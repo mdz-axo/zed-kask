@@ -11,7 +11,11 @@
   "ensemble" model).
 - Compound agents declare `dependencies { required, optional }` and auto-hire
   their team.
-- Gas: hire 5 cr, @mention 1 cr + tokens, delegation 1 cr + tokens.
+- Gas (observed live 2026-08-02): add own agent to a workspace = flat 2 cr
+  (`gas_charged: 2` on `/add`); @mention/delegation = 1 cr + tokens; hiring
+  another author's catalogue agent via `/hire` fee unverified (the plan's
+  earlier "hire 5 cr" was not observed). The consent gate floors dependency-
+  less hires at the 2 cr add fee (`effective_hire_cost`).
 - Delegation is one level deep: delegates lose `delegate_to_agent` /
   `execute_agent` (no delegation chains).
 - API surface (verified against the live service):
@@ -25,6 +29,31 @@
     failures (e.g. unfunded agents). Error mapping inspects bodies, not just
     status codes — see `detect_embedded_error` in
     `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
+
+### Verified response shapes (live, 2026-08-02)
+
+Pinned by the `abw_*` live tests (`cargo test -p hkask-mcp-swarm --lib --
+--ignored abw`) and unit-test contracts in the panel:
+
+- `GET /api/workspaces` → bare array or `{workspaces: [...]}`; each workspace:
+  `id, name, slug, description, origin, owner_id, agent_count,
+  agent_previews, workspace_budget, workspace_remaining, workspace_spent`.
+  The panel's `agent_count`/`workspace_budget`/`workspace_remaining` parse
+  contract matches these names exactly.
+- `GET /api/workspaces/{id}` → `{ id, name, slug, mission, description,
+  is_composition, members, agents: [{ agent_id, agent_name, agent_type,
+  description, display_alias, accepts, produces, tags, sample_queries,
+  prompt_template, relationship, total_executions }], workspace_budget,
+  workspace_remaining, workspace_spent, coordination_strategist_id,
+  coordination_strategist_name }`. The roster drill-down parses the top-level
+  `agents` array.
+- `GET /api/workspaces/{id}/messages` → `{ messages: [{ message_id,
+  message_type, content, sender_id, sender_name, sender_type, created_at,
+  metadata }] }`. The run-status strip renders `sender_name`.
+- `GET /api/wallet` → `{ balance }`.
+- `GET /api/agents/{name}/dependencies` → `{ total_hire_cost, required_cost,
+  optional_cost, has_dependencies, required, optional }` (the consent gate's
+  re-verification source).
 
 ## 3. Design decisions (current state)
 
@@ -170,11 +199,15 @@ The slash-command path (`/swarm-intelligence ...`, via
 prefix is stripped before the task reaches the cascade (previously the
 `/swarm-intelligence` prefix leaked into `task`).
 
-Known limits (as of 2026-08-02):
-- No `fire` tool — the ABW fire endpoint is not implemented. DECIDE flags
-  redundant duplicates (`flag_redundant_duplicate`) for manual pruning;
-  ACT aborts a `fire` move with `no_fire_tool`. Do not reintroduce `fire` or
-  `swarm_update_swarm` in the templates until a server tool exists.
+Known limits (as of 2026-08-02, updated after live verification):
+- `swarm_fire` now exists (verified live — `DELETE /workspaces/{id}/agents/{agent}`
+  removes the agent from the roster; no credit cost; the agent itself is not
+  deleted). DECIDE flags redundant duplicates and ACT emits `swarm_fire` for
+  them. `swarm_delete_agent` (verified live — `DELETE /agents/{id}`) is the
+  permanent-delete counterpart.
+- Workspace update and workspace delete have NO ABW endpoint (both 405,
+  verified live) — do not add `swarm_update_swarm` or a workspace-delete
+  tool. Agent update (`PUT /api/agents/{id}`) remains unverified.
 - `swarm_create_agent` hardcodes `provider: "anthropic"` and passes through
   `mcp_tools`/`skills` from the request.
 
@@ -217,7 +250,9 @@ substrate; both tool sets remain registered.
 and `skills` (skill ids). `swarm_delegate_local` declares the card's
 `mcp_tools` to the model and dispatches model tool calls through the zed IPC
 bridge's `ToolInvoke` method (governed `McpRuntime` on the zed side, panel
-token). Tool calls are allowlisted to the card's declared tools. Declared
+token). Tool calls are allowlisted to the card's declared tools AND the
+allowlist is enforced zed-side at the dispatch boundary (the qualified
+`server/tool` list travels with every `tool_invoke` request). Declared
 `skills` are executed against the task through the zed-side `ManifestExecutor`
 (IPC `SkillExecute` method, capped at 3 per delegation) **before** the LLM
 call; each cascade's output is guard-scanned and injected into the prompt as
@@ -229,6 +264,14 @@ guard rejects the delegation (an injection from a skill is a finding).
 Local cards are removed with `swarm_remove_local` (the local counterpart of
 firing — deletes the card directory; a synced card's ABW agent is untouched)
 and added via clone or manual file placement (§15.1.1).
+
+Cloned cards' declared `mcp_tools`/`skills` are third-party ABW data. At
+clone time (`swarm_clone_to_local`) they are provenance-filtered: entries
+must be shape-valid (`server/tool`, charset-safe) and, when
+`HKASK_MCP_SERVER_IDS` is set (the parent's governed server set, injected by
+the bridge), the `server` must be one of the operator's governed servers — a
+cloned ABW card cannot extend the delegated tool surface beyond them.
+Dropped entries are logged so the operator sees what was filtered.
 
 ### 15.4 Backend toggle
 
@@ -269,8 +312,9 @@ synthetic ledger breaks the corrective feedback loop.
 
 - Create: `swarm_create_swarm` (consent-gated hires), `swarm_create_agent`,
   `swarm_create_app`, `swarm_clone_to_local`, `swarm_push_to_cloud`.
-- Roster: `swarm_hire` (consent-gated) — **no ABW fire** (blocked, see §17);
-  local pruning via `swarm_remove_local`.
+- Roster: `swarm_hire` (consent-gated; own agents auto-route through
+  `/add`) and `swarm_fire` (verified live — roster removal); local pruning
+  via `swarm_remove_local`; permanent ABW deletion via `swarm_delete_agent`.
 - Spend: `swarm_delegate` / `swarm_execute_agent` (ABW), `swarm_delegate_local`
   (local). Budget: `swarm_fund_local`; per-dispatch ceiling
   (`HKASK_ABW_MAX_CREDITS`); wallet is ABW-side.
@@ -287,11 +331,20 @@ verify:
 
 | Operation | Endpoint shape to verify on ABW | Current state |
 |---|---|---|
-| Fire / un-hire | `DELETE /api/workspaces/{id}/agents/{agent_id}` (or `POST /api/workspaces/{id}/agents/{agent_id}/fire`) | No tool; DECIDE flags redundant duplicates; ACT aborts with `no_fire_tool`; local pruning via `swarm_remove_local` |
-| Workspace update | `PATCH /api/workspaces/{id}` (name, mission, budget) | No tool; create-only |
-| Workspace delete | `DELETE /api/workspaces/{id}` | No tool |
-| Agent update | `PUT /api/agents/{agent_id}` (system_prompt, model, temperature) | No direct tool; `swarm_push_to_cloud` updates an ABW agent *from a local card* |
-| Agent delete | `DELETE /api/agents/{agent_id}` | No tool |
+| Fire / un-hire | `DELETE /api/workspaces/{id}/agents/{agent_id}` — **verified live 2026-08-02** (accepts the agent id or name; 200 `{"message": "Agent removed from workspace"}`) | **Implemented** as `swarm_fire` (no credit cost, no consent token); the skill's DECIDE/ACT emit it for redundant duplicates; local pruning via `swarm_remove_local` |
+| Workspace update | `PATCH /api/workspaces/{id}` (name, mission, budget) | **Disproven** — 405 Method Not Allowed on the live service; do NOT implement |
+| Workspace delete | `DELETE /api/workspaces/{id}` (and `POST .../delete`) | **Disproven** — 405 / 404 on the live service; no programmatic workspace deletion exists; leftover verify workspaces are pruned manually on agent-bestiary.world |
+| Agent update | `PUT /api/agents/{agent_id}` (system_prompt, model, temperature) | No direct tool; `swarm_push_to_cloud` updates an ABW agent *from a local card*; PUT shape unverified |
+| Agent delete | `DELETE /api/agents/{agent_id}` — **verified live 2026-08-02** (200 `{"message": "Agent deleted successfully"}`; catalogue confirms removal) | **Implemented** as `swarm_delete_agent` (resolves uuid-vs-name via the catalogue on 404) |
+
+Additional verified lifecycle facts (2026-08-02): `POST /api/agents` returns
+`{agent_id, agent_name, message}` (owned agents carry a uuid in `agent_id`);
+`POST /api/teams` returns `{id, slug, ...}` with a default `workspace_budget:
+100`; **own agents hire via `POST /api/workspaces/{id}/add`** (400 "Use /add
+for your own agents" on `/hire`, `gas_charged: 2` flat add fee), while other
+authors' catalogue agents use `/hire`; agent names are slugs (`[a-z0-9_]`,
+3–64 chars) and workspace slugs are capped at 64 chars — both enforced
+server-side now.
 
 Verification procedure: inspect ABW's OpenAPI/docs for each shape, add the
 tool with the verified path, and pin the response shape with a unit test

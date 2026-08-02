@@ -649,7 +649,7 @@ pub enum TrainingJobStatus {
 // ── Provider error ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
-pub enum ProviderError {
+pub enum HostProviderError {
     #[error("Provider '{0}' is not available (missing CLI or configuration)")]
     Unavailable(String),
     #[error("Training job failed: {0}")]
@@ -713,29 +713,16 @@ pub struct PodStatus {
 pub trait TrainingHost: Send + Sync {
     /// Submit a training job for execution.
     /// Returns a provider-specific job ID for status tracking.
-    async fn submit(&self, job: &TrainingJob) -> Result<String, ProviderError>;
+    async fn submit(&self, job: &TrainingJob) -> Result<String, HostProviderError>;
 
     /// Query the status of a previously submitted job.
     /// Returns rich pod status including SSH connection info, IP, uptime,
     /// and GPU type. The operator MUST be able to SSH into the pod and
     /// inspect logs. If `ssh_command` is empty, the pod is not debuggable.
-    async fn status(&self, job_id: &str) -> Result<PodStatus, ProviderError>;
+    async fn status(&self, job_id: &str) -> Result<PodStatus, HostProviderError>;
 
     /// Cancel a running or queued job. Terminates the pod to stop billing.
-    async fn cancel(&self, job_id: &str) -> Result<(), ProviderError>;
-}
-
-/// Metadata returned by a provider when a training job completes.
-/// DEPRECATED — completion metadata now comes from the HuggingFace
-/// completion manifest (CompletionManifest struct in huggingface.rs).
-/// This struct is retained for trait conformance but is not used.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompletionMetadata {
-    pub base_model: String,
-    pub output_name: Option<String>,
-    pub loss: Option<f32>,
-    pub training_duration_secs: Option<u64>,
-    pub tokens_processed: Option<u64>,
+    async fn cancel(&self, job_id: &str) -> Result<(), HostProviderError>;
 }
 
 /// Username characters accepted for SSH logins: alphanumerics, `.`, `_`, `-`,

@@ -58,6 +58,9 @@ templates:
       <phase description>
     generates_spans:
       - reg.<skill_name>.<phase-1>
+    # NOTE: these per-template spans use the ontology-derived short name
+    # (e.g. reg.bughunt.oracle), NOT the ledger namespace. The ledger
+    # span_namespace (reg.skill.<id>) lives in the process manifest below.
   # ... one entry per phase ...
   # Reference documents (RenderAct type) if any:
   - id: <skill_name>/<reference-name>
@@ -220,6 +223,17 @@ ocap:
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
   template_scoped: true
+
+ledger:
+  emit_spans: true
+  # MANDATORY: must be reg.skill.<manifest.id> (CI-enforced by
+  # scripts/check-skill-span-namespace.sh). Any other form fails the gate.
+  # The abolished `spans:` list MUST NOT appear here.
+  span_namespace: reg.skill.<skill_name>
+  telemetry_namespace: hkask.template.<skill_name>
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
 {% endraw %}
 ```
 

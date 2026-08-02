@@ -26,7 +26,7 @@ pub struct AdapterMetrics {
 // ── Store errors ───────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
-pub enum AdapterStoreError {
+pub enum JobStoreError {
     #[error("Storage error: {0}")]
     Storage(String),
     #[error("Serialization error: {0}")]
@@ -38,10 +38,10 @@ fn exec_discard(
     conn: &rusqlite::Connection,
     sql: &str,
     params: &[&dyn rusqlite::types::ToSql],
-) -> Result<(), AdapterStoreError> {
+) -> Result<(), JobStoreError> {
     conn.execute(sql, params)
         .map(|_| ())
-        .map_err(|e| AdapterStoreError::Storage(format!("Execute failed: {}", e)))
+        .map_err(|e| JobStoreError::Storage(format!("Execute failed: {}", e)))
 }
 
 // ── Job store ───────────────────────────────────────────────────────────
@@ -75,13 +75,13 @@ impl JobStore {
     /// [P4] Constraining: persistence initialization fails explicitly rather than weakening boundaries.
     pub fn new(
         pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
-    ) -> Result<Self, AdapterStoreError> {
+    ) -> Result<Self, JobStoreError> {
         let store = Self { pool };
         store.init_schema()?;
         Ok(store)
     }
 
-    fn init_schema(&self) -> Result<(), AdapterStoreError> {
+    fn init_schema(&self) -> Result<(), JobStoreError> {
         let conn = self.lock()?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS training_jobs (
@@ -96,7 +96,7 @@ impl JobStore {
                 provider_job_id TEXT
             );",
         )
-        .map_err(|error| AdapterStoreError::Storage(format!("Initialize schema: {error}")))?;
+        .map_err(|error| JobStoreError::Storage(format!("Initialize schema: {error}")))?;
 
         for (column, definition) in [
             ("artifact_manifest_json", "TEXT"),
@@ -104,19 +104,19 @@ impl JobStore {
         ] {
             let mut statement = conn
                 .prepare("PRAGMA table_info(training_jobs)")
-                .map_err(|error| AdapterStoreError::Storage(format!("Inspect schema: {error}")))?;
+                .map_err(|error| JobStoreError::Storage(format!("Inspect schema: {error}")))?;
             let columns = statement
                 .query_map([], |row| row.get::<_, String>(1))
-                .map_err(|error| AdapterStoreError::Storage(format!("Inspect schema: {error}")))?
+                .map_err(|error| JobStoreError::Storage(format!("Inspect schema: {error}")))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| AdapterStoreError::Storage(format!("Inspect schema: {error}")))?;
+                .map_err(|error| JobStoreError::Storage(format!("Inspect schema: {error}")))?;
             drop(statement);
             if !columns.iter().any(|existing| existing == column) {
                 conn.execute_batch(&format!(
                     "ALTER TABLE training_jobs ADD COLUMN {column} {definition};"
                 ))
                 .map_err(|error| {
-                    AdapterStoreError::Storage(format!("Migrate {column}: {error}"))
+                    JobStoreError::Storage(format!("Migrate {column}: {error}"))
                 })?;
             }
         }
@@ -125,11 +125,11 @@ impl JobStore {
 
     fn lock(
         &self,
-    ) -> Result<r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>, AdapterStoreError>
+    ) -> Result<r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>, JobStoreError>
     {
         self.pool
             .get()
-            .map_err(|e| AdapterStoreError::Storage(format!("pool get: {}", e)))
+            .map_err(|e| JobStoreError::Storage(format!("pool get: {}", e)))
     }
 
     /// Store a new training job.
@@ -143,7 +143,7 @@ impl JobStore {
         status: &str,
         created_at: i64,
         host: &str,
-    ) -> Result<(), AdapterStoreError> {
+    ) -> Result<(), JobStoreError> {
         let conn = self.lock()?;
         exec_discard(
             &conn,
@@ -168,9 +168,9 @@ impl JobStore {
         &self,
         job_id: &str,
         artifacts: &crate::huggingface::TrainingArtifacts,
-    ) -> Result<(), AdapterStoreError> {
+    ) -> Result<(), JobStoreError> {
         let manifest = serde_json::to_string(artifacts)
-            .map_err(|error| AdapterStoreError::Serialization(error.to_string()))?;
+            .map_err(|error| JobStoreError::Serialization(error.to_string()))?;
         let conn = self.lock()?;
         exec_discard(
             &conn,
@@ -187,7 +187,7 @@ impl JobStore {
         &self,
         job_id: &str,
         provider_job_id: &str,
-    ) -> Result<(), AdapterStoreError> {
+    ) -> Result<(), JobStoreError> {
         let conn = self.lock()?;
         exec_discard(
             &conn,
@@ -203,7 +203,7 @@ impl JobStore {
     pub fn artifacts(
         &self,
         job_id: &str,
-    ) -> Result<Option<crate::huggingface::TrainingArtifacts>, AdapterStoreError> {
+    ) -> Result<Option<crate::huggingface::TrainingArtifacts>, JobStoreError> {
         let conn = self.lock()?;
         let manifest: Option<String> = match conn.query_row(
             "SELECT artifact_manifest_json FROM training_jobs WHERE id = ?1",
@@ -213,7 +213,7 @@ impl JobStore {
             Ok(manifest) => manifest,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(error) => {
-                return Err(AdapterStoreError::Storage(format!(
+                return Err(JobStoreError::Storage(format!(
                     "Read artifact manifest: {error}"
                 )));
             }
@@ -221,13 +221,13 @@ impl JobStore {
         manifest
             .map(|manifest| {
                 serde_json::from_str(&manifest)
-                    .map_err(|error| AdapterStoreError::Serialization(error.to_string()))
+                    .map_err(|error| JobStoreError::Serialization(error.to_string()))
             })
             .transpose()
     }
 
     /// Update job status.
-    pub fn update_status(&self, job_id: &str, status: &str) -> Result<(), AdapterStoreError> {
+    pub fn update_status(&self, job_id: &str, status: &str) -> Result<(), JobStoreError> {
         let conn = self.lock()?;
         exec_discard(
             &conn,
@@ -240,14 +240,14 @@ impl JobStore {
     }
 
     /// Get a job by ID.
-    pub fn get(&self, job_id: &str) -> Result<Option<StoredJob>, AdapterStoreError> {
+    pub fn get(&self, job_id: &str) -> Result<Option<StoredJob>, JobStoreError> {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, base_model, dataset_path, params_json, status, created_at, host
                      FROM training_jobs WHERE id = ?1",
             )
-            .map_err(|e| AdapterStoreError::Storage(format!("Query failed: {}", e)))?;
+            .map_err(|e| JobStoreError::Storage(format!("Query failed: {}", e)))?;
 
         let result = stmt.query_row(rusqlite::params![job_id], |row| {
             Ok(StoredJob {
@@ -264,19 +264,19 @@ impl JobStore {
         match result {
             Ok(job) => Ok(Some(job)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AdapterStoreError::Storage(format!("Query failed: {}", e))),
+            Err(e) => Err(JobStoreError::Storage(format!("Query failed: {}", e))),
         }
     }
 
     /// List all jobs, most recent first.
-    pub fn list_all(&self) -> Result<Vec<StoredJob>, AdapterStoreError> {
+    pub fn list_all(&self) -> Result<Vec<StoredJob>, JobStoreError> {
         let conn = self.lock()?;
         let mut stmt = conn
             .prepare(
                 "SELECT id, base_model, dataset_path, params_json, status, created_at, host
                      FROM training_jobs ORDER BY created_at DESC",
             )
-            .map_err(|e| AdapterStoreError::Storage(format!("Query failed: {}", e)))?;
+            .map_err(|e| JobStoreError::Storage(format!("Query failed: {}", e)))?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -290,11 +290,11 @@ impl JobStore {
                     host: row.get(6)?,
                 })
             })
-            .map_err(|e| AdapterStoreError::Storage(format!("Query failed: {}", e)))?;
+            .map_err(|e| JobStoreError::Storage(format!("Query failed: {}", e)))?;
 
         let mut jobs = Vec::new();
         for row in rows {
-            jobs.push(row.map_err(|e| AdapterStoreError::Storage(format!("Row error: {}", e)))?);
+            jobs.push(row.map_err(|e| JobStoreError::Storage(format!("Row error: {}", e)))?);
         }
         Ok(jobs)
     }

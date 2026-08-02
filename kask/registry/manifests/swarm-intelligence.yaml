@@ -160,14 +160,16 @@ steps:
     action: select
     description: >
       DECIDE: Propose composition adjustments isomorphic to swarm-algorithm
-      tuning, mapped onto ABW's hire/delegate vocabulary (no fire tool yet —
-      redundant duplicates are flagged, not fired):
+      tuning, mapped onto ABW's hire/delegate/fire vocabulary (fire is
+      `swarm_fire`, verified live 2026-08-02 — roster removal, no credit
+      cost):
         - Variety deficit → hire agents whose accepts/produces cover the
           missing transforms (ACO pheromone deposition: strengthen the path
           to the uncovered region).
         - Coherence deficit + low diversity → hire a diverse agent (raise
           PSO c1 cognitive / lower omega inertia — broaden the search);
-          flag a redundant duplicate for manual pruning (no fire tool).
+          flag a redundant duplicate and prune it with `swarm_fire` (abw) /
+          `swarm_remove_local` (local).
         - Coherence deficit + high diversity but low alignment → hire/assign
           a coordinator compound agent (raise PSO c2 social — pull toward
           gbest; Reynolds alignment rule).

@@ -35,7 +35,7 @@ manifest:
     delegates, ontology annotations); scaffolds the full registry crate
     (template manifest + .j2 templates + process manifest + SKILL.md
     companion) by delegating to skill-maintenance-build; validates the
-    scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10 by delegating
+    scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E11 by delegating
     to skill-maintenance-validate; and iterates until validation passes
     or escalation is required. Overrides the built-in Zed create-skill,
     which only produces SKILL.md files — insufficient for kask, where
@@ -143,7 +143,7 @@ steps:
     description: >
       Validate the scaffolded crate against all check categories.
       Delegates to skill-maintenance-validate. Checks R1-R12 (registry),
-      Z1-Z8 (companion), X1-X4 (cross-artifact), E1-E10 (executor
+      Z1-Z8 (companion), X1-X4 (cross-artifact), E1-E11 (executor
       compliance). Produces fix suggestions for any failures.
     renderer: minijinja
     template_ref: create-skill/create-skill-validate

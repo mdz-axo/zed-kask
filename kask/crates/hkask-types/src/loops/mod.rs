@@ -4,9 +4,10 @@
 //! to break the circular dependency that prevented extracting Regulation subcrates
 //! (storage guard, SLO, seam watcher). They have no Regulation-internal dependencies.
 //!
-//! The `Loop` trait remains in `hkask-regulation` because external crates implement
-//! it for foreign types (e.g., `impl Loop for RwLock<CyberneticsLoop>`),
-//! which would violate the orphan rule if the trait lived in `hkask-types`.
+//! The `Loop` trait lives in `hkask-regulation` alongside its sole implementor
+//! (`CyberneticsLoop`). The `impl Loop for RwLock<CyberneticsLoop>` that forced this
+//! placement (orphan rule) was removed as dead code; the trait could now move to
+//! `hkask-types` but remains here pending that decision.
 //!
 //! Channel types (`CurationInput`, `ToolConsumptionEvent`, etc.) also remain
 //! in `hkask-regulation` because they depend on `RuntimeAlert` (Regulation-internal).

@@ -33,8 +33,10 @@ templates:
       verb-noun or noun-noun, no reserved prefixes). Identify the PDCA
       phases the skill will have (most follow the bug-hunt pattern: a
       phased pipeline with feedback loop closure). Identify which skills
-      this skill will compose (delegates). Identify the span namespace
-      (reg.<skill_name>.*).
+      this skill will compose (delegates). Identify the per-template span
+      namespace (reg.<skill_name>.<phase>, ontology-derived); the ledger
+      span_namespace is deterministic (reg.skill.<manifest.id>) and injected
+      by the scaffold phase.
     generates_spans:
       - reg.create_skill.describe
 
@@ -57,7 +59,7 @@ templates:
       - reg.create_skill.scaffold
 
   - id: create-skill/create-skill-validate
-    name: "Validate scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10"
+    name: "Validate scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E11"
     path: create-skill-validate.j2
     type: KnowAct
     description: >
@@ -69,8 +71,9 @@ templates:
       frontmatter, name match, description quality, template table
       constraints, consistency); X1-X4 (cross-artifact: template_refs
       resolve, ordinals sequential, names match, OCAP matches templates);
-      E1-E10 (executor compliance: canonical actions only, gas/rjoule/
+      E1-E11 (executor compliance: canonical actions only, gas/rjoule/
       convergence blocks present, convergence_field resolvable
-      template_refs resolvable, error_handling present).
+      template_refs resolvable, error_handling present, ledger.span_namespace
+      equals reg.skill.<manifest.id> with no abolished spans: list).
     generates_spans:
       - reg.create_skill.validate

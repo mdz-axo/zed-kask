@@ -78,6 +78,7 @@ Validate **all skills** in the registry directory.
 | X1 | Registry exists | manifest.yaml present | Critical |
 | X2 | No orphan SKILL.md | SKILL.md without registry → incomplete | High |
 | X3 | No drift | SKILL.md does not claim behaviors registry templates do not support | Medium |
+| X4 | Bidirectional name match | Every `.agents/skills/<name>/` has a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name. | High |
 
 ### Process Manifest Compliance Checks (registry/manifests/*.yaml)
 
@@ -97,6 +98,7 @@ dispatches only canonical actions; non-canonical actions cause runtime errors.
 | E8 | Sub-manifest budgets | Any `template_ref` pointing to a `.yaml` sub-manifest (FlowDef recursion) must have `gas` and `rjoule` blocks in the sub-manifest. Sub-manifest `rjoule.cap` should be > 0 if the sub-manifest uses inference. | High |
 | E9 | Step description | Every step has a non-empty `description` field. | Critical |
 | E10 | Ordinal sequence | Step ordinals are sequential starting from 1 (or 0 for pre-processing steps). | Medium |
+| E11 | Ledger span namespace | `ledger.span_namespace` is present and equals `reg.skill.<manifest.id>` (the literal string `reg.skill.` + the manifest's `id`). The abolished `spans:` list MUST NOT be present in the `ledger:` block. | Critical |
 
 ### Canonical Action Semantics (Pattern A type system)
 
@@ -163,7 +165,7 @@ Respond with a JSON object:
 
 - Every check must be evaluated for every targeted skill — no omissions.
 - Registry checks (R1–R12) are mandatory. Companion checks (Z1–Z8) are secondary.
-- Executor compliance checks (E1–E10) are mandatory for process manifests.
+- Executor compliance checks (E1–E11) are mandatory for process manifests.
 - Fail results must include specific evidence.
 - Fix suggestions must be actionable.
 - Registry check failures (R1–R5) are always `critical`.

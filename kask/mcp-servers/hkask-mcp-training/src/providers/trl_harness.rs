@@ -32,7 +32,7 @@ use std::path::PathBuf;
 pub struct TrlHarness;
 
 impl HarnessAdapter for TrlHarness {
-    fn render_config(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let trainer = job.params.trl_trainer.unwrap_or_default();
         match trainer {
             TrlTrainer::Sft => self.render_sft_script(job),
@@ -205,7 +205,7 @@ impl TrlHarness {
     /// Render a TRL SFTTrainer Python script from canonical `TrainingParams`.
     ///
     /// The script is rendered via `registry/templates/training/trl-sft.j2`.
-    fn render_sft_script(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    fn render_sft_script(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let mut context = self.build_base_context(job);
 
         // TRL-specific: packing — enables example packing for efficiency.
@@ -224,7 +224,7 @@ impl TrlHarness {
         &self,
         job: &TrainingJob,
         trainer_name: &str,
-    ) -> Result<String, ProviderError> {
+    ) -> Result<String, HostProviderError> {
         let trainer = job.params.trl_trainer.unwrap_or_default();
         let mut context = self.build_base_context(job);
 
@@ -270,9 +270,9 @@ impl TrlHarness {
         template_path: &std::path::Path,
         context: serde_json::Map<String, serde_json::Value>,
         label: &str,
-    ) -> Result<String, ProviderError> {
+    ) -> Result<String, HostProviderError> {
         let template = std::fs::read_to_string(template_path).map_err(|error| {
-            ProviderError::InvalidConfig(format!(
+            HostProviderError::InvalidConfig(format!(
                 "Read {label} template {}: {error}",
                 template_path.display()
             ))
@@ -283,7 +283,7 @@ impl TrlHarness {
             .render_str(&template, serde_json::Value::Object(context))
             .map(|script| script.trim().to_string() + "\n")
             .map_err(|error| {
-                ProviderError::InvalidConfig(format!("Render {label} template: {error}"))
+                HostProviderError::InvalidConfig(format!("Render {label} template: {error}"))
             })
     }
 }

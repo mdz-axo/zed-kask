@@ -9,7 +9,7 @@
 //! lora-training skill gates).
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::providers::TrainingParams;
 
@@ -150,13 +150,4 @@ pub struct TrainValidateConfigRequest {
     /// Optional base model — if provided, runs G-Q5 (paged optimizer heuristic).
     #[serde(default)]
     pub base_model: Option<String>,
-}
-
-// ── Supporting types ─────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AbBaseline {
-    pub previous_version: u32,
-    pub previous_loss: f32,
-    pub previous_perplexity: f32,
 }

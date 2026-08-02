@@ -22,9 +22,9 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 ### skill-maintenance-validate
 
-1. Validate the specified skill or all skills in the registry directory against R1-R12 registry checks, Z1-Z8 companion checks, X1-X4 cross-artifact checks, and E1-E10 executor compliance checks.
+1. Validate the specified skill or all skills in the registry directory against R1-R12 registry checks, Z1-Z8 companion checks, X1-X4 cross-artifact checks, and E1-E11 executor compliance checks.
 2. Evaluate every check for every targeted skill without omissions, including invariant X5: every `.agents/skills/<name>/` must have a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name.
-3. For executor compliance (E1-E10), verify that every process manifest uses only canonical actions, has gas/rjoule blocks with adequate caps, has a convergence block (for skill category), has valid category, and has resolvable template_refs.
+3. For executor compliance (E1-E11), verify that every process manifest uses only canonical actions, has gas/rjoule blocks with adequate caps, has a convergence block (for skill category), has valid category, has resolvable template_refs, and has a `ledger.span_namespace` equal to `reg.skill.<manifest.id>` with no abolished `spans:` list (E11).
 4. Include specific evidence for any fail results.
 5. Provide actionable fix suggestions for any failures, including mapping non-canonical actions to their canonical equivalents.
 6. Respond with a JSON object containing validation results, pass/fail counts (including executor_compliance), and fix suggestions.
@@ -34,7 +34,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 1. Generate a complete registry crate (manifest.yaml and .j2 templates) from the user's natural language description.
 2. Ensure the skill name is lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, and lacks reserved prefixes.
 3. Create at least one .j2 template with valid [inference] frontmatter and a Jinja2 body containing a system prompt and JSON output schema.
-4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (convergence_mode, cauchy_epsilon, cauchy_window, max_iterations, min_iterations, on_not_reached), `gas:` block (cap proportional to step count), `rjoule:` block (cap > 0 if inference is used), and `steps:` array using only canonical actions.
+4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (convergence_mode, cauchy_epsilon, cauchy_window, max_iterations, min_iterations, on_not_reached), `gas:` block (cap proportional to step count), `rjoule:` block (cap > 0 if inference is used), `steps:` array using only canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<name>` (CI-enforced; no `spans:` list).
 5. Derive a SKILL.md companion from the completed registry crate.
 6. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, gas_block_present, rjoule_block_present, convergence_block_present).
 
@@ -103,8 +103,8 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 ## Constraints
 
-- `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E10 executor compliance mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9 failures are critical; Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
-- `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have gas/rjoule/convergence blocks and canonical actions.
+- `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E11 executor compliance mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9/E11 failures are critical; Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
+- `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have gas/rjoule/convergence blocks, canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (no abolished `spans:` list).
 - `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared; energy_cap must be 2048-8192. Source actions must be mapped to canonical actions. Process manifest must have gas/rjoule/convergence blocks.
 - `skill-maintenance-reverse.j2`: Public. Every instruction must trace to a manifest field or .j2 body — do not invent content.
 - `skill-maintenance-prose.j2`: Public. Output raw markdown only — no JSON, code fences, frontmatter, or structural sections.

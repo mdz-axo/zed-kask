@@ -142,6 +142,17 @@ steps:
     description: Re-enter PDCA cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
+
+ledger:
+  emit_spans: true
+  # MANDATORY: must be reg.skill.<manifest.id> (CI-enforced by
+  # scripts/check-skill-span-namespace.sh). Any other form fails the gate.
+  # The abolished `spans:` list MUST NOT appear here.
+  span_namespace: reg.skill.<skill-name>
+  telemetry_namespace: hkask.template.<skill-name>
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
 {% endraw %}
 ```
 
@@ -254,6 +265,7 @@ Respond with a JSON object:
 - The process manifest must have a `gas:` block with `cap > 0`.
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select` (inference).
 - The process manifest must have a `convergence:` block with threshold, max_iterations, min_iterations, convergence_field, and on_not_reached.
+- The process manifest must have a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (CI-enforced). The `spans:` list is abolished — do not add it.
 - The name must pass all naming rules.
 - Do not add features, tools, or capabilities the user did not describe.
 - If the user description is too vague for a section, ask clarifying questions before scaffolding. Do not generate TODO markers or stubs.

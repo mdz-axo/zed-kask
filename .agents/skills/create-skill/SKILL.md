@@ -106,9 +106,15 @@ annotated with the ontology terms that define its domain's process.
    template contract's input/output types. PKO's Procedure, Step,
    StepExecution become contract fields. ESO's Event, Situation, Role
    become contract fields.
-3. **Span namespaces**: the ontology's concepts become span names.
-   `reg.gradient.detect` follows the gradient ontology; `reg.bughunt.oracle`
-   follows the Weinberg oracle concept.
+3. **Span namespaces**: the ontology's concepts become span names. There are
+   two distinct namespaces — do not conflate them:
+   - `ledger.span_namespace` (process manifest): MUST be `reg.skill.<manifest.id>`
+     (CI-enforced by `scripts/check-skill-span-namespace.sh`; the `spans:` list is
+     abolished). E.g. `reg.skill.bug-hunt`.
+   - per-template `generates_spans` (template manifest + .j2): the ontology-derived
+     short name, e.g. `reg.gradient.detect` follows the gradient ontology,
+     `reg.bughunt.oracle` follows the Weinberg oracle concept. These are NOT gated
+     by the CI script and may use a shortened form distinct from `manifest.id`.
 4. **Convergence criteria**: the ontology's quality criteria become the
    convergence metric. PKO's execution completeness becomes a coverage
    metric. The gradient-hunter's fractal recurrence becomes a
@@ -123,7 +129,7 @@ specific to skill creation:
 Plan:   Phase 1 — Research     → Find academic/industry ontological anchors for the skill's domain
 Plan:   Phase 2 — Describe     → Capture purpose, name, PDCA shape (emergent from anchors), delegates, ontology
 Do:     Phase 3 — Scaffold    → Generate manifest.yaml + .j2 templates + process manifest + SKILL.md
-Check:  Phase 4 — Validate    → Run skill-maintenance-validate against R1-R12, Z1-Z8, X1-X4, E1-E10
+Check:  Phase 4 — Validate    → Run skill-maintenance-validate against R1-R12, Z1-Z8, X1-X4, E1-E11
 Check:  Phase 5 — Converge     → Check validation passed; if not, re-enter at Research with fixes
 Act:    Phase 6 — Loop        → If validation failed, re-enter at Phase 1 with the failure report
 ```
@@ -171,7 +177,10 @@ which is exactly what we want to avoid.
    research phase, not a generic template. Each phase is grounded in an
    ontological anchor.
 4. Identify which skills this skill will compose (delegates).
-5. Identify the span namespace (reg.<skill_name>.*).
+5. Identify the per-template span namespace (`reg.<skill_name>.<phase>`,
+   ontology-derived). The ledger `span_namespace` is deterministic — always
+   `reg.skill.<manifest.id>` — and is injected by the scaffold phase; do not
+   "choose" it.
 6. Identify the ontology annotations for each artifact.
 
 ### Phase 3 — Scaffold (delegate to skill-maintenance-build)
@@ -188,7 +197,7 @@ Delegate to `skill-maintenance-build` to generate the full registry crate:
 ### Phase 4 — Validate (delegate to skill-maintenance-validate)
 
 Delegate to `skill-maintenance-validate` to check the scaffolded crate
-against R1-R12, Z1-Z8, X1-X4, E1-E10.
+against R1-R12, Z1-Z8, X1-X4, E1-E11.
 
 ### Phase 5 — Converge
 
@@ -204,7 +213,7 @@ were insufficient or the PDCA shape didn't emerge correctly from them.
 | `create-skill-research.j2` | `KnowAct` | Search academic/industry literature for the skill's domain. Find ontological anchors (process ontologies, quality criteria, entity types, existing ontologies). Derive the PDCA shape from the anchors. |
 | `create-skill-describe.j2` | `KnowAct` | Capture the skill's purpose, name, PDCA shape (emergent from anchors), delegates, span namespace, ontology annotations. |
 | `create-skill-scaffold.j2` | `KnowAct` | Generate the full registry crate structure with ontology-annotated artifacts. Delegates to skill-maintenance-build. |
-| `create-skill-validate.j2` | `KnowAct` | Validate the scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E10. Delegates to skill-maintenance-validate. |
+| `create-skill-validate.j2` | `KnowAct` | Validate the scaffolded crate against R1-R12, Z1-Z8, X1-X4, E1-E11. Delegates to skill-maintenance-validate. |
 | `create-skill-ontologies.yaml` | `RenderAct` | Reference: ontology reference set (PKO, Dublin Core, GOLEM, MovieLabs OMC, ESO) with domain mappings and annotation patterns. |
 
 ## Constraints

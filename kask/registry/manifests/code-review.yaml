@@ -336,7 +336,7 @@ ocap:
 
 ledger:
   emit_spans: true
-  span_namespace: reg.codereview
+  span_namespace: reg.skill.code-review
   telemetry_namespace: hkask.template.code-review
   variety_monitoring: true
   algedonic_threshold: 100

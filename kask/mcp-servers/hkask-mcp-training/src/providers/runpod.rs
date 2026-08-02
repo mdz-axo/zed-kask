@@ -244,12 +244,12 @@ impl RunpodHost {
     /// Drain all known pods by terminating them. Used on shutdown to avoid
     /// orphaned billable pods. Errors per-pod are logged but don't abort the
     /// drain — we want to attempt every pod even if one fails.
-    pub async fn drain_all_pods(&self) -> Result<usize, ProviderError> {
+    pub async fn drain_all_pods(&self) -> Result<usize, HostProviderError> {
         let pod_ids: Vec<(String, String)> = {
             let map = self
                 .jobs
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock error: {}", e)))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock error: {}", e)))?;
             map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
         let count = pod_ids.len();
@@ -283,14 +283,14 @@ impl RunpodHost {
     }
 
     /// Send a request to the Runpod REST API v2 and return the parsed JSON
-    /// response. For non-2xx responses, returns a `ProviderError::Backend`
+    /// response. For non-2xx responses, returns a `HostProviderError::Backend`
     /// with the v2 error envelope (`title` / `status` / `detail` / `errors`).
     async fn rest_request(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<Value>,
-    ) -> Result<Value, ProviderError> {
+    ) -> Result<Value, HostProviderError> {
         let url = format!("{}{}", RUNPOD_API_V2_BASE, path);
         let mut req = self
             .client
@@ -303,7 +303,7 @@ impl RunpodHost {
         let response = req
             .send()
             .await
-            .map_err(|e| ProviderError::Backend(format!("Runpod API request failed: {}", e)))?;
+            .map_err(|e| HostProviderError::Backend(format!("Runpod API request failed: {}", e)))?;
         let status = response.status();
 
         // 204 No Content (DELETE success) — return an empty object.
@@ -314,7 +314,7 @@ impl RunpodHost {
         let text = response
             .text()
             .await
-            .map_err(|e| ProviderError::Backend(format!("Runpod API read error: {}", e)))?;
+            .map_err(|e| HostProviderError::Backend(format!("Runpod API read error: {}", e)))?;
 
         // Empty body — treat as empty object.
         if text.trim().is_empty() {
@@ -322,7 +322,7 @@ impl RunpodHost {
         }
 
         let json: Value = serde_json::from_str(&text).map_err(|e| {
-            ProviderError::Backend(format!(
+            HostProviderError::Backend(format!(
                 "Runpod API parse error (status {}): {} — body: {}",
                 status, e, text
             ))
@@ -338,7 +338,7 @@ impl RunpodHost {
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Runpod API error");
-            return Err(ProviderError::Backend(format!(
+            return Err(HostProviderError::Backend(format!(
                 "Runpod API {}: {} — {}",
                 status, title, detail
             )));
@@ -348,7 +348,7 @@ impl RunpodHost {
     }
 
     /// Create a pod via `POST /v2/pods`. Returns the created pod's ID.
-    async fn create_pod(&self, body: Value) -> Result<String, ProviderError> {
+    async fn create_pod(&self, body: Value) -> Result<String, HostProviderError> {
         let json = self
             .rest_request(reqwest::Method::POST, "/pods", Some(body))
             .await?;
@@ -356,20 +356,20 @@ impl RunpodHost {
             .get("id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                ProviderError::Backend(format!("No pod ID in Runpod create response: {}", json))
+                HostProviderError::Backend(format!("No pod ID in Runpod create response: {}", json))
             })?
             .to_string();
         Ok(pod_id)
     }
 
     /// Get a pod via `GET /v2/pods/{id}`. Returns the full pod object.
-    async fn get_pod(&self, pod_id: &str) -> Result<Value, ProviderError> {
+    async fn get_pod(&self, pod_id: &str) -> Result<Value, HostProviderError> {
         self.rest_request(reqwest::Method::GET, &format!("/pods/{}", pod_id), None)
             .await
     }
 
     /// Terminate a pod via `DELETE /v2/pods/{id}`. Returns 204 with no body.
-    async fn delete_pod(&self, pod_id: &str) -> Result<(), ProviderError> {
+    async fn delete_pod(&self, pod_id: &str) -> Result<(), HostProviderError> {
         self.rest_request(reqwest::Method::DELETE, &format!("/pods/{}", pod_id), None)
             .await?;
         Ok(())
@@ -377,7 +377,7 @@ impl RunpodHost {
 
     /// Fetch a template via `GET /v2/templates/{id}`. Returns the template
     /// object (image, disk, ports, env, registry, mounts).
-    async fn get_template(&self, template_id: &str) -> Result<Value, ProviderError> {
+    async fn get_template(&self, template_id: &str) -> Result<Value, HostProviderError> {
         self.rest_request(
             reqwest::Method::GET,
             &format!("/templates/{}", template_id),
@@ -469,7 +469,7 @@ struct PodDeploySpec<'a> {
 pub fn generate_install_script(
     job: &TrainingJob,
     harness: TrainingHarnessId,
-) -> Result<String, ProviderError> {
+) -> Result<String, HostProviderError> {
     let output_dir = format!("/workspace/outputs/{}", job.id);
     // The manifest is written locally to /workspace/completion.json (guaranteed
     // to work regardless of CWD), then uploaded to HuggingFace at the
@@ -495,7 +495,7 @@ pub fn generate_install_script(
                 let yaml = crate::providers::AxolotlHarness
                     .render_config(job)
                     .map_err(|e| {
-                        ProviderError::InvalidConfig(format!("Failed to render axolotl YAML: {e}"))
+                        HostProviderError::InvalidConfig(format!("Failed to render axolotl YAML: {e}"))
                     })?;
                 (
                     "config.yml",
@@ -509,7 +509,7 @@ pub fn generate_install_script(
                 let script = crate::providers::TrlHarness
                     .render_config(job)
                     .map_err(|e| {
-                        ProviderError::InvalidConfig(format!("Failed to render TRL script: {e}"))
+                        HostProviderError::InvalidConfig(format!("Failed to render TRL script: {e}"))
                     })?;
                 (
                     "train.py",
@@ -523,7 +523,7 @@ pub fn generate_install_script(
                 let yaml = crate::providers::LudwigHarness
                     .render_config(job)
                     .map_err(|e| {
-                        ProviderError::InvalidConfig(format!("Failed to render Ludwig YAML: {e}"))
+                        HostProviderError::InvalidConfig(format!("Failed to render Ludwig YAML: {e}"))
                     })?;
                 (
                     "model.yaml",
@@ -759,7 +759,7 @@ pub fn generate_install_script(
 
 #[async_trait::async_trait]
 impl TrainingHost for RunpodHost {
-    async fn submit(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    async fn submit(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         // GPU selection: operator-accepted `RUNPOD_GPU_TYPE_ID` (resolved
         // keychain-first into `self.gpu_type_id`) is authoritative when set.
         // When unset, fall back to the model-size heuristic — small models
@@ -807,7 +807,7 @@ impl TrainingHost for RunpodHost {
             }
         };
         let artifacts = job.artifacts.as_ref().ok_or_else(|| {
-            ProviderError::DatasetError(
+            HostProviderError::DatasetError(
                 "RunPod requires a published Hugging Face artifact path before creating a billable pod"
                     .to_string(),
             )
@@ -879,7 +879,7 @@ impl TrainingHost for RunpodHost {
         };
 
         if resolved_image.is_empty() && template_id.is_empty() {
-            return Err(ProviderError::InvalidConfig(
+            return Err(HostProviderError::InvalidConfig(
                 "Either RUNPOD_DOCKER_IMAGE or RUNPOD_TEMPLATE_ID must be set to create a RunPod pod"
                     .to_string(),
             ));
@@ -1115,18 +1115,18 @@ impl TrainingHost for RunpodHost {
         Ok(pod_id)
     }
 
-    async fn status(&self, job_id: &str) -> Result<PodStatus, ProviderError> {
+    async fn status(&self, job_id: &str) -> Result<PodStatus, HostProviderError> {
         let pod_id = {
             let map = self
                 .jobs
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock error: {e}")))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock error: {e}")))?;
             map.get(job_id).cloned()
         };
         let pod_id = match pod_id {
             Some(id) => id,
             None => {
-                return Err(ProviderError::JobFailed(format!(
+                return Err(HostProviderError::JobFailed(format!(
                     "No pod found for job {job_id}"
                 )));
             }
@@ -1215,12 +1215,12 @@ impl TrainingHost for RunpodHost {
         Ok(pod_status)
     }
 
-    async fn cancel(&self, job_id: &str) -> Result<(), ProviderError> {
+    async fn cancel(&self, job_id: &str) -> Result<(), HostProviderError> {
         let pod_id = {
             let map = self
                 .jobs
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock error: {}", e)))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock error: {}", e)))?;
             map.get(job_id).cloned()
         };
 

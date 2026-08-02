@@ -27,7 +27,7 @@ use std::path::PathBuf;
 /// MDS: Composition — CAN render_config ON TrainingJob VIA HarnessAdapter
 pub trait HarnessAdapter: Send + Sync {
     /// Render the training configuration in the harness's native format.
-    fn render_config(&self, job: &TrainingJob) -> Result<String, ProviderError>;
+    fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError>;
 
     /// Directory where the harness outputs adapter weights.
     fn output_dir(&self, job_id: &str) -> PathBuf;
@@ -45,7 +45,7 @@ pub trait HarnessAdapter: Send + Sync {
 pub struct AxolotlHarness;
 
 impl HarnessAdapter for AxolotlHarness {
-    fn render_config(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let p = &job.params;
         let lo = &p.lora;
         let opt = &p.optimization;
@@ -227,7 +227,7 @@ impl HarnessAdapter for AxolotlHarness {
 
         let template_path = template_root.join("templates/training/axolotl-lora.j2");
         let template = std::fs::read_to_string(&template_path).map_err(|error| {
-            ProviderError::InvalidConfig(format!(
+            HostProviderError::InvalidConfig(format!(
                 "Read Axolotl template {}: {error}",
                 template_path.display()
             ))
@@ -238,7 +238,7 @@ impl HarnessAdapter for AxolotlHarness {
             .render_str(&template, serde_json::Value::Object(context))
             .map(|yaml| yaml.trim().to_string() + "\n")
             .map_err(|error| {
-                ProviderError::InvalidConfig(format!("Render Axolotl template: {error}"))
+                HostProviderError::InvalidConfig(format!("Render Axolotl template: {error}"))
             })
     }
 
@@ -288,7 +288,7 @@ impl HarnessAdapter for AxolotlHarness {
 pub struct LudwigHarness;
 
 impl HarnessAdapter for LudwigHarness {
-    fn render_config(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    fn render_config(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let p = &job.params;
         let lo = &p.lora;
         let opt = &p.optimization;
@@ -440,7 +440,7 @@ impl HarnessAdapter for LudwigHarness {
 
         let template_path = template_root.join("templates/training/ludwig-lora.j2");
         let template = std::fs::read_to_string(&template_path).map_err(|error| {
-            ProviderError::InvalidConfig(format!(
+            HostProviderError::InvalidConfig(format!(
                 "Read Ludwig template {}: {error}",
                 template_path.display()
             ))
@@ -451,7 +451,7 @@ impl HarnessAdapter for LudwigHarness {
             .render_str(&template, serde_json::Value::Object(context))
             .map(|yaml| yaml.trim().to_string() + "\n")
             .map_err(|error| {
-                ProviderError::InvalidConfig(format!("Render Ludwig template: {error}"))
+                HostProviderError::InvalidConfig(format!("Render Ludwig template: {error}"))
             })
     }
 

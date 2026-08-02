@@ -63,7 +63,7 @@ impl DeepInfraHost {
         method: reqwest::Method,
         path: &str,
         body: Option<serde_json::Value>,
-    ) -> Result<serde_json::Value, ProviderError> {
+    ) -> Result<serde_json::Value, HostProviderError> {
         let url = format!("https://api.deepinfra.com/v1/{}", path);
         let mut req = self
             .client
@@ -76,26 +76,26 @@ impl DeepInfraHost {
         let resp = req
             .send()
             .await
-            .map_err(|e| ProviderError::Backend(format!("DeepInfra API: {e}")))?;
+            .map_err(|e| HostProviderError::Backend(format!("DeepInfra API: {e}")))?;
         let status = resp.status();
         let text = resp
             .text()
             .await
-            .map_err(|e| ProviderError::Backend(format!("DeepInfra response: {e}")))?;
+            .map_err(|e| HostProviderError::Backend(format!("DeepInfra response: {e}")))?;
         if !status.is_success() {
-            return Err(ProviderError::Backend(format!(
+            return Err(HostProviderError::Backend(format!(
                 "DeepInfra API error ({}): {}",
                 status, text
             )));
         }
         serde_json::from_str(&text)
-            .map_err(|e| ProviderError::Backend(format!("DeepInfra JSON parse: {e}")))
+            .map_err(|e| HostProviderError::Backend(format!("DeepInfra JSON parse: {e}")))
     }
 }
 
 #[async_trait::async_trait]
 impl TrainingHost for DeepInfraHost {
-    async fn submit(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    async fn submit(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let container_name = Self::container_name(&job.id);
         let install_script = crate::providers::runpod::generate_install_script(
             job,
@@ -162,18 +162,18 @@ runcmd:
         Ok(container_id)
     }
 
-    async fn status(&self, job_id: &str) -> Result<PodStatus, ProviderError> {
+    async fn status(&self, job_id: &str) -> Result<PodStatus, HostProviderError> {
         let container_name = {
             let map = self
                 .containers
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock: {e}")))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock: {e}")))?;
             map.get(job_id).cloned()
         };
         let container_name = match container_name {
             Some(n) => n,
             None => {
-                return Err(ProviderError::JobFailed(format!(
+                return Err(HostProviderError::JobFailed(format!(
                     "No container for job {job_id}"
                 )));
             }
@@ -254,12 +254,12 @@ runcmd:
         })
     }
 
-    async fn cancel(&self, job_id: &str) -> Result<(), ProviderError> {
+    async fn cancel(&self, job_id: &str) -> Result<(), HostProviderError> {
         let container_name = {
             let map = self
                 .containers
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock: {e}")))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock: {e}")))?;
             map.get(job_id).cloned()
         };
         let container_name = match container_name {

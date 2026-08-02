@@ -1,9 +1,9 @@
 //! The Loop trait — sense → compare → compute → act → verify.
 //!
-//! This trait remains in hkask-regulation (not moved to hkask-types) because
-//! external crates implement it for foreign types (e.g.,
-//! `impl Loop for RwLock<CyberneticsLoop>`), which would violate the
-//! orphan rule if the trait lived in hkask-types.
+//! This trait lives in `hkask-regulation` alongside its sole implementor
+//! (`CyberneticsLoop`). The `impl Loop for RwLock<CyberneticsLoop>` that forced this
+//! placement (orphan rule) was removed as dead code; the trait could now move to
+//! `hkask-types` but remains here pending that decision.
 //!
 //! The data types (Signal, Deviation, RegulatoryAction, etc.) are in hkask-types.
 

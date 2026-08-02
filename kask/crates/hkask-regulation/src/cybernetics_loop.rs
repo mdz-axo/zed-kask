@@ -1405,31 +1405,6 @@ impl RegulationLoop for CyberneticsLoop {
     }
 }
 
-/// Adapt `Arc<RwLock<CyberneticsLoop>>` for use as `Arc<dyn RegulationLoop>` in LoopScheduler.
-/// Eliminates the pass-through `CyberneticsLoopHandle` struct per Prohibition #4.
-#[async_trait::async_trait]
-impl RegulationLoop for tokio::sync::RwLock<CyberneticsLoop> {
-    fn id(&self) -> LoopId {
-        LoopId::Cybernetics
-    }
-
-    async fn sense(&self) -> Vec<Signal> {
-        self.read().await.sense().await
-    }
-
-    async fn compute(&self, deviations: &[Deviation]) -> Vec<RegulatoryAction> {
-        self.read().await.compute(deviations).await
-    }
-
-    async fn act(&self, actions: &[RegulatoryAction]) {
-        self.read().await.act(actions).await
-    }
-
-    async fn verify_impact(&self, previous_actions: &[RegulatoryAction]) -> Vec<ImpactReport> {
-        self.read().await.verify_impact(previous_actions).await
-    }
-}
-
 impl CyberneticsLoop {
     /// Build a `RegulatoryAction` from a `ProposedAction` returned by the regulation policy.
     ///

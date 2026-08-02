@@ -115,14 +115,15 @@ For each Abort, emit no call. Record the abort reason in aborted_reasons.
 For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
 - `hire` → `swarm_hire` with `{ workspace_id, agent_name, include_optional:
   false, consent_token, credits_authorized }`. The consent token must have
-  been minted for action "hire" and target = agent_name.
+  been minted for action "hire" and target = agent_name. Own agents (created
+  via `swarm_create_agent`) route through `/add` automatically.
 - `delegate` → `swarm_delegate` with `{ workspace_id, agent_name, task,
   consent_token, credits_authorized }` (workspace delegation semantics, one
   level deep — the delegate loses delegate_to_agent/execute_agent).
-
-There is no `fire` tool in abw mode — a `remove`/fire move cannot be emitted.
-Mark it Aborted with reason "no_fire_tool" so the operator can prune the
-redundant agent manually (or use `swarm_remove_local` for a local-only card).
+- `remove`/`fire` → `swarm_fire` with `{ workspace_id, agent_name }` (removes
+  the agent from the roster — the redundant-duplicate pruning; no credit
+  cost, no consent token). The agent itself is NOT deleted — use
+  `swarm_delete_agent` for that.
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% endif %}

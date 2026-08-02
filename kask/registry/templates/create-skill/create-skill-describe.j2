@@ -82,9 +82,26 @@ Which existing skills will this skill compose? Common delegates:
 - `self-improvement` — nested PDCA + outer Kata
 - `gpa-evolution` — evolutionary optimization
 
-## Step 5 — Identify Span Namespace
+## Step 5 — Identify Span Namespaces
 
-The skill will emit spans under `reg.<skill_name>.*`. Each phase emits one span, named after the phase's domain concept (not a generic phase number).
+A kask skill has TWO distinct span namespaces — do not conflate them:
+
+1. **Ledger span namespace** (process manifest `ledger.span_namespace`): MUST be
+   `reg.skill.<skill_name>` — literally `reg.skill.` + the `manifest.id`. This is
+   the CI-enforced standard (`scripts/check-skill-span-namespace.sh`); any other
+   form (e.g. `reg.codereview`, `reg.<skill_name>`) fails the gate. The
+   abolished `spans:` list MUST NOT be present in the `ledger:` block.
+
+2. **Per-template span names** (template manifest `generates_spans` and .j2
+   frontmatter): the ontology-derived short name for the domain, e.g.
+   `reg.bughunt.oracle`, `reg.codereview.scope`, `reg.lora.select`. Each phase
+   emits one span, named after the phase's domain concept (not a generic phase
+   number). This is NOT gated by the CI script and may use a shortened /
+   ontological form distinct from `manifest.id`.
+
+Record the per-template span names here. The ledger namespace is deterministic
+from `manifest.id` (always `reg.skill.<id>`) — the scaffold phase injects it
+mechanically; you do not choose it.
 
 ## Step 6 — Record Ontology Annotations
 

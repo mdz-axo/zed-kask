@@ -452,8 +452,13 @@ fn parse_run_status_messages(content: serde_json::Value) -> Option<Vec<String>> 
     let messages = content.get("messages")?.as_array()?;
     let mut lines = Vec::new();
     for msg in messages {
+        // The verified ABW message shape (live, 2026-08-02) carries the
+        // sender in `sender_name` (with `sender_id`/`sender_type` beside it),
+        // not `sender`/`role` — check it before the fallback so the strip
+        // renders the real sender instead of a generic "agent".
         let sender = msg
             .get("agent_id")
+            .or_else(|| msg.get("sender_name"))
             .or_else(|| msg.get("sender"))
             .or_else(|| msg.get("role"))
             .and_then(|v| v.as_str())
@@ -1297,6 +1302,55 @@ impl SwarmPanel {
                         Err(err) => {
                             this.hire_error =
                                 Some(format!("Failed to remove local agent: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Fire an agent from the ABW workspace shown in the roster drill-down
+    /// (item 4 management surface). Calls `swarm_fire` (verified live
+    /// 2026-08-02: `DELETE /workspaces/{id}/agents/{agent}` — removes the
+    /// agent from the roster; no credit cost; the agent itself is not
+    /// deleted). On success, re-opens the detail so the fired row disappears.
+    fn fire_agent(&mut self, workspace_id: String, agent_id: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("fire-{agent_id}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_fire",
+                        json!({ "workspace_id": workspace_id, "agent_name": agent_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            // Re-open the detail so the fired agent disappears
+                            // from the roster.
+                            if let Some(detail) = this.swarm_detail.clone() {
+                                this.open_swarm_detail(
+                                    detail.workspace_id.clone(),
+                                    detail.name.clone(),
+                                    cx,
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            this.hire_error = Some(format!("Failed to fire agent: {err}").into());
                         }
                     }
                     cx.notify();
@@ -2171,12 +2225,27 @@ impl SwarmPanel {
             })
             .when(!detail.agents.is_empty(), |this| {
                 this.child(v_flex().gap_1().children(detail.agents.iter().map(|a| {
+                    let row_agent_id = a.agent_id.clone();
+                    let row_workspace = detail.workspace_id.clone();
                     h_flex()
                         .gap_2()
                         .child(Label::new(a.agent_id.clone()).color(Color::Default))
                         .child(Label::new(a.agent_type.clone()).color(Color::Accent))
                         .child(div().flex_1())
                         .child(Label::new(a.description.clone()).color(Color::Muted))
+                        .child(
+                            Button::new(SharedString::from(format!("fire-{row_agent_id}")), "Fire")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .disabled(self.spend_in_flight.is_some())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.fire_agent(
+                                        row_workspace.clone(),
+                                        row_agent_id.clone(),
+                                        cx,
+                                    );
+                                })),
+                        )
                 })))
             })
             .when(
@@ -3299,6 +3368,11 @@ mod tests {
             "swarm_clone_to_local",
             "swarm_remove_local",
             "swarm_push_to_cloud",
+            // ABW lifecycle tools (verified live 2026-08-02): fire removes an
+            // agent from a workspace roster; delete_agent permanently deletes
+            // an ABW agent.
+            "swarm_fire",
+            "swarm_delete_agent",
         ] {
             assert!(tool.starts_with("swarm_"));
         }
@@ -3404,6 +3478,81 @@ mod tests {
     #[test]
     fn parse_run_status_messages_none_without_messages() {
         assert!(parse_run_status_messages(serde_json::json!({ "error": "x" })).is_none());
+    }
+
+    #[test]
+    fn parse_run_status_messages_uses_verified_sender_name() {
+        // The verified ABW message shape (live, 2026-08-02) carries the
+        // sender in `sender_name` — the strip must render it, not the
+        // generic "agent" fallback.
+        let content = serde_json::json!({
+            "messages": [{
+                "content": {"content": "telemetry reported", "source": "abw", "trust": "untrusted"},
+                "sender_name": "sensor_advisor",
+                "sender_type": "agent",
+                "message_id": "m1",
+                "created_at": "2026-08-02T00:00:00Z",
+            }]
+        });
+        let lines = parse_run_status_messages(content).expect("parse");
+        assert_eq!(lines, vec!["sensor_advisor: telemetry reported"]);
+    }
+
+    #[test]
+    fn parse_swarm_roster_reads_verified_detail_shape() {
+        // The verified `/workspaces/{id}` detail shape (live, 2026-08-02):
+        // top-level `agents` whose entries carry agent_id/agent_type/
+        // description (plus more fields the panel ignores).
+        let content = serde_json::json!({
+            "id": "ws-1",
+            "name": "alpha",
+            "is_composition": false,
+            "members": [],
+            "agents": [{
+                "agent_id": "sensor_advisor",
+                "agent_name": "sensor_advisor",
+                "agent_type": "sensor",
+                "description": "reads telemetry",
+                "accepts": [],
+                "produces": [],
+                "total_executions": 12,
+                "tags": [],
+            }],
+            "workspace_budget": 500,
+            "workspace_remaining": 200,
+        });
+        let roster = parse_swarm_roster(content).expect("roster");
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster[0].agent_id, "sensor_advisor");
+        assert_eq!(roster[0].agent_type, "sensor");
+        assert_eq!(roster[0].description, "reads telemetry");
+    }
+
+    #[test]
+    fn workspace_list_parses_verified_field_names() {
+        // The verified `/workspaces` shape (live, 2026-08-02) carries
+        // agent_count / workspace_budget / workspace_remaining under exactly
+        // these names — pin the parse contract so a future rename is caught.
+        let json = serde_json::json!({
+            "workspaces": [{
+                "id": "ws-1",
+                "name": "alpha",
+                "description": "d",
+                "slug": "alpha",
+                "origin": "create",
+                "owner_id": "o1",
+                "agent_count": 3,
+                "workspace_budget": 500,
+                "workspace_remaining": 200,
+            }]
+        });
+        let parsed: WorkspaceListResponse = serde_json::from_value(json).expect("parse");
+        assert_eq!(parsed.workspaces.len(), 1);
+        let w = &parsed.workspaces[0];
+        assert_eq!(w.id.as_deref(), Some("ws-1"));
+        assert_eq!(w.agent_count, Some(3));
+        assert_eq!(w.workspace_budget, Some(500));
+        assert_eq!(w.workspace_remaining, Some(200));
     }
 
     // The `fetch_all` parse path was broken before the `parse_tool_response`

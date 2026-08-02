@@ -69,15 +69,15 @@ impl NebiusHost {
         format!("hkask-training-{}", &job_id[..8.min(job_id.len())])
     }
 
-    async fn run_cli(&self, args: &[&str]) -> Result<String, ProviderError> {
+    async fn run_cli(&self, args: &[&str]) -> Result<String, HostProviderError> {
         let output = tokio::process::Command::new(&self.nebius_cli)
             .args(args)
             .output()
             .await
-            .map_err(|e| ProviderError::Backend(format!("Nebius CLI: {e}")))?;
+            .map_err(|e| HostProviderError::Backend(format!("Nebius CLI: {e}")))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ProviderError::Backend(format!(
+            return Err(HostProviderError::Backend(format!(
                 "Nebius CLI error: {stderr}"
             )));
         }
@@ -87,7 +87,7 @@ impl NebiusHost {
 
 #[async_trait::async_trait]
 impl TrainingHost for NebiusHost {
-    async fn submit(&self, job: &TrainingJob) -> Result<String, ProviderError> {
+    async fn submit(&self, job: &TrainingJob) -> Result<String, HostProviderError> {
         let vm_name = Self::vm_name(&job.id);
         let install_script = crate::providers::runpod::generate_install_script(
             job,
@@ -142,7 +142,7 @@ runcmd:
             ])
             .await?;
         let disk_id = extract_json_field(&disk_output, "id")
-            .ok_or_else(|| ProviderError::Backend("Failed to get disk ID from Nebius".into()))?;
+            .ok_or_else(|| HostProviderError::Backend("Failed to get disk ID from Nebius".into()))?;
 
         // Step 2: Create VM with GPU, public IP, and cloud-init
         let network_spec = format!(
@@ -176,7 +176,7 @@ runcmd:
             ])
             .await?;
         let vm_id = extract_json_field(&vm_output, "id")
-            .ok_or_else(|| ProviderError::Backend("Failed to get VM ID from Nebius".into()))?;
+            .ok_or_else(|| HostProviderError::Backend("Failed to get VM ID from Nebius".into()))?;
 
         if let Ok(mut map) = self.vms.lock() {
             map.insert(job.id.clone(), vm_id.clone());
@@ -194,17 +194,17 @@ runcmd:
         Ok(vm_id)
     }
 
-    async fn status(&self, job_id: &str) -> Result<PodStatus, ProviderError> {
+    async fn status(&self, job_id: &str) -> Result<PodStatus, HostProviderError> {
         let vm_id = {
             let map = self
                 .vms
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock: {e}")))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock: {e}")))?;
             map.get(job_id).cloned()
         };
         let vm_id = match vm_id {
             Some(id) => id,
-            None => return Err(ProviderError::JobFailed(format!("No VM for job {job_id}"))),
+            None => return Err(HostProviderError::JobFailed(format!("No VM for job {job_id}"))),
         };
 
         let output = self
@@ -268,12 +268,12 @@ runcmd:
         })
     }
 
-    async fn cancel(&self, job_id: &str) -> Result<(), ProviderError> {
+    async fn cancel(&self, job_id: &str) -> Result<(), HostProviderError> {
         let vm_id = {
             let map = self
                 .vms
                 .lock()
-                .map_err(|e| ProviderError::Backend(format!("Lock: {e}")))?;
+                .map_err(|e| HostProviderError::Backend(format!("Lock: {e}")))?;
             map.get(job_id).cloned()
         };
         let vm_id = match vm_id {

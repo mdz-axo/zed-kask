@@ -16,20 +16,23 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (25 — both tool sets always available in either mode)
-//! ABW tools (17): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+//! ## Tools (27 — both tool sets always available in either mode)
+//! ABW tools (19): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 //! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
 //! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
-//! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`.
+//! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
+//! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
+//! (permanent agent deletion, verified live).
 //! Local tools (8): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_list_local_agents`,
 //! `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`.
 //!
 //! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_create_swarm`,
 //! `swarm_xaman`) are consent-gated — see `kask/docs/plans/abw-swarm-intelligence.md`
-//! §3.6. Fire/workspace-update/agent-update are intentionally NOT implemented
-//! (§17 — the endpoints are unverified).
+//! §3.6. Workspace delete and workspace update have NO ABW endpoint (405,
+//! verified live) and must not be added. Workspace create (`POST /api/teams`)
+//! is verified; the create-path response shapes are pinned in §0.
 //!
 //! ## v2 Local mode (§15)
 //! `SwarmConfig.mode` selects between `Abw` (v1, default) and `Local`
@@ -739,6 +742,12 @@ impl SwarmClient {
 
         match status.as_u16() {
             200..=299 => {
+                // DELETE endpoints and other no-content responses return an
+                // empty body — treat that as a successful null result rather
+                // than a parse failure.
+                if body.trim().is_empty() {
+                    return Ok(serde_json::Value::Null);
+                }
                 let value: serde_json::Value = serde_json::from_str(&body)
                     .map_err(|e| SwarmError::ApiVersionMismatch(format!("parse error: {e}")))?;
                 // ABW wraps upstream LLM errors into 200 envelopes. Detect the
@@ -776,6 +785,25 @@ impl SwarmClient {
         payload: &serde_json::Value,
     ) -> Result<serde_json::Value, SwarmError> {
         self.send(self.http.post(self.url(path)).json(payload))
+            .await
+    }
+
+    /// Send a DELETE request (fire, workspace/agent teardown). Empty 2xx
+    /// bodies are mapped to `null` by `send`.
+    async fn delete(&self, path: &str) -> Result<serde_json::Value, SwarmError> {
+        self.send(self.http.delete(self.url(path))).await
+    }
+
+    /// Send a PATCH request. The workspace-update endpoint is 405 on ABW
+    /// (verified live 2026-08-02 — no PATCH /workspaces/{id}); this exists
+    /// only for the live probe that pins that fact.
+    #[cfg(test)]
+    async fn patch(
+        &self,
+        path: &str,
+        payload: &serde_json::Value,
+    ) -> Result<serde_json::Value, SwarmError> {
+        self.send(self.http.patch(self.url(path)).json(payload))
             .await
     }
 
@@ -1721,20 +1749,85 @@ fn url_encode_segment(segment: &str) -> String {
 }
 
 /// Build an ABW workspace slug from a name base and a timestamp. ABW slugs
-/// allow only lowercase letters, digits, and underscores. The timestamp suffix
-/// disambiguates swarms created with the same name: the FULL epoch-millis value
-/// is used — the prior version truncated to the first 4 digits of the epoch-
-/// millis string, which is constant for ~3.17 years (the 4th digit of a 13-
-/// digit value rolls over every 10^11 ms), so two swarms with the same name
-/// created months apart received the SAME slug. Extracted from
-/// `swarm_create_swarm` for testability (KA-03: the prior inline version
+/// allow only lowercase letters, digits, and underscores, and are capped at
+/// 3–64 chars (verified live 2026-08-02 — a 66-char slug was rejected with
+/// HTTP 400). The timestamp suffix disambiguates swarms created with the
+/// same name: the FULL epoch-millis value is used — the prior version
+/// truncated to the first 4 digits of the epoch-millis string, which is
+/// constant for ~3.17 years (the 4th digit of a 13-digit value rolls over
+/// every 10^11 ms), so two swarms with the same name created months apart
+/// received the SAME slug. The base is truncated (keeping the trailing
+/// underscore-trim) so base + '_' + suffix fits within 64 chars. Extracted
+/// from `swarm_create_swarm` for testability (KA-03: the prior inline version
 /// panicked on a pre-epoch clock via `&string[..4]` on an empty string).
 fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
     let suffix = now
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().to_string())
         .unwrap_or_else(|_| "0".to_string());
-    format!("{}_{}", slug_base.trim_matches('_'), suffix)
+    let base = slug_base.trim_matches('_');
+    // ABW slugs are capped at 64 chars (verified live) — reserve room for the
+    // `_` separator + the full millis suffix and truncate the base.
+    let max_base = 64usize.saturating_sub(suffix.len() + 1);
+    let base = if base.len() > max_base {
+        &base[..max_base]
+    } else {
+        base
+    };
+    format!("{base}_{suffix}")
+}
+
+/// Validate an ABW agent name (the creation surface). ABW agent names are
+/// slugs: 3–64 chars, lowercase letters, digits, and underscores only
+/// (verified live 2026-08-02 — `zed_kask_verify_<uuid>` with hyphens was
+/// rejected with HTTP 400 "slug must contain only lowercase letters, digits,
+/// and underscores"). Rejecting here turns ABW's confusing 400 into a clear
+/// argument error.
+fn validate_agent_name(name: &str) -> Result<(), String> {
+    let len = name.chars().count();
+    if len < 3 || len > 64 {
+        return Err(format!("invalid agent_name: must be 3–64 chars, got {len}"));
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
+        return Err(
+            "invalid agent_name: must contain only lowercase letters, digits, and underscores"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// The flat fee ABW charges to add an owned agent to a workspace. Verified
+/// live 2026-08-02: `POST /workspaces/{id}/add` returned `gas_charged: 2`
+/// for a no-dependency owned agent, while `/agents/{name}/dependencies`
+/// reports `total_hire_cost: 0` — the dependency quote UNDER-states the
+/// actual add charge. The consent gate's re-verification must floor the
+/// quote at this fee so a 1-credit authorization cannot spend 2. (The plan
+/// doc's "hire 5 cr" was stale; the live add fee is 2.)
+const OWNED_ADD_FLAT_FEE: u64 = 2;
+
+/// The effective hire cost for a re-verified `/agents/{name}/dependencies`
+/// payload. A dependency-less agent quotes `total_hire_cost: 0` but the add
+/// charges `OWNED_ADD_FLAT_FEE` — the gate must never under-quote a spend.
+/// Only call this after the caller has already rejected a MISSING
+/// `total_hire_cost` (missing = unknown, never zero — the `.rules` trap).
+fn effective_hire_cost(deps: &serde_json::Value) -> u64 {
+    let total = deps
+        .get("total_hire_cost")
+        .and_then(|c| c.as_u64())
+        .unwrap_or(0);
+    let has_deps = deps
+        .get("has_dependencies")
+        .and_then(|h| h.as_bool())
+        .unwrap_or(false);
+    if has_deps {
+        total
+    } else {
+        std::cmp::max(total, OWNED_ADD_FLAT_FEE)
+    }
 }
 
 /// Strip leading @mentions from a delegate task (KA-06): a task starting
@@ -2237,6 +2330,25 @@ pub struct RemoveLocalRequest {
     pub agent_name: String,
 }
 
+/// Fire (un-hire) an agent from an ABW workspace.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FireRequest {
+    /// The workspace (swarm) id.
+    pub workspace_id: String,
+    /// The agent to fire — the roster's `agent_name` or `agent_id` (ABW
+    /// resolves both; verified live 2026-08-02).
+    pub agent_name: String,
+}
+
+/// Permanently delete an ABW agent.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteAgentRequest {
+    /// The agent to delete — the `agent_id` or `agent_name` from
+    /// `swarm_list_agents` (for owned agents the catalogue carries a uuid in
+    /// `agent_id` and the slug in `agent_name`; the tool resolves either).
+    pub agent_name: String,
+}
+
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
@@ -2553,7 +2665,7 @@ impl SwarmServer {
                 .map_err(SwarmError::into_tool_error)?;
 
             let total = match data.get("total_hire_cost").and_then(|c| c.as_u64()) {
-                Some(cost) => cost,
+                Some(_cost) => effective_hire_cost(&data),
                 None => {
                     // Do not fabricate cost = 0 on a missing field. A missing
                     // `total_hire_cost` means ABW changed its response shape or
@@ -2708,41 +2820,41 @@ impl SwarmServer {
             // agent doesn't exist. The `.rules` trap: a failed measurement
             // must be distinguishable from a measured zero. Mirrors the
             // `swarm_hire_cost` fix (§12.4).
-            let total_hire_cost = match deps.get("total_hire_cost").and_then(|c| c.as_u64()) {
-                Some(cost) => cost,
-                None => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        agent = %req.agent_name,
-                        "swarm_hire: ABW re-verify response missing total_hire_cost — cost unknown"
-                    );
-                    self.consent.refund(refund_grant.clone());
-                    return Err(McpToolError::internal(
-                        "hire cost unknown — ABW re-verify response missing total_hire_cost field"
-                            .to_string(),
-                    ));
-                }
-            };
-            // Conservative cost re-verification for `include_optional = true`:
-            // the ABW `total_hire_cost` field semantics are unverified (it may
-            // or may not include optional dependency costs). When the caller
-            // requests optional dependencies, use the conservative estimate
-            // `max(total_hire_cost, required_cost + optional_cost)` so the
-            // gate never under-estimates the actual ABW charge. When
-            // `include_optional = false` (the default), `total_hire_cost` is
-            // the exact cost — no adjustment needed.
+            if deps
+                .get("total_hire_cost")
+                .and_then(|c| c.as_u64())
+                .is_none()
+            {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    agent = %req.agent_name,
+                    "swarm_hire: ABW re-verify response missing total_hire_cost — cost unknown"
+                );
+                self.consent.refund(refund_grant.clone());
+                return Err(McpToolError::internal(
+                    "hire cost unknown — ABW re-verify response missing total_hire_cost field"
+                        .to_string(),
+                ));
+            }
+            // Conservative cost re-verification: the effective cost is the
+            // dependency quote, floored at `OWNED_ADD_FLAT_FEE` for
+            // dependency-less agents (owned agents quote `total_hire_cost: 0`
+            // but the /add charges 2 — verified live), and when the caller
+            // requests optional dependencies, use `max(total, required +
+            // optional)` so the gate never under-estimates the ABW charge.
+            let base_cost = effective_hire_cost(&deps);
             let actual_cost = if req.include_optional.unwrap_or(false) {
                 let required = deps
                     .get("required_cost")
                     .and_then(|c| c.as_u64())
-                    .unwrap_or(total_hire_cost);
+                    .unwrap_or(base_cost);
                 let optional = deps
                     .get("optional_cost")
                     .and_then(|c| c.as_u64())
                     .unwrap_or(0);
-                std::cmp::max(total_hire_cost, required.saturating_add(optional))
+                std::cmp::max(base_cost, required.saturating_add(optional))
             } else {
-                total_hire_cost
+                base_cost
             };
             if actual_cost > u64::from(req.credits_authorized) {
                 self.consent.refund(refund_grant.clone());
@@ -2782,7 +2894,13 @@ impl SwarmServer {
                 .into_tool_error());
             }
 
-            let data = self
+            // POST the hire. Other authors' catalogue agents use `/hire`;
+            // the operator's OWN agents return 400 "Use /add for your own
+            // agents" and must use `/add` (verified live 2026-08-02). Retry
+            // on /add with the same payload — the consent + ceiling gate has
+            // already run, and the /add flat fee is covered by the
+            // `effective_hire_cost` floor above.
+            let data = match self
                 .client
                 .post(
                     &format!("/workspaces/{}/hire", url_encode_segment(&req.workspace_id)),
@@ -2792,11 +2910,28 @@ impl SwarmServer {
                     }),
                 )
                 .await
-                .map_err(|e| {
-                    // Refund before propagating: the spend never happened.
-                    self.consent.refund(refund_grant.clone());
-                    SwarmError::into_tool_error(e)
-                })?;
+            {
+                Ok(d) => Ok(d),
+                Err(SwarmError::Unavailable(m)) if m.contains("Use /add for your own agents") => {
+                    tracing::info!(
+                        target: "hkask.mcp.swarm",
+                        agent = %req.agent_name,
+                        "own agent — falling back to /workspaces/{{id}}/add"
+                    );
+                    self.client
+                        .post(
+                            &format!("/workspaces/{}/add", url_encode_segment(&req.workspace_id)),
+                            &serde_json::json!({ "agent_id": req.agent_name }),
+                        )
+                        .await
+                }
+                Err(e) => Err(e),
+            }
+            .map_err(|e| {
+                // Refund before propagating: the spend never happened.
+                self.consent.refund(refund_grant.clone());
+                SwarmError::into_tool_error(e)
+            })?;
 
             Ok(self
                 .client
@@ -3068,6 +3203,12 @@ impl SwarmServer {
                     "agent_name and system_prompt must be non-empty".to_string(),
                 ));
             }
+            // ABW agent names are slugs ([a-z0-9_], 3–64) — reject invalid
+            // names here so ABW's confusing 400 becomes a clear argument error
+            // (verified live 2026-08-02).
+            if let Err(e) = validate_agent_name(&req.agent_name) {
+                return Err(McpToolError::invalid_argument(e));
+            }
 
             let mut card = serde_json::json!({
                 "agent_name": req.agent_name,
@@ -3224,21 +3365,23 @@ impl SwarmServer {
                         continue;
                     }
                 };
-                let actual_cost = match deps.get("total_hire_cost").and_then(|c| c.as_u64()) {
-                    Some(c) => c,
-                    None => {
-                        tracing::warn!(
-                            target: "hkask.mcp.swarm",
-                            agent = %agent,
-                            "swarm_create_swarm: ABW re-verify missing total_hire_cost — cost unknown"
-                        );
-                        self.consent.refund(refund_grant);
-                        hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": "hire cost unknown — ABW re-verify response missing total_hire_cost",
-                        }));
-                        continue;
-                    }
+                let actual_cost = if deps.get("total_hire_cost").and_then(|c| c.as_u64()).is_none() {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        agent = %agent,
+                        "swarm_create_swarm: ABW re-verify missing total_hire_cost — cost unknown"
+                    );
+                    self.consent.refund(refund_grant);
+                    hire_errors.push(serde_json::json!({
+                        "agent": agent,
+                        "error": "hire cost unknown — ABW re-verify response missing total_hire_cost",
+                    }));
+                    continue;
+                } else {
+                    // Floor at the flat add fee for dependency-less agents (the
+                    // /dependencies quote is 0 for owned agents but /add charges
+                    // OWNED_ADD_FLAT_FEE — verified live).
+                    effective_hire_cost(&deps)
                 };
                 if actual_cost > u64::from(grant) {
                     self.consent.refund(refund_grant);
@@ -3275,7 +3418,9 @@ impl SwarmServer {
                     }));
                     continue;
                 }
-                match self
+                // Own agents use /add (400 "Use /add for your own agents" on
+                // /hire — verified live); fall back with the same gate applied.
+                let hire_outcome = match self
                     .client
                     .post(
                         &format!("/workspaces/{}/hire", url_encode_segment(&workspace_id)),
@@ -3283,6 +3428,18 @@ impl SwarmServer {
                     )
                     .await
                 {
+                    Ok(d) => Ok(d),
+                    Err(SwarmError::Unavailable(m)) if m.contains("Use /add for your own agents") => {
+                        self.client
+                            .post(
+                                &format!("/workspaces/{}/add", url_encode_segment(&workspace_id)),
+                                &serde_json::json!({ "agent_id": agent }),
+                            )
+                            .await
+                    }
+                    Err(e) => Err(e),
+                };
+                match hire_outcome {
                     Ok(_) => hired.push(agent.clone()),
                     Err(e) => {
                         // Refund: the spend never happened.
@@ -3963,6 +4120,131 @@ impl SwarmServer {
                 "cloud_id": card.cloud_id,
                 "synced": card.cloud_id.is_some(),
             }))
+        })
+        .await
+    }
+
+    /// Fire (un-hire) an agent from a workspace. The ABW counterpart of
+    /// firing: removes the agent from the roster — the redundant-duplicate
+    /// pruning the skill's DECIDE phase flags (`flag_redundant_duplicate`).
+    /// The agent itself is NOT deleted — use `swarm_delete_agent` for that.
+    /// Spends no credits (verified live 2026-08-02: `DELETE
+    /// /workspaces/{id}/agents/{agent}` → 200 `{"message": "Agent removed
+    /// from workspace"}`).
+    #[tool(
+        description = "Fire (un-hire) an agent from an ABW workspace (swarm). Removes the agent from the roster; the agent itself is NOT deleted (use swarm_delete_agent for that). No credit cost. Requires API key."
+    )]
+    pub async fn swarm_fire(&self, parameters: Parameters<FireRequest>) -> String {
+        execute_tool_semantic(self, "swarm_fire", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .delete(&format!(
+                    "/workspaces/{}/agents/{}",
+                    url_encode_segment(&req.workspace_id),
+                    url_encode_segment(&req.agent_name),
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "fired": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Permanently delete an ABW agent. This is irreversible — the agent is
+    /// removed from the operator's library and from every workspace roster
+    /// (fire first if it is hired, or fire happens implicitly). A synced
+    /// local card is NOT touched (the sync link simply dangles — use
+    /// `swarm_remove_local` to sever it). Verified live 2026-08-02: `DELETE
+    /// /agents/{agent_id}` → 200 `{"message": "Agent deleted successfully"}`.
+    #[tool(
+        description = "Permanently delete an ABW agent (irreversible — removes it from your library and all workspace rosters). Accepts the agent_id or agent_name from swarm_list_agents. A synced local card is NOT touched — use swarm_remove_local to sever the local link. Requires API key."
+    )]
+    pub async fn swarm_delete_agent(&self, parameters: Parameters<DeleteAgentRequest>) -> String {
+        execute_tool_semantic(self, "swarm_delete_agent", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            // DELETE /agents/{id} accepts the agent_id (uuid for owned agents)
+            // and the agent_name (slug). If the direct delete 404s, the caller
+            // may have passed the slug while ABW keys the agent by uuid —
+            // resolve through the catalogue and retry with the id.
+            let data = match self
+                .client
+                .delete(&format!("/agents/{}", url_encode_segment(&req.agent_name)))
+                .await
+            {
+                Ok(d) => Ok(d),
+                Err(SwarmError::Unavailable(m)) if m.contains("404") => {
+                    tracing::info!(
+                        target: "hkask.mcp.swarm",
+                        agent = %req.agent_name,
+                        "direct agent delete 404 — resolving via catalogue"
+                    );
+                    let catalogue = self
+                        .client
+                        .get("/agents")
+                        .await
+                        .map_err(SwarmError::into_tool_error)?;
+                    let found_id =
+                        catalogue
+                            .get("agents")
+                            .and_then(|a| a.as_array())
+                            .and_then(|arr| {
+                                arr.iter()
+                                    .find(|e| {
+                                        e.get("agent_id").and_then(|v| v.as_str())
+                                            == Some(req.agent_name.as_str())
+                                            || e.get("agent_name").and_then(|v| v.as_str())
+                                                == Some(req.agent_name.as_str())
+                                    })
+                                    .and_then(|e| {
+                                        e.get("agent_id")
+                                            .and_then(|v| v.as_str())
+                                            .map(str::to_string)
+                                    })
+                            });
+                    let Some(found_id) = found_id else {
+                        return Err(McpToolError::not_found(format!(
+                            "agent '{}' not found",
+                            req.agent_name
+                        )));
+                    };
+                    self.client
+                        .delete(&format!("/agents/{}", url_encode_segment(&found_id)))
+                        .await
+                }
+                Err(e) => Err(e),
+            }
+            .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "deleted": req.agent_name,
+                    "result": data,
+                }))
+                .await)
         })
         .await
     }
@@ -4700,6 +4982,40 @@ mod tests {
             slug0, slug1,
             "same-name swarms created 1s apart must not collide"
         );
+    }
+
+    #[test]
+    fn make_swarm_slug_caps_total_length_at_64() {
+        // ABW rejects slugs longer than 64 chars (verified live 2026-08-02).
+        // A long name base must be truncated, keeping the disambiguating
+        // millis suffix, so the total never exceeds 64.
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let long_base = "a".repeat(100);
+        let slug = make_swarm_slug(&long_base, now);
+        assert!(
+            slug.len() <= 64,
+            "slug must fit ABW's 64-char cap, got {} chars: {slug}",
+            slug.len()
+        );
+        assert!(
+            slug.ends_with("_1700000000000"),
+            "millis suffix kept: {slug}"
+        );
+        // A short base is untouched.
+        assert_eq!(make_swarm_slug("alpha", now), "alpha_1700000000000");
+    }
+
+    #[test]
+    fn validate_agent_name_enforces_abw_slug_rule() {
+        assert!(validate_agent_name("sensor_advisor").is_ok());
+        assert!(validate_agent_name("abc123").is_ok());
+        // Hyphens are rejected (the verified ABW rule — uuid suffixes fail).
+        assert!(validate_agent_name("zed_kask_verify-abc").is_err());
+        // Uppercase rejected.
+        assert!(validate_agent_name("Sensor").is_err());
+        // Length bounds.
+        assert!(validate_agent_name("ab").is_err());
+        assert!(validate_agent_name(&"a".repeat(65)).is_err());
     }
 
     #[test]
@@ -6769,6 +7085,213 @@ mod tests {
         );
     }
 
+    #[test]
+    fn effective_hire_cost_floors_dependency_less_agents() {
+        // Owned, no-dependency agents quote total_hire_cost: 0 but /add
+        // charges the flat fee (verified live) — the gate must floor at it.
+        let no_deps = serde_json::json!({
+            "total_hire_cost": 0,
+            "has_dependencies": false,
+            "required": [],
+            "optional": [],
+        });
+        assert_eq!(effective_hire_cost(&no_deps), OWNED_ADD_FLAT_FEE);
+        // With dependencies, the quoted total is authoritative.
+        let with_deps = serde_json::json!({
+            "total_hire_cost": 5,
+            "has_dependencies": true,
+            "required": ["a"],
+            "optional": [],
+        });
+        assert_eq!(effective_hire_cost(&with_deps), 5);
+    }
+
+    #[tokio::test]
+    async fn swarm_hire_falls_back_to_add_for_own_agents() {
+        // Own agents return 400 "Use /add for your own agents" on /hire
+        // (verified live) — swarm_hire must retry on /add.
+        let add_hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let add_hits_for_mock = add_hits.clone();
+        let mock = MockAbw::new(move |method, path, _body| {
+            if path.starts_with("/api/agents/") && path.ends_with("/dependencies") {
+                return (
+                    200,
+                    r#"{"total_hire_cost": 0, "has_dependencies": false, "required": [], "optional": []}"#
+                        .to_string(),
+                );
+            }
+            if method == "POST" && path.ends_with("/hire") {
+                return (400, r#"Use /add for your own agents"#.to_string());
+            }
+            if method == "POST" && path.ends_with("/add") {
+                add_hits_for_mock.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                return (200, r#"{"agent_name": "my_own_agent", "gas_charged": 2, "message": "Agent added successfully", "relationship": "owned"}"#.to_string());
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+        let token = consent.mint("hire", "my_own_agent", 10).expect("mint");
+
+        let result = server
+            .swarm_hire(Parameters(HireRequest {
+                workspace_id: "ws1".to_string(),
+                agent_name: "my_own_agent".to_string(),
+                include_optional: None,
+                consent_token: token.clone(),
+                credits_authorized: 10,
+            }))
+            .await;
+        assert!(
+            result.contains("added") || result.contains("hired"),
+            "own-agent hire must succeed via /add, got: {result}"
+        );
+        assert_eq!(add_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // The token is consumed after the successful add.
+        assert!(matches!(
+            consent.consume(&token, "hire", "my_own_agent", 0),
+            Err(SwarmError::ConsentDenied(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn swarm_hire_own_agent_floor_gate_refuses_underfunded_consent() {
+        // A 1-credit consent must not cover a 2-credit add — the floor
+        // closes the over-spend (quote 0 vs charge 2).
+        let mock = MockAbw::new(|_method, path, _body| {
+            if path.starts_with("/api/agents/") && path.ends_with("/dependencies") {
+                return (
+                    200,
+                    r#"{"total_hire_cost": 0, "has_dependencies": false, "required": [], "optional": []}"#
+                        .to_string(),
+                );
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+        let token = consent.mint("hire", "my_own_agent", 1).expect("mint");
+
+        let result = server
+            .swarm_hire(Parameters(HireRequest {
+                workspace_id: "ws1".to_string(),
+                agent_name: "my_own_agent".to_string(),
+                include_optional: None,
+                consent_token: token.clone(),
+                credits_authorized: 1,
+            }))
+            .await;
+        assert!(
+            result.contains("exceeds"),
+            "1-credit consent must be refused for a 2-credit add, got: {result}"
+        );
+        // The token is refunded — the operator can retry with more credits.
+        consent
+            .consume(&token, "hire", "my_own_agent", 0)
+            .expect("refunded");
+    }
+
+    #[tokio::test]
+    async fn swarm_fire_removes_agent_from_workspace() {
+        let mock = MockAbw::new(|method, path, _body| {
+            if method == "DELETE" && path.ends_with("/agents/redundant_agent") {
+                return (
+                    200,
+                    r#"{"message": "Agent removed from workspace"}"#.to_string(),
+                );
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_fire(Parameters(FireRequest {
+                workspace_id: "ws1".to_string(),
+                agent_name: "redundant_agent".to_string(),
+            }))
+            .await;
+        assert!(
+            result.contains("redundant_agent") && result.contains("removed"),
+            "fire must report the removed agent, got: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn swarm_delete_agent_deletes_directly_by_slug() {
+        let mock = MockAbw::new(|method, path, _body| {
+            if method == "DELETE" && path == "/api/agents/good_agent" {
+                return (
+                    200,
+                    r#"{"message": "Agent deleted successfully"}"#.to_string(),
+                );
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_delete_agent(Parameters(DeleteAgentRequest {
+                agent_name: "good_agent".to_string(),
+            }))
+            .await;
+        assert!(result.contains("good_agent"), "got: {result}");
+    }
+
+    #[tokio::test]
+    async fn swarm_delete_agent_resolves_uuid_via_catalogue_on_404() {
+        // Owned agents are keyed by uuid; a caller passing the slug gets a
+        // 404 on the direct delete — the tool must resolve via the catalogue
+        // and retry with the uuid (the verified lifecycle shape).
+        let mock = MockAbw::new(|method, path, _body| {
+            if method == "DELETE" && path == "/api/agents/my_own_agent" {
+                return (404, r#"Agent not found"#.to_string());
+            }
+            if method == "DELETE" && path == "/api/agents/11111111-2222-3333-4444-555555555555" {
+                return (
+                    200,
+                    r#"{"message": "Agent deleted successfully"}"#.to_string(),
+                );
+            }
+            if path == "/api/agents" {
+                return (
+                    200,
+                    r#"{"agents": [{"agent_id": "11111111-2222-3333-4444-555555555555", "agent_name": "my_own_agent", "agent_type": "research"}]}"#
+                        .to_string(),
+                );
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_delete_agent(Parameters(DeleteAgentRequest {
+                agent_name: "my_own_agent".to_string(),
+            }))
+            .await;
+        assert!(
+            result.contains("my_own_agent") && result.contains("deleted"),
+            "delete must succeed via the uuid lookup, got: {result}"
+        );
+    }
+
     // ── swarm_create_swarm per-hire consent loop ─────────────────────────────
     //
     // The cost=0 consume pattern is unique to swarm_create_swarm (the
@@ -7193,6 +7716,31 @@ mod tests {
             ws.get("id").is_some(),
             "workspace must have an id field, got: {ws}"
         );
+
+        // B5: probe the single-workspace detail (`GET /workspaces/{id}`) —
+        // the roster drill-down surface — and the `agent_previews` entry
+        // shape. The panel's roster parse must handle whatever this returns.
+        let ws_id = ws.get("id").and_then(|v| v.as_str()).expect("workspace id");
+        if let Ok(detail) = client.get(&format!("/workspaces/{ws_id}")).await {
+            eprintln!(
+                "B5: detail keys: {:?}",
+                detail.as_object().map(|o| o.keys().collect::<Vec<_>>())
+            );
+            let previews = detail
+                .get("agent_previews")
+                .or_else(|| detail.get("agents"))
+                .and_then(|a| a.as_array());
+            if let Some(arr) = previews
+                && let Some(first) = arr.first()
+            {
+                eprintln!(
+                    "B5: first roster entry keys: {:?}",
+                    first.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                );
+            }
+        } else {
+            eprintln!("B5: GET /workspaces/{{id}} failed — roster drill-down will error");
+        }
     }
 
     #[tokio::test]
@@ -7279,5 +7827,302 @@ mod tests {
             data.get("balance").is_some(),
             "GET /wallet must return a balance field, got: {data}"
         );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ABW API key; run with --ignored abw"]
+    async fn abw_lifecycle_create_fire_delete_probe() {
+        // Full-lifecycle probe of the §17 blocked endpoints (the operator
+        // authorized live mutation + cleanup). Creates a disposable agent,
+        // reuses a leftover zed-kask-verify workspace (delete is 405, so we
+        // do not create more), and probes: /dependencies for an owned agent,
+        // /add by name vs uuid, fire by name vs uuid, the delegate message
+        // POST, and PATCH /workspaces/{id}. Deletes the agent at the end.
+        let Some(client) = abw_client() else {
+            eprintln!("skipping: HKASK_ABW_API_KEY not set");
+            return;
+        };
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let agent_name = format!("zed_kask_verify_{suffix}");
+        let mut created_agent: Option<String> = None;
+
+        // Find a leftover verify workspace to reuse (we must not leave more
+        // undeletable workspaces behind).
+        let ws_data = client.get("/workspaces").await.expect("GET /workspaces");
+        let workspaces = ws_data
+            .get("workspaces")
+            .and_then(|w| w.as_array())
+            .or_else(|| ws_data.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let reused_ws = workspaces.iter().find_map(|ws| {
+            let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.starts_with("zed-kask-verify") {
+                ws.get("id").and_then(|v| v.as_str()).map(str::to_string)
+            } else {
+                None
+            }
+        });
+        let Some(ws) = reused_ws else {
+            eprintln!("L0: no leftover zed-kask-verify workspace to reuse — skipping");
+            return;
+        };
+        eprintln!("L0 reusing workspace {ws}");
+
+        // L1: create agent.
+        let card = serde_json::json!({
+            "agent_name": agent_name,
+            "agent_type": "research",
+            "system_prompt": "You are a lifecycle verification agent. Reply with the single word 'ok'.",
+            "capabilities": {
+                "executor": "llm",
+                "model": "claude-haiku-4-5-20251001",
+                "temperature": 0.0,
+                "provider": "anthropic",
+                "mcp_tools": [],
+                "skills": [],
+            },
+            "metadata": {
+                "description": "zed-kask lifecycle verification (deleted after test)",
+                "tags": ["zed-kask-verify"],
+                "sample_queries": ["verify"],
+            },
+        });
+        match client.post("/agents", &card).await {
+            Ok(resp) => {
+                eprintln!("L1 agent create response: {resp}");
+                created_agent = resp
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+            Err(e) => eprintln!("L1 agent create FAILED: {e}"),
+        }
+
+        // L1b: does /dependencies work for an owned (just-created) agent? The
+        // consent gate's re-verification depends on it.
+        match client
+            .get(&format!(
+                "/agents/{}/dependencies",
+                url_encode_segment(&agent_name)
+            ))
+            .await
+        {
+            Ok(resp) => eprintln!("L1b owned /dependencies ok: {resp}"),
+            Err(e) => eprintln!("L1b owned /dependencies FAILED: {e}"),
+        }
+
+        // L3: /add by NAME (slug) vs by UUID — the swarm_hire fallback payload.
+        let add_by_name = client
+            .post(
+                &format!("/workspaces/{}/add", url_encode_segment(&ws)),
+                &serde_json::json!({ "agent_id": agent_name }),
+            )
+            .await;
+        match &add_by_name {
+            Ok(resp) => eprintln!("L3 add by NAME ok: {resp}"),
+            Err(e) => eprintln!("L3 add by NAME FAILED: {e}"),
+        }
+        let mut added_uuid: Option<String> = None;
+        if let Some(agent) = &created_agent {
+            match client
+                .post(
+                    &format!("/workspaces/{}/add", url_encode_segment(&ws)),
+                    &serde_json::json!({ "agent_id": agent }),
+                )
+                .await
+            {
+                Ok(resp) => {
+                    eprintln!("L3 add by UUID ok: {resp}");
+                    added_uuid = Some(agent.clone());
+                }
+                Err(e) => eprintln!("L3 add by UUID FAILED: {e}"),
+            }
+        }
+
+        // L5: fire by NAME and by UUID (whichever was added).
+        for (label, id) in [
+            ("NAME", agent_name.clone()),
+            ("UUID", added_uuid.clone().unwrap_or_default()),
+        ] {
+            if id.is_empty() {
+                continue;
+            }
+            let path = format!(
+                "/workspaces/{}/agents/{}",
+                url_encode_segment(&ws),
+                url_encode_segment(&id)
+            );
+            match client.delete(&path).await {
+                Ok(resp) => eprintln!("L5 fire by {label} ok: {resp}"),
+                Err(e) => eprintln!("L5 fire by {label} FAILED: {e}"),
+            }
+        }
+
+        // L5b: delegate message POST shape (may 500 "not funded" — that is
+        // itself the verified error mapping).
+        match client
+            .post(
+                &format!("/workspaces/{}/messages", url_encode_segment(&ws)),
+                &serde_json::json!({ "content": format!("@{agent_name} verify one message") }),
+            )
+            .await
+        {
+            Ok(resp) => eprintln!("L5b delegate message ok: {resp}"),
+            Err(e) => eprintln!("L5b delegate message FAILED: {e}"),
+        }
+
+        // L5c: PATCH /workspaces/{id} (workspace update probe).
+        match client
+            .patch(
+                &format!("/workspaces/{}", url_encode_segment(&ws)),
+                &serde_json::json!({ "mission": "updated by lifecycle probe" }),
+            )
+            .await
+        {
+            Ok(resp) => eprintln!("L5c workspace PATCH ok: {resp}"),
+            Err(e) => eprintln!("L5c workspace PATCH FAILED: {e}"),
+        }
+
+        // L8: delete the agent (best-effort cleanup).
+        if let Some(agent) = &created_agent {
+            match client
+                .delete(&format!("/agents/{}", url_encode_segment(agent)))
+                .await
+            {
+                Ok(resp) => eprintln!("L8 agent delete ok: {resp}"),
+                Err(e) => eprintln!("L8 agent delete FAILED: {e}"),
+            }
+        }
+
+        // L9: confirm the agent is gone from the catalogue.
+        match client.get("/agents").await {
+            Ok(resp) => {
+                let still_there = resp
+                    .get("agents")
+                    .and_then(|a| a.as_array())
+                    .map(|arr| {
+                        arr.iter().any(|e| {
+                            e.get("agent_name").and_then(|v| v.as_str())
+                                == Some(agent_name.as_str())
+                        })
+                    })
+                    .unwrap_or(false);
+                eprintln!("L9 agent still in catalogue after delete: {still_there}");
+            }
+            Err(e) => eprintln!("L9 catalogue fetch FAILED: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ABW API key; run with --ignored abw"]
+    async fn abw_lifecycle_implemented_tools() {
+        // End-to-end through the IMPLEMENTED tool handlers (not raw client
+        // calls): create agent → hire into a leftover verify workspace (own
+        // agent → the /add fallback) → fire → delete. Everything is disposed
+        // at the end (the workspace is reused, not created).
+        let Some(client) = abw_client() else {
+            eprintln!("skipping: HKASK_ABW_API_KEY not set");
+            return;
+        };
+        let ws_data = client.get("/workspaces").await.expect("GET /workspaces");
+        let workspaces = ws_data
+            .get("workspaces")
+            .and_then(|w| w.as_array())
+            .or_else(|| ws_data.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let Some(ws_id) = workspaces.iter().find_map(|ws| {
+            let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.starts_with("zed-kask-verify") {
+                ws.get("id").and_then(|v| v.as_str()).map(str::to_string)
+            } else {
+                None
+            }
+        }) else {
+            eprintln!("T0: no leftover zed-kask-verify workspace to reuse — skipping");
+            return;
+        };
+        eprintln!("T0 reusing workspace {ws_id}");
+
+        let consent = StdArc::new(ConsentStore::default());
+        let server = SwarmServer::new(
+            hkask_types::WebID::new(),
+            StdArc::new(client),
+            consent.clone(),
+            StdArc::new(LocalAgentRegistry::new("/nonexistent")),
+            StdArc::new(LazyLocalSwarmRuntime::lazy(
+                "/tmp/test-swarm-ledger-live.db".to_string(),
+            )),
+        );
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let agent_name = format!("zed_kask_verify_{suffix}");
+
+        // T1: create through the tool (slug validation applies).
+        let create = server
+            .swarm_create_agent(Parameters(CreateAgentRequest {
+                agent_name: agent_name.clone(),
+                agent_type: "research".to_string(),
+                system_prompt: "You are a lifecycle verification agent. Reply with 'ok'."
+                    .to_string(),
+                description: "zed-kask lifecycle verification (deleted after test)".to_string(),
+                model: None,
+                temperature: None,
+                tags: Some(vec!["zed-kask-verify".to_string()]),
+                sample_queries: None,
+                dependencies_required: None,
+                dependencies_optional: None,
+                mcp_tools: Some(vec![]),
+                skills: Some(vec![]),
+            }))
+            .await;
+        assert!(
+            create.contains("created"),
+            "T1 create must succeed through the tool, got: {create}"
+        );
+        eprintln!("T1 create ok: {create}");
+
+        // T2: hire — own agents route through /add (the fallback), consent-gated.
+        let token = consent.mint("hire", &agent_name, 10).expect("mint");
+        let hire = server
+            .swarm_hire(Parameters(HireRequest {
+                workspace_id: ws_id.clone(),
+                agent_name: agent_name.clone(),
+                include_optional: None,
+                consent_token: token.clone(),
+                credits_authorized: 10,
+            }))
+            .await;
+        assert!(
+            hire.contains("added") || hire.contains("hired"),
+            "T2 own-agent hire must succeed via the /add fallback, got: {hire}"
+        );
+        eprintln!("T2 hire (own agent, /add fallback) ok: {hire}");
+
+        // T3: fire through the tool.
+        let fire = server
+            .swarm_fire(Parameters(FireRequest {
+                workspace_id: ws_id.clone(),
+                agent_name: agent_name.clone(),
+            }))
+            .await;
+        assert!(
+            fire.contains("removed"),
+            "T3 fire must remove the agent, got: {fire}"
+        );
+        eprintln!("T3 fire ok: {fire}");
+
+        // T4: delete through the tool (slug → 404 → catalogue → uuid).
+        let delete = server
+            .swarm_delete_agent(Parameters(DeleteAgentRequest {
+                agent_name: agent_name.clone(),
+            }))
+            .await;
+        assert!(
+            delete.contains("deleted"),
+            "T4 delete must succeed, got: {delete}"
+        );
+        eprintln!("T4 delete ok: {delete}");
     }
 }
