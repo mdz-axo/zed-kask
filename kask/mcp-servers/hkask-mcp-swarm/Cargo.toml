@@ -36,3 +36,5 @@ dirs = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+tiny_http = { workspace = true }
+dotenvy = { workspace = true }

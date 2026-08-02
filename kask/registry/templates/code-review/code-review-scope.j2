@@ -1,0 +1,165 @@
+{# goal: Scope the change — compute the real diff (Fagan sizing), identify critical paths, build a change model (Good Regulator), and consume prior_review.next_review_focus. Detection/collection separation: do NOT judge findings here. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    change_spec: string
+    diff_base: string
+    focus: array
+    prior_review: object
+  output:
+    change_model: object
+    scope_summary: string
+    size_class: string
+    critical_paths: array
+    focus_axes: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: code-review/code-review-scope.j2 #}
+{# Functional Role: KnowAct — Scope the change (Fagan Planning + Good Regulator) #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: scope #}
+{# Phase 1 — SCOPE (Fagan Planning: sizing + critical-path identification + change model) #}
+{# hKask v0.31.0 — Code Review #}
+{#
+  Good Regulator compliance: a review that does not model the change it reviews
+  cannot review it well (Conant-Ashby). Build the change model BEFORE detection.
+  Feedback loop closure: when prior_review is present, consume next_review_focus
+  as the primary emphasis. A first-pass review has no prior context.
+  The diff MUST be computed from real git output — never estimated from the spec.
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a code review scoping strategist. Model the change under review before any detection.
+Do NOT judge findings in this phase — you only scope and model.
+
+## Stated Spec (P1 boundary — the review judges the change against this)
+{{ change_spec }}
+
+## Diff Base
+{{ diff_base }}
+
+## Focus Axes (empty = comprehensive, the default)
+{{ focus | default([]) | tojson }}
+
+{% if prior_review and prior_review | length > 0 %}
+## Prior Review Feedback (loop closure)
+This is iteration N+1. The previous pass produced these signals; consume them.
+
+```json
+{{ prior_review | tojson }}
+```
+
+- **next_review_focus**: if present, make this the primary emphasis for this
+  pass. Adjust focus_axes accordingly (add it, do not silently drop it) unless
+  the prior pass already exhausted it (state so explicitly if so).
+- **lessons_learned**: distill into 1-3 scope adjustments (e.g., a recurring
+  defect class that needs deeper coverage this pass).
+- **blockers**: the prior blocker count — adjudicate will compute blocker_delta
+  against this; record it in change_model for downstream use.
+{% else %}
+## Prior Review Feedback
+No prior review — this is a first pass. Scope from scratch.
+{% endif %}
+
+## Step 1 — Compute the real diff (do not estimate)
+
+Run real git commands (the agent executes these between template calls; in a
+pure FlowDef invocation, the orchestrator provides the diff output):
+
+```
+git --no-pager diff {{ diff_base }}...HEAD --stat
+git --no-pager diff {{ diff_base }}...HEAD --name-only
+git --no-pager log {{ diff_base }}..HEAD --oneline
+git --no-pager diff {{ diff_base }}...HEAD
+```
+
+From the real `--stat` output, derive insertions/deletions and files touched.
+Do NOT guess sizes from the spec. If the diff is empty, emit size_class
+"empty", an empty critical_paths, and a note — the review stops here.
+
+## Step 2 — Fagan change sizing
+
+Classify the change size:
+| size_class | lines changed (real) | guidance |
+|---|---|---|
+| trivial | < ~20 AND non-critical | lightweight review; deep multi-axis pass optional |
+| good | ~100 | reviewable in one sitting |
+| acceptable | ~300 | acceptable if a single logical change |
+| too_large | > ~1000 | request a split BEFORE merging; give a concrete split plan |
+
+Also watch FILE size, not just diff size: a small diff can push an already-
+large file past a healthy boundary (~1000 total lines). Flag files that the
+change materially grows.
+
+## Step 3 — Critical-path identification
+
+Mark any changed region touching these as critical (deeper scrutiny):
+auth, payments, data writes, concurrency, `unsafe`, FFI, secrets/credentials,
+external data boundaries (APIs, logs, user content, config files), and any
+path the change_spec names as load-bearing.
+
+## Step 4 — Change model (Good Regulator)
+
+Describe:
+- **what_changed**: 1-2 sentences on the change's logical units (single / few /
+  many).
+- **intent_vs_spec**: does the diff appear to match the stated change_spec? If
+  not, flag the mismatch — intent-vs-spec is a Purpose-axis finding, but note
+  it here so perspectives can pick it up.
+- **module_boundaries_crossed**: does the change touch multiple modules / a
+  shared module / cross-crate surfaces?
+- **observed_characteristics**: async, unsafe, trait objects, concurrency,
+  FFI, macros — these drive which PERFECT/addyosmani axes deserve emphasis.
+- **prior_blockers**: `prior_review.blockers` if present, else 0 (adjudicate
+  computes blocker_delta against this).
+
+## Step 5 — Resolve focus
+
+- If `focus` is non-empty, restrict detection to those axes (security always
+  gets at least a basic pass even when focus omits it).
+- If `focus` is empty, this is comprehensive (the default) — all axes run.
+- If `prior_review.next_review_focus` is present, merge it into focus_axes as
+  the primary emphasis (do not drop the user's explicit `focus`).
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "change_model": {
+    "what_changed": "...",
+    "intent_vs_spec": "...",
+    "module_boundaries_crossed": ["..."],
+    "observed_characteristics": ["async", "unsafe", "trait_objects", "concurrency", "ffi", "macros"],
+    "prior_blockers": 0
+  },
+  "scope_summary": "one-line: N files, M lines, size_class, critical paths",
+  "size_class": "trivial | good | acceptable | too_large | empty",
+  "critical_paths": [
+    {"file": "...", "region": "...", "reason": "auth | payments | data_writes | concurrency | unsafe | ffi | secrets | external_data | load_bearing"}
+  ],
+  "focus_axes": ["resolved axes to detect against this pass"],
+  "prior_feedback_consumed": "brief note on how prior_review (if any) shaped this scope"
+}
+```
+
+## Constraints
+
+- Compute the diff from real git output; never estimate from the spec.
+- Do not judge findings here — only model the change (detection/collection is
+  later).
+- When prior_review is present, next_review_focus MUST be consumed — silently
+  ignoring prior feedback is a feedback-loop violation.
+- observed_characteristics must be derived from actually reading the diff /
+  files; do not fabricate. If you could not read the diff, state so and
+  proceed with an empty characteristics list.
+- Handle missing variables gracefully (leave as-is or use default).

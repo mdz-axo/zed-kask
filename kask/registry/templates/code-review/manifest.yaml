@@ -1,0 +1,105 @@
+# Template crate manifest for code-review skill
+# hKask v0.31.0
+
+crate:
+  name: code-review
+  version: "0.31.0"
+  description: >
+    Convergent code review of a change against its stated spec. Grounded in
+    Fagan formal inspection (Planning → defect detection → defect collection →
+    follow-up), modern code review (Bacchelli & Bird 2013; Sadowski & Stolee
+    2015), the PERFECT framework (Bastrich), and Ousterhout's "A Philosophy of
+    Software Design". Decomposed into phased templates: Scope (change model +
+    Fagan sizing + critical-path identification + Good Regulator + prior-review
+    feedback) → Perspectives (multi-axis DETECTION across PERFECT-ordered axes
+    intersected with the addyosmani five-axis, with optional delegation to
+    kali-audit / bug-hunt / refactor-architecture / deep-module / essentialist)
+    → Adjudicate (defect COLLECTION with pragmatic-semantics IS/OUGHT +
+    epistemic mode + provenance + constraint-force severity + falsifier +
+    grill-me self-challenge + file:line no-fiction citation) → Report (verdict
+    + named structural remedies + coverage honesty + lessons_learned /
+    next_review_focus loop closure) → Implement (optional, user-gated Act phase
+    via fix_mode). Reasoning patterns from pragmatic-semantics,
+    pragmatic-cybernetics, falsifiability, hypothesis-framer, grill-me, and
+    essentialist are embedded as inline prompt instructions in the adjudicate
+    and perspectives phases. Comprehensive-by-default; variety via delegation,
+    not toggleable modes (essentialist deletion test). Emits Regulation spans
+    (reg.codereview.*) for observability (P12). OCAP-gated.
+
+templates:
+  - id: code-review/code-review-scope
+    name: "Scope the change: real diff, Fagan sizing, critical paths, change model (Good Regulator)"
+    path: code-review-scope.j2
+    type: KnowAct
+    description: >
+      Compute the diff against diff_base from real git output, classify change
+      size (Fagan sizing: ~100 good, ~300 acceptable, ~1000 too large), identify
+      critical paths (auth/payments/data writes/concurrency/unsafe/FFI/secrets/
+      external data boundaries), and build a lightweight change model (Good
+      Regulator). Consumes prior_review.next_review_focus as the primary
+      emphasis for this pass. Does not judge findings — only models the change.
+    generates_spans:
+      - reg.codereview.scope
+
+  - id: code-review/code-review-perspectives
+    name: "Multi-axis defect DETECTION (PERFECT × addyosmani five-axis) with optional delegation"
+    path: code-review-perspectives.j2
+    type: KnowAct
+    description: >
+      Walk the diff through PERFECT-ordered axes (Purpose → Edge cases →
+      Reliability → Form → Evidence → Clarity → Taste) intersected with the
+      addyosmani five-axis (correctness, readability, architecture, security,
+      performance). DETECTION only — records raw, unverdicted findings with
+      file:line + verbatim evidence (no-fiction). Respects focus. For each
+      enabled delegate flag, emits a delegation instruction for the agent to
+      invoke the specialist skill between this step and adjudicate. Accepts
+      pre-populated probe_findings for the FlowDef path. Detection/collection
+      separation (Sauer) — no verdicts here.
+    generates_spans:
+      - reg.codereview.perspectives
+
+  - id: code-review/code-review-adjudicate
+    name: "Defect COLLECTION: pragmatic-semantics + falsifier + grill-me + no-fiction citation"
+    path: code-review-adjudicate.j2
+    type: KnowAct
+    description: >
+      Turn raw observations into tiered, evidence-backed verdicts (defect
+      COLLECTION). Applies pragmatic-semantics IS/OUGHT + epistemic mode +
+      provenance, frames each as a falsifiable hypothesis (H0/H1 + falsifier),
+      derives severity from constraint force (Prohibition→Blocker,
+      Guideline→Should-fix, Preference→Nit, Informational→FYI), runs grill-me
+      self-challenge, and enforces file:line no-fiction citation (uncited
+      findings rejected, not dropped). Computes blocker_delta vs prior_review.
+      Does NOT re-scan the code (Sauer detection/collection separation).
+    generates_spans:
+      - reg.codereview.adjudicate
+
+  - id: code-review/code-review-report
+    name: "Verdict + structural remedies + coverage honesty + loop closure"
+    path: code-review-report.j2
+    type: KnowAct
+    description: >
+      Produce a verdict driven by Blocker presence (not nit count): Approve /
+      Request changes / Comment. Group findings by severity, lead with what
+      matters, attach a NAMED structural remedy to every architectural/structural
+      finding, rank the 3 highest-leverage top fixes, and emit coverage honesty
+      (checked / not_checked / residual_risk — never a bare "LGTM"). Emits
+      lessons_learned and next_review_focus for loop closure.
+    generates_spans:
+      - reg.codereview.report
+
+  - id: code-review/code-review-implement
+    name: "User-gated Act phase: generate + apply concrete fixes (fix_mode != 'none')"
+    path: code-review-implement.j2
+    type: KnowAct
+    description: >
+      Act phase (Fagan rework). SKIPPED when fix_mode == 'none' (the default)
+      via step.condition — the review is review-first; setting fix_mode to a
+      non-`none` value IS the user's consent to modify code. For each finding
+      at/above the requested tier with a concrete remedy, produce ONE surgical
+      edit (file, location, exact verbatim old_text read from the actual file,
+      new_text). Reuses the report's structural remedies. Honors project
+      conventions and .rules. Never fabricates old_text — skips findings it
+      cannot ground.
+    generates_spans:
+      - reg.codereview.implement

@@ -9494,6 +9494,7 @@ version = "0.31.1"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
+ "dotenvy",
  "hkask-guard",
  "hkask-inference",
  "hkask-ledger",
@@ -9507,6 +9508,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+ "tiny_http",
  "tokio",
  "tracing",
  "uuid",

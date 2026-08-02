@@ -1,0 +1,345 @@
+# Code Review Process Manifest
+# hKask v0.31.0 — Convergent code review as phased PDCA
+# Phased: scope → perspectives → adjudicate → report → implement (gated) → convergence-check → loop
+#
+# Ontological anchors (the shape emerges from these, NOT from a generic template):
+#   - Fagan (1976) "Design and code inspections to reduce errors in program
+#     development" — the original phased inspection ontology
+#     (Planning → defect detection → defect collection → follow-up).
+#     scope = Planning, perspectives = defect detection, adjudicate = collection,
+#     report = outputs, implement/convergence = follow-up (loop closure).
+#   - Bacchelli & Bird (2013), Sadowski & Stolee (2015) — modern code review
+#     (tool-mediated, asynchronous, lightweight) → review-first, ask-before-implement.
+#   - Sauer et al. (2000) — key process conditions for review effectiveness →
+#     detection (perspectives) is separated from collection (adjudicate).
+#   - PKO (Carriero et al. 2025) — review IS a Procedure: perspectives = pko:Step,
+#     adjudicate = pko:StepVerification, lessons_learned = pko:IssueOccurrence.
+#
+# Design: comprehensive-by-default. The four candidate modes (adversarial,
+# multi-perspective, refactoring, generative) are inline reasoning lenses, NOT
+# orthogonal toggleable invocations (essentialist deletion test: deleting
+# "modes" does not re-introduce complexity). Variety comes from delegation to
+# specialist skills (Ashby's requisite variety). "Generative" (implement fixes)
+# is gated by fix_mode (default 'none' = review-only); setting it is the user's
+# consent to modify code.
+
+manifest:
+  id: code-review
+  category: skill
+  name: Code Review
+  description: >
+    Convergent code review of a change against its stated spec. Computes the
+    real diff (Fagan sizing), builds a change model (Good Regulator), runs
+    multi-axis defect DETECTION across PERFECT-ordered axes intersected with
+    the addyosmani five-axis with optional delegation to kali-audit (security),
+    bug-hunt (deep defects), and refactor-architecture/deep-module/essentialist
+    (architecture), then performs defect COLLECTION with pragmatic-semantics
+    IS/OUGHT + epistemic mode + provenance + constraint-force severity + a
+    falsifier + grill-me self-challenge + file:line no-fiction citation.
+    Produces a verdict (Approve/Request changes/Comment) with named structural
+    remedies and coverage honesty, an optional user-gated fix implementation,
+    and lessons_learned/next_review_focus for loop closure. Convergence is
+    blocker_delta stabilization (Cauchy). Comprehensive-by-default; variety via
+    delegation, not modes. Emits reg.codereview.* spans. OCAP-gated.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: change_spec
+    type: string
+    required: true
+    description: >
+      The stated spec / intent the change implements. The review judges the
+      change against this. Referenced by scope (intent vs change) and
+      adjudicate (does the code do what the spec claims?).
+  - name: diff_base
+    type: string
+    required: true
+    description: >
+      Git ref to diff against (e.g. "main", "origin/main", a commit SHA). The
+      scope step computes `git diff <diff_base>...HEAD` from real git output —
+      do not estimate sizes from the spec.
+  - name: focus
+    type: array
+    required: false
+    default: []
+    description: >
+      Axes to restrict the review to (empty = comprehensive, the default).
+      Members from {purpose, edge_cases, reliability, form, evidence, clarity,
+      taste} (PERFECT) intersected with {correctness, readability, architecture,
+      security, performance} (addyosmani five-axis). Security always gets at
+      least a basic pass even when focus is non-empty.
+  - name: delegate_security
+    type: boolean
+    required: false
+    default: false
+    description: >
+      Emit a delegation instruction to invoke kali-audit (surface=code) for the
+      security axis. The inline pass always covers security basics; delegation
+      adds depth. Essentialist G1: re-use kali-audit rather than reimplement.
+  - name: delegate_bug_hunt
+    type: boolean
+    required: false
+    default: false
+    description: >
+      Emit a delegation instruction to invoke bug-hunt for deep defect-finding
+      against this change's quality criteria.
+  - name: delegate_architecture
+    type: boolean
+    required: false
+    default: false
+    description: >
+      Emit a delegation instruction to invoke refactor-architecture /
+      deep-module / essentialist (advisory mode) for architecture findings.
+  - name: fix_mode
+    type: string
+    required: false
+    default: "none"
+    description: >
+      Controls the optional Act (implement) phase. `none` (default) = review
+      only — the review is review-first. `blockers` = implement Blocker fixes;
+      `should_fix` = Blocker + Should-fix; `all` = every actionable finding
+      (skip pure taste/FYI with no concrete remedy). Setting a non-`none` value
+      IS the user's consent to modify code. This is the "generative" mode,
+      gated and AFTER the review.
+  - name: prior_review
+    type: object
+    required: false
+    description: >
+      Output of a previous code-review pass on the same change. Closes the
+      feedback loop: scope consumes prior_review.next_review_focus as the
+      primary emphasis; adjudicate uses prior_review.blockers to compute
+      blocker_delta; the loop step routes report's next_review_focus and
+      lessons_learned back here. Absent on first pass.
+  - name: probe_findings
+    type: string
+    required: false
+    description: >
+      Raw findings from agent-orchestrated delegate-skill invocation, populated
+      by the agent between step 2 (perspectives) and step 3 (adjudicate). In
+      pure FlowDef execution, pre-populate this; in Zed sessions the agent
+      invokes kali-audit/bug-hunt/refactor-architecture between the calls and
+      folds the returned findings into raw_findings with `source` set.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      SCOPE (Fagan Planning). Compute the real diff from git output, classify
+      change size (Fagan sizing: ~100 good, ~300 acceptable, ~1000 too large),
+      identify critical paths (auth/payments/data writes/concurrency/unsafe/
+      FFI/secrets/external data boundaries), and build a lightweight change
+      model (Good Regulator). Consumes prior_review.next_review_focus as the
+      primary emphasis for this pass.
+    renderer: minijinja
+    template_ref: code-review/code-review-scope
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      change_spec: "{{ change_spec }}"
+      diff_base: "{{ diff_base }}"
+      focus: "{{ focus | default([]) }}"
+      prior_review: "{{ prior_review | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      PERSPECTIVES (Fagan defect detection). Multi-axis DETECTION only across
+      PERFECT-ordered axes (Purpose → Edge cases → Reliability → Form →
+      Evidence → Clarity → Taste) intersected with the addyosmani five-axis
+      (correctness, readability, architecture, security, performance). Records
+      raw, unverdicted findings with file:line + verbatim evidence (no-fiction).
+      Respects focus. For each enabled delegate flag, emits a delegation
+      instruction for the agent to invoke the specialist skill between this
+      step and adjudicate. Accepts pre-populated probe_findings for the FlowDef
+      path.
+    renderer: minijinja
+    template_ref: code-review/code-review-perspectives
+    gas_cap: 8192
+    timeout_seconds: 300
+    input_mapping:
+      change_model: "{{ step_1_result.change_model | default({}) }}"
+      focus: "{{ focus | default([]) }}"
+      focus_axes: "{{ step_1_result.focus_axes | default([]) }}"
+      critical_paths: "{{ step_1_result.critical_paths | default([]) }}"
+      delegate_security: "{{ delegate_security | default(false) }}"
+      delegate_bug_hunt: "{{ delegate_bug_hunt | default(false) }}"
+      delegate_architecture: "{{ delegate_architecture | default(false) }}"
+      probe_findings: "{{ probe_findings | default('') }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      ADJUDICATE (Fagan defect collection). Turn raw observations into tiered,
+      evidence-backed verdicts. Applies pragmatic-semantics IS/OUGHT + epistemic
+      mode + provenance, frames each as a falsifiable hypothesis (H0/H1 +
+      falsifier), derives severity from constraint force (Prohibition→Blocker,
+      Guideline→Should-fix, Preference→Nit, Informational→FYI), runs grill-me
+      self-challenge, and enforces file:line no-fiction citation (uncited
+      findings rejected, not dropped). Computes blocker_delta vs prior_review.
+      Detection/collection separation (Sauer) — does NOT re-scan the code.
+    renderer: minijinja
+    template_ref: code-review/code-review-adjudicate
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      raw_findings: "{{ step_2_result.raw_findings | default([]) }}"
+      change_spec: "{{ change_spec }}"
+      critical_paths: "{{ step_1_result.critical_paths | default([]) }}"
+      prior_review: "{{ prior_review | default({}) }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      REPORT (Fagan outputs). Produce a verdict driven by Blocker presence
+      (not nit count): Approve / Request changes / Comment. Group findings by
+      severity, lead with what matters, attach a NAMED structural remedy to
+      every architectural/structural finding, rank the 3 highest-leverage top
+      fixes, and emit coverage honesty (checked / not_checked / residual_risk —
+      never a bare "LGTM"). Emits lessons_learned and next_review_focus for
+      loop closure.
+    renderer: minijinja
+    template_ref: code-review/code-review-report
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
+      change_model: "{{ step_1_result.change_model | default({}) }}"
+      size_class: "{{ step_1_result.size_class | default('') }}"
+      rejected_findings: "{{ step_3_result.rejected_findings | default([]) }}"
+      severity_counts: "{{ step_3_result.severity_counts | default({}) }}"
+      blocker_delta: "{{ step_3_result.blocker_delta | default(0) }}"
+      prior_review: "{{ prior_review | default({}) }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      IMPLEMENT (Fagan rework — Act phase). Caller-gated via fix_mode. SKIPPED
+      by step.condition unless fix_mode is one of blockers/should_fix/all
+      (default-deny: absence and 'none' both skip — the review is review-first).
+      The executor cannot obtain interactive consent mid-cascade, so enabling
+      requires a caller that passes fix_mode into context (programmatic/CI, or a
+      future SkillToolInput params extension); the interactive skill tool passes
+      only {name, task} today, so this step is inert on that path. For each finding
+      at/above the requested tier with
+      a concrete remedy, produce ONE surgical edit (file, location, exact
+      verbatim old_text read from the actual file, new_text). Reuses the
+      report's structural remedies. Honors project conventions and .rules.
+      Never fabricates old_text — skips findings it cannot ground.
+    renderer: minijinja
+    template_ref: code-review/code-review-implement
+    gas_cap: 6144
+    timeout_seconds: 120
+    condition: "fix_mode == 'blockers' OR fix_mode == 'should_fix' OR fix_mode == 'all'"
+    input_mapping:
+      adjudicated_findings: "{{ step_3_result.adjudicated_findings | default([]) }}"
+      review: "{{ step_4_result.review | default({}) }}"
+      fix_mode: "{{ fix_mode | default('none') }}"
+      change_model: "{{ step_1_result.change_model | default({}) }}"
+
+  - ordinal: 6
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion on blocker_delta stabilization. Deterministic."
+    input_mapping:
+      hypotenuse: "{{ step_3_result.blocker_delta | default(0) }}"
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter the review cycle if convergence is not met. Routes the report's
+      next_review_focus (and lessons_learned) and the prior pass's blocker
+      count back to scope as prior_review, closing the feedback loop. The next
+      pass's scope consumes next_review_focus as its primary emphasis and
+      adjudicate computes a fresh blocker_delta against the updated baseline.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      prior_review:
+        next_review_focus: "{{ step_4_result.next_review_focus | default('') }}"
+        lessons_learned: "{{ step_4_result.lessons_learned | default([]) }}"
+        blockers: "{{ step_3_result.severity_counts.blockers | default(0) }}"
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ocap:
+  required_capabilities:
+    - resource: template
+      action: render
+      template_id: code-review/code-review-scope
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: code-review/code-review-perspectives
+      gas_budget: 8192
+    - resource: template
+      action: render
+      template_id: code-review/code-review-adjudicate
+      gas_budget: 6144
+    - resource: template
+      action: render
+      template_id: code-review/code-review-report
+      gas_budget: 4096
+    - resource: template
+      action: render
+      template_id: code-review/code-review-implement
+      gas_budget: 6144
+    - resource: manifest
+      action: execute
+      template_id: code-review
+      gas_budget: 1000
+  delegation_chain_required: true
+  signature_algorithm: ed25519
+  capability_expiry_seconds: 3600
+  template_scoped: true
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.codereview
+  telemetry_namespace: hkask.template.code-review
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

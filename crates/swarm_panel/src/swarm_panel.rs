@@ -296,8 +296,8 @@ struct SwarmCard {
     name: String,
     description: String,
     agent_count: u64,
-    budget: u64,
-    remaining: u64,
+    budget: Option<u64>,
+    remaining: Option<u64>,
 }
 
 // ── MCP response structs (minimal, mirror hkask-mcp-swarm's tool output) ────
@@ -877,8 +877,8 @@ impl SwarmPanel {
                                                 name: w.name.unwrap_or_default(),
                                                 description: w.description.unwrap_or_default(),
                                                 agent_count: w.agent_count.unwrap_or(0),
-                                                budget: w.workspace_budget.unwrap_or(0),
-                                                remaining: w.workspace_remaining.unwrap_or(0),
+                                                budget: w.workspace_budget,
+                                                remaining: w.workspace_remaining,
                                             })
                                         })
                                         .collect::<Vec<_>>();
@@ -1138,7 +1138,7 @@ impl SwarmPanel {
         };
         self.swarm_detail = Some(SwarmDetailView {
             workspace_id: workspace_id.clone(),
-            name: name.clone(),
+            name,
             loading: true,
             error: None,
             agents: Vec::new(),
@@ -1196,7 +1196,7 @@ impl SwarmPanel {
             return;
         };
         self.run_status = Some(RunStatusView {
-            name: name.clone(),
+            name,
             loading: true,
             error: None,
             messages: Vec::new(),
@@ -2304,7 +2304,7 @@ impl SwarmPanel {
                 let detail_id = swarm_id.clone();
                 let detail_name = swarm_name.clone();
                 let runs_id = swarm_id.clone();
-                let runs_name = swarm_name.clone();
+                let runs_name = swarm_name;
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -2325,7 +2325,8 @@ impl SwarmPanel {
                                         .child(
                                             Label::new(format!(
                                                 "⛽ {}/{}",
-                                                swarm.remaining, swarm.budget
+                                                swarm.remaining.map_or("-".to_string(), |v| v.to_string()),
+                                                swarm.budget.map_or("-".to_string(), |v| v.to_string())
                                             ))
                                             .color(Color::Muted),
                                         ),

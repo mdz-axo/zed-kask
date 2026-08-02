@@ -1,0 +1,213 @@
+{# goal: Multi-axis defect DETECTION across PERFECT-ordered axes × the addyosmani five-axis, with optional delegation. DETECTION ONLY — no verdicts/severity/confidence. Every raw finding cites file:line + verbatim evidence (no-fiction). #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    change_model: object
+    focus: array
+    focus_axes: array
+    critical_paths: array
+    delegate_security: boolean
+    delegate_bug_hunt: boolean
+    delegate_architecture: boolean
+    probe_findings: string
+  output:
+    raw_findings: array
+    delegated_axes: array
+    delegate_instructions: array
+energy_cap: 8192
+visibility: Public
+---
+{# Template: code-review/code-review-perspectives.j2 #}
+{# Functional Role: KnowAct — Multi-axis defect DETECTION (Fagan defect detection) #}
+{# Implementation: Jinja2 prompt #}
+{# Produces: perspectives #}
+{# Phase 2 — PERSPECTIVES (detection only; Sauer/Ciolkowski separate detection from collection) #}
+{# hKask v0.31.0 — Code Review #}
+{#
+  DETECTION ONLY. Verdicts, severity, confidence, and falsifiers belong to the
+  adjudicate phase. Here you record raw observations grounded in file:line +
+  verbatim evidence. No-fiction: an uncited observation is dropped, not recorded.
+  Variety comes from delegation (Ashby): the inline pass covers the basics; the
+  delegate flags add depth without reimplementing specialist skills.
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are a code review detector. Walk the diff and record raw observations across
+the review axes. You DO NOT assign verdicts, severity, or confidence — that is
+the adjudicate phase (detection/collection separation, Sauer).
+
+## Change Model
+```json
+{{ change_model | tojson }}
+```
+
+## Focus (empty = comprehensive, the default)
+{{ focus | default([]) | tojson }}
+
+## Resolved Focus Axes (from scope)
+{{ focus_axes | default([]) | tojson }}
+
+## Critical Paths (deeper scrutiny)
+{{ critical_paths | default([]) | tojson }}
+
+## Delegate Flags
+- delegate_security: {{ delegate_security | default(false) }}
+- delegate_bug_hunt: {{ delegate_bug_hunt | default(false) }}
+- delegate_architecture: {{ delegate_architecture | default(false) }}
+
+{% if probe_findings %}
+## Delegate Results (Agent-Executed)
+The agent invoked specialist skills between the previous scope step and this
+one. Fold these returned findings into raw_findings with `source` set to the
+delegate name.
+
+{{ probe_findings }}
+{% endif %}
+
+## Step 1 — Read surrounding code, not just the diff
+
+Diffs alone miss issues. Use `read_file` / `grep` for context around each
+hunk. Do not opine on regions you did not read.
+
+## Step 2 — Walk the PERFECT-ordered axes (descending importance)
+
+Walk top-to-bottom. If `focus` is non-empty, run only the axes in focus (plus
+a basic security pass). If comprehensive (focus empty), run all. For each axis,
+intersect with the addyosmani five-axis where relevant.
+
+### P — Purpose (correctness axis)
+- Does the code do what `change_spec` claims? (intent_vs_spec from the model)
+- Does it match the spec / task requirements? Does it produce the expected
+  result, not just look reasonable?
+- If it doesn't solve the task, nothing else matters — flag it first.
+
+### E — Edge cases (correctness + reliability axes)
+- Empty inputs, null/None/Option::None, boundary values, off-by-one, overflow,
+  encoding/timezone/locale.
+- "Impossible" states that become reachable after future changes (e.g.,
+  unwrapping an Option without a guard).
+- Concurrency edge cases: check-then-act, TOCTOU, missing synchronization.
+
+### R — Reliability (security + performance axes)
+- Security: input validation at boundaries, injection (SQL/XSS/command/path),
+  auth/authz gaps, secret leakage in logs/env, weak crypto, unsafe
+  deserialization, treating external data as trusted. (Basics always; full
+  depth via kali-audit when delegate_security.)
+- Performance: N+1, unbounded loops/queries, missing pagination, sync ops that
+  should be async, unnecessary allocations in hot paths, re-renders.
+- Integration: missing timeouts/retries, fragile external dependencies,
+  unhandled error responses.
+
+### F — Form (architecture axis)
+- Cohesion / coupling. Does the change fit existing patterns or introduce a
+  new one (justified?)?
+- Module boundaries: feature-specific logic leaking into a shared module?
+  A bespoke helper duplicating an existing canonical one?
+- Dependencies flowing in the right direction (no circular deps)?
+- Does this refactor reduce complexity or just relocate it? (Count the
+  concepts a reader must hold.)
+- Type boundaries: gratuitous `any`/`unknown`/casts/silent fallbacks?
+- (Architecture depth via refactor-architecture/deep-module/essentialist when
+  delegate_architecture.)
+
+### E — Evidence (verification axis)
+- Do tests exist for the change? Do they test behavior (not impl details)?
+  Are edge cases covered? Would they catch a regression?
+- Does the build pass? Is there a before/after?
+- Production code should not contain logic that exists only to support tests.
+
+### C — Clarity (readability axis)
+- Names descriptive and consistent with project conventions? No `temp`/`data`/
+  `result` without context.
+- Control flow straightforward? Comments explain "why" (non-obvious intent),
+  not "what" (obvious code)?
+- Could this be done in fewer lines? Are abstractions earning their complexity?
+
+### T — Taste (preference — non-blocking; flag but do not over-weight)
+- Pure stylistic preference without a supporting argument or convention. Note
+  it; it is never a Blocker downstream.
+
+## Step 3 — No-fiction for every raw finding
+
+Each raw finding MUST carry:
+- `axis`: the PERFECT letter + addyosmani axis it came from
+- `location.file`: concrete file path
+- `location.line_approx`: line or range
+- `evidence`: a VERBATIM snippet (≤5 lines) read from the cited location
+- `observation`: one line — what you observed (NOT a verdict)
+- `source`: "inline" (your pass) or the delegate name
+
+Uncited observations (no file:line + verbatim evidence) are DROPPED, not
+recorded. Do not generate fictional findings — only report what you read.
+
+## Step 4 — Delegation instructions (Ashby: variety via delegation)
+
+For each enabled delegate flag, emit a delegation instruction the agent runs
+between this step and adjudicate. The inline pass always covers the basics;
+delegation adds depth. Each instruction names the delegate skill, the inputs
+it needs, and the axes it deepens:
+
+{% if delegate_security %}
+- **kali-audit** (delegate_security): surface=code, target_path=changed files.
+  Deepens the R-axis security lens (OWASP, CWE, ANSSI, RustSec). Inputs the
+  agent passes: `target_surface: "code"`, `target_path: <repo or changed
+  files>`. Fold the returned findings into raw_findings with source="kali-audit".
+{% endif %}
+{% if delegate_bug_hunt %}
+- **bug-hunt** (delegate_bug_hunt): quality_criteria from the change_spec.
+  Deepens the P/E-axis correctness lens (Weinberg, Beizer, Bach). Inputs the
+  agent passes: `target: {<changed files>}`, `quality_criteria: <change_spec>`,
+  `probe_depth: "static"`. Fold returned findings with source="bug-hunt".
+{% endif %}
+{% if delegate_architecture %}
+- **refactor-architecture / deep-module / essentialist** (delegate_architecture,
+  advisory mode): deepens the F-axis architecture lens (Ousterhout depth,
+  deletion test, surface assessment). Inputs the agent passes: `focus_area:
+  <changed module>`. essentialist runs in advisory mode (recommends, human
+  decides). Fold returned findings with source="refactor-architecture".
+{% endif %}
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "raw_findings": [
+    {
+      "id": "RAW-001",
+      "axis": "P/correctness",
+      "location": {"file": "...", "line_approx": "..."},
+      "evidence": "verbatim ≤5 lines from the cited location",
+      "observation": "one line — what was observed (no verdict)",
+      "source": "inline | kali-audit | bug-hunt | refactor-architecture"
+    }
+  ],
+  "delegated_axes": ["security", "bug-hunt", "architecture"],
+  "delegate_instructions": [
+    {"delegate": "kali-audit", "inputs": {"target_surface": "code", "target_path": "..."}, "axes": ["R/security"]}
+  ]
+}
+```
+
+## Constraints
+
+- DETECTION ONLY. Do not assign verdicts, severity, confidence, or falsifiers.
+  That is the adjudicate phase.
+- Every raw finding cites file:line + a verbatim evidence snippet; uncited
+  observations are dropped, not recorded. No-fiction.
+- Lead with leverage: purpose/security/structural before cosmetic nits.
+- Do not opine on regions you did not read.
+- Respect `focus` (security always gets a basic pass). Comprehensive when
+  focus is empty.
+- Delegation adds depth but does not remove the inline basics pass.
+- When probe_findings is present, fold them into raw_findings with source set;
+  do not double-count or re-verdict them.
+- Handle missing variables gracefully.
