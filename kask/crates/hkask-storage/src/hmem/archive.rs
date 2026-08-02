@@ -28,6 +28,8 @@ pub enum ArchiveError {
     Database(String),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Invalid: {0}")]
+    Validation(String),
     #[error("Archive is empty — no h_mems to export")]
     Empty,
 }
@@ -72,7 +74,7 @@ impl BackupArchive {
         source_server_url: &str,
     ) -> Result<Self, ArchiveError> {
         if passphrase.len() < 8 {
-            return Err(ArchiveError::Database(
+            return Err(ArchiveError::Validation(
                 "Passphrase must be at least 8 characters".to_string(),
             ));
         }

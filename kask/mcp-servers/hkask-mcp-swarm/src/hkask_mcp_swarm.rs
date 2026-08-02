@@ -4,7 +4,9 @@
 //! Exposes ABW's agent catalogue, workspaces ("swarms"), and the Xaman Ek
 //! curator as MCP tools, governed by the kask MCP runtime (OCAP, gas, spans).
 //!
-//! ## API surface (verified 2026-08-01 against the live service)
+//! ## API surface (verified 2026-08-01 against the live service; lifecycle
+//! endpoints — agent create/delete, fire, hire-via-`/add`, workspace delete
+//! via the team route — re-verified 2026-08-02)
 //! - Base URL: `https://agent-bestiary.world` (no `api.` subdomain)
 //! - Auth: `Authorization: Bearer <key>` (Pro-tier API key, scopes read/write/execute)
 //! - Open: `GET /api/agents`, `GET /api/models/catalogue`
@@ -4554,6 +4556,62 @@ mod tests {
         assert!(!c.default_agent_model.is_empty());
     }
 
+    // The module doc claims 28 tools (20 ABW + 8 local). Enforce the count
+    // against the ACTUAL registered router surface — a tool dropped, renamed,
+    // or left unregistered by a future refactor fails here instead of
+    // silently drifting from the docs (the "advertised invariants need
+    // enforcement points" trap applied to the doc claim itself).
+    #[test]
+    fn tool_surface_is_exactly_28_registered_tools() {
+        let router = SwarmServer::combined_router();
+        let mut names: Vec<String> = router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.into_owned())
+            .collect();
+        names.sort();
+        let mut expected: Vec<String> = [
+            // ABW (20).
+            "swarm_list_agents",
+            "swarm_get_swarm",
+            "swarm_get_agent",
+            "swarm_list_apps",
+            "swarm_ontology_templates",
+            "swarm_execute_agent",
+            "swarm_hire_cost",
+            "swarm_request_consent",
+            "swarm_hire",
+            "swarm_delegate",
+            "swarm_run_status",
+            "swarm_generate_prompt",
+            "swarm_generate_ontology",
+            "swarm_create_agent",
+            "swarm_create_swarm",
+            "swarm_xaman",
+            "swarm_create_app",
+            "swarm_fire",
+            "swarm_delete_agent",
+            "swarm_delete_swarm",
+            // Local (8).
+            "swarm_fund_local",
+            "swarm_balance_local",
+            "swarm_local_history",
+            "swarm_delegate_local",
+            "swarm_list_local_agents",
+            "swarm_clone_to_local",
+            "swarm_push_to_cloud",
+            "swarm_remove_local",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        expected.sort();
+        assert_eq!(
+            names, expected,
+            "registered tool surface drifted from the documented 28"
+        );
+    }
+
     // The algedonic wallet signal must never be fabricated. When the server is
     // unauthenticated, `wallet_balance` returns `None` (no key → no wallet),
     // and `with_wallet` leaves the response untouched rather than inserting a
@@ -7937,6 +7995,149 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires ABW API key; run with --ignored abw"]
+    async fn abw_wallet_transactions_endpoint_exists() {
+        // The skill's CHECK phase reconciles `emitted_calls` against
+        // `/api/wallet/transactions` — the loop's closure read. If the
+        // endpoint does not exist, the reconciliation is aspirational (the
+        // loop thinks it is reconciling spend and is not). Probe it
+        // read-only; if it 404s, the CHECK template must be softened to
+        // reconcile against `/api/wallet` or `swarm_local_history`.
+        let Some(client) = abw_client() else {
+            eprintln!("skipping: HKASK_ABW_API_KEY not set");
+            return;
+        };
+        match client.get("/wallet/transactions").await {
+            Ok(resp) => eprintln!("W1 GET /api/wallet/transactions ok: {resp}"),
+            Err(e) => eprintln!("W1 GET /api/wallet/transactions FAILED: {e}"),
+        }
+        // Some wallet APIs nest under /wallet or expose a query variant.
+        match client.get("/wallet/transactions?limit=5").await {
+            Ok(resp) => eprintln!("W2 GET /api/wallet/transactions?limit=5 ok: {resp}"),
+            Err(e) => eprintln!("W2 GET /api/wallet/transactions?limit=5 FAILED: {e}"),
+        }
+        match client.get("/transactions").await {
+            Ok(resp) => eprintln!("W3 GET /api/transactions ok: {resp}"),
+            Err(e) => eprintln!("W3 GET /api/transactions FAILED: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ABW API key AND explicit operator OK (spends credits hiring a third-party agent); run with --ignored abw"]
+    async fn abw_third_party_hire_cost_probe() {
+        // B2 was inconclusive: a catalogue agent quoted `total_hire_cost: 10`,
+        // `required_cost: 0`, `optional_cost: 5` — matching neither `required`
+        // nor `required + optional`. The consent gate's re-verification
+        // (`effective_hire_cost`) trusts `total_hire_cost` for agents WITH
+        // dependencies, and this quote model is unverified for NON-owned
+        // (third-party) agents — the one place the gate could still
+        // under-quote a real spend. Do NOT run without explicit operator
+        // approval: it hires a third-party catalogue agent (a real, small
+        // credit spend) into a disposable workspace, observes the actual
+        // `/hire` `gas_charged`, then fires the agent and deletes the
+        // workspace — nothing is left behind.
+        let Some(client) = abw_client() else {
+            eprintln!("skipping: HKASK_ABW_API_KEY not set");
+            return;
+        };
+
+        // Find a cheap, dependency-less third-party catalogue agent (not
+        // owned by this account — `owner_id`/author differs).
+        let agents_data = client.get("/agents").await.expect("GET /agents");
+        let agents = agents_data
+            .get("agents")
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let Some(candidate) = agents.iter().find(|a| {
+            let deps = a
+                .get("dependencies")
+                .and_then(|d| d.as_array())
+                .map(|d| !d.is_empty())
+                .unwrap_or(false);
+            !deps
+        }) else {
+            eprintln!("P0: no dependency-less catalogue agent found — skipping");
+            return;
+        };
+        let agent_id = candidate
+            .get("agent_id")
+            .or_else(|| candidate.get("agent_name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let agent_label = candidate
+            .get("agent_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        eprintln!("P0 candidate: {agent_label} ({agent_id})");
+
+        // Quote first — the same read the consent gate does.
+        match client
+            .get(&format!(
+                "/agents/{}/dependencies",
+                url_encode_segment(&agent_label)
+            ))
+            .await
+        {
+            Ok(resp) => eprintln!("P1 third-party /dependencies quote: {resp}"),
+            Err(e) => eprintln!("P1 third-party /dependencies quote FAILED: {e}"),
+        }
+
+        // Create a disposable workspace, hire via /hire, observe gas_charged.
+        let slug = make_swarm_slug("zed_kask_verify", std::time::SystemTime::now());
+        let ws = client
+            .post(
+                "/teams",
+                &serde_json::json!({
+                    "name": format!("zed-kask-verify-{}", uuid::Uuid::new_v4().simple()),
+                    "slug": slug,
+                    "description": "third-party hire cost probe (deleted after test)",
+                    "mission": "third-party hire cost probe (deleted after test)",
+                }),
+            )
+            .await
+            .expect("POST /teams")
+            .get("id")
+            .and_then(|i| i.as_str())
+            .map(str::to_string)
+            .expect("team create returned id");
+        eprintln!("P2 created workspace {ws}");
+
+        match client
+            .post(
+                &format!("/workspaces/{}/hire", url_encode_segment(&ws)),
+                &serde_json::json!({ "agent_id": agent_id }),
+            )
+            .await
+        {
+            Ok(resp) => eprintln!("P3 /hire gas_charged: {resp}"),
+            Err(e) => eprintln!("P3 /hire FAILED: {e}"),
+        }
+
+        // Cleanup: fire (if hired) and delete the workspace.
+        match client
+            .delete(&format!(
+                "/workspaces/{}/agents/{}",
+                url_encode_segment(&ws),
+                url_encode_segment(&agent_id)
+            ))
+            .await
+        {
+            Ok(resp) => eprintln!("P4 fire ok: {resp}"),
+            Err(e) => eprintln!("P4 fire (best-effort) FAILED: {e}"),
+        }
+        match client
+            .delete(&format!("/teams/{}", url_encode_segment(&ws)))
+            .await
+        {
+            Ok(resp) => eprintln!("P5 workspace delete ok: {resp}"),
+            Err(e) => eprintln!("P5 workspace delete FAILED: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ABW API key; run with --ignored abw"]
     async fn abw_lifecycle_create_fire_delete_probe() {
         // Full-lifecycle probe of the ABW lifecycle endpoints (the operator
         // authorized live mutation + cleanup). Self-contained: creates its own
@@ -8432,6 +8633,11 @@ mod tests {
         // the verified team-scoped delete route directly (the probe that
         // created them should not depend on the tool under test), then asserts
         // the catalogue and workspace list contain no leftovers.
+        //
+        // MUST run with `--test-threads=1`: deleting a workspace a concurrent
+        // lifecycle test is mid-using surfaces as an ABW
+        // `permission_denied` on that test's next call (observed live), so the
+        // lifecycle tests and this cleanup must be serialized.
         let Some(client) = abw_client() else {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;

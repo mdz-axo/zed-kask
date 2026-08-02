@@ -48,12 +48,13 @@ pub trait ToolPort: Send + Sync {
     /// Invoke a tool. Requires a [`DelegationToken`] proving OCAP authorization.
     ///
     /// The implementation matches the token's declared `(resource, resource_id,
-    /// action)` against the invoked tool (see `McpRuntime::invoke`). Expiry is
-    /// **not** checked by this gate — `is_valid_for` does not consult `expires_at`;
-    /// do not rely on token expiry for safety.
+    /// action)` against the invoked tool AND rejects expired tokens
+    /// (see `McpRuntime::invoke` → `DelegationToken::is_valid_for_at`). Expiry is
+    /// applied to cascade-minted tokens from the manifest's
+    /// `ocap.capability_expiry_seconds`; ad-hoc tokens carry no expiry.
     ///
     /// post: returns tool output or `ToolPortError::CapabilityDenied` if the token
-    ///       does not authorize this (resource, resource_id, action)
+    ///       does not authorize this (resource, resource_id, action) or is expired
     fn invoke<'a>(
         &'a self,
         server: &'a str,

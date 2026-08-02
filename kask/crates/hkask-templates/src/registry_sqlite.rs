@@ -45,20 +45,6 @@ fn parse_template_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TemplateRow> 
     ))
 }
 
-fn query_column(conn: &Connection, sql: &str, id: &str) -> Result<Vec<String>> {
-    let db_err = |ctx: &str, e| {
-        TemplateError::Database(InfrastructureError::database(format!("{ctx}: {e}")))
-    };
-    let results: Vec<String> = conn
-        .prepare(sql)
-        .map_err(|e| db_err("Prepare", e))?
-        .query_map(params![id], |row| row.get::<_, String>(0))
-        .map_err(|e| db_err("Query", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(results)
-}
-
 // ── SqliteRegistry ─────────────────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -120,11 +106,9 @@ impl SqliteRegistry {
             .map_err(|e| TemplateError::Database(InfrastructureError::database(e.to_string())))?
             .execute_batch(concat!(
             "CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY, template_type TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', description TEXT, source_path TEXT NOT NULL, cascade_level INTEGER NOT NULL DEFAULT 0, matroshka_limit INTEGER NOT NULL DEFAULT 7, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
-            "CREATE TABLE IF NOT EXISTS template_capabilities(template_id TEXT NOT NULL, capability TEXT NOT NULL, PRIMARY KEY(template_id, capability), FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE TABLE IF NOT EXISTS provenance(id INTEGER PRIMARY KEY AUTOINCREMENT, template_id TEXT NOT NULL, git_sha TEXT NOT NULL, modified_by TEXT NOT NULL, modified_at DATETIME DEFAULT CURRENT_TIMESTAMP, branch TEXT, commit_message TEXT, FOREIGN KEY(template_id) REFERENCES templates(id));",
             "CREATE INDEX IF NOT EXISTS idx_templates_type ON templates(template_type);",
             "CREATE INDEX IF NOT EXISTS idx_provenance_template ON provenance(template_id);",
-            "CREATE INDEX IF NOT EXISTS idx_template_capabilities ON template_capabilities(capability);",
             "CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, domain TEXT NOT NULL, word_act TEXT, flow_def TEXT, know_act TEXT, polarity TEXT, content_hash TEXT, visibility TEXT NOT NULL DEFAULT 'private', zone TEXT NOT NULL DEFAULT 'private', namespace TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);",
             "CREATE INDEX IF NOT EXISTS idx_skills_domain ON skills(domain);",
             "CREATE INDEX IF NOT EXISTS idx_skills_visibility ON skills(visibility);",
@@ -159,27 +143,6 @@ impl SqliteRegistry {
             "INSERT OR REPLACE INTO templates (id, template_type, name, description, source_path, cascade_level, matroshka_limit, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, CURRENT_TIMESTAMP)",
             params![entry.id, entry.template_type.as_str(), entry.name, entry.description, entry.source_path, entry.cascade_level, entry.matroshka_limit],
         ).map_err(|e| TemplateError::Manifest(format!("Insert: {}", e)))?;
-        for (table, col, items) in [(
-            "template_capabilities",
-            "capability",
-            &entry.required_capabilities,
-        )] {
-            tx.execute(
-                &format!("DELETE FROM {} WHERE template_id = ?1", table),
-                params![entry.id],
-            )
-            .map_err(|e| TemplateError::Manifest(format!("Delete {col}: {}", e)))?;
-            for item in items {
-                tx.execute(
-                    &format!(
-                        "INSERT INTO {} (template_id, {}) VALUES (?1, ?2)",
-                        table, col
-                    ),
-                    params![entry.id, item],
-                )
-                .map_err(|e| TemplateError::Manifest(format!("Insert {col}: {}", e)))?;
-            }
-        }
         tx.commit()
             .map_err(|e| TemplateError::Manifest(format!("Commit: {}", e)))?;
         Ok(())
@@ -187,7 +150,6 @@ impl SqliteRegistry {
 
     #[allow(clippy::too_many_arguments)]
     fn row_to_entry(
-        conn: &Connection,
         id: &str,
         tt: TemplateType,
         name: String,
@@ -202,11 +164,6 @@ impl SqliteRegistry {
             name,
             description: desc,
             source_path: sp,
-            required_capabilities: query_column(
-                conn,
-                "SELECT capability FROM template_capabilities WHERE template_id = ?1",
-                id,
-            )?,
             cascade_level: cl,
             matroshka_limit: ml,
         })
@@ -236,7 +193,7 @@ impl SqliteRegistry {
                     id: format!("Template '{}': {}", id, e),
                 })
             })?;
-        Self::row_to_entry(&conn, &row.0, row.1, row.2, row.3, row.4, row.5, row.6)
+        Self::row_to_entry(&row.0, row.1, row.2, row.3, row.4, row.5, row.6)
     }
 
     /// Delete a template and all associated data (capabilities, provenance).
@@ -256,7 +213,7 @@ impl SqliteRegistry {
                 return entry;
             }
         };
-        for table in &["template_capabilities", "provenance"] {
+        for table in &["provenance"] {
             if let Err(e) = conn.execute(
                 &format!("DELETE FROM {} WHERE template_id = ?1", table),
                 params![id],
@@ -326,7 +283,7 @@ impl RegistryIndex for SqliteRegistry {
             .unwrap_or_default();
         rows.into_iter()
             .filter_map(|(id, tt, name, desc, sp, cl, ml)| {
-                Self::row_to_entry(&conn, &id, tt, name, desc, sp, cl, ml).ok()
+                Self::row_to_entry(&id, tt, name, desc, sp, cl, ml).ok()
             })
             .collect()
     }

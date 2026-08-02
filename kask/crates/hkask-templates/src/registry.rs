@@ -469,7 +469,6 @@ impl Registry {
                             name,
                             description: tmpl.description,
                             source_path: format!("registry/templates/{skill_name}/{}", tmpl.path),
-                            required_capabilities: Vec::new(),
                             cascade_level: 0,
                             matroshka_limit: max_recursion,
                         };

@@ -12,7 +12,6 @@ pub struct RegistryEntry {
     pub name: String,
     pub description: String,
     pub source_path: String,
-    pub required_capabilities: Vec<String>,
     pub cascade_level: u32,
     pub matroshka_limit: u32,
 }
@@ -310,16 +309,13 @@ pub trait SkillRegistryIndex {
 pub trait RegistryIndex {
     fn list(&self, domain_hint: Option<TemplateType>) -> Vec<RegistryEntry>;
 
-    fn list_with_capabilities(&self, capabilities: &[String]) -> Vec<RegistryEntry> {
+    /// List all registry entries. The `capabilities` parameter is **not used**:
+    /// per-template capability declarations were removed (they were never
+    /// enforced at runtime), and OCAP is enforced at the runtime tool gate
+    /// (`McpRuntime::invoke`), not at the registry-list level. The parameter is
+    /// retained for API compatibility; it is a no-op.
+    fn list_with_capabilities(&self, _capabilities: &[String]) -> Vec<RegistryEntry> {
         self.list(None)
-            .into_iter()
-            .filter(|e| {
-                e.required_capabilities.is_empty()
-                    || e.required_capabilities
-                        .iter()
-                        .all(|c| capabilities.contains(c))
-            })
-            .collect()
     }
 
     fn get(&self, id: &str) -> Result<RegistryEntry, RegistryError>;

@@ -561,17 +561,26 @@ impl hkask_capability::ToolPort for McpRuntime {
                     .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
                 let est = &governance.estimator;
                 let agent = token.delegated_to;
-                // Capability match: the token must declare authority for this
-                // tool. (No signature verification — tokens are minted and
-                // consumed in-process; see the comment above the impl.)
-                let authorized = token.is_valid_for(
+                // Capability match + expiry: the token must declare authority
+                // for this tool and not be expired. (No signature verification —
+                // tokens are minted and consumed in-process; see the comment
+                // above the impl.) Expiry is applied to cascade-minted tokens from
+                // the manifest's `ocap.capability_expiry_seconds`; ad-hoc tokens
+                // carry no expiry and never expire.
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let authorized = token.is_valid_for_at(
                     hkask_capability::DelegationResource::Tool,
                     tool,
                     hkask_capability::DelegationAction::Execute,
-                ) || self.verify_capability_domain(token, tool).await;
+                    now,
+                ) || (!token.is_expired(now)
+                    && self.verify_capability_domain(token, tool).await);
                 if !authorized {
                     return Err(hkask_capability::ToolPortError::CapabilityDenied(format!(
-                        "token does not authorize tool: {}",
+                        "token does not authorize tool: {} (or is expired)",
                         tool
                     )));
                 }

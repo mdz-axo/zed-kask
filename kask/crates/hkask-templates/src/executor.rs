@@ -421,7 +421,7 @@ impl ManifestExecutor {
         tool_ref: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        self.invoke_tool(tool_ref, input, 0)
+        self.invoke_tool(tool_ref, input, 0, None)
             .await
             .map(|(result, _)| result)
     }
@@ -431,6 +431,7 @@ impl ManifestExecutor {
         tool_name: &str,
         input: Value,
         action_number: u64,
+        expiry_seconds: Option<u32>,
     ) -> Result<(Value, ToolTaint)> {
         let tool_info = self.tools.get_tool_info(tool_name).await.ok_or_else(|| {
             TemplateError::NotFound(NotFound {
@@ -466,13 +467,34 @@ impl ManifestExecutor {
         }
 
         let executor_webid = WebID::from_persona(b"manifest-executor");
-        let token = hkask_capability::panel_default_token(
-            DelegationResource::Tool,
-            tool_name.to_string(),
-            DelegationAction::Execute,
-            executor_webid,
-            executor_webid,
-        );
+        // Mint the OCAP token. Cascade-minted tokens expire after the
+        // manifest's `ocap.capability_expiry_seconds` (Some); ad-hoc `call_tool`
+        // invocations carry no expiry (None) and never expire. The runtime gate
+        // (`McpRuntime::invoke` → `is_valid_for_at`) rejects expired tokens.
+        let token = match expiry_seconds {
+            Some(secs) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                hkask_capability::DelegationTokenBuilder::new(
+                    DelegationResource::Tool,
+                    tool_name.to_string(),
+                    DelegationAction::Execute,
+                    executor_webid,
+                    executor_webid,
+                )
+                .expires_at(now + secs as i64)
+                .build()
+            }
+            None => hkask_capability::panel_default_token(
+                DelegationResource::Tool,
+                tool_name.to_string(),
+                DelegationAction::Execute,
+                executor_webid,
+                executor_webid,
+            ),
+        };
 
         let result = self
             .tools
@@ -878,7 +900,13 @@ impl ManifestExecutor {
                         context = self.execute_compute(step, context).await?;
                     }
                     "execute" | "feedback" | "validate" | "retrieve" => {
-                        context = self.execute_tool_invoke(step, context).await?;
+                        context = self
+                            .execute_tool_invoke(
+                                step,
+                                context,
+                                manifest.ocap.capability_expiry_seconds,
+                            )
+                            .await?;
                     }
                     // RenderAct: render a template (`.j2` or `.yaml`) without
                     // inference. The action is the rendering — the output is
@@ -1523,6 +1551,7 @@ impl ManifestExecutor {
         &self,
         step: &BundleManifestStep,
         mut context: HashMap<String, Value>,
+        expiry_seconds: u32,
     ) -> Result<HashMap<String, Value>> {
         let mcp_ref_raw = step.mcp.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
@@ -1548,7 +1577,7 @@ impl ManifestExecutor {
             });
 
         let (result, tool_taint) = self
-            .invoke_tool(&mcp_ref, input, context.len() as u64)
+            .invoke_tool(&mcp_ref, input, context.len() as u64, Some(expiry_seconds))
             .await?;
 
         let result_key = format!("step_{}_result", step.ordinal);

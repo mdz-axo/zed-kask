@@ -1,9 +1,8 @@
-//! Types for hkask-mcp-media — request types and transcript data models.
+//! Types for hkask-mcp-media — MCP tool request input structs.
 //!
-//! - Request types: MCP tool input structs (Deserialize + JsonSchema)
-//! - Transcript types: synchronized audio + word-level timed transcript
-
-pub mod transcript;
+//! All types implement `Deserialize + JsonSchema` for MCP tool input validation.
+//! Transcript types (`TimedWord`/`TranscriptSegment`/`TranscriptBundle`) are
+//! imported from `hkask_types` — not re-defined here.
 
 use schemars::JsonSchema;
 use serde::Deserialize;

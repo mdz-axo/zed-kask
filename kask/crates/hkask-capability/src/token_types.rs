@@ -183,18 +183,43 @@ impl DelegationToken {
         hex::encode(hasher.finalize())
     }
 
-    /// expect: "System types preserve semantic identity and are provenance-aware"
-    /// pre:  self is any [`DelegationToken`]; resource is any [`DelegationResource`];
-    ///       resource_id is any &str; action is any [`DelegationAction`]
+    /// Authorization predicate: the token matches `(resource, resource_id, action)`
+    /// AND has not expired. This is the gate `McpRuntime::invoke` consults.
+    ///
+    /// `now` is taken explicitly so the gate and tests are deterministic; the
+    /// convenience [`is_valid_for`](Self::is_valid_for) uses the current wall clock.
+    ///
     /// post: returns true iff self.resource == resource AND self.resource_id == resource_id
-    ///       AND self.action == action
+    ///       AND self.action == action AND !self.is_expired(now)
+    pub fn is_valid_for_at(
+        &self,
+        resource: DelegationResource,
+        resource_id: &str,
+        action: DelegationAction,
+        now: i64,
+    ) -> bool {
+        self.resource == resource
+            && self.resource_id == resource_id
+            && self.action == action
+            && !self.is_expired(now)
+    }
+
+    /// Authorization predicate using the current wall-clock time. See
+    /// [`is_valid_for_at`](Self::is_valid_for_at) for the deterministic variant.
+    ///
+    /// post: returns is_valid_for_at(resource, resource_id, action, now)
     pub fn is_valid_for(
         &self,
         resource: DelegationResource,
         resource_id: &str,
         action: DelegationAction,
     ) -> bool {
-        self.resource == resource && self.resource_id == resource_id && self.action == action
+        self.is_valid_for_at(
+            resource,
+            resource_id,
+            action,
+            chrono::Utc::now().timestamp(),
+        )
     }
 
     /// expect: "System types preserve semantic identity and are provenance-aware"
