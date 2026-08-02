@@ -8,7 +8,6 @@
 //! `verify_capability_domain`), not cryptography.
 
 use hkask_types::WebID;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::resources::{DelegationAction, DelegationResource};
@@ -22,7 +21,7 @@ pub const SYSTEM_MAX_RECURSION: u8 = 7;
 /// Minted by the composition root (`panel_default_token` / `new_with_expiry`)
 /// and checked by `McpRuntime::invoke`'s capability-match gate. Carries no
 /// cryptographic material — see the module docs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DelegationToken {
     pub id: String,
     pub resource: DelegationResource,

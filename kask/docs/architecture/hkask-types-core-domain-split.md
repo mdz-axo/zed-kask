@@ -31,7 +31,7 @@ The cycle-break that motivated the consolidation may no longer be necessary: the
 
 ## Decision
 
-**Not yet made.** Three options are on the table. The choice depends on the outcome of a consumer-dependency audit (Option B feasibility). This ADR exists so the trade-offs are visible before any move.
+**Audit complete (2026-08-02); execution pending approval.** Three options were on the table; the consumer-dependency audit (results below) determined which are cycle-free. The informed recommendation is a hybrid (see Recommendation). This ADR exists so the trade-offs are visible before any move.
 
 ### Option A — Split into two crates: `hkask-types-core` + `hkask-types-domain`
 

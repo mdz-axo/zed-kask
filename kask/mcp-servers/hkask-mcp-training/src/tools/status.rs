@@ -1,11 +1,44 @@
 use crate::TrainingServer;
+use crate::adapter::AdapterStoreError;
 use crate::adapters::AdapterMetrics;
 use crate::providers::TrainingJobStatus;
+use crate::providers::types::HostProviderError;
 use crate::types::TrainStatusRequest;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 use serde_json::json;
+
+// Classify domain errors into the correct MCP wire kind. `McpToolError` carries
+// no `source` field, so only the kind is preserved, not the error chain. Prior
+// to this, every store/host error was mapped to `internal`, mis-reporting
+// `NotFound` and `Unavailable` as Internal.
+fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
+    let message = e.to_string();
+    match e {
+        AdapterStoreError::NotFound(_) | AdapterStoreError::ExpertiseNotFound(_) => {
+            McpToolError::not_found(message)
+        }
+        AdapterStoreError::InvalidState(_) => McpToolError::failed_precondition(message),
+        AdapterStoreError::ChecksumMismatch { .. }
+        | AdapterStoreError::Database(_)
+        | AdapterStoreError::Infra(_)
+        | AdapterStoreError::Serialization(_) => McpToolError::internal(message),
+    }
+}
+
+fn map_host_provider_error(e: HostProviderError) -> McpToolError {
+    let message = e.to_string();
+    match e {
+        HostProviderError::Unavailable(_) => McpToolError::unavailable(message),
+        HostProviderError::InvalidConfig(_) | HostProviderError::DatasetError(_) => {
+            McpToolError::invalid_argument(message)
+        }
+        HostProviderError::JobFailed(_) | HostProviderError::Backend(_) => {
+            McpToolError::internal(message)
+        }
+    }
+}
 
 impl TrainingServer {
     #[tool(
@@ -126,7 +159,7 @@ impl TrainingServer {
                         let adapter: crate::adapter::TrainedLoRAAdapter = match self
                             .adapter_store
                             .get_by_id(uuid::Uuid::parse_str(&job_id).unwrap_or_default())
-                            .map_err(|e| McpToolError::internal(format!("Adapter store error: {e}")))?
+                            .map_err(map_adapter_store_error)?
                         {
                             Some(existing) => {
                                 result["adapter_registered"] = json!(true);
@@ -157,7 +190,7 @@ impl TrainingServer {
                                         Some(std::path::Path::new(&weight_path)),
                                     );
                                     match self.adapter_store.store(&adapter)
-                                        .map_err(|e| McpToolError::internal(format!("Adapter store error: {e}")))
+                                        .map_err(map_adapter_store_error)
                                     {
                                         Ok(()) => {
                                             result["adapter_registered"] = json!(true);
@@ -192,7 +225,7 @@ impl TrainingServer {
                             let current_loss = Self::metrics_from_trained(&adapter).and_then(|m| m.loss);
                             if let Some(prev) = self.adapter_store
                                 .get_previous_by_skill_name(&adapter_skill, adapter.id)
-                                .map_err(|e| McpToolError::internal(format!("Adapter store error: {e}")))?
+                                .map_err(map_adapter_store_error)?
                                 && let (Some(new_loss), Some(prev_loss)) = (
                                     current_loss,
                                     Self::metrics_from_trained(&prev).and_then(|m| m.loss),
@@ -212,7 +245,7 @@ impl TrainingServer {
 
                     Ok(result)
                 }
-                Err(e) => Err(McpToolError::internal(format!("Status query failed: {e}"))),
+                Err(e) => Err(map_host_provider_error(e)),
             }
         })
         .await

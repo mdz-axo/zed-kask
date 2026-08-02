@@ -5,7 +5,7 @@
 > is grounded in the code at the cited paths, not in a design aspiration. When
 > this document disagrees with the code, the code wins — file an issue.
 
-## 0. Substrate: ABW swarm semantics (verified live 2026-08-01)
+## 0. Substrate: ABW swarm semantics (verified live 2026-08-01; lifecycle + gas model re-verified 2026-08-02)
 
 - A swarm is an ABW **workspace** with hired agents (not the deprecated
   "ensemble" model).

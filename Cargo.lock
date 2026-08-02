@@ -9608,7 +9608,6 @@ dependencies = [
  "blake3",
  "chrono",
  "hex",
- "hkask-capability",
  "hkask-keystore",
  "hkask-types",
  "r2d2",
