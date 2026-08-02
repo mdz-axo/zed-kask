@@ -54,8 +54,8 @@ for your `ContextCategory`. The static mapping is in `default_for()` per
 algorithm: `RtkStyleAlgorithm` (`algorithms.rs:49`) for shell commands,
 `WordRankAlgorithm` (`algorithms.rs:119`) for logs and conversation history,
 `FlashrankAlgorithm` (`algorithms.rs:429`) for file contents and as the
-universal fallback. After enough observations, `CondenserEngine` overrides the
-static mapping via `recommend_algorithm()` (`engine.rs:199`).
+universal fallback. The static `default_for()` mapping is the only
+selection path — the learning override was removed.
 
 ### Step 2: Set the Profile
 

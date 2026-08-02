@@ -1,18 +1,14 @@
 # hkask-mcp-condenser
 
-Context condensation MCP server — compress tool outputs, manage profiles, classify categories, summarize thread history.
+Context condensation MCP server — summarize thread history, persist compressed output, score saliency.
 
-Part of hKask's Episodic loop (L2). The condenser operates on the active conversation window, compressing tool outputs to fit within token budgets.
+Part of hKask's Episodic loop (L2). The condenser operates on the active conversation window. Runtime tool-result compression is handled in-process by `BridgeThreadCondenser` (in `kask_bridge`), not via this MCP server — the server exposes only the operations the agent cannot perform inline.
 
-## Tools (8)
+## Tools (4)
 
 | Tool | Description | Requires Config |
 |------|-------------|-----------------|
-| `condenser_ping` | Liveness check, profile info, algorithm listing, suggested profile, compression history stats | — |
-| `condenser_compress` | Compress tool output using context-aware algorithms. Auto-selects the best-performing algorithm per category when sufficient compression history exists (learning). | — |
-| `condenser_classify` | Classify tool name to context category | — |
-| `condenser_set_profile` | Set compression profile (heavy/normal/soft/light) | — |
-| `condenser_stats` | Cumulative compression statistics | — |
+| `condenser_ping` | Liveness check, profile info, capabilities | — |
 | `condenser_score_saliency` | Score text relevance against persona keywords (word-overlap) or memory stores (semantic/episodic search). Returns 0.0–1.0. The `against` parameter accepts `"persona"` (default) or `"memory"`. When `against="persona"`, the optional `persona_keywords` parameter overrides the server's default keyword set. When `against="memory"`, the tool checks for a semantic memory store first, then falls back to episodic memory. If neither is available, returns 0.5 (neutral). | Persona keywords configurable via `HKASK_CONDENSER_PERSONA_KEYWORDS` or per-request override. Memory stores require `HKASK_DB_PATH` |
 | `condenser_persist` | Persist compressed output to episodic memory | `HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE` |
 | `condenser_thread_summary` | LLM-powered conversation summarization via centralized inference router. Disables model thinking/reasoning mode to ensure output tokens are used for the summary, not internal reasoning. Returns `original_tokens_approx` and `summary_tokens_approx` for context-window budgeting. | — |
@@ -69,11 +65,11 @@ More-specific categories are checked first — `test` matches before `run`, so `
 
 `approx_token_count` uses the standard ~4 characters per token heuristic (same rule of thumb used by OpenAI's tiktoken and Anthropic's Claude). This provides fast, dependency-free estimates for context-window planning.
 
-`ThreadSummaryOutput` includes both `original_tokens_approx` (before summarization) and `summary_tokens_approx` (after), enabling callers to budget context windows. The `ChatService` auto-condense trigger uses this same heuristic at 87.5% of the model's context window.
+`ThreadSummaryOutput` includes both `original_tokens_approx` (before summarization) and `summary_tokens_approx` (after), enabling callers to budget context windows.
 
 ## Thinking Mode
 
-For models with reasoning/thinking mode (e.g., qwen3, gemma4, deepseek-r1), `condenser_thread_summary` and `ChatService::condense_history` set `disable_thinking: true` in `LLMParameters`. This maps to `enable_thinking: false` in the OpenAI-compatible chat request, instructing the model to skip internal reasoning and produce output directly. Without this, reasoning-mode models can consume all `max_tokens` on internal thought, producing empty visible output.
+For models with reasoning/thinking mode (e.g., qwen3, gemma4, deepseek-r1), `condenser_thread_summary` sets `disable_thinking: true` in `LLMParameters`. This maps to `enable_thinking: false` in the OpenAI-compatible chat request, instructing the model to skip internal reasoning and produce output directly. Without this, reasoning-mode models can consume all `max_tokens` on internal thought, producing empty visible output.
 
 The `enable_thinking` field is only serialized when `false` — backends that don't support it are unaffected.
 
@@ -92,34 +88,8 @@ hkask-mcp-condenser
 HKASK_DB_PATH=/path/to/db HKASK_DB_PASSPHRASE=secret hkask-mcp-condenser
 ```
 
-## Tool Surface Justification
-
-The condenser exposes 8 tools, exceeding the 7-function guideline. Each tool beyond 7 is justified:
-
-| Tool | Why It Cannot Be Merged |
-|------|------------------------|
-| `condenser_classify` | Preview operation — lets clients check classification without paying the compression cost. Merging into `compress` would force clients to compress just to see the category. |
-| `condenser_stats` | Cumulative state across all compressions (counts, byte totals, algorithm usage). `condenser_ping` returns instantaneous state (current profile, health). Different time horizons, different data shapes. |
-
-## Learning
-
-The condenser learns which compression algorithm performs best per category. After 10 compressions for a given category, `CondenserEngine::recommend_algorithm()` returns the algorithm with the highest historical compression ratio. When sufficient data exists, `compress()` auto-selects the recommended algorithm instead of the static `default_for()` mapping.
-
-The engine stores up to 200 `CompressionRecord` observations in a bounded ring buffer. The `condenser_ping` response includes:
-- `suggested_profile` — recommends a more aggressive profile when health checks flag degradation
-- `history_records` — number of stored compression observations
-- `history_stats` — per-algorithm and per-category compression ratio summaries
-
 ## Regulation Spans
 
-The `reg.condenser` tracing spans (compress, compression_ratio, health) are **diagnostic logging** for human inspection via log output — NOT cybernetic feedback signals. They are not consumed by any regulation policy or feedback loop.
+The `reg.condenser` tracing spans (compress, compression_ratio) are **diagnostic logging** for human inspection via log output — NOT cybernetic feedback signals. They are not consumed by any regulation policy or feedback loop.
 
-The actual feedback channel is the daemon's `store_experience` call, enriched with compression quality data (algorithm, category, profile, compression_ratio, health_signal_count). This data is available to the Regulation runtime for observability and analysis.
-
-## Two-Phase Condensation
-
-The ChatService's auto-condense pipeline supports two-phase condensation:
-1. **Phase 1 (CPU):** Pre-compress the old half of conversation history with `CondenserEngine` (Profile::Heavy, ConversationHistory category). Reduces token count before the expensive LLM call.
-2. **Phase 2 (LLM):** Summarize the pre-compressed old half via the centralized inference router.
-
-Phase 1 is controlled by the `pre_compress` setting (default: true). When disabled, the raw old half is fed directly to the LLM summarizer.
+The actual feedback channel is the `record_experience` call, enriched with compression quality data (algorithm, category, profile, compression_ratio, health_signal_count). This data is available to the Regulation runtime for observability and analysis.

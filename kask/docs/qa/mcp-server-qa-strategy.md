@@ -55,7 +55,7 @@ boundary, external deps, McpToolError kinds used) is in
 |---|---|---|---|
 | codegraph | 8 | yes — `codegraph_index_embeddings` calls embedding API; `codegraph_context` returns LLM-bound text | sqlite (bundled), tree-sitter, reqwest (DeepInfra/OpenRouter embeddings) |
 | companies | 40 | yes — `research_search` returns raw LLM/web claims; `company_screener` parses NL prompts | FMP, EODHD, Exa, Tavily, Brave (reqwest) |
-| condenser | 6 | yes — `condenser_compress`, `condenser_classify`, `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
+| condenser | 4 | yes — `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
 | corpus | 26 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
 | curator | 11 | no — reads Regulation ledger, does not call LLM | sqlite (SQLCipher) |
 | kata-kanban | 18 | no — pure state machine over sqlite | sqlite (SQLCipher) |
@@ -195,9 +195,8 @@ evidence produced.
 - **Tools covered**: every tool marked "LLM I/O boundary? yes" in Phase 1
   (codegraph: `codegraph_index_embeddings`, `codegraph_context`;
   companies: `research_search`, `company_screener`; condenser:
-  condenser:
-  `condenser_classify`, `condenser_thread_summary`,
-  `condenser_score_saliency`, `condenser_compress`; corpus: `corpus_compose`,
+  `condenser_thread_summary`,
+  `condenser_score_saliency`; corpus: `corpus_compose`,
   `corpus_mashup`, `corpus_generate_qa`, `corpus_generate_qa_batch`,
   `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr`,
   `corpus_rewrite`, `corpus_build_persona`, `corpus_compare`,

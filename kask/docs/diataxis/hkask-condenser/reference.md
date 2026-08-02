@@ -14,8 +14,9 @@ mds_categories: [domain, lifecycle]
 context window. It classifies each tool result into a `ContextCategory`,
 derives an `OntologyAnchor`, selects a `CondenserAlgorithm` via the
 `AlgorithmRegistry`, and scores lines by domain saliency, persona keywords,
-and structural bonuses. The crate provides three algorithms and a learning
-`CondenserEngine` that recommends better-performing algorithms over time.
+and structural bonuses. The crate provides three algorithms and a
+`CondenserEngine` that dispatches compression via the static `default_for()`
+mapping.
 
 ## Source citations
 
@@ -23,8 +24,7 @@ and structural bonuses. The crate provides three algorithms and a learning
 |--------|----------|
 | `CondenserEngine` | `kask/crates/hkask-condenser/src/engine.rs:39` |
 | `CondenserEngine::new` | `kask/crates/hkask-condenser/src/engine.rs:53` |
-| `CondenserEngine::compress` | `kask/crates/hkask-condenser/src/engine.rs:75` |
-| `recommend_algorithm` | `kask/crates/hkask-condenser/src/engine.rs:199` |
+| `CondenserEngine::compress` | `kask/crates/hkask-condenser/src/engine.rs:62` |
 | `CondenserAlgorithm` trait | `kask/crates/hkask-condenser/src/algorithms.rs:33` |
 | `RtkStyleAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:49` |
 | `WordRankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:119` |
@@ -78,12 +78,11 @@ classDiagram
     class AlgorithmRegistry {
         +new()
         +select(cat) CondenserAlgorithm
-        +select_by_name(name)
     }
     class CondenserEngine {
         +new()
         +compress(tool, output, cat)
-        +recommend_algorithm(cat)
+        +set_profile(p)
     }
     class OntologyGraph {
         +graph_adjacency_bonus(line, kws)
@@ -109,9 +108,9 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-COND-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-condenser/src/algorithms.rs:33,49,119,429,576,596; kask/crates/hkask-condenser/src/engine.rs:39,53,75,199; kask/crates/hkask-condenser/src/ontology_graph.rs:43,28; kask/crates/hkask-condenser/src/types.rs:23,217,298,342
-status: VERIFIED
+verified_date: 2026-08-02
+verified_against: kask/crates/hkask-condenser/src/algorithms.rs; kask/crates/hkask-condenser/src/engine.rs; kask/crates/hkask-condenser/src/ontology_graph.rs; kask/crates/hkask-condenser/src/types.rs
+status: VERIFIED (v2 — learning subsystem removed; select_by_name/recommend_algorithm removed)
 -->
 
 ## Saliency functions
@@ -144,16 +143,6 @@ The `classify_tool` function (`algorithms.rs:654`) maps a tool name to a
 fallback. The `derive_ontology_anchor` function (`algorithms.rs:680`) derives
 an `OntologyAnchor` (`types.rs:23`) from a tool name. These functions connect
 tool invocations to the ontology graph for saliency scoring.
-
-## Learning
-
-`CondenserEngine::recommend_algorithm` (`engine.rs:199`) returns the
-best-performing algorithm for a category based on observed compression ratios
-in the engine's bounded history ring buffer. When sufficient observations
-exist (`MIN_OBSERVATIONS_FOR_RECOMMENDATION`), `compress()` uses the
-recommended algorithm instead of the static `default_for()` mapping. This is
-the condenser's cybernetic feedback loop: the more it compresses, the better
-it selects.
 
 ## See also
 

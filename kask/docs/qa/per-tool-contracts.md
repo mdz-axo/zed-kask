@@ -203,10 +203,6 @@ Credentials: none declared (uses `InferencePort` from `HKASK_INFERENCE_URL`).
 | Tool | LLM I/O | External dep | Category 3 | Category 5 | Category 7 |
 |---|---|---|---|---|---|
 | `condenser_ping` | no | InferencePort (health) | N/A (no cred) | yes (inference down) | skip |
-| `condenser_compress` | **yes** | InferencePort | N/A | yes | **yes** |
-| `condenser_set_profile` | no | in-memory | N/A | N/A | skip |
-| `condenser_stats` | no | in-memory | N/A | N/A | skip |
-| `condenser_classify` | **yes** | InferencePort | N/A | yes | **yes** |
 | `condenser_persist` | no | episodic/semantic memory | N/A | yes | skip |
 | `condenser_thread_summary` | **yes** | InferencePort | N/A | yes | **yes** |
 | `condenser_score_saliency` | **yes** | InferencePort | N/A | yes | **yes** |
@@ -414,8 +410,8 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
 - LLM I/O boundary tools (Category 7 applies): 50
   (codegraph: 2 — `codegraph_context`, `codegraph_index_embeddings`;
   companies: 2 — `company_screener`, `research_search`;
-  condenser: 4 — `condenser_compress`, `condenser_classify`,
-  `condenser_thread_summary`, `condenser_score_saliency`;
+  condenser: 2 — `condenser_thread_summary`,
+  `condenser_score_saliency`;
   corpus: 11 — `corpus_ocr`, `corpus_build_persona`, `corpus_compose`,
   `corpus_rewrite`, `corpus_compare`, `corpus_mashup`, `corpus_generate_qa`,
   `corpus_generate_qa_batch`, `corpus_extract_triples`, `corpus_embed`,
@@ -431,14 +427,13 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
   `scenario_research`, `scenario_synthesize`, `scenario_assess`;
   training: 2 — `training_evaluate`, `training_validate_config`)
 - Tools with declared credentials (Category 3 applies): all tools on servers
-  that declare credentials (companies, corpus, curator, kata-kanban, media,
+  credentials (companies, corpus, curator, kata-kanban, media,
   research, training) plus `codegraph_index_embeddings` which reads inline
-  keys. codegraph (other 8), condenser (8), scenarios (18) declare no
+  keys. codegraph (other 8), condenser (4), scenarios (18) declare no
   credentials → Category 3 is N/A for those.
 - Tools with external dependencies (Category 5 applies): all except the
-  in-memory-only tools: `condenser_set_profile`, `condenser_stats`,
-  `corpus_convert`, `corpus_is_complex`, `corpus_chunk`, `corpus_explain`,
-  `image_create_collage`, `audio_capture`, `web_ping`.
+  in-memory-only tools: `corpus_convert`, `corpus_is_complex`, `corpus_chunk`,
+  `corpus_explain`, `image_create_collage`, `audio_capture`, `web_ping`.
 
 The routine's total cell count is `206 × 7 = 1442`, minus the explicit
 N/A skips documented above. The coverage matrix converges when every

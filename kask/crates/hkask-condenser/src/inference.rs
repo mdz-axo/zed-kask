@@ -8,9 +8,8 @@ use crate::types::ThreadSummaryOutput;
 
 /// System prompt for LLM-assisted thread summarization.
 ///
-/// Shared by the MCP server's `condenser_thread_summary` tool and the
-/// ChatService's `condense_history` auto-condense path. Both callers
-/// feed this as the system prompt for the inference request.
+/// Used by the MCP server's `condenser_thread_summary` tool as the system
+/// prompt for the inference request.
 pub const SUMMARY_SYSTEM_PROMPT: &str = "You are a context condensation assistant. Produce structured summaries that \
      preserve technical details (file paths, error messages, decisions) while \
      eliminating verbosity. Use bullet points. Be concise.";

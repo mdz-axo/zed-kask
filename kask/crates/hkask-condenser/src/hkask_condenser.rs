@@ -25,20 +25,17 @@
 //!   receive bonus scores.
 //! - **`types`** — Domain types: `OntologyAnchor` (3-tier classification),
 //!   `OntologyAxis` (Pko/DcBibo), `OntologyNamespace` (Fibo/Golem/Cogat/
-//!   MlSchema/Omc), compression profiles, health signals, `CompressionRecord`
-//!   (per-compression observation for learning), `CompressionHistoryStats`.
-//! - **`engine`** — `CondenserEngine` owns profile state, compression dispatch,
-//!   and compression history (bounded ring buffer of `CompressionRecord`).
-//!   After 10+ observations per category, `recommend_algorithm()` returns the
-//!   best-performing algorithm — `compress()` auto-selects it (learning).
-//!   `suggest_profile()` recommends a more aggressive profile when health
-//!   checks flag degradation. Derives ontology anchors from tool names internally.
+//!   MlSchema/Omc), compression profiles, health signals.
+//! - **`engine`** — `CondenserEngine` owns profile state and compression
+//!   dispatch. Selects an algorithm per compression via the static
+//!   `default_for()` mapping. Derives ontology anchors from tool names
+//!   internally.
 //! - **`inference`** — Prompt formatting and token estimation for
 //!   LLM-assisted thread summarization.
 //!
 //! This crate provides the domain primitives consumed by:
-//! - `hkask-services-chat` (ChatService::condense_history — two-phase auto-condense:
-//!   CPU pre-compress + LLM summarize)
+//! - `kask_bridge` (`BridgeThreadCondenser` — the runtime tool-result
+//!   compression path wired into the agent turn loop)
 //! - `hkask-mcp-condenser` (MCP server — thin wrapper exposing tools)
 
 pub mod algorithms;

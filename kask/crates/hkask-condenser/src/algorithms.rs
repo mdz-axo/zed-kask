@@ -604,29 +604,6 @@ impl AlgorithmRegistry {
             .expect("at least one algorithm")
             .as_ref()
     }
-
-    /// Select an algorithm by name. Used by the learning mechanism in
-    /// `CondenserEngine::compress()` when `recommend_algorithm()` returns
-    /// a historically better-performing algorithm than the static mapping.
-    pub fn select_by_name(&self, name: &str) -> Option<&dyn CondenserAlgorithm> {
-        self.algorithms
-            .iter()
-            .find(|a| a.name() == name)
-            .map(|a| a.as_ref())
-    }
-
-    pub fn list_algorithms(&self) -> Vec<serde_json::Value> {
-        self.algorithms
-            .iter()
-            .map(|a| {
-                serde_json::json!({
-                    "name": a.name(),
-                    "description": a.description(),
-                    "default_for": a.default_for().iter().map(|c| c.label()).collect::<Vec<_>>(),
-                })
-            })
-            .collect()
-    }
 }
 
 /// Keyword→category mapping — single source of truth for both exact-token (Phase 1)
@@ -902,7 +879,7 @@ mod tests {
             }
         );
         assert_eq!(
-            derive_ontology_anchor("condenser_compress"),
+            derive_ontology_anchor("condenser_persist"),
             OntologyAnchor::DualAxis {
                 axis: OntologyAxis::Pko,
                 concept: hkask_bridge_dublincore::PROCEDURE.to_string()

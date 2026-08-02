@@ -1,7 +1,8 @@
 # QA Condenser Health Check — v0.31.0
 #
-# Verifies hkask-mcp-condenser compression invariants by running the
-# condenser_contract.rs test suite and classifying failures.
+# Verifies hkask-mcp-condenser invariants by running the qa_contract.rs test
+# suite (MCP tool contracts) and the hkask-condenser engine unit tests,
+# then classifying failures.
 #
 # Open questions addressed:
 #   8.1  — Condenser completion (regression protection)
@@ -9,22 +10,16 @@
 #         (compressed_bytes <= original_bytes)
 #
 # Cybernetic feedback loop:
-#   Sensor → cargo test output for condenser_contract
-#   Comparator → classify step evaluates SLA violation patterns
+#   Sensor → cargo test output for qa_contract + engine unit tests
+#   Comparator → classify step evaluates failure patterns
 #   Actuator → terminal step reports health status
 #
-# SLA invariants verified by condenser_contract.rs (11 tests):
-#   1. compress_reduces_size         — compressed_bytes <= original_bytes
-#   2. compress_empty_input          — handles empty input gracefully
-#   3. compress_with_explicit_category — category passthrough
-#   4. repeated_compression_increments_stats — cumulative stats
-#   5. classify_chat_tool            — tool→category mapping
-#   6. classify_test_tool
-#   7. classify_shell_tool
-#   8. classify_unknown_tool_is_unknown
-#   9. default_profile_is_normal     — profile handling
-#  10. set_profile_changes_behavior  — profile switching
-#  11. health_check_returns_signals  — health signal detection
+# Test coverage:
+#   - hkask-mcp-condenser qa_contract.rs (11 tests): condenser_ping,
+#     condenser_persist, condenser_thread_summary, condenser_score_saliency
+#     (happy paths, schema violations, error propagation, adversarial injection)
+#   - hkask-condenser engine unit tests: compress returns content, profile
+#     switching, classify mapping, passthrough when budget exceeds input
 #
 # Runner readiness: PARTIAL — run_command steps executable today;
 #   classify step requires QaScriptRunner.
@@ -36,9 +31,10 @@ manifest:
   version: 0.31.0
   visibility: Private
   description: >
-    Verifies hkask-mcp-condenser compression engine invariants through
-    the condenser_contract.rs test suite (11 tests). Classifies failures
-    for regressions in compression SLA, health signals, or profile handling.
+    Verifies hkask-mcp-condenser invariants through the qa_contract.rs test
+    suite (11 MCP tool contract tests) and the hkask-condenser engine unit
+    tests. Classifies failures for regressions in compression, persistence,
+    thread summarization, or saliency scoring.
 
 gas:
   cap: 20000
@@ -54,8 +50,8 @@ steps:
   # Step 1: Run condenser contract tests
   - ordinal: 1
     action: execute
-    command: "cargo test -p hkask-mcp-condenser --test condenser_contract -- --nocapture 2>&1 | tail -25"
-    description: "Run condenser engine contract tests: compression SLA, health signals, classification, profiles"
+    command: "cargo test -p hkask-mcp-condenser -p hkask-condenser --no-fail-fast 2>&1 | tail -25"
+    description: "Run condenser MCP contract tests + engine unit tests"
     retries: 0
     branching:
       success: 2
@@ -66,7 +62,7 @@ steps:
   - ordinal: 2
     action: select
     classifier: qa-triage
-    description: "Test suite: hkask-mcp-condenser contract tests. Verify compression engine invariants: compressed_bytes <= original_bytes for all inputs, empty input handling, category passthrough, cumulative statistics, profile switching (set_profile_changes_behavior), tool classification (chat/test/shell/unknown), and health signal detection. All 11 contract tests passing indicates condenser SLA compliance."
+    description: "Test suites: hkask-mcp-condenser qa_contract.rs (11 tests covering condenser_ping, condenser_persist, condenser_thread_summary, condenser_score_saliency — happy paths, schema violations, error propagation, adversarial injection) and hkask-condenser engine unit tests (compress, profile, classify). All tests passing indicates condenser health."
     retries: 0
     branching:
       high_confidence: 3
@@ -79,16 +75,16 @@ steps:
   # Step 3: PASS — all condenser invariants hold
   - ordinal: 3
     action: execute
-    command: "echo '[QA:condenser] PASS — compression SLA, health signals verified (11/11)'"
-    description: "All condenser contract tests pass"
+    command: "echo '[QA:condenser] PASS — MCP contract tests + engine unit tests verified'"
+    description: "All condenser tests pass"
     retries: 0
     terminal: true
 
-  # Step 4: Contract test failure — SLA violation
+  # Step 4: Test failure — regression detected
   - ordinal: 4
     action: execute
-    command: "echo '[QA:condenser] FAIL — condenser contract tests failed. Possible SLA violation: negative_compression, low_signal, or broken profile switching.'"
-    description: "Condenser contract test failure — compression engine SLA may be violated"
+    command: "echo '[QA:condenser] FAIL — condenser tests failed. Possible regression in compression, persistence, thread summarization, or saliency scoring.'"
+    description: "Condenser test failure — regression may be present"
     retries: 0
     terminal: true
 

@@ -140,7 +140,6 @@ impl CondenserServer {
                 .engine
                 .lock()
                 .map_err(|_| McpToolError::internal("engine lock poisoned"))?;
-            let health = engine.check_global_health();
             let mode = if self.capability_tier.embedded {
                 "embedded"
             } else {
@@ -157,123 +156,8 @@ impl CondenserServer {
                     "keystore": self.capability_tier.keystore_available,
                     "reg": self.capability_tier.reg_available(),
                 },
-                "profile": engine.stats.current_profile,
-                "suggested_profile": engine.suggest_profile().to_string(),
-                "algorithms": engine.registry.list_algorithms(),
-                "health": health,
-                "history_records": engine.history_len(),
-                "history_stats": engine.compression_stats(),
+                "profile": engine.profile().to_string(),
                 "default_model": self.default_model,
-            }))
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Compress tool output using context-aware algorithms with domain ontology anchoring (P8.1)"
-    )]
-    pub async fn condenser_compress(
-        &self,
-        Parameters(CompressRequest {
-            tool_name,
-            output,
-            category,
-        }): Parameters<CompressRequest>,
-    ) -> String {
-        execute_tool(self, "condenser_compress", async {
-            if output.is_empty() {
-                return Err(McpToolError::invalid_argument("output must not be empty"));
-            }
-            let cat = match category.as_deref() {
-                Some(c) => match c.parse::<ContextCategory>() {
-                    Ok(cat) => Some(cat),
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(e));
-                    }
-                },
-                None => None,
-            };
-            let mut engine = self.engine.lock().map_err(|_| McpToolError::internal("engine lock poisoned"))?;
-            let result = engine.compress(&tool_name, &output, cat);
-
-            self.record_experience(
-                "condenser_compress",
-                &tool_name,
-                "success",
-                serde_json::json!({
-                    "algorithm": result.algorithm,
-                    "category": result.category,
-                    "profile": result.profile,
-                    "compression_ratio": if result.compressed_bytes == 0 { 0.0 } else { result.original_bytes as f64 / result.compressed_bytes as f64 },
-                    "original_size": result.original_bytes,
-                    "compressed_size": result.compressed_bytes,
-                    "reduction_pct": result.reduction_pct,
-                    "health_signals": result.health_signals.len(),
-                }),
-            );
-
-            // CompressedOutput contains only strings, integers, and a clamped f64 — never NaN/Inf.
-            Ok(
-                serde_json::to_value(&result).expect("CompressedOutput serialization is infallible"),
-            )
-        }).await
-    }
-
-    #[tool(description = "Set compression profile (heavy/normal/soft/light)")]
-    pub async fn condenser_set_profile(
-        &self,
-        Parameters(SetProfileRequest { profile }): Parameters<SetProfileRequest>,
-    ) -> String {
-        execute_tool(self, "condenser_set_profile", async {
-            let p = match profile.parse::<Profile>() {
-                Ok(p) => p,
-                Err(e) => {
-                    return Err(McpToolError::invalid_argument(e));
-                }
-            };
-            let mut engine = self
-                .engine
-                .lock()
-                .map_err(|_| McpToolError::internal("engine lock poisoned"))?;
-            engine.set_profile(p);
-            Ok(serde_json::json!({
-                "profile": p.to_string(),
-                "retention_pct": p.retention_pct(),
-                "max_lines": p.max_lines(),
-            }))
-        })
-        .await
-    }
-
-    #[tool(description = "Cumulative compression statistics")]
-    pub async fn condenser_stats(&self) -> String {
-        execute_tool(self, "condenser_stats", async {
-            let engine = self
-                .engine
-                .lock()
-                .map_err(|_| McpToolError::internal("engine lock poisoned"))?;
-            // CondenserStats contains only strings and integers — never NaN/Inf.
-            Ok(serde_json::to_value(engine.get_stats())
-                .expect("CondenserStats serialization is infallible"))
-        })
-        .await
-    }
-
-    #[tool(description = "Classify tool name to context category")]
-    pub async fn condenser_classify(
-        &self,
-        Parameters(ClassifyRequest { tool_name }): Parameters<ClassifyRequest>,
-    ) -> String {
-        execute_tool(self, "condenser_classify", async {
-            let engine = self
-                .engine
-                .lock()
-                .map_err(|_| McpToolError::internal("engine lock poisoned"))?;
-            let (category, algorithm) = engine.classify(&tool_name);
-            Ok(serde_json::json!({
-                "tool_name": tool_name,
-                "category": category.label(),
-                "algorithm": algorithm,
             }))
         })
         .await

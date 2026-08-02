@@ -176,23 +176,6 @@ impl std::fmt::Display for OntologyNamespace {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompressRequest {
-    pub tool_name: String,
-    pub output: String,
-    pub category: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SetProfileRequest {
-    pub profile: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ClassifyRequest {
-    pub tool_name: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct PersistRequest {
     /// Tool name that produced the content.
     pub tool_name: String,
@@ -375,76 +358,6 @@ pub struct CondenserHealthSignal {
     pub budget_requested: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_filled: Option<usize>,
-}
-
-/// Cumulative compression statistics.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CondenserStats {
-    pub total_compressions: u64,
-    pub total_original_bytes: u64,
-    pub total_compressed_bytes: u64,
-    pub algorithm_usage: std::collections::HashMap<String, u64>,
-    pub category_usage: std::collections::HashMap<String, u64>,
-    pub current_profile: String,
-}
-
-impl Default for CondenserStats {
-    fn default() -> Self {
-        Self {
-            total_compressions: 0,
-            total_original_bytes: 0,
-            total_compressed_bytes: 0,
-            algorithm_usage: std::collections::HashMap::new(),
-            category_usage: std::collections::HashMap::new(),
-            current_profile: "normal".to_string(),
-        }
-    }
-}
-
-/// A single compression observation for learning.
-///
-/// Stored in `CondenserEngine::history` (bounded ring buffer). Used by
-/// `recommend_algorithm()` to select the best-performing algorithm per
-/// category based on observed compression ratios.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CompressionRecord {
-    /// Algorithm name (e.g., "word_rank", "rtk_style", "flashrank").
-    pub algorithm: String,
-    /// Context category label (e.g., "log_output", "shell_command").
-    pub category: String,
-    /// Profile name at time of compression (e.g., "heavy", "normal").
-    pub profile: String,
-    /// Compression ratio: original_bytes / compressed_bytes (higher = better).
-    pub compression_ratio: f64,
-    /// Original input size in bytes.
-    pub original_bytes: usize,
-    /// Compressed output size in bytes.
-    pub compressed_bytes: usize,
-}
-
-/// Per-algorithm compression statistics computed from history.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AlgorithmStats {
-    pub count: usize,
-    pub mean_ratio: f64,
-    pub min_ratio: f64,
-    pub max_ratio: f64,
-}
-
-/// Per-category compression statistics computed from history.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CategoryStats {
-    pub count: usize,
-    pub mean_ratio: f64,
-    pub best_algorithm: String,
-}
-
-/// Summary of compression history grouped by algorithm and category.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct CompressionHistoryStats {
-    pub by_algorithm: std::collections::HashMap<String, AlgorithmStats>,
-    pub by_category: std::collections::HashMap<String, CategoryStats>,
-    pub total_records: usize,
 }
 
 /// Request for thread summarization via the centralized inference router.
@@ -834,26 +747,5 @@ mod tests {
             let parsed: OntologyNamespace = s.parse().unwrap();
             assert_eq!(parsed, *ns, "round-trip failed for {ns:?}");
         }
-    }
-
-    #[test]
-    fn compress_request_defaults_category_to_none() {
-        let req: CompressRequest =
-            serde_json::from_str(r#"{"tool_name": "test", "output": "hello"}"#).unwrap();
-        assert_eq!(req.category, None);
-    }
-
-    #[test]
-    fn compress_request_parses_explicit_category() {
-        let req: CompressRequest = serde_json::from_str(
-            r#"{
-                "tool_name": "company_profile",
-                "output": "AAPL market cap 3.2T",
-                "category": "structured_data"
-            }"#,
-        )
-        .unwrap();
-        assert_eq!(req.category.as_deref(), Some("structured_data"));
-        assert_eq!(req.tool_name, "company_profile");
     }
 }

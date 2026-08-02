@@ -1,7 +1,7 @@
 ---
 title: "Condenser MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-08-01
+last_updated: 2026-08-02
 version: "0.32.1"
 status: "Active"
 domain: "Composition"
@@ -11,97 +11,86 @@ mds_categories: [composition, lifecycle]
 # Condenser MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-condenser` (MCP wrapper) + `crates/hkask-condenser` (pure domain)
-**Tools:** 8 — `condenser_ping`, `condenser_compress`, `condenser_classify`, `condenser_set_profile`, `condenser_stats`, `condenser_persist`, `condenser_thread_summary`, `condenser_score_saliency`
+**Tools:** 4 — `condenser_ping`, `condenser_persist`, `condenser_thread_summary`, `condenser_score_saliency`
 **Auto-start:** Yes (one of the core servers auto-started at editor startup / agent panel initialization; not in `CORE_EXCLUDED`)
 
-> **Hosting note (v0.31.0):** The deleted `hkask-services-chat` crate has been replaced by zed's
-> in-process chat / agent panel (`crates/agent`, `crates/agent_ui`). The 2-phase `condense_history`
-> flow is invoked from the in-process agent loop, not from a standalone chat service. The deleted
-> REPL boot surface is replaced by editor startup / agent panel initialization.
+> **Hosting note (v0.32.1):** The runtime tool-result compression path is `BridgeThreadCondenser`
+> (in `kask_bridge`), wired into zed's agent turn loop via `agent::set_thread_condenser`. It calls
+> `CondenserEngine::compress` directly — no MCP round-trip. The MCP server exposes only the
+> operations the agent cannot perform inline: LLM-assisted thread summarization, episodic
+> persistence, and saliency scoring. The previous `condenser_compress` MCP tool was removed
+> (redundant with the bridge), along with the learning/stats tools (`condenser_stats`,
+> `condenser_set_profile`, `condenser_classify`) and the engine's learning subsystem (history
+> ring buffer, `recommend_algorithm`, `compression_stats`, `suggest_profile`,
+> `check_global_health`) — all were dormant in the default-off configuration.
 
 ## Pipeline Architecture (DIAG-RF-006)
 
-The `CondenserServer` (thin MCP wrapper) delegates to `CondenserEngine` (pure domain logic), which dispatches to one of three compression algorithms based on the classified `ContextCategory`. The engine records each compression in a bounded history ring buffer; after 10+ observations per category, it auto-selects the best-performing algorithm (learning). The in-process agent loop's `condense_history` (in zed's `crates/agent`, replacing the deleted `hkask-services-chat`) uses two-phase condensation: CPU pre-compress (Phase 1) then LLM summarize (Phase 2).
+The `CondenserServer` (thin MCP wrapper) delegates to `CondenserEngine` (pure domain logic) for
+compression, and to `InferencePort` for LLM summarization. The engine selects an algorithm per
+compression via the static `default_for()` mapping — no learning, no history, no stats.
 
 ```mermaid
 flowchart TD
     Client["MCP Client\n(zed agent panel / external)"]
-    
+
     subgraph Wrapper["hkask-mcp-condenser (thin wrapper)"]
         Server["CondenserServer\nMCP tool router"]
-        Ping["condenser_ping\n+suggested_profile\n+history_stats"]
-        Compress["condenser_compress\n+auto-select algorithm"]
-        Classify["condenser_classify"]
-        SetProfile["condenser_set_profile"]
-        Stats["condenser_stats"]
+        Ping["condenser_ping\n+profile +capabilities"]
         Persist["condenser_persist"]
         ThreadSummary["condenser_thread_summary"]
         ScoreSaliency["condenser_score_saliency"]
     end
-    
+
     subgraph Domain["hkask-condenser (pure domain)"]
-        Engine["CondenserEngine\nprofile + stats + history"]
-        Registry["AlgorithmRegistry\nselect + select_by_name"]
+        Engine["CondenserEngine\nprofile + compress"]
+        Registry["AlgorithmRegistry\nselect (static default_for)"]
         ClassifyFn["classify_tool\ntool_name to category"]
         AnchorFn["derive_ontology_anchor\ntool_name to OntologyAnchor"]
         SaliencyFn["domain_saliency\nline + anchor to f64"]
-        SaliencyModule["saliency module\nscore_against_persona\nextract_query_words\nscore_memory_results\nword_frequencies shared"]
+        SaliencyModule["saliency module\nscore_against_persona\nextract_query_words\nscore_memory_results"]
         OntologyGraph["OntologyGraph\nFIBO/CogAT/GOLEM/ML-Schema/OMC/PKO/DC+BIBO"]
-        History["CompressionRecord ring buffer\n200 max observations"]
-        Learning["recommend_algorithm\nsuggest_profile\ncompression_stats"]
     end
-    
+
     subgraph Algos["Compression Algorithms"]
         Rtk["rtk_style\nhead/tail + density factor"]
         WordRank["word_rank\nTF-IDF + structural + saliency"]
         Flashrank["flashrank\ngreedy marginal utility"]
     end
-    
-    subgraph ChatSvc["crates/agent (in-process chat / agent panel)"]
-        CondenseHistory["condense_history\n2-phase: CPU then LLM"]
-        Phase1["Phase 1: CPU pre-compress\nCondenserEngine Heavy profile"]
-        Phase2["Phase 2: LLM summarize\nInferencePort call"]
+
+    subgraph Bridge["kask_bridge (runtime path)"]
+        BridgeCondenser["BridgeThreadCondenser\ncompress_tool_result"]
     end
-    
+
     subgraph Infra["Infrastructure"]
-        InferencePort["GuardedInferencePort\nover LanguageModelInferencePort\n(D4/D8 — not a centralized router)"]
+        InferencePort["InferencePort\n(hkask-inference router)"]
         Episodic["EpisodicMemory\n(optional, SQLite-backed)"]
         Semantic["SemanticMemory\n(optional, SQLite + embeddings)"]
         EmbeddingStore["EmbeddingStore\n1024-dim KNN search"]
     end
+
     Client -->|"tool call"| Server
     Server --> Ping
-    Server --> Compress
-    Server --> Classify
-    Server --> SetProfile
-    Server --> Stats
     Server --> Persist
     Server --> ThreadSummary
     Server --> ScoreSaliency
-    
+
     Ping --> Engine
-    Compress --> Engine
-    Classify --> Engine
-    SetProfile --> Engine
-    Stats --> Engine
-    
+    BridgeCondenser -->|"in-process, no MCP"| Engine
+
     Engine --> Registry
     Engine --> ClassifyFn
     Engine --> AnchorFn
     Engine --> SaliencyFn
-    Engine --> History
-    Engine --> Learning
-    Learning -->|"reads"| History
     SaliencyFn --> OntologyGraph
-    
+
     Registry -->|"static default_for"| Rtk
     Registry -->|"static default_for"| WordRank
     Registry -->|"static default_for"| Flashrank
-    Learning -->|"learned override"| Registry
-    
+
     Rtk -->|"density_factor"| AnchorFn
     WordRank -->|"line_score"| SaliencyFn
-    
+
     Persist --> Episodic
     ThreadSummary --> InferencePort
     ScoreSaliency -->|"against=persona"| SaliencyModule
@@ -109,34 +98,27 @@ flowchart TD
     ScoreSaliency -->|"against=memory fallback"| Episodic
     ScoreSaliency -->|"score result count"| SaliencyModule
     Semantic --> EmbeddingStore
-    
-    Compress -->|"record_experience\n(in-process; episodic.store when configured, else debug log)"| Episodic
+
     ThreadSummary -->|"record_experience\n(in-process; episodic.store when configured, else debug log)"| Episodic
-    
-    CondenseHistory --> Phase1
-    Phase1 -->|"CondenserEngine\nProfile::Heavy"| Engine
-    Phase1 -->|"compressed text"| Phase2
-    Phase2 --> InferencePort
-    CondenseHistory -->|"format + estimate"| SaliencyModule
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-006
-verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs (CondenserServer tool router + record_experience), crates/hkask-condenser/src/engine.rs (CondenserEngine), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry + 3 algorithms); condense_history 2-phase invoked from zed's crates/agent; InferencePort node = GuardedInferencePort over LanguageModelInferencePort (D4/D8); record_experience edges point at live EpisodicMemory (in-process episodic.store when configured, else debug log) — no daemon, no DaemonClient; tool count verified at 8 #[tool] annotations
-status: VERIFIED (v5 — Daemon node removed; record_experience edges repointed to live EpisodicMemory; tool count corrected to 8)
+verified_date: 2026-08-02
+verified_against: mcp-servers/hkask-mcp-condenser/src/hkask_mcp_condenser.rs (CondenserServer tool router + record_experience), crates/hkask-condenser/src/engine.rs (CondenserEngine — no history/learning), crates/hkask-condenser/src/algorithms.rs (AlgorithmRegistry::select only — select_by_name/list_algorithms removed), kask/crates/kask_bridge/src/condenser_bridge.rs (BridgeThreadCondenser — runtime path); tool count verified at 4 #[tool] annotations
+status: VERIFIED (v6 — learning subsystem + 4 MCP tools removed; BridgeThreadCondenser shown as runtime path)
 -->
 
 ## Key paths
 
-- **Compress:** `condenser_compress` → `CondenserEngine` → `AlgorithmRegistry::select` (auto-select after 10+ observations per category) → algorithm (`rtk_style` / `word_rank` / `flashrank`) → `CompressionRecord` appended to ring buffer (200 max)
-- **Classify:** `condenser_classify` → `classify_tool` maps tool name → `ContextCategory`
-- **Saliency:** `condenser_score_saliency` → `domain_saliency` (line + `OntologyAnchor`) → against persona / memory / memory-fallback
-- **Auto-condense (in-process agent loop):** `condense_history` → Phase 1 (CPU pre-compress via `CondenserEngine` Heavy profile) → Phase 2 (LLM summarize via `InferencePort`)
-- **Learning loop:** `condenser_compress` and `condenser_thread_summary` call `record_experience` in-process after the engine produces a result. When episodic persistence is configured (`HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`), `record_experience` builds a first-person `HMem` and stores it via `EpisodicMemory::store`; otherwise it emits a debug log (`hkask.mcp.condenser.memory`) so the server still runs in memory-only mode. There is no daemon, no `DaemonClient`, and no fire-and-forget task — recording is a synchronous in-process call owned by the server. `recommend_algorithm` / `suggest_profile` continue to read the in-process ring buffer (200 max observations) to override the static `default_for` selection; the ring buffer is the live learning substrate.
+- **Runtime compression (in-process, no MCP):** `BridgeThreadCondenser::compress_tool_result` → `CondenserEngine::compress` → `AlgorithmRegistry::select` (static `default_for`) → algorithm (`rtk_style` / `word_rank` / `flashrank`). Wired via `agent::set_thread_condenser` in `crates/zed/src/main.rs`, gated on `kask.condenser.auto_compress_tool_results` (default off). Code-reading tools bypass the condenser via `NO_COMPRESS_TOOLS` in `crates/agent/src/thread.rs`.
+- **Thread summary:** `condenser_thread_summary` → `inference::format_conversation_text` + `SUMMARY_SYSTEM_PROMPT` → `InferencePort::generate_with_model` → `inference::build_summary_output`.
+- **Saliency:** `condenser_score_saliency` → `saliency::score_against_persona` (persona) or `saliency::extract_query_words` + memory query + `saliency::score_memory_results` (memory).
+- **Persist:** `condenser_persist` → `EpisodicMemory::store` (requires `HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`).
+- **Experience recording:** `condenser_thread_summary` calls `record_experience` in-process after producing a result. When episodic persistence is configured, `record_experience` builds a first-person `HMem` and stores it via `EpisodicMemory::store`; otherwise it emits a debug log (`hkask.mcp.condenser.memory`). There is no daemon and no fire-and-forget task — recording is a synchronous in-process call owned by the server.
 
 ## Cross-links
 
 - [MCP Server Registry](README.md) — all 11 on-disk MCP servers
-- [MCP Server Explanation](../../diataxis/hkask-mcp-server/explanation.md) — MCP bootstrap and tool dispatch sequence (replaces the deleted `explanation/architecture-patterns.md`)
-- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams, essentialist split (hkask-services-chat deleted; chat owned by zed's `crates/agent`)
+- [MCP Server Explanation](../../diataxis/hkask-mcp-server/explanation.md) — MCP bootstrap and tool dispatch sequence
+- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams
