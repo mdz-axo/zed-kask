@@ -1,4 +1,4 @@
-//! Inference configuration — multi-provider routing for 8 providers: DeepInfra, fal.ai, Together AI, OpenRouter, KiloCode, Ollama (local), Cline (cloud gateway), RunPod (vision/OCR only).
+//! Inference configuration — multi-provider routing for 9 providers: DeepInfra, fal.ai, Together AI, OpenRouter, KiloCode, Ollama (local), Cline (cloud gateway), RunPod (vision/OCR only), Z.ai.
 //!
 //! # Environment Variables
 //!
@@ -9,8 +9,10 @@
 //! - `KILOCODE_BASE_URL` / `KILOCODE_API_KEY` — KiloCode (cloud, required)
 //! - `OLLAMA_BASE_URL` / `OLLAMA_API_KEY` — Ollama (local; key optional, header ignored)
 //! - `CLINE_BASE_URL` / `CLINE_API_KEY` — Cline cloud gateway (required)
+//! - `ZAI_BASE_URL` / `ZAI_API_KEY` — Z.ai (cloud, required). OpenAI-compatible platform at `api.z.ai`
+//!   hosting GLM models (e.g. `glm-5.2`). Base URL default: `https://api.z.ai/api/paas/v4`.
 //! - `RUNPOD_API_KEY` / `RUNPOD_BASE_URL` or `RUNPOD_TEMPLATE_ID` — RunPod (vision/OCR only)
-//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, Together AI, RunPod, OpenRouter, KiloCode, ollama, Cline; default: DeepInfra)
+//! - `HKASK_DEFAULT_PROVIDER` — default provider for unprefixed models (DeepInfra, fal.ai, Together AI, RunPod, OpenRouter, KiloCode, ollama, Cline, Z.ai; default: DeepInfra)
 //! - `HKASK_DEFAULT_MODEL` — default model (default: `OpenRouter/z-ai/glm-5.2`)
 //!
 //! # API Key Resolution
@@ -29,6 +31,7 @@
 //! - `KiloCode/anthropic/claude-sonnet-4.5` → KiloCode (cloud)
 //! - `ollama/qwen3:8b` → Ollama (local)
 //! - `Cline/anthropic/claude-sonnet-4-6` → Cline (cloud gateway)
+//! - `Z.ai/glm-5.2` → Z.ai (cloud)
 //! - `RunPod/kask-ocr` → RunPod (vision/OCR only — not available for chat)
 //! - No prefix → default provider (configurable, default: DeepInfra)
 
@@ -65,6 +68,11 @@ pub enum ProviderId {
     /// Env: `CLINE_API_KEY`, `CLINE_BASE_URL` (default `https://api.cline.bot/api`).
     #[serde(rename = "CL")]
     Cline,
+    /// Z.ai (cloud) — prefix `Z.ai/`. OpenAI-compatible platform at `api.z.ai`
+    /// hosting GLM models (e.g. `glm-5.2`, `glm-5v-turbo`).
+    /// Env: `ZAI_API_KEY`, `ZAI_BASE_URL` (default `https://api.z.ai/api/paas/v4`).
+    #[serde(rename = "ZA")]
+    Zai,
 }
 
 impl ProviderId {
@@ -76,7 +84,7 @@ impl ProviderId {
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — model-name routing to provider boundary
     /// pre:  model is non-empty
-    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, fal.ai/, Together AI/, RunPod/, OpenRouter/, KiloCode/, ollama/, Cline/ prefixes
+    /// post: returns Some((ProviderId, stripped_model)) for DeepInfra/, fal.ai/, Together AI/, RunPod/, OpenRouter/, KiloCode/, ollama/, Cline/, Z.ai/ prefixes
     /// post: returns None for unrecognized or missing prefix
     #[must_use]
     pub fn parse_from_model(model: &str) -> Option<(Self, &str)> {
@@ -91,6 +99,7 @@ impl ProviderId {
             ("KiloCode/", ProviderId::KiloCode),
             ("ollama/", ProviderId::Ollama),
             ("Cline/", ProviderId::Cline),
+            ("Z.ai/", ProviderId::Zai),
         ];
         for (prefix, provider) in PREFIXES {
             if let Some(rest) = model.strip_prefix(prefix) {
@@ -143,7 +152,7 @@ impl ProviderId {
     ///
     /// expect: "The system normalizes provider responses for monitoring"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — stable provider name for routing
-    /// post: returns "DeepInfra", "fal.ai", "Together AI", "RunPod", "OpenRouter", "KiloCode", "ollama", or "Cline"
+    /// post: returns "DeepInfra", "fal.ai", "Together AI", "RunPod", "OpenRouter", "KiloCode", "ollama", "Cline", or "Z.ai"
     #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -155,6 +164,7 @@ impl ProviderId {
             ProviderId::KiloCode => "KiloCode",
             ProviderId::Ollama => "ollama",
             ProviderId::Cline => "Cline",
+            ProviderId::Zai => "Z.ai",
         }
     }
 }
@@ -191,6 +201,10 @@ pub struct InferenceConfig {
     /// Env: `CLINE_API_KEY`, `CLINE_BASE_URL` (default `https://api.cline.bot/api`).
     pub cline_base_url: String,
     pub cline_api_key: String,
+    /// Z.ai cloud — OpenAI-compatible platform at `api.z.ai` hosting GLM models.
+    /// Env: `ZAI_API_KEY`, `ZAI_BASE_URL` (default `https://api.z.ai/api/paas/v4`).
+    pub zai_base_url: String,
+    pub zai_api_key: String,
     pub timeout_secs: u64,
     pub pool_max_idle: usize,
     pub default_model: String,
@@ -216,6 +230,8 @@ impl Default for InferenceConfig {
             ollama_api_key: String::new(),
             cline_base_url: "https://api.cline.bot/api".to_string(),
             cline_api_key: String::new(),
+            zai_base_url: "https://api.z.ai/api/paas/v4".to_string(),
+            zai_api_key: String::new(),
             timeout_secs: 120,
             pool_max_idle: 5,
             default_model: "OpenRouter/z-ai/glm-5.2".to_string(),
@@ -242,6 +258,8 @@ impl InferenceConfig {
         let cline_base_url = std::env::var("CLINE_BASE_URL")
             .unwrap_or_else(|_| "https://api.cline.bot/api".to_string());
         let cline_api_key = resolve_api_key("CLINE_API_KEY");
+        // Z.ai — sanitized prefix "Z.ai" → ZAI, reading ZAI_BASE_URL / ZAI_API_KEY.
+        let za = ProviderConfig::from_env("Z.ai", "https://api.z.ai/api/paas/v4");
 
         let fal_base_url =
             std::env::var("FALAI_BASE_URL").unwrap_or_else(|_| "https://api.fal.ai".to_string());
@@ -272,6 +290,8 @@ impl InferenceConfig {
             ollama_api_key: om.api_key,
             cline_base_url,
             cline_api_key,
+            zai_base_url: za.base_url,
+            zai_api_key: za.api_key,
             timeout_secs: resolve_config_str("HKASK_HTTP_TIMEOUT_SECS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(120),
@@ -336,7 +356,7 @@ fn resolve_api_key(env_name: &str) -> String {
 ///
 /// Reads `HKASK_DEFAULT_PROVIDER` via [`resolve_api_key`] (env var first, then
 /// OS keychain). Accepted values: DeepInfra, fal.ai, Together AI, RunPod,
-/// OpenRouter, KiloCode, ollama, Cline. Defaults to DeepInfra.
+/// OpenRouter, KiloCode, ollama, Cline, Z.ai. Defaults to DeepInfra.
 fn resolve_default_provider() -> ProviderId {
     let raw = resolve_api_key("HKASK_DEFAULT_PROVIDER");
     parse_provider_code(&raw)
@@ -345,7 +365,7 @@ fn resolve_default_provider() -> ProviderId {
 /// Parse a provider code string to a ProviderId.
 ///
 /// Accepted values: full provider names (DeepInfra, fal.ai, Together AI,
-/// RunPod, OpenRouter, KiloCode, ollama, Cline). Anything else (including
+/// RunPod, OpenRouter, KiloCode, ollama, Cline, Z.ai). Anything else (including
 /// empty) → DeepInfra.
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
@@ -357,6 +377,7 @@ fn parse_provider_code(raw: &str) -> ProviderId {
         "KiloCode" => ProviderId::KiloCode,
         "ollama" => ProviderId::Ollama,
         "Cline" => ProviderId::Cline,
+        "Z.ai" => ProviderId::Zai,
         _ => ProviderId::DeepInfra,
     }
 }
@@ -429,6 +450,10 @@ mod tests {
             ProviderId::parse_from_model("RunPod/my-model"),
             Some((ProviderId::Runpod, "my-model"))
         );
+        assert_eq!(
+            ProviderId::parse_from_model("Z.ai/glm-5.2"),
+            Some((ProviderId::Zai, "glm-5.2"))
+        );
     }
 
     /// expect: "Inference model prefix fallback works correctly under test conditions"
@@ -486,6 +511,7 @@ mod tests {
             ProviderId::Runpod.prefix_model("my-model"),
             "RunPod/my-model"
         );
+        assert_eq!(ProviderId::Zai.prefix_model("glm-5.2"), "Z.ai/glm-5.2");
     }
 
     /// expect: "Inference fal.ai prefix parsing works correctly under test conditions"
@@ -516,6 +542,7 @@ mod tests {
         assert_eq!(parse_provider_code("KiloCode"), ProviderId::KiloCode);
         assert_eq!(parse_provider_code("ollama"), ProviderId::Ollama);
         assert_eq!(parse_provider_code("Cline"), ProviderId::Cline);
+        assert_eq!(parse_provider_code("Z.ai"), ProviderId::Zai);
     }
 
     /// expect: "Inference provider code default works correctly under test conditions"

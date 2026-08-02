@@ -1,6 +1,6 @@
 //! Inference Providers sub-page — API key entry + enable toggles for
 //! OpenAI-compatible providers (DeepInfra, fal.ai, Together, OpenRouter,
-//! KiloCode, Cline). When enabled, an `openai_compatible.<provider_id>` entry
+//! KiloCode, Cline, Z.ai). When enabled, an `openai_compatible.<provider_id>` entry
 //! is written to settings.json so the provider appears in the LLM provider
 //! picker. The API key is stored in the keychain under the provider's
 //! `api_url` (so zed's OpenAI-compatible provider finds it) and mirrored to
@@ -38,7 +38,7 @@ pub(crate) fn render_inference_providers_page(
     let mut rows: Vec<AnyElement> = Vec::new();
     for desc in kask_bridge::INFERENCE_PROVIDERS {
         // Match on `credential_key` (lowercase canonical key: "deepinfra",
-        // "fal", "together", "openrouter", "kilocode", "cline"), not `desc.id`
+        // "fal", "together", "openrouter", "kilocode", "cline", "zai"), not `desc.id`
         // (which is the display-form "DeepInfra", "fal.ai", "Together AI", …).
         // The runtime matchers in `kask_bridge` use `credential_key`; the UI
         // must agree or every toggle renders off and writes no-op.
@@ -49,6 +49,7 @@ pub(crate) fn render_inference_providers_page(
             "openrouter" => inference.openrouter_enabled,
             "kilocode" => inference.kilocode_enabled,
             "cline" => inference.cline_enabled,
+            "zai" => inference.zai_enabled,
             _ => false,
         };
         rows.push(render_inference_provider_row(
@@ -266,6 +267,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
         "OpenRouter" => "openrouter",
         "KiloCode" => "kilocode",
         "Cline" => "cline",
+        "Z.ai" => "zai",
         other => other,
     }
     .to_string();
@@ -279,6 +281,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
             "openrouter" => inference.openrouter_enabled = Some(enabled),
             "kilocode" => inference.kilocode_enabled = Some(enabled),
             "cline" => inference.cline_enabled = Some(enabled),
+            "zai" => inference.zai_enabled = Some(enabled),
             _ => {}
         }
     });

@@ -160,6 +160,9 @@ pub struct KaskInferenceProvidersSettings {
 
     /// Enable Cline (open source unified API for models and tools).
     pub cline_enabled: bool,
+
+    /// Enable Z.ai (OpenAI-compatible platform hosting GLM models).
+    pub zai_enabled: bool,
 }
 
 impl KaskInferenceProvidersSettings {
@@ -177,6 +180,7 @@ impl KaskInferenceProvidersSettings {
             openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
             kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
             cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
+            zai_enabled: std::env::var("ZAI_API_KEY").is_ok(),
         }
     }
 }
@@ -1178,6 +1182,7 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
             openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
             kilocode_enabled: c.kilocode_enabled.unwrap_or(from_env.kilocode_enabled),
             cline_enabled: c.cline_enabled.unwrap_or(from_env.cline_enabled),
+            zai_enabled: c.zai_enabled.unwrap_or(from_env.zai_enabled),
         }
     }
 }
@@ -1685,6 +1690,7 @@ mod tests {
                     | "OPENROUTER_API_KEY"
                     | "KILOCODE_API_KEY"
                     | "CLINE_API_KEY"
+                    | "ZAI_API_KEY"
             )
         });
         assert!(

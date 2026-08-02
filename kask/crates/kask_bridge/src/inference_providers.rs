@@ -1,7 +1,7 @@
 //! Inference provider descriptors and `openai_compatible` settings sync.
 //!
 //! Each inference provider (DeepInfra, fal.ai, Together, OpenRouter, KiloCode,
-//! Cline) is exposed as a zed OpenAI-compatible provider. When the user enables
+//! Cline, Z.ai) is exposed as a zed OpenAI-compatible provider. When the user enables
 //! a provider in the kask settings UI, the composition root calls
 //! `ensure_openai_compatible_entries` to write the corresponding
 //! `openai_compatible.<provider_id>` entry into settings.json. The existing
@@ -41,7 +41,7 @@ pub struct InferenceProviderDescriptor {
     pub dashboard_url: &'static str,
 }
 
-/// The 6 inference providers surfaced in kask settings.
+/// The 7 inference providers surfaced in kask settings.
 pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
     InferenceProviderDescriptor {
         id: "DeepInfra",
@@ -90,6 +90,14 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "CLINE_API_KEY",
         credential_key: "cline",
         dashboard_url: "https://cline.bot/",
+    },
+    InferenceProviderDescriptor {
+        id: "Z.ai",
+        name: "Z.ai",
+        api_url: "https://api.z.ai/api/paas/v4",
+        env_var: "ZAI_API_KEY",
+        credential_key: "zai",
+        dashboard_url: "https://z.ai/",
     },
 ];
 
@@ -151,6 +159,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
             "openrouter" => settings.inference_providers.openrouter_enabled,
             "kilocode" => settings.inference_providers.kilocode_enabled,
             "cline" => settings.inference_providers.cline_enabled,
+            "zai" => settings.inference_providers.zai_enabled,
             _ => false,
         };
         if enabled {
@@ -185,7 +194,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
 pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut App) {
     // Extract the enabled states before the closure so we don't borrow
     // `settings` inside the `move` closure.
-    let enabled_states: [(&'static str, bool); 6] = [
+    let enabled_states: [(&'static str, bool); 7] = [
         ("DeepInfra", settings.inference_providers.deepinfra_enabled),
         ("fal.ai", settings.inference_providers.fal_enabled),
         ("Together AI", settings.inference_providers.together_enabled),
@@ -195,6 +204,7 @@ pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut
         ),
         ("KiloCode", settings.inference_providers.kilocode_enabled),
         ("Cline", settings.inference_providers.cline_enabled),
+        ("Z.ai", settings.inference_providers.zai_enabled),
     ];
 
     let fs = <dyn fs::Fs>::global(cx);
