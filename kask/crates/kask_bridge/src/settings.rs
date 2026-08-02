@@ -668,6 +668,16 @@ impl KaskSettings {
             env.insert("HKASK_WEBID".to_string(), curator_webid);
         }
 
+        // Pass the governed server id set to the swarm server so it can
+        // filter cloned cards' declared `mcp_tools` to these servers (the
+        // provenance boundary for third-party ABW cards). Only the swarm
+        // server's `config_env` allowlist includes this var, so no other
+        // child receives it.
+        env.insert(
+            "HKASK_MCP_SERVER_IDS".to_string(),
+            crate::BUILT_IN_MCP_SERVERS_IDS.join(","),
+        );
+
         // Defaults are read from each subsection's `Default` impl so there's a
         // single source of truth — changing `Default` automatically updates
         // the comparison here. Do not inline magic numbers; they drift from

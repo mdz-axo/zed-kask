@@ -3596,6 +3596,13 @@ mod tests {
             abw_prompt.contains("default to `abw`"),
             "steer prompt must warn that a missing mode defaults to abw"
         );
+        // The slash-command context syntax must be documented so the
+        // operator knows how to pass mode/swarm_id via `/swarm-intelligence
+        // mode=local swarm_id=ws-1 compose my swarm`.
+        assert!(
+            abw_prompt.contains("key=value"),
+            "steer prompt must document the key=value slash-command context syntax"
+        );
 
         let local_prompt =
             steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);

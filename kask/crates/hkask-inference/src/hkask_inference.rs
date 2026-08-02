@@ -50,7 +50,7 @@ pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 pub use media_router::MediaRouter;
 pub use ollama_registry::{
-    LocalAdapter, ModelFrom, ModelfileSpec, OllamaRegistry, RegisteredModel, RegistryError,
+    LocalAdapter, ModelFrom, ModelfileSpec, OllamaRegistry, OllamaRegistryError, RegisteredModel,
 };
 
 /// Unified model entry from any provider, with provider prefix applied.

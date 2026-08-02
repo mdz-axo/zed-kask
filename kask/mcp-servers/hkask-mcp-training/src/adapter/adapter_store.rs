@@ -431,10 +431,11 @@ impl AdapterStore {
 
     /// Delete an adapter by ID.
     ///
-    /// OCAP-gated: callers must present a valid DelegationToken with `adapter:delete` capability.
-    /// Token verification happens at the `McpRuntime` governance layer
-    /// (`McpRuntime::with_governance` in `crates/zed/src/main.rs`), not at
-    /// the adapter store layer.
+    /// Capability gating for this operation is enforced at the `McpRuntime`
+    /// governance layer (`McpRuntime::with_governance` in `crates/zed/src/main.rs`),
+    /// not at the adapter store layer — this function does not verify a
+    /// capability token and must not be reached via code paths that bypass
+    /// the governed runtime.
     ///
     /// expect: "The adapter manages LoRA adapter lifecycle and inference composition"
     /// pre:  adapter exists

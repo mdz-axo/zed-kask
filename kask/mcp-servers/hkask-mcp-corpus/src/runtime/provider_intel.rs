@@ -15,7 +15,7 @@ use std::sync::Arc;
 // ── Error types ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
-pub enum ProviderError {
+pub enum ProviderIntelError {
     #[error("HTTP error: {0}")]
     Http(String),
     #[error("API error: {0}")]
@@ -28,9 +28,9 @@ pub enum ProviderError {
     Ledger(#[from] hkask_ledger::LedgerError),
 }
 
-impl From<reqwest::Error> for ProviderError {
+impl From<reqwest::Error> for ProviderIntelError {
     fn from(e: reqwest::Error) -> Self {
-        ProviderError::Http(format!("{e}"))
+        ProviderIntelError::Http(format!("{e}"))
     }
 }
 
@@ -89,13 +89,13 @@ pub struct CostRate {
 #[async_trait::async_trait]
 pub trait ProviderIntelligence: Send + Sync {
     fn provider_id(&self) -> &'static str;
-    async fn discover(&self, api_key: &str) -> Result<ProviderState, ProviderError>;
-    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderError>;
+    async fn discover(&self, api_key: &str) -> Result<ProviderState, ProviderIntelError>;
+    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderIntelError>;
     /// Get the actual per-unit cost for the given model. `model_name` is the
     /// full model identifier (e.g., "meta-llama/Llama-3.3-70B-Instruct").
     /// Providers with per-model pricing use it; flat-rate providers ignore it.
     async fn actual_cost(&self, api_key: &str, model_name: &str)
-    -> Result<CostRate, ProviderError>;
+    -> Result<CostRate, ProviderIntelError>;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ fn default_billing_start() -> chrono::DateTime<chrono::Utc> {
 async fn fetch_json<T: for<'de> Deserialize<'de>>(
     url: &str,
     api_key: &str,
-) -> Result<T, ProviderError> {
+) -> Result<T, ProviderIntelError> {
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -126,7 +126,7 @@ async fn fetch_json<T: for<'de> Deserialize<'de>>(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(ProviderError::Api(format!("{status}: {body}")));
+        return Err(ProviderIntelError::Api(format!("{status}: {body}")));
     }
     Ok(resp.json().await?)
 }
@@ -172,7 +172,7 @@ impl ProviderIntelligence for DeepInfraProvider {
         "deepinfra"
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         Ok(ProviderState {
             tier: "pay-as-you-go".into(),
             monthly_limit: None,
@@ -182,7 +182,7 @@ impl ProviderIntelligence for DeepInfraProvider {
         })
     }
 
-    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         let now = chrono::Utc::now();
         let from = format!("{}.{:02}", now.year(), now.month());
         let url = format!("https://api.deepinfra.com/payment/usage?from={from}");
@@ -222,7 +222,7 @@ impl ProviderIntelligence for DeepInfraProvider {
         &self,
         _api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         Ok(CostRate {
             input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
             output_nj_per_unit: Self::OUTPUT_NJ_PER_TOKEN,
@@ -252,7 +252,7 @@ impl ProviderIntelligence for OpenRouterProvider {
         "openrouter"
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         Ok(ProviderState {
             tier: "credit-based".into(),
             monthly_limit: None,
@@ -262,7 +262,7 @@ impl ProviderIntelligence for OpenRouterProvider {
         })
     }
 
-    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         #[derive(Deserialize)]
         struct KeyResp {
             data: KeyData,
@@ -298,7 +298,7 @@ impl ProviderIntelligence for OpenRouterProvider {
         &self,
         _api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         // OpenRouter pricing is model-specific — the classify_batch caller
         // should use the model's pricing from the /models API or config.
         // These are conservative fallback defaults.
@@ -331,7 +331,7 @@ impl ProviderIntelligence for TogetherProvider {
         "together"
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         // Together is fully prepaid — always pay-as-you-go, no free tier
         Ok(ProviderState {
             tier: "prepaid".into(),
@@ -342,7 +342,7 @@ impl ProviderIntelligence for TogetherProvider {
         })
     }
 
-    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         #[derive(Deserialize)]
         #[allow(dead_code)] // populated by serde deserialization
         struct UsageEntry {
@@ -382,7 +382,7 @@ impl ProviderIntelligence for TogetherProvider {
         &self,
         _api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         // Always marginal — prepaid credits consumed at per-token rate
         Ok(CostRate {
             input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
@@ -413,7 +413,7 @@ impl ProviderIntelligence for FalProvider {
         "fal"
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         Ok(ProviderState {
             tier: "pay-as-you-go".into(),
             monthly_limit: None,
@@ -423,7 +423,7 @@ impl ProviderIntelligence for FalProvider {
         })
     }
 
-    async fn usage(&self, _api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, _api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         // fal.ai does not expose a public usage API
         Ok(UsageStatus {
             consumed: 0,
@@ -437,7 +437,7 @@ impl ProviderIntelligence for FalProvider {
         &self,
         _api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         Ok(CostRate {
             input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
             output_nj_per_unit: Self::OUTPUT_NJ_PER_TOKEN,
@@ -508,7 +508,7 @@ impl ProviderIntelligence for SelfTrackedProvider {
         self.config.id
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         let tier_name = self
             .config
             .tiers
@@ -532,7 +532,7 @@ impl ProviderIntelligence for SelfTrackedProvider {
         })
     }
 
-    async fn usage(&self, _api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, _api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         let consumed = self.ledger_call_count();
         let limit = self.tier_limit().unwrap_or(u64::MAX);
         let (fraction, exhaustion) = usage_status(consumed, limit);
@@ -548,7 +548,7 @@ impl ProviderIntelligence for SelfTrackedProvider {
         &self,
         api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         let usage = self.usage(api_key).await?;
         // Providers with no tier cap (limit == u64::MAX) are always-marginal.
         let has_cap = usage.limit > 0 && usage.limit != u64::MAX;
@@ -588,7 +588,7 @@ impl ProviderIntelligence for FirecrawlProvider {
         "firecrawl"
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         Ok(ProviderState {
             tier: "credit-based".into(),
             monthly_limit: None,
@@ -598,7 +598,7 @@ impl ProviderIntelligence for FirecrawlProvider {
         })
     }
 
-    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         #[derive(Deserialize)]
         struct AccountResp {
             credits_used: Option<u64>,
@@ -633,7 +633,7 @@ impl ProviderIntelligence for FirecrawlProvider {
         &self,
         _api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         Ok(CostRate {
             input_nj_per_unit: 0,
             output_nj_per_unit: 0,
@@ -660,7 +660,7 @@ impl ProviderIntelligence for RunpodProvider {
         "runpod"
     }
 
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderError> {
+    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
         Ok(ProviderState {
             tier: "pay-as-you-go".into(),
             monthly_limit: None,
@@ -670,7 +670,7 @@ impl ProviderIntelligence for RunpodProvider {
         })
     }
 
-    async fn usage(&self, _api_key: &str) -> Result<UsageStatus, ProviderError> {
+    async fn usage(&self, _api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
         Ok(UsageStatus {
             consumed: 0,
             limit: u64::MAX,
@@ -683,7 +683,7 @@ impl ProviderIntelligence for RunpodProvider {
         &self,
         _api_key: &str,
         _model_name: &str,
-    ) -> Result<CostRate, ProviderError> {
+    ) -> Result<CostRate, ProviderIntelError> {
         Ok(CostRate {
             input_nj_per_unit: 0,
             output_nj_per_unit: 0,

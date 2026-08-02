@@ -117,14 +117,18 @@ re-confirming (`refund`). The panel renders the gate as a consent banner
    the account every governed tool call — panel, skill cascade, and swarm
    `tool_invoke` dispatch — charges.
 
-Known limit: consent tokens are stored in-memory **per server process**. The
-panel's hire flow and the Steer curator's spend flow route through different
-processes (governed `McpRuntime` vs per-project `ContextServerStore`), so a
-token minted by one is not consumable by the other. Same-process flows
-(panel confirm → panel spend; curator mint → curator spend) work; a mixed
-flow (confirm in the panel banner, spend from Steer) fails with a consent
-error. This is session-scoped by design, but the split is across processes —
-keep each spend flow within one process.
+Known limit → resolved (2026-08-02): consent tokens previously lived in
+in-memory stores **per server process**, so the panel's hire flow and the
+Steer curator's spend flow (governed `McpRuntime` vs per-project
+`ContextServerStore`) could not share a token. The store is now a shared
+SQLite file by default (`~/.hkask/swarm_consent.db`, overridable via
+`HKASK_SWARM_CONSENT_STORE`) opened by both processes, so a token minted by
+the panel is consumable by the Steer curator (and vice versa). Single-use is
+enforced atomically across processes (DELETE-affected-rows check — two
+processes racing on the same token cannot double-spend it); grants expire
+after 1 hour (`CONSENT_TTL_SECS`). On store-open failure the server degrades
+to the session-local in-memory store with a loud error — same-process flows
+still work, cross-process flows do not.
 
 ### 3.7 Curator opt-in is the default
 

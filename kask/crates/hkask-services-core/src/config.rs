@@ -30,40 +30,11 @@ const DEFAULT_TEMPLATE_CACHE_PATH: &str = "/tmp/hkask-templates";
 const DEFAULT_USER_NAME: &str = "curator";
 const TEST_USER_NAME: &str = "test-user";
 
-/// Default path for the primary database file.
-/// Resolved relative to `resolve_data_dir()` unless overridden via `HKASK_DB_PATH`.
-pub const DEFAULT_DB_PATH: &str = "hkask.db";
-
-/// Resolve the hKask data directory.
-///
-/// Order of precedence:
-/// 1. `HKASK_DATA_DIR` environment variable
-/// 2. `$XDG_DATA_HOME/hkask`
-/// 3. `$HOME/.local/share/hkask`
-/// 4. Current working directory (fallback)
-///
-/// All relative database paths in `ServiceConfig` are resolved against
-/// this directory, ensuring agent databases stay in a predictable location
-/// regardless of where `kask` is invoked from.
-#[must_use]
-pub fn resolve_data_dir() -> std::path::PathBuf {
-    if let Ok(dir) = std::env::var("HKASK_DATA_DIR") {
-        let p = std::path::PathBuf::from(&dir);
-        if p.is_absolute() || p.starts_with(".") {
-            return p;
-        }
-    }
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        return std::path::PathBuf::from(xdg).join("hkask");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return std::path::PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("hkask");
-    }
-    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
+// Default DB filename and data-dir resolution are path primitives owned by
+// `hkask_types::agent_paths`; re-exported here so this crate's historical
+// public API (`hkask_services_core::DEFAULT_DB_PATH`, `::config::resolve_data_dir`)
+// keeps resolving for existing consumers.
+pub use hkask_types::agent_paths::{DEFAULT_DB_PATH, resolve_data_dir};
 
 /// Configuration resolved once at startup and shared across all services.
 ///

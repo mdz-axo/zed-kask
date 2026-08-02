@@ -40,7 +40,7 @@ pub use types::{
     DEFAULT_REQUEST_TIMEOUT_SECS, ExtractOptions, ExtractOutput, ExtractRequest, ExtractedContent,
     FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, MAX_CACHE_MAX_ENTRIES,
     MAX_CACHE_TTL_SECS, MAX_CACHE_VALUE_BYTES, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
-    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderError,
+    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, PingOutput, ProviderFailureRecord,
     ProviderFilter, ProviderHealthEntry, ProviderInfo, RATE_LIMIT_MAX_REQUESTS,
     RATE_LIMIT_WINDOW_SECS, RRF_K, RankedResult, RerankSignal, SearchCapability, SearchMetadata,
     SearchOutput, SearchQuery, SearchRequest, SearchResult, SearchResultOutput, SearchStrategy,

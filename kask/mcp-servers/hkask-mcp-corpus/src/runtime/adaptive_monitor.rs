@@ -247,7 +247,7 @@ mod tests {
             _api_key: &str,
         ) -> Result<
             crate::runtime::provider_intel::ProviderState,
-            crate::runtime::provider_intel::ProviderError,
+            crate::runtime::provider_intel::ProviderIntelError,
         > {
             Ok(crate::runtime::provider_intel::ProviderState {
                 tier: "mock".into(),
@@ -260,11 +260,11 @@ mod tests {
         async fn usage(
             &self,
             _api_key: &str,
-        ) -> Result<UsageStatus, crate::runtime::provider_intel::ProviderError> {
+        ) -> Result<UsageStatus, crate::runtime::provider_intel::ProviderIntelError> {
             if self.usage_ok {
                 Ok(self.usage_status.clone())
             } else {
-                Err(crate::runtime::provider_intel::ProviderError::Http(
+                Err(crate::runtime::provider_intel::ProviderIntelError::Http(
                     "mock error".into(),
                 ))
             }
@@ -275,7 +275,7 @@ mod tests {
             _model_name: &str,
         ) -> Result<
             crate::runtime::provider_intel::CostRate,
-            crate::runtime::provider_intel::ProviderError,
+            crate::runtime::provider_intel::ProviderIntelError,
         > {
             Ok(self.cost_rate.clone())
         }

@@ -185,16 +185,6 @@ pub struct PersistRequest {
     pub confidence: Option<f64>,
 }
 
-/// Request to score text saliency against a target (persona or memory).
-/// Used by the communication gate to inform CAT speak/silent decisions.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SaliencyScoreRequest {
-    /// The text to score (e.g., incoming message body).
-    pub text: String,
-    /// Scoring target: "persona" or "memory".
-    pub against: String,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Profile {

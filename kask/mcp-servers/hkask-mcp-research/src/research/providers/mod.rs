@@ -271,7 +271,7 @@ impl ProviderPool {
         let results = futures_util::future::join_all(futures).await;
 
         let mut succeeded: Vec<String> = Vec::new();
-        let mut failed: Vec<ProviderError> = Vec::new();
+        let mut failed: Vec<ProviderFailureRecord> = Vec::new();
         let mut all_results: Vec<(String, usize, SearchResult)> = Vec::new();
         let mut merged_answer_box: Option<AnswerBox> = None;
         let mut merged_related_questions: Vec<String> = Vec::new();
@@ -294,7 +294,7 @@ impl ProviderPool {
                 }
                 Err(e) => {
                     tracing::warn!(provider = %kind, error = %e, "Compound search provider failed");
-                    failed.push(ProviderError {
+                    failed.push(ProviderFailureRecord {
                         kind: kind.clone(),
                         error: e.to_string(),
                     });

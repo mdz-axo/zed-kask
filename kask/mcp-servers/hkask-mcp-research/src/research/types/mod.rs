@@ -205,7 +205,7 @@ pub struct ProviderInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderError {
+pub struct ProviderFailureRecord {
     pub kind: String,
     pub error: String,
 }
@@ -219,7 +219,7 @@ pub struct CompoundSearchResult {
     pub related_questions: Vec<String>,
     pub providers_queried: Vec<ProviderInfo>,
     pub providers_succeeded: Vec<String>,
-    pub providers_failed: Vec<ProviderError>,
+    pub providers_failed: Vec<ProviderFailureRecord>,
     pub total_before_dedup: usize,
     pub duplicates_removed: usize,
 }
@@ -329,7 +329,7 @@ pub struct SearchMetadata {
     pub strategy: String,
     pub providers_queried: Vec<ProviderInfo>,
     pub providers_succeeded: Vec<String>,
-    pub providers_failed: Vec<ProviderError>,
+    pub providers_failed: Vec<ProviderFailureRecord>,
     pub total_before_dedup: usize,
     pub duplicates_removed: usize,
     pub top_rrf_scores: Vec<f64>,

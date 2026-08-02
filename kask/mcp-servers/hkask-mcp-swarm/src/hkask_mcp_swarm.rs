@@ -39,9 +39,11 @@
 //! `hkask-guard`. No ABW calls are made in `Local` mode.
 
 use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
+use hkask_storage::database::value::DbValue;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::sync::Arc;
 
 // ── Configuration ──────────────────────────────────────────────────────────
 
@@ -122,6 +124,13 @@ pub struct SwarmConfig {
     /// read by `LocalAgentRegistry` in `Local` mode. Default
     /// `agents/local/curated` relative to the working directory.
     pub local_agents_dir: String,
+    /// The governed MCP server ids this server may declare tools for (from
+    /// `HKASK_MCP_SERVER_IDS`, the parent's `BUILT_IN_MCP_SERVERS_IDS`).
+    /// `None` = no server-side filtering (backward compatible). When set,
+    /// `swarm_clone_to_local` drops any cloned card tool whose `server`
+    /// segment is not in this set — a third-party ABW card must not extend
+    /// the delegated tool surface beyond the operator's own governed servers.
+    pub allowed_tool_servers: Option<Vec<String>>,
 }
 
 impl Default for SwarmConfig {
@@ -144,6 +153,7 @@ impl Default for SwarmConfig {
             curator_consent_default: false,
             default_agent_model: "claude-haiku-4-5-20251001".to_string(),
             local_agents_dir: "agents/local/curated".to_string(),
+            allowed_tool_servers: None,
         }
     }
 }
@@ -201,6 +211,16 @@ impl SwarmConfig {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.local_agents_dir);
         let local_agents_dir = resolve_local_agents_dir(&local_agents_dir);
+        let allowed_tool_servers = std::env::var("HKASK_MCP_SERVER_IDS")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| {
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            });
         let warning = if api_key.is_none() && mode == SwarmMode::Abw {
             Some(
                 "HKASK_ABW_API_KEY not set and mode=abw — swarm server in catalogue-only mode; \
@@ -233,6 +253,7 @@ impl SwarmConfig {
                 curator_consent_default,
                 default_agent_model,
                 local_agents_dir,
+                allowed_tool_servers,
             },
             warning,
         )
@@ -258,38 +279,120 @@ pub struct ConsentGrant {
     pub token: String,
 }
 
-/// Store of active consent grants, keyed by token. In-memory and per-server-
-/// process: a grant does not survive a server restart, which is the correct
-/// behavior (consent is session-scoped, not durable).
-#[derive(Debug, Default)]
+/// Store of active consent grants, keyed by token.
+///
+/// Two backends:
+/// - `Memory` — the session-scoped per-process store (tests, and the fallback
+///   when the shared store cannot be opened). A grant does not survive a
+///   server restart.
+/// - `Sqlite` — the default in production: a shared, restart-durable store
+///   (one SQLite file) so a token minted by the panel's governed server
+///   process is consumable by the Steer curator's per-project server process
+///   (and vice versa). Single-use is enforced atomically via the
+///   DELETE-affected-rows check — two processes racing on the same token
+///   cannot double-spend it. Grants expire after [`CONSENT_TTL_SECS`].
 pub struct ConsentStore {
-    grants: std::sync::Mutex<std::collections::HashMap<String, ConsentGrant>>,
+    inner: ConsentInner,
+}
+
+enum ConsentInner {
+    Memory(std::sync::Mutex<std::collections::HashMap<String, ConsentGrant>>),
+    Sqlite(Arc<SqliteConsentStore>),
+}
+
+/// SQLite-backed consent store shared across swarm server processes.
+struct SqliteConsentStore {
+    driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
+}
+
+/// Lifetime of a consent grant in the shared store. Grants are
+/// process-shared (both the governed `McpRuntime` instance and the
+/// per-project `ContextServerStore` instance open the same SQLite store), so
+/// unlike the in-memory fallback they survive a server restart — the TTL
+/// bounds that durability: an operator authorization older than this is
+/// unspendable.
+const CONSENT_TTL_SECS: i64 = 3600;
+
+impl Default for ConsentStore {
+    fn default() -> Self {
+        Self {
+            inner: ConsentInner::Memory(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+}
+
+/// Map a storage error into the swarm error surface (the `.rules` trap: a
+/// failed measurement/store query must be distinguishable from a clean miss).
+fn consent_store_err(e: hkask_storage::database::types::DbError) -> SwarmError {
+    SwarmError::Unavailable(format!("consent store query failed: {e}"))
 }
 
 impl ConsentStore {
+    /// Open (or create) the shared SQLite consent store at `path`. Both the
+    /// governed and the per-project swarm server processes resolve the same
+    /// path (default `~/.hkask/swarm_consent.db`), making consent tokens
+    /// consumable across processes — the panel's hire flow and the Steer
+    /// curator's spend flow compose.
+    pub fn open_sqlite(path: &str) -> Result<Self, String> {
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "failed to create consent store dir {}: {e}",
+                    parent.display()
+                )
+            })?;
+        }
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(path)
+            .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
+        let pool = r2d2::Pool::builder()
+            .max_size(4)
+            .build(manager)
+            .map_err(|e| format!("failed to create consent store pool: {e}"))?;
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
+        driver
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS consent_grants (\
+                     token TEXT PRIMARY KEY, \
+                     action TEXT NOT NULL, \
+                     target TEXT NOT NULL, \
+                     credits_authorized INTEGER NOT NULL, \
+                     created_at TEXT NOT NULL \
+                 )",
+            )
+            .map_err(|e| format!("failed to init consent store schema: {e}"))?;
+        Ok(Self {
+            inner: ConsentInner::Sqlite(Arc::new(SqliteConsentStore { driver })),
+        })
+    }
+
     /// Mint a consent token for an action+target and record the grant.
     /// Returns the token the panel shows the operator and the spend tool
-    /// must present.
-    fn mint(&self, action: &str, target: &str, credits_authorized: u32) -> String {
-        let token = format!(
-            "hkask-consent-{:016x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-                ^ (fnv1a(action, target) as u128)
-        );
-        let grant = ConsentGrant {
-            action: action.to_string(),
-            target: target.to_string(),
-            credits_authorized,
-            token: token.clone(),
-        };
-        self.grants
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(token.clone(), grant);
-        token
+    /// must present. `Err` when the shared store cannot record the
+    /// authorization (fail-closed — an unrecorded token is never handed
+    /// out as if it were spendable).
+    fn mint(
+        &self,
+        action: &str,
+        target: &str,
+        credits_authorized: u32,
+    ) -> Result<String, SwarmError> {
+        match &self.inner {
+            ConsentInner::Memory(grants) => {
+                let token = mint_token(action, target);
+                grants.lock().unwrap_or_else(|e| e.into_inner()).insert(
+                    token.clone(),
+                    ConsentGrant {
+                        action: action.to_string(),
+                        target: target.to_string(),
+                        credits_authorized,
+                        token: token.clone(),
+                    },
+                );
+                Ok(token)
+            }
+            ConsentInner::Sqlite(store) => store.mint(action, target, credits_authorized),
+        }
     }
 
     /// Consume a consent token, validating it authorizes `action` on `target`
@@ -309,27 +412,32 @@ impl ConsentStore {
         target: &str,
         cost: u32,
     ) -> Result<u32, SwarmError> {
-        let mut grants = self.grants.lock().unwrap_or_else(|e| e.into_inner());
-        let grant = grants.get(token).ok_or_else(|| {
-            SwarmError::ConsentDenied("unknown or already-used consent token".into())
-        })?;
+        match &self.inner {
+            ConsentInner::Memory(grants) => {
+                let mut grants = grants.lock().unwrap_or_else(|e| e.into_inner());
+                let grant = grants.get(token).ok_or_else(|| {
+                    SwarmError::ConsentDenied("unknown or already-used consent token".into())
+                })?;
 
-        if grant.action != action || grant.target != target {
-            return Err(SwarmError::ConsentDenied(format!(
-                "consent token scope mismatch: token is for {} on '{}', not {} on '{}'",
-                grant.action, grant.target, action, target
-            )));
+                if grant.action != action || grant.target != target {
+                    return Err(SwarmError::ConsentDenied(format!(
+                        "consent token scope mismatch: token is for {} on '{}', not {} on '{}'",
+                        grant.action, grant.target, action, target
+                    )));
+                }
+                if cost > grant.credits_authorized {
+                    return Err(SwarmError::ConsentDenied(format!(
+                        "cost {cost} exceeds authorized ceiling {}",
+                        grant.credits_authorized
+                    )));
+                }
+                // Remove only on success — the token is consumed.
+                let authorized = grant.credits_authorized;
+                grants.remove(token);
+                Ok(authorized)
+            }
+            ConsentInner::Sqlite(store) => store.consume(token, action, target, cost),
         }
-        if cost > grant.credits_authorized {
-            return Err(SwarmError::ConsentDenied(format!(
-                "cost {cost} exceeds authorized ceiling {}",
-                grant.credits_authorized
-            )));
-        }
-        // Remove only on success — the token is consumed.
-        let authorized = grant.credits_authorized;
-        grants.remove(token);
-        Ok(authorized)
     }
 
     /// Refund a consumed grant so the operator can retry after a transient
@@ -337,13 +445,168 @@ impl ConsentStore {
     /// re-inserted with its original scope and ceiling; it remains single-use
     /// per *successful* spend — a refunded token is consumed again on the next
     /// attempt and removed for good once the spend succeeds. No-op if the grant
-    /// was never consumed (defensive against double-refund).
+    /// was never consumed (defensive against double-refund). Best-effort in the
+    /// shared store: a refund failure (store unavailable) is logged loudly —
+    /// the spend already failed, so the operator re-mints.
     fn refund(&self, grant: ConsentGrant) {
-        self.grants
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(grant.token.clone(), grant);
+        match &self.inner {
+            ConsentInner::Memory(grants) => {
+                grants
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(grant.token.clone(), grant);
+            }
+            ConsentInner::Sqlite(store) => store.refund(grant),
+        }
     }
+}
+
+impl SqliteConsentStore {
+    fn mint(
+        &self,
+        action: &str,
+        target: &str,
+        credits_authorized: u32,
+    ) -> Result<String, SwarmError> {
+        let token = mint_token(action, target);
+        // Lazy expiry sweep — correctness is the TTL check on consume.
+        let cutoff =
+            (chrono::Utc::now() - chrono::Duration::seconds(CONSENT_TTL_SECS)).to_rfc3339();
+        let _ = self.driver.execute(
+            "DELETE FROM consent_grants WHERE created_at < ?1",
+            &[DbValue::Text(cutoff)],
+        );
+        self.driver
+            .execute(
+                "INSERT OR REPLACE INTO consent_grants \
+                     (token, action, target, credits_authorized, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                &[
+                    DbValue::Text(token.clone()),
+                    DbValue::Text(action.to_string()),
+                    DbValue::Text(target.to_string()),
+                    DbValue::Integer(i64::from(credits_authorized)),
+                    DbValue::Text(chrono::Utc::now().to_rfc3339()),
+                ],
+            )
+            .map_err(|e| {
+                SwarmError::ConsentDenied(format!(
+                    "consent store unavailable — cannot record the operator's authorization: {e}"
+                ))
+            })?;
+        Ok(token)
+    }
+
+    fn consume(
+        &self,
+        token: &str,
+        action: &str,
+        target: &str,
+        cost: u32,
+    ) -> Result<u32, SwarmError> {
+        let row = self
+            .driver
+            .query_optional(
+                "SELECT action, target, credits_authorized, created_at \
+                 FROM consent_grants WHERE token = ?1",
+                &[DbValue::Text(token.to_string())],
+            )
+            .map_err(consent_store_err)?;
+        let Some(row) = row else {
+            return Err(SwarmError::ConsentDenied(
+                "unknown or already-used consent token".into(),
+            ));
+        };
+        let created = row.get_str(3).map_err(consent_store_err)?;
+        let created = chrono::DateTime::parse_from_rfc3339(created)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .map_err(|e| {
+                SwarmError::Unavailable(format!("consent store corrupt created_at: {e}"))
+            })?;
+        if chrono::Utc::now()
+            .signed_duration_since(created)
+            .num_seconds()
+            > CONSENT_TTL_SECS
+        {
+            // Expired — remove and treat as unknown (never spendable).
+            let _ = self.driver.execute(
+                "DELETE FROM consent_grants WHERE token = ?1",
+                &[DbValue::Text(token.to_string())],
+            );
+            return Err(SwarmError::ConsentDenied("consent token expired".into()));
+        }
+        let grant_action = row.get_str(0).map_err(consent_store_err)?.to_string();
+        let grant_target = row.get_str(1).map_err(consent_store_err)?.to_string();
+        let grant_credits =
+            u32::try_from(row.get_int(2).map_err(consent_store_err)?).map_err(|_| {
+                SwarmError::Unavailable("consent store corrupt credits_authorized".into())
+            })?;
+        if grant_action != action || grant_target != target {
+            return Err(SwarmError::ConsentDenied(format!(
+                "consent token scope mismatch: token is for {grant_action} on '{grant_target}', \
+                 not {action} on '{target}'"
+            )));
+        }
+        if cost > grant_credits {
+            return Err(SwarmError::ConsentDenied(format!(
+                "cost {cost} exceeds authorized ceiling {grant_credits}"
+            )));
+        }
+        // Single-use, atomic across processes: the DELETE returns the affected
+        // row count; a concurrent consume of the same token wins the DELETE and
+        // this one sees 0 rows → treated as a replay.
+        let deleted = self
+            .driver
+            .execute(
+                "DELETE FROM consent_grants WHERE token = ?1",
+                &[DbValue::Text(token.to_string())],
+            )
+            .map_err(consent_store_err)?;
+        if deleted == 0 {
+            return Err(SwarmError::ConsentDenied(
+                "unknown or already-used consent token".into(),
+            ));
+        }
+        Ok(grant_credits)
+    }
+
+    fn refund(&self, grant: ConsentGrant) {
+        if let Err(e) = self.driver.execute(
+            "INSERT OR REPLACE INTO consent_grants \
+                 (token, action, target, credits_authorized, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            &[
+                DbValue::Text(grant.token.clone()),
+                DbValue::Text(grant.action.clone()),
+                DbValue::Text(grant.target.clone()),
+                DbValue::Integer(i64::from(grant.credits_authorized)),
+                DbValue::Text(chrono::Utc::now().to_rfc3339()),
+            ],
+        ) {
+            tracing::error!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                token = %grant.token,
+                "consent refund failed in the shared store — the grant is lost; \
+                 the operator must re-confirm"
+            );
+        }
+    }
+}
+
+/// Build an opaque single-use consent token (timestamp XOR FNV-1a of the
+/// scope). Not cryptographic — the token's value is its unguessability
+/// combined with single-use consumption, not secrecy against a motivated
+/// attacker with process access.
+fn mint_token(action: &str, target: &str) -> String {
+    format!(
+        "hkask-consent-{:016x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+            ^ (fnv1a(action, target) as u128)
+    )
 }
 
 /// A tiny FNV-1a hash so consent tokens are not trivially guessable from the
@@ -1516,6 +1779,81 @@ fn strip_leading_mentions(task: &str) -> String {
     remaining.to_string()
 }
 
+/// Validate a cloned card's declared `mcp_tools` (third-party ABW data).
+/// Each entry must be `server/tool` with charset-safe, non-empty segments.
+/// When `allowed_servers` is set (the governed server set from
+/// `HKASK_MCP_SERVER_IDS`), entries whose server is not in it are dropped — a
+/// cloned ABW card must not extend the delegated tool surface beyond the
+/// operator's own governed servers. Dropped entries are logged so the
+/// operator sees what was filtered (the `.rules` startup-failure-signal trap:
+/// a silent drop is indistinguishable from "nothing to drop").
+fn filter_mcp_tools(tools: Vec<String>, allowed_servers: Option<&[String]>) -> Vec<String> {
+    let mut kept = Vec::new();
+    for qualified in tools {
+        let Some((server, tool)) = qualified.split_once('/') else {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                tool = %qualified,
+                "cloned card tool dropped: not server/tool shaped"
+            );
+            continue;
+        };
+        let server_ok = !server.is_empty()
+            && server
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        let tool_ok = !tool.is_empty()
+            && tool
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+        if !server_ok || !tool_ok {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                tool = %qualified,
+                "cloned card tool dropped: invalid characters"
+            );
+            continue;
+        }
+        if let Some(allowed) = allowed_servers
+            && !allowed.iter().any(|s| s == server)
+        {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                tool = %qualified,
+                "cloned card tool dropped: server not in the governed set (HKASK_MCP_SERVER_IDS)"
+            );
+            continue;
+        }
+        kept.push(qualified);
+    }
+    kept
+}
+
+/// Validate a cloned card's declared `skills` (third-party ABW data). Skill
+/// ids are resolved on the zed side, so an unknown id is already non-fatal
+/// (recorded, delegation proceeds) — the shape check just keeps garbage out
+/// of the card.
+fn filter_declared_skills(skills: Vec<String>) -> Vec<String> {
+    skills
+        .into_iter()
+        .filter(|id| {
+            let ok = !id.is_empty()
+                && id.len() <= 128
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+            if !ok {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    skill = %id,
+                    "cloned card skill dropped: invalid id shape"
+                );
+            }
+            ok
+        })
+        .collect()
+}
+
 /// Sanitize an ABW agent or Xaman Ek response before returning it to the MCP
 /// client (the zed-kask agent). ABW agents and the curator are third-party
 /// surfaces that could return prompt-injection vectors (e.g. "ignore previous
@@ -2022,7 +2360,18 @@ impl SwarmServer {
                         .get("/workspaces")
                         .await
                         .map_err(SwarmError::into_tool_error)?;
-                    Ok(sanitize_workspace_payload(data))
+                    let payload = sanitize_workspace_payload(data);
+                    // Normalize the list shape: ABW's /workspaces response is
+                    // not part of the verified surface and may be a bare array
+                    // or a `{workspaces: [...]}` envelope. The panel expects
+                    // the envelope — wrap a bare array so a shape change on
+                    // ABW's side cannot silently blank the panel's list.
+                    Ok(match payload {
+                        serde_json::Value::Array(arr) => {
+                            serde_json::json!({ "workspaces": arr })
+                        }
+                        other => other,
+                    })
                 }
             }
         })
@@ -2284,7 +2633,8 @@ impl SwarmServer {
             }
             let token = self
                 .consent
-                .mint(&req.action, &req.target, req.credits_authorized);
+                .mint(&req.action, &req.target, req.credits_authorized)
+                .map_err(SwarmError::into_tool_error)?;
             Ok(serde_json::json!({
                 "consent_token": token,
                 "action": req.action,
@@ -3410,8 +3760,12 @@ impl SwarmServer {
                     .unwrap_or_default()
             };
             let abw_caps = abw_card.get("capabilities");
-            let mcp_tools = string_list(abw_caps.and_then(|c| c.get("mcp_tools")));
-            let skills = string_list(abw_caps.and_then(|c| c.get("skills")));
+            let mcp_tools = filter_mcp_tools(
+                string_list(abw_caps.and_then(|c| c.get("mcp_tools"))),
+                self.client.config().allowed_tool_servers.as_deref(),
+            );
+            let skills =
+                filter_declared_skills(string_list(abw_caps.and_then(|c| c.get("skills"))));
             let local_card = LocalAgentCard {
                 agent_id: safe_agent_id.clone(),
                 agent_type,
@@ -3621,6 +3975,25 @@ impl rmcp::ServerHandler for SwarmServer {}
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Resolve the shared consent store path. `HKASK_SWARM_CONSENT_STORE`
+/// overrides; the default is `~/.hkask/swarm_consent.db`. Both swarm server
+/// processes (governed `McpRuntime` and per-project `ContextServerStore`)
+/// compute the same path, which is what makes consent tokens consumable
+/// across processes.
+fn resolve_consent_store_path() -> String {
+    std::env::var("HKASK_SWARM_CONSENT_STORE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            dirs::data_dir()
+                .unwrap_or_else(|| std::path::Path::new(".").to_path_buf())
+                .join("hkask")
+                .join("swarm_consent.db")
+                .to_string_lossy()
+                .to_string()
+        })
+}
+
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         "hkask-mcp-swarm",
@@ -3684,6 +4057,34 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 });
             let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
 
+            // Build the consent store. Default: the shared SQLite store
+            // (~/.hkask/swarm_consent.db, operator-overridable via
+            // `HKASK_SWARM_CONSENT_STORE`) so a token minted by the panel's
+            // governed server process is consumable by the Steer curator's
+            // per-project server process (both resolve the same path). On open
+            // failure, degrade to the session-local in-memory store with a loud
+            // error — same-process consent still works; cross-process flows
+            // (panel confirm → Steer spend) do not.
+            let consent_store = match ConsentStore::open_sqlite(&resolve_consent_store_path()) {
+                Ok(store) => {
+                    tracing::info!(
+                        target: "hkask.mcp.swarm",
+                        "consent store: shared SQLite (cross-process tokens enabled)"
+                    );
+                    store
+                }
+                Err(e) => {
+                    tracing::error!(
+                        target: "hkask.mcp.swarm",
+                        error = %e,
+                        "consent store unavailable — falling back to the session-local in-memory \
+                         store; cross-process consent flows (panel confirm → Steer spend) will \
+                         not work. Set HKASK_SWARM_CONSENT_STORE to a writable path."
+                    );
+                    ConsentStore::default()
+                }
+            };
+
             Ok(SwarmServer::new(
                 ctx.webid,
                 std::sync::Arc::new(SwarmClient::new(
@@ -3694,7 +4095,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .unwrap_or_else(|_| reqwest::Client::new()),
                     config,
                 )),
-                std::sync::Arc::new(ConsentStore::default()),
+                std::sync::Arc::new(consent_store),
                 local_registry,
                 local_runtime,
             ))
@@ -3753,7 +4154,7 @@ mod tests {
     #[test]
     fn consent_consume_succeeds_for_valid_in_scope_token() {
         let store = ConsentStore::default();
-        let token = store.mint("hire", "style_transfer", 20);
+        let token = store.mint("hire", "style_transfer", 20).expect("mint");
         let authorized = store
             .consume(&token, "hire", "style_transfer", 20)
             .expect("valid token should consume");
@@ -3770,7 +4171,7 @@ mod tests {
     #[test]
     fn consent_consume_rejects_replay() {
         let store = ConsentStore::default();
-        let token = store.mint("hire", "style_transfer", 20);
+        let token = store.mint("hire", "style_transfer", 20).expect("mint");
         store
             .consume(&token, "hire", "style_transfer", 20)
             .expect("first consume");
@@ -3782,7 +4183,7 @@ mod tests {
     fn consent_consume_rejects_scope_mismatch() {
         let store = ConsentStore::default();
         // Consent for one agent must not authorize a different agent.
-        let token = store.mint("hire", "style_transfer", 20);
+        let token = store.mint("hire", "style_transfer", 20).expect("mint");
         let wrong_agent = store.consume(&token, "hire", "watermark", 20);
         assert!(matches!(wrong_agent, Err(SwarmError::ConsentDenied(_))));
     }
@@ -3791,7 +4192,7 @@ mod tests {
     fn consent_consume_rejects_action_mismatch() {
         let store = ConsentStore::default();
         // Consent for a hire must not authorize a delegate.
-        let token = store.mint("hire", "style_transfer", 20);
+        let token = store.mint("hire", "style_transfer", 20).expect("mint");
         let wrong_action = store.consume(&token, "delegate", "style_transfer", 20);
         assert!(matches!(wrong_action, Err(SwarmError::ConsentDenied(_))));
     }
@@ -3799,7 +4200,7 @@ mod tests {
     #[test]
     fn consent_consume_rejects_over_spend() {
         let store = ConsentStore::default();
-        let token = store.mint("hire", "style_transfer", 10);
+        let token = store.mint("hire", "style_transfer", 10).expect("mint");
         let over = store.consume(&token, "hire", "style_transfer", 20);
         assert!(matches!(over, Err(SwarmError::ConsentDenied(_))));
     }
@@ -4043,7 +4444,7 @@ mod tests {
     fn consent_consume_rejects_curate_action_mismatch() {
         let store = ConsentStore::default();
         // A token minted for "hire" must not authorize a "curate" action.
-        let token = store.mint("hire", "style_transfer", 20);
+        let token = store.mint("hire", "style_transfer", 20).expect("mint");
         let wrong = store.consume(&token, "curate", "xaman", 0);
         assert!(matches!(wrong, Err(SwarmError::ConsentDenied(_))));
     }
@@ -4051,7 +4452,7 @@ mod tests {
     #[test]
     fn consent_consume_accepts_curate_action() {
         let store = ConsentStore::default();
-        let token = store.mint("curate", "xaman", 0);
+        let token = store.mint("curate", "xaman", 0).expect("mint");
         let result = store.consume(&token, "curate", "xaman", 0);
         assert!(result.is_ok());
     }
@@ -4071,7 +4472,7 @@ mod tests {
     #[test]
     fn consent_refund_restores_grant_for_retry() {
         let store = ConsentStore::default();
-        let token = store.mint("hire", "market_analyst", 20);
+        let token = store.mint("hire", "market_analyst", 20).expect("mint");
         let ceiling = store
             .consume(&token, "hire", "market_analyst", 20)
             .expect("first consume");
@@ -4108,6 +4509,123 @@ mod tests {
         assert_eq!(ceiling, 5);
     }
 
+    // ── Shared SQLite consent store (cross-process) ─────────────────────────
+    // The production default: both swarm server processes (governed McpRuntime
+    // and per-project ContextServerStore) open the same SQLite file, so a token
+    // minted by one process is consumable by the other. These tests simulate
+    // the two processes as two `ConsentStore::open_sqlite` handles on one path.
+
+    fn temp_consent_store_path(tag: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "hkask-swarm-consent-{tag}-{}",
+                uuid::Uuid::new_v4()
+            ))
+            .join("consent.db")
+            .to_string_lossy()
+            .to_string()
+    }
+
+    #[test]
+    fn consent_store_sqlite_roundtrip_and_single_use() {
+        let path = temp_consent_store_path("roundtrip");
+        let store = ConsentStore::open_sqlite(&path).expect("open sqlite store");
+        let token = store.mint("hire", "market_analyst", 20).expect("mint");
+
+        // In-scope consume returns the authorized ceiling.
+        let ceiling = store
+            .consume(&token, "hire", "market_analyst", 10)
+            .expect("consume in scope");
+        assert_eq!(ceiling, 20);
+        // Replay is rejected (single-use).
+        let replay = store.consume(&token, "hire", "market_analyst", 10);
+        assert!(
+            matches!(replay, Err(SwarmError::ConsentDenied(_))),
+            "replay must be rejected"
+        );
+        // Refund re-inserts; the refunded token is consumable again.
+        store.refund(ConsentGrant {
+            action: "hire".to_string(),
+            target: "market_analyst".to_string(),
+            credits_authorized: 20,
+            token: token.clone(),
+        });
+        store
+            .consume(&token, "hire", "market_analyst", 10)
+            .expect("refunded token re-consumable");
+        std::fs::remove_dir_all(std::path::Path::new(&path).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn consent_store_sqlite_token_minted_in_one_process_consumed_in_another() {
+        let path = temp_consent_store_path("cross");
+        let process_a = ConsentStore::open_sqlite(&path).expect("process A");
+        let process_b = ConsentStore::open_sqlite(&path).expect("process B");
+
+        // A mints (the panel's governed process); B consumes (the Steer
+        // curator's per-project process) — the mixed flow that failed with
+        // the old per-process in-memory store.
+        let token = process_a.mint("hire", "market_analyst", 20).expect("mint");
+        let ceiling = process_b
+            .consume(&token, "hire", "market_analyst", 10)
+            .expect("cross-process consume");
+        assert_eq!(ceiling, 20);
+        // Single-use holds across processes: a replay in either process fails.
+        assert!(matches!(
+            process_a.consume(&token, "hire", "market_analyst", 10),
+            Err(SwarmError::ConsentDenied(_))
+        ));
+        std::fs::remove_dir_all(std::path::Path::new(&path).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn consent_store_sqlite_scope_mismatch_preserves_grant() {
+        let path = temp_consent_store_path("scope");
+        let store = ConsentStore::open_sqlite(&path).expect("open sqlite store");
+        let token = store.mint("hire", "market_analyst", 20).expect("mint");
+        let mismatch = store.consume(&token, "hire", "different_agent", 10);
+        assert!(matches!(mismatch, Err(SwarmError::ConsentDenied(_))));
+        // The grant is preserved — a corrected-scope retry succeeds.
+        store
+            .consume(&token, "hire", "market_analyst", 10)
+            .expect("corrected scope consumes");
+        std::fs::remove_dir_all(std::path::Path::new(&path).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn consent_store_sqlite_expired_grant_is_unspendable() {
+        let path = temp_consent_store_path("ttl");
+        let store = ConsentStore::open_sqlite(&path).expect("open sqlite store");
+        let token = store.mint("hire", "market_analyst", 20).expect("mint");
+
+        // Backdate the grant beyond the TTL via a raw driver on the same file.
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(&path)
+            .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("pool");
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
+        let old =
+            (chrono::Utc::now() - chrono::Duration::seconds(CONSENT_TTL_SECS + 60)).to_rfc3339();
+        driver
+            .execute(
+                "UPDATE consent_grants SET created_at = ?1 WHERE token = ?2",
+                &[DbValue::Text(old), DbValue::Text(token.clone())],
+            )
+            .expect("backdate");
+
+        let err = store
+            .consume(&token, "hire", "market_analyst", 10)
+            .unwrap_err();
+        assert!(
+            matches!(err, SwarmError::ConsentDenied(ref m) if m.contains("expired")),
+            "expired grant must be unspendable, got {err:?}"
+        );
+        std::fs::remove_dir_all(std::path::Path::new(&path).parent().unwrap()).ok();
+    }
+
     // ── Curate consent target stability (BH-09) ─────────────────────────────
     // A curate token minted for "xaman" must be consumable regardless of
     // whether a session_id is present — the server uses a fixed "xaman"
@@ -4115,7 +4633,7 @@ mod tests {
     #[test]
     fn curate_consume_uses_fixed_xaman_target() {
         let store = ConsentStore::default();
-        let token = store.mint("curate", "xaman", 0);
+        let token = store.mint("curate", "xaman", 0).expect("mint");
         // Consume with the fixed target the server now uses.
         store
             .consume(&token, "curate", "xaman", 0)
@@ -4128,7 +4646,7 @@ mod tests {
         // target — this pins that the server's fixed "xaman" target is the
         // only valid scope for curate consent.
         let store = ConsentStore::default();
-        let token = store.mint("curate", "xaman", 0);
+        let token = store.mint("curate", "xaman", 0).expect("mint");
         let wrong = store.consume(&token, "curate", "session-abc-123", 0);
         assert!(matches!(wrong, Err(SwarmError::ConsentDenied(_))));
     }
@@ -4249,6 +4767,55 @@ mod tests {
         assert_eq!(sanitize_agent_id("a/b\\c").as_deref(), Some("abc"));
     }
 
+    // ── Cloned-card tool/skill provenance filtering ─────────────────────────
+    // `swarm_clone_to_local` copies mcp_tools/skills from ABW (third-party).
+    // The filters bound that surface to the operator's governed servers.
+
+    #[test]
+    fn filter_mcp_tools_drops_non_governed_servers() {
+        let allowed = vec!["codegraph".to_string(), "swarm".to_string()];
+        let tools = vec![
+            "codegraph/codegraph_query".to_string(),
+            "training/train_lora".to_string(),
+            "swarm/swarm_get_swarm".to_string(),
+            "evil-server/steal".to_string(),
+        ];
+        let kept = filter_mcp_tools(tools, Some(&allowed));
+        assert_eq!(
+            kept,
+            vec![
+                "codegraph/codegraph_query".to_string(),
+                "swarm/swarm_get_swarm".to_string()
+            ],
+            "tools on non-governed servers must be dropped"
+        );
+    }
+
+    #[test]
+    fn filter_mcp_tools_drops_malformed_entries() {
+        let tools = vec![
+            "no_slash".to_string(),
+            "/tool_only".to_string(),
+            "server/".to_string(),
+            "server/tool with spaces".to_string(),
+            "good/server_ok".to_string(),
+        ];
+        let kept = filter_mcp_tools(tools, None);
+        assert_eq!(kept, vec!["good/server_ok".to_string()]);
+    }
+
+    #[test]
+    fn filter_declared_skills_drops_malformed_ids() {
+        let skills = vec![
+            "grill-me".to_string(),
+            "bad skill id!".to_string(),
+            "".to_string(),
+            "ok_skill.2".to_string(),
+        ];
+        let kept = filter_declared_skills(skills);
+        assert_eq!(kept, vec!["grill-me".to_string(), "ok_skill.2".to_string()]);
+    }
+
     // ── Per-dispatch ceiling enforcement ─────────────────────────────────────
     // `max_credits_per_dispatch` is a hard server-side gate, not advisory.
     // `swarm_hire_cost` surfaces it as `within_budget` for the banner; the
@@ -4290,7 +4857,7 @@ mod tests {
         // the refund semantics at the ConsentStore level: a refunded grant is
         // re-consumable.
         let store = ConsentStore::default();
-        let token = store.mint("hire", "expensive_agent", 100);
+        let token = store.mint("hire", "expensive_agent", 100).expect("mint");
         // Consume (the spend path does this before the ceiling check).
         let ceiling = store
             .consume(&token, "hire", "expensive_agent", 0)
@@ -4318,7 +4885,7 @@ mod tests {
         // store doesn't know the ceiling), refunded by the gate, and
         // re-consumable after the operator raises the ceiling.
         let store = ConsentStore::default();
-        let token = store.mint("delegate", "ws-123", 1000);
+        let token = store.mint("delegate", "ws-123", 1000).expect("mint");
         let authorized = store
             .consume(&token, "delegate", "ws-123", 1000)
             .expect("consume should succeed — store doesn't know the ceiling");
@@ -5010,7 +5577,7 @@ mod tests {
     #[test]
     fn consent_consume_preserves_grant_on_scope_mismatch() {
         let store = ConsentStore::default();
-        let token = store.mint("hire", "style_transfer", 20);
+        let token = store.mint("hire", "style_transfer", 20).expect("mint");
         // A wrong-scope consume must fail but NOT destroy the token.
         let wrong = store.consume(&token, "hire", "watermark", 20);
         assert!(matches!(wrong, Err(SwarmError::ConsentDenied(_))));
@@ -5027,7 +5594,7 @@ mod tests {
     #[test]
     fn consent_consume_preserves_grant_on_over_spend() {
         let store = ConsentStore::default();
-        let token = store.mint("hire", "style_transfer", 10);
+        let token = store.mint("hire", "style_transfer", 10).expect("mint");
         // An over-spend consume must fail but NOT destroy the token.
         let over = store.consume(&token, "hire", "style_transfer", 20);
         assert!(matches!(over, Err(SwarmError::ConsentDenied(_))));
@@ -5781,7 +6348,6 @@ mod tests {
                     let method = request.method().as_str().to_string();
                     let path = request.url().to_string();
                     let mut req_body = String::new();
-                    use std::io::Read;
                     let _ = request.as_reader().read_to_string(&mut req_body);
                     let (status, body) = responder(&method, &path, &req_body);
                     let response = tiny_http::Response::from_string(body).with_status_code(status);
@@ -5839,7 +6405,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("hire", "test_agent", 20);
+        let token = consent.mint("hire", "test_agent", 20).expect("mint");
         let result = server
             .swarm_hire(Parameters(HireRequest {
                 workspace_id: "ws1".to_string(),
@@ -5876,7 +6442,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("hire", "test_agent", 20);
+        let token = consent.mint("hire", "test_agent", 20).expect("mint");
         let result = server
             .swarm_hire(Parameters(HireRequest {
                 workspace_id: "ws1".to_string(),
@@ -5917,7 +6483,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("hire", "test_agent", 20);
+        let token = consent.mint("hire", "test_agent", 20).expect("mint");
         let result = server
             .swarm_hire(Parameters(HireRequest {
                 workspace_id: "ws1".to_string(),
@@ -5961,7 +6527,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("hire", "test_agent", 20);
+        let token = consent.mint("hire", "test_agent", 20).expect("mint");
         let result = server
             .swarm_hire(Parameters(HireRequest {
                 workspace_id: "ws1".to_string(),
@@ -5998,7 +6564,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("curate", "xaman", 0);
+        let token = consent.mint("curate", "xaman", 0).expect("mint");
         let result = server
             .swarm_xaman(Parameters(XamanRequest {
                 message: "plan a team".to_string(),
@@ -6036,7 +6602,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("curate", "xaman", 0);
+        let token = consent.mint("curate", "xaman", 0).expect("mint");
         let result = server
             .swarm_xaman(Parameters(XamanRequest {
                 message: "plan a team".to_string(),
@@ -6076,7 +6642,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("curate", "xaman", 0);
+        let token = consent.mint("curate", "xaman", 0).expect("mint");
         let result = server
             .swarm_xaman(Parameters(XamanRequest {
                 message: "plan a team".to_string(),
@@ -6122,7 +6688,7 @@ mod tests {
         let consent = StdArc::new(ConsentStore::default());
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
-        let token = consent.mint("hire", "test_agent", 20);
+        let token = consent.mint("hire", "test_agent", 20).expect("mint");
         let result = server
             .swarm_hire(Parameters(HireRequest {
                 workspace_id: "ws1".to_string(),
@@ -6141,6 +6707,65 @@ mod tests {
         assert!(
             re_consume.is_ok(),
             "consent must be refunded after conservative cost refusal, got: {re_consume:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn swarm_get_swarm_list_normalizes_bare_array_response() {
+        // ABW's /workspaces response shape is not part of the verified
+        // surface — it may be a bare array or a {workspaces: [...]} envelope.
+        // The server must wrap a bare array so the panel's WorkspaceListResponse
+        // parse never blanks the whole list on a shape change.
+        let mock = MockAbw::new(|_method, path, _body| {
+            if path == "/api/workspaces" {
+                return (
+                    200,
+                    r#"[{"id": "ws-1", "name": "alpha"}, {"id": "ws-2", "name": "beta"}]"#
+                        .to_string(),
+                );
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_get_swarm(Parameters(GetSwarmRequest { workspace_id: None }))
+            .await;
+        assert!(
+            result.contains("\"workspaces\""),
+            "bare array must be wrapped in the workspaces envelope, got: {result}"
+        );
+        assert!(result.contains("ws-1") && result.contains("ws-2"));
+    }
+
+    #[tokio::test]
+    async fn swarm_get_swarm_list_preserves_envelope_response() {
+        let mock = MockAbw::new(|_method, path, _body| {
+            if path == "/api/workspaces" {
+                return (
+                    200,
+                    r#"{"workspaces": [{"id": "ws-1", "name": "alpha"}]}"#.to_string(),
+                );
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_get_swarm(Parameters(GetSwarmRequest { workspace_id: None }))
+            .await;
+        // An already-enveloped response must pass through untouched.
+        assert!(
+            result.contains("\"workspaces\"") && !result.contains("\"workspaces\":\"workspaces\""),
+            "envelope must not be double-wrapped, got: {result}"
         );
     }
 
@@ -6206,9 +6831,9 @@ mod tests {
         let server = test_server_with_mock(&mock.base_url, consent.clone());
 
         // Mint three consent tokens, one per hire.
-        let token_cheap = consent.mint("hire", "cheap_agent", 10);
-        let token_expensive = consent.mint("hire", "expensive_agent", 100);
-        let token_post_fail = consent.mint("hire", "post_fail_agent", 10);
+        let token_cheap = consent.mint("hire", "cheap_agent", 10).expect("mint");
+        let token_expensive = consent.mint("hire", "expensive_agent", 100).expect("mint");
+        let token_post_fail = consent.mint("hire", "post_fail_agent", 10).expect("mint");
 
         let result = server
             .swarm_create_swarm(Parameters(CreateSwarmRequest {

@@ -203,6 +203,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SWARM_MODE",
             "HKASK_LOCAL_AGENTS_DIR",
             "HKASK_SWARM_LEDGER_PATH",
+            "HKASK_SWARM_CONSENT_STORE",
+            // The governed server id set — the swarm server filters cloned
+            // cards' declared mcp_tools to these servers (provenance boundary
+            // for third-party ABW cards).
+            "HKASK_MCP_SERVER_IDS",
             // Data dir — needed so `resolve_under_data_dir` in the swarm
             // server resolves `local_agents_dir` under the same root as the
             // parent process. Without this, a relative default

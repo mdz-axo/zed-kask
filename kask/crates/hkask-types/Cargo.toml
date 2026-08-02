@@ -3,7 +3,7 @@ name = "hkask-types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ID types, nu-event, and visibility types for hKask"
+description = "Foundation types for the hKask platform — IDs, errors, events, visibility, hexagonal ports, and shared domain primitives"
 
 
 [lib]

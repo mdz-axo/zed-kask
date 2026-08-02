@@ -46,7 +46,7 @@ const DEFAULT_SOURCE_SUBDIR: &str = ".hkask/models";
 
 /// Errors from registry operations.
 #[derive(Debug, Error)]
-pub enum RegistryError {
+pub enum OllamaRegistryError {
     #[error("ollama binary not found on PATH (set OLLAMA_BIN or install Ollama)")]
     OllamaNotFound,
     #[error("invalid model spec: {0}")]
@@ -199,14 +199,14 @@ impl OllamaRegistry {
     /// pre:  spec.name is non-empty; referenced GGUF/adapter paths exist
     /// post: Ollama imports the model; it becomes routable as `ollama/<name>`
     /// post: the Modelfile is persisted under `source_dir/modelfiles/` for re-creation
-    pub fn create(&self, spec: &ModelfileSpec) -> Result<RegisteredModel, RegistryError> {
+    pub fn create(&self, spec: &ModelfileSpec) -> Result<RegisteredModel, OllamaRegistryError> {
         if spec.name.is_empty() {
-            return Err(RegistryError::InvalidSpec("name must be non-empty".into()));
+            return Err(OllamaRegistryError::InvalidSpec("name must be non-empty".into()));
         }
         if let ModelFrom::Gguf(p) = &spec.from
             && !p.exists()
         {
-            return Err(RegistryError::InvalidSpec(format!(
+            return Err(OllamaRegistryError::InvalidSpec(format!(
                 "GGUF not found: {}",
                 p.display()
             )));
@@ -214,19 +214,19 @@ impl OllamaRegistry {
         if let Some(ref adapter) = spec.adapter
             && !adapter.exists()
         {
-            return Err(RegistryError::InvalidSpec(format!(
+            return Err(OllamaRegistryError::InvalidSpec(format!(
                 "adapter not found: {}",
                 adapter.display()
             )));
         }
 
         let modelfile_dir = self.source_dir.join("modelfiles");
-        std::fs::create_dir_all(&modelfile_dir).map_err(|e| RegistryError::Io(e.to_string()))?;
+        std::fs::create_dir_all(&modelfile_dir).map_err(|e| OllamaRegistryError::Io(e.to_string()))?;
         // Filesystem-safe filename: replace '/' with '_' so "hkask/foo" -> "hkask_foo".
         let safe = spec.name.replace('/', "_");
         let modelfile_path = modelfile_dir.join(format!("{safe}.Modelfile"));
         std::fs::write(&modelfile_path, build_modelfile(spec))
-            .map_err(|e| RegistryError::Io(e.to_string()))?;
+            .map_err(|e| OllamaRegistryError::Io(e.to_string()))?;
 
         #[allow(clippy::disallowed_methods)]
         let output = Command::new(&self.ollama_bin)
@@ -237,16 +237,16 @@ impl OllamaRegistry {
             .output()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    RegistryError::OllamaNotFound
+                    OllamaRegistryError::OllamaNotFound
                 } else {
-                    RegistryError::Io(e.to_string())
+                    OllamaRegistryError::Io(e.to_string())
                 }
             })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             warn!(target: "reg.inference", "ollama create '{}' failed: {stderr}", spec.name);
-            return Err(RegistryError::CreateFailed {
+            return Err(OllamaRegistryError::CreateFailed {
                 name: spec.name.clone(),
                 stderr,
             });
@@ -274,10 +274,10 @@ impl OllamaRegistry {
         name: &str,
         adapter: &LocalAdapter,
         parameters: Vec<(String, String)>,
-    ) -> Result<RegisteredModel, RegistryError> {
+    ) -> Result<RegisteredModel, OllamaRegistryError> {
         let adapter_file = adapter.storage_path.join("adapter_model.safetensors");
         if !adapter_file.exists() {
-            return Err(RegistryError::InvalidSpec(format!(
+            return Err(OllamaRegistryError::InvalidSpec(format!(
                 "adapter weights not found: {}",
                 adapter_file.display()
             )));
@@ -299,9 +299,9 @@ impl OllamaRegistry {
     /// expect: "The system registers owned models as runnable inference providers"
     /// pre:  name is non-empty
     /// post: model removed from Ollama; source artifacts retained
-    pub fn remove(&self, name: &str) -> Result<(), RegistryError> {
+    pub fn remove(&self, name: &str) -> Result<(), OllamaRegistryError> {
         if name.is_empty() {
-            return Err(RegistryError::InvalidSpec("name must be non-empty".into()));
+            return Err(OllamaRegistryError::InvalidSpec("name must be non-empty".into()));
         }
         #[allow(clippy::disallowed_methods)]
         let output = Command::new(&self.ollama_bin)
@@ -310,14 +310,14 @@ impl OllamaRegistry {
             .output()
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    RegistryError::OllamaNotFound
+                    OllamaRegistryError::OllamaNotFound
                 } else {
-                    RegistryError::Io(e.to_string())
+                    OllamaRegistryError::Io(e.to_string())
                 }
             })?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(RegistryError::RemoveFailed {
+            return Err(OllamaRegistryError::RemoveFailed {
                 name: name.to_string(),
                 stderr,
             });

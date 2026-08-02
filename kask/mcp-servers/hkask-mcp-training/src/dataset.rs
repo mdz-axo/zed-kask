@@ -18,12 +18,9 @@ use thiserror::Error;
 
 // ── Canonical ChatML types ─────────────────────────────────────────────────
 
-/// A single conversation turn in canonical ChatML format.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
-}
+// Canonical chat turn type lives in `hkask_types::ChatMessage` (foundation
+// inference type); re-exported here so this module's ChatML section reads in place.
+pub use hkask_types::ChatMessage;
 
 /// A full conversation (list of role/content turns).
 #[derive(Debug, Clone, Serialize, Deserialize)]
