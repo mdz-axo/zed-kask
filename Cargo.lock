@@ -20257,6 +20257,7 @@ dependencies = [
  "editor",
  "fs",
  "gpui",
+ "hkask-types",
  "kask_bridge",
  "kask_panel",
  "log",

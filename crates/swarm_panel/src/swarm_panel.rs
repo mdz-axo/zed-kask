@@ -34,6 +34,7 @@ use gpui::{
     App, Context, Entity, EventEmitter, Focusable, ReadGlobal as _, Render, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, uniform_list,
 };
+use hkask_types::tool_response::parse_tool_response;
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
 use project::Project;
 use serde::Deserialize;
@@ -373,16 +374,13 @@ struct WorkspaceInfo {
     workspace_remaining: Option<u64>,
 }
 
-/// Extract the algedonic wallet balance from a tool response. The server
-/// wraps tool output in `{"content": {...}}` and attaches `wallet.balance`
-/// when authenticated. Returns `None` when absent — never a fabricated zero.
+/// Extract the algedonic wallet balance from a tool response (the
+/// `with_wallet` shape: `content.wallet.balance`). Returns `None` when
+/// absent — never a fabricated zero.
 fn extract_wallet_balance(output: &str) -> Option<i64> {
-    let value: serde_json::Value = serde_json::from_str(output).ok()?;
-    value
-        .get("content")
-        .and_then(|c| c.get("wallet"))
-        .and_then(|w| w.get("balance"))
-        .and_then(|b| b.as_i64())
+    parse_tool_response(output)
+        .and_then(|content| content.get("wallet").cloned())
+        .and_then(|w| w.get("balance").and_then(|b| b.as_i64()))
 }
 
 /// Parse a tool invoker response, unwrapping the `content` envelope the MCP
@@ -392,13 +390,9 @@ fn extract_wallet_balance(output: &str) -> Option<i64> {
 /// the response was not valid JSON — callers should surface a parse error,
 /// never fabricate a default.
 ///
-/// This is the single seam for the panel's MCP response parsing — every call
-/// site goes through it, so a change to the envelope shape is one edit, and
-/// the parse path is unit-testable without GPUI or the tool invoker.
-fn parse_tool_response(output: &str) -> Option<serde_json::Value> {
-    let value: serde_json::Value = serde_json::from_str(output).ok()?;
-    Some(value.get("content").cloned().unwrap_or(value))
-}
+/// The seam lives in `hkask_types::tool_response::parse_tool_response` — the
+/// same unwrapper the MCP server test helpers use, so a change to the envelope
+/// shape is one edit in one crate.
 
 /// Extract a swarm's hired agents from a `swarm_get_swarm` response.
 /// ABW's exact roster shape is not part of the verified surface, so this
@@ -3402,31 +3396,10 @@ mod tests {
         assert_eq!(extract_wallet_balance("{}"), None);
     }
 
-    // `parse_tool_response` is the single seam for unwrapping the MCP runtime's
-    // `{"content": {...}}` envelope. Every panel call site goes through it, so
-    // a change to the envelope shape is one edit. These tests pin the contract.
-    #[test]
-    fn parse_tool_response_unwraps_content_envelope() {
-        let out = r#"{"content":{"agents":[{"agent_id":"a"}]}}"#;
-        let parsed = parse_tool_response(out).expect("valid envelope");
-        assert!(parsed.get("agents").is_some(), "inner content is unwrapped");
-    }
-
-    #[test]
-    fn parse_tool_response_returns_inner_when_no_envelope() {
-        // Defensive: if a future invoker returns the payload directly (no
-        // `content` wrapper), the helper returns the whole value rather than
-        // dropping it. This keeps the panel working across invoker changes.
-        let out = r#"{"agents":[{"agent_id":"a"}]}"#;
-        let parsed = parse_tool_response(out).expect("valid json");
-        assert!(parsed.get("agents").is_some());
-    }
-
-    #[test]
-    fn parse_tool_response_none_on_garbage() {
-        assert_eq!(parse_tool_response("not json"), None);
-        assert_eq!(parse_tool_response(""), None);
-    }
+    // `parse_tool_response` is imported from `hkask_types::tool_response` —
+    // the shared seam whose own tests pin the envelope contract. The panel
+    // relies on those tests; the remaining panel tests here exercise the
+    // envelope-parse path through the call sites (fetch_all etc.).
 
     // Item 4: the roster drill-down parses ABW's workspace payload
     // defensively across envelope shapes, and never fabricates an empty

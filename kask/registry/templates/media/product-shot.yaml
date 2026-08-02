@@ -1,0 +1,72 @@
+# Media — Product-Shot Pipeline (FlowDef)
+# Pre-defined pipeline (OpenMontage pattern): generate a clean product image,
+# remove the background, then upscale to 4K. Topology is fixed and known-good —
+# the FlowDef executor chains tool outputs implicitly, so no $references are
+# needed and no fal.ai response-shape coupling exists. Invoked via
+# action: flowdef from a parent skill (e.g. media-workflow or a future
+# product-photography skill).
+
+template_type: FlowDef
+name: media_product_shot
+version: "1.0.0"
+description: >
+  Product photography pipeline: generate a centered product image with studio
+  lighting, remove the background for a clean cutout, and upscale to 4K for
+  print/retail use. Pre-defined multi-step pipeline — the agent only supplies
+  the product description; the step topology is fixed.
+
+# gas: image generation + upscale are the costly steps (two fal.ai calls,
+# one queue-mode). No fusion block — model selection is operator-configured
+# via kask.fusion / HKASK_FUSION_PANEL_MODELS; recommend the default image
+# generation model (HKASK_MEDIA_IMAGE_GEN_MODEL) for the generate step.
+gas:
+  cap: 80000
+  cost_per_iteration: 4000
+  alert_threshold: 0.8
+  hard_limit: true
+
+# rJoule: generate_image (flux/dev) + image_remove_background + upscale_image.
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+parameters:
+  - name: product_description
+    type: string
+    required: true
+    description: "What the product is and how it should be framed/photographed"
+  - name: style
+    type: string
+    required: false
+    description: "Photographic style direction (e.g. studio, lifestyle, minimal, dramatic)"
+  - name: scale
+    type: integer
+    default: 4
+    description: "Upscale factor (2 or 4)"
+
+input_type: text
+output_type: image_urls
+latency: async
+cost_tier: high
+
+steps:
+  - id: generate
+    tool: generate_image
+    description: "Generate a clean, centered product image with even studio lighting"
+    prompt: "{{ product_description }}. Clean product photography, centered composition, even studio lighting, high detail, no text overlay. {{ style }}"
+
+  - id: remove_background
+    tool: image_remove_background
+    description: "Remove background for a transparent / white-bg product cutout"
+
+  - id: upscale
+    tool: upscale_image
+    description: "Upscale the cutout for print/retail resolution"
+    scale: "{{ scale }}"
+
+# Pipeline (documentation):
+# Phase 1: generate_image — product on a clean backdrop
+# Phase 2: image_remove_background — isolate the product
+# Phase 3: upscale_image — final resolution for deliverables
+# Return: final cutout image URL

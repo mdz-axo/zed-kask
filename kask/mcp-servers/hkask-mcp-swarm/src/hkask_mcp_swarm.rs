@@ -7712,11 +7712,11 @@ mod tests {
     /// Extract `workspace_id` from a tool response envelope (the
     /// `execute_tool_semantic` shape: `{"content": {...}, ...}` with the tool
     /// value under `content`). Falls back to a top-level `workspace_id` for
-    /// raw-client responses.
+    /// raw-client responses. Uses the shared envelope seam so the unwrap
+    /// cannot drift from the panel's.
     fn extract_workspace_id(tool_response: &str) -> Option<String> {
-        let value: serde_json::Value = serde_json::from_str(tool_response).ok()?;
-        let content = value.get("content").unwrap_or(&value);
-        content
+        let value = hkask_types::tool_response::parse_tool_response(tool_response)?;
+        value
             .get("workspace_id")
             .and_then(|id| id.as_str())
             .map(str::to_string)

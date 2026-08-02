@@ -936,9 +936,7 @@ impl CorpusServer {
                 })))
                 .await;
 
-                let content = serde_json::from_str::<serde_json::Value>(&response)
-                    .ok()
-                    .and_then(|value| value.get("content").cloned());
+                let content = hkask_types::tool_response::parse_tool_response(&response);
                 let text = content
                     .as_ref()
                     .and_then(|value| value.get("text"))

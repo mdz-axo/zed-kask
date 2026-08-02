@@ -47,7 +47,7 @@ pub(crate) async fn mcp_search(
 
     tracing::debug!(target: "hkask.discover", query = %query, has_results = result.get("results").is_some(), result_keys = ?result.as_object().map(|o| o.keys().collect::<Vec<_>>()), "MCP search response");
 
-    let payload = result.get("content").unwrap_or(&result);
+    let payload = hkask_types::tool_response::unwrap_tool_envelope(result);
 
     let results = payload["results"]
         .as_array()

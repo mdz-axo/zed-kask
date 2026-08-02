@@ -681,8 +681,10 @@ convention enforced by `RR-0026` (cargo-test kind).
 tool value under a `content` key — a response is `{"content": {…}}`, not the
 payload itself. Any extractor that reads a tool response must unwrap
 `content` first, or every field read returns `None`/`Ok(None)` with no error.
-The panel's `parse_tool_response` is the canonical consumer-side unwrapper
-(the single seam); server-side test helpers must do the same. Hit 2026-08-02:
+The canonical unwrapper is `hkask_types::tool_response::{parse_tool_response,
+unwrap_tool_envelope}` (the single seam, extracted 2026-08-02 so the panel,
+corpus tool responses, and MCP server test helpers all share it) — do not
+re-implement `value.get("content")` locally. Hit 2026-08-02:
 `extract_workspace_id` in `hkask-mcp-swarm` initially read `workspace_id` off
 the envelope top level, returned `None` on a live create-swarm response, and
 panicked a live probe.

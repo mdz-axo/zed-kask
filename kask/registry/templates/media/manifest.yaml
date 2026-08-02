@@ -100,3 +100,37 @@ templates:
       media intent. Selects appropriate models, defines node topology,
       and wires $references for correct data flow between nodes. Output
       is a valid workflow JSON ready for media.execute_workflow.
+
+  # ── Pre-defined pipelines (OpenMontage pattern; FlowDef, fixed topology) ──
+  # The FlowDef executor chains tool outputs implicitly — no $references and
+  # no fal.ai response-shape coupling. The agent only supplies the subject /
+  # style / motion description; the step topology is fixed and known-good.
+
+  - id: media/product-shot
+    name: "Product-shot pipeline: generate a clean product image, remove…"
+    path: product-shot.yaml
+    type: FlowDef
+    description: >
+      Product photography pipeline: generate a centered product image with
+      studio lighting, remove the background for a clean cutout, and upscale
+      to 4K. Pre-defined multi-step pipeline — the agent only supplies the
+      product description; the step topology is fixed.
+
+  - id: media/stylize-upscale
+    name: "Stylize-and-upscale pipeline: generate a base image, apply an…"
+    path: stylize-upscale.yaml
+    type: FlowDef
+    description: >
+      Artistic stylization pipeline: generate a base image, apply an artistic
+      style transfer, then upscale the result to final resolution. Pre-defined
+      multi-step pipeline — the agent supplies the subject and the target
+      style; the step topology is fixed.
+
+  - id: media/reaction-gif
+    name: "Reaction-GIF pipeline: generate a still image, animate it into a…"
+    path: reaction-gif.yaml
+    type: FlowDef
+    description: >
+      Reaction-GIF pipeline: generate a still image, animate it into a short
+      video clip, then convert the clip to a shareable GIF. Spans cloud
+      generation and local ffmpeg processing — the local+cloud dual path.

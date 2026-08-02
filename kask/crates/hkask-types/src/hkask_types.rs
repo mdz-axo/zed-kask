@@ -27,6 +27,7 @@ pub mod template_type;
 
 pub mod ports;
 pub mod time;
+pub mod tool_response;
 pub mod tool_taint;
 pub mod transcript;
 pub mod visibility;
