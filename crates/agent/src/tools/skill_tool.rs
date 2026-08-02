@@ -1155,6 +1155,59 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_skill_tool_manifest_executor_merges_context_and_task_wins(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // Skill-invocation context (e.g. swarm-intelligence's `mode` and
+        // `swarm_id`) must reach the cascade, and a `context["task"]` entry
+        // must NOT clobber the real user task (task is injected last).
+        let (skill, _body) = create_test_skill("context-skill", "A skill", "# Body");
+        let skills = Arc::new(vec![skill]);
+
+        let executor = Arc::new(StubManifestExecutor::new(["context-skill"], "ok"));
+        let executor_for_assert: Arc<StubManifestExecutor> = executor.clone();
+        let tool = Arc::new(SkillTool::with_manifest_executor(
+            move |_cx| skills.clone(),
+            executor,
+        ));
+
+        let (mut sender, input) = ToolInput::<SkillToolInput>::test();
+        sender.send_full(json!({
+            "name": "context-skill",
+            "task": "steer the swarm",
+            "context": {
+                "mode": "local",
+                "swarm_id": "ws_123",
+                "task": "spoofed task"
+            }
+        }));
+        let (event_stream, _rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(input, event_stream, cx));
+        let _output = task.await.unwrap();
+
+        let ctx = executor_for_assert
+            .last_context()
+            .expect("execute_skill was not called");
+        assert_eq!(
+            ctx.get("mode"),
+            Some(&serde_json::Value::String("local".to_string())),
+            "skill-invocation context must reach the cascade"
+        );
+        assert_eq!(
+            ctx.get("swarm_id"),
+            Some(&serde_json::Value::String("ws_123".to_string())),
+            "skill-invocation context must reach the cascade"
+        );
+        assert_eq!(
+            ctx.get("task"),
+            Some(&serde_json::Value::String("steer the swarm".to_string())),
+            "the user's task must win over a context['task'] entry"
+        );
+    }
+
+    #[gpui::test]
     async fn test_skill_tool_manifest_executor_surfaces_cascade_errors(cx: &mut TestAppContext) {
         init_test(cx);
 

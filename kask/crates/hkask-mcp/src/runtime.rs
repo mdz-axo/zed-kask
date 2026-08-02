@@ -432,14 +432,16 @@ impl McpRuntime {
         // resolve to a dead connection.
         let mut servers = self.servers.write().await;
         if let Some(server) = servers.remove(server_id) {
+            let tools = server.tools;
+            let tool_count = tools.len();
             let mut tool_registry = self.tool_registry.write().await;
-            for tool in server.tools {
+            for tool in tools {
                 tool_registry.remove(&tool.name);
             }
             info!(
                 target: "hkask.mcp",
                 server_id = %server_id,
-                tools = server.tools.len(),
+                tools = tool_count,
                 "MCP server stopped"
             );
         }

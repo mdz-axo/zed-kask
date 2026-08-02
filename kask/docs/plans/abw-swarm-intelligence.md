@@ -169,6 +169,8 @@ substrate; both tool sets remain registered.
   Lazily initialized (OnceCell) on first local tool call.
 - Ledger — operator-funded (`swarm_fund_local`); unfunded delegation returns
   `PaymentRequired`. No auto-replenishment: the corrective signal must be real.
+  Transaction history is queryable via `swarm_local_history` (the local-mode
+  run/reconciliation surface).
 - Cost — 1 credit / 1000 tokens, capped at `credits_authorized`, debited
   *before* the output guard scan (compute was spent even if the output is
   quarantined).
@@ -180,8 +182,17 @@ and `skills` (skill ids). `swarm_delegate_local` declares the card's
 `mcp_tools` to the model and dispatches model tool calls through the zed IPC
 bridge's `ToolInvoke` method (governed `McpRuntime` on the zed side, panel
 token). Tool calls are allowlisted to the card's declared tools. Declared
-`skills` are carried on the card and in create/clone/push, but are **not yet
-executed** in local mode — the skill-exec IPC method is the follow-up.
+`skills` are executed against the task through the zed-side `ManifestExecutor`
+(IPC `SkillExecute` method, capped at 3 per delegation) **before** the LLM
+call; each cascade's output is guard-scanned and injected into the prompt as
+context. A missing/failed skill is recorded (`executed_skills` in the
+response) and the delegation proceeds; a skill output that trips the input
+
+guard rejects the delegation (an injection from a skill is a finding).
+
+Local cards are removed with `swarm_remove_local` (the local counterpart of
+firing — deletes the card directory; a synced card's ABW agent is untouched)
+and added via clone or manual file placement (§15.1.1).
 
 ### 15.4 Backend toggle
 
@@ -203,3 +214,50 @@ sets, the current mode, the consent gate, the ceiling, and the
 The local economy is operator-funded with no auto-replenishment. `debit`
 returns `PaymentRequired` on insufficient balance. This is deliberate: a
 synthetic ledger breaks the corrective feedback loop.
+
+## 16. Observation & management surfaces (as built, 2026-08-02)
+
+### Observe
+
+- Panel Browse: agent cards (type, executions, cloud/local/synced badge),
+  swarm cards (name, agent count, budget/remaining), wallet header (`⛽`),
+  local balance header (`■`). Swarm cards have **Details** (roster drill-down)
+  and **Run Status** (recent workspace messages) buttons.
+- `swarm_get_swarm` — roster + budget (server-sanitized, including roster
+  descriptions). `swarm_run_status` — ABW workspace messages. `swarm_balance_local`
+  + `swarm_local_history` — local ledger balance and transactions.
+- The `swarm-intelligence` skill's SENSE/CHECK re-measure both substrates;
+  the algedonic override rides every tool response.
+
+### Manage
+
+- Create: `swarm_create_swarm` (consent-gated hires), `swarm_create_agent`,
+  `swarm_create_app`, `swarm_clone_to_local`, `swarm_push_to_cloud`.
+- Roster: `swarm_hire` (consent-gated) — **no ABW fire** (blocked, see §17);
+  local pruning via `swarm_remove_local`.
+- Spend: `swarm_delegate` / `swarm_execute_agent` (ABW), `swarm_delegate_local`
+  (local). Budget: `swarm_fund_local`; per-dispatch ceiling
+  (`HKASK_ABW_MAX_CREDITS`); wallet is ABW-side.
+- Compose: Xaman Ek (`swarm_xaman`), the `swarm-intelligence` skill, the
+  panel's Compose tab.
+
+## 17. Blocked by ABW endpoint verification (not implementable from zed-kask)
+
+These management operations have **no server tool** and must not be added
+until the ABW API surface is verified against the live service. Advertised
+tools that hit unverified endpoints are worse than no tool (the `.rules`
+"advertised invariants need enforcement points" trap). The endpoint shapes to
+verify:
+
+| Operation | Endpoint shape to verify on ABW | Current state |
+|---|---|---|
+| Fire / un-hire | `DELETE /api/workspaces/{id}/agents/{agent_id}` (or `POST /api/workspaces/{id}/agents/{agent_id}/fire`) | No tool; DECIDE flags redundant duplicates; ACT aborts with `no_fire_tool`; local pruning via `swarm_remove_local` |
+| Workspace update | `PATCH /api/workspaces/{id}` (name, mission, budget) | No tool; create-only |
+| Workspace delete | `DELETE /api/workspaces/{id}` | No tool |
+| Agent update | `PUT /api/agents/{agent_id}` (system_prompt, model, temperature) | No direct tool; `swarm_push_to_cloud` updates an ABW agent *from a local card* |
+| Agent delete | `DELETE /api/agents/{agent_id}` | No tool |
+
+Verification procedure: inspect ABW's OpenAPI/docs for each shape, add the
+tool with the verified path, and pin the response shape with a unit test
+(like the existing consent/ceiling tests). Until then, the operator prunes
+ABW rosters manually on agent-bestiary.world.

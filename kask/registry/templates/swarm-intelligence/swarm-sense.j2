@@ -95,12 +95,12 @@ Via the hkask-mcp-swarm local tools:
 
 - `swarm_list_local_agents` → local agent registry: `agents[]` each with
   `{ agent_id, agent_type, accepts[], produces[], capabilities { model,
-  min_provider_class, system_prompt }, dependencies { required[],
-  optional[] } }`.
-- The local ledger balance is returned by `swarm_delegate_local` responses
-  (the `balance` field). If no prior delegation has occurred, the balance is
-  unknown — set `wallet_state = { balance: null, source: "local_ledger" }`.
-  Do NOT fabricate a zero balance (the `.rules` trap on `unwrap_or(0)` for
+  min_provider_class, system_prompt, mcp_tools[], skills[] }, dependencies {
+  required[], optional[] } }`.
+- `swarm_balance_local` → the local ledger balance: `{ balance, asset }`.
+  An unfunded ledger reads 0. If the call fails, set
+  `wallet_state = { balance: null, source: "local_ledger" }` — do NOT
+  fabricate a zero balance (the `.rules` trap on `unwrap_or(0)` for
   regulation signals — a null balance means "not yet measured", not "zero").
 
 Record the raw workspace_roster and wallet_state.

@@ -2845,7 +2845,11 @@ pub(crate) fn manifest_executor() -> Option<&'static Arc<dyn SkillManifestExecut
 /// created before the deferred post-login task wires the executor pick
 /// it up on later invocations. `Arc::clone` is cheap (atomic refcount),
 /// so calling this per skill invocation is not a measurable cost.
-pub(crate) fn manifest_executor_cloned() -> Option<Arc<dyn SkillManifestExecutor>> {
+///
+/// `pub` (not `pub(crate)`) so the composition root can back the IPC
+/// `SkillExecPort` (main.rs `AgentSkillExec`) with the same global — the
+/// zed-side skill-execution path for MCP servers runs through here too.
+pub fn manifest_executor_cloned() -> Option<Arc<dyn SkillManifestExecutor>> {
     crate::manifest_executor().cloned()
 }
 

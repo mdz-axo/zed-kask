@@ -120,6 +120,39 @@ impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
     }
 }
 
+/// MCP-server-side skill-execution boundary.
+///
+/// Lets a child MCP server process (e.g. `hkask-mcp-swarm`'s local delegate)
+/// run an hKask skill cascade that lives in the zed process (the global
+/// `ManifestExecutor`). `InferenceIpcClient` implements this over the
+/// `InferenceMethod::SkillExecute` IPC method; backends without a bridge
+/// return a clear error. The cascade runs with the executor's own gas/OCAP
+/// enforcement on the zed side — the child never holds token material.
+///
+/// Two implementors: the IPC client (real execution) and the fallback stub
+/// (clear error) — the swarm delegate loop reads it, so it is not
+/// speculative generality.
+pub trait SkillExecPort: Send + Sync {
+    /// Execute a skill cascade by name against `task`. Returns the cascade's
+    /// final output as text. `Err` when the skill has no manifest or the
+    /// cascade failed.
+    fn execute_skill<'a>(
+        &'a self,
+        name: &'a str,
+        task: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
+}
+
+impl SkillExecPort for Arc<dyn SkillExecPort> {
+    fn execute_skill<'a>(
+        &'a self,
+        name: &'a str,
+        task: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        self.as_ref().execute_skill(name, task)
+    }
+}
+
 pub trait InferencePort: Send + Sync {
     fn generate(
         &self,

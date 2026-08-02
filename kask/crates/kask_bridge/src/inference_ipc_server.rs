@@ -225,11 +225,15 @@ impl InferenceIpcServer {
     /// `hkask-mcp-swarm`'s local delegate). When `None`, `tool_invoke`
     /// requests return an error. The zed side mints the OCAP panel token —
     /// the child process never holds token material.
+    /// `skill_exec_port` runs `skill_execute` requests through the zed-side
+    /// `ManifestExecutor` (its own gas/OCAP enforcement). When `None`,
+    /// `skill_execute` requests return an error.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
         media_router: Option<Arc<hkask_inference::MediaRouter>>,
         tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
+        skill_exec_port: Option<Arc<dyn hkask_types::SkillExecPort>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -276,6 +280,7 @@ impl InferenceIpcServer {
         let emb_port = embedding_port.clone();
         let media = media_router.clone();
         let tools = tool_port.clone();
+        let skill_exec = skill_exec_port.clone();
 
         // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
         // `Send`, so we can't pass it into tokio::spawn. Instead, this task
@@ -316,10 +321,19 @@ impl InferenceIpcServer {
                         let emb_port = emb_port.clone();
                         let media = media.clone();
                         let tools = tools.clone();
+                        let skill_exec = skill_exec.clone();
                         let list_models_tx = list_models_tx.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, port, emb_port, media, tools, list_models_tx)
-                                .await;
+                            handle_connection(
+                                stream,
+                                port,
+                                emb_port,
+                                media,
+                                tools,
+                                skill_exec,
+                                list_models_tx,
+                            )
+                            .await;
                         });
                     }
                     Err(e) => {
@@ -376,6 +390,7 @@ async fn handle_connection(
     embedding_port: Option<LanguageModelEmbeddingPort>,
     media_router: Option<Arc<hkask_inference::MediaRouter>>,
     tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
+    skill_exec_port: Option<Arc<dyn hkask_types::SkillExecPort>>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -430,6 +445,7 @@ async fn handle_connection(
             embedding_port.as_ref(),
             media_router.as_ref(),
             tool_port.as_ref(),
+            skill_exec_port.as_ref(),
             &list_models_tx,
             request,
         )
@@ -481,6 +497,7 @@ async fn dispatch(
     embedding_port: Option<&LanguageModelEmbeddingPort>,
     media_router: Option<&Arc<hkask_inference::MediaRouter>>,
     tool_port: Option<&Arc<dyn hkask_capability::ToolPort>>,
+    skill_exec_port: Option<&Arc<dyn hkask_types::SkillExecPort>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -620,6 +637,43 @@ async fn dispatch(
         };
     }
 
+    // Skill-execute requests route to the zed-side `ManifestExecutor` (via
+    // the injected `SkillExecPort`). The cascade runs with its own gas/OCAP
+    // enforcement on the zed side — the child process never holds token
+    // material. Used by `hkask-mcp-swarm`'s local delegate to run an agent's
+    // declared `skills` against the task before the LLM call.
+    if matches!(request.method, InferenceMethod::SkillExecute) {
+        let Some(skill_exec_port) = skill_exec_port else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "skill execution not configured on the zed side — the IPC \
+                        server was started without a skill exec port. This indicates a \
+                        startup wiring bug."
+                        .to_string(),
+                },
+            };
+        };
+        let Some(name) = params.skill_name.clone() else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "SkillExec".to_string(),
+                    message: "skill_execute request missing skill_name".to_string(),
+                },
+            };
+        };
+        let task = params.skill_task.unwrap_or_default();
+        return match skill_exec_port.execute_skill(&name, &task).await {
+            Ok(result) => InferenceOutcome::SkillResult { result },
+            Err(e) => InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "SkillExec".to_string(),
+                    message: e,
+                },
+            },
+        };
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -663,7 +717,8 @@ async fn dispatch(
         InferenceMethod::Embed
         | InferenceMethod::ListModels
         | InferenceMethod::MediaGenerate
-        | InferenceMethod::ToolInvoke => unreachable!(),
+        | InferenceMethod::ToolInvoke
+        | InferenceMethod::SkillExecute => unreachable!(),
     };
 
     match result {

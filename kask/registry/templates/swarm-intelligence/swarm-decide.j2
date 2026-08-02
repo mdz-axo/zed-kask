@@ -73,7 +73,9 @@ In local mode, "hire" means the operator should add the agent card to
 `agents/local/curated/<id>/agent_card.json` (or clone it from ABW via the
 panel's "Clone to Local" button). The DECIDE phase proposes which agents to
 add; the operator does the file write. There is no `swarm_hire_local` tool
-(§15.1.1 rejected — the team is emergent from the call pattern).
+(§15.1.1 rejected — the team is emergent from the call pattern). Pruning is
+available: `swarm_remove_local` deletes a local card (the local counterpart
+of firing).
 {% else %}
 Prefer agents already in the ABW catalogue whose dependencies are
 satisfiable by the current roster.
@@ -82,15 +84,16 @@ satisfiable by the current roster.
 ### If deficit_class = "coherence_deficit" + coherence_low_diversity
 Hire a diverse agent (different agent_type or model from the current
 monoculture). List redundant duplicates (same agent_type + model as an
-existing hire) under `redundant_candidates` in the move's rationale — there
-is no `fire` tool yet (the ABW fire endpoint is not implemented), so the
-recommendation is hire-only; the redundancy is flagged for the operator's
-manual review.
+existing hire) under `redundant_candidates` in the move's rationale. In
+**local mode**, a redundant duplicate can be pruned with
+`swarm_remove_local` (the local counterpart of firing — propose a `remove`
+move). In **abw mode** there is no `fire` tool yet (the ABW fire endpoint is
+not implemented), so the recommendation is hire-only; the redundancy is
+flagged for the operator's manual review.
 **Anchor: PSO** — raise c1 (cognitive scaling) and lower omega (inertia) to
 broaden the search; **ACO evaporation** — "pheromone evaporates with time
 and hence the longer paths will have more evaporation" (Bansal 2019) —
-flagging the redundant duplicate is the evaporation signal, to be acted on
-when a `fire` tool lands.
+flagging/removing the redundant duplicate is the evaporation signal.
 
 ### If deficit_class = "coherence_deficit" + coherence_low_alignment
 Hire or assign a coordinator compound agent.
@@ -141,6 +144,8 @@ reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
 ## Output
 
 Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
-"delegate", agent_id_or_type, estimated_credits, covers_transforms?,
+"delegate"|"remove", agent_id_or_type, estimated_credits, covers_transforms?,
 redundant_candidates?, rationale }), tuning_rationale (object mapping move →
 swarm-algorithm term), respects_no_delegation_chains (boolean), delegate_notes.
+`remove` moves are local-mode only (`swarm_remove_local`); in abw mode a
+`remove`/fire move must be flagged as un-actionable until a fire tool lands.

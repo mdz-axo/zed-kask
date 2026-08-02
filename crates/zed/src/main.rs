@@ -1719,11 +1719,19 @@ fn main() {
                         let tool_port_for_ipc: Option<
                             std::sync::Arc<dyn hkask_capability::ToolPort>,
                         > = Some(mcp_runtime_for_deferred.clone());
+                        // The agent global manifest executor backs
+                        // `skill_execute` requests (delegated swarm agents
+                        // running declared skills). Resolved at call time so
+                        // the post-login wiring (below) is picked up.
+                        let skill_exec_port_for_ipc: Option<
+                            std::sync::Arc<dyn hkask_types::SkillExecPort>,
+                        > = Some(std::sync::Arc::new(AgentSkillExec));
                         match kask_bridge::InferenceIpcServer::start(
                             guarded_inference.clone(),
                             embedding_port_for_ipc.clone(),
                             Some(media_router),
                             tool_port_for_ipc,
+                            skill_exec_port_for_ipc,
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -1822,10 +1830,18 @@ fn main() {
                         );
                         let no_model_port: std::sync::Arc<dyn hkask_types::InferencePort> =
                             std::sync::Arc::new(kask_bridge::NoModelInferencePort);
+                        // No tool port here: the no-op port means no chat model
+                        // is configured yet, so delegated agents have nothing to
+                        // dispatch against. The guarded IPC server (started after
+                        // the model resolves) carries the McpRuntime tool port.
+                        // Same for skill execution — no manifest executor is
+                        // wired until the model resolves.
                         match kask_bridge::InferenceIpcServer::start(
                             no_model_port,
                             None,
                             Some(media_router),
+                            None,
+                            None,
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -2561,6 +2577,36 @@ fn sync_kask_mcp_runtime_servers(
 struct PanelToolInvoker {
     tool_port: std::sync::Arc<hkask_mcp::McpRuntime>,
     executor: gpui::BackgroundExecutor,
+}
+
+/// `SkillExecPort` backed by the agent crate's global manifest executor.
+///
+/// Wired into the inference IPC server so MCP server child processes (e.g.
+/// `hkask-mcp-swarm`'s local delegate) can run an agent's declared skills.
+/// Resolves the executor at call time (it is wired in the deferred
+/// post-login task, after the IPC server starts) — the same resolver
+/// pattern as `SkillTool`. The cascade runs with the executor's own
+/// gas/OCAP enforcement on this side; the wrapper only forwards name + task.
+struct AgentSkillExec;
+
+impl hkask_types::SkillExecPort for AgentSkillExec {
+    fn execute_skill<'a>(
+        &'a self,
+        name: &'a str,
+        task: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+    {
+        let name = name.to_string();
+        let task = task.to_string();
+        Box::pin(async move {
+            let Some(executor) = agent::manifest_executor_cloned() else {
+                return Err("manifest executor not wired — skills cannot run".to_string());
+            };
+            let mut context = std::collections::HashMap::new();
+            context.insert("task".to_string(), serde_json::Value::String(task));
+            executor.execute_skill(&name, context).await
+        })
+    }
 }
 
 impl kask_panel::ToolInvoker for PanelToolInvoker {

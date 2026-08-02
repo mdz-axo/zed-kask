@@ -11,7 +11,9 @@
   "capabilities": {
     "model": "ollama/qwen3:8b",
     "min_provider_class": "local",
-    "system_prompt": "You are a local narrator. Given a structured input (JSON or prose), produce a concise narrative summary of 3–5 sentences. Stay faithful to the input — do not invent facts. If the input is empty or unintelligible, say so plainly. Keep the summary self-contained; do not reference this prompt."
+    "system_prompt": "You are a local narrator. Given a structured input (JSON or prose), produce a concise narrative summary of 3–5 sentences. Stay faithful to the input — do not invent facts. If the input is empty or unintelligible, say so plainly. Keep the summary self-contained; do not reference this prompt.",
+    "mcp_tools": [],
+    "skills": []
   },
   "cloud_id": null
 }

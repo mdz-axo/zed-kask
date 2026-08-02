@@ -41,6 +41,10 @@
 //!   delegate) so a delegated agent can call MCP tools that live in the parent
 //!   process. The zed side mints the OCAP panel token — the child never holds
 //!   token material.
+//! - `skill_execute` — run an hKask skill cascade on the zed side
+//!   (`SkillExecPort`, backed by the global `ManifestExecutor`); used by MCP
+//!   servers so a delegated agent's declared `skills` execute with the
+//!   executor's own gas/OCAP enforcement.
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -90,6 +94,10 @@ pub enum InferenceMethod {
     /// Uses `tool_server`, `tool_name`, `tool_args` from `InferenceParams`.
     /// The result is returned as `InferenceOutcome::ToolResult`.
     ToolInvoke,
+    /// Execute an hKask skill cascade on the zed side (`SkillExecPort`).
+    /// Uses `skill_name`, `skill_task` from `InferenceParams`. The result is
+    /// returned as `InferenceOutcome::SkillResult`.
+    SkillExecute,
 }
 
 /// Parameters for an inference request.
@@ -141,6 +149,11 @@ pub struct InferenceParams {
     pub tool_name: Option<String>,
     /// Tool arguments (JSON).
     pub tool_args: Option<serde_json::Value>,
+    // ── Skill execution fields (for `InferenceMethod::SkillExecute`) ──
+    /// Skill id to execute (e.g. "grill-me").
+    pub skill_name: Option<String>,
+    /// Task text the skill cascade acts on.
+    pub skill_task: Option<String>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -179,10 +192,20 @@ pub enum InferenceOutcome {
         media: serde_json::Value,
     },
     /// Tool dispatch result from `InferenceMethod::ToolInvoke`.
-    /// The value is the tool's JSON output.
+    /// The value is the tool's JSON output. The key is `tool_result` (not
+    /// `result`) so the untagged enum cannot confuse a tool output that
+    /// happens to carry `result` with the `Result` variant.
     ToolResult {
-        #[serde(rename = "result")]
+        #[serde(rename = "tool_result")]
         result: serde_json::Value,
+    },
+    /// Skill execution result from `InferenceMethod::SkillExecute`.
+    /// The value is the cascade's final output text. The key is
+    /// `skill_result` (distinct from `result`/`tool_result` for the same
+    /// untagged-enum reason).
+    SkillResult {
+        #[serde(rename = "skill_result")]
+        result: String,
     },
     /// Error from the inference port.
     Error {
@@ -240,6 +263,146 @@ impl From<InferenceErrorPayload> for InferenceError {
             "CircuitOpen" => InferenceError::CircuitOpen(e.message),
             "VisionUnsupported" => InferenceError::VisionUnsupported(e.message),
             _ => InferenceError::Generation(e.message),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The untagged `InferenceOutcome` must not confuse a tool output that
+    // happens to carry a `result` key with the `Result` variant — the
+    // `ToolResult` payload uses the distinct `tool_result` key. Pins the
+    // serde contract for the swarm tool-dispatch path.
+    #[test]
+    fn tool_result_roundtrip_uses_distinct_key() {
+        let response = InferenceResponse {
+            id: 7,
+            outcome: InferenceOutcome::ToolResult {
+                result: serde_json::json!({ "rows": 42, "result": "inner" }),
+            },
+        };
+        let json = serde_json::to_string(&response).expect("serialize");
+        assert!(
+            json.contains("\"tool_result\""),
+            "ToolResult must serialize under the distinct tool_result key: {json}"
+        );
+        let parsed: InferenceResponse = serde_json::from_str(&json).expect("deserialize");
+        match parsed.outcome {
+            InferenceOutcome::ToolResult { result } => {
+                assert_eq!(result["rows"], 42);
+                // The inner `result` key of the tool's own output must not
+                // be mistaken for the Result variant.
+                assert_eq!(result["result"], "inner");
+            }
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tool_invoke_request_roundtrip() {
+        let request = InferenceRequest {
+            id: 3,
+            method: InferenceMethod::ToolInvoke,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
+                tool_server: Some("codegraph".to_string()),
+                tool_name: Some("codegraph_query".to_string()),
+                tool_args: Some(serde_json::json!({ "q": "x" })),
+                skill_name: None,
+                skill_task: None,
+            },
+        };
+        let json = serde_json::to_string(&request).expect("serialize");
+        let parsed: InferenceRequest = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(parsed.method, InferenceMethod::ToolInvoke));
+        assert_eq!(parsed.params.tool_server.as_deref(), Some("codegraph"));
+        assert_eq!(parsed.params.tool_name.as_deref(), Some("codegraph_query"));
+        assert_eq!(
+            parsed.params.tool_args,
+            Some(serde_json::json!({ "q": "x" }))
+        );
+    }
+
+    #[test]
+    fn skill_execute_request_roundtrip() {
+        let request = InferenceRequest {
+            id: 4,
+            method: InferenceMethod::SkillExecute,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
+                skill_name: Some("grill-me".to_string()),
+                skill_task: Some("probe the delegate".to_string()),
+            },
+        };
+        let json = serde_json::to_string(&request).expect("serialize");
+        let parsed: InferenceRequest = serde_json::from_str(&json).expect("deserialize");
+        assert!(matches!(parsed.method, InferenceMethod::SkillExecute));
+        assert_eq!(parsed.params.skill_name.as_deref(), Some("grill-me"));
+        assert_eq!(
+            parsed.params.skill_task.as_deref(),
+            Some("probe the delegate")
+        );
+
+        // The skill output serializes under the distinct `skill_result` key.
+        let response = InferenceResponse {
+            id: 4,
+            outcome: InferenceOutcome::SkillResult {
+                result: "gap analysis".to_string(),
+            },
+        };
+        let json = serde_json::to_string(&response).expect("serialize");
+        assert!(json.contains("\"skill_result\""), "{json}");
+        let parsed: InferenceResponse = serde_json::from_str(&json).expect("deserialize");
+        match parsed.outcome {
+            InferenceOutcome::SkillResult { result } => assert_eq!(result, "gap analysis"),
+            other => panic!("expected SkillResult, got {other:?}"),
         }
     }
 }

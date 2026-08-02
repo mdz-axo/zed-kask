@@ -39,7 +39,7 @@ use hkask_types::inference_ipc::{
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult, MediaGenerateParams, ToolDispatchPort,
+    InferenceResult, MediaGenerateParams, SkillExecPort, ToolDispatchPort,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -180,6 +180,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 "received ToolResult outcome for a non-tool-invoke request".into(),
             )),
+            InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
+                "received SkillResult outcome for a non-skill-execute request".into(),
+            )),
         }
     }
 
@@ -219,6 +222,8 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                skill_name: None,
+                skill_task: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -277,6 +282,12 @@ impl InferenceIpcClient {
             InferenceOutcome::Media { .. } => Err(EmbeddingGenerationError::Connection(
                 "received Media outcome for an embed request".into(),
             )),
+            InferenceOutcome::ToolResult { .. } => Err(EmbeddingGenerationError::Connection(
+                "received ToolResult outcome for an embed request".into(),
+            )),
+            InferenceOutcome::SkillResult { .. } => Err(EmbeddingGenerationError::Connection(
+                "received SkillResult outcome for an embed request".into(),
+            )),
         }
     }
 
@@ -330,6 +341,8 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                skill_name: None,
+                skill_task: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -386,6 +399,12 @@ impl InferenceIpcClient {
             InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
                 "received Media outcome for a list_models request".into(),
             )),
+            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
+                "received ToolResult outcome for a list_models request".into(),
+            )),
+            InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
+                "received SkillResult outcome for a list_models request".into(),
+            )),
         }
     }
 
@@ -429,6 +448,8 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                skill_name: None,
+                skill_task: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -488,6 +509,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
                 "received ToolResult outcome for a media request".into(),
             )),
+            InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
+                "received SkillResult outcome for a media request".into(),
+            )),
         }
     }
 
@@ -546,6 +570,8 @@ impl InferenceIpcClient {
                 tool_server: Some(server.to_string()),
                 tool_name: Some(tool.to_string()),
                 tool_args: Some(args),
+                skill_name: None,
+                skill_task: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -598,6 +624,98 @@ impl InferenceIpcClient {
             ))),
         }
     }
+
+    /// Execute an hKask skill cascade on the zed side via the IPC bridge.
+    ///
+    /// `name` is the skill id (e.g. "grill-me"), `task` the text the cascade
+    /// acts on. The zed process runs the skill through its global
+    /// `ManifestExecutor` (gas/OCAP enforcement on that side). Returns the
+    /// cascade's final output text.
+    pub async fn execute_skill(&self, name: &str, task: &str) -> Result<String, InferenceError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: InferenceMethod::SkillExecute,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
+                skill_name: Some(name.to_string()),
+                skill_task: Some(task.to_string()),
+            },
+        };
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut guard = self.stream.lock().await;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
+
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let line = read_response_line(stream)
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+
+        let Some(line) = line else {
+            *guard = None;
+            return Err(InferenceError::Connection(
+                "IPC socket closed by server".into(),
+            ));
+        };
+
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+
+        if response.id != id {
+            return Err(InferenceError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )));
+        }
+
+        match response.outcome {
+            InferenceOutcome::SkillResult { result } => Ok(result),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            other => Err(InferenceError::Connection(format!(
+                "received non-skill-execute outcome for a skill-execute request: {other:?}"
+            ))),
+        }
+    }
 }
 
 impl InferencePort for InferenceIpcClient {
@@ -635,6 +753,8 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            skill_name: None,
+            skill_task: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::Generate, params).await }.boxed()
@@ -675,6 +795,8 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            skill_name: None,
+            skill_task: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateWithModel, params).await }.boxed()
@@ -715,6 +837,8 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            skill_name: None,
+            skill_task: None,
         };
         let this = self;
         async move {
@@ -759,6 +883,8 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            skill_name: None,
+            skill_task: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()
@@ -816,10 +942,28 @@ impl ToolDispatchPort for InferenceIpcClient {
         server: &'a str,
         tool: &'a str,
         args: serde_json::Value,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>,
+    > {
         let server = server.to_string();
         let tool = tool.to_string();
         Box::pin(async move { self.invoke_tool(&server, &tool, args).await })
+    }
+}
+
+impl SkillExecPort for InferenceIpcClient {
+    fn execute_skill<'a>(
+        &'a self,
+        name: &'a str,
+        task: &'a str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        let name = name.to_string();
+        let task = task.to_string();
+        Box::pin(async move {
+            self.execute_skill(&name, &task)
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
 }
 

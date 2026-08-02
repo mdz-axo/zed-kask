@@ -106,6 +106,9 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
   (`agents/local/curated/<id>/agent_card.json`). No `workspace_id` — the
   workspace is the session (§15.1.9 rejected workspace_id on local tools).
   No consent token — the balance check is the gate.
+- `remove` → `swarm_remove_local` with `{ agent_name }` (the local
+  counterpart of firing — deletes the card; a synced card's ABW agent is
+  untouched).
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% else %}
@@ -117,9 +120,9 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
   consent_token, credits_authorized }` (workspace delegation semantics, one
   level deep — the delegate loses delegate_to_agent/execute_agent).
 
-There is no `fire` tool — a `fire` move cannot be emitted. If a decision
-proposes firing, mark it Aborted with reason "no_fire_tool" so the operator
-can prune the redundant agent manually.
+There is no `fire` tool in abw mode — a `remove`/fire move cannot be emitted.
+Mark it Aborted with reason "no_fire_tool" so the operator can prune the
+redundant agent manually (or use `swarm_remove_local` for a local-only card).
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% endif %}

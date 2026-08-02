@@ -109,15 +109,20 @@ fn steer_system_prompt(
          Bestiary World and require the ABW API key.\n\
          \n\
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
-         `swarm_balance_local`, `swarm_fund_local`, `swarm_delegate_local`, \
-         `swarm_clone_to_local`, `swarm_push_to_cloud`. These run on the local \
+         `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \
+         `swarm_delegate_local`, `swarm_clone_to_local`, `swarm_remove_local`, \
+         `swarm_push_to_cloud`. These run on the local \
          substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
          `PaymentRequired`. There is no consent token in local mode: the balance \
          check is the gate. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
          cards between the local registry (`agents/local/curated/<id>/agent_card.json`) \
-         and ABW; a cloned card carries `cloud_id` to track the sync link.\n\
+         and ABW; a cloned card carries `cloud_id` to track the sync link. \
+         `swarm_remove_local` deletes a local card (the local counterpart of \
+         firing — a synced card's ABW agent is untouched); `swarm_local_history` \
+         reads the local ledger's recent transactions (the run/reconciliation \
+         surface in local mode).\n\
          \n\
          {workspace_note}\n\
          \n\
@@ -376,6 +381,84 @@ fn parse_tool_response(output: &str) -> Option<serde_json::Value> {
     Some(value.get("content").cloned().unwrap_or(value))
 }
 
+/// Extract a swarm's hired agents from a `swarm_get_swarm` response.
+/// ABW's exact roster shape is not part of the verified surface, so this
+/// parses defensively across the plausible envelopes: an `agents` array at
+/// the top level, under `workspace`, or under `team`. Each agent's
+/// `description` is a plain sanitized string (the server's display-field
+/// sanitizer guarantees that). Returns `None` when no roster array is found
+/// (a malformed response is an error, never an empty roster).
+fn parse_swarm_roster(content: serde_json::Value) -> Option<Vec<SwarmRosterAgent>> {
+    let candidates = [
+        content.get("agents"),
+        content.get("workspace").and_then(|w| w.get("agents")),
+        content.get("team").and_then(|t| t.get("agents")),
+        content
+            .get("workspace")
+            .and_then(|w| w.get("team"))
+            .and_then(|t| t.get("agents")),
+    ];
+    let agents = candidates.into_iter().find_map(|c| c?.as_array())?;
+    Some(
+        agents
+            .iter()
+            .filter_map(|a| {
+                let agent_id = a
+                    .get("agent_id")
+                    .or_else(|| a.get("agent_name"))
+                    .and_then(|v| v.as_str())?;
+                Some(SwarmRosterAgent {
+                    agent_id: agent_id.to_string(),
+                    agent_type: a
+                        .get("agent_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    description: a
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Extract renderable message lines from a `swarm_run_status` response.
+/// The server sanitizes each message's `content`/`response` into the
+/// `{content, source, trust}` container; extract the inner text. A missing
+/// `messages` array is an error (never an empty status).
+fn parse_run_status_messages(content: serde_json::Value) -> Option<Vec<String>> {
+    let messages = content.get("messages")?.as_array()?;
+    let mut lines = Vec::new();
+    for msg in messages {
+        let sender = msg
+            .get("agent_id")
+            .or_else(|| msg.get("sender"))
+            .or_else(|| msg.get("role"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("agent");
+        let text = msg
+            .get("content")
+            .or_else(|| msg.get("response"))
+            .and_then(|v| {
+                if v.is_string() {
+                    v.as_str().map(str::to_string)
+                } else {
+                    v.get("content")
+                        .and_then(|c| c.as_str())
+                        .map(str::to_string)
+                }
+            })
+            .unwrap_or_default();
+        if !text.trim().is_empty() {
+            lines.push(format!("{sender}: {text}"));
+        }
+    }
+    Some(lines)
+}
+
 /// Extract agent-name mentions from a Xaman Ek composition response. The
 /// curator recommends members in its `response` text and `in_progress` plan;
 /// we match `lowercase_with_underscores` tokens that look like agent names.
@@ -446,6 +529,10 @@ pub struct SwarmPanel {
     /// Current ABW wallet balance (the algedonic channel). `None` = unknown
     /// (unauthenticated or the balance query failed) — never a fabricated zero.
     wallet_balance: Option<i64>,
+    /// Current local ledger balance (v2 §15). `None` = unknown or the local
+    /// runtime isn't initialized. Displayed in the header when the backend
+    /// mode is `local`.
+    local_balance: Option<i64>,
     /// In-flight consent prompt for a hire action: the agent being considered
     /// plus its pre-flight cost estimate. `Some` renders the consent banner.
     pending_hire: Option<PendingHire>,
@@ -454,6 +541,12 @@ pub struct SwarmPanel {
     selected_workspace: Option<String>,
     /// A spend currently in flight (after consent), shown as a busy state.
     spend_in_flight: Option<String>,
+    /// The swarm roster drill-down (item 4). `Some` renders the detail view
+    /// instead of the browse list.
+    swarm_detail: Option<SwarmDetailView>,
+    /// The most recently requested swarm run status (item 3), rendered as a
+    /// dismissible strip. `None` = no status shown.
+    run_status: Option<RunStatusView>,
     /// Which surface is active: browse, author, compose, or steer.
     mode: PanelMode,
     /// Authoring form state.
@@ -512,6 +605,35 @@ struct PendingHire {
     optional_cost: u64,
     within_budget: bool,
     max_credits: u32,
+}
+
+/// One agent row in a swarm's roster (drill-down view, item 4).
+#[derive(Clone, Debug)]
+struct SwarmRosterAgent {
+    agent_id: String,
+    agent_type: String,
+    description: String,
+}
+
+/// The swarm roster drill-down: replaces the browse list while open.
+#[derive(Clone, Debug)]
+struct SwarmDetailView {
+    workspace_id: String,
+    name: String,
+    loading: bool,
+    error: Option<SharedString>,
+    agents: Vec<SwarmRosterAgent>,
+}
+
+/// A swarm's recent run status (ABW workspace messages). Rendered as a
+/// dismissible strip above the browse list.
+#[derive(Clone, Debug)]
+struct RunStatusView {
+    name: String,
+    loading: bool,
+    error: Option<SharedString>,
+    /// Rendered message lines (sender + content), newest first.
+    messages: Vec<String>,
 }
 
 impl SwarmPanel {
@@ -613,9 +735,12 @@ impl SwarmPanel {
                 _subscriptions: subscriptions,
                 search_task: None,
                 wallet_balance: None,
+                local_balance: None,
                 pending_hire: None,
                 selected_workspace: None,
                 spend_in_flight: None,
+                swarm_detail: None,
+                run_status: None,
                 mode: PanelMode::Browse,
                 author,
                 compose,
@@ -886,6 +1011,31 @@ impl SwarmPanel {
                     cx.notify();
                 })
                 .ok();
+                // Read the local ledger balance (v2 §15), in the async scope
+                // (the update closure above is sync). Independent of the list
+                // fetch; a failure leaves the balance unknown (None), never a
+                // fabricated zero.
+                let balance_result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_balance_local", json!({}))
+                    .await;
+                this.update(cx, |this, cx| {
+                    match balance_result {
+                        Ok(output) => {
+                            let parsed = parse_tool_response(&output);
+                            if let Some(content) = parsed {
+                                this.local_balance =
+                                    content.get("balance").and_then(|b| b.as_i64());
+                            }
+                        }
+                        Err(err) => {
+                            log::debug!(
+                                "swarm-panel: local balance fetch failed (non-fatal): {err}"
+                            );
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
             }
         })
         .detach();
@@ -976,6 +1126,168 @@ impl SwarmPanel {
         .detach();
     }
 
+    /// Open the roster drill-down for a swarm (item 4): fetch
+    /// `swarm_get_swarm(workspace_id)` and render the hired agents. The
+    /// roster response is ABW's raw (server-sanitized) payload; parse
+    /// defensively across the plausible envelope shapes.
+    fn open_swarm_detail(&mut self, workspace_id: String, name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.swarm_detail = Some(SwarmDetailView {
+            workspace_id: workspace_id.clone(),
+            name: name.clone(),
+            loading: true,
+            error: None,
+            agents: Vec::new(),
+        });
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_get_swarm",
+                        json!({ "workspace_id": workspace_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    let Some(detail) = this.swarm_detail.as_mut() else {
+                        return;
+                    };
+                    detail.loading = false;
+                    match result {
+                        Ok(output) => {
+                            match parse_tool_response(&output).and_then(parse_swarm_roster) {
+                                Some(agents) => detail.agents = agents,
+                                None => {
+                                    detail.error =
+                                        Some(format!("Failed to parse roster: {output}").into());
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            detail.error = Some(format!("Failed to fetch roster: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Back out of the roster drill-down.
+    fn close_swarm_detail(&mut self, cx: &mut Context<Self>) {
+        self.swarm_detail = None;
+        cx.notify();
+    }
+
+    /// Fetch and show a swarm's recent run status (item 3):
+    /// `swarm_run_status(workspace_id)`. Rendered as a dismissible strip.
+    fn show_run_status(&mut self, workspace_id: String, name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.run_status = Some(RunStatusView {
+            name: name.clone(),
+            loading: true,
+            error: None,
+            messages: Vec::new(),
+        });
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_run_status",
+                        json!({ "workspace_id": workspace_id, "limit": 20 }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    let Some(status) = this.run_status.as_mut() else {
+                        return;
+                    };
+                    status.loading = false;
+                    match result {
+                        Ok(output) => {
+                            match parse_tool_response(&output).and_then(parse_run_status_messages) {
+                                Some(messages) => status.messages = messages,
+                                None => {
+                                    status.error = Some(
+                                        format!("Failed to parse run status: {output}").into(),
+                                    );
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            status.error =
+                                Some(format!("Failed to fetch run status: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Dismiss the run-status strip.
+    fn dismiss_run_status(&mut self, cx: &mut Context<Self>) {
+        self.run_status = None;
+        cx.notify();
+    }
+
+    /// Remove a local-only agent card (item 5 local counterpart of firing).
+    /// Calls `swarm_remove_local`, which deletes the card directory. A synced
+    /// card's ABW agent is untouched. On success, re-fetches so the list and
+    /// source badges update.
+    fn remove_local_agent(&mut self, agent_name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("remove-{agent_name}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_remove_local",
+                        json!({ "agent_name": agent_name }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.hire_error =
+                                Some(format!("Failed to remove local agent: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     /// Fetch the pre-flight hire cost for an agent and open the consent gate.
     /// This is the entry point to the cost/consent flow: read-only, spends
     /// nothing, and populates `pending_hire` so the banner renders.
@@ -1043,15 +1355,20 @@ impl SwarmPanel {
                                         .get("within_budget")
                                         .and_then(|c| c.as_bool())
                                         .unwrap_or(false),
-                                    // Fallback mirrors `SwarmConfig::default().max_credits_per_dispatch`
-                                    // (50) — the server always sends this field, so the fallback
-                                    // only fires on a malformed response. Keep in sync with the
-                                    // server default if it changes.
+                                    // Fallback mirrors the server default — the
+                                    // server always sends this field, so the
+                                    // fallback only fires on a malformed response.
+                                    // Read from `Default` (single source of truth)
+                                    // rather than a magic number.
                                     max_credits: content
                                         .get("max_credits_per_dispatch")
                                         .and_then(|c| c.as_u64())
-                                        .unwrap_or(50)
-                                        as u32,
+                                        .unwrap_or_else(|| {
+                                            u64::from(
+                                                kask_bridge::KaskSwarmSettings::default()
+                                                    .max_credits_per_dispatch,
+                                            )
+                                        }) as u32,
                                 });
                             }
                             None => {
@@ -1719,6 +2036,131 @@ impl SwarmPanel {
         cards
     }
 
+    /// The dismissible run-status strip (item 3): recent ABW workspace
+    /// messages for the requested swarm.
+    fn render_run_status_strip(
+        &self,
+        status: &RunStatusView,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let border = cx.theme().colors().border;
+        v_flex()
+            .w_full()
+            .gap_1()
+            .p_3()
+            .rounded_sm()
+            .border_1()
+            .border_color(border)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Label::new(format!("Run Status — {}", status.name)).color(Color::Default),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("dismiss-run-status", "Close")
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dismiss_run_status(cx);
+                            })),
+                    ),
+            )
+            .when(status.loading, |this| {
+                this.child(
+                    Label::new("Loading…")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
+            .when_some(status.error.clone(), |this, err| {
+                this.child(Label::new(err).size(LabelSize::Small).color(Color::Warning))
+            })
+            .when(
+                status.messages.is_empty() && !status.loading && status.error.is_none(),
+                |this| {
+                    this.child(
+                        Label::new("No recent activity.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                },
+            )
+            .when(!status.messages.is_empty(), |this| {
+                this.child(v_flex().gap_0p5().children(status.messages.iter().map(|m| {
+                    Label::new(m.clone())
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                })))
+            })
+    }
+
+    /// The swarm roster drill-down (item 4): the hired agents of the
+    /// selected workspace, replacing the browse list while open.
+    fn render_swarm_detail(
+        &self,
+        detail: &SwarmDetailView,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Button::new("back-to-swarms", "← Back")
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_swarm_detail(cx);
+                            })),
+                    )
+                    .child(
+                        Headline::new(format!("{} — roster", detail.name))
+                            .size(HeadlineSize::Small),
+                    ),
+            )
+            .child(
+                Label::new(format!("workspace {}", detail.workspace_id))
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted),
+            )
+            .when(detail.loading, |this| {
+                this.child(
+                    Label::new("Loading roster…")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
+            .when_some(detail.error.clone(), |this, err| {
+                this.child(Label::new(err).size(LabelSize::Small).color(Color::Warning))
+            })
+            .when(!detail.agents.is_empty(), |this| {
+                this.child(v_flex().gap_1().children(detail.agents.iter().map(|a| {
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new(a.agent_id.clone()).color(Color::Default))
+                        .child(Label::new(a.agent_type.clone()).color(Color::Accent))
+                        .child(div().flex_1())
+                        .child(Label::new(a.description.clone()).color(Color::Muted))
+                })))
+            })
+            .when(
+                detail.agents.is_empty() && !detail.loading && detail.error.is_none(),
+                |this| {
+                    this.child(
+                        Label::new("No agents in this swarm.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                },
+            )
+    }
+
     fn render_card(&mut self, entry: SwarmEntry, cx: &mut Context<Self>) -> MarketplaceCard {
         match entry {
             SwarmEntry::Agent(agent) => {
@@ -1730,10 +2172,15 @@ impl SwarmPanel {
                 let show_clone = source == AgentSource::Cloud;
                 // Push-to-cloud button: visible for Local agents only.
                 let show_push = source == AgentSource::Local;
+                // Remove-local button: Local-only agents can be removed (the
+                // local counterpart of firing). Synced cards are kept — the
+                // sync link would be orphaned.
+                let show_remove = source == AgentSource::Local;
                 // Pre-clone agent_name for each button closure that needs it.
                 let hire_name = agent_name.clone();
                 let clone_name = agent_name.clone();
                 let push_name = agent_name.clone();
+                let remove_name = agent_name.clone();
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -1830,43 +2277,110 @@ impl SwarmPanel {
                                             }),
                                         ),
                                     )
+                                })
+                                .when(show_remove, |this| {
+                                    this.child(
+                                        Button::new(
+                                            SharedString::from(format!("remove-{remove_name}")),
+                                            "Remove",
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(self.spend_in_flight.is_some())
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.remove_local_agent(remove_name.clone(), cx);
+                                            }),
+                                        ),
+                                    )
                                 }),
                         ),
                 )
             }
-            SwarmEntry::Swarm(swarm) => MarketplaceCard::new().child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_1()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Label::new(swarm.name.clone()).color(Color::Default))
-                                    .child(
-                                        Label::new(format!("{} agents", swarm.agent_count))
-                                            .color(Color::Accent),
-                                    )
-                                    .child(
-                                        Label::new(format!(
-                                            "⛽ {}/{}",
-                                            swarm.remaining, swarm.budget
-                                        ))
+            SwarmEntry::Swarm(swarm) => {
+                let swarm_id = swarm.id.clone();
+                let swarm_name = swarm.name.clone();
+                // Each button closure gets its own clone (moved-in closures).
+                let detail_id = swarm_id.clone();
+                let detail_name = swarm_name.clone();
+                let runs_id = swarm_id.clone();
+                let runs_name = swarm_name.clone();
+                MarketplaceCard::new().child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .flex_1()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Label::new(swarm.name.clone()).color(Color::Default))
+                                        .child(
+                                            Label::new(format!("{} agents", swarm.agent_count))
+                                                .color(Color::Accent),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "⛽ {}/{}",
+                                                swarm.remaining, swarm.budget
+                                            ))
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(Label::new(swarm.description).color(Color::Muted)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .items_end()
+                                .child(
+                                    Label::new("Swarm")
+                                        .size(LabelSize::XSmall)
                                         .color(Color::Muted),
-                                    ),
-                            )
-                            .child(Label::new(swarm.description).color(Color::Muted)),
-                    )
-                    .child(
-                        Label::new("Swarm")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
-            ),
+                                )
+                                // Drill-down (item 4): open the roster view.
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("detail-{swarm_id}")),
+                                        "Details",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.open_swarm_detail(
+                                                detail_id.clone(),
+                                                detail_name.clone(),
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                // Run status (item 3): show recent workspace
+                                // messages.
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("runs-{swarm_id}")),
+                                        "Run Status",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.show_run_status(
+                                                runs_id.clone(),
+                                                runs_name.clone(),
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                ),
+                        ),
+                )
+            }
         }
     }
 
@@ -2345,7 +2859,27 @@ impl Render for SwarmPanel {
                                             Color::Muted
                                         }),
                                 )
-                            }),
+                            })
+                            // v2 §15: in local mode the algedonic channel is the
+                            // local ledger balance (operator-funded). Shown only
+                            // when the backend mode is local; hidden when unknown
+                            // — never a fabricated zero.
+                            .when(
+                                Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local,
+                                |this| {
+                                    this.when_some(self.local_balance, |this, balance| {
+                                        this.child(
+                                            Label::new(format!("■ {balance} local credits"))
+                                                .size(LabelSize::Small)
+                                                .color(if balance <= 0 {
+                                                    Color::Warning
+                                                } else {
+                                                    Color::Muted
+                                                }),
+                                        )
+                                    })
+                                },
+                            ),
                     )
                     // v2 §15: the mode toggle re-routes the swarm server
                     // between ABW (v1) and the local substrate (v2). Writing
@@ -2553,23 +3087,36 @@ impl Render for SwarmPanel {
                             }
                         }
                         PanelMode::Browse => {
-                            let count = self.filtered_entry_indices.len();
-                            if count == 0 {
-                                this.child(self.render_empty_state(cx)).into_any_element()
+                            // Run-status strip (dismissible) above the list.
+                            let content = this
+                                .when_some(self.run_status.clone(), |this, status| {
+                                    this.child(self.render_run_status_strip(&status, cx))
+                                })
+                                .when_some(self.swarm_detail.clone(), |this, detail| {
+                                    this.child(self.render_swarm_detail(&detail, cx))
+                                });
+                            if self.swarm_detail.is_some() {
+                                content.into_any_element()
                             } else {
-                                let scroll_handle = &self.list;
-                                this.child(
-                                    uniform_list(
-                                        "swarm-entries",
-                                        count,
-                                        cx.processor(Self::render_entries),
-                                    )
-                                    .flex_grow_1()
-                                    .pb_4()
-                                    .track_scroll(scroll_handle),
-                                )
-                                .vertical_scrollbar_for(scroll_handle, window, cx)
-                                .into_any_element()
+                                let count = self.filtered_entry_indices.len();
+                                if count == 0 {
+                                    content.child(self.render_empty_state(cx)).into_any_element()
+                                } else {
+                                    let scroll_handle = &self.list;
+                                    content
+                                        .child(
+                                            uniform_list(
+                                                "swarm-entries",
+                                                count,
+                                                cx.processor(Self::render_entries),
+                                            )
+                                            .flex_grow_1()
+                                            .pb_4()
+                                            .track_scroll(scroll_handle),
+                                        )
+                                        .vertical_scrollbar_for(scroll_handle, window, cx)
+                                        .into_any_element()
+                                }
                             }
                         }
                     }),
@@ -2705,9 +3252,12 @@ mod tests {
             "swarm_create_app",
             // v2 §15 local tools (Slices 9 + 11).
             "swarm_fund_local",
+            "swarm_balance_local",
+            "swarm_local_history",
             "swarm_delegate_local",
             "swarm_list_local_agents",
             "swarm_clone_to_local",
+            "swarm_remove_local",
             "swarm_push_to_cloud",
         ] {
             assert!(tool.starts_with("swarm_"));
@@ -2760,6 +3310,60 @@ mod tests {
     fn parse_tool_response_none_on_garbage() {
         assert_eq!(parse_tool_response("not json"), None);
         assert_eq!(parse_tool_response(""), None);
+    }
+
+    // Item 4: the roster drill-down parses ABW's workspace payload
+    // defensively across envelope shapes, and never fabricates an empty
+    // roster from a malformed response.
+    #[test]
+    fn parse_swarm_roster_reads_top_level_agents() {
+        let content = serde_json::json!({
+            "agents": [
+                { "agent_id": "market_analyst", "agent_type": "research", "description": "d" },
+                { "agent_id": "writer", "agent_type": "creative" }
+            ]
+        });
+        let roster = parse_swarm_roster(content).expect("roster");
+        assert_eq!(roster.len(), 2);
+        assert_eq!(roster[0].agent_id, "market_analyst");
+        assert_eq!(roster[0].description, "d");
+        assert_eq!(roster[1].description, ""); // missing description defaults empty
+    }
+
+    #[test]
+    fn parse_swarm_roster_reads_nested_workspace_agents() {
+        let content =
+            serde_json::json!({ "workspace": { "id": "ws", "agents": [{ "agent_id": "a1" }] } });
+        let roster = parse_swarm_roster(content).expect("roster");
+        assert_eq!(roster.len(), 1);
+        assert_eq!(roster[0].agent_id, "a1");
+    }
+
+    #[test]
+    fn parse_swarm_roster_none_without_agents_array() {
+        assert!(parse_swarm_roster(serde_json::json!({ "error": "x" })).is_none());
+        assert!(parse_swarm_roster(serde_json::json!({ "workspace": {} })).is_none());
+    }
+
+    // Item 3: the run-status strip extracts message lines, unwrapping the
+    // server's {content, source, trust} sanitize container.
+    #[test]
+    fn parse_run_status_messages_unwraps_sanitize_container() {
+        let content = serde_json::json!({
+            "messages": [
+                { "agent_id": "market_analyst", "content": { "content": "analyzed the sector", "source": "abw" } },
+                { "sender": "system", "content": "plain text message" }
+            ]
+        });
+        let lines = parse_run_status_messages(content).expect("messages");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "market_analyst: analyzed the sector");
+        assert_eq!(lines[1], "system: plain text message");
+    }
+
+    #[test]
+    fn parse_run_status_messages_none_without_messages() {
+        assert!(parse_run_status_messages(serde_json::json!({ "error": "x" })).is_none());
     }
 
     // The `fetch_all` parse path was broken before the `parse_tool_response`
@@ -2897,9 +3501,12 @@ mod tests {
         let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
         for tool in [
             "swarm_list_local_agents",
+            "swarm_balance_local",
+            "swarm_local_history",
             "swarm_fund_local",
             "swarm_delegate_local",
             "swarm_clone_to_local",
+            "swarm_remove_local",
             "swarm_push_to_cloud",
         ] {
             assert!(

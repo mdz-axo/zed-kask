@@ -73,14 +73,17 @@ You are a swarm-convergence analyst. Re-measure the swarm state post-Act and com
 ## Step 1 — Re-measure the swarm state post-Act
 
 {% if mode == "local" %}
-Re-fetch the local agent registry via `swarm_list_local_agents` and the
-local ledger balance (from the last `swarm_delegate_local` response's
-`balance` field). Recompute variety_coverage, diversity, alignment,
+Re-fetch the local agent registry via `swarm_list_local_agents`, the local
+ledger balance via `swarm_balance_local`, and the local ledger history via
+`swarm_local_history` (funds/debits — the reconciliation record for this
+session's dispatches). Recompute variety_coverage, diversity, alignment,
 cohesion, separation exactly as in SENSE, against the post-Act roster.
 {% else %}
 Re-fetch the workspace roster and wallet via hkask-mcp-swarm (the agent
-orchestrates these calls). Recompute variety_coverage, diversity, alignment,
-cohesion, separation exactly as in SENSE, against the post-Act roster.
+orchestrates these calls), plus `swarm_run_status` for the workspace's
+recent messages (dispatch/reconciliation evidence). Recompute
+variety_coverage, diversity, alignment, cohesion, separation exactly as in
+SENSE, against the post-Act roster.
 {% endif %}
 
 ## Step 2 — Compute loop_closure

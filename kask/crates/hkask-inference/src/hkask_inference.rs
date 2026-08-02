@@ -278,3 +278,56 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
         })
     }
 }
+
+/// Resolve the skill-execution port for an MCP server.
+///
+/// Returns the IPC-bridge client when the socket is available (the zed
+/// process runs the cascade through its global `ManifestExecutor`), or a
+/// stub that returns a clear error. Mirrors `resolve_tool_dispatch_port`.
+#[must_use]
+pub async fn resolve_skill_exec_port() -> std::sync::Arc<dyn hkask_types::SkillExecPort> {
+    match InferenceIpcClient::from_env().await {
+        Some(Ok(client)) => {
+            tracing::info!(
+                target: "hkask.inference",
+                "MCP skill execution routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
+            );
+            std::sync::Arc::new(client)
+        }
+        Some(Err(e)) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                error = %e,
+                "IPC bridge connection failed — skill execution unavailable"
+            );
+            std::sync::Arc::new(UnavailableSkillExec)
+        }
+        None => {
+            tracing::info!(
+                target: "hkask.inference",
+                "HKASK_INFERENCE_SOCKET not set — skill execution unavailable"
+            );
+            std::sync::Arc::new(UnavailableSkillExec)
+        }
+    }
+}
+
+/// Skill-execution stub for MCP servers without the IPC bridge.
+struct UnavailableSkillExec;
+
+impl hkask_types::SkillExecPort for UnavailableSkillExec {
+    fn execute_skill<'a>(
+        &'a self,
+        _name: &'a str,
+        _task: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+    {
+        Box::pin(async {
+            Err(
+                "skill execution unavailable: HKASK_INFERENCE_SOCKET not set or IPC bridge \
+                 unreachable — running a declared skill requires the zed process"
+                    .to_string(),
+            )
+        })
+    }
+}
