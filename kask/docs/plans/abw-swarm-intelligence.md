@@ -325,13 +325,12 @@ synthetic ledger breaks the corrective feedback loop.
 - Compose: Xaman Ek (`swarm_xaman`), the `swarm-intelligence` skill, the
   panel's Compose tab.
 
-## 17. Blocked by ABW endpoint verification (not implementable from zed-kask)
+## 17. ABW lifecycle endpoint ledger (verified / blocked, as of 2026-08-02)
 
-These management operations have **no server tool** and must not be added
-until the ABW API surface is verified against the live service. Advertised
-tools that hit unverified endpoints are worse than no tool (the `.rules`
-"advertised invariants need enforcement points" trap). The endpoint shapes to
-verify:
+Each lifecycle operation is verified against the live service before a tool
+is added; a tool that hits an unverified endpoint is worse than no tool (the
+`.rules` "advertised invariants need enforcement points" trap). Endpoints
+marked **Disproven** have no ABW endpoint and must not be added:
 
 | Operation | Endpoint shape to verify on ABW | Current state |
 |---|---|---|

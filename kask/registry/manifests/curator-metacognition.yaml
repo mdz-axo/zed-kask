@@ -95,23 +95,10 @@ error_handling:
   on_synthesis_failure: degrade_gracefully
   on_escalation_required: notify_administrator_immediately
 
-# OCAP Configuration
+# OCAP Configuration — see the unified OCAP pattern (McpRuntime::invoke is the
+# real gate; the 4 fields below are declared config, not yet enforced at runtime).
 ocap:
-  delegation_chain:
-    Curator:
-      can_delegate_to: [all_bots]
-      can_access: [own_episodic, all_public_semantic]
-      requires_consent: false
-    bots:
-      can_delegate_to: []
-      can_access: [own_episodic, all_public_semantic]
-      requires_consent: true
-    Administrator:
-      can_delegate_to: [Curator]
-      can_access: [all]
-      requires_consent: false
   delegation_chain_required: true
-  max_delegation_depth: 7
   signature_algorithm: HMAC-SHA256
   capability_expiry_seconds: 7200
   template_scoped: true

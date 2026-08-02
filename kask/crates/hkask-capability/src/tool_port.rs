@@ -47,8 +47,13 @@ pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait ToolPort: Send + Sync {
     /// Invoke a tool. Requires a [`DelegationToken`] proving OCAP authorization.
     ///
-    /// pre:  token must be valid and not expired
-    /// post: returns tool output or `ToolPortError::CapabilityDenied` if token is insufficient
+    /// The implementation matches the token's declared `(resource, resource_id,
+    /// action)` against the invoked tool (see `McpRuntime::invoke`). Expiry is
+    /// **not** checked by this gate — `is_valid_for` does not consult `expires_at`;
+    /// do not rely on token expiry for safety.
+    ///
+    /// post: returns tool output or `ToolPortError::CapabilityDenied` if the token
+    ///       does not authorize this (resource, resource_id, action)
     fn invoke<'a>(
         &'a self,
         server: &'a str,

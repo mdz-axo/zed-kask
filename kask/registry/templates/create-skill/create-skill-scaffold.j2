@@ -209,16 +209,15 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: <skill_name>/<phase-1>
-      gas_budget: <gas_cap>
-    # ... one entry per template ...
-    - resource: manifest
-      action: execute
-      template_id: <skill_name>
-      gas_budget: 1000
+  # OCAP is enforced at the runtime actuator boundary — McpRuntime::invoke
+  # matches the in-process DelegationToken's (resource, resource_id, action)
+  # against the invoked tool, plus a gas gate via CyberneticsLoop. A second
+  # gate is the per-agent mcp_tools allowlist enforced at the ToolDispatchPort
+  # dispatch boundary. The 4 fields below are declared config; they are NOT
+  # yet enforced at runtime (no signature verification, no chain-depth check,
+  # no expiry applied to minted tokens). Do NOT add a `required_capabilities`
+  # list here — OcapConfig has deny_unknown_fields and will reject it; declare
+  # per-template capabilities only if you wire them for real (see ADR).
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

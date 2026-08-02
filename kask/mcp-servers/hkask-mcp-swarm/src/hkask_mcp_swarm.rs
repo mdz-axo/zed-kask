@@ -7643,16 +7643,17 @@ mod tests {
             .filter(|k| !k.is_empty())
     }
 
-    /// Extract `workspace_id` from a tool response envelope (the `with_wallet`
-    /// shape: `{"workspace_id": ..., "wallet": ...}`).
+    /// Extract `workspace_id` from a tool response envelope (the
+    /// `execute_tool_semantic` shape: `{"content": {...}, ...}` with the tool
+    /// value under `content`). Falls back to a top-level `workspace_id` for
+    /// raw-client responses.
     fn extract_workspace_id(tool_response: &str) -> Option<String> {
-        serde_json::from_str::<serde_json::Value>(tool_response)
-            .ok()
-            .and_then(|v| {
-                v.get("workspace_id")
-                    .and_then(|id| id.as_str())
-                    .map(str::to_string)
-            })
+        let value: serde_json::Value = serde_json::from_str(tool_response).ok()?;
+        let content = value.get("content").unwrap_or(&value);
+        content
+            .get("workspace_id")
+            .and_then(|id| id.as_str())
+            .map(str::to_string)
     }
 
     /// Construct a SwarmClient pointed at the real ABW service.
@@ -8158,11 +8159,12 @@ mod tests {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;
         };
+        let client = StdArc::new(client);
 
         let consent = StdArc::new(ConsentStore::default());
         let server = SwarmServer::new(
             hkask_types::WebID::new(),
-            StdArc::new(client),
+            client.clone(),
             consent.clone(),
             StdArc::new(LocalAgentRegistry::new("/nonexistent")),
             StdArc::new(LazyLocalSwarmRuntime::lazy(

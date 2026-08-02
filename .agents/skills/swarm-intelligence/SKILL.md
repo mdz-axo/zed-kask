@@ -16,8 +16,10 @@ A swarm is an ABW **workspace** with hired agents (not the deprecated
 "ensemble" model). Compound agents orchestrate via `execute_agent` (text
 consult, one LLM call) and `delegate_to_agent` (full tool access, 1 cr +
 tokens, **delegation chains forbidden** — delegates lose
-`delegate_to_agent`/`execute_agent`). Gas: hire 5 cr, @mention 1 cr + tokens,
-delegation 1 cr + tokens. Compound agents declare `dependencies { required,
+`delegate_to_agent`/`execute_agent`). Gas (verified live 2026-08-02): own-
+agent hire is a flat 2 cr `/add` fee, @mention 1 cr + tokens, delegation 1
+cr + tokens; third-party `/hire` fee unverified. Compound agents declare
+`dependencies { required,
 optional }` and auto-hire their team. Thagard coherence scoring on
 workspaces. (Verified live 2026-08-01.)
 

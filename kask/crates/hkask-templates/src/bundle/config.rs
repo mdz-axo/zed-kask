@@ -320,9 +320,31 @@ impl Default for ErrorHandlingConfig {
     }
 }
 
-/// OCAP configuration. Loaded from manifest YAML, future wiring target.
+/// OCAP configuration (loaded from manifest YAML).
+///
+/// # What is and isn't enforced
+///
+/// The **real** OCAP boundary is `McpRuntime::invoke` (`hkask-mcp`): it matches the
+/// in-process `DelegationToken`'s `(resource, resource_id, action)` against the
+/// invoked tool, plus a gas gate via `CyberneticsLoop`. A second real gate is the
+/// per-agent `mcp_tools` allowlist enforced at the `ToolDispatchPort` dispatch
+/// boundary (`hkask-types`). Tokens are minted and consumed in-process — there is
+/// no untrusted transport boundary and **no signature verification against a
+/// trusted authority**; do not describe this system as providing unforgeability.
+///
+/// The four fields below are **declared config, not yet enforced** at runtime
+/// (future wiring target): no delegation-chain check, no signature use, no
+/// expiry applied to minted tokens, no template scoping. They are kept so a
+/// future change can wire them without a manifest format break.
+///
+/// `deny_unknown_fields` is set so that any new field (e.g. a re-introduced
+/// `required_capabilities` list) fails loudly at load time instead of being
+/// silently dropped — silent drops are how the former `required_capabilities`
+/// theater persisted undetected. Per-template capability declarations must be
+/// added as a real field here AND wired into `McpRuntime::invoke` in the same
+/// change; do not add them to manifests first.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct OcapConfig {
     pub delegation_chain_required: bool,
     pub signature_algorithm: String,

@@ -6,11 +6,12 @@
 # an ABW workspace with hired agents. Compound agents orchestrate via
 # execute_agent (text consult) and delegate_to_agent (full tool access, 1 cr
 # + tokens, delegation chains forbidden — delegates lose
-# delegate_to_agent/execute_agent). Gas: hire 5 cr, @mention 1 cr + tokens,
-# delegation 1 cr + tokens. Compound agents declare dependencies { required,
-# optional } and auto-hire their team. Thagard coherence scoring on
-# workspaces. (Source: kask/docs/plans/abw-swarm-intelligence.md §0, verified
-# live 2026-08-01.)
+# delegate_to_agent/execute_agent). Gas (verified live 2026-08-02): own-
+# agent hire is a flat 2 cr /add fee, @mention 1 cr + tokens, delegation 1
+# cr + tokens; third-party /hire fee unverified. Compound agents declare
+# dependencies { required, optional } and auto-hire their team. Thagard
+# coherence scoring on workspaces. (Source:
+# kask/docs/plans/abw-swarm-intelligence.md §0, verified live 2026-08-01.)
 #
 # Surface ontologies:
 #   - Onto4MAT (Kiesel et al. 2022): Team { hasAlignmentWithTeam,

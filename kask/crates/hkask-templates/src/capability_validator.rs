@@ -1,5 +1,29 @@
 //! Capability-aware validator — OCAP enforcement point for template execution.
 //!
+//! # Status: not wired (dead in production)
+//!
+//! `validate_capabilities` has **zero production call sites** — it is exercised
+//! only by the unit tests in this file. It is NOT invoked by the manifest
+//! executor, the registry bootstrap, or `McpRuntime::invoke`. Do not rely on it
+//! for any security property.
+//!
+//! It also expects flat string requirements like `"tool:search:execute"`, which
+//! does not match the object form (`{resource, action, template_id, gas_budget}`)
+//! that manifests historically declared under `ocap.required_capabilities` —
+//! that manifest key is now removed (silently dropped before, rejected by
+//! `OcapConfig::deny_unknown_fields` now).
+//!
+//! The **real** runtime OCAP gate is `McpRuntime::invoke` (token-to-tool
+//! capability match + gas) and the `ToolDispatchPort` per-agent allowlist —
+//! see `hkask-capability/src/tool_port.rs` and `hkask-mcp/src/runtime.rs`.
+//!
+//! This validator is retained as a reference implementation for a *future*
+//! registration-time gate (Option B in the OCAP design note): if manifest-declared
+//! per-template capabilities are ever wired for real, this is the shape the check
+//! would take — but it must be given a real call site and a schema that matches
+//! the manifest field added to `OcapConfig` in the same change. Until then, treat
+//! it as illustrative dead code.
+//!
 //! At template registration time, capability validation checks that the registering
 //! agent holds the required OCAP tokens for the template's declared capability
 //! requirements. At runtime, OCAP enforcement is handled by `McpRuntime::invoke` /
