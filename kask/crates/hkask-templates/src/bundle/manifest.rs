@@ -106,6 +106,16 @@ pub struct BundleManifest {
     pub category: Option<String>,
     #[serde(default)]
     pub inputs: Option<serde_json::Value>,
+    /// Opt-in to runtime validation of caller-supplied context against the
+    /// manifest's declared `inputs` (see `inputs::validate_inputs`). When
+    /// `Some(true)`, the skill executor rejects invocations that omit a
+    /// `required` input or supply a value whose JSON type does not match the
+    /// declared `type`. Unknown keys are warned, not rejected (manifests may
+    /// declare inputs sparsely). Default `None` = no validation, preserving
+    /// back-compat for skills whose required inputs are supplied programmatically
+    /// rather than via the interactive `skill` tool's `context` map.
+    #[serde(default)]
+    pub enforce_inputs: Option<bool>,
     #[serde(default)]
     pub principles: Option<serde_json::Value>,
 }

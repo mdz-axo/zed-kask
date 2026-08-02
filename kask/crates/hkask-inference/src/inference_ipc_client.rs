@@ -222,6 +222,7 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                tool_allowlist: None,
                 skill_name: None,
                 skill_task: None,
             },
@@ -341,6 +342,7 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                tool_allowlist: None,
                 skill_name: None,
                 skill_task: None,
             },
@@ -448,6 +450,7 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                tool_allowlist: None,
                 skill_name: None,
                 skill_task: None,
             },
@@ -531,14 +534,17 @@ impl InferenceIpcClient {
     /// Invoke a governed MCP tool on the zed side via the IPC bridge.
     ///
     /// `server` is the MCP server id (e.g. "codegraph"), `tool` the tool
-    /// name, `args` the JSON arguments. The zed process mints the OCAP panel
-    /// token and dispatches through its `McpRuntime` (governance, gas, spans
-    /// all apply). Returns the tool's JSON output.
+    /// name, `args` the JSON arguments. `allowed` is the caller's declared
+    /// `server/tool` allowlist (the delegated agent's `mcp_tools`) — the zed
+    /// side refuses any tool outside it before minting the OCAP panel token,
+    /// so the allowlist is enforced at the dispatch boundary, not only inside
+    /// the child. Returns the tool's JSON output.
     pub async fn invoke_tool(
         &self,
         server: &str,
         tool: &str,
         args: serde_json::Value,
+        allowed: &[String],
     ) -> Result<serde_json::Value, InferenceError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = InferenceRequest {
@@ -570,6 +576,7 @@ impl InferenceIpcClient {
                 tool_server: Some(server.to_string()),
                 tool_name: Some(tool.to_string()),
                 tool_args: Some(args),
+                tool_allowlist: Some(allowed.to_vec()),
                 skill_name: None,
                 skill_task: None,
             },
@@ -662,6 +669,7 @@ impl InferenceIpcClient {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                tool_allowlist: None,
                 skill_name: Some(name.to_string()),
                 skill_task: Some(task.to_string()),
             },
@@ -753,6 +761,7 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            tool_allowlist: None,
             skill_name: None,
             skill_task: None,
         };
@@ -795,6 +804,7 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            tool_allowlist: None,
             skill_name: None,
             skill_task: None,
         };
@@ -837,6 +847,7 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            tool_allowlist: None,
             skill_name: None,
             skill_task: None,
         };
@@ -883,6 +894,7 @@ impl InferencePort for InferenceIpcClient {
             tool_server: None,
             tool_name: None,
             tool_args: None,
+            tool_allowlist: None,
             skill_name: None,
             skill_task: None,
         };
@@ -942,12 +954,14 @@ impl ToolDispatchPort for InferenceIpcClient {
         server: &'a str,
         tool: &'a str,
         args: serde_json::Value,
+        allowed: &'a [String],
     ) -> std::pin::Pin<
         Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>,
     > {
         let server = server.to_string();
         let tool = tool.to_string();
-        Box::pin(async move { self.invoke_tool(&server, &tool, args).await })
+        let allowed = allowed.to_vec();
+        Box::pin(async move { self.invoke_tool(&server, &tool, args, &allowed).await })
     }
 }
 

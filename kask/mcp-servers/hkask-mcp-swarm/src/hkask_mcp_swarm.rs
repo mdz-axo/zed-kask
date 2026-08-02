@@ -739,6 +739,19 @@ impl LocalAgentRegistry {
 /// Constructed lazily on first tool call (the `run_server` factory closure
 /// is sync — it cannot `.await` the inference port resolution). `lazy()`
 /// stores the config; `get_or_init()` does the async init on first use.
+///
+/// Design tradeoff (R1): the `OnceCell` caches the resolved ports forever.
+/// If the server starts before `HKASK_INFERENCE_SOCKET` is set (e.g.
+/// the McpRuntime launch fires before the deferred task sets the socket),
+/// `resolve_tool_dispatch_port` returns the `UnavailableToolDispatch` stub
+/// and the stub is cached for the process lifetime. This is a transient
+/// degradation, not a silent failure: the stub errors are `tracing::warn!`-logged
+/// and carry a clear remediation message. The `SettingsStore` restart observer
+/// (`sync_kask_mcp_runtime_servers` in `main.rs`) detects the env diff and
+/// restarts the server with a fresh `OnceCell` — the window is between server
+/// start and first restart. Re-resolving on every call would add latency to
+/// every local tool invocation for a window that closes on the first settings
+/// change (which also fires on the socket becoming available).
 pub struct LazyLocalSwarmRuntime {
     ledger_path: String,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
@@ -1059,6 +1072,16 @@ impl LocalSwarmRuntime {
     /// tool-call summary. The debit happens before the output guard scan so
     /// a guard-quarantined result still costs credits (matching ABW's
     /// "compute was spent" semantics).
+    ///
+    /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
+    /// the only tool set shown to the model AND the qualified list travels
+    /// with every dispatch so the zed-side IPC server enforces it at the
+    /// dispatch boundary (a tool outside the card's declared set is never
+    /// minted a panel token). Tool *results* are third-party data injected
+    /// into the model's context — each is run through the input guard and
+    /// redacted (not fatal) on violation: a false-positive pattern in
+    /// legitimate tool data must not abort the delegation, but the payload
+    /// must not reach the model.
     async fn delegate(
         &self,
         agent: &LocalAgentCard,
@@ -1165,6 +1188,13 @@ impl LocalSwarmRuntime {
                     .map(|(s, t)| (s.to_string(), t.to_string()))
             })
             .collect();
+        // The qualified allowlist travels with every dispatch so the zed-side
+        // IPC server can enforce it at the dispatch boundary — a tool outside
+        // the card's declared set is never minted a panel token there.
+        let qualified_allowed: Vec<String> = declared_tools
+            .iter()
+            .map(|(s, t)| format!("{s}/{t}"))
+            .collect();
         let tool_defs: Vec<hkask_types::ChatToolDefinition> = declared_tools
             .iter()
             .map(|(server, tool)| hkask_types::ChatToolDefinition {
@@ -1196,7 +1226,7 @@ impl LocalSwarmRuntime {
         let mut total_tokens: i64 = 0;
         let mut final_text = String::new();
         let mut final_model = String::new();
-        for _round in 0..=MAX_TOOL_ROUNDS {
+        for _round in 0..MAX_TOOL_ROUNDS {
             let result = self
                 .inference
                 .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
@@ -1225,18 +1255,35 @@ impl LocalSwarmRuntime {
                     Some((server, tool)) => {
                         match self
                             .tool_dispatch
-                            .invoke_tool(server, tool, call.args.clone())
+                            .invoke_tool(server, tool, call.args.clone(), &qualified_allowed)
                             .await
                         {
                             Ok(value) => {
                                 let text = serde_json::to_string(&value)
                                     .unwrap_or_else(|_| value.to_string());
+                                // Redact-and-continue (see fn doc): a tool result
+                                // that trips the input guard is quarantined from the
+                                // model context, but the delegation proceeds — tool
+                                // output is data, and a false positive must not abort
+                                // the run.
+                                let (injected, ok, error) = match self.scan_input(&text) {
+                                    Ok(()) => (text, true, None),
+                                    Err(e) => (
+                                        format!(
+                                            "[redacted: tool output tripped the input guard — not injected]"
+                                        ),
+                                        false,
+                                        Some(e.to_string()),
+                                    ),
+                                };
+                                let mut summary =
+                                    serde_json::json!({ "tool": qualified, "ok": ok });
+                                if let Some(err) = error {
+                                    summary["error"] = serde_json::Value::String(err);
+                                }
                                 (
-                                    format!("Tool call '{qualified}' returned:\n{text}"),
-                                    serde_json::json!({
-                                        "tool": qualified,
-                                        "ok": true,
-                                    }),
+                                    format!("Tool call '{qualified}' returned:\n{injected}"),
+                                    summary,
                                 )
                             }
                             Err(e) => {
@@ -2461,6 +2508,15 @@ impl SwarmServer {
             // workspace chat, a semantic injection at the ABW chat layer.
             // The consent gate already authorizes the named agent; this is
             // defense-in-depth against accidental cross-mention.
+            //
+            // Design tradeoff (R8): the consent ceiling gates the operator's
+            // *authorization*, not ABW's *actual charge*. ABW is a third-party
+            // service that charges its own credits based on execution — the
+            // `credits_authorized` field is the operator's declared budget,
+            // not a hard limit on ABW's spend. This is inherent to the ABW
+            // architecture: zed-kask posts a message; ABW executes and charges.
+            // The local mode (`swarm_delegate_local`) does not have this
+            // limitation — the local ledger debit is a hard gate.
             let task_clean = strip_leading_mentions(&req.task);
             let data = self
                 .client
@@ -3942,7 +3998,6 @@ mod tests {
         );
     }
 
-
     // URL encoding: path segments with special characters must be encoded
     // so they don't corrupt the URL path.
     #[test]
@@ -4532,12 +4587,12 @@ mod tests {
     }
 
     /// A stub tool dispatch port for `LocalSwarmRuntime` tests. Records every
-    /// (server, tool, args) triple and returns a fixed JSON result.
+    /// (server, tool, args, allowlist) dispatch and returns a fixed JSON result.
     struct StubToolDispatch {
         /// Fixed result JSON for every dispatched call.
         result: serde_json::Value,
-        /// Recorded (server, tool, args) triples, in dispatch order.
-        calls: std::sync::Mutex<Vec<(String, String, serde_json::Value)>>,
+        /// Recorded (server, tool, args, allowlist) tuples, in dispatch order.
+        calls: std::sync::Mutex<Vec<(String, String, serde_json::Value, Vec<String>)>>,
     }
 
     impl StubToolDispatch {
@@ -4555,6 +4610,7 @@ mod tests {
             server: &'a str,
             tool: &'a str,
             args: serde_json::Value,
+            allowed: &'a [String],
         ) -> std::pin::Pin<
             Box<
                 dyn std::future::Future<
@@ -4566,10 +4622,12 @@ mod tests {
                     + '_,
             >,
         > {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((server.to_string(), tool.to_string(), args));
+            self.calls.lock().unwrap().push((
+                server.to_string(),
+                tool.to_string(),
+                args,
+                allowed.to_vec(),
+            ));
             let result = self.result.clone();
             Box::pin(async move { Ok(result) })
         }
@@ -5182,6 +5240,9 @@ mod tests {
         assert_eq!(calls.len(), 1, "one tool call expected");
         assert_eq!(calls[0].0, "stubserver");
         assert_eq!(calls[0].1, "query");
+        // The qualified allowlist travels with the dispatch so the zed-side
+        // IPC server can enforce it at the dispatch boundary.
+        assert_eq!(calls[0].3, vec!["stubserver/query".to_string()]);
         drop(calls);
         // The summary reflects the successful dispatch, and declared skills
         // are carried on the result (declared, not yet executed).
@@ -5991,16 +6052,14 @@ mod tests {
         // Search for kask/.env from the crate dir upward to the workspace root.
         // cargo test runs with the crate dir as CWD, so kask/.env is at
         // ../../.env relative to CWD.
-        for candidate in [
-            "kask/.env",
-            "../../.env",
-            "../../../kask/.env",
-        ] {
+        for candidate in ["kask/.env", "../../.env", "../../../kask/.env"] {
             if dotenvy::from_path(candidate).is_ok() {
                 break;
             }
         }
-        std::env::var("HKASK_ABW_API_KEY").ok().filter(|k| !k.is_empty())
+        std::env::var("HKASK_ABW_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())
     }
 
     /// Construct a SwarmClient pointed at the real ABW service.
@@ -6020,9 +6079,15 @@ mod tests {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;
         };
-        let data = client.get("/agents").await.expect("GET /agents should succeed");
+        let data = client
+            .get("/agents")
+            .await
+            .expect("GET /agents should succeed");
         let agents = data.get("agents").and_then(|a| a.as_array());
-        assert!(agents.is_some(), "GET /agents must return an agents array, got: {data}");
+        assert!(
+            agents.is_some(),
+            "GET /agents must return an agents array, got: {data}"
+        );
         // Each agent should have an agent_id (string) — the catalogue's
         // primary key that swarm_get_agent and swarm_hire match on.
         if let Some(arr) = agents
@@ -6057,7 +6122,10 @@ mod tests {
         };
 
         let deps = client
-            .get(&format!("/agents/{}/dependencies", url_encode_segment(&agent_name)))
+            .get(&format!(
+                "/agents/{}/dependencies",
+                url_encode_segment(&agent_name)
+            ))
             .await
             .expect("GET /agents/{name}/dependencies should succeed");
 
@@ -6088,7 +6156,9 @@ mod tests {
         let optional = optional.unwrap();
         if optional > 0 {
             if total == required + optional {
-                eprintln!("B2 confirmed: total_hire_cost = required + optional (includes optional)");
+                eprintln!(
+                    "B2 confirmed: total_hire_cost = required + optional (includes optional)"
+                );
             } else if total == required {
                 eprintln!(
                     "B2 WARNING: total_hire_cost = required only (does NOT include optional). \
@@ -6112,7 +6182,10 @@ mod tests {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;
         };
-        let data = client.get("/workspaces").await.expect("GET /workspaces should succeed");
+        let data = client
+            .get("/workspaces")
+            .await
+            .expect("GET /workspaces should succeed");
 
         // The workspaces response may be an array directly or nested.
         // Try both shapes the server handles (via sanitize_workspace_payload).
@@ -6131,7 +6204,10 @@ mod tests {
         }
 
         let ws = &workspaces[0];
-        eprintln!("B1: first workspace keys: {:?}", ws.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+        eprintln!(
+            "B1: first workspace keys: {:?}",
+            ws.as_object().map(|o| o.keys().collect::<Vec<_>>())
+        );
 
         // B1 verification: check for workspace_budget / workspace_remaining.
         // These are the field names the panel's WorkspaceInfo expects.
@@ -6205,7 +6281,10 @@ mod tests {
 
         // B4 verification: check whether messages use content or response.
         let msg = &messages[0];
-        eprintln!("B4: first message keys: {:?}", msg.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+        eprintln!(
+            "B4: first message keys: {:?}",
+            msg.as_object().map(|o| o.keys().collect::<Vec<_>>())
+        );
         let has_content = msg.get("content").is_some();
         let has_response = msg.get("response").is_some();
         eprintln!(
@@ -6227,11 +6306,13 @@ mod tests {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;
         };
-        let data = client.get("/wallet").await.expect("GET /wallet should succeed");
+        let data = client
+            .get("/wallet")
+            .await
+            .expect("GET /wallet should succeed");
         assert!(
             data.get("balance").is_some(),
             "GET /wallet must return a balance field, got: {data}"
         );
     }
-
 }

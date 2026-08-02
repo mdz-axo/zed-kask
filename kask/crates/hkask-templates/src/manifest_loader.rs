@@ -91,6 +91,11 @@ struct ManifestHeader {
     /// Defaults to `skill` for back-compat with pre-category manifests.
     #[serde(default)]
     category: Option<String>,
+    /// Opt-in to runtime validation of caller-supplied context against the
+    /// manifest's declared `inputs` (see `crate::inputs::validate_inputs`).
+    /// Defaults to `None` (no validation) for back-compat.
+    #[serde(default)]
+    enforce_inputs: Option<bool>,
 }
 
 /// Deserialize visibility in a case-insensitive manner.
@@ -158,6 +163,7 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         functional_role: file.manifest.functional_role,
         category: file.manifest.category,
         inputs: file.inputs,
+        enforce_inputs: file.manifest.enforce_inputs,
         principles: file.principles,
     };
 

@@ -98,14 +98,21 @@ pub struct ModelEntry {
 pub trait ToolDispatchPort: Send + Sync {
     /// Invoke a tool on a governed MCP server via the zed process.
     ///
-    /// pre:  `server` is a registered MCP server id; `tool` exists on it
+    /// `allowed` is the caller's declared `server/tool` allowlist (the
+    /// delegated agent's `mcp_tools`). The zed-side dispatch refuses any
+    /// tool outside it before minting the panel token — the allowlist is
+    /// enforced at the dispatch boundary, not only inside the child.
+    ///
+    /// pre:  `server` is a registered MCP server id; `tool` exists on it;
+    ///       `server/tool` is in `allowed`
     /// post: returns the tool's JSON output, or an error (tool not found,
-    ///       capability denied, dispatch unavailable)
+    ///       not in allowlist, capability denied, dispatch unavailable)
     fn invoke_tool<'a>(
         &'a self,
         server: &'a str,
         tool: &'a str,
         args: serde_json::Value,
+        allowed: &'a [String],
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
 }
 
@@ -115,8 +122,9 @@ impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
         server: &'a str,
         tool: &'a str,
         args: serde_json::Value,
+        allowed: &'a [String],
     ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>> {
-        self.as_ref().invoke_tool(server, tool, args)
+        self.as_ref().invoke_tool(server, tool, args, allowed)
     }
 }
 

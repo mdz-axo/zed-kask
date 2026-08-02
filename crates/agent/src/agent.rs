@@ -2208,6 +2208,19 @@ impl NativeAgent {
             // The user's task (text from `original_content`) is injected into
             // the cascade context as `task` so templates can reference
             // `{{ task }}`. Without this, the cascade runs blind.
+            //
+            // The slash-command path has no `SkillToolInput.context` channel
+            // (unlike the model-invoked `skill` tool, where the model passes
+            // `context: {mode, swarm_id, ...}`). To let context-dependent
+            // skills (e.g. `swarm-intelligence` needs `mode` and `swarm_id`)
+            // receive context here, leading `key=value` pairs in the
+            // argument text are parsed into the context map. The slash-command
+            // prefix is stripped first so `task` is the argument, not
+            // "/swarm-intelligence compose my swarm".
+            //
+            // Example: `/swarm-intelligence mode=local swarm_id=ws-1 compose`
+            //   → context: {mode: "local", swarm_id: "ws-1"}
+            //   → task: "compose"
             let user_task = original_content
                 .iter()
             // Find the first text block — the user's typed request.
@@ -2219,13 +2232,16 @@ impl NativeAgent {
                     }
                 })
                 .unwrap_or_default();
+            let stripped_task = strip_slash_command_prefix(&user_task);
+            let (slash_context, task_text) = parse_slash_command_context(&stripped_task);
             let envelope = if let Some(executor) = crate::manifest_executor() {
                 let skill_name = skill.name.as_ref();
                 if executor.has_manifest(skill_name) {
                     let mut context = std::collections::HashMap::new();
+                    context.extend(slash_context);
                     context.insert(
                         "task".to_string(),
-                        serde_json::Value::String(user_task.clone()),
+                        serde_json::Value::String(task_text),
                     );
                     match executor.execute_skill(skill_name, context).await {
                         Ok(result_text) => {

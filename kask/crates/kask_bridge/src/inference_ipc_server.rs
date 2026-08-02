@@ -590,6 +590,21 @@ async fn dispatch(
     // default token is minted here, giving the dispatch the same authority
     // as the kask panel's own tool calls (OCAP + gas + reg spans all apply
     // inside `McpRuntime::invoke`).
+    //
+    // Design tradeoff (R4): the token's `resource_id` is the tool name
+    // only, not the `server/tool` pair — `is_valid_for` checks
+    // `resource_id == tool` without server scoping. The token authorizes
+    // the tool on any server, but `McpRuntime::invoke` routes to the
+    // specific `server` parameter, so the actual tool called is on the
+    // specified server. The card's `mcp_tools` allowlist (in the swarm
+    // delegate loop) gates the full `server/tool` pair before the model's
+    // call reaches this dispatch — the allowlist is the effective gate.
+    // The `PanelToolInvoker` (kask panel's own calls) uses the identical
+    // tool-name-only scoping, so the IPC bridge is consistent with the
+    // panel. Adding server-scoping would require changing
+    // `panel_default_token` in `hkask-capability` and all callers — a
+    // cross-crate change that would tighten the OCAP token without
+    // changing the threat model (same-uid processes are trusted).
     if matches!(request.method, InferenceMethod::ToolInvoke) {
         let Some(tool_port) = tool_port else {
             return InferenceOutcome::Error {
@@ -618,6 +633,40 @@ async fn dispatch(
             };
         };
         let args = params.tool_args.unwrap_or(serde_json::Value::Null);
+        // The child's declared `server/tool` allowlist is enforced HERE, at
+        // the dispatch boundary, before any token is minted — a tool outside
+        // it is never authorized, so the allowlist does not depend on the
+        // child's in-process matching being correct. Fail closed: a missing
+        // or empty allowlist is a protocol violation (the child must declare
+        // what it may dispatch), never an implicit grant-all. This is the
+        // enforcement point for the .rules "advertised invariants need
+        // enforcement points" trap on the delegated-tool authority claim.
+        let qualified = format!("{server}/{tool}");
+        match &params.tool_allowlist {
+            Some(allowlist) if !allowlist.is_empty() => {
+                if !allowlist.iter().any(|a| a == &qualified) {
+                    return InferenceOutcome::Error {
+                        error: InferenceErrorPayload {
+                            code: "ToolPort".to_string(),
+                            message: format!(
+                                "tool '{qualified}' is not in the delegated tool allowlist — \
+                                 refused before minting the panel token"
+                            ),
+                        },
+                    };
+                }
+            }
+            _ => {
+                return InferenceOutcome::Error {
+                    error: InferenceErrorPayload {
+                        code: "ToolPort".to_string(),
+                        message: "tool_invoke request missing tool_allowlist — the delegated \
+                            tool allowlist must be declared per request (fail closed)"
+                            .to_string(),
+                    },
+                };
+            }
+        }
         let webid = hkask_types::WebID::from_persona(b"kask-panel");
         let token = hkask_capability::panel_default_token(
             hkask_capability::DelegationResource::Tool,
@@ -849,5 +898,308 @@ mod tests {
         let mut reader = CappedReader::new(cursor);
         let result = reader.read_line().await;
         assert!(matches!(result, Err(e) if e.kind() == std::io::ErrorKind::InvalidData));
+    }
+
+    // ── Dispatch round-trip (the highest-value missing test) ─────────────────
+    // Exercises the real `dispatch` path for ToolInvoke/SkillExecute with a
+    // stub ToolPort that records the minted token. Pins: (a) the panel token
+    // is minted with resource_id == the requested tool under the kask-panel
+    // persona, (b) the declared allowlist is enforced zed-side (fail closed
+    // on missing/empty/out-of-list), (c) the outcome mapping
+    // (ToolResult / SkillResult / Error).
+
+    struct StubInferencePort;
+
+    impl InferencePort for StubInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = std::result::Result<
+                            hkask_types::InferenceResult,
+                            hkask_types::InferenceError,
+                        >,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Err(hkask_types::InferenceError::Generation("unused".into())) })
+        }
+    }
+
+    struct StubToolPort {
+        calls: std::sync::Mutex<Vec<(String, String, hkask_capability::DelegationToken)>>,
+    }
+
+    impl hkask_capability::ToolPort for StubToolPort {
+        fn invoke<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            _args: serde_json::Value,
+            token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            let server = server.to_string();
+            let tool = tool.to_string();
+            let token = token.clone();
+            Box::pin(async move {
+                self.calls.lock().unwrap().push((server, tool, token));
+                Ok(serde_json::json!({ "rows": 42 }))
+            })
+        }
+
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async { None })
+        }
+    }
+
+    struct StubSkillExec;
+
+    impl hkask_types::SkillExecPort for StubSkillExec {
+        fn execute_skill<'a>(
+            &'a self,
+            _name: &'a str,
+            _task: &'a str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
+        {
+            Box::pin(async { Ok("skill output".to_string()) })
+        }
+    }
+
+    fn tool_invoke_request(tool_allowlist: Option<Vec<String>>) -> InferenceRequest {
+        InferenceRequest {
+            id: 9,
+            method: InferenceMethod::ToolInvoke,
+            params: hkask_types::inference_ipc::InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: hkask_types::template::LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
+                tool_server: Some("codegraph".to_string()),
+                tool_name: Some("codegraph_query".to_string()),
+                tool_args: Some(serde_json::json!({ "q": "x" })),
+                tool_allowlist,
+                skill_name: None,
+                skill_task: None,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_mints_panel_token_for_allowed_tool() {
+        let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort);
+        let stub_tool_port = Arc::new(StubToolPort {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let tool_port: Arc<dyn hkask_capability::ToolPort> = stub_tool_port.clone();
+        let skill_exec: Arc<dyn hkask_types::SkillExecPort> = Arc::new(StubSkillExec);
+        let (list_models_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
+        let request = tool_invoke_request(Some(vec!["codegraph/codegraph_query".to_string()]));
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            Some(&tool_port),
+            Some(&skill_exec),
+            &Arc::new(list_models_tx),
+            request,
+        )
+        .await;
+
+        assert!(
+            matches!(outcome, InferenceOutcome::ToolResult { .. }),
+            "allowed tool must dispatch, got {outcome:?}"
+        );
+        let calls = stub_tool_port.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "codegraph");
+        assert_eq!(calls[0].1, "codegraph_query");
+        let token = &calls[0].2;
+        assert_eq!(token.resource_id, "codegraph_query");
+        assert_eq!(
+            token.delegated_to,
+            hkask_types::WebID::from_persona(b"kask-panel"),
+            "dispatch gas is charged to the kask-panel persona (shared with the panel)"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_refuses_tool_outside_allowlist() {
+        let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort);
+        let stub_tool_port = Arc::new(StubToolPort {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let tool_port: Arc<dyn hkask_capability::ToolPort> = stub_tool_port.clone();
+        let skill_exec: Arc<dyn hkask_types::SkillExecPort> = Arc::new(StubSkillExec);
+        let (list_models_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
+        // The request names codegraph/codegraph_query but the allowlist only
+        // declares a different tool — the dispatch must be refused BEFORE
+        // minting (no token ever reaches the ToolPort).
+        let request = tool_invoke_request(Some(vec!["codegraph/other_tool".to_string()]));
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            Some(&tool_port),
+            Some(&skill_exec),
+            &Arc::new(list_models_tx),
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert!(
+                    error
+                        .message
+                        .contains("not in the delegated tool allowlist"),
+                    "unexpected error: {}",
+                    error.message
+                );
+            }
+            other => panic!("expected allowlist refusal, got {other:?}"),
+        }
+        assert!(
+            stub_tool_port.calls.lock().unwrap().is_empty(),
+            "no tool call may reach the ToolPort for an out-of-allowlist tool"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_tool_invoke_refuses_missing_allowlist() {
+        let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort);
+        let stub_tool_port = Arc::new(StubToolPort {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let tool_port: Arc<dyn hkask_capability::ToolPort> = stub_tool_port.clone();
+        let skill_exec: Arc<dyn hkask_types::SkillExecPort> = Arc::new(StubSkillExec);
+        let (list_models_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
+        // A request without a declared allowlist is a protocol violation —
+        // fail closed, never grant-all.
+        let request = tool_invoke_request(None);
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            Some(&tool_port),
+            Some(&skill_exec),
+            &Arc::new(list_models_tx),
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert!(
+                    error.message.contains("missing tool_allowlist"),
+                    "unexpected error: {}",
+                    error.message
+                );
+            }
+            other => panic!("expected fail-closed refusal, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_skill_execute_returns_skill_result() {
+        let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort);
+        let tool_port: Arc<dyn hkask_capability::ToolPort> = Arc::new(StubToolPort {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let skill_exec: Arc<dyn hkask_types::SkillExecPort> = Arc::new(StubSkillExec);
+        let (list_models_tx, _rx) = tokio::sync::mpsc::unbounded_channel::<(
+            tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,
+        )>();
+        let request = InferenceRequest {
+            id: 10,
+            method: InferenceMethod::SkillExecute,
+            params: hkask_types::inference_ipc::InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: hkask_types::template::LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
+                tool_allowlist: None,
+                skill_name: Some("grill-me".to_string()),
+                skill_task: Some("probe".to_string()),
+            },
+        };
+
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            Some(&tool_port),
+            Some(&skill_exec),
+            &Arc::new(list_models_tx),
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::SkillResult { result } => assert_eq!(result, "skill output"),
+            other => panic!("expected SkillResult, got {other:?}"),
+        }
     }
 }

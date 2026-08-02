@@ -14,6 +14,7 @@ pub mod capability_validator;
 pub mod convergence;
 pub mod crate_loader;
 pub mod executor;
+pub mod inputs;
 pub mod manifest_loader;
 pub mod ports;
 pub mod prompt_strategy;
@@ -32,6 +33,7 @@ pub use hkask_types::Skill;
 pub use hkask_types::SkillPolarity;
 pub use hkask_types::SkillZone;
 
+pub use inputs::{render_input_param_spec, validate_inputs};
 pub use manifest_loader::{
     ManifestLoadError, load_manifest_from_file, load_manifest_from_yaml, resolve_manifest,
 };

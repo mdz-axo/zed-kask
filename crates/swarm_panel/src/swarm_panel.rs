@@ -78,6 +78,19 @@ const SWARM_SERVER: &str = "swarm";
 /// curator's `SkillTool` discovers the skill from the `<available_skills>`
 /// list in its base system prompt; this prompt adds the swarm-specific
 /// context (active workspace, current backend mode, the skill's purpose).
+/// Build the Steer-mode system prompt for the curator agent.
+///
+/// Design tradeoff (R7): the `mode` variable reaches the `swarm-intelligence`
+/// skill cascade via the curator's `context` argument, which is prompt-level
+/// instruction — not a hard-enforced input. The manifest defaults `mode` to
+/// `'abw'` when the context lacks it (`{{ mode | default('abw') }}`). A
+/// prompt-injected curator could omit `mode` to force ABW, or pass
+/// `mode: "local"` to switch backends. This is a wrong-result risk, not a
+/// security violation: both backends have their own spending gates (consent
+/// tokens for ABW, ledger balance for local), so a wrong-mode cascade cannot
+/// bypass spending controls. Hard enforcement (declaring `mode` as a required
+/// manifest input) would change the `hkask-templates` schema and break
+/// existing callers. The prompt instruction is the pragmatic tradeoff.
 fn steer_system_prompt(
     selected_workspace: Option<&str>,
     mode: kask_bridge::SwarmModeConfig,

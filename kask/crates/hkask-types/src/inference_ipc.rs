@@ -149,6 +149,14 @@ pub struct InferenceParams {
     pub tool_name: Option<String>,
     /// Tool arguments (JSON).
     pub tool_args: Option<serde_json::Value>,
+    /// Qualified `server/tool` names the child may dispatch (the delegated
+    /// agent's declared `mcp_tools` allowlist). The zed side refuses any
+    /// tool outside this list **before** minting the panel token — the
+    /// allowlist is enforced at the dispatch boundary, not only inside the
+    /// child process. Fail closed: a missing or empty allowlist is a
+    /// protocol violation, never an implicit grant-all.
+    #[serde(default)]
+    pub tool_allowlist: Option<Vec<String>>,
     // ── Skill execution fields (for `InferenceMethod::SkillExecute`) ──
     /// Skill id to execute (e.g. "grill-me").
     pub skill_name: Option<String>,
@@ -331,6 +339,7 @@ mod tests {
                 tool_server: Some("codegraph".to_string()),
                 tool_name: Some("codegraph_query".to_string()),
                 tool_args: Some(serde_json::json!({ "q": "x" })),
+                tool_allowlist: Some(vec!["codegraph/codegraph_query".to_string()]),
                 skill_name: None,
                 skill_task: None,
             },
@@ -343,6 +352,10 @@ mod tests {
         assert_eq!(
             parsed.params.tool_args,
             Some(serde_json::json!({ "q": "x" }))
+        );
+        assert_eq!(
+            parsed.params.tool_allowlist,
+            Some(vec!["codegraph/codegraph_query".to_string()])
         );
     }
 
@@ -377,6 +390,7 @@ mod tests {
                 tool_server: None,
                 tool_name: None,
                 tool_args: None,
+                tool_allowlist: None,
                 skill_name: Some("grill-me".to_string()),
                 skill_task: Some("probe the delegate".to_string()),
             },

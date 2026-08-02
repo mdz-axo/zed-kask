@@ -263,6 +263,7 @@ impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
         _server: &'a str,
         _tool: &'a str,
         _args: serde_json::Value,
+        _allowed: &'a [String],
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
