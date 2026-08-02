@@ -380,11 +380,15 @@ The current `media-workflow.yaml` converges on "all workflow output URLs present
 
 ### 5.2 Pipeline manifests (authored this pass — 3)
 
-Authored as `category: skill` FlowDef manifests that render a known-good fal.ai DAG for each pipeline and execute via `media.execute_workflow`. They reuse the *current* engine (no WS-2 dependency) and demonstrate the OpenMontage pre-defined-pipeline pattern. See:
-- `kask/registry/manifests/media-pipeline-product-shot.yaml`
-- `kask/registry/manifests/media-pipeline-explainer-video.yaml`
-- `kask/registry/manifests/media-pipeline-reaction-gif.yaml`
-- compose templates in `kask/registry/templates/media/` (registered in `media/manifest.yaml`).
+Authored as **FlowDef templates** in the existing `media` template crate (not top-level process manifests), modeled on the shipped `logo-iterative-refine.yaml`. This format is preferred over the top-level fal.ai-workflow-JSON format because the FlowDef executor **chains tool outputs implicitly** — no `$references` and no coupling to fal.ai response-shape field paths, so the pipelines are robust and don't depend on unverified provider response JSON. They reuse the *current* tools (no WS-2 dependency) and demonstrate the OpenMontage pre-defined-pipeline pattern: a fixed, known-good topology parameterized by user intent, rather than an LLM-composed DAG each time.
+
+- `kask/registry/templates/media/product-shot.yaml` — generate → remove background → upscale (product photography)
+- `kask/registry/templates/media/stylize-upscale.yaml` — generate → style transfer → upscale (artistic stylization)
+- `kask/registry/templates/media/reaction-gif.yaml` — generate → image-to-video → video-to-gif (cloud generation + local ffmpeg; the local+cloud dual path)
+
+Registered in `kask/registry/templates/media/manifest.yaml`. Invoked via `action: flowdef` from a parent skill (e.g. `media-workflow` or a future product-photography skill).
+
+**Acceptance:** each pipeline is a self-contained FlowDef with a fixed multi-step topology; the agent only supplies the subject/style/motion description. No `$references` or provider-response-shape coupling.
 
 ### 5.3 `media-provider-guide` skill (after WS-1)
 
@@ -416,7 +420,7 @@ These are verified Prohibition-level findings independent of any work stream:
 | 4. Provider abstraction allows adding a provider without editing dispatch | §3 WS-1 (trait + registry; `select` replaces the `match`) |
 | 5. Workflow engine subsumes fal.ai DAG + ComfyUI graphs | §3 WS-2 (`Source/Compute/Sink` + fal adapter) |
 | 6. Asset ownership model: storage, metadata, portability, anti-lock-in | §4 (table with enforcement points) |
-| 7. ≥3 pipeline manifests authored | §5.2 + the 3 manifest files |
+| 7. ≥3 pipeline manifests authored | §5.2 + `media/product-shot.yaml`, `media/stylize-upscale.yaml`, `media/reaction-gif.yaml` (registered in `media/manifest.yaml`) |
 | 8. No upstream Zed files modified without a D-seam | All changes are in `kask/` crates; no upstream edits proposed. `DIVERGENCE.md` unchanged. |
 | 9. Every new credential env var in the allowlist is read by the server | §6 fix #2 removes the unread `TOGETHERAI_API_KEY`; WS-1/WS-3 add no new credentials. A `media_credentials_only_include_used_keys` test pins alignment. |
 

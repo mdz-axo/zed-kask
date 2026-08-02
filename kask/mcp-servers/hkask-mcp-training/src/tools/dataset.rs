@@ -1,5 +1,6 @@
 use crate::TrainingServer;
 use crate::dataset::DatasetPipeline;
+use crate::tools::error_mapping::map_dataset_error;
 use crate::types::{AssembleDatasetRequest, IngestQaRequest, TrainIngestDatasetRequest};
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_storage::HMem;
@@ -169,7 +170,7 @@ impl TrainingServer {
                         "is_preference": is_preference, "cached": true,
                     }))
                 }
-                Err(e) => Err(McpToolError::invalid_argument(format!("Dataset ingest error: {e}"))),
+                Err(e) => Err(map_dataset_error(e)),
             }
         })
         .await

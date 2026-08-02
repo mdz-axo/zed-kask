@@ -2,7 +2,7 @@
 //!
 //! Re-export facade. Submodules organized by concern:
 //! - `manifest`: BundleManifest, BundleManifestStep, BundleSkill, SkillPolarity, ValidationResult
-//! - `config`: ConvergenceConfig, BundleGasConfig, ErrorHandlingConfig, OcapConfig, BundleLedgerConfig, BundleAuditConfig
+//! - `config`: ConvergenceConfig, BundleGasConfig, ErrorHandlingConfig, BundleLedgerConfig, BundleAuditConfig
 //! - `composition`: BundleComplementarity, BundleConflict, ConflictType, ConflictResolution, ComplementarityType
 //! - `cascade`: CascadePhase
 

@@ -2,6 +2,10 @@ use crate::TrainingServer;
 use crate::huggingface::HuggingFaceTraining;
 use crate::lora_validation;
 use crate::providers::{TrainingHostId, TrainingJob, TrainingJobStatus};
+use crate::tools::error_mapping::{
+    map_adapter_store_error, map_host_provider_error, map_hugging_face_error,
+    map_training_artifact_error,
+};
 use crate::types::TrainSubmitRequest;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::handler::server::wrapper::Parameters;
@@ -273,8 +277,8 @@ impl TrainingServer {
                 let bytes = std::fs::read(&normalized_path).map_err(|error| McpToolError::internal(format!("Read normalized dataset for publication: {error}")))?;
                 let dataset_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
                 let training = HuggingFaceTraining::from_env().map_err(|error| McpToolError::failed_precondition(format!("Configure Hugging Face training artifacts: {error}")))?;
-                let dataset = training.publish_dataset(&job.id, bytes, &dataset_sha256).await.map_err(|error| McpToolError::internal(format!("Publish training dataset: {error}")))?;
-                job.artifacts = Some(training.prepare_training_artifacts(&job.id, dataset).await.map_err(|error| McpToolError::internal(format!("Prepare training artifacts: {error}")))?);
+                let dataset = training.publish_dataset(&job.id, bytes, &dataset_sha256).await.map_err(map_hugging_face_error)?;
+                job.artifacts = Some(training.prepare_training_artifacts(&job.id, dataset).await.map_err(map_training_artifact_error)?);
             }
 
             if let Some(ref job_store) = self.job_store {
@@ -296,7 +300,7 @@ impl TrainingServer {
                     chrono::Utc::now().timestamp(), 0,
                     resolved_skill_name.clone().unwrap_or_default(), version, None, None,
                 );
-                if let Err(e) = self.adapter_store.store(&adapter).map_err(|e| McpToolError::internal(format!("Adapter store error: {e}"))) {
+                if let Err(e) = self.adapter_store.store(&adapter).map_err(map_adapter_store_error) {
                     tracing::warn!(target: "hkask.training.retrain", adapter_id = %job.id, error = %e, "Failed to pre-register adapter metadata");
                 }
             }
@@ -331,7 +335,7 @@ impl TrainingServer {
                         tracing::warn!(target: "hkask.training.job.persist", job_id = %job.id, error = %store_error, "Failed to persist submission failure");
                     }
                     tracing::error!(target: "hkask.training.job.fail", job_id = %job.id, error = %e, "Training job submission failed");
-                    Err(McpToolError::internal(format!("Training job failed: {e}")))
+                    Err(map_host_provider_error(e))
                 }
             }
         })

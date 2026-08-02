@@ -4,7 +4,7 @@
 //! Tokens are minted and consumed in-process (the composition root hands them
 //! to `McpRuntime::invoke`); there is no untrusted transport boundary, so the
 //! token carries no signature and no public key. The enforced gate is the
-//! capability match in `McpRuntime::invoke` (`is_valid_for_at` /
+//! capability match in `McpRuntime::invoke` (`is_valid_for` /
 //! `verify_capability_domain`), not cryptography.
 
 use hkask_types::WebID;
@@ -18,9 +18,9 @@ pub const SYSTEM_MAX_RECURSION: u8 = 7;
 
 /// In-process capability token for inter-agent delegation.
 ///
-/// Minted by the composition root (`panel_default_token` / `new_with_expiry`)
-/// and checked by `McpRuntime::invoke`'s capability-match gate. Carries no
-/// cryptographic material — see the module docs.
+/// Minted by the composition root (`panel_default_token`) and checked by
+/// `McpRuntime::invoke`'s capability-match gate. Carries no cryptographic
+/// material — see the module docs.
 #[derive(Debug, Clone)]
 pub struct DelegationToken {
     pub id: String,
@@ -29,11 +29,10 @@ pub struct DelegationToken {
     pub action: DelegationAction,
     pub delegated_from: WebID,
     pub delegated_to: WebID,
-    pub expires_at: Option<i64>,
 }
 
 impl DelegationToken {
-    /// Mint a token with no expiry (ad-hoc call path — never expires).
+    /// Mint a token for in-process tool invocation.
     #[must_use]
     pub fn new(
         resource: DelegationResource,
@@ -41,45 +40,6 @@ impl DelegationToken {
         action: DelegationAction,
         delegated_from: WebID,
         delegated_to: WebID,
-    ) -> Self {
-        Self::build(
-            resource,
-            resource_id,
-            action,
-            delegated_from,
-            delegated_to,
-            None,
-        )
-    }
-
-    /// Mint a token that expires at `expires_at` (cascade path —
-    /// `ocap.capability_expiry_seconds` from the manifest).
-    #[must_use]
-    pub fn new_with_expiry(
-        resource: DelegationResource,
-        resource_id: String,
-        action: DelegationAction,
-        delegated_from: WebID,
-        delegated_to: WebID,
-        expires_at: i64,
-    ) -> Self {
-        Self::build(
-            resource,
-            resource_id,
-            action,
-            delegated_from,
-            delegated_to,
-            Some(expires_at),
-        )
-    }
-
-    fn build(
-        resource: DelegationResource,
-        resource_id: String,
-        action: DelegationAction,
-        delegated_from: WebID,
-        delegated_to: WebID,
-        expires_at: Option<i64>,
     ) -> Self {
         let id = Self::generate_id(
             &resource,
@@ -95,7 +55,6 @@ impl DelegationToken {
             action,
             delegated_from,
             delegated_to,
-            expires_at,
         }
     }
 
@@ -115,29 +74,18 @@ impl DelegationToken {
         hex::encode(hasher.finalize())
     }
 
-    /// Authorization predicate: the token matches `(resource, resource_id, action)`
-    /// AND has not expired. This is the gate `McpRuntime::invoke` consults.
-    ///
-    /// `now` is taken explicitly so the gate and tests are deterministic.
+    /// Authorization predicate: the token matches `(resource, resource_id, action)`.
+    /// This is the gate `McpRuntime::invoke` consults.
     ///
     /// post: returns true iff self.resource == resource AND self.resource_id == resource_id
-    ///       AND self.action == action AND !self.is_expired(now)
-    pub fn is_valid_for_at(
+    ///       AND self.action == action
+    pub fn is_valid_for(
         &self,
         resource: DelegationResource,
         resource_id: &str,
         action: DelegationAction,
-        now: i64,
     ) -> bool {
-        self.resource == resource
-            && self.resource_id == resource_id
-            && self.action == action
-            && !self.is_expired(now)
-    }
-
-    /// post: returns true if the token is past its expiry (or has no expiry set and
-    ///       `now` is irrelevant)
-    pub fn is_expired(&self, now: i64) -> bool {
-        self.expires_at.is_some_and(|exp| now > exp)
+        self.resource == resource && self.resource_id == resource_id && self.action == action
     }
 }
+

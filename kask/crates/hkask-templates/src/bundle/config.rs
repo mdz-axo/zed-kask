@@ -320,53 +320,6 @@ impl Default for ErrorHandlingConfig {
     }
 }
 
-/// OCAP configuration (loaded from manifest YAML).
-///
-/// # What is and isn't enforced
-///
-/// The **real** OCAP boundary is `McpRuntime::invoke` (`hkask-mcp`): it matches the
-/// in-process `DelegationToken`'s `(resource, resource_id, action)` against the
-/// invoked tool, rejects expired tokens (`is_valid_for_at`), plus a gas gate via
-/// `CyberneticsLoop`. A second real gate is the per-agent `mcp_tools` allowlist
-/// enforced at the `ToolDispatchPort` dispatch boundary (`hkask-types`). Tokens are
-/// minted and consumed in-process — there is no untrusted transport boundary and
-/// **no signature verification against a trusted authority**; do not describe this
-/// system as providing unforgeability.
-///
-/// Of the four fields below, `capability_expiry_seconds` **is enforced**: the
-/// `ManifestExecutor` mints cascade tool-invocation tokens with `expires_at = now +
-/// capability_expiry_seconds`, and `McpRuntime::invoke` rejects expired tokens.
-/// Ad-hoc `call_tool` invocations mint no-expiry tokens and never expire. The other
-/// three fields (`delegation_chain_required`, `signature_algorithm`,
-/// `template_scoped`) remain **declared, not yet enforced** (future wiring target):
-/// no delegation-chain check, no signature use, no template scoping. They are kept
-/// so a future change can wire them without a manifest format break.
-///
-/// `deny_unknown_fields` is set so that any new field (e.g. a re-introduced
-/// `required_capabilities` list) fails loudly at load time instead of being
-/// silently dropped — silent drops are how the former `required_capabilities`
-/// theater persisted undetected. Per-template capability declarations must be
-/// added as a real field here AND wired into `McpRuntime::invoke` in the same
-/// change; do not add them to manifests first.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct OcapConfig {
-    pub delegation_chain_required: bool,
-    pub signature_algorithm: String,
-    pub capability_expiry_seconds: u32,
-    pub template_scoped: bool,
-}
-impl Default for OcapConfig {
-    fn default() -> Self {
-        Self {
-            delegation_chain_required: true,
-            signature_algorithm: "ed25519".into(),
-            capability_expiry_seconds: 3600,
-            template_scoped: true,
-        }
-    }
-}
-
 /// Regulation monitoring configuration. Loaded from manifest YAML, spans handled by `McpRuntime::invoke` / `ToolGovernance` (in `hkask-mcp`) at runtime.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

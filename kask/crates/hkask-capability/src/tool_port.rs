@@ -45,16 +45,14 @@ pub type ToolFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// is object-safe: `Arc<dyn ToolPort>` works. This eliminates the adapter layers that
 /// previously wrapped `McpRuntime` to satisfy a non-dyn `ToolPort`.
 pub trait ToolPort: Send + Sync {
-    /// Invoke a tool. Requires a [`DelegationToken`] proving OCAP authorization.
+    /// Invoke a tool. Requires a [`DelegationToken`] proving the caller's authority.
     ///
     /// The implementation matches the token's declared `(resource, resource_id,
-    /// action)` against the invoked tool AND rejects expired tokens
-    /// (see `McpRuntime::invoke` → `DelegationToken::is_valid_for_at`). Expiry is
-    /// applied to cascade-minted tokens from the manifest's
-    /// `ocap.capability_expiry_seconds`; ad-hoc tokens carry no expiry.
+    /// action)` against the invoked tool (`McpRuntime::invoke` →
+    /// `DelegationToken::is_valid_for`), plus a gas gate via `CyberneticsLoop`.
     ///
     /// post: returns tool output or `ToolPortError::CapabilityDenied` if the token
-    ///       does not authorize this (resource, resource_id, action) or is expired
+    ///       does not authorize this (resource, resource_id, action)
     fn invoke<'a>(
         &'a self,
         server: &'a str,

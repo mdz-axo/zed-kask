@@ -15,6 +15,11 @@ description: >
   print/retail use. Pre-defined multi-step pipeline — the agent only supplies
   the product description; the step topology is fixed.
 
+# primary_model is the model used by the generate step (the generate_image MCP
+# tool's default, overridable via HKASK_MEDIA_IMAGE_GEN_MODEL). The remove-bg
+# and upscale steps route through their own MCP tools' configured models.
+primary_model: "fal.ai/flux/dev"
+
 # gas: image generation + upscale are the costly steps (two fal.ai calls,
 # one queue-mode). No fusion block — model selection is operator-configured
 # via kask.fusion / HKASK_FUSION_PANEL_MODELS; recommend the default image

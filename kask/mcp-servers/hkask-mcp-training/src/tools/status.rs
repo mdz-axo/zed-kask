@@ -1,44 +1,12 @@
 use crate::TrainingServer;
-use crate::adapter::AdapterStoreError;
 use crate::adapters::AdapterMetrics;
 use crate::providers::TrainingJobStatus;
-use crate::providers::types::HostProviderError;
+use crate::tools::error_mapping::{map_adapter_store_error, map_host_provider_error};
 use crate::types::TrainStatusRequest;
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_mcp_server::server::execute_tool;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 use serde_json::json;
-
-// Classify domain errors into the correct MCP wire kind. `McpToolError` carries
-// no `source` field, so only the kind is preserved, not the error chain. Prior
-// to this, every store/host error was mapped to `internal`, mis-reporting
-// `NotFound` and `Unavailable` as Internal.
-fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
-    let message = e.to_string();
-    match e {
-        AdapterStoreError::NotFound(_) | AdapterStoreError::ExpertiseNotFound(_) => {
-            McpToolError::not_found(message)
-        }
-        AdapterStoreError::InvalidState(_) => McpToolError::failed_precondition(message),
-        AdapterStoreError::ChecksumMismatch { .. }
-        | AdapterStoreError::Database(_)
-        | AdapterStoreError::Infra(_)
-        | AdapterStoreError::Serialization(_) => McpToolError::internal(message),
-    }
-}
-
-fn map_host_provider_error(e: HostProviderError) -> McpToolError {
-    let message = e.to_string();
-    match e {
-        HostProviderError::Unavailable(_) => McpToolError::unavailable(message),
-        HostProviderError::InvalidConfig(_) | HostProviderError::DatasetError(_) => {
-            McpToolError::invalid_argument(message)
-        }
-        HostProviderError::JobFailed(_) | HostProviderError::Backend(_) => {
-            McpToolError::internal(message)
-        }
-    }
-}
 
 impl TrainingServer {
     #[tool(

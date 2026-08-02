@@ -13,7 +13,7 @@ use super::cascade::CascadePhase;
 use super::composition::{BundleComplementarity, BundleConflict};
 use super::config::{
     BundleAuditConfig, BundleGasConfig, BundleLedgerConfig, ConvergenceConfig, ErrorHandlingConfig,
-    OcapConfig, RjouleConfig,
+    RjouleConfig,
 };
 use hkask_types::SkillPolarity;
 use hkask_types::Visibility;
@@ -94,7 +94,6 @@ pub struct BundleManifest {
     pub gas: BundleGasConfig,
     pub rjoule: RjouleConfig,
     pub error_handling: ErrorHandlingConfig,
-    pub ocap: OcapConfig,
     pub ledger: BundleLedgerConfig,
     pub audit: BundleAuditConfig,
     #[serde(default)]
