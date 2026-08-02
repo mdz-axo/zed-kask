@@ -110,19 +110,6 @@ ocap:
       can_delegate_to: [Curator]
       can_access: [all]
       requires_consent: false
-  required_capabilities:
-    - resource: regulation
-      action: emit
-      gas_budget: 2000
-    - resource: memory
-      action: recall
-      gas_budget: 3000
-    - resource: inference
-      action: call
-      gas_budget: 6000
-    # - resource: ensemble  # Deferred (2026-06-14)
-    #   action: coordinate
-    #   gas_budget: 4000
   delegation_chain_required: true
   max_delegation_depth: 7
   signature_algorithm: HMAC-SHA256

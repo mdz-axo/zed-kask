@@ -113,23 +113,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: structured-extraction/identify-entities
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: structured-extraction/extract-relations
-      gas_budget: 4500
-    - resource: template
-      action: render
-      template_id: structured-extraction/map-to-schema
-      gas_budget: 5000
-    - resource: manifest
-      action: execute
-      template_id: structured-extraction
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

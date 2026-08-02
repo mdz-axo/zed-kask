@@ -168,34 +168,6 @@ error_handling:
 
 # OCAP Configuration
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: composition/hemingway-style-synthesizer
-      gas_budget: 4096
-    - resource: manifest
-      action: execute
-      template_id: hemingway-style-synthesizer
-      gas_budget: 500
-    - resource: embedding
-      action: search
-      template_id: hemingway-style-synthesizer
-      gas_budget: 500
-      description: "KNN search for exemplar passage retrieval from style corpus"
-    - resource: embedding
-      action: generate
-      template_id: hemingway-style-synthesizer
-      gas_budget: 500
-      description: "Embed prompts and generated prose for centroid validation"
-    - resource: embedding
-      action: centroid
-      template_id: hemingway-style-synthesizer
-      gas_budget: 500
-      description: "Compute style centroid for validation distance check"
-    - resource: regulation
-      action: emit
-      template_id: hemingway-style-synthesizer
-      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

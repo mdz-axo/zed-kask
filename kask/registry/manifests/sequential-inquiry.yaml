@@ -259,34 +259,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-grasp
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-target
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-predict
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-engine
-      gas_budget: 9000
-    - resource: template
-      action: render
-      template_id: skill-router/skill-router-match
-      gas_budget: 2000
-    - resource: inference
-      action: call
-      gas_budget: 9000
-    - resource: manifest
-      action: execute
-      template_id: sequential-inquiry
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

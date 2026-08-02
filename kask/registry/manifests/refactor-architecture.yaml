@@ -205,39 +205,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-explore
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-candidates
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-deepen
-      gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-route
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-audit
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-strangle
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: refactor-architecture/ra-verify
-      gas_budget: 5000
-    - resource: manifest
-      action: execute
-      template_id: refactor-architecture
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

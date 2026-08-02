@@ -183,31 +183,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-sample-trajectories
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-reflect
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-propose-mutations
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-test-variants
-      gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: gpa-evolution/gpa-frontier-update
-      gas_budget: 3000
-    - resource: manifest
-      action: execute
-      template_id: gpa-evolution
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 7200    # Evolution cycles run longer than kata

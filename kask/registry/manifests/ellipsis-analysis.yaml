@@ -109,19 +109,6 @@ error_handling:
 
 # OCAP Configuration
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: metacognition/ellipsis-analysis
-      gas_budget: 6000
-    - resource: manifest
-      action: execute
-      template_id: ellipsis-analysis
-      gas_budget: 500
-    - resource: regulation
-      action: emit
-      template_id: ellipsis-analysis
-      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

@@ -220,33 +220,6 @@ error_handling:
 
 # OCAP Configuration
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: rag/reformulate-query
-      gas_budget: 2000
-    - resource: template
-      action: render
-      template_id: rag/synthesize-grounded
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: rag/verify-citations
-      gas_budget: 2000
-    - resource: manifest
-      action: execute
-      template_id: rag-pipeline
-      gas_budget: 500
-    - resource: regulation
-      action: emit
-      template_id: rag-pipeline
-      gas_budget: 500
-    - resource: memory
-      action: recall
-      gas_budget: 3000
-    - resource: web
-      action: search
-      gas_budget: 4000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

@@ -215,31 +215,6 @@ error_handling:
 
 # OCAP Configuration
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: rca/define-problem
-      gas_budget: 2000
-    - resource: template
-      action: render
-      template_id: rca/ishikawa-6m
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: rca/five-whys-chain
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: rca/corrective-action
-      gas_budget: 3000
-    - resource: manifest
-      action: execute
-      template_id: root-cause-analysis
-      gas_budget: 500
-    - resource: regulation
-      action: emit
-      template_id: root-cause-analysis
-      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

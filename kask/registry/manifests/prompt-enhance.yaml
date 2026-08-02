@@ -388,63 +388,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-classify
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-audit
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-coding
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-reasoning
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-creative
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-classification
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-extraction
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-agent-task
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-rewrite-meta
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-collector
-      gas_budget: 1024
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-verify
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-evolve
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: prompt-enhance/enhance-output
-      gas_budget: 4000
-    - resource: manifest
-      action: execute
-      template_id: prompt-enhance
-      gas_budget: 2000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 7200    # High-tier evolutionary runs take longer

@@ -185,27 +185,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: kali-audit/select-surface
-      gas_budget: 2048
-    - resource: template
-      action: render
-      template_id: kali-audit/audit
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: kali-audit/report
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: kali-audit/taxonomy-map
-      gas_budget: 2048
-    - resource: manifest
-      action: execute
-      template_id: kali-audit
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

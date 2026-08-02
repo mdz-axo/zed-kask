@@ -261,31 +261,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: capabilities-reasoner/capability-register
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: capabilities-reasoner/capability-elicit
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: capabilities-reasoner/capability-evaluate
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: capabilities-reasoner/capability-reason
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: capabilities-reasoner/capability-report
-      gas_budget: 4096
-    - resource: manifest
-      action: execute
-      template_id: capabilities-reasoner
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

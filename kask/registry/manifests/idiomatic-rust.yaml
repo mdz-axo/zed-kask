@@ -250,23 +250,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: idiomatic-rust/idiomatic-rust-inquiry
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: idiomatic-rust/idiomatic-rust-design
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: idiomatic-rust/idiomatic-rust-challenge
-      gas_budget: 8192
-    - resource: manifest
-      action: execute
-      template_id: idiomatic-rust
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

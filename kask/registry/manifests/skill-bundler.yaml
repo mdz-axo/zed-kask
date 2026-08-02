@@ -173,31 +173,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: goal-analysis/create
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: skill-bundler/bundler-compose
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: skill-bundler/bundler-synthesize
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: skill-bundler/bundler-validate
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: skill-bundler/bundler-evolve
-      gas_budget: 6000
-    - resource: manifest
-      action: execute
-      template_id: skill-bundler
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

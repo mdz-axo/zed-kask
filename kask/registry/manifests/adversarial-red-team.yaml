@@ -160,23 +160,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: adversarial-red-team/select-target
-      gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: adversarial-red-team/generate-adversarial
-      gas_budget: 7000
-    - resource: template
-      action: render
-      template_id: adversarial-red-team/test-against-target
-      gas_budget: 7000
-    - resource: manifest
-      action: execute
-      template_id: adversarial-red-team
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

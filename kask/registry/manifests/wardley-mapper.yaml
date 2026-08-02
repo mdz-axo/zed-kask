@@ -159,31 +159,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: wardley-mapper/inventory-components
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: wardley-mapper/classify-evolution
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: wardley-mapper/map-value-chain
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: wardley-mapper/identify-movement
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: wardley-mapper/synthesize-recommendations
-      gas_budget: 5000
-    - resource: manifest
-      action: execute
-      template_id: wardley-mapper
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

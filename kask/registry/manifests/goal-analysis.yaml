@@ -179,27 +179,6 @@ error_handling:
       span: reg.goal.alert.storage_failure
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: goal-analysis/create
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: goal-analysis/goal-activate
-      gas_budget: 2000
-    - resource: template
-      action: render
-      template_id: goal-analysis/judge
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: goal-analysis/goal-resolve
-      gas_budget: 2000
-    - resource: manifest
-      action: execute
-      template_id: goal-analysis
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

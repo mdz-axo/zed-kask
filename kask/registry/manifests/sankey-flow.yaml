@@ -255,43 +255,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: sankey-flow/sankey-classify
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: sankey-flow/sankey-gather
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: sankey-flow/sankey-draft
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: sankey-flow/sankey-evaluate
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: sankey-flow/sankey-write
-      gas_budget: 4096
-    # Delegation capabilities (Path B — conditional on source_ref presence).
-    # These are declared so the ocap membrane permits cross-skill template
-    # renders when the gather step delegates. Gas for delegated renders is
-    # drawn from this manifest's gas.cap (70000).
-    - resource: template
-      action: render
-      template_id: structured-extraction/identify-entities
-      gas_budget: 8000
-    - resource: template
-      action: render
-      template_id: sequential-inquiry/sequential-inquiry-engine
-      gas_budget: 8000
-    - resource: manifest
-      action: execute
-      template_id: sankey-flow
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

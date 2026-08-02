@@ -165,31 +165,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: diagnose/diagnose-spec-anchor
-      gas_budget: 3072
-    - resource: template
-      action: render
-      template_id: diagnose/diagnose-loop
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: falsifiability/falsifiability-hypothesize
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: diagnose/diagnose-instrument
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: diagnose/diagnose-fix
-      gas_budget: 6144
-    - resource: manifest
-      action: execute
-      template_id: diagnose
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

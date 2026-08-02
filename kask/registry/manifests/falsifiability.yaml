@@ -175,31 +175,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: falsifiability/falsifiability-admit
-      gas_budget: 3072
-    - resource: template
-      action: render
-      template_id: falsifiability/falsifiability-hypothesize
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: falsifiability/falsifiability-counterfactual
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: falsifiability/falsifiability-discriminate
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: falsifiability/falsifiability-eliminate
-      gas_budget: 4096
-    - resource: manifest
-      action: execute
-      template_id: falsifiability
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

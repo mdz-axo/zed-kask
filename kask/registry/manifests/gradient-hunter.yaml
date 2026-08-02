@@ -248,31 +248,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: gradient-hunter/gradient-prior
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: gradient-hunter/gradient-map
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: gradient-hunter/gradient-detect
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: gradient-hunter/gradient-hypothesize
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: gradient-hunter/gradient-report
-      gas_budget: 4096
-    - resource: manifest
-      action: execute
-      template_id: gradient-hunter
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

@@ -134,27 +134,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: mcda/identify-criteria
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: mcda/weight-and-score
-      gas_budget: 5000
-    - resource: template
-      action: render
-      template_id: mcda/rank-alternatives
-      gas_budget: 4000
-    - resource: template
-      action: render
-      template_id: mcda/sensitivity-analysis
-      gas_budget: 4000
-    - resource: manifest
-      action: execute
-      template_id: mcda
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

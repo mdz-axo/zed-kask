@@ -81,19 +81,6 @@ error_handling:
 
 # OCAP Configuration
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: prompt-templates/inference_call
-      gas_budget: 1000
-    - resource: inference
-      action: call
-      template_id: prompt-templates/inference_call
-      gas_budget: 8192
-    - resource: regulation
-      action: emit
-      template_id: prompt-templates/inference_call
-      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

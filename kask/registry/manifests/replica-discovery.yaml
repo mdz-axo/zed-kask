@@ -462,22 +462,6 @@ error_handling:
   on_method_failure: continue
 
 ocap:
-  required_capabilities:
-    - resource: web
-      action: search
-      gas_budget: 8192
-    - resource: web
-      action: extract
-      gas_budget: 8192
-    - resource: replica
-      action: cache
-      gas_budget: 2048
-    - resource: memory
-      action: infer
-      gas_budget: 8192
-    - resource: regulation
-      action: emit
-      gas_budget: 500
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

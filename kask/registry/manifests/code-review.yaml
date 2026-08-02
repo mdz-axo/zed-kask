@@ -304,31 +304,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: code-review/code-review-scope
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: code-review/code-review-perspectives
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: code-review/code-review-adjudicate
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: code-review/code-review-report
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: code-review/code-review-implement
-      gas_budget: 6144
-    - resource: manifest
-      action: execute
-      template_id: code-review
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

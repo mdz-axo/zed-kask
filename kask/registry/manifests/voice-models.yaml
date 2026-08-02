@@ -139,19 +139,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: manifest
-      action: execute
-      template_id: voice-models
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: voice/profile
-      gas_budget: 3000
-    - resource: registry
-      action: index
-      registry_path: registry/manifests/voice-models.yaml
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

@@ -117,17 +117,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: manifest
-      action: execute
-      template_id: stt-tts
-    - resource: template
-      action: render
-      template_id: ttbs/transform
-    - resource: tool
-      action: invoke
-      tool_id: media.execute_workflow
-      gas_budget: 120000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

@@ -204,31 +204,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: diataxis-diagram/diataxis-diagram-classify
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: diataxis-diagram/diataxis-diagram-extract
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: diataxis-diagram/diataxis-diagram-generate
-      gas_budget: 8192
-    - resource: template
-      action: render
-      template_id: diataxis-diagram/diataxis-diagram-evaluate
-      gas_budget: 6144
-    - resource: template
-      action: render
-      template_id: diataxis-diagram/diataxis-diagram-write
-      gas_budget: 4096
-    - resource: manifest
-      action: execute
-      template_id: diataxis-diagram
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

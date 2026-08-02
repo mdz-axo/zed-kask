@@ -158,23 +158,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: deep-module/deep-module-assess
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: deep-module/deep-module-delete
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: deep-module/deep-module-design
-      gas_budget: 6000
-    - resource: manifest
-      action: execute
-      template_id: deep-module
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

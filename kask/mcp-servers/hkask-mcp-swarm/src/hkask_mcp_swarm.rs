@@ -7643,6 +7643,18 @@ mod tests {
             .filter(|k| !k.is_empty())
     }
 
+    /// Extract `workspace_id` from a tool response envelope (the `with_wallet`
+    /// shape: `{"workspace_id": ..., "wallet": ...}`).
+    fn extract_workspace_id(tool_response: &str) -> Option<String> {
+        serde_json::from_str::<serde_json::Value>(tool_response)
+            .ok()
+            .and_then(|v| {
+                v.get("workspace_id")
+                    .and_then(|id| id.as_str())
+                    .map(str::to_string)
+            })
+    }
+
     /// Construct a SwarmClient pointed at the real ABW service.
     fn abw_client() -> Option<SwarmClient> {
         let key = abw_api_key()?;
@@ -7925,12 +7937,12 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires ABW API key; run with --ignored abw"]
     async fn abw_lifecycle_create_fire_delete_probe() {
-        // Full-lifecycle probe of the §17 blocked endpoints (the operator
-        // authorized live mutation + cleanup). Creates a disposable agent,
-        // reuses a leftover zed-kask-verify workspace (delete is 405, so we
-        // do not create more), and probes: /dependencies for an owned agent,
-        // /add by name vs uuid, fire by name vs uuid, the delegate message
-        // POST, and PATCH /workspaces/{id}. Deletes the agent at the end.
+        // Full-lifecycle probe of the ABW lifecycle endpoints (the operator
+        // authorized live mutation + cleanup). Self-contained: creates its own
+        // disposable workspace and agent, probes /dependencies for an owned
+        // agent, /add by name vs uuid, fire by name vs uuid, the delegate
+        // message POST, PATCH /workspaces/{id} (405), then deletes the agent
+        // AND the workspace (team-scoped delete) — nothing is left behind.
         let Some(client) = abw_client() else {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;
@@ -7939,28 +7951,25 @@ mod tests {
         let agent_name = format!("zed_kask_verify_{suffix}");
         let mut created_agent: Option<String> = None;
 
-        // Find a leftover verify workspace to reuse (we must not leave more
-        // undeletable workspaces behind).
-        let ws_data = client.get("/workspaces").await.expect("GET /workspaces");
-        let workspaces = ws_data
-            .get("workspaces")
-            .and_then(|w| w.as_array())
-            .or_else(|| ws_data.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let reused_ws = workspaces.iter().find_map(|ws| {
-            let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.starts_with("zed-kask-verify") {
-                ws.get("id").and_then(|v| v.as_str()).map(str::to_string)
-            } else {
-                None
-            }
-        });
-        let Some(ws) = reused_ws else {
-            eprintln!("L0: no leftover zed-kask-verify workspace to reuse — skipping");
-            return;
-        };
-        eprintln!("L0 reusing workspace {ws}");
+        // L0: create a disposable workspace (verified free; deleted at the end).
+        let slug = make_swarm_slug("zed_kask_verify", std::time::SystemTime::now());
+        let ws = client
+            .post(
+                "/teams",
+                &serde_json::json!({
+                    "name": format!("zed-kask-verify-{suffix}"),
+                    "slug": slug,
+                    "description": "zed-kask lifecycle verification (deleted after test)",
+                    "mission": "zed-kask lifecycle verification (deleted after test)",
+                }),
+            )
+            .await
+            .expect("POST /teams")
+            .get("id")
+            .and_then(|i| i.as_str())
+            .map(str::to_string)
+            .expect("team create returned id");
+        eprintln!("L0 created workspace {ws}");
 
         // L1: create agent.
         let card = serde_json::json!({
@@ -8105,38 +8114,50 @@ mod tests {
             }
             Err(e) => eprintln!("L9 catalogue fetch FAILED: {e}"),
         }
+
+        // L10: delete the disposable workspace via the team-scoped route.
+        match client
+            .delete(&format!("/teams/{}", url_encode_segment(&ws)))
+            .await
+        {
+            Ok(resp) => eprintln!("L10 workspace delete ok: {resp}"),
+            Err(e) => eprintln!("L10 workspace delete FAILED: {e}"),
+        }
+
+        // L11: confirm the workspace is gone from the list.
+        match client.get("/workspaces").await {
+            Ok(resp) => {
+                let remaining = resp
+                    .get("workspaces")
+                    .and_then(|w| w.as_array())
+                    .or_else(|| resp.as_array())
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|w| w.get("id").and_then(|v| v.as_str()) == Some(ws.as_str()))
+                    .count();
+                assert_eq!(
+                    remaining, 0,
+                    "workspace {ws} still listed after team-scoped delete"
+                );
+                eprintln!("L11 workspace gone from list — assert passed");
+            }
+            Err(e) => eprintln!("L11 workspace list fetch FAILED: {e}"),
+        }
     }
 
     #[tokio::test]
     #[ignore = "requires ABW API key; run with --ignored abw"]
     async fn abw_lifecycle_implemented_tools() {
         // End-to-end through the IMPLEMENTED tool handlers (not raw client
-        // calls): create agent → hire into a leftover verify workspace (own
-        // agent → the /add fallback) → fire → delete. Everything is disposed
-        // at the end (the workspace is reused, not created).
+        // calls): create agent → create swarm (free) → hire own agent (the
+        // /add fallback) → fire → delete agent → delete swarm (the team-route
+        // tool). Self-contained: the workspace is created and deleted by this
+        // test, so nothing is left behind and no leftover dependence remains.
         let Some(client) = abw_client() else {
             eprintln!("skipping: HKASK_ABW_API_KEY not set");
             return;
         };
-        let ws_data = client.get("/workspaces").await.expect("GET /workspaces");
-        let workspaces = ws_data
-            .get("workspaces")
-            .and_then(|w| w.as_array())
-            .or_else(|| ws_data.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let Some(ws_id) = workspaces.iter().find_map(|ws| {
-            let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.starts_with("zed-kask-verify") {
-                ws.get("id").and_then(|v| v.as_str()).map(str::to_string)
-            } else {
-                None
-            }
-        }) else {
-            eprintln!("T0: no leftover zed-kask-verify workspace to reuse — skipping");
-            return;
-        };
-        eprintln!("T0 reusing workspace {ws_id}");
 
         let consent = StdArc::new(ConsentStore::default());
         let server = SwarmServer::new(
@@ -8175,6 +8196,20 @@ mod tests {
             "T1 create must succeed through the tool, got: {create}"
         );
         eprintln!("T1 create ok: {create}");
+
+        // T1b: create the swarm (free — no agents, no consent tokens).
+        let swarm_name = format!("zed-kask-verify-{suffix}");
+        let swarm = server
+            .swarm_create_swarm(Parameters(CreateSwarmRequest {
+                name: swarm_name.clone(),
+                mission: Some("zed-kask lifecycle verification (deleted after test)".to_string()),
+                agents: None,
+                consent_tokens: None,
+            }))
+            .await;
+        let ws_id = extract_workspace_id(&swarm)
+            .unwrap_or_else(|| panic!("T1b create swarm must return a workspace_id, got: {swarm}"));
+        eprintln!("T1b create swarm ok: workspace_id {ws_id}");
 
         // T2: hire — own agents route through /add (the fallback), consent-gated.
         let token = consent.mint("hire", &agent_name, 10).expect("mint");
@@ -8217,6 +8252,52 @@ mod tests {
             "T4 delete must succeed, got: {delete}"
         );
         eprintln!("T4 delete ok: {delete}");
+
+        // T5: delete the swarm through the tool (team-scoped route).
+        let delete_swarm = server
+            .swarm_delete_swarm(Parameters(DeleteSwarmRequest {
+                workspace_id: ws_id.clone(),
+            }))
+            .await;
+        assert!(
+            delete_swarm.contains("deleted"),
+            "T5 delete swarm must succeed, got: {delete_swarm}"
+        );
+        eprintln!("T5 delete swarm ok: {delete_swarm}");
+
+        // T6: the account must be clean — no verify workspace or agent left.
+        let ws_after = client.get("/workspaces").await.expect("GET /workspaces");
+        let ws_left = ws_after
+            .get("workspaces")
+            .and_then(|w| w.as_array())
+            .or_else(|| ws_after.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|w| {
+                w.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .starts_with("zed-kask-verify")
+            })
+            .count();
+        assert_eq!(ws_left, 0, "verify workspaces remain after T5");
+        let agents_after = client.get("/agents").await.expect("GET /agents");
+        let agents_left = agents_after
+            .get("agents")
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|a| {
+                a.get("agent_name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| n.starts_with("zed_kask_verify"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(agents_left, 0, "verify agents remain after T4");
+        eprintln!("T6 account clean — assert passed");
     }
 
     #[tokio::test]

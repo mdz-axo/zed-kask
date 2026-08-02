@@ -239,45 +239,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    # Beginner mode templates
-    - resource: template
-      action: render
-      template_id: kata-improvement/beginner-selector
-      gas_budget: 2500
-    - resource: template
-      action: render
-      template_id: kata-improvement/beginner-five-questions
-      gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: kata-improvement/beginner-pdca-cycle
-      gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: kata-improvement/beginner-observation-drill
-      gas_budget: 3000
-    # Improvement mode templates
-    - resource: template
-      action: render
-      template_id: kata-improvement/improvement-step1-direction
-      gas_budget: 3000
-    - resource: template
-      action: render
-      template_id: kata-improvement/improvement-step2-current
-      gas_budget: 3500
-    - resource: template
-      action: render
-      template_id: kata-improvement/improvement-step3-target
-      gas_budget: 3500
-    - resource: template
-      action: render
-      template_id: kata-improvement/improvement-step4-experiment
-      gas_budget: 4000
-    - resource: manifest
-      action: execute
-      template_id: kata-improvement
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

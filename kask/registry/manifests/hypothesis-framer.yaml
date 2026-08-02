@@ -146,23 +146,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    - resource: template
-      action: render
-      template_id: hypothesis-framer/finer-evaluate
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: hypothesis-framer/pico-structure
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: hypothesis-framer/hypothesis-operationalize
-      gas_budget: 8000
-    - resource: manifest
-      action: execute
-      template_id: hypothesis-framer
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

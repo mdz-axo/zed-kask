@@ -1268,10 +1268,10 @@ impl CyberneticsLoop {
 
     /// Full regulation cycle with loop-quality telemetry.
     ///
-    /// Overrides the default `tick()` to measure elapsed time and compute
-    /// `LoopMetrics` metrics (delay_ms, gain, fidelity_score, effectiveness_score)
-    /// after each cycle. Calls `verify_impact` to close the feedback loop.
-    async fn tick(&self) {
+    /// Measures elapsed time and computes `LoopMetrics` metrics (delay_ms,
+    /// gain, fidelity_score, effectiveness_score) after each cycle. Calls
+    /// `verify_impact` to close the feedback loop.
+    pub async fn tick(&self) {
         let start = std::time::Instant::now();
 
         let signals = self.sense().await;

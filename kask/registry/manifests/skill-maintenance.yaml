@@ -265,41 +265,6 @@ error_handling:
   on_validation_failure: abort
 
 ocap:
-  required_capabilities:
-    # Maintenance mode templates
-    - resource: template
-      action: render
-      template_id: skill-maintenance/skill-maintenance-audit
-      gas_budget: 6000
-    - resource: template
-      action: render
-      template_id: skill-maintenance/skill-maintenance-coverage
-      gas_budget: 6000
-    # Logic audit mode templates (folded from skill-logic-audit)
-    - resource: template
-      action: render
-      template_id: skill-maintenance/logic-load-goal
-      gas_budget: 2048
-    - resource: template
-      action: render
-      template_id: skill-maintenance/logic-critique-template
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: skill-maintenance/logic-critique-critique
-      gas_budget: 2048
-    - resource: template
-      action: render
-      template_id: skill-maintenance/logic-compose-proposal
-      gas_budget: 4096
-    - resource: template
-      action: render
-      template_id: skill-maintenance/logic-user-choice
-      gas_budget: 2048
-    - resource: manifest
-      action: execute
-      template_id: skill-maintenance
-      gas_budget: 1000
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600
