@@ -242,7 +242,7 @@ Credentials: **optional** `HKASK_OCR_MODEL`, `HKASK_EMBEDDING_MODEL`,
 | `corpus_purge_qa` | no | sqlite | yes | yes | skip |
 | `corpus_tag_chunks` | **yes** | inference | yes | yes | **yes** |
 
-### hkask-mcp-curator (11 tools)
+### hkask-mcp-curator (9 tools)
 
 Credentials: **optional** `HKASK_CURATOR_DB`, `HKASK_DB_PASSPHRASE`.
 
@@ -252,8 +252,6 @@ Credentials: **optional** `HKASK_CURATOR_DB`, `HKASK_DB_PASSPHRASE`.
 | `curator_escalations` | no | sqlite | yes | yes | skip |
 | `curator_escalation_resolve` | no | sqlite | yes | yes | skip |
 | `curator_escalation_dismiss` | no | sqlite | yes | yes | skip |
-| `curator_health` | no | sqlite | yes | yes | skip |
-| `curator_reg_status` | no | sqlite | yes | yes | skip |
 | `curator_semantic_search` | no | sqlite | yes | yes | skip |
 | `curator_memory_recall` | no | sqlite | yes | yes | skip |
 | `curator_algedonic_log` | no | sqlite | yes | yes | skip |

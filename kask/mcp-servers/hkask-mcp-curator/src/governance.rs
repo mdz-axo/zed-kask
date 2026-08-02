@@ -48,17 +48,28 @@ impl From<EscalationEntry> for EscalationResponse {
 // ── Escalation CRUD (free functions for MCP / granular access) ─────────
 
 /// Emit a Regulation regulation record for an escalation operation (resolve/dismiss).
+/// `detail` (the operator's resolution note or dismissal reason) is recorded
+/// in the observation payload so the audit trail keeps it.
 fn emit_escalation_event(
     events: &Arc<dyn RegulationSink>,
     operation: &str,
     actor_key: &str,
     escalation_id: &str,
     actor: &str,
+    detail: Option<&str>,
 ) {
-    let span = Span::new(
-        SpanNamespace::try_from(RegulationSpan::Curation).expect("canonical span"),
-        operation,
-    );
+    let namespace = match SpanNamespace::try_from(RegulationSpan::Curation) {
+        Ok(ns) => ns,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.curation",
+                error = %e,
+                "Curation span namespace not in canonical registry — Regulation event skipped"
+            );
+            return;
+        }
+    };
+    let span = Span::new(namespace, operation);
     let event = RegulationRecord::new(
         WebID::from_persona(b"curator"),
         span,
@@ -66,6 +77,7 @@ fn emit_escalation_event(
         serde_json::json!({
             "escalation_id": escalation_id,
             actor_key: actor,
+            "detail": detail,
         }),
         0,
     );
@@ -107,6 +119,7 @@ pub fn resolve_direct(
     events: &Arc<dyn RegulationSink>,
     id: &str,
     resolved_by: &str,
+    resolution: Option<&str>,
 ) -> Result<(), ServiceError> {
     emit_escalation_event(
         events,
@@ -114,6 +127,7 @@ pub fn resolve_direct(
         "resolved_by",
         id,
         resolved_by,
+        resolution,
     );
 
     queue.resolve(id, resolved_by).map_err(|e| match e {
@@ -142,6 +156,7 @@ pub fn dismiss_direct(
     events: &Arc<dyn RegulationSink>,
     id: &str,
     dismissed_by: &str,
+    reason: Option<&str>,
 ) -> Result<(), ServiceError> {
     emit_escalation_event(
         events,
@@ -149,6 +164,7 @@ pub fn dismiss_direct(
         "dismissed_by",
         id,
         dismissed_by,
+        reason,
     );
 
     queue.dismiss(id, dismissed_by).map_err(|e| match e {

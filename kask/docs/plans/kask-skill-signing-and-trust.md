@@ -2,7 +2,7 @@
 title: "Kask Skill Signing & Trust Model"
 audience: [developers, operators, agents]
 last_updated: 2026-08-02
-version: "0.2.0"
+version: "0.3.0"
 status: "Active"
 domain: "Trust"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -174,9 +174,31 @@ flowchart TD
     VerifyClient -->|extract| Install
 ```
 
+### Skill lifecycle (reference)
+
+A skill moves through the trust model as a state machine. `expires_at` is set
+at signing time (D2); verification happens at upload (fail closed, 400) and on
+the poll (skip + warn); the catalog filter is the enforcement point and the
+sweep is the cleanup. Re-publishing (a new signature) restarts the clock from
+the new `expires_at` — the only way to relist an expired skill.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Local: skill authored, visibility Private
+    Local --> Published: toggle Public + publish (sign canonical bytes)
+    Published --> Rejected: upload verification fails (400)
+    Published --> Verified: upload verification passes
+    Verified --> Listed: manifest indexed (immediate or poll)
+    Listed --> Expired: expires_at passes (catalog filter)
+    Expired --> Purged: expiry sweep deletes rows
+    Listed --> Local: unpublish (visibility Private)
+    Rejected --> Local: fix manifest and re-sign
+    Purged --> Local: re-publish with new signature
+```
+
 ## Phased plan
 
-### Phase 1 — Manifest fields + client signing (client-only)
+### Phase 1 — Manifest fields + client signing (client-only) ✅ COMPLETE
 
 **Tasks:**
 1. Add **required** fields to `KaskSkillManifest` (`crates/cloud_api_types/src/kask_skill.rs`):
@@ -203,7 +225,7 @@ against its `public_key` over the canonical bytes and whose `expires_at` is
 the canonical bytes; tampered manifest bytes fail; the canonical form excludes
 the `signature` field but includes `expires_at`.
 
-### Phase 2 — Server verification + schema
+### Phase 2 — Server verification + schema ✅ COMPLETE
 
 **Tasks:**
 1. Add required columns to `kask_skill_versions`
@@ -232,7 +254,7 @@ beyond cap → 400 `OverCap`.
 `verify_manifest_signature` (valid, tampered, missing fields, expired, over-cap);
 integration test on the upload route (unsigned rejected, valid signed accepted).
 
-### Phase 3 — Expiry enforcement (catalog + sweep)
+### Phase 3 — Expiry enforcement (catalog + sweep) ✅ COMPLETE
 
 **Tasks:**
 1. Catalog query (`get_kask_skills_where` / `metadata_from_skill_and_version`):
@@ -253,7 +275,7 @@ signature (new `expires_at`) relists it.
 fresh version present; sweep test: purge removes expired versions + orphaned
 skills.
 
-### Phase 4 — Client install verification
+### Phase 4 — Client install verification ✅ COMPLETE
 
 **Tasks:**
 1. `KaskSkillMetadata` already flattens the manifest (`cloud_api_types/src/kask_skill.rs`)
@@ -276,7 +298,7 @@ the mismatch.
 **Verification:** `cargo check -p kask_extensions_ui`; unit test: signed
 manifest verifies, tampered manifest rejects, expired manifest rejects.
 
-### Phase 5 — Tests pinning deviations + docs
+### Phase 5 — Tests pinning deviations + docs ✅ COMPLETE
 
 **Tasks:**
 1. Pin the new deviations per the `.rules` "tests must pin deliberate

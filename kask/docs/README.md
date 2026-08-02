@@ -78,7 +78,7 @@ lifecycle definition.
 
 | Document | Status | Description |
 |----------|--------|-------------|
-| [`plans/kask-extensions-panel-and-skill-sharing.md`](plans/kask-extensions-panel-and-skill-sharing.md) | Active | Skill marketplace (visibility toggle, publish/install, Kask Extensions Panel). Phases 1–5 complete; Phases 6–7 partial. |
+| [`plans/kask-skill-signing-and-trust.md`](plans/kask-skill-signing-and-trust.md) | Active | Skill marketplace signing & trust model — Ed25519-signed manifests with `expires_at` set at signing, server verification (upload 400 / poll skip), 120-day catalog expiry + sweep, client install verification. All 5 phases complete. Supersedes the deleted `kask-extensions-panel-and-skill-sharing.md` (removed 2026-08-01). |
 | [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Active | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server + `swarm_panel`. v1 feature-complete (slices 1–7 + Xaman Ek); v2 local-cloud hybrid evolution unimplemented. |
 | [`plans/swarm-intelligence-skill-design.md`](plans/swarm-intelligence-skill-design.md) | Active | `swarm-intelligence` registry skill design — composition/configuration/operation of ABW agent swarms. Scaffold complete; grill-me round pending. |
 

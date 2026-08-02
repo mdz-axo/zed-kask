@@ -498,8 +498,7 @@ pub async fn install_skill(
 ) -> Result<PathBuf> {
     let (source_user, skill_name) = skill_id
         .split_once('/')
-        .context("kask skill id must be \"{source_user}/{skill_name}\"")
-        .map(|(source_user, skill_name)| (source_user, skill_name))?;
+        .context("kask skill id must be \"{source_user}/{skill_name}\"")?;
 
     // zed-kask: verify the manifest signature against the catalog's public
     // key **before** downloading anything (plan Phase 4 / D3). The catalog

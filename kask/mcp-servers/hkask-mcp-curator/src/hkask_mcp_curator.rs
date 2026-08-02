@@ -14,6 +14,7 @@ pub mod types;
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_services_core::{ErrorKind, ServiceError};
 use hkask_storage::database::sqlite::SqliteDriver;
 
 use hkask_types::WebID;
@@ -29,16 +30,79 @@ use types::*;
 
 const SERVER_NAME: &str = "hkask-mcp-curator";
 
+/// Minimum interval between self-heal re-open attempts, so a DB outage does
+/// not trigger a full DB open + store construction on every tool call.
+const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The five stores the curator's tools read, all backed by the curator's
 /// sovereign `pod.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
-type CuratorStoreSet = (
-    Option<Arc<hkask_storage::EscalationQueue>>,
-    Option<Arc<hkask_storage::RegulationArchive>>,
-    Option<Arc<hkask_memory::EpisodicMemory>>,
-    Option<Arc<hkask_memory::SemanticMemory>>,
-    Option<Arc<dyn hkask_capability::TokenRegistry>>,
-);
+///
+/// Named fields (not a positional tuple): tools address stores by name, so
+/// adding or reordering a store cannot silently rebind a `..` destructuring
+/// to the wrong store.
+#[derive(Clone)]
+pub struct CuratorStores {
+    pub escalation_queue: Option<Arc<hkask_storage::EscalationQueue>>,
+    pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
+    pub episodic: Option<Arc<hkask_memory::EpisodicMemory>>,
+    pub semantic: Option<Arc<hkask_memory::SemanticMemory>>,
+    pub token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>>,
+}
+
+impl CuratorStores {
+    /// All stores `None` — the DB-open level failed and a re-open may help.
+    fn all_none(&self) -> bool {
+        self.escalation_queue.is_none()
+            && self.regulation_store.is_none()
+            && self.episodic.is_none()
+            && self.semantic.is_none()
+            && self.token_registry.is_none()
+    }
+
+    /// Empty store set — used when the DB cannot be opened at all.
+    pub fn empty() -> Self {
+        Self {
+            escalation_queue: None,
+            regulation_store: None,
+            episodic: None,
+            semantic: None,
+            token_registry: None,
+        }
+    }
+
+    /// Guarded accessor — folds the repeated `permission_denied` store check
+    /// that every tool used to inline.
+    fn escalation_queue(&self) -> Result<&Arc<hkask_storage::EscalationQueue>, McpToolError> {
+        self.escalation_queue
+            .as_ref()
+            .ok_or_else(|| McpToolError::permission_denied("EscalationQueue not available"))
+    }
+
+    fn regulation_store(&self) -> Result<&Arc<hkask_storage::RegulationArchive>, McpToolError> {
+        self.regulation_store
+            .as_ref()
+            .ok_or_else(|| McpToolError::permission_denied("RegulationArchive not available"))
+    }
+
+    fn episodic(&self) -> Result<&Arc<hkask_memory::EpisodicMemory>, McpToolError> {
+        self.episodic
+            .as_ref()
+            .ok_or_else(|| McpToolError::permission_denied("EpisodicMemory not available"))
+    }
+
+    fn semantic(&self) -> Result<&Arc<hkask_memory::SemanticMemory>, McpToolError> {
+        self.semantic
+            .as_ref()
+            .ok_or_else(|| McpToolError::permission_denied("SemanticMemory not available"))
+    }
+
+    fn token_registry(&self) -> Result<&Arc<dyn hkask_capability::TokenRegistry>, McpToolError> {
+        self.token_registry
+            .as_ref()
+            .ok_or_else(|| McpToolError::permission_denied("TokenRegistry not available"))
+    }
+}
 
 /// Self-healing handle over the curator's sovereign `pod.db` — the MCP-side
 /// mirror of `CuratorStores` in `kask_bridge::memory`.
@@ -51,12 +115,15 @@ type CuratorStoreSet = (
 /// warns once per outage round (re-armed on heal), a successful heal logs
 /// `info!`.
 pub struct CuratorDb {
-    stores: RwLock<CuratorStoreSet>,
+    stores: RwLock<CuratorStores>,
     db_path: Option<String>,
     passphrase: Option<String>,
     heal_attempt_logged: AtomicBool,
     /// Tests construct handles with no valid path — healing disabled.
     heal_enabled: bool,
+    /// Last heal attempt — gates re-opens so a DB outage doesn't trigger a
+    /// full open + store construction on every tool call.
+    last_heal_attempt: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl CuratorDb {
@@ -68,8 +135,15 @@ impl CuratorDb {
             .unwrap_or_else(|| {
                 let p = hkask_types::agent_paths::agent_pod_db("curator");
                 let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
-                if let Some(parent) = resolved.parent() {
-                    std::fs::create_dir_all(parent).ok();
+                if let Some(parent) = resolved.parent()
+                    && let Err(e) = std::fs::create_dir_all(parent)
+                {
+                    tracing::warn!(
+                        target: "hkask.mcp.curator",
+                        error = %e,
+                        path = ?parent,
+                        "Failed to create curator data directory — DB open will likely fail"
+                    );
                 }
                 resolved.to_string_lossy().to_string()
             });
@@ -82,6 +156,7 @@ impl CuratorDb {
             passphrase,
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled,
+            last_heal_attempt: std::sync::Mutex::new(None),
         };
         if Self::db_level_down_from(&this.stores) {
             if this.heal_enabled {
@@ -115,19 +190,20 @@ impl CuratorDb {
     /// the qa_contract integration tests (compiled as a separate crate, so
     /// `#[cfg(test)]` doesn't reach them).
     #[doc(hidden)]
-    pub fn for_tests(stores: CuratorStoreSet) -> Self {
+    pub fn for_tests(stores: CuratorStores) -> Self {
         Self {
             stores: RwLock::new(stores),
             db_path: None,
             passphrase: None,
             heal_attempt_logged: AtomicBool::new(false),
             heal_enabled: false,
+            last_heal_attempt: std::sync::Mutex::new(None),
         }
     }
 
     /// Replace the stores — simulates an outage or a heal. Test-only.
     #[doc(hidden)]
-    pub fn set_for_tests(&self, stores: CuratorStoreSet) {
+    pub fn set_for_tests(&self, stores: CuratorStores) {
         if let Ok(mut guard) = self.stores.write() {
             *guard = stores;
         }
@@ -137,15 +213,11 @@ impl CuratorDb {
     /// case a re-open can fix. Partial degradation (a per-store `from_driver`
     /// failure leaving some stores `Some`) is NOT healable by re-open and
     /// must not churn re-opens on every tool call.
-    fn db_level_down(stores: &CuratorStoreSet) -> bool {
-        stores.0.is_none()
-            && stores.1.is_none()
-            && stores.2.is_none()
-            && stores.3.is_none()
-            && stores.4.is_none()
+    fn db_level_down(stores: &CuratorStores) -> bool {
+        stores.all_none()
     }
 
-    fn db_level_down_from(stores: &RwLock<CuratorStoreSet>) -> bool {
+    fn db_level_down_from(stores: &RwLock<CuratorStores>) -> bool {
         match stores.read() {
             Ok(guard) => Self::db_level_down(&guard),
             Err(_) => true,
@@ -154,14 +226,30 @@ impl CuratorDb {
 
     /// Read the current store set, attempting a re-open when the DB-level
     /// open has failed.
-    fn get(&self) -> CuratorStoreSet {
-        if self.heal_enabled && Self::db_level_down_from(&self.stores) {
+    fn get(&self) -> CuratorStores {
+        if self.heal_enabled && Self::db_level_down_from(&self.stores) && self.heal_due() {
             self.try_heal();
         }
         match self.stores.read() {
-            Ok(guard) => (*guard).clone(),
-            Err(_) => (None, None, None, None, None),
+            Ok(guard) => guard.clone(),
+            Err(_) => CuratorStores::empty(),
         }
+    }
+
+    /// Gate heal re-open attempts to at most one per `HEAL_RETRY_INTERVAL`.
+    fn heal_due(&self) -> bool {
+        let now = std::time::Instant::now();
+        let mut last = self
+            .last_heal_attempt
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(prev) = *last
+            && now.duration_since(prev) < HEAL_RETRY_INTERVAL
+        {
+            return false;
+        }
+        *last = Some(now);
+        true
     }
 
     fn try_heal(&self) {
@@ -214,18 +302,17 @@ impl CuratorServer {
     #[tool(description = "Liveness check")]
     pub async fn curator_ping(&self, Parameters(_req): Parameters<PingRequest>) -> String {
         execute_tool(self, "curator_ping", async {
-            let (escalation_queue, regulation_store, episodic, semantic, token_registry) =
-                self.db.get();
+            let stores = self.db.get();
             Ok(json!({
                 "status": "ok",
                 "server": SERVER_NAME,
                 "curator_webid": self.webid.to_string(),
                 "stores": {
-                    "escalation_queue": escalation_queue.is_some(),
-                    "regulation_store": regulation_store.is_some(),
-                    "episodic": episodic.is_some(),
-                    "semantic": semantic.is_some(),
-                    "token_registry": token_registry.is_some(),
+                    "escalation_queue": stores.escalation_queue.is_some(),
+                    "regulation_store": stores.regulation_store.is_some(),
+                    "episodic": stores.episodic.is_some(),
+                    "semantic": stores.semantic.is_some(),
+                    "token_registry": stores.token_registry.is_some(),
                 }
             }))
         })
@@ -237,13 +324,9 @@ impl CuratorServer {
     #[tool(description = "List all pending escalations requiring review")]
     pub async fn curator_escalations(&self, Parameters(_req): Parameters<PingRequest>) -> String {
         execute_tool(self, "curator_escalations", async {
-            let (escalation_queue, ..) = self.db.get();
-            let Some(ref queue) = escalation_queue else {
-                return Err(McpToolError::permission_denied(
-                    "EscalationQueue not available",
-                ));
-            };
-            match governance::list_escalations_direct(queue.as_ref()) {
+            let stores = self.db.get();
+            let queue = stores.escalation_queue()?;
+            match governance::list_escalations_direct(queue) {
                 Ok(entries) => {
                     let serialized: Vec<serde_json::Value> = entries
                         .iter()
@@ -265,7 +348,7 @@ impl CuratorServer {
                         .collect();
                     Ok(json!({"count": serialized.len(), "escalations": serialized}))
                 }
-                Err(e) => Err(McpToolError::internal(format!("{e}"))),
+                Err(e) => Err(to_tool_error(e)),
             }
         })
         .await
@@ -277,22 +360,23 @@ impl CuratorServer {
         Parameters(req): Parameters<EscalationResolveRequest>,
     ) -> String {
         execute_tool(self, "curator_escalation_resolve", async {
-            let (escalation_queue, regulation_store, ..) = self.db.get();
-            let Some(ref queue) = escalation_queue else {
-                return Err(McpToolError::permission_denied(
-                    "EscalationQueue not available",
-                ));
-            };
-            let Some(ref events_store) = regulation_store else {
-                return Err(McpToolError::permission_denied(
-                    "RegulationArchive not available",
-                ));
-            };
+            let stores = self.db.get();
+            let queue = stores.escalation_queue()?;
+            let events_store = stores.regulation_store()?;
             let events: Arc<dyn RegulationSink> =
                 Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            match governance::resolve_direct(queue.as_ref(), &events, &req.id, "curator") {
+            // Attribution is server-side: the MCP request carries no caller
+            // identity. The resolution note is recorded in the Regulation
+            // event so the audit trail keeps it.
+            match governance::resolve_direct(
+                queue,
+                &events,
+                &req.id,
+                "curator",
+                Some(&req.resolution),
+            ) {
                 Ok(()) => Ok(json!({"resolved": true, "id": req.id})),
-                Err(e) => Err(McpToolError::internal(format!("{e}"))),
+                Err(e) => Err(to_tool_error(e)),
             }
         })
         .await
@@ -304,52 +388,16 @@ impl CuratorServer {
         Parameters(req): Parameters<EscalationDismissRequest>,
     ) -> String {
         execute_tool(self, "curator_escalation_dismiss", async {
-            let (escalation_queue, regulation_store, ..) = self.db.get();
-            let Some(ref queue) = escalation_queue else {
-                return Err(McpToolError::permission_denied(
-                    "EscalationQueue not available",
-                ));
-            };
-            let Some(ref events_store) = regulation_store else {
-                return Err(McpToolError::permission_denied(
-                    "RegulationArchive not available",
-                ));
-            };
+            let stores = self.db.get();
+            let queue = stores.escalation_queue()?;
+            let events_store = stores.regulation_store()?;
             let events: Arc<dyn RegulationSink> =
                 Arc::clone(events_store) as Arc<dyn RegulationSink>;
-            match governance::dismiss_direct(queue.as_ref(), &events, &req.id, "curator") {
+            match governance::dismiss_direct(queue, &events, &req.id, "curator", Some(&req.reason))
+            {
                 Ok(()) => Ok(json!({"dismissed": true, "id": req.id})),
-                Err(e) => Err(McpToolError::internal(format!("{e}"))),
+                Err(e) => Err(to_tool_error(e)),
             }
-        })
-        .await
-    }
-
-    // ── System Health ──────────────────────────────────────────────────
-
-    #[tool(
-        description = "Run metacognition cycle — daemon no longer available; returns unavailable status"
-    )]
-    pub async fn curator_health(&self, Parameters(_req): Parameters<PingRequest>) -> String {
-        execute_tool(self, "curator_health", async {
-            Err(McpToolError::unavailable(
-                "Daemon no longer available; curator_health requires a live daemon",
-            ))
-        })
-        .await
-    }
-
-    #[tool(
-        description = "Live Regulation status — daemon no longer available; returns unavailable status"
-    )]
-    pub async fn curator_reg_status(
-        &self,
-        Parameters(_req): Parameters<RegStatusRequest>,
-    ) -> String {
-        execute_tool(self, "curator_reg_status", async {
-            Err(McpToolError::unavailable(
-                "Daemon no longer available; curator_reg_status requires a live daemon",
-            ))
         })
         .await
     }
@@ -362,10 +410,8 @@ impl CuratorServer {
         Parameters(req): Parameters<SemanticSearchRequest>,
     ) -> String {
         execute_tool(self, "curator_semantic_search", async {
-            let (.., semantic, _) = self.db.get();
-            let Some(ref semantic) = semantic else {
-                return Err(McpToolError::permission_denied("SemanticMemory not available"));
-            };
+            let stores = self.db.get();
+            let semantic = stores.semantic()?;
             match semantic.query_deduped(&req.query) {
                 Ok(h_mems) => {
                     let limit = req.limit.unwrap_or(10);
@@ -393,13 +439,18 @@ impl CuratorServer {
         Parameters(req): Parameters<MemoryRecallRequest>,
     ) -> String {
         execute_tool(self, "curator_memory_recall", async {
-            let (.., episodic, semantic, _) = self.db.get();
             let memory_type = req.memory_type.as_deref().unwrap_or("both");
+            if !matches!(memory_type, "episodic" | "semantic" | "both") {
+                return Err(McpToolError::invalid_argument(format!(
+                    "unknown memory_type '{memory_type}' — expected 'episodic', 'semantic', or 'both'"
+                )));
+            }
+            let stores = self.db.get();
             let mut result = json!({});
 
             if memory_type == "episodic" || memory_type == "both" {
-                if let Some(ref ep) = episodic {
-                    match ep.query_for_deduped(&req.entity, self.webid) {
+                match stores.episodic() {
+                    Ok(ep) => match ep.query_for_deduped(&req.entity, self.webid) {
                         Ok(h_mems) => {
                             let s: Vec<serde_json::Value> = h_mems
                                 .iter()
@@ -416,14 +467,15 @@ impl CuratorServer {
                         Err(e) => {
                             result["episodic"] = json!({"error": format!("{e}")});
                         }
+                    },
+                    Err(_) => {
+                        result["episodic"] = json!({"status": "unavailable"});
                     }
-                } else {
-                    result["episodic"] = json!({"status": "unavailable"});
                 }
             }
             if memory_type == "semantic" || memory_type == "both" {
-                if let Some(ref sem) = semantic {
-                    match sem.query_deduped(&req.entity) {
+                match stores.semantic() {
+                    Ok(sem) => match sem.query_deduped(&req.entity) {
                         Ok(h_mems) => {
                             let s: Vec<serde_json::Value> = h_mems
                                 .iter()
@@ -439,9 +491,10 @@ impl CuratorServer {
                         Err(e) => {
                             result["semantic"] = json!({"error": format!("{e}")});
                         }
+                    },
+                    Err(_) => {
+                        result["semantic"] = json!({"status": "unavailable"});
                     }
-                } else {
-                    result["semantic"] = json!({"status": "unavailable"});
                 }
             }
             Ok(result)
@@ -457,12 +510,8 @@ impl CuratorServer {
         Parameters(req): Parameters<AlgedonicLogRequest>,
     ) -> String {
         execute_tool(self, "curator_algedonic_log", async {
-            let (_, regulation_store, ..) = self.db.get();
-            let Some(ref store) = regulation_store else {
-                return Err(McpToolError::permission_denied(
-                    "RegulationArchive not available",
-                ));
-            };
+            let stores = self.db.get();
+            let store = stores.regulation_store()?;
             let hours = req.hours.unwrap_or(24);
             let since = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
             match store.query_algedonic(since, 500) {
@@ -495,12 +544,8 @@ impl CuratorServer {
     )]
     pub async fn reg_query(&self, Parameters(req): Parameters<RegQueryRequest>) -> String {
         execute_tool(self, "reg_query", async {
-            let (_, regulation_store, ..) = self.db.get();
-            let Some(ref store) = regulation_store else {
-                return Err(McpToolError::permission_denied(
-                    "RegulationArchive not available",
-                ));
-            };
+            let stores = self.db.get();
+            let store = stores.regulation_store()?;
             let window_secs = req.window_seconds.unwrap_or(3600);
             let limit = req.limit.unwrap_or(100) as u64;
             let since = chrono::Utc::now() - chrono::Duration::seconds(window_secs as i64);
@@ -509,7 +554,7 @@ impl CuratorServer {
             let weighted = store
                 .replay_weighted(since, limit, &config)
                 .map_err(|e| McpToolError::internal(format!("Regulation query failed: {e}")))?;
-            let total_count = weighted.len();
+            let replayed_count = weighted.len();
             let filtered: Vec<serde_json::Value> = weighted
                 .into_iter()
                 .filter(|we| {
@@ -541,7 +586,11 @@ impl CuratorServer {
             Ok(json!({
                 "namespace": namespace_info,
                 "window_seconds": window_secs,
-                "total_events": total_count,
+                // The replay applies the SQL limit before the namespace
+                // filter, so `replayed_count` is the post-limit, post-weight
+                // count — NOT the total number of events in the window for
+                // `namespace`.
+                "replayed_count": replayed_count,
                 "filtered_count": filtered.len(),
                 "events": filtered
             }))
@@ -556,20 +605,22 @@ impl CuratorServer {
     )]
     pub async fn list_tokens(&self, Parameters(req): Parameters<TokenListRequest>) -> String {
         execute_tool(self, "list_tokens", async {
-            let (.., token_registry) = self.db.get();
-            let Some(ref registry) = token_registry else {
-                return Err(McpToolError::permission_denied(
-                    "TokenRegistry not available",
-                ));
-            };
+            let stores = self.db.get();
+            let registry = stores.token_registry()?;
             let window_secs = req.window_seconds.unwrap_or(86400);
             let since = chrono::Utc::now() - chrono::Duration::seconds(window_secs as i64);
 
             let tokens = if let Some(ref issuer) = req.issuer {
-                let wid: WebID = issuer.parse().unwrap_or_default();
+                let wid: WebID = issuer.parse().map_err(|_| {
+                    McpToolError::invalid_argument(format!("invalid issuer WebID: '{issuer}'"))
+                })?;
                 registry.query_by_issuer(&wid, since)
             } else if let Some(ref recipient) = req.recipient {
-                let wid: WebID = recipient.parse().unwrap_or_default();
+                let wid: WebID = recipient.parse().map_err(|_| {
+                    McpToolError::invalid_argument(format!(
+                        "invalid recipient WebID: '{recipient}'"
+                    ))
+                })?;
                 registry.query_by_recipient(&wid, since)
             } else {
                 registry.query_all(since)
@@ -609,6 +660,16 @@ impl CuratorServer {
 
 // ── Server startup ─────────────────────────────────────────────────────
 
+/// Map a governance `ServiceError` to the structured MCP wire error,
+/// preserving the semantic kind where the wire supports it (NotFound →
+/// not_found) instead of flattening everything to `internal`.
+fn to_tool_error(e: ServiceError) -> McpToolError {
+    match e.kind() {
+        ErrorKind::NotFound => McpToolError::not_found(e.to_string()),
+        _ => McpToolError::internal(e.to_string()),
+    }
+}
+
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
         SERVER_NAME,
@@ -635,52 +696,57 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 /// a single shared driver. Called at construction and on every heal attempt.
 /// All-or-nothing on the DB-open steps (a failure before store construction
 /// returns all `None`s); per-store `from_driver` failures degrade only that
-/// store, matching the prior behavior.
-fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> CuratorStoreSet {
+/// store.
+fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> CuratorStores {
     let Some(db_path) = db_path else {
         tracing::warn!(target: "hkask.mcp.curator", "Curator DB path not resolved");
-        return (None, None, None, None, None);
+        return CuratorStores::empty();
     };
     let Some(passphrase) = passphrase else {
         tracing::warn!(target: "hkask.mcp.curator", "HKASK_DB_PASSPHRASE not set");
-        return (None, None, None, None, None);
+        return CuratorStores::empty();
     };
 
     let db = match hkask_storage::open_or_repair(db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to open curator DB");
-            return (None, None, None, None, None);
+            return CuratorStores::empty();
         }
     };
     let pool = match db.sqlite_pool() {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to get SQLite pool");
-            return (None, None, None, None, None);
+            return CuratorStores::empty();
         }
     };
     let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
         Arc::new(SqliteDriver::new(pool));
-    let h_mem_store = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore");
-            return (None, None, None, None, None);
-        }
-    };
-    let h_mem_store2 = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore (semantic)");
-            return (None, None, None, None, None);
-        }
-    };
     let embedding_dim = hkask_storage::embedding_dim();
     let embedding_store =
         hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), embedding_dim);
-    let embedding_store =
-        hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), embedding_dim);
+
+    // Memory stores degrade per-store, matching the escalation/regulation/
+    // token stores below — an episodic/semantic failure must not take down
+    // the escalation queue and regulation archive with it.
+    let episodic = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
+        Ok(s) => Some(Arc::new(hkask_memory::EpisodicMemory::new(s))),
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore (episodic) — episodic recall degraded");
+            None
+        }
+    };
+    let semantic = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
+        Ok(s) => Some(Arc::new(hkask_memory::SemanticMemory::new(
+            s,
+            embedding_store,
+        ))),
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore (semantic) — semantic recall degraded");
+            None
+        }
+    };
     let escalation_queue = match hkask_storage::EscalationQueue::from_driver(Arc::clone(&driver)) {
         Ok(q) => Some(Arc::new(q)),
         Err(e) => {
@@ -696,13 +762,6 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
             None
         }
     };
-    // RegulationArchive schema initialized by from_driver().
-    let episodic = Arc::new(hkask_memory::EpisodicMemory::new(h_mem_store));
-    let semantic = Arc::new(hkask_memory::SemanticMemory::new(
-        h_mem_store2,
-        embedding_store,
-    ));
-
     // Token registry — consent audit trail for DelegationToken lifecycle.
     // Schema is initialized automatically by from_driver().
     let token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>> =
@@ -714,11 +773,11 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
             }
         };
 
-    (
+    CuratorStores {
         escalation_queue,
         regulation_store,
-        Some(episodic),
-        Some(semantic),
+        episodic,
+        semantic,
         token_registry,
-    )
+    }
 }

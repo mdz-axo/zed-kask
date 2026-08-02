@@ -12,18 +12,16 @@
 //! This is the OCAP pattern — the tool asserts the store is present before
 //! proceeding. The tests assert `permission_denied` (not `reg.guard.*` —
 //! Gap B, not wired).
-//!
-//! `curator_health` and `curator_reg_status` always return `unavailable`
-//! (the daemon was removed) — these are tested as error-propagation.
 
 #![cfg(test)]
 
 use hkask_mcp_curator::types::*;
-use hkask_mcp_curator::{CuratorDb, CuratorServer};
-use hkask_storage::EscalationQueue;
-use hkask_storage::RegulationArchive;
+use hkask_mcp_curator::{CuratorDb, CuratorServer, CuratorStores};
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_types::WebID;
+use hkask_storage::{EscalationQueue, RegulationArchive, TokenRegistryStore};
+use hkask_types::event::{CyclePhase, RegulationRecord, RegulationSink, Span, SpanNamespace};
+use hkask_types::regulation::RegulationSpan;
+use hkask_types::{BotID, TemplateID, WebID};
 use std::sync::Arc;
 
 // ── Test harness ────────────────────────────────────────────────────────────
@@ -33,7 +31,7 @@ use std::sync::Arc;
 fn make_server_no_stores() -> CuratorServer {
     CuratorServer::new(
         WebID::new(),
-        Arc::new(CuratorDb::for_tests((None, None, None, None, None))),
+        Arc::new(CuratorDb::for_tests(CuratorStores::empty())),
     )
 }
 
@@ -50,14 +48,105 @@ fn make_server_with_stores() -> CuratorServer {
     );
     CuratorServer::new(
         WebID::new(),
-        Arc::new(CuratorDb::for_tests((
-            Some(escalation_queue),
-            Some(regulation_store),
-            None,
-            None,
-            None,
-        ))),
+        Arc::new(CuratorDb::for_tests(CuratorStores {
+            escalation_queue: Some(escalation_queue),
+            regulation_store: Some(regulation_store),
+            ..CuratorStores::empty()
+        })),
     )
+}
+
+/// Build a CuratorServer with an in-memory EscalationQueue pre-populated
+/// with `count` pending escalations, plus a RegulationArchive. Returns the
+/// server and the added escalation ids.
+fn make_server_with_escalations(count: usize) -> (CuratorServer, Vec<String>) {
+    let escalation_queue = Arc::new(
+        EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("escalation queue"),
+    );
+    let mut ids = Vec::new();
+    for _ in 0..count {
+        let id = escalation_queue
+            .add(
+                TemplateID::new(),
+                BotID::new(),
+                "test output".into(),
+                0.9,
+                0,
+                "probe".into(),
+            )
+            .expect("add escalation");
+        ids.push(id.to_string());
+    }
+    let pool = SqliteDriver::in_memory_pool().expect("pool");
+    let regulation_store = Arc::new(
+        RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)))
+            .expect("regulation archive init"),
+    );
+    let server = CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::for_tests(CuratorStores {
+            escalation_queue: Some(escalation_queue),
+            regulation_store: Some(regulation_store),
+            ..CuratorStores::empty()
+        })),
+    );
+    (server, ids)
+}
+
+/// Build a CuratorServer with a RegulationArchive pre-populated with
+/// `count` Regulation events.
+fn make_server_with_archive_events(count: usize) -> CuratorServer {
+    let escalation_queue = Arc::new(
+        EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("escalation queue"),
+    );
+    let pool = SqliteDriver::in_memory_pool().expect("pool");
+    let regulation_store = Arc::new(
+        RegulationArchive::from_driver(Arc::new(SqliteDriver::new(pool)))
+            .expect("regulation archive init"),
+    );
+    for i in 0..count {
+        persist_regulation_event(&regulation_store, &format!("probe_{i}"));
+    }
+    CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::for_tests(CuratorStores {
+            escalation_queue: Some(escalation_queue),
+            regulation_store: Some(regulation_store),
+            ..CuratorStores::empty()
+        })),
+    )
+}
+
+/// Build a CuratorServer with a TokenRegistry present (consent audit store).
+fn make_server_with_token_registry() -> CuratorServer {
+    let registry: Arc<dyn hkask_capability::TokenRegistry> = Arc::new(
+        TokenRegistryStore::from_driver(SqliteDriver::in_memory_driver())
+            .expect("token registry init"),
+    );
+    CuratorServer::new(
+        WebID::new(),
+        Arc::new(CuratorDb::for_tests(CuratorStores {
+            token_registry: Some(registry),
+            ..CuratorStores::empty()
+        })),
+    )
+}
+
+/// Persist a synthetic Regulation event through the archive's
+/// `RegulationSink` surface, as the escalation resolve/dismiss paths do.
+/// Uses the `gas` span category so the event is visible to the algedonic
+/// replay (`query_algedonic` filters on `ALGEDONIC_SPAN_CATEGORIES`, which
+/// does not include `curation`).
+fn persist_regulation_event(store: &RegulationArchive, operation: &str) {
+    let ns = SpanNamespace::try_from(RegulationSpan::Gas).expect("canonical span");
+    let record = RegulationRecord::new(
+        WebID::from_persona(b"curator"),
+        Span::new(ns, operation),
+        CyclePhase::Act,
+        serde_json::json!({"probe": operation}),
+        0,
+    );
+    store.persist(&record).expect("regulation event persist");
 }
 
 /// Parse a tool's JSON string response, unwrapping the rmcp `content` envelope.
@@ -81,7 +170,7 @@ mod self_healing {
     /// tool without a restart.
     #[tokio::test]
     async fn tools_recover_after_stores_heal() {
-        let db = Arc::new(CuratorDb::for_tests((None, None, None, None, None)));
+        let db = Arc::new(CuratorDb::for_tests(CuratorStores::empty()));
         let server = CuratorServer::new(WebID::new(), db.clone());
 
         // Down: permission_denied.
@@ -95,7 +184,10 @@ mod self_healing {
             EscalationQueue::from_driver(SqliteDriver::in_memory_driver())
                 .expect("escalation queue"),
         );
-        db.set_for_tests((Some(escalation_queue), None, None, None, None));
+        db.set_for_tests(CuratorStores {
+            escalation_queue: Some(escalation_queue),
+            ..CuratorStores::empty()
+        });
 
         // Same server instance now serves the tool.
         let out = server
@@ -109,7 +201,7 @@ mod self_healing {
     /// itself) can distinguish "server up, stores down" from "server down".
     #[tokio::test]
     async fn ping_reports_stores_down_then_up() {
-        let db = Arc::new(CuratorDb::for_tests((None, None, None, None, None)));
+        let db = Arc::new(CuratorDb::for_tests(CuratorStores::empty()));
         let server = CuratorServer::new(WebID::new(), db.clone());
 
         let out = server
@@ -126,7 +218,10 @@ mod self_healing {
             EscalationQueue::from_driver(SqliteDriver::in_memory_driver())
                 .expect("escalation queue"),
         );
-        db.set_for_tests((Some(escalation_queue), None, None, None, None));
+        db.set_for_tests(CuratorStores {
+            escalation_queue: Some(escalation_queue),
+            ..CuratorStores::empty()
+        });
 
         let out = server
             .curator_ping(params::<PingRequest>(serde_json::json!({})))
@@ -256,6 +351,26 @@ mod curator_escalations {
             .expect("missing array");
         assert!(arr.is_empty());
     }
+
+    #[tokio::test]
+    async fn happy_with_entries() {
+        // REQ: happy — pre-populated queue lists the pending escalations
+        let (server, ids) = make_server_with_escalations(2);
+        let out = server
+            .curator_escalations(params::<PingRequest>(serde_json::json!({})))
+            .await;
+        let v = parse(&out);
+        assert_eq!(v.get("count").and_then(|c| c.as_u64()), Some(2));
+        let arr = v
+            .get("escalations")
+            .and_then(|e| e.as_array())
+            .expect("missing array");
+        assert_eq!(arr.len(), 2);
+        assert!(
+            arr.iter()
+                .any(|e| e.get("id").and_then(|i| i.as_str()) == Some(ids[0].as_str()))
+        );
+    }
 }
 
 // ── curator_escalation_resolve ─────────────────────────────────────────────
@@ -276,17 +391,39 @@ mod curator_escalation_resolve {
 
     #[tokio::test]
     async fn error_propagation_nonexistent_id() {
-        // REQ: error-propagation — valid stores, nonexistent escalation id
+        // REQ: error-propagation — valid stores, nonexistent escalation id.
+        // The storage NotFound kind must survive to the wire as not_found,
+        // not be flattened to internal.
         let server = make_server_with_stores();
         let req = params::<EscalationResolveRequest>(
             serde_json::json!({"id": "nonexistent-id", "resolution": "fixed"}),
         );
         let out = server.curator_escalation_resolve(req).await;
         let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
-        assert!(
-            v.get("error").is_some(),
-            "nonexistent escalation should produce structured error: {out}"
+        assert_eq!(
+            v.get("kind").and_then(|k| k.as_str()),
+            Some("not_found"),
+            "nonexistent escalation should map to not_found, got: {out}"
         );
+    }
+
+    #[tokio::test]
+    async fn happy_success() {
+        // REQ: happy — add an escalation, resolve it, assert success and the
+        // queue draining the pending entry.
+        let (server, ids) = make_server_with_escalations(1);
+        let req = params::<EscalationResolveRequest>(
+            serde_json::json!({"id": ids[0], "resolution": "verified fixed"}),
+        );
+        let out = server.curator_escalation_resolve(req).await;
+        let v = parse(&out);
+        assert_eq!(v.get("resolved").and_then(|r| r.as_bool()), Some(true));
+
+        let out = server
+            .curator_escalations(params::<PingRequest>(serde_json::json!({})))
+            .await;
+        let v = parse(&out);
+        assert_eq!(v.get("count").and_then(|c| c.as_u64()), Some(0));
     }
 
     #[tokio::test]
@@ -321,39 +458,17 @@ mod curator_escalation_dismiss {
         let result: Result<EscalationDismissRequest, _> = serde_json::from_value(raw);
         assert!(result.is_err(), "missing 'reason' must fail");
     }
-}
-
-// ── curator_health ──────────────────────────────────────────────────────────
-
-mod curator_health {
-    use super::*;
 
     #[tokio::test]
-    async fn error_propagation_daemon_unavailable() {
-        // REQ: error-propagation — daemon removed, always unavailable
-        let server = make_server_no_stores();
-        let out = server
-            .curator_health(params::<PingRequest>(serde_json::json!({})))
-            .await;
-        assert_error_kind(&out, "unavailable");
-    }
-}
-
-// ── curator_reg_status ─────────────────────────────────────────────────────
-
-mod curator_reg_status {
-    use super::*;
-
-    #[tokio::test]
-    async fn error_propagation_daemon_unavailable() {
-        // REQ: error-propagation — daemon removed, always unavailable
-        let server = make_server_no_stores();
-        let out = server
-            .curator_reg_status(params::<RegStatusRequest>(
-                serde_json::json!({"domain": null}),
-            ))
-            .await;
-        assert_error_kind(&out, "unavailable");
+    async fn happy_success() {
+        // REQ: happy — add an escalation, dismiss it, assert success
+        let (server, ids) = make_server_with_escalations(1);
+        let req = params::<EscalationDismissRequest>(
+            serde_json::json!({"id": ids[0], "reason": "not actionable"}),
+        );
+        let out = server.curator_escalation_dismiss(req).await;
+        let v = parse(&out);
+        assert_eq!(v.get("dismissed").and_then(|d| d.as_bool()), Some(true));
     }
 }
 
@@ -416,6 +531,18 @@ mod curator_memory_recall {
         let result: Result<MemoryRecallRequest, _> = serde_json::from_value(raw);
         assert!(result.is_err(), "missing 'entity' must fail");
     }
+
+    #[tokio::test]
+    async fn invalid_memory_type_rejected() {
+        // REQ: error-propagation — unknown memory_type → invalid_argument,
+        // not a silent empty object
+        let server = make_server_no_stores();
+        let req = params::<MemoryRecallRequest>(
+            serde_json::json!({"entity": "test_entity", "memory_type": "bogus"}),
+        );
+        let out = server.curator_memory_recall(req).await;
+        assert_error_kind(&out, "invalid_argument");
+    }
 }
 
 // ── curator_algedonic_log ───────────────────────────────────────────────────
@@ -441,6 +568,16 @@ mod curator_algedonic_log {
         let v = parse(&out);
         assert_eq!(v.get("window_hours").and_then(|h| h.as_u64()), Some(24));
         assert_eq!(v.get("count").and_then(|c| c.as_u64()), Some(0));
+    }
+
+    #[tokio::test]
+    async fn happy_with_events() {
+        // REQ: happy — persisted Regulation events are visible in the log
+        let server = make_server_with_archive_events(1);
+        let req = params::<AlgedonicLogRequest>(serde_json::json!({"hours": 24}));
+        let out = server.curator_algedonic_log(req).await;
+        let v = parse(&out);
+        assert_eq!(v.get("count").and_then(|c| c.as_u64()), Some(1));
     }
 }
 
@@ -469,8 +606,22 @@ mod reg_query {
         );
         let out = server.reg_query(req).await;
         let v = parse(&out);
-        assert_eq!(v.get("total_events").and_then(|t| t.as_u64()), Some(0));
+        assert_eq!(v.get("replayed_count").and_then(|t| t.as_u64()), Some(0));
         assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(0));
+    }
+
+    #[tokio::test]
+    async fn happy_with_events() {
+        // REQ: happy — persisted Regulation events are replayed; the
+        // replayed_count reflects the archive contents
+        let server = make_server_with_archive_events(3);
+        let req = params::<RegQueryRequest>(
+            serde_json::json!({"namespace": null, "window_seconds": 86400, "limit": 100}),
+        );
+        let out = server.reg_query(req).await;
+        let v = parse(&out);
+        assert_eq!(v.get("replayed_count").and_then(|t| t.as_u64()), Some(3));
+        assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(3));
     }
 }
 
@@ -496,5 +647,18 @@ mod list_tokens {
         let raw = serde_json::json!({"window_seconds": null, "issuer": null, "recipient": null, "extra": 42});
         let result: Result<TokenListRequest, _> = serde_json::from_value(raw);
         assert!(result.is_ok(), "unknown fields should be ignored");
+    }
+
+    #[tokio::test]
+    async fn invalid_issuer_rejected() {
+        // REQ: error-propagation — unparseable issuer WebID → invalid_argument,
+        // not a silent random-WebID query (regression pin for the
+        // unwrap_or_default filter bug)
+        let server = make_server_with_token_registry();
+        let req = params::<TokenListRequest>(
+            serde_json::json!({"window_seconds": 3600, "issuer": "not-a-webid", "recipient": null}),
+        );
+        let out = server.list_tokens(req).await;
+        assert_error_kind(&out, "invalid_argument");
     }
 }

@@ -151,8 +151,8 @@ All Mermaid diagrams were inline in their parent documents. The former `docs/dia
 | `reference/regulation-spans.md` | 1 |
 | `architecture/core/MDS.md` | 1 |
 | `diataxis/` (40 artifacts, 1 diagram each) | 40 |
-| `plans/kask-extensions-panel-and-skill-sharing.md` | 1 |
-| **Total (surviving)** | **64** |
+| `plans/kask-skill-signing-and-trust.md` | 2 |
+| **Total (surviving)** | **65** |
 
 **Deleted parent documents (diagrams recoverable via git):**
 

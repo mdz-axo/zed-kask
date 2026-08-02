@@ -42,6 +42,22 @@ test_both_dbs!(
     test_kask_skill_expiry_sweep_sqlite
 );
 
+async fn make_version(
+    source_user: &str,
+    skill_name: &str,
+    version: &str,
+    description: &str,
+) -> NewKaskSkillVersion {
+    make_version_with_expiry(
+        source_user,
+        skill_name,
+        version,
+        description,
+        "2027-01-01T00:00:00Z",
+    )
+    .await
+}
+
 async fn make_version_with_expiry(
     source_user: &str,
     skill_name: &str,

@@ -25,11 +25,6 @@ pub struct SemanticSearchRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct RegStatusRequest {
-    pub domain: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct RegQueryRequest {
     /// Regulation namespace prefix to filter by (e.g., "reg.sovereignty", "reg.contract")
     pub namespace: Option<String>,
@@ -47,11 +42,6 @@ pub struct TokenListRequest {
     pub issuer: Option<String>,
     /// Optional recipient WebID filter
     pub recipient: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AgentStatusRequest {
-    pub agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
