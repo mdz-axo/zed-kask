@@ -18,7 +18,7 @@
 use hkask_mcp_curator::types::*;
 use hkask_mcp_curator::{CuratorDb, CuratorServer, CuratorStores};
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{EscalationQueue, RegulationArchive, TokenRegistryStore};
+use hkask_storage::{EscalationQueue, RegulationArchive};
 use hkask_types::event::{CyclePhase, RegulationRecord, RegulationSink, Span, SpanNamespace};
 use hkask_types::regulation::RegulationSpan;
 use hkask_types::{BotID, TemplateID, WebID};
@@ -36,7 +36,7 @@ fn make_server_no_stores() -> CuratorServer {
 }
 
 /// Build a CuratorServer with an in-memory EscalationQueue and
-/// RegulationArchive. Episodic/Semantic/TokenRegistry remain None.
+/// RegulationArchive. Episodic/Semantic remain None.
 fn make_server_with_stores() -> CuratorServer {
     let escalation_queue = Arc::new(
         EscalationQueue::from_driver(SqliteDriver::in_memory_driver()).expect("escalation queue"),
@@ -112,21 +112,6 @@ fn make_server_with_archive_events(count: usize) -> CuratorServer {
         Arc::new(CuratorDb::for_tests(CuratorStores {
             escalation_queue: Some(escalation_queue),
             regulation_store: Some(regulation_store),
-            ..CuratorStores::empty()
-        })),
-    )
-}
-
-/// Build a CuratorServer with a TokenRegistry present (consent audit store).
-fn make_server_with_token_registry() -> CuratorServer {
-    let registry: Arc<dyn hkask_capability::TokenRegistry> = Arc::new(
-        TokenRegistryStore::from_driver(SqliteDriver::in_memory_driver())
-            .expect("token registry init"),
-    );
-    CuratorServer::new(
-        WebID::new(),
-        Arc::new(CuratorDb::for_tests(CuratorStores {
-            token_registry: Some(registry),
             ..CuratorStores::empty()
         })),
     )
@@ -622,43 +607,5 @@ mod reg_query {
         let v = parse(&out);
         assert_eq!(v.get("replayed_count").and_then(|t| t.as_u64()), Some(3));
         assert_eq!(v.get("filtered_count").and_then(|c| c.as_u64()), Some(3));
-    }
-}
-
-// ── list_tokens ────────────────────────────────────────────────────────────
-
-mod list_tokens {
-    use super::*;
-
-    #[tokio::test]
-    async fn ocap_denial_no_registry() {
-        // REQ: ocap-denial — no TokenRegistry → permission_denied
-        let server = make_server_no_stores();
-        let req = params::<TokenListRequest>(
-            serde_json::json!({"window_seconds": null, "issuer": null, "recipient": null}),
-        );
-        let out = server.list_tokens(req).await;
-        assert_error_kind(&out, "permission_denied");
-    }
-
-    #[tokio::test]
-    async fn schema_violation_extra_unknown_field() {
-        // REQ: schema-violation (c) — extra field ignored by serde
-        let raw = serde_json::json!({"window_seconds": null, "issuer": null, "recipient": null, "extra": 42});
-        let result: Result<TokenListRequest, _> = serde_json::from_value(raw);
-        assert!(result.is_ok(), "unknown fields should be ignored");
-    }
-
-    #[tokio::test]
-    async fn invalid_issuer_rejected() {
-        // REQ: error-propagation — unparseable issuer WebID → invalid_argument,
-        // not a silent random-WebID query (regression pin for the
-        // unwrap_or_default filter bug)
-        let server = make_server_with_token_registry();
-        let req = params::<TokenListRequest>(
-            serde_json::json!({"window_seconds": 3600, "issuer": "not-a-webid", "recipient": null}),
-        );
-        let out = server.list_tokens(req).await;
-        assert_error_kind(&out, "invalid_argument");
     }
 }

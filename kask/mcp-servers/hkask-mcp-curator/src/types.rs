@@ -35,16 +35,6 @@ pub struct RegQueryRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct TokenListRequest {
-    /// Lookback window in seconds (default: 86400 = 24 hours)
-    pub window_seconds: Option<u64>,
-    /// Optional issuer WebID filter
-    pub issuer: Option<String>,
-    /// Optional recipient WebID filter
-    pub recipient: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct MemoryRecallRequest {
     pub entity: String,
     pub memory_type: Option<String>,

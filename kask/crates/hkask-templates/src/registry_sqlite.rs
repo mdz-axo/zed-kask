@@ -12,7 +12,7 @@ use hkask_types::{InfrastructureError, NotFound, Visibility};
 use hkask_types::{
     RegistryEntry, RegistryError, RegistryIndex, Skill, SkillRegistryIndex, SkillZone,
 };
-use rusqlite::{Connection, params};
+use rusqlite::params;
 use tracing;
 
 type SkillRow = (

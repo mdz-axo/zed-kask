@@ -25,7 +25,6 @@ pub mod gallery;
 pub mod hmem;
 pub mod kata;
 pub mod regulation_store;
-pub mod token_registry;
 pub mod wallet;
 
 pub use embeddings::{EmbeddingError, EmbeddingStore, SimilarityResult, StoredEmbedding};
@@ -42,5 +41,4 @@ pub use hmem::archive::{ArchiveError, BackupArchive, BackupMeta, MigrationReceip
 pub use hmem::{HMem, HMemError, HMemStore};
 pub use kata::{KataHistoryEntry, KataHistoryError, KataHistoryStore};
 pub use regulation_store::{DecayConfig, RegulationArchive, WeightedEvent};
-pub use token_registry::TokenRegistryStore;
 pub use wallet::WalletStore;

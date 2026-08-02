@@ -477,15 +477,14 @@ impl ManifestExecutor {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
-                hkask_capability::DelegationTokenBuilder::new(
+                hkask_capability::DelegationToken::new_with_expiry(
                     DelegationResource::Tool,
                     tool_name.to_string(),
                     DelegationAction::Execute,
                     executor_webid,
                     executor_webid,
+                    now + secs as i64,
                 )
-                .expires_at(now + secs as i64)
-                .build()
             }
             None => hkask_capability::panel_default_token(
                 DelegationResource::Tool,
@@ -3762,7 +3761,7 @@ mod tests {
             LLMParameters::default(),
         );
         let (result, _taint) = executor
-            .invoke_tool("read", serde_json::json!({}), 1)
+            .invoke_tool("read", serde_json::json!({}), 1, None)
             .await
             .expect("SourceToolPort invoke should succeed");
         let text = result.as_str().expect("spotlighted output is a string");
@@ -3791,7 +3790,9 @@ mod tests {
                 ..Default::default()
             },
         )));
-        let result = executor.invoke_tool("read", serde_json::json!({}), 1).await;
+        let result = executor
+            .invoke_tool("read", serde_json::json!({}), 1, None)
+            .await;
         let err = result.expect_err("RequireHuman verdict must abort the invocation");
         assert!(
             err.to_string().contains("requires human confirmation"),

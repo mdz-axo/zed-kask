@@ -213,11 +213,12 @@ ocap:
   # matches the in-process DelegationToken's (resource, resource_id, action)
   # against the invoked tool, plus a gas gate via CyberneticsLoop. A second
   # gate is the per-agent mcp_tools allowlist enforced at the ToolDispatchPort
-  # dispatch boundary. The 4 fields below are declared config; they are NOT
-  # yet enforced at runtime (no signature verification, no chain-depth check,
-  # no expiry applied to minted tokens). Do NOT add a `required_capabilities`
-  # list here — OcapConfig has deny_unknown_fields and will reject it; declare
-  # per-template capabilities only if you wire them for real (see ADR).
+  # dispatch boundary. Of the fields below, `capability_expiry_seconds` IS
+  # enforced (cascade-minted tokens expire after it; McpRuntime::invoke rejects
+  # expired tokens); the other three are declared but not yet enforced at runtime.
+  # Do NOT add a `required_capabilities` list here — OcapConfig has
+  # deny_unknown_fields and will reject it; declare per-template capabilities only
+  # if you wire them for real (see ADR).
   delegation_chain_required: true
   signature_algorithm: ed25519
   capability_expiry_seconds: 3600

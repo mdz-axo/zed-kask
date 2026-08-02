@@ -131,9 +131,10 @@ For every proposed move:
   `swarm_hire_local` tool — §15.1.1 rejected). Record estimated_credits per
   move as the `credits_authorized` the operator should set for the call.
 {% else %}
-- **Gas awareness** (verified live 2026-08-02): an own-agent hire is a flat
-  2 cr `/add` fee; third-party `/hire` fee unverified; each @mention 1 cr +
-  tokens, each delegation 1 cr + tokens. Record estimated_credits per move.
+- **Gas awareness** (verified live 2026-08-02): own-agent hire via `/add` is
+  a flat 2 cr fee; third-party `/hire` is a flat 5 cr base (quote `total` =
+  base + required + optional); each @mention 1 cr + tokens, each delegation
+  1 cr + tokens. Record estimated_credits per move.
 {% endif %}
 
 ## Step 3 — Record tuning_rationale

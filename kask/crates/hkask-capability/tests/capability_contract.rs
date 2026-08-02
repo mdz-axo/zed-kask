@@ -1,12 +1,9 @@
 //! Behavioral contract tests for `hkask-capability`.
 //!
-//! Covers: DelegationToken (is_expired, is_valid_for, allows_*, deterministic id)
+//! Covers: DelegationToken (is_expired, is_valid_for_at, deterministic id)
 //! and capabilities_match.
 
-use hkask_capability::{
-    DelegationAction, DelegationResource, DelegationToken, DelegationTokenBuilder,
-    SYSTEM_MAX_ATTENUATION, capabilities_match,
-};
+use hkask_capability::{DelegationAction, DelegationResource, DelegationToken, capabilities_match};
 use hkask_types::WebID;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -33,14 +30,13 @@ fn make_token() -> DelegationToken {
 
 #[test]
 fn token_not_expired_when_no_expiry() {
-    let token = DelegationTokenBuilder::new(
+    let token = DelegationToken::new(
         DelegationResource::Tool,
         "tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-    )
-    .build(); // no expires_at set → None
+    );
     assert!(!token.is_expired(0), "token with no expiry never expires");
     assert!(
         !token.is_expired(i64::MAX),
@@ -50,15 +46,14 @@ fn token_not_expired_when_no_expiry() {
 
 #[test]
 fn token_expired_after_expiry_time() {
-    let token = DelegationTokenBuilder::new(
+    let token = DelegationToken::new_with_expiry(
         DelegationResource::Tool,
         "tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-    )
-    .expires_at(1000)
-    .build();
+        1000,
+    );
     assert!(
         token.is_expired(1001),
         "token must be expired when current_time > expires_at"
@@ -67,15 +62,14 @@ fn token_expired_after_expiry_time() {
 
 #[test]
 fn token_not_expired_before_expiry() {
-    let token = DelegationTokenBuilder::new(
+    let token = DelegationToken::new_with_expiry(
         DelegationResource::Tool,
         "tool".into(),
         DelegationAction::Execute,
         alice(),
         bob(),
-    )
-    .expires_at(1000)
-    .build();
+        1000,
+    );
     assert!(
         !token.is_expired(999),
         "token must not be expired before expiry"
@@ -86,53 +80,84 @@ fn token_not_expired_before_expiry() {
     );
 }
 
-// ── DelegationToken::is_valid_for — the capability-match gate ───────────
+// ── DelegationToken::is_valid_for_at — the capability-match gate ─────────
 
 #[test]
-fn is_valid_for_matches_exact_triple() {
+fn is_valid_for_at_matches_exact_triple() {
     let token = make_token();
-    assert!(token.is_valid_for(
+    assert!(token.is_valid_for_at(
         DelegationResource::Tool,
         "test_tool",
-        DelegationAction::Execute
+        DelegationAction::Execute,
+        0
     ));
-    assert!(!token.is_valid_for(
+    assert!(!token.is_valid_for_at(
         DelegationResource::Tool,
         "other_tool",
-        DelegationAction::Execute
+        DelegationAction::Execute,
+        0
     ));
-    assert!(!token.is_valid_for(
+    assert!(!token.is_valid_for_at(
         DelegationResource::Tool,
         "test_tool",
-        DelegationAction::Read
+        DelegationAction::Read,
+        0
     ));
-    assert!(!token.is_valid_for(
+    assert!(!token.is_valid_for_at(
         DelegationResource::Registry,
         "test_tool",
-        DelegationAction::Execute
+        DelegationAction::Execute,
+        0
     ));
 }
 
-// ── DelegationToken::allows_* — action hierarchy ────────────────────────
+// ── DelegationToken::is_valid_for_at — the expiry-aware gate ────────────
+// Pins the enforcement point for `ocap.capability_expiry_seconds`: the gate
+// (`McpRuntime::invoke`) rejects tokens whose `expires_at` has passed, even
+// when the (resource, resource_id, action) triple matches exactly.
 
 #[test]
-fn execute_allows_read_and_write() {
-    let token = make_token(); // Execute
-    assert!(token.allows_read());
-    assert!(token.allows_write());
+fn is_valid_for_at_rejects_expired_token_even_on_match() {
+    let token = DelegationToken::new_with_expiry(
+        DelegationResource::Tool,
+        "test_tool".into(),
+        DelegationAction::Execute,
+        alice(),
+        bob(),
+        1000,
+    );
+    assert!(
+        !token.is_valid_for_at(
+            DelegationResource::Tool,
+            "test_tool",
+            DelegationAction::Execute,
+            1001
+        ),
+        "expired token must be denied even when the capability triple matches"
+    );
+    assert!(
+        token.is_valid_for_at(
+            DelegationResource::Tool,
+            "test_tool",
+            DelegationAction::Execute,
+            1000
+        ),
+        "token at exact expiry boundary must still be valid"
+    );
 }
 
 #[test]
-fn read_allows_only_read() {
-    let token = DelegationToken::new(
-        DelegationResource::Tool,
-        "t".into(),
-        DelegationAction::Read,
-        alice(),
-        bob(),
+fn is_valid_for_at_admits_no_expiry_token() {
+    let token = make_token();
+    assert!(
+        token.is_valid_for_at(
+            DelegationResource::Tool,
+            "test_tool",
+            DelegationAction::Execute,
+            i64::MAX
+        ),
+        "token with no expiry must remain valid at any time"
     );
-    assert!(token.allows_read());
-    assert!(!token.allows_write());
 }
 
 // ── capabilities_match — action hierarchy ───────────────────────────────
@@ -198,23 +223,4 @@ fn token_id_varies_with_params() {
         t1.id, t2.id,
         "different resource_id must produce different id"
     );
-}
-
-// ── Builder defaults ────────────────────────────────────────────────────
-
-#[test]
-fn builder_defaults() {
-    let token = DelegationTokenBuilder::new(
-        DelegationResource::Tool,
-        "tool".into(),
-        DelegationAction::Execute,
-        alice(),
-        bob(),
-    )
-    .build();
-    assert_eq!(token.attenuation_level, 0);
-    assert_eq!(token.max_attenuation, SYSTEM_MAX_ATTENUATION);
-    assert!(token.context_nonce.is_empty());
-    assert!(token.caveats.is_empty());
-    assert!(token.expires_at.is_none());
 }

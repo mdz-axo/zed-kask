@@ -11,11 +11,15 @@
   "ensemble" model).
 - Compound agents declare `dependencies { required, optional }` and auto-hire
   their team.
-- Gas (observed live 2026-08-02): add own agent to a workspace = flat 2 cr
-  (`gas_charged: 2` on `/add`); @mention/delegation = 1 cr + tokens; hiring
-  another author's catalogue agent via `/hire` fee unverified (the plan's
-  earlier "hire 5 cr" was not observed). The consent gate floors dependency-
-  less hires at the 2 cr add fee (`effective_hire_cost`).
+- Gas (verified live 2026-08-02): add an OWN agent to a workspace = flat 2 cr
+  (`gas_charged: 2` on `/add`; owned `/dependencies` quotes `total_hire_cost:
+  0`, hence the consent-gate floor). Hire a THIRD-PARTY catalogue agent via
+  `/hire` = flat 5 cr base (`gas_charged: 5` on `sensor_advisor` with
+  `dependencies_hired: []`); the third-party `/dependencies` quote already
+  includes the base (`total = base + required + optional` — a quote of
+  `total=10, required=0, optional=5` is base 5 + optional 5). @mention/
+  delegation = 1 cr + tokens. `/api/wallet/transactions` verified (the CHECK
+  phase's reconciliation read).
 - Delegation is one level deep: delegates lose `delegate_to_agent` /
   `execute_agent` (no delegation chains).
 - API surface (verified against the live service):
@@ -344,8 +348,14 @@ Additional verified lifecycle facts (2026-08-02): `POST /api/agents` returns
 `{agent_id, agent_name, message}` (owned agents carry a uuid in `agent_id`);
 `POST /api/teams` returns `{id, slug, ...}` with a default `workspace_budget:
 100`; **own agents hire via `POST /api/workspaces/{id}/add`** (400 "Use /add
-for your own agents" on `/hire`, `gas_charged: 2` flat add fee), while other
-authors' catalogue agents use `/hire`; agent names are slugs (`[a-z0-9_]`,
+for your own agents" on `/hire`, `gas_charged: 2` flat add fee), while
+third-party catalogue agents hire via `/hire` at a flat **5 cr base**
+(verified live on `sensor_advisor`: `gas_charged: 5` with
+`dependencies_hired: []`; the third-party `/dependencies` quote already
+includes the base — `total = base + required + optional`);
+`GET /api/wallet/transactions` verified (the CHECK phase's reconciliation
+read: `{balance, transactions[{amount, tx_type, description,
+balance_after}], wallet_id}`); agent names are slugs (`[a-z0-9_]`,
 3–64 chars) and workspace slugs are capped at 64 chars — both enforced
 server-side now.
 

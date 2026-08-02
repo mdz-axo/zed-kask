@@ -17,7 +17,6 @@ use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_services_core::{ErrorKind, ServiceError};
 use hkask_storage::database::sqlite::SqliteDriver;
 
-use hkask_types::WebID;
 use hkask_types::event::RegulationSink;
 use hkask_types::regulation::RegulationSpan;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -34,7 +33,7 @@ const SERVER_NAME: &str = "hkask-mcp-curator";
 /// not trigger a full DB open + store construction on every tool call.
 const HEAL_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The five stores the curator's tools read, all backed by the curator's
+/// The four stores the curator's tools read, all backed by the curator's
 /// sovereign `pod.db`. Grouped so the self-healing handle can swap the whole
 /// set atomically after a re-open.
 ///
@@ -47,7 +46,6 @@ pub struct CuratorStores {
     pub regulation_store: Option<Arc<hkask_storage::RegulationArchive>>,
     pub episodic: Option<Arc<hkask_memory::EpisodicMemory>>,
     pub semantic: Option<Arc<hkask_memory::SemanticMemory>>,
-    pub token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>>,
 }
 
 impl CuratorStores {
@@ -57,7 +55,6 @@ impl CuratorStores {
             && self.regulation_store.is_none()
             && self.episodic.is_none()
             && self.semantic.is_none()
-            && self.token_registry.is_none()
     }
 
     /// Empty store set — used when the DB cannot be opened at all.
@@ -67,7 +64,6 @@ impl CuratorStores {
             regulation_store: None,
             episodic: None,
             semantic: None,
-            token_registry: None,
         }
     }
 
@@ -95,12 +91,6 @@ impl CuratorStores {
         self.semantic
             .as_ref()
             .ok_or_else(|| McpToolError::permission_denied("SemanticMemory not available"))
-    }
-
-    fn token_registry(&self) -> Result<&Arc<dyn hkask_capability::TokenRegistry>, McpToolError> {
-        self.token_registry
-            .as_ref()
-            .ok_or_else(|| McpToolError::permission_denied("TokenRegistry not available"))
     }
 }
 
@@ -209,7 +199,7 @@ impl CuratorDb {
         }
     }
 
-    /// True when the DB-open level failed (all five stores `None`) — the
+    /// True when the DB-open level failed (all four stores `None`) — the
     /// case a re-open can fix. Partial degradation (a per-store `from_driver`
     /// failure leaving some stores `Some`) is NOT healable by re-open and
     /// must not churn re-opens on every tool call.
@@ -289,7 +279,7 @@ impl CuratorDb {
 hkask_mcp_server::mcp_server!(
     pub struct CuratorServer {
         /// Self-healing handle over the curator's sovereign `pod.db`. All
-        /// five stores are read through `db.get()` on every tool call so a
+        /// four stores are read through `db.get()` on every tool call so a
         /// mid-process heal takes effect without a server restart.
         db: Arc<CuratorDb>,
     }
@@ -312,7 +302,6 @@ impl CuratorServer {
                     "regulation_store": stores.regulation_store.is_some(),
                     "episodic": stores.episodic.is_some(),
                     "semantic": stores.semantic.is_some(),
-                    "token_registry": stores.token_registry.is_some(),
                 }
             }))
         })
@@ -597,65 +586,6 @@ impl CuratorServer {
         })
         .await
     }
-
-    // ── Token Registry (for consent auditing) ───────────────────────────
-
-    #[tool(
-        description = "List all DelegationTokens within a time window. Supports filtering by issuer or recipient WebID. Returns structured token data for consent auditing and anomaly detection."
-    )]
-    pub async fn list_tokens(&self, Parameters(req): Parameters<TokenListRequest>) -> String {
-        execute_tool(self, "list_tokens", async {
-            let stores = self.db.get();
-            let registry = stores.token_registry()?;
-            let window_secs = req.window_seconds.unwrap_or(86400);
-            let since = chrono::Utc::now() - chrono::Duration::seconds(window_secs as i64);
-
-            let tokens = if let Some(ref issuer) = req.issuer {
-                let wid: WebID = issuer.parse().map_err(|_| {
-                    McpToolError::invalid_argument(format!("invalid issuer WebID: '{issuer}'"))
-                })?;
-                registry.query_by_issuer(&wid, since)
-            } else if let Some(ref recipient) = req.recipient {
-                let wid: WebID = recipient.parse().map_err(|_| {
-                    McpToolError::invalid_argument(format!(
-                        "invalid recipient WebID: '{recipient}'"
-                    ))
-                })?;
-                registry.query_by_recipient(&wid, since)
-            } else {
-                registry.query_all(since)
-            }
-            .map_err(|e| McpToolError::internal(format!("Token query failed: {e}")))?;
-
-            let serialized: Vec<serde_json::Value> = tokens
-                .iter()
-                .map(|t| {
-                    json!({
-                        "id": t.id,
-                        "resource": format!("{:?}", t.resource),
-                        "resource_id": t.resource_id,
-                        "action": format!("{:?}", t.action),
-                        "delegated_from": t.delegated_from.to_string(),
-                        "delegated_to": t.delegated_to.to_string(),
-                        "expires_at": t.expires_at,
-                        "attenuation_level": t.attenuation_level,
-                    })
-                })
-                .collect();
-
-            RegulationSpan::Tool {
-                subsystem: hkask_types::regulation::ToolSubsystem::Curator,
-            }
-            .emit("list_tokens");
-
-            Ok(json!({
-                "window_seconds": window_secs,
-                "count": serialized.len(),
-                "tokens": serialized
-            }))
-        })
-        .await
-    }
 }
 
 // ── Server startup ─────────────────────────────────────────────────────
@@ -692,7 +622,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     .await
 }
 
-/// Open the curator's sovereign `pod.db` and construct all five stores from
+/// Open the curator's sovereign `pod.db` and construct all four stores from
 /// a single shared driver. Called at construction and on every heal attempt.
 /// All-or-nothing on the DB-open steps (a failure before store construction
 /// returns all `None`s); per-store `from_driver` failures degrade only that
@@ -762,22 +692,10 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
             None
         }
     };
-    // Token registry — consent audit trail for DelegationToken lifecycle.
-    // Schema is initialized automatically by from_driver().
-    let token_registry: Option<Arc<dyn hkask_capability::TokenRegistry>> =
-        match hkask_storage::TokenRegistryStore::from_driver(Arc::clone(&driver)) {
-            Ok(store) => Some(Arc::new(store) as Arc<dyn hkask_capability::TokenRegistry>),
-            Err(e) => {
-                tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create TokenRegistryStore");
-                None
-            }
-        };
-
     CuratorStores {
         escalation_queue,
         regulation_store,
         episodic,
         semantic,
-        token_registry,
     }
 }

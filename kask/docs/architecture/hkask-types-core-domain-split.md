@@ -61,11 +61,31 @@ The cycle-break that motivated the consolidation may no longer be necessary: the
 | Matches declared purpose | partial (core does; domain crate doesn't) | yes (core shrinks to purpose) | no (purpose doc admits the drift) |
 | Wildcard re-exports | can be scoped per-crate | removed (types leave) | remain |
 
+## Audit results (2026-08-02)
+
+The consumer-dependency audit is complete (graph-audit semantic mode, manual grep-based; consumers verified via actual `use hkask_types::` imports, not type-name greps, to avoid common-word false positives like `Signal`/`Deviation`). A move of bucket -> owner is cycle-free iff the owner's transitive dependency closure contains no consumer of the bucket.
+
+**Cycle-free (viable Option-B moves):**
+- `loops`, `regulation`, `curator`, `goal` -> `hkask-regulation`
+- `wallet_types` -> `hkask-storage` (zero new edges: all three consumers already depend on storage)
+- `template_type`, `skill` -> `hkask-templates` (sole consumer each)
+- `tool_taint` -> `hkask-capability` (capability-closure = {types})
+- `inference_ipc` -> `hkask-inference` (kask_bridge already deps inference)
+- `keychain_keys` -> `hkask-keystore` (kask_bridge already deps keystore)
+
+**Internalize into single-consumer MCP server (no external edge):** `voice` + `transcript` -> `hkask-mcp-media`; `document` + `corpus` -> `hkask-mcp-corpus`. (For `transcript`: media already imports from `hkask-types`; the dead local duplicate was deleted 2026-08-02 in T1.2a.)
+
+**Cycle (stays core):** `template` (`LLMParameters`/`TemplateFile`) -> `hkask-templates` cycles because templates depends on `hkask-guard` and guard uses `LLMParameters`. `LLMParameters` is a foundational config primitive (11 consumers), not a domain type — stays core.
+
+**Dead code (delete):** `server_config` is not root-re-exported, has zero module-path imports, and no test/doc references. Deletion held while another agent is active in `hkask-types`.
+
+**Stay core (foundational):** `id`/`error`/`event`/`observable_span`/`visibility`/`time`/`crypto`/`secret`, `ports` (hexagonal seams, 16 consumers), `agent_paths` (path primitives), `json_extract` (utility), `macros` (`enum_str_ops!`).
+
+**Key correction to the original framing:** the worry that Option B re-introduces the cycle that motivated the original consolidation applies to *only* `template`, not to `loops` (the original consolidation's target). `hkask-storage` no longer imports `loops` — that cycle is already broken — so `loops` can return to `hkask-regulation`.
+
 ## Recommendation
 
-**Lean toward Option B if the audit confirms it is cycle-free; otherwise Option A.** Option B best satisfies the essentialist "types live with their domain" principle and lets `hkask-types` finally match its declared purpose, but only if the cycle that motivated the original consolidation is genuinely gone. Option A is the safe fallback that gets locality without cycle risk. Option C is the do-nothing baseline.
-
-The audit must, for each domain bucket, enumerate its consumers and verify that moving the bucket to its owning crate introduces no import cycle. The graph-audit skill (semantic mode, or the `hkask-mcp-codegraph` MCP server when wired) produces this graph. **Do not execute B without the audit.**
+**Execute the hybrid revealed by the audit** (not pure A or B as originally framed): Option-B moves for the 10 viable buckets, internalize the 4 single-consumer buckets, delete `server_config`, keep the foundational buckets in core. After the moves, `hkask-types` shrinks from ~197 to ~80 items, matching its declared purpose. Execute one domain per commit; each move gated on `cargo check` + `./script/clippy` for affected consumers. The audit gate is satisfied — execution may proceed when the active agent's `hkask-types` work lands.
 
 ## Consequences
 

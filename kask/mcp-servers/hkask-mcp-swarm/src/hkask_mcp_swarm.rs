@@ -10,7 +10,9 @@
 //! - Base URL: `https://agent-bestiary.world` (no `api.` subdomain)
 //! - Auth: `Authorization: Bearer <key>` (Pro-tier API key, scopes read/write/execute)
 //! - Open: `GET /api/agents`, `GET /api/models/catalogue`
-//! - Authed: `/api/workspaces`, `/api/agents/{name}/execute`, `/api/xaman/sessions`, `/api/wallet`
+//! - Authed: `/api/workspaces`, `/api/agents/{name}/execute`, `/api/xaman/sessions`,
+//!   `/api/wallet`, `/api/wallet/transactions` (reconciliation read, verified
+//!   2026-08-02)
 //!
 //! ## Error model
 //! ABW returns HTTP 200 envelopes containing upstream LLM errors in the body
@@ -1810,8 +1812,14 @@ fn validate_agent_name(name: &str) -> Result<(), String> {
 /// for a no-dependency owned agent, while `/agents/{name}/dependencies`
 /// reports `total_hire_cost: 0` — the dependency quote UNDER-states the
 /// actual add charge. The consent gate's re-verification must floor the
-/// quote at this fee so a 1-credit authorization cannot spend 2. (The plan
-/// doc's "hire 5 cr" was stale; the live add fee is 2.)
+/// quote at this fee so a 1-credit authorization cannot spend 2.
+///
+/// Third-party hires are a different tier: `/hire` charges a flat 5 cr base
+/// (verified live 2026-08-02 on `sensor_advisor`: `gas_charged: 5` with
+/// `dependencies_hired: []`), and the third-party `/dependencies` quote
+/// already INCLUDES the base (quote `total=10, required=0, optional=5` =
+/// base 5 + optional 5). So the floor only needs to cover the owned-agent
+/// case; the third-party quote is trustworthy as-is.
 const OWNED_ADD_FLAT_FEE: u64 = 2;
 
 /// The effective hire cost for a re-verified `/agents/{name}/dependencies`
@@ -7806,6 +7814,14 @@ mod tests {
         let total = total.unwrap();
         let required = required.unwrap();
         let optional = optional.unwrap();
+        // Observed model (verified live 2026-08-02 on sensor_advisor):
+        // `total_hire_cost` = base hire fee + required + optional, where the
+        // base is 5 cr for a third-party /hire and 2 cr for an owned /add
+        // (the owned quote is 0 + the 2 cr flat add fee). A quote of
+        // `total=10, required=0, optional=5` is base(5) + optional(5), NOT
+        // required+optional — so the include_optional conservative
+        // re-verification in swarm_hire must use max(total, required +
+        // optional), which it does.
         if optional > 0 {
             if total == required + optional {
                 eprintln!(
@@ -7815,6 +7831,13 @@ mod tests {
                 eprintln!(
                     "B2 WARNING: total_hire_cost = required only (does NOT include optional). \
                      The conservative re-verification in swarm_hire is necessary."
+                );
+            } else if total > required + optional {
+                eprintln!(
+                    "B2 base-fee model: total={total} = base + required + optional \
+                     (base = total - required - optional = {}; third-party /hire base is 5, \
+                     owned /add is 2 — verified live 2026-08-02)",
+                    total - required - optional
                 );
             } else {
                 eprintln!(
@@ -8068,15 +8091,18 @@ mod tests {
         let agent_label = candidate
             .get("agent_name")
             .and_then(|v| v.as_str())
-            .unwrap_or("?")
+            .unwrap_or_else(|| agent_id.as_str())
             .to_string();
         eprintln!("P0 candidate: {agent_label} ({agent_id})");
 
-        // Quote first — the same read the consent gate does.
+        // Quote first — the same read the consent gate does. Third-party
+        // catalogue entries are keyed by slug name (observed live: the
+        // `/agents` list carries `agent_id` == the slug for non-owned
+        // agents), so quote by whichever id field exists.
         match client
             .get(&format!(
                 "/agents/{}/dependencies",
-                url_encode_segment(&agent_label)
+                url_encode_segment(&agent_id)
             ))
             .await
         {
