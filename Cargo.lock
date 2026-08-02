@@ -11000,7 +11000,6 @@ dependencies = [
  "urlencoding",
  "util",
  "workspace",
- "zeroize",
 ]
 
 [[package]]

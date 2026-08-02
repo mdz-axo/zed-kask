@@ -44,7 +44,6 @@ chrono.workspace = true
 # manifests with the publisher's Ed25519 keypair stored in the OS keychain.
 hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
 hkask-types = { path = "../../kask/crates/hkask-types" }
-zeroize.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

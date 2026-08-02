@@ -97,6 +97,15 @@ pub struct SkillToolInput {
     /// for backward compatibility with callers that only pass `name`.
     #[serde(default)]
     pub task: String,
+    /// Extra context entries merged into the manifest cascade context. Skills
+    /// that branch on operator configuration read these — e.g.
+    /// `swarm-intelligence`'s templates branch on `mode` ("abw"|"local") and
+    /// require `swarm_id`. Without a channel for these, the cascade renders
+    /// empty `{{ mode }}` and always takes the default branch.
+    /// `task` is injected after this map, so a `context["task"]` entry never
+    /// clobbers the user's actual request.
+    #[serde(default)]
+    pub context: std::collections::HashMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -349,9 +358,11 @@ impl AgentTool for SkillTool {
             // cascade is executed instead of body injection. The SKILL.md
             // frontmatter stays the discovery-only catalog entry.
             let _skill_name = input.name.clone();
-            // Clone the task before `input` is moved into `initial_title`
-            // below, so we can inject it into the manifest cascade context.
+            // Clone the task and context before `input` is moved into
+            // `initial_title` below, so we can inject them into the manifest
+            // cascade context.
             let task = input.task.clone();
+            let extra_context = input.context.clone();
             let is_builtin = skill.source == agent_skills::SkillSource::BuiltIn;
             if !is_builtin {
                 let authorize = cx.update(|cx| {
@@ -384,6 +395,9 @@ impl AgentTool for SkillTool {
                     // blind — templates get model defaults but never the actual
                     // request the user wants the skill to act on.
                     let mut context = std::collections::HashMap::new();
+                    // Merge skill-invocation context first, then inject the
+                    // user's task last so it always wins.
+                    context.extend(extra_context);
                     context.insert(
                         "task".to_string(),
                         serde_json::Value::String(task.clone()),

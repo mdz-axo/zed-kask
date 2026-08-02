@@ -707,6 +707,19 @@ mod tests {
         (chrono::Utc::now() + chrono::Duration::days(KASK_SKILL_MAX_AGE_DAYS as i64)).to_rfc3339()
     }
 
+    // zed-kask: pin the cap constant — the server's `KASK_SKILL_MAX_AGE_DAYS`
+    // mirrors `hkask_keystore::KEY_MAX_AGE_DAYS` (the client's default at
+    // signing time). The keystore pins its own side with
+    // `key_max_age_days_is_120`; this pins the server side so a one-sided
+    // change (client raising the default, server not enforcing, or vice
+    // versa) fails loudly instead of silently accepting mismatched windows
+    // (`.rules` "Model-name constants must not be duplicated across crates"
+    // — same drift class for a policy constant).
+    #[test]
+    fn kask_skill_max_age_days_is_120() {
+        assert_eq!(KASK_SKILL_MAX_AGE_DAYS, 120);
+    }
+
     // zed-kask: pin the deny-by-default deviation (plan Phase 5 / D5) — the
     // upstream extension store accepts any manifest; kask requires a valid
     // signature inside the 120-day window.

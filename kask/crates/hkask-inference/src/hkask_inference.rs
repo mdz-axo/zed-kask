@@ -213,3 +213,68 @@ pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::Inferen
         }
     }
 }
+
+/// Resolve the tool-dispatch port for an MCP server.
+///
+/// Returns the IPC-bridge client when the socket is available (the zed
+/// process dispatches governed tools through its `McpRuntime`), or a stub
+/// that returns a clear error. Unlike `resolve_inference_port` there is no
+/// media fallback — tool dispatch only exists on the zed side.
+///
+/// Mirrors `resolve_inference_port`'s structure so MCP servers resolve both
+/// ports in one startup step (e.g. `hkask-mcp-swarm`'s local delegate loop
+/// reads `Arc<dyn ToolDispatchPort>`).
+#[must_use]
+pub async fn resolve_tool_dispatch_port() -> std::sync::Arc<dyn hkask_types::ToolDispatchPort> {
+    match InferenceIpcClient::from_env().await {
+        Some(Ok(client)) => {
+            tracing::info!(
+                target: "hkask.inference",
+                "MCP tool dispatch routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
+            );
+            std::sync::Arc::new(client)
+        }
+        Some(Err(e)) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                error = %e,
+                "IPC bridge connection failed — tool dispatch unavailable"
+            );
+            std::sync::Arc::new(UnavailableToolDispatch)
+        }
+        None => {
+            tracing::info!(
+                target: "hkask.inference",
+                "HKASK_INFERENCE_SOCKET not set — tool dispatch unavailable"
+            );
+            std::sync::Arc::new(UnavailableToolDispatch)
+        }
+    }
+}
+
+/// Tool-dispatch stub for MCP servers without the IPC bridge. Returns a
+/// clear error naming the missing socket so the caller can distinguish
+/// "dispatch unavailable" from "tool not found".
+struct UnavailableToolDispatch;
+
+impl hkask_types::ToolDispatchPort for UnavailableToolDispatch {
+    fn invoke_tool<'a>(
+        &'a self,
+        _server: &'a str,
+        _tool: &'a str,
+        _args: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<serde_json::Value, hkask_types::InferenceError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(
+                "tool dispatch unavailable: HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — \
+                 MCP tool calls from delegated agents require the zed process".to_string(),
+            ))
+        })
+    }
+}

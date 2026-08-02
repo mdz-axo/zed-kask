@@ -81,11 +81,16 @@ satisfiable by the current roster.
 
 ### If deficit_class = "coherence_deficit" + coherence_low_diversity
 Hire a diverse agent (different agent_type or model from the current
-monoculture) and/or fire a redundant duplicate.
+monoculture). List redundant duplicates (same agent_type + model as an
+existing hire) under `redundant_candidates` in the move's rationale — there
+is no `fire` tool yet (the ABW fire endpoint is not implemented), so the
+recommendation is hire-only; the redundancy is flagged for the operator's
+manual review.
 **Anchor: PSO** — raise c1 (cognitive scaling) and lower omega (inertia) to
 broaden the search; **ACO evaporation** — "pheromone evaporates with time
-and hence the longer paths will have more evaporation" (Bansal 2019) — fire
-the redundant duplicate to evaporate the over-deposited pheromone.
+and hence the longer paths will have more evaporation" (Bansal 2019) —
+flagging the redundant duplicate is the evaporation signal, to be acted on
+when a `fire` tool lands.
 
 ### If deficit_class = "coherence_deficit" + coherence_low_alignment
 Hire or assign a coordinator compound agent.
@@ -136,6 +141,6 @@ reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
 ## Output
 
 Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
-"fire"|"delegate", agent_id_or_type, estimated_credits, covers_transforms?,
-rationale }), tuning_rationale (object mapping move → swarm-algorithm term),
-respects_no_delegation_chains (boolean), delegate_notes.
+"delegate", agent_id_or_type, estimated_credits, covers_transforms?,
+redundant_candidates?, rationale }), tuning_rationale (object mapping move →
+swarm-algorithm term), respects_no_delegation_chains (boolean), delegate_notes.

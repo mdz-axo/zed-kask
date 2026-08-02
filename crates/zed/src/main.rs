@@ -917,6 +917,30 @@ fn main() {
         sync_kask_mcp_servers(cx);
         cx.observe_global::<SettingsStore>(sync_kask_mcp_servers).detach();
 
+        // The governed McpRuntime instances (kask panel + skill cascade) are
+        // started once at login and keep their startup env. A settings change
+        // that alters a server's env (e.g. `kask.swarm.mode` →
+        // `HKASK_SWARM_MODE`) must restart them; the per-project
+        // ContextServerStore path above handles its own instances via
+        // descriptor re-sync. The restart baseline is recorded by the
+        // deferred launch task once servers actually start — an empty
+        // baseline means "not launched yet", and the observer no-ops.
+        let kask_mcp_restart_env: std::sync::Arc<
+            std::sync::Mutex<
+                std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+            >,
+        > = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+        let mcp_runtime_for_restart = tool_port.clone();
+        let restart_env_for_observer = kask_mcp_restart_env.clone();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            sync_kask_mcp_runtime_servers(
+                mcp_runtime_for_restart.clone(),
+                restart_env_for_observer.clone(),
+                cx,
+            );
+        })
+        .detach();
+
         debugger_ui::init(cx);
         debugger_tools::init(cx);
         client::init(&client, cx);
@@ -997,6 +1021,7 @@ fn main() {
             let user_store = app_state.user_store.clone();
             let mcp_runtime_for_deferred = mcp_runtime_for_startup;
             let servers_to_start_clone = servers_to_start;
+            let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env.clone();
             // Captures for the model-dependent wiring block (moved here from
             // the synchronous startup so it runs after the user resolves and
             // the LanguageModelRegistry is populated). See the
@@ -1687,10 +1712,18 @@ fn main() {
                                 kask_bridge::InferenceConfig::from_env(),
                             ),
                         );
+                        // The governed McpRuntime backs `tool_invoke` requests
+                        // (delegated swarm agents calling MCP tools). The IPC
+                        // server mints the panel token — the child process
+                        // never holds token material.
+                        let tool_port_for_ipc: Option<
+                            std::sync::Arc<dyn hkask_capability::ToolPort>,
+                        > = Some(mcp_runtime_for_deferred.clone());
                         match kask_bridge::InferenceIpcServer::start(
                             guarded_inference.clone(),
                             embedding_port_for_ipc.clone(),
                             Some(media_router),
+                            tool_port_for_ipc,
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -1841,38 +1874,18 @@ fn main() {
                     // worker thread (see .rules).
                     let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
                     let _tokio_guard = tokio_handle.enter();
-                    let credential_urls = cx.update(|cx| {
-                        let settings = kask_bridge::KaskSettings::get_global(cx);
-                        kask_bridge::credential_urls_for_mcp(&settings)
-                    });
-                    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                     for server_id in &servers_to_start_clone {
                         let binary = format!("hkask-mcp-{server_id}");
-                        // Filter credentials per-server (same allowlist as the
-                        // ContextServerStore path via KaskMcpDescriptor).
-                        let server_credential_urls =
-                            kask_bridge::filter_credentials_for_server(
-                                server_id,
-                                &credential_urls,
-                            );
-                        let server_env = kask_settings
-                            .mcp_env_with_credentials(
-                                &server_credential_urls,
-                                credentials_provider.as_ref(),
-                                cx,
-                            )
-                            .await;
-                        // Filter the base config env per-server — the curator's
-                        // email config should not be injected into codegraph.
-                        let server_env =
-                            kask_bridge::filter_config_env_for_server(server_id, &server_env);
-                        let mut mcp_env = server_env;
-                        if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
-                            mcp_env.insert(
-                                hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
-                                socket_path.clone(),
-                            );
-                        }
+                        let mcp_env = kask_server_env(server_id, cx).await;
+                        // Record the env baseline BEFORE starting so the
+                        // settings-change restart observer can diff against it
+                        // (an empty baseline = not yet launched = no-op). On
+                        // start failure the baseline is dropped so a later
+                        // settings change retries.
+                        kask_mcp_restart_env_for_deferred
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(server_id.clone(), mcp_env.clone());
                         mcp_runtime_for_deferred
                             .register_server(hkask_mcp::McpServer {
                                 id: server_id.to_string(),
@@ -1885,11 +1898,17 @@ fn main() {
                             .await
                         {
                             Ok(()) => log::info!("Kask MCP server '{server_id}' started (McpRuntime)"),
-                            Err(e) => log::warn!(
-                                "Kask MCP server '{server_id}' failed to start: {e} \
-                                 — set HKASK_MCP_{}_BIN to the binary path",
-                                server_id.to_uppercase()
-                            ),
+                            Err(e) => {
+                                log::warn!(
+                                    "Kask MCP server '{server_id}' failed to start: {e} \
+                                     — set HKASK_MCP_{}_BIN to the binary path",
+                                    server_id.to_uppercase()
+                                );
+                                kask_mcp_restart_env_for_deferred
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .remove(server_id);
+                            }
                         }
                     }
                 }
@@ -2425,6 +2444,104 @@ fn sync_kask_mcp_servers(cx: &mut gpui::App) {
         // re-evaluate and restart servers whose configuration changed.
         cx.notify();
     });
+}
+
+/// Build the env map for a kask MCP server child process: per-server
+/// credential + config filtering (the same allowlists `KaskMcpDescriptor`
+/// and the launch loop use), plus the inference socket path once set.
+///
+/// Extracted so the deferred launch loop and the settings-change restart
+/// observer construct env identically — a divergence would restart servers
+/// with different env than the launch, or miss that the env changed.
+async fn kask_server_env(
+    server_id: &str,
+    cx: &mut gpui::AsyncApp,
+) -> std::collections::HashMap<String, String> {
+    let settings = cx.update(|cx| kask_bridge::KaskSettings::get_global(cx).clone());
+    let credential_urls = kask_bridge::credential_urls_for_mcp(&settings);
+    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
+    let server_credential_urls =
+        kask_bridge::filter_credentials_for_server(server_id, &credential_urls);
+    let server_env = settings
+        .mcp_env_with_credentials(&server_credential_urls, credentials_provider.as_ref(), cx)
+        .await;
+    let server_env = kask_bridge::filter_config_env_for_server(server_id, &server_env);
+    let mut mcp_env = server_env;
+    if let Some(socket_path) = INFERENCE_SOCKET_PATH.get() {
+        mcp_env.insert(
+            hkask_types::inference_ipc::INFERENCE_SOCKET_ENV.to_string(),
+            socket_path.clone(),
+        );
+    }
+    mcp_env
+}
+
+/// Re-sync the governed `McpRuntime` server processes when kask settings
+/// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
+///
+/// `sync_kask_mcp_servers` (above) re-syncs only the per-project
+/// `ContextServerStore` path. The governed McpRuntime instances — which the
+/// kask panel's `ToolInvoker` and the skill cascade route through — are
+/// started once at login and would otherwise keep their startup env forever
+/// (a `kask.swarm.mode` toggle would never re-route the panel's own tool
+/// calls). This restarts exactly the servers whose computed env actually
+/// changed; servers not yet tracked by the deferred launch (empty baseline)
+/// are left alone. The baseline is recorded by the launch loop, so this
+/// observer is a no-op until the governed servers are actually running.
+fn sync_kask_mcp_runtime_servers(
+    mcp_runtime: std::sync::Arc<hkask_mcp::McpRuntime>,
+    last_env: std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+        >,
+    >,
+    cx: &mut gpui::App,
+) {
+    let server_ids: Vec<&'static str> = kask_bridge::BUILT_IN_MCP_SERVERS_IDS.to_vec();
+    cx.spawn(async move |cx| {
+        // `start_server_with_env` drives tokio primitives (process, rmcp),
+        // so the tokio context must be entered on this foreground thread —
+        // same pattern as the deferred launch loop (see its .rules comment).
+        let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
+        let _tokio_guard = tokio_handle.enter();
+        for server_id in server_ids {
+            let env = kask_server_env(server_id, cx).await;
+            let previous = last_env
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(server_id)
+                .cloned();
+            let Some(previous) = previous else {
+                // Not yet launched — the deferred task hasn't recorded a
+                // baseline, so there is nothing to restart.
+                continue;
+            };
+            if previous == env {
+                continue;
+            }
+            log::info!("Kask MCP server '{server_id}' env changed — restarting (McpRuntime)");
+            mcp_runtime.stop_server(server_id).await;
+            let binary = format!("hkask-mcp-{server_id}");
+            match mcp_runtime
+                .start_server_with_env(server_id, &binary, env.clone())
+                .await
+            {
+                Ok(()) => {
+                    *last_env
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .get_mut(server_id)
+                        .expect("baseline recorded before start") = env;
+                }
+                Err(e) => {
+                    // Keep the old baseline so a subsequent settings change
+                    // retries the restart.
+                    log::warn!("Kask MCP server '{server_id}' restart failed: {e}");
+                }
+            }
+        }
+    })
+    .detach();
 }
 
 // ── D10: Kask panel adapters ───────────────────────────────────────────────

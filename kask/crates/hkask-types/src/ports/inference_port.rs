@@ -83,6 +83,43 @@ pub struct ModelEntry {
     pub supports_vision: bool,
 }
 
+/// MCP-server-side tool dispatch boundary.
+///
+/// Lets a child MCP server process (e.g. `hkask-mcp-swarm`'s local delegate
+/// loop) invoke governed MCP tools that live in the zed process's
+/// `McpRuntime`. The zed side mints the OCAP panel token — the child never
+/// sees or holds token material. `InferenceIpcClient` implements this over
+/// the `InferenceMethod::ToolInvoke` IPC method; backends without a bridge
+/// (MediaRouter fallback) return a clear error.
+///
+/// Two implementors: the IPC client (real dispatch) and the fallback stub
+/// (clear error) — the swarm delegate loop reads it, so it is not
+/// speculative generality.
+pub trait ToolDispatchPort: Send + Sync {
+    /// Invoke a tool on a governed MCP server via the zed process.
+    ///
+    /// pre:  `server` is a registered MCP server id; `tool` exists on it
+    /// post: returns the tool's JSON output, or an error (tool not found,
+    ///       capability denied, dispatch unavailable)
+    fn invoke_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>>;
+}
+
+impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
+    fn invoke_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>> {
+        self.as_ref().invoke_tool(server, tool, args)
+    }
+}
+
 pub trait InferencePort: Send + Sync {
     fn generate(
         &self,

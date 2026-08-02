@@ -477,6 +477,23 @@ fn verify_install_manifest(manifest: &KaskSkillManifest) -> Result<()> {
     Ok(())
 }
 
+/// The install directory and download URL derive from `skill_id`, while
+/// verification and the SHA256 bound use `manifest` — a mismatched pair
+/// would extract a verified skill into the wrong directory. Enforce the
+/// coupling (`.rules` "advertised invariants need enforcement points"): the
+/// manifest must describe the id being installed. Pure check, extracted for
+/// testability without fs/http types.
+fn ensure_manifest_matches_skill_id(skill_id: &str, manifest: &KaskSkillManifest) -> Result<()> {
+    if skill_id != format!("{}/{}", manifest.source_user, manifest.skill_name) {
+        bail!(
+            "manifest {}/{} does not match skill id {skill_id}; refusing to install",
+            manifest.source_user,
+            manifest.skill_name
+        );
+    }
+    Ok(())
+}
+
 /// Install a kask skill from the marketplace.
 ///
 /// Downloads the tarball via `GET /api/kask-skills/:id/download` (which
@@ -499,6 +516,10 @@ pub async fn install_skill(
     let (source_user, skill_name) = skill_id
         .split_once('/')
         .context("kask skill id must be \"{source_user}/{skill_name}\"")?;
+
+    // zed-kask: the manifest must describe the id being installed (see
+    // `ensure_manifest_matches_skill_id` — enforcement point).
+    ensure_manifest_matches_skill_id(skill_id, manifest)?;
 
     // zed-kask: verify the manifest signature against the catalog's public
     // key **before** downloading anything (plan Phase 4 / D3). The catalog
@@ -775,6 +796,37 @@ mod tests {
         assert!(
             verify_install_manifest(&expired).is_err(),
             "expired manifest must fail install verification"
+        );
+    }
+
+    // zed-kask: pin the id<->manifest coupling (install-path enforcement
+    // point) — `install_skill` must refuse a manifest that does not describe
+    // the requested skill id, or a verified skill could be extracted into the
+    // wrong directory.
+    #[test]
+    fn install_skill_refuses_mismatched_manifest_id() {
+        let manifest = KaskSkillManifest {
+            source_user: "alice".to_string(),
+            skill_name: "essentialist".to_string(),
+            version: "2026-08-02.1".to_string(),
+            description: "test".to_string(),
+            dependencies: vec![],
+            tarball_sha256: "abc123".to_string(),
+            public_key: "aa".repeat(32),
+            signature: "bb".repeat(64),
+            expires_at: "2999-01-01T00:00:00Z".to_string(),
+        };
+
+        // Matching id passes; any other id is refused before any download.
+        ensure_manifest_matches_skill_id("alice/essentialist", &manifest)
+            .expect("matching manifest/id must pass");
+        assert!(
+            ensure_manifest_matches_skill_id("alice/other", &manifest).is_err(),
+            "mismatched manifest/skill id must be rejected"
+        );
+        assert!(
+            ensure_manifest_matches_skill_id("bob/essentialist", &manifest).is_err(),
+            "different source_user must be rejected"
         );
     }
 }

@@ -220,10 +220,16 @@ impl InferenceIpcServer {
     /// `media_router` is the hKask `MediaRouter` used for media generation
     /// (image, video, speech, transcription via fal.ai/DeepInfra). When `None`,.
     /// `media_generate` requests return an error.
+    /// `tool_port` is the governed `McpRuntime` (as `ToolPort`) used for
+    /// `tool_invoke` requests from MCP servers that run agent loops (e.g.
+    /// `hkask-mcp-swarm`'s local delegate). When `None`, `tool_invoke`
+    /// requests return an error. The zed side mints the OCAP panel token —
+    /// the child process never holds token material.
     pub fn start(
         inference_port: Arc<dyn InferencePort>,
         embedding_port: Option<LanguageModelEmbeddingPort>,
         media_router: Option<Arc<hkask_inference::MediaRouter>>,
+        tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -269,6 +275,7 @@ impl InferenceIpcServer {
         let port = inference_port.clone();
         let emb_port = embedding_port.clone();
         let media = media_router.clone();
+        let tools = tool_port.clone();
 
         // Spawn a GPUI-side task for ListModels requests. `AsyncApp` is not
         // `Send`, so we can't pass it into tokio::spawn. Instead, this task
@@ -308,9 +315,11 @@ impl InferenceIpcServer {
                         let port = port.clone();
                         let emb_port = emb_port.clone();
                         let media = media.clone();
+                        let tools = tools.clone();
                         let list_models_tx = list_models_tx.clone();
                         tokio::spawn(async move {
-                            handle_connection(stream, port, emb_port, media, list_models_tx).await;
+                            handle_connection(stream, port, emb_port, media, tools, list_models_tx)
+                                .await;
                         });
                     }
                     Err(e) => {
@@ -366,6 +375,7 @@ async fn handle_connection(
     port: Arc<dyn InferencePort>,
     embedding_port: Option<LanguageModelEmbeddingPort>,
     media_router: Option<Arc<hkask_inference::MediaRouter>>,
+    tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -419,6 +429,7 @@ async fn handle_connection(
             &port,
             embedding_port.as_ref(),
             media_router.as_ref(),
+            tool_port.as_ref(),
             &list_models_tx,
             request,
         )
@@ -469,6 +480,7 @@ async fn dispatch(
     port: &Arc<dyn InferencePort>,
     embedding_port: Option<&LanguageModelEmbeddingPort>,
     media_router: Option<&Arc<hkask_inference::MediaRouter>>,
+    tool_port: Option<&Arc<dyn hkask_capability::ToolPort>>,
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
@@ -555,6 +567,59 @@ async fn dispatch(
         };
     }
 
+    // Tool dispatch requests route to the governed `McpRuntime` (as
+    // `ToolPort`) on the zed side. The child MCP server (e.g. the swarm
+    // server's local delegate loop) never holds token material — the panel
+    // default token is minted here, giving the dispatch the same authority
+    // as the kask panel's own tool calls (OCAP + gas + reg spans all apply
+    // inside `McpRuntime::invoke`).
+    if matches!(request.method, InferenceMethod::ToolInvoke) {
+        let Some(tool_port) = tool_port else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "tool dispatch not configured on the zed side — the IPC server \
+                        was started without a tool port. This indicates a startup wiring bug."
+                        .to_string(),
+                },
+            };
+        };
+        let Some(server) = params.tool_server.clone() else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".to_string(),
+                    message: "tool_invoke request missing tool_server".to_string(),
+                },
+            };
+        };
+        let Some(tool) = params.tool_name.clone() else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".to_string(),
+                    message: "tool_invoke request missing tool_name".to_string(),
+                },
+            };
+        };
+        let args = params.tool_args.unwrap_or(serde_json::Value::Null);
+        let webid = hkask_types::WebID::from_persona(b"kask-panel");
+        let token = hkask_capability::panel_default_token(
+            hkask_capability::DelegationResource::Tool,
+            tool.clone(),
+            hkask_capability::DelegationAction::Execute,
+            webid,
+            webid,
+        );
+        return match tool_port.invoke(&server, &tool, args, &token).await {
+            Ok(value) => InferenceOutcome::ToolResult { result: value },
+            Err(e) => InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "ToolPort".to_string(),
+                    message: e.to_string(),
+                },
+            },
+        };
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -595,9 +660,10 @@ async fn dispatch(
             .await
         }
         // Already handled above — unreachable.
-        InferenceMethod::Embed | InferenceMethod::ListModels | InferenceMethod::MediaGenerate => {
-            unreachable!()
-        }
+        InferenceMethod::Embed
+        | InferenceMethod::ListModels
+        | InferenceMethod::MediaGenerate
+        | InferenceMethod::ToolInvoke => unreachable!(),
     };
 
     match result {

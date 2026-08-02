@@ -413,6 +413,38 @@ impl McpRuntime {
         self.connections.write().await.clear();
     }
 
+    /// Stop a single managed server process and drop its tool registry.
+    ///
+    /// Used by the settings-change restart path: governed `McpRuntime`
+    /// instances are started once at login, so a settings change that alters
+    /// a server's env (e.g. `kask.swarm.mode` → `HKASK_SWARM_MODE`) requires
+    /// stopping the old process and re-running `start_server_with_env` with
+    /// the new env (`start_server_with_env` alone is idempotent per
+    /// connection and would no-op on an already-connected server).
+    ///
+    /// Idempotent: stopping an unknown or already-stopped server is a no-op.
+    pub async fn stop_server(&self, server_id: &str) {
+        if let Some(cancel) = self.cancellation_tokens.write().await.remove(server_id) {
+            cancel.cancel();
+        }
+        self.connections.write().await.remove(server_id);
+        // Drop the server's tools from the registry so stale names do not
+        // resolve to a dead connection.
+        let mut servers = self.servers.write().await;
+        if let Some(server) = servers.remove(server_id) {
+            let mut tool_registry = self.tool_registry.write().await;
+            for tool in server.tools {
+                tool_registry.remove(&tool.name);
+            }
+            info!(
+                target: "hkask.mcp",
+                server_id = %server_id,
+                tools = server.tools.len(),
+                "MCP server stopped"
+            );
+        }
+    }
+
     /// Discover tools from all registered servers
     #[must_use]
     pub async fn discover_tools(&self) -> Vec<String> {

@@ -98,11 +98,13 @@ templates:
     path: swarm-decide.j2
     type: KnowAct
     description: >
-      Propose composition adjustments mapped onto the swarm's hire/fire/
-      delegate vocabulary, isomorphic to swarm-algorithm tuning: variety
+      Propose composition adjustments mapped onto the swarm's hire/delegate
+      vocabulary (no fire tool yet — redundant duplicates are flagged, not
+      fired), isomorphic to swarm-algorithm tuning: variety
       deficit → hire agents covering missing transforms (ACO pheromone
       deposition); coherence + low diversity → hire diverse agent (raise PSO
-      c1, lower omega) and fire redundant duplicates (ACO evaporation);
+      c1, lower omega) and flag redundant duplicates (ACO evaporation,
+      operator prunes manually);
       coherence + high diversity + low alignment → assign coordinator
       compound agent (raise PSO c2, Reynolds alignment); loop-break → emit
       reconciliation repair, not a composition change. Mode-agnostic (v2
@@ -158,10 +160,12 @@ templates:
     type: RenderAct
     description: >
       Reference: the swarm-algorithm tuning palette mapped onto ABW's
-      hire/fire/delegate vocabulary. PSO velocity terms (c1 cognitive, c2
-      social, omega inertia) → ABW composition moves. ACO pheromone
-      deposition/evaporation → hire/fire. Reynolds separation/alignment/
-      cohesion → diversity/coordination/coherence. Onto4MAT team properties
-      as the measurable substrate. Includes the three deficit classes and
-      their tuning responses, plus the canonical failure mode (premature
-      convergence / diversity collapse) and its detection signal.
+      hire/delegate vocabulary (fire is not yet implemented — redundancy
+      moves flag duplicates for manual pruning). PSO velocity terms (c1
+      cognitive, c2 social, omega inertia) → ABW composition moves. ACO
+      pheromone deposition/evaporation → hire/flag-redundant. Reynolds
+      separation/alignment/cohesion → diversity/coordination/coherence.
+      Onto4MAT team properties as the measurable substrate. Includes the
+      three deficit classes and their tuning responses, plus the canonical
+      failure mode (premature convergence / diversity collapse) and its
+      detection signal.

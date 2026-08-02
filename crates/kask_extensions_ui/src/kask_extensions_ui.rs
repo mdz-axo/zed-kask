@@ -479,7 +479,8 @@ impl KaskExtensionsPage {
             return;
         };
 
-        // Find the skill in the catalog to get the SHA256.
+        // Find the skill in the catalog to get its manifest (which carries
+        // the signature fields, expires_at, and tarball SHA256).
         let Some(skill) = self.remote_skill_entries.iter().find(|s| s.id == skill_id) else {
             log::warn!(
                 "kask-extensions: skill '{}' not found in catalog; cannot install.",

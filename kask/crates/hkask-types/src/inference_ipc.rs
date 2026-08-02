@@ -36,6 +36,11 @@
 //! - `embed` — model + texts → embedding vectors (OpenAI-compatible `/embeddings`)
 //! - `list_models` — list available models from zed's `LanguageModelRegistry`
 //! - `media_generate` — generate media (image, video, speech, transcription) via fal.ai/DeepInfra
+//! - `tool_invoke` — invoke a governed MCP tool on the zed side (`ToolDispatchPort`);
+//!   used by MCP servers that run agent loops (e.g. `hkask-mcp-swarm`'s local
+//!   delegate) so a delegated agent can call MCP tools that live in the parent
+//!   process. The zed side mints the OCAP panel token — the child never holds
+//!   token material.
 //!
 //! Streaming methods (`generate_stream*`) are not supported over IPC — the
 //! IPC bridge collects the stream server-side and returns a single result.
@@ -81,6 +86,10 @@ pub enum InferenceMethod {
     /// `InferenceParams`. The result is returned as
     /// `InferenceOutcome::Media`.
     MediaGenerate,
+    /// Invoke a governed MCP tool on the zed side (`ToolDispatchPort`).
+    /// Uses `tool_server`, `tool_name`, `tool_args` from `InferenceParams`.
+    /// The result is returned as `InferenceOutcome::ToolResult`.
+    ToolInvoke,
 }
 
 /// Parameters for an inference request.
@@ -125,6 +134,13 @@ pub struct InferenceParams {
     pub media_language: Option<String>,
     /// Workflow JSON for `execute_workflow`.
     pub media_workflow: Option<serde_json::Value>,
+    // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
+    /// MCP server id the tool lives on (e.g. "codegraph").
+    pub tool_server: Option<String>,
+    /// Tool name to invoke.
+    pub tool_name: Option<String>,
+    /// Tool arguments (JSON).
+    pub tool_args: Option<serde_json::Value>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -161,6 +177,12 @@ pub enum InferenceOutcome {
     Media {
         #[serde(rename = "media")]
         media: serde_json::Value,
+    },
+    /// Tool dispatch result from `InferenceMethod::ToolInvoke`.
+    /// The value is the tool's JSON output.
+    ToolResult {
+        #[serde(rename = "result")]
+        result: serde_json::Value,
     },
     /// Error from the inference port.
     Error {

@@ -77,8 +77,11 @@ const SWARM_SERVER: &str = "swarm";
 /// `swarm-intelligence` skill is available for composition/steering. The
 /// curator's `SkillTool` discovers the skill from the `<available_skills>`
 /// list in its base system prompt; this prompt adds the swarm-specific
-/// context (active workspace, the skill's purpose).
-fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
+/// context (active workspace, current backend mode, the skill's purpose).
+fn steer_system_prompt(
+    selected_workspace: Option<&str>,
+    mode: kask_bridge::SwarmModeConfig,
+) -> SharedString {
     let workspace_note = match selected_workspace {
         Some(id) => format!(
             "The operator's active swarm (ABW workspace) is `{id}`. \
@@ -89,6 +92,9 @@ fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
             asks to compose a swarm, ask them to select one in the Browse tab first."
             .to_string(),
     };
+    let workspace_context = selected_workspace
+        .map(|id| format!("\"swarm_id\": \"{id}\""))
+        .unwrap_or_else(|| "\"swarm_id\": \"\"".to_string());
     format!(
         "## Agent Swarm Panel — Steer Mode\n\
          \n\
@@ -103,10 +109,10 @@ fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
          Bestiary World and require the ABW API key.\n\
          \n\
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
-         `swarm_fund_local`, `swarm_delegate_local`, `swarm_clone_to_local`, \
-         `swarm_push_to_cloud`. These run on the local substrate \
-         (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no ABW \
-         round-trips. The local ledger is operator-funded — call \
+         `swarm_balance_local`, `swarm_fund_local`, `swarm_delegate_local`, \
+         `swarm_clone_to_local`, `swarm_push_to_cloud`. These run on the local \
+         substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
+         ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
          `PaymentRequired`. There is no consent token in local mode: the balance \
          check is the gate. `swarm_clone_to_local` and `swarm_push_to_cloud` sync \
@@ -115,14 +121,24 @@ fn steer_system_prompt(selected_workspace: Option<&str>) -> SharedString {
          \n\
          {workspace_note}\n\
          \n\
+         The current backend (`kask.swarm.mode`) is **`{mode}`**.\n\
+         \n\
          The `swarm-intelligence` skill is available for swarm composition and \
          steering in both modes. When the operator asks to compose, configure, \
          tune, or steer a swarm toward a target condition, invoke the \
-         `swarm-intelligence` skill with the swarm id (or the local registry) \
-         and the operator's task. The skill runs a SENSE → ORIENT → DECIDE → ACT \
-         → CHECK → CONVERGE loop and branches on `{{ mode }}` (local vs abw) at \
-         the SENSE/ACT/CHECK steps. Pass `mode` in the skill context so the \
-         templates select the right data source and gate.\n\
+         `swarm-intelligence` skill with the operator's task. Pass the current \
+         backend and workspace in the skill's `context` argument so the \
+         cascade selects the right data source and gate:\n\
+         \
+         ```json\n\
+         {{\"mode\": \"{mode}\", {workspace_context}}}\n\
+         ```\n\
+         \
+         The skill runs a SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE \
+         loop and branches on `{{{{ mode }}}}` (local vs abw) at the \
+         SENSE/ACT/CHECK steps. Without `mode` in the context, the templates \
+         default to `abw` — the skill would steer the ABW backend even when \
+         `kask.swarm.mode` is `local`.\n\
          \n\
          The consent gate (ABW mode only) is enforced by `swarm_request_consent` \
          (mints a single-use, action+target-scoped token) and `swarm_hire`/\
@@ -1241,9 +1257,13 @@ impl SwarmPanel {
         }
 
         let thread_store = ThreadStore::global(cx);
+        let mode = Self::current_swarm_mode(cx);
         let agent_server = std::rc::Rc::new(
             agent::CuratorAgentServer::new(self.fs.clone(), thread_store)
-                .with_extra_static_context(steer_system_prompt(self.selected_workspace.as_deref()))
+                .with_extra_static_context(steer_system_prompt(
+                    self.selected_workspace.as_deref(),
+                    mode,
+                ))
                 .with_mcp_server_scope(SWARM_SERVER.into()),
         );
 
@@ -2802,7 +2822,7 @@ mod tests {
     // skill for composition/steering requests. Pins the §13 wiring.
     #[test]
     fn steer_system_prompt_names_skill_and_server() {
-        let prompt = steer_system_prompt(Some("ws_test"));
+        let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Abw);
         assert!(
             prompt.contains("swarm-intelligence"),
             "steer prompt must name the swarm-intelligence skill"
@@ -2819,7 +2839,7 @@ mod tests {
 
     #[test]
     fn steer_system_prompt_handles_no_workspace() {
-        let prompt = steer_system_prompt(None);
+        let prompt = steer_system_prompt(None, kask_bridge::SwarmModeConfig::Local);
         assert!(
             prompt.contains("No swarm"),
             "steer prompt must guide the operator when no workspace is selected"
@@ -2834,7 +2854,7 @@ mod tests {
     // actual ConsentStore-backed flow.
     #[test]
     fn steer_prompt_references_only_existing_tools() {
-        let prompt = steer_system_prompt(Some("ws_test"));
+        let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Abw);
         // Tools that do not exist in the MCP server.
         assert!(
             !prompt.contains("swarm_update_swarm"),
@@ -2874,7 +2894,7 @@ mod tests {
     // tools and the mode toggle."
     #[test]
     fn steer_prompt_describes_local_tools() {
-        let prompt = steer_system_prompt(Some("ws_test"));
+        let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
         for tool in [
             "swarm_list_local_agents",
             "swarm_fund_local",
@@ -2902,6 +2922,39 @@ mod tests {
         assert!(
             prompt.contains("PaymentRequired"),
             "steer prompt must name the PaymentRequired error for an unfunded ledger"
+        );
+    }
+
+    // The steer prompt must carry the current backend mode and instruct the
+    // curator to pass it (plus the workspace) in the skill's `context`
+    // argument. Without `mode` in the cascade context, the
+    // swarm-intelligence templates default to the abw branch — the skill
+    // steers the wrong backend. Pins the G1 fix (mode → skill context).
+    #[test]
+    fn steer_prompt_carries_mode_and_context_instruction() {
+        let abw_prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Abw);
+        assert!(
+            abw_prompt.contains("\"mode\": \"abw\""),
+            "abw prompt must carry mode abw in the context example"
+        );
+        assert!(
+            abw_prompt.contains("\"swarm_id\": \"ws_test\""),
+            "abw prompt must carry the workspace id in the context example"
+        );
+        assert!(
+            abw_prompt.contains("`context` argument"),
+            "steer prompt must tell the curator to pass context to the skill tool"
+        );
+        assert!(
+            abw_prompt.contains("default to `abw`"),
+            "steer prompt must warn that a missing mode defaults to abw"
+        );
+
+        let local_prompt =
+            steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
+        assert!(
+            local_prompt.contains("\"mode\": \"local\""),
+            "local prompt must carry mode local in the context example"
         );
     }
 

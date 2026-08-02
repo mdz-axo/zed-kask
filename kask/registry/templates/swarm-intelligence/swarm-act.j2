@@ -77,22 +77,24 @@ In local mode, the gate is the **ledger balance check** — no consent token
 ledger balance + the per-dispatch ceiling. If the balance is insufficient,
 the call returns `PaymentRequired` — the same error ABW returns.
 
-Each DispatchIntent must produce a GateDecision:
+Each dispatch intent must produce a gate decision:
 - `Proceed { credits_authorized }` — the operator authorized the spend.
   The `credits_authorized` is passed directly to `swarm_delegate_local`.
 - `Abort { reason }` — the operator declined. Record the reason; emit no
   spend for this move.
 {% else %}
-Each DispatchIntent must produce a GateDecision:
-- `Proceed { credits_authorized }` — the operator authorized the spend. The
-  signed credits_authorized token is required for the MCP call.
+In abw mode, the gate is the consent token minted by `swarm_request_consent`
+(action + target-scoped, single-use). Each dispatch intent must produce a
+gate decision:
+- `Proceed { credits_authorized }` — the operator authorized the spend. A
+  consent token for this action+target with `credits_authorized` is required
+  for the MCP spend call.
 - `Abort { reason }` — the operator declined. Record the reason; emit no
   spend for this move.
 
-The consent gate MUST block. If the panel cannot produce a signed
-credits_authorized token, the move is Aborted with reason
-"missing_consent_token". This is the enforcement point for the .rules
-"Advertised invariants need enforcement points" trap.
+The consent gate MUST block. If no consent token can be produced, the move
+is Aborted with reason "missing_consent_token". This is the enforcement
+point for the .rules "Advertised invariants need enforcement points" trap.
 {% endif %}
 
 ## Step 3 — Emit the gated MCP calls
@@ -108,11 +110,16 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% else %}
 For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
-- `hire` → `swarm_update_swarm` (POST /api/workspaces/{id}/add or
-  /api/agents/{id}/hire)
-- `fire` → `swarm_update_swarm` (/api/agents/{id}/fire)
-- `delegate` → `swarm_delegate` (workspace delegation semantics, one level
-  deep, delegate loses delegate_to_agent/execute_agent)
+- `hire` → `swarm_hire` with `{ workspace_id, agent_name, include_optional:
+  false, consent_token, credits_authorized }`. The consent token must have
+  been minted for action "hire" and target = agent_name.
+- `delegate` → `swarm_delegate` with `{ workspace_id, agent_name, task,
+  consent_token, credits_authorized }` (workspace delegation semantics, one
+  level deep — the delegate loses delegate_to_agent/execute_agent).
+
+There is no `fire` tool — a `fire` move cannot be emitted. If a decision
+proposes firing, mark it Aborted with reason "no_fire_tool" so the operator
+can prune the redundant agent manually.
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% endif %}

@@ -39,7 +39,7 @@ use hkask_types::inference_ipc::{
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbeddingGenerationError, InferenceError, InferencePort,
-    InferenceResult, MediaGenerateParams,
+    InferenceResult, MediaGenerateParams, ToolDispatchPort,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -177,6 +177,9 @@ impl InferenceIpcClient {
             InferenceOutcome::Media { .. } => Err(InferenceError::Connection(
                 "received Media outcome for a non-media request".into(),
             )),
+            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
+                "received ToolResult outcome for a non-tool-invoke request".into(),
+            )),
         }
     }
 
@@ -213,6 +216,9 @@ impl InferenceIpcClient {
                 media_object_description: None,
                 media_language: None,
                 media_workflow: None,
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -321,6 +327,9 @@ impl InferenceIpcClient {
                 media_object_description: None,
                 media_language: None,
                 media_workflow: None,
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -417,6 +426,9 @@ impl InferenceIpcClient {
                 media_object_description: params.object_description.clone(),
                 media_language: params.language.clone(),
                 media_workflow: params.workflow.clone(),
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -473,6 +485,9 @@ impl InferenceIpcClient {
             InferenceOutcome::ModelList { .. } => Err(InferenceError::Connection(
                 "received ModelList outcome for a media request".into(),
             )),
+            InferenceOutcome::ToolResult { .. } => Err(InferenceError::Connection(
+                "received ToolResult outcome for a media request".into(),
+            )),
         }
     }
 
@@ -487,6 +502,101 @@ impl InferenceIpcClient {
         params: &MediaGenerateParams,
     ) -> Result<serde_json::Value, InferenceError> {
         self.call_media_generate(op, params).await
+    }
+
+    /// Invoke a governed MCP tool on the zed side via the IPC bridge.
+    ///
+    /// `server` is the MCP server id (e.g. "codegraph"), `tool` the tool
+    /// name, `args` the JSON arguments. The zed process mints the OCAP panel
+    /// token and dispatches through its `McpRuntime` (governance, gas, spans
+    /// all apply). Returns the tool's JSON output.
+    pub async fn invoke_tool(
+        &self,
+        server: &str,
+        tool: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, InferenceError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: InferenceMethod::ToolInvoke,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
+                media_workflow: None,
+                tool_server: Some(server.to_string()),
+                tool_name: Some(tool.to_string()),
+                tool_args: Some(args),
+            },
+        };
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut guard = self.stream.lock().await;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
+
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let line = read_response_line(stream)
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+
+        let Some(line) = line else {
+            *guard = None;
+            return Err(InferenceError::Connection(
+                "IPC socket closed by server".into(),
+            ));
+        };
+
+        let response: InferenceResponse = serde_json::from_str(&line)
+            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+
+        if response.id != id {
+            return Err(InferenceError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )));
+        }
+
+        match response.outcome {
+            InferenceOutcome::ToolResult { result } => Ok(result),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            other => Err(InferenceError::Connection(format!(
+                "received non-tool-invoke outcome for a tool-invoke request: {other:?}"
+            ))),
+        }
     }
 }
 
@@ -522,6 +632,9 @@ impl InferencePort for InferenceIpcClient {
             media_object_description: None,
             media_language: None,
             media_workflow: None,
+            tool_server: None,
+            tool_name: None,
+            tool_args: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::Generate, params).await }.boxed()
@@ -559,6 +672,9 @@ impl InferencePort for InferenceIpcClient {
             media_object_description: None,
             media_language: None,
             media_workflow: None,
+            tool_server: None,
+            tool_name: None,
+            tool_args: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateWithModel, params).await }.boxed()
@@ -596,6 +712,9 @@ impl InferencePort for InferenceIpcClient {
             media_object_description: None,
             media_language: None,
             media_workflow: None,
+            tool_server: None,
+            tool_name: None,
+            tool_args: None,
         };
         let this = self;
         async move {
@@ -637,6 +756,9 @@ impl InferencePort for InferenceIpcClient {
             media_object_description: None,
             media_language: None,
             media_workflow: None,
+            tool_server: None,
+            tool_name: None,
+            tool_args: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()
@@ -685,6 +807,19 @@ impl InferencePort for InferenceIpcClient {
         let params = params.clone();
         let this = self;
         async move { this.media_generate(&op, &params).await }.boxed()
+    }
+}
+
+impl ToolDispatchPort for InferenceIpcClient {
+    fn invoke_tool<'a>(
+        &'a self,
+        server: &'a str,
+        tool: &'a str,
+        args: serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>> {
+        let server = server.to_string();
+        let tool = tool.to_string();
+        Box::pin(async move { self.invoke_tool(&server, &tool, args).await })
     }
 }
 
