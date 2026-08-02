@@ -23,7 +23,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 ### skill-maintenance-validate
 
 1. Validate the specified skill or all skills in the registry directory against R1-R12 registry checks, Z1-Z8 companion checks, X1-X4 cross-artifact checks, and E1-E11 executor compliance checks.
-2. Evaluate every check for every targeted skill without omissions, including invariant X5: every `.agents/skills/<name>/` must have a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name.
+2. Evaluate every check for every targeted skill without omissions, including invariant X4: every `.agents/skills/<name>/` must have a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name.
 3. For executor compliance (E1-E11), verify that every process manifest uses only canonical actions, has gas/rjoule blocks with adequate caps, has a convergence block (for skill category), has valid category, has resolvable template_refs, and has a `ledger.span_namespace` equal to `reg.skill.<manifest.id>` with no abolished `spans:` list (E11).
 4. Include specific evidence for any fail results.
 5. Provide actionable fix suggestions for any failures, including mapping non-canonical actions to their canonical equivalents.

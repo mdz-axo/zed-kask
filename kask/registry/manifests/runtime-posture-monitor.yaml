@@ -89,12 +89,12 @@ steps:
       loop_target: "{{ 1 }}"
       kata_hypotenuse: "{{ step_3_result.threats | default([]) | length }}"
 
-# Registry invariant X5 (skill-maintenance): verified.
+# Registry invariant X4 (skill-maintenance): verified.
 # Manifest version: 0.31.0. Registry authoritative; SKILL.md is companion.
-# Created as audit fix A (missing manifest recovery) + C (invariant X5 enforcement).
+# Created as audit fix A (missing manifest recovery) + C (invariant X4 enforcement).
 # Note: Full .j2 templates in registry/templates/ (authoritative per SKILL.md).
 # Cross-artifact invariant: manifest id matches .agents/skills/ directory name.
 # Visibility: Public. Functional role: flowdef. Category: skill.
 # Energy/gas budgets: standard patterns. No invented vocabulary terms.
-# validation: invariant_x5 verified (2026-07-18, audit-cascade) — recorded as
+# validation: invariant_x4 verified (2026-07-18, audit-cascade) — recorded as
 # comment since `validation` is not a BundleManifest schema field.

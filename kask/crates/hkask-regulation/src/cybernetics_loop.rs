@@ -47,7 +47,7 @@ use crate::regulation_policy::{
 };
 use crate::types::loops::{
     ActionDecision, ActionType, CurationInput, Deviation, ImpactReport, LoopId, LoopMetrics,
-    RegulationLoop, RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
+    RegulatoryAction, RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
 };
 use crate::types::loops::{BudgetOption, RegulationData};
 
@@ -68,7 +68,7 @@ struct CalibratedThresholds {
 
 /// The Cybernetics Loop — homeostatic self-regulation.
 ///
-/// Implements the `Loop` trait's sense→compare→compute→act cycle.
+/// Implements the sense→compare→compute→act regulation cycle.
 /// The Cybernetic Loop regulates all three domain loops (Inference,
 /// Episodic, Semantic) and may signal the Curation Loop via algedonic
 /// alerts. It may NOT regulate the Curation Loop.
@@ -772,10 +772,10 @@ impl CyberneticsLoop {
     }
 }
 
-#[async_trait::async_trait]
-impl RegulationLoop for CyberneticsLoop {
-    fn id(&self) -> LoopId {
-        LoopId::Cybernetics
+impl CyberneticsLoop {
+    /// Compare: detect deviations from set-points.
+    async fn compare(&self, signals: &[Signal]) -> Vec<Deviation> {
+        signals.iter().filter_map(Deviation::from_signal).collect()
     }
 
     /// Produces signals for: per-agent energy ratio, variety deficit, queue depth,

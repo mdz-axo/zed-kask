@@ -57,4 +57,4 @@ pub use set_points::{
 };
 pub use skill_span::SkillFeedbackSpan;
 pub use tool_stats::ToolStats;
-pub use types::loops::{CurationInput, ExperienceClassification, RegulationLoop, RegulatoryAction};
+pub use types::loops::{CurationInput, ExperienceClassification, RegulatoryAction};

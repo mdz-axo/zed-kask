@@ -205,9 +205,12 @@ Known limits (as of 2026-08-02, updated after live verification):
   deleted). DECIDE flags redundant duplicates and ACT emits `swarm_fire` for
   them. `swarm_delete_agent` (verified live — `DELETE /agents/{id}`) is the
   permanent-delete counterpart.
-- Workspace update and workspace delete have NO ABW endpoint (both 405,
-  verified live) — do not add `swarm_update_swarm` or a workspace-delete
-  tool. Agent update (`PUT /api/agents/{id}`) remains unverified.
+- Workspace update has NO ABW endpoint (405, verified live) — do not add
+  `swarm_update_swarm`. Agent update (`PUT /api/agents/{id}`) remains
+  unverified. Workspace delete IS implemented: `swarm_delete_swarm` via the
+  team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-02;
+  `DELETE /api/workspaces/{id}` is 405) — the counterpart of
+  `swarm_create_swarm` for the full lifecycle.
 - `swarm_create_agent` hardcodes `provider: "anthropic"` and passes through
   `mcp_tools`/`skills` from the request.
 
@@ -314,7 +317,8 @@ synthetic ledger breaks the corrective feedback loop.
   `swarm_create_app`, `swarm_clone_to_local`, `swarm_push_to_cloud`.
 - Roster: `swarm_hire` (consent-gated; own agents auto-route through
   `/add`) and `swarm_fire` (verified live — roster removal); local pruning
-  via `swarm_remove_local`; permanent ABW deletion via `swarm_delete_agent`.
+  via `swarm_remove_local`; permanent ABW deletion via `swarm_delete_agent`;
+  workspace teardown via `swarm_delete_swarm` (team-scoped, verified live).
 - Spend: `swarm_delegate` / `swarm_execute_agent` (ABW), `swarm_delegate_local`
   (local). Budget: `swarm_fund_local`; per-dispatch ceiling
   (`HKASK_ABW_MAX_CREDITS`); wallet is ABW-side.
@@ -333,7 +337,7 @@ verify:
 |---|---|---|
 | Fire / un-hire | `DELETE /api/workspaces/{id}/agents/{agent_id}` — **verified live 2026-08-02** (accepts the agent id or name; 200 `{"message": "Agent removed from workspace"}`) | **Implemented** as `swarm_fire` (no credit cost, no consent token); the skill's DECIDE/ACT emit it for redundant duplicates; local pruning via `swarm_remove_local` |
 | Workspace update | `PATCH /api/workspaces/{id}` (name, mission, budget) | **Disproven** — 405 Method Not Allowed on the live service; do NOT implement |
-| Workspace delete | `DELETE /api/workspaces/{id}` (and `POST .../delete`) | **Disproven** — 405 / 404 on the live service; no programmatic workspace deletion exists; leftover verify workspaces are pruned manually on agent-bestiary.world |
+| Workspace delete | `DELETE /api/teams/{id}` — **verified live 2026-08-02** (200 `{"status": "deleted"}`; `DELETE /api/workspaces/{id}` is 405, `POST .../delete`/`archive`/`leave` are 404) | **Implemented** as `swarm_delete_swarm` (team-scoped; irreversible — drops the workspace and its roster); the full lifecycle (create → hire → fire → delete) is verified and covered by a live probe |
 | Agent update | `PUT /api/agents/{agent_id}` (system_prompt, model, temperature) | No direct tool; `swarm_push_to_cloud` updates an ABW agent *from a local card*; PUT shape unverified |
 | Agent delete | `DELETE /api/agents/{agent_id}` — **verified live 2026-08-02** (200 `{"message": "Agent deleted successfully"}`; catalogue confirms removal) | **Implemented** as `swarm_delete_agent` (resolves uuid-vs-name via the catalogue on 404) |
 
@@ -348,5 +352,7 @@ server-side now.
 
 Verification procedure: inspect ABW's OpenAPI/docs for each shape, add the
 tool with the verified path, and pin the response shape with a unit test
-(like the existing consent/ceiling tests). Until then, the operator prunes
-ABW rosters manually on agent-bestiary.world.
+(like the existing consent/ceiling tests). Workspace delete is now a tool
+(`swarm_delete_swarm`), so leftover verify workspaces are cleaned up by the
+same lifecycle probe that creates them (`abw_workspace_lifecycle_cleanup`,
+`#[ignore = "requires ABW API key"]`).

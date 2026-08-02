@@ -724,7 +724,6 @@ fn main() {
             loop {
                 interval.tick().await;
                 let loop_guard = cybernetics_loop_for_tick.read().await;
-                use hkask_regulation::RegulationLoop;
                 loop_guard.tick().await;
             }
         })

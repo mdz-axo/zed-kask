@@ -1,6 +1,6 @@
 //! hKask 6-Loop Architecture — channel types and re-exports.
 //!
-//! The loop type system (LoopId, Signal, Deviation, RegulatoryAction, Loop trait, etc.)
+//! The loop type system (LoopId, Signal, Deviation, RegulatoryAction, etc.)
 //! has been moved to `hkask_types::loops` to break the circular dependency
 //! that prevented extracting Regulation subcrates.
 //!
@@ -30,7 +30,6 @@
 
 // Channel types stay in hkask-regulation (depend on RuntimeAlert).
 pub mod channels;
-pub mod loop_trait;
 
 // Re-export the full loop type system from hkask-types.
 pub use channels::{
@@ -41,12 +40,6 @@ pub use hkask_types::loops::{
     ExperienceClassification, ImpactReport, LoopId, LoopMetrics, RegulationData, RegulatoryAction,
     RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
 };
-
-// The Loop trait stays in hkask-regulation (orphan rule — external crates impl it for foreign types).
-pub use loop_trait::Loop;
-
-// Backward-compatible alias — old code used `RegulationLoop`.
-pub use loop_trait::Loop as RegulationLoop;
 
 // Backward-compatible re-exports — CuratorDirective and CuratorHandle were
 // previously re-exported from here but live in hkask_types::curator.

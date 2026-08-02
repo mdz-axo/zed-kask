@@ -16,22 +16,25 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (27 — both tool sets always available in either mode)
-//! ABW tools (19): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+//! ## Tools (28 — both tool sets always available in either mode)
+//! ABW tools (20): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 //! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
 //! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
 //! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
-//! (permanent agent deletion, verified live).
+//! (permanent agent deletion, verified live), `swarm_delete_swarm`
+//! (permanent workspace deletion via the team-scoped route, verified live).
 //! Local tools (8): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_list_local_agents`,
 //! `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`.
 //!
 //! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_create_swarm`,
 //! `swarm_xaman`) are consent-gated — see `kask/docs/plans/abw-swarm-intelligence.md`
-//! §3.6. Workspace delete and workspace update have NO ABW endpoint (405,
-//! verified live) and must not be added. Workspace create (`POST /api/teams`)
+//! §3.6. Workspace update has NO ABW endpoint (405, verified live) and must
+//! not be added. Workspace delete IS implemented as `swarm_delete_swarm` via
+//! the team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-02);
+//! `DELETE /api/workspaces/{id}` is 405. Workspace create (`POST /api/teams`)
 //! is verified; the create-path response shapes are pinned in §0.
 //!
 //! ## v2 Local mode (§15)
@@ -2349,6 +2352,13 @@ pub struct DeleteAgentRequest {
     pub agent_name: String,
 }
 
+/// Permanently delete an ABW workspace (swarm).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteSwarmRequest {
+    /// The workspace (swarm) id to delete.
+    pub workspace_id: String,
+}
+
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
@@ -4242,6 +4252,42 @@ impl SwarmServer {
                 .client
                 .with_wallet(serde_json::json!({
                     "deleted": req.agent_name,
+                    "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Permanently delete an ABW workspace (swarm). The counterpart of
+    /// `swarm_create_swarm`. Workspaces are created as teams, so the delete
+    /// is team-scoped: `DELETE /api/teams/{id}` — verified live 2026-08-02
+    /// (`DELETE /api/workspaces/{id}` is 405; the team route returns 200
+    /// `{"status": "deleted"}`). Irreversible — all roster membership is
+    /// dropped with the workspace. Requires API key.
+    #[tool(
+        description = "Permanently delete an ABW workspace (swarm) by id — the counterpart of swarm_create_swarm. Irreversible: the workspace and its roster are removed. Verified route: DELETE /api/teams/{id}. Requires API key."
+    )]
+    pub async fn swarm_delete_swarm(&self, parameters: Parameters<DeleteSwarmRequest>) -> String {
+        execute_tool_semantic(self, "swarm_delete_swarm", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .delete(&format!("/teams/{}", url_encode_segment(&req.workspace_id)))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "deleted_workspace": req.workspace_id,
                     "result": data,
                 }))
                 .await)
@@ -7292,6 +7338,53 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn swarm_delete_swarm_deletes_via_team_route() {
+        // Workspaces are created as teams; the verified delete route is
+        // `DELETE /api/teams/{id}` (200 `{"status": "deleted"}`), NOT
+        // `DELETE /api/workspaces/{id}` (405). Pin the exact path so a
+        // regression back to the 405 route fails here.
+        let mock = MockAbw::new(|method, path, _body| {
+            if method == "DELETE" && path == "/api/teams/ws-1234" {
+                return (200, r#"{"status": "deleted"}"#.to_string());
+            }
+            if path == "/api/wallet" {
+                return (200, WALLET_OK.to_string());
+            }
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        });
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_delete_swarm(Parameters(DeleteSwarmRequest {
+                workspace_id: "ws-1234".to_string(),
+            }))
+            .await;
+        assert!(
+            result.contains("ws-1234") && result.contains("deleted"),
+            "delete must report the deleted workspace, got: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn swarm_delete_swarm_rejects_empty_workspace_id() {
+        let mock =
+            MockAbw::new(|_method, _path, _body| (404, r#"{"error": "unmocked"}"#.to_string()));
+        let consent = StdArc::new(ConsentStore::default());
+        let server = test_server_with_mock(&mock.base_url, consent.clone());
+
+        let result = server
+            .swarm_delete_swarm(Parameters(DeleteSwarmRequest {
+                workspace_id: "  ".to_string(),
+            }))
+            .await;
+        assert!(
+            result.contains("workspace_id must be non-empty"),
+            "empty id must be rejected client-side, got: {result}"
+        );
+    }
+
     // ── swarm_create_swarm per-hire consent loop ─────────────────────────────
     //
     // The cost=0 consume pattern is unique to swarm_create_swarm (the
@@ -8124,5 +8217,261 @@ mod tests {
             "T4 delete must succeed, got: {delete}"
         );
         eprintln!("T4 delete ok: {delete}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ABW API key; run with --ignored abw"]
+    async fn abw_workspace_delete_discovery() {
+        // The workspaces created during lifecycle verification cannot be
+        // deleted via DELETE /workspaces/{id} (405) or POST .../delete (404).
+        // Discover the real route: check for an OpenAPI spec, then try the
+        // plausible team-scoped variants against the leftover workspace.
+        let Some(client) = abw_client() else {
+            eprintln!("skipping: HKASK_ABW_API_KEY not set");
+            return;
+        };
+
+        // Find a leftover verify workspace to aim the probes at.
+        let ws_data = client.get("/workspaces").await.expect("GET /workspaces");
+        let workspaces = ws_data
+            .get("workspaces")
+            .and_then(|w| w.as_array())
+            .or_else(|| ws_data.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let leftover: Vec<String> = workspaces
+            .iter()
+            .filter(|ws| {
+                let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                name.starts_with("zed-kask-verify")
+            })
+            .filter_map(|ws| ws.get("id").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        eprintln!("D0 leftover workspaces: {leftover:?}");
+        let Some(ws) = leftover.first() else {
+            eprintln!("no leftover workspace to probe");
+            return;
+        };
+
+        // D1: look for an OpenAPI/docs spec that lists the real delete route.
+        for spec in [
+            "/openapi.json",
+            "/api/openapi.json",
+            "/swagger.json",
+            "/api/swagger.json",
+            "/api/docs",
+            "/api/openapi",
+        ] {
+            match client.get(spec).await {
+                Ok(v) => {
+                    let text = v.to_string();
+                    let has_workspace = text.to_lowercase().contains("workspace");
+                    let has_delete = text.to_lowercase().contains("delete");
+                    eprintln!(
+                        "D1 {spec}: 200 (len {}), mentions workspace={has_workspace}, delete={has_delete}",
+                        text.len()
+                    );
+                    if has_delete {
+                        // Print the delete-y paths, truncated.
+                        let snippet: String = text
+                            .split(|c: char| c == ',' || c == '\n')
+                            .filter(|p| {
+                                p.to_lowercase().contains("workspace")
+                                    && p.to_lowercase().contains("delete")
+                            })
+                            .take(5)
+                            .collect::<Vec<_>>()
+                            .join(" | ");
+                        if !snippet.is_empty() {
+                            eprintln!(
+                                "D1 {spec} delete paths: {}",
+                                &snippet[..snippet.len().min(600)]
+                            );
+                        }
+                    }
+                }
+                Err(e) => eprintln!("D1 {spec}: {e}"),
+            }
+        }
+
+        // D2: try the team-scoped and alternative delete variants.
+        let ws_enc = url_encode_segment(ws);
+        let variants: Vec<(String, String, serde_json::Value)> = vec![
+            (
+                "DELETE".to_string(),
+                format!("/teams/{ws_enc}"),
+                serde_json::json!({}),
+            ),
+            (
+                "POST".to_string(),
+                format!("/teams/{ws_enc}/delete"),
+                serde_json::json!({}),
+            ),
+            (
+                "DELETE".to_string(),
+                format!("/teams/{ws_enc}/workspace"),
+                serde_json::json!({}),
+            ),
+            (
+                "POST".to_string(),
+                format!("/workspaces/{ws_enc}/archive"),
+                serde_json::json!({}),
+            ),
+            (
+                "POST".to_string(),
+                format!("/workspaces/{ws_enc}/leave"),
+                serde_json::json!({}),
+            ),
+            (
+                "DELETE".to_string(),
+                format!("/workspaces/{ws_enc}"),
+                serde_json::json!({}),
+            ),
+        ];
+        for (method, path, body) in variants {
+            let result = match method.as_str() {
+                "DELETE" => client.delete(&path).await,
+                _ => client.post(&path, &body).await,
+            };
+            match result {
+                Ok(v) => eprintln!("D2 {method} {path}: ok {v}"),
+                Err(e) => eprintln!("D2 {method} {path}: {e}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires ABW API key; run with --ignored abw"]
+    async fn abw_workspace_lifecycle_cleanup() {
+        // Final-state assertion for the live lifecycle verification: every
+        // `zed-kask-verify-*` workspace and `zed_kask_verify_*` agent created
+        // by the probes must be deleted, and the account must be clean. Uses
+        // the verified team-scoped delete route directly (the probe that
+        // created them should not depend on the tool under test), then asserts
+        // the catalogue and workspace list contain no leftovers.
+        let Some(client) = abw_client() else {
+            eprintln!("skipping: HKASK_ABW_API_KEY not set");
+            return;
+        };
+
+        // C1: delete every leftover verify workspace via the team route.
+        let ws_data = client.get("/workspaces").await.expect("GET /workspaces");
+        let workspaces = ws_data
+            .get("workspaces")
+            .and_then(|w| w.as_array())
+            .or_else(|| ws_data.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let leftovers: Vec<(String, String)> = workspaces
+            .iter()
+            .filter_map(|ws| {
+                let name = ws.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                if name.starts_with("zed-kask-verify") {
+                    Some((
+                        ws.get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        name.to_string(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if leftovers.is_empty() {
+            eprintln!("C1: no leftover verify workspaces — account clean");
+        }
+        for (id, name) in &leftovers {
+            match client
+                .delete(&format!("/teams/{}", url_encode_segment(id)))
+                .await
+            {
+                Ok(resp) => eprintln!("C1 deleted workspace {name} ({id}): {resp}"),
+                Err(e) => eprintln!("C1 delete workspace {name} ({id}) FAILED: {e}"),
+            }
+        }
+
+        // C1b: confirm none remain.
+        let ws_after = client.get("/workspaces").await.expect("GET /workspaces");
+        let remaining: Vec<String> = ws_after
+            .get("workspaces")
+            .and_then(|w| w.as_array())
+            .or_else(|| ws_after.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|ws| {
+                ws.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .starts_with("zed-kask-verify")
+            })
+            .map(|ws| {
+                ws.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string()
+            })
+            .collect();
+        assert!(
+            remaining.is_empty(),
+            "verify workspaces remain after cleanup: {remaining:?}"
+        );
+        eprintln!("C1b: no verify workspaces remain — assert passed");
+
+        // C2: delete leftover verify agents.
+        let agents_data = client.get("/agents").await.expect("GET /agents");
+        let leftover_agents: Vec<String> = agents_data
+            .get("agents")
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|a| {
+                a.get("agent_name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| n.starts_with("zed_kask_verify"))
+                    .unwrap_or(false)
+            })
+            .filter_map(|a| {
+                a.get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        if leftover_agents.is_empty() {
+            eprintln!("C2: no leftover verify agents — account clean");
+        }
+        for id in &leftover_agents {
+            match client
+                .delete(&format!("/agents/{}", url_encode_segment(id)))
+                .await
+            {
+                Ok(resp) => eprintln!("C2 deleted agent {id}: {resp}"),
+                Err(e) => eprintln!("C2 delete agent {id} FAILED: {e}"),
+            }
+        }
+
+        // C2b: confirm the catalogue is clean.
+        let agents_after = client.get("/agents").await.expect("GET /agents");
+        let remaining_agents = agents_after
+            .get("agents")
+            .and_then(|a| a.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter(|a| {
+                a.get("agent_name")
+                    .and_then(|v| v.as_str())
+                    .map(|n| n.starts_with("zed_kask_verify"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(
+            remaining_agents, 0,
+            "verify agents remain in catalogue after cleanup"
+        );
+        eprintln!("C2b: no verify agents remain — assert passed");
     }
 }

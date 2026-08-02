@@ -3370,9 +3370,11 @@ mod tests {
             "swarm_push_to_cloud",
             // ABW lifecycle tools (verified live 2026-08-02): fire removes an
             // agent from a workspace roster; delete_agent permanently deletes
-            // an ABW agent.
+            // an ABW agent; delete_swarm permanently deletes a workspace via
+            // the team-scoped route (DELETE /api/teams/{id}).
             "swarm_fire",
             "swarm_delete_agent",
+            "swarm_delete_swarm",
         ] {
             assert!(tool.starts_with("swarm_"));
         }

@@ -64,16 +64,19 @@ templates:
     type: KnowAct
     description: >
       Validate the scaffolded crate against all check categories.
-      Delegates to skill-maintenance-validate. Checks: R1-R12 (registry:
-      manifest structure, .j2 frontmatter, template_type, contract
-      visibility, energy_cap, generates_spans, path
-      resolution, version pin, id namespacing); Z1-Z8 (companion: SKILL.md
-      frontmatter, name match, description quality, template table
-      constraints, consistency); X1-X4 (cross-artifact: template_refs
-      resolve, ordinals sequential, names match, OCAP matches templates);
-      E1-E11 (executor compliance: canonical actions only, gas/rjoule/
-      convergence blocks present, convergence_field resolvable
-      template_refs resolvable, error_handling present, ledger.span_namespace
-      equals reg.skill.<manifest.id> with no abolished spans: list).
+      Delegates to skill-maintenance-validate (its check catalog is
+      authoritative — this template mirrors it). Checks: R1-R12 (registry:
+      manifest exists, crate metadata, templates non-empty, template entry
+      valid, template_type, contract, energy_cap range, visibility, .j2
+      exists, [inference] frontmatter, jinja2 body); Z1-Z8 (companion:
+      SKILL.md exists, frontmatter, name matches directory, description
+      present, no Magna Carta violations, headless, no deprecated markers,
+      derived from registry); X1-X4 (cross-artifact: registry exists, no
+      orphan SKILL.md, no drift, bidirectional name match); E1-E11 (executor
+      compliance: canonical actions, gas block + cap adequate, rjoule block,
+      convergence block, category valid, template_refs resolvable,
+      sub-manifest budgets, step description, ordinal sequence,
+      ledger.span_namespace == reg.skill.<manifest.id> with no abolished
+      spans: list). Produces fix suggestions for any failures.
     generates_spans:
       - reg.create_skill.validate
