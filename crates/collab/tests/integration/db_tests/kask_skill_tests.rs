@@ -30,11 +30,24 @@ test_both_dbs!(
     test_kask_skill_uniqueness_sqlite
 );
 
-async fn make_version(
+test_both_dbs!(
+    test_kask_skill_expiry_filter,
+    test_kask_skill_expiry_filter_postgres,
+    test_kask_skill_expiry_filter_sqlite
+);
+
+test_both_dbs!(
+    test_kask_skill_expiry_sweep,
+    test_kask_skill_expiry_sweep_postgres,
+    test_kask_skill_expiry_sweep_sqlite
+);
+
+async fn make_version_with_expiry(
     source_user: &str,
     skill_name: &str,
     version: &str,
     description: &str,
+    expires_at: &str,
 ) -> NewKaskSkillVersion {
     let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
     let t0 = time::PrimitiveDateTime::new(t0.date(), t0.time());
@@ -47,7 +60,7 @@ async fn make_version(
         tarball_sha256: "abc123".into(),
         public_key: "aa".repeat(32),
         signature: "bb".repeat(64),
-        expires_at: "2027-01-01T00:00:00Z".into(),
+        expires_at: expires_at.into(),
         published_at: t0,
     }
 }
@@ -186,5 +199,76 @@ async fn test_kask_skill_uniqueness(db: &Arc<Database>) {
         skills.len(),
         2,
         "different source_user should be a separate skill"
+    );
+}
+
+/// zed-kask: pin the expiry filter (plan Phase 3 / D2) — a skill whose
+/// signed `expires_at` has passed is not listed in the catalog, even before
+/// the sweep runs.
+async fn test_kask_skill_expiry_filter(db: &Arc<Database>) {
+    db.insert_kask_skill_versions(&[
+        make_version_with_expiry(
+            "alice",
+            "fresh",
+            "1.0.0",
+            "Fresh skill",
+            "2999-01-01T00:00:00Z",
+        )
+        .await,
+        make_version_with_expiry(
+            "alice",
+            "stale",
+            "1.0.0",
+            "Stale skill",
+            "2020-01-01T00:00:00Z",
+        )
+        .await,
+    ])
+    .await
+    .unwrap();
+
+    let skills = db.get_kask_skills().await.unwrap();
+    let ids: Vec<String> = skills.iter().map(|s| s.id.to_string()).collect();
+    assert!(
+        ids.contains(&"alice/fresh".to_string()),
+        "unexpired skill must be listed: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"alice/stale".to_string()),
+        "expired skill must not be listed: {ids:?}"
+    );
+}
+
+/// zed-kask: pin the expiry sweep (plan Phase 3 / D2) — expired versions are
+/// purged and their now-orphaned skill rows are removed. Unparseable
+/// `expires_at` counts as expired (fail closed, plan D5).
+async fn test_kask_skill_expiry_sweep(db: &Arc<Database>) {
+    db.insert_kask_skill_versions(&[
+        make_version_with_expiry(
+            "alice",
+            "stale",
+            "1.0.0",
+            "Stale skill",
+            "2020-01-01T00:00:00Z",
+        )
+        .await,
+        make_version_with_expiry("bob", "kept", "1.0.0", "Kept skill", "2999-01-01T00:00:00Z")
+            .await,
+    ])
+    .await
+    .unwrap();
+
+    let purged = db.purge_expired_kask_skill_versions().await.unwrap();
+    assert_eq!(purged, 1, "exactly the expired version is purged");
+
+    let skills = db.get_kask_skills().await.unwrap();
+    let ids: Vec<String> = skills.iter().map(|s| s.id.to_string()).collect();
+    assert!(
+        ids.contains(&"bob/kept".to_string()),
+        "unexpired skill must survive the sweep: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&"alice/stale".to_string()),
+        "expired skill must be purged with its version: {ids:?}"
     );
 }

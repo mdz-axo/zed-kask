@@ -487,8 +487,8 @@ impl KaskExtensionsPage {
             );
             return;
         };
-        let sha256 = skill.manifest.tarball_sha256.clone();
-        let dependencies = skill.manifest.dependencies.clone();
+        let manifest = skill.manifest.clone();
+        let dependencies = manifest.dependencies.clone();
         let skill_id_str = skill_id.to_string();
 
         // zed-kask: Check if the skill's dependencies are installed. If not,
@@ -533,7 +533,7 @@ impl KaskExtensionsPage {
                 fs.as_ref(),
                 &http_client,
                 &skill_id_str,
-                &sha256,
+                &manifest,
                 &marketplace_dir,
             )
             .await;

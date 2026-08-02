@@ -9,10 +9,122 @@ use axum::{
     response::Redirect,
     routing::{get, post},
 };
-use cloud_api_types::{GetKaskSkillsResponse, KaskSkillMetadata, KaskSkillVoteRequest};
+use cloud_api_types::{
+    GetKaskSkillsResponse, KaskSkillManifest, KaskSkillMetadata, KaskSkillVoteRequest,
+};
+use ed25519_dalek::{Signature, VerifyingKey};
 use std::sync::Arc;
 use std::time::Duration;
 use util::ResultExt;
+
+/// Maximum accepted lifetime of a signed kask skill manifest, in days.
+///
+/// Mirrors `hkask_keystore::KEY_MAX_AGE_DAYS` (the client's default for
+/// `expires_at` at signing time). The server enforces the same cap against
+/// its own clock: a manifest whose `expires_at` is more than this many days
+/// in the future is rejected (`OverCap`), and one whose `expires_at` has
+/// passed is filtered from the catalog and purged (plan D2).
+const KASK_SKILL_MAX_AGE_DAYS: u64 = 120;
+
+/// Why a signed kask skill manifest failed verification.
+///
+/// The manifest fields are required (they fail to deserialize if missing),
+/// so `verify_manifest_signature` only reports failures that survive
+/// parsing. The upload path rejects with the variant's reason (fail closed,
+/// plan D5); the periodic poll skips and warns with the same reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestVerificationError {
+    InvalidPublicKey,
+    InvalidSignature,
+    SignatureMismatch,
+    InvalidExpiresAt(String),
+    ExpiredAtSigning(String),
+    OverCap(String),
+}
+
+impl std::fmt::Display for ManifestVerificationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPublicKey => write!(f, "public key is not a valid Ed25519 key"),
+            Self::InvalidSignature => write!(f, "signature is not valid Ed25519"),
+            Self::SignatureMismatch => {
+                write!(
+                    f,
+                    "signature does not verify against the manifest's public key"
+                )
+            }
+            Self::InvalidExpiresAt(expires_at) => {
+                write!(
+                    f,
+                    "expires_at {expires_at} is not a valid RFC 3339 timestamp"
+                )
+            }
+            Self::ExpiredAtSigning(expires_at) => {
+                write!(
+                    f,
+                    "expires_at {expires_at} is already in the past (expired at signing)"
+                )
+            }
+            Self::OverCap(expires_at) => write!(
+                f,
+                "expires_at {expires_at} exceeds the {KASK_SKILL_MAX_AGE_DAYS}-day cap"
+            ),
+        }
+    }
+}
+
+/// Verify a signed kask skill manifest (plan D2/D3/D5).
+///
+/// Checks, against the **server clock**:
+/// 1. `public_key` parses as an Ed25519 key and `signature` as Ed25519.
+/// 2. `signature` verifies over `manifest.canonical_signing_bytes()` — the
+///    manifest's own shared canonical serialization (plan D4), so it
+///    commits to `expires_at` and transitively to the tarball hash.
+/// 3. `expires_at` is inside `now < expires_at <= now + 120 days`.
+///
+/// The upload path fails closed (400); the poll path skips + warns.
+pub fn verify_manifest_signature(
+    manifest: &KaskSkillManifest,
+) -> Result<(), ManifestVerificationError> {
+    let public_key = hex::decode(&manifest.public_key)
+        .map_err(|_| ManifestVerificationError::InvalidPublicKey)?;
+    let public_key: [u8; 32] = public_key
+        .try_into()
+        .map_err(|_| ManifestVerificationError::InvalidPublicKey)?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| ManifestVerificationError::InvalidPublicKey)?;
+
+    let signature = hex::decode(&manifest.signature)
+        .map_err(|_| ManifestVerificationError::InvalidSignature)?;
+    let signature: [u8; 64] = signature
+        .try_into()
+        .map_err(|_| ManifestVerificationError::InvalidSignature)?;
+    let signature = Signature::from_bytes(&signature);
+
+    let canonical = manifest
+        .canonical_signing_bytes()
+        .map_err(|_| ManifestVerificationError::InvalidSignature)?;
+    verifying_key
+        .verify_strict(&canonical, &signature)
+        .map_err(|_| ManifestVerificationError::SignatureMismatch)?;
+
+    let now = chrono::Utc::now();
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&manifest.expires_at)
+        .map_err(|_| ManifestVerificationError::InvalidExpiresAt(manifest.expires_at.clone()))?;
+    if expires_at.with_timezone(&chrono::Utc) <= now {
+        return Err(ManifestVerificationError::ExpiredAtSigning(
+            manifest.expires_at.clone(),
+        ));
+    }
+    let cap = now + chrono::Duration::days(KASK_SKILL_MAX_AGE_DAYS as i64);
+    if expires_at.with_timezone(&chrono::Utc) > cap {
+        return Err(ManifestVerificationError::OverCap(
+            manifest.expires_at.clone(),
+        ));
+    }
+
+    Ok(())
+}
 
 pub fn router() -> Router {
     Router::new()
@@ -183,7 +295,30 @@ async fn upload_kask_skill(
     // the immediate-index path re-parses below. Tarball bodies are passed
     // through without a copy.
     let is_manifest_upload = params.key.ends_with("/manifest.json");
-    let manifest_body = is_manifest_upload.then(|| body.clone());
+
+    // zed-kask: verify a manifest upload's signature and expiry **before** it
+    // reaches S3 (fail closed, plan D2/D5). An unsigned, tampered, or
+    // expired manifest must not enter the catalog or the blob store — the
+    // poll would otherwise reconcile it into Postgres.
+    let verified_manifest = if is_manifest_upload {
+        let manifest: KaskSkillManifest = serde_json::from_slice(&body).map_err(|e| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                format!("invalid manifest.json body: {e}"),
+                Default::default(),
+            )
+        })?;
+        verify_manifest_signature(&manifest).map_err(|e| {
+            Error::Http(
+                StatusCode::BAD_REQUEST,
+                format!("manifest verification failed: {e}"),
+                Default::default(),
+            )
+        })?;
+        Some(manifest)
+    } else {
+        None
+    };
 
     blob_store_client
         .put_object()
@@ -199,7 +334,7 @@ async fn upload_kask_skill(
     // in the marketplace within seconds instead of waiting up to
     // KASK_SKILL_FETCH_INTERVAL for the periodic poll. The poll remains as
     // reconciliation for out-of-band S3 writes.
-    if let Some(manifest_body) = manifest_body {
+    if let Some(manifest) = verified_manifest {
         let parts: Vec<&str> = params.key.split('/').collect();
         if let [
             "kask-skills",
@@ -210,9 +345,6 @@ async fn upload_kask_skill(
         ] = parts.as_slice()
         {
             let index_result = async {
-                let manifest: cloud_api_types::KaskSkillManifest =
-                    serde_json::from_slice(&manifest_body).context("invalid manifest.json body")?;
-
                 // Verify the tarball for this version actually exists before
                 // indexing — otherwise a manifest-only upload (client bug or
                 // reordering) creates a catalog entry whose install 404s.
@@ -457,6 +589,18 @@ async fn fetch_kask_skills_from_blob_store(
         .insert_kask_skill_versions(&new_versions)
         .await?;
 
+    // zed-kask: expiry sweep (plan Phase 3 / D2). Runs on the same cadence as
+    // the poll. A nonzero purge count is `log::warn!`ed — the `.rules`
+    // "signal, not silence" trap: an operator must be able to distinguish
+    // "catalog healthy, nothing expired" from "catalog purged dead skills".
+    let purged = app_state.db.purge_expired_kask_skill_versions().await?;
+    if purged > 0 {
+        log::warn!(
+            "kask skill expiry sweep purged {purged} expired version(s). \
+             Their publishers must re-sign and re-publish to relist them."
+        );
+    }
+
     log::info!(
         "fetched {} new kask skills from blob store",
         new_versions.len()
@@ -499,6 +643,18 @@ async fn fetch_kask_skill_manifest(
                 String::from_utf8_lossy(&manifest_bytes)
             )
         })?;
+
+    // zed-kask: skip + warn on unverifiable manifests (fail closed, plan
+    // D5). The upload path rejects the same way with a 400; the poll is the
+    // reconciliation path for out-of-band S3 writes, so it must not index a
+    // manifest that would have been rejected at upload. The error propagates
+    // to the caller's `.log_err()`, which logs the S3 key + reason.
+    if let Err(error) = verify_manifest_signature(&manifest) {
+        anyhow::bail!(
+            "kask skill {id} version {version} failed signature verification; \
+             not indexed. The publisher must re-sign and re-publish. Reason: {error}"
+        );
+    }
     let published_at = object.last_modified.with_context(|| {
         format!("missing last modified timestamp for kask skill {id} version {version}")
     })?;
@@ -517,4 +673,91 @@ async fn fetch_kask_skill_manifest(
         expires_at: manifest.expires_at,
         published_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    fn signed_manifest(expires_at: &str) -> KaskSkillManifest {
+        let mut secret = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::rng(), &mut secret);
+        let signing_key = SigningKey::from_bytes(&secret);
+        let public_key: ed25519_dalek::VerifyingKey = signing_key.verifying_key();
+
+        let mut manifest = KaskSkillManifest {
+            source_user: "alice".to_string(),
+            skill_name: "essentialist".to_string(),
+            version: "2026-08-02.1".to_string(),
+            description: "test".to_string(),
+            dependencies: vec![],
+            tarball_sha256: "abc123".to_string(),
+            public_key: hex::encode(public_key.as_bytes()),
+            signature: String::new(),
+            expires_at: expires_at.to_string(),
+        };
+        let canonical = manifest.canonical_signing_bytes().unwrap();
+        let signature = ed25519_dalek::Signer::sign(&signing_key, &canonical);
+        manifest.signature = hex::encode(signature.to_bytes());
+        manifest
+    }
+
+    fn future_expiry() -> String {
+        (chrono::Utc::now() + chrono::Duration::days(KASK_SKILL_MAX_AGE_DAYS as i64)).to_rfc3339()
+    }
+
+    // zed-kask: pin the deny-by-default deviation (plan Phase 5 / D5) — the
+    // upstream extension store accepts any manifest; kask requires a valid
+    // signature inside the 120-day window.
+    #[test]
+    fn verification_accepts_valid_signed_manifest() {
+        let manifest = signed_manifest(&future_expiry());
+        verify_manifest_signature(&manifest).expect("valid manifest must verify");
+    }
+
+    #[test]
+    fn verification_rejects_tampered_manifest() {
+        let mut manifest = signed_manifest(&future_expiry());
+        manifest.description = "tampered".to_string();
+        assert_eq!(
+            verify_manifest_signature(&manifest),
+            Err(ManifestVerificationError::SignatureMismatch)
+        );
+    }
+
+    #[test]
+    fn verification_rejects_expired_at_signing() {
+        let manifest = signed_manifest("2020-01-01T00:00:00Z");
+        assert_eq!(
+            verify_manifest_signature(&manifest),
+            Err(ManifestVerificationError::ExpiredAtSigning(
+                "2020-01-01T00:00:00Z".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn verification_rejects_over_cap_expiry() {
+        // 121 days out — beyond the server's 120-day cap (plan D2: the cap is
+        // judged by the server clock, not the publisher's).
+        let far_future = (chrono::Utc::now()
+            + chrono::Duration::days(KASK_SKILL_MAX_AGE_DAYS as i64 + 1))
+        .to_rfc3339();
+        let manifest = signed_manifest(&far_future);
+        assert!(matches!(
+            verify_manifest_signature(&manifest),
+            Err(ManifestVerificationError::OverCap(_))
+        ));
+    }
+
+    #[test]
+    fn verification_rejects_invalid_public_key() {
+        let mut manifest = signed_manifest(&future_expiry());
+        manifest.public_key = "zz".repeat(32);
+        assert_eq!(
+            verify_manifest_signature(&manifest),
+            Err(ManifestVerificationError::InvalidPublicKey)
+        );
+    }
 }

@@ -275,9 +275,28 @@ impl Database {
         }
         let rows = query.all(tx).await?;
 
+        // zed-kask: expiry enforcement (plan Phase 3 / D2). A skill version is
+        // listed only while its signed `expires_at` is in the future. The
+        // column is TEXT (RFC 3339), so the comparison happens here in Rust
+        // rather than in SQL (lexicographic ordering is not reliable for
+        // variable-precision timestamps). The sweep deletes the underlying
+        // rows; this filter is the enforcement point that keeps expired
+        // skills out of the catalog between sweep runs.
+        let now = time::OffsetDateTime::now_utc();
         Ok(rows
             .into_iter()
-            .filter_map(|(skill, version)| Some(metadata_from_skill_and_version(skill, version?)))
+            .filter_map(|(skill, version)| {
+                let version = version?;
+                let expires_at = time::OffsetDateTime::parse(
+                    &version.expires_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .ok()?;
+                if expires_at <= now {
+                    return None;
+                }
+                Some(metadata_from_skill_and_version(skill, version))
+            })
             .collect())
     }
 
@@ -587,6 +606,75 @@ impl Database {
                 .exec(&*tx)
                 .await?;
             Ok(result.rows_affected > 0)
+        })
+        .await
+    }
+
+    /// zed-kask: Purge expired kask skill versions and the skills orphaned by
+    /// them (plan Phase 3 / D2).
+    ///
+    /// A version's `expires_at` (TEXT, RFC 3339) is compared here in Rust —
+    /// lexicographic SQL comparison is unreliable for variable-precision
+    /// timestamps. Versions whose `expires_at` has passed are deleted; skill
+    /// rows with no remaining versions are deleted too (the catalog filter in
+    /// `get_kask_skills_where` is the enforcement point between sweeps; this
+    /// is the cleanup that removes the dead rows).
+    ///
+    /// Returns the number of expired versions purged. The caller logs a
+    /// signal (`.rules` "signal, not silence" trap) — a sweep finding expired
+    /// skills is an operator-visible event, not a silent no-op.
+    pub async fn purge_expired_kask_skill_versions(&self) -> Result<usize> {
+        self.transaction(|tx| async move {
+            let now = time::OffsetDateTime::now_utc();
+            let versions = kask_skill_version::Entity::find().all(&*tx).await?;
+
+            let mut expired_versions = Vec::new();
+            for version in &versions {
+                let expires_at = time::OffsetDateTime::parse(
+                    &version.expires_at,
+                    &time::format_description::well_known::Rfc3339,
+                );
+                if expires_at.map(|t| t <= now).unwrap_or(true) {
+                    // Unparseable `expires_at` counts as expired: it can never
+                    // satisfy the catalog filter, and keeping the row forever
+                    // would let dead skills accumulate (plan D5 fail-closed).
+                    expired_versions.push((version.kask_skill_id, version.version.clone()));
+                }
+            }
+
+            for (skill_id, version) in &expired_versions {
+                kask_skill_version::Entity::delete_many()
+                    .filter(
+                        kask_skill_version::Column::KaskSkillId
+                            .eq(*skill_id)
+                            .and(kask_skill_version::Column::Version.eq(version)),
+                    )
+                    .exec(&*tx)
+                    .await?;
+            }
+
+            // Orphaned skills: no remaining versions (the expired one was the
+            // only/latest one). ON DELETE CASCADE on versions/votes already
+            // cleaned those up; this removes the skill row itself.
+            if !expired_versions.is_empty() {
+                let remaining: Vec<KaskSkillId> = kask_skill_version::Entity::find()
+                    .select_only()
+                    .column(kask_skill_version::Column::KaskSkillId)
+                    .distinct()
+                    .into_tuple()
+                    .all(&*tx)
+                    .await?;
+                if remaining.is_empty() {
+                    kask_skill::Entity::delete_many().exec(&*tx).await?;
+                } else {
+                    kask_skill::Entity::delete_many()
+                        .filter(kask_skill::Column::Id.is_not_in(remaining.iter().map(|id| *id)))
+                        .exec(&*tx)
+                        .await?;
+                }
+            }
+
+            Ok(expired_versions.len())
         })
         .await
     }

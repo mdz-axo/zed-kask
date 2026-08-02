@@ -43,6 +43,7 @@ chrono.workspace = true
 # kask-extensions: Phase 1 of the skill signing plan (D4) — the client signs
 # manifests with the publisher's Ed25519 keypair stored in the OS keychain.
 hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
+hkask-types = { path = "../../kask/crates/hkask-types" }
 zeroize.workspace = true
 
 [dev-dependencies]

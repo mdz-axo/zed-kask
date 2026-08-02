@@ -38,6 +38,7 @@ clock.workspace = true
 cloud_api_types.workspace = true
 collections.workspace = true
 dashmap.workspace = true
+ed25519-dalek.workspace = true
 envy = "0.4.2"
 futures.workspace = true
 gpui.workspace = true

@@ -437,21 +437,76 @@ pub async fn unpublish_skill(
     Ok(())
 }
 
+/// Verify a kask skill manifest's signature and expiry on the install path
+/// (plan Phase 4 / D3).
+///
+/// The manifest comes from the **catalog** (`KaskSkillMetadata` flattens it),
+/// not from a downloaded artifact — the server verified it at upload/poll
+/// time, so the client trusts the server-indexed `public_key`. This check
+/// re-verifies over the same canonical bytes (plan D4) before any tarball
+/// bytes are touched, and rejects a manifest whose `expires_at` has passed
+/// even if the server's sweep hasn't run yet.
+fn verify_install_manifest(manifest: &KaskSkillManifest) -> Result<()> {
+    let public_key: hkask_types::Ed25519PublicKey = manifest
+        .public_key
+        .parse()
+        .map_err(|_| anyhow::anyhow!("kask skill manifest has an invalid public key"))?;
+    let signature: hkask_types::Ed25519Signature = manifest
+        .signature
+        .parse()
+        .map_err(|_| anyhow::anyhow!("kask skill manifest has an invalid signature"))?;
+
+    let canonical = manifest.canonical_signing_bytes()?;
+    if !hkask_keystore::signing::verify(&canonical, &signature, &public_key) {
+        bail!(
+            "kask skill signature does not verify against the catalog public key; \
+             the manifest or catalog entry may be tampered with. Do not install."
+        );
+    }
+
+    let now = chrono::Utc::now();
+    let expires_at = chrono::DateTime::parse_from_rfc3339(&manifest.expires_at)
+        .with_context(|| "kask skill manifest has an invalid expires_at")?;
+    if expires_at.with_timezone(&chrono::Utc) <= now {
+        bail!(
+            "kask skill manifest expired at {}; re-publish the skill to continue using it.",
+            manifest.expires_at
+        );
+    }
+
+    Ok(())
+}
+
 /// Install a kask skill from the marketplace.
 ///
 /// Downloads the tarball via `GET /api/kask-skills/:id/download` (which
-/// redirects to an S3 presigned URL), verifies the SHA256, and extracts
-/// into the marketplace dir under the global skills directory.
+/// redirects to an S3 presigned URL), verifies the manifest's Ed25519
+/// signature against the catalog's `public_key` (plan Phase 4 / D3) and the
+/// `expires_at` window, verifies the tarball SHA256, then extracts into the
+/// marketplace dir under the global skills directory.
+///
+/// The catalog metadata (`manifest`) is the trust anchor: the signature is
+/// verified over `canonical_signing_bytes()` reconstructed from the catalog
+/// fields (not from a downloaded manifest — plan D4). No manifest download
+/// is needed; the metadata already carries every field.
 pub async fn install_skill(
     fs: &dyn Fs,
     http_client: &HttpClientWithUrl,
     skill_id: &str,
-    expected_sha256: &str,
+    manifest: &KaskSkillManifest,
     marketplace_dir: &Path,
 ) -> Result<PathBuf> {
     let (source_user, skill_name) = skill_id
         .split_once('/')
-        .context("kask skill id must be \"{source_user}/{skill_name}\"")?;
+        .context("kask skill id must be \"{source_user}/{skill_name}\"")
+        .map(|(source_user, skill_name)| (source_user, skill_name))?;
+
+    // zed-kask: verify the manifest signature against the catalog's public
+    // key **before** downloading anything (plan Phase 4 / D3). The catalog
+    // key is server-verified; a signature that does not verify means the
+    // catalog row or the manifest was tampered with. Fail closed — a skill
+    // we cannot authenticate must not be installed.
+    verify_install_manifest(manifest)?;
 
     log::info!(
         "kask-extensions: installing skill '{}/{}'",
@@ -476,12 +531,13 @@ pub async fn install_skill(
         .await
         .context("reading kask skill tarball")?;
 
-    // Verify SHA256.
+    // Verify SHA256 (integrity of the tarball bytes; the signature already
+    // authenticated the manifest, which binds this hash — plan D1).
     let actual_sha256 = hex::encode(Sha256::digest(&tar_gz_bytes));
-    if actual_sha256 != expected_sha256 {
+    if actual_sha256 != manifest.tarball_sha256 {
         bail!(
             "kask skill tarball SHA256 mismatch: expected {}, got {}",
-            expected_sha256,
+            manifest.tarball_sha256,
             actual_sha256
         );
     }
@@ -673,6 +729,53 @@ mod tests {
         assert!(
             !hkask_keystore::signing::verify(&tampered_canonical, &parsed_signature, &public_key),
             "tampered expires_at must invalidate the signature"
+        );
+    }
+
+    // zed-kask: pin the install-path verification (plan Phase 4 acceptance) —
+    // a valid signed manifest passes `verify_install_manifest`, a tampered
+    // one fails, and an expired one fails even with a valid signature.
+    #[test]
+    fn install_manifest_verification_accepts_valid_and_rejects_tampered_and_expired() {
+        let signing_key = generate_signing_keypair();
+        let public_key = derive_public_key(&signing_key);
+
+        let make_manifest = |expires_at: String| {
+            let mut manifest = KaskSkillManifest {
+                source_user: "alice".to_string(),
+                skill_name: "essentialist".to_string(),
+                version: "2026-08-02.1".to_string(),
+                description: "test".to_string(),
+                dependencies: vec![],
+                tarball_sha256: "abc123".to_string(),
+                public_key: public_key.to_string(),
+                signature: String::new(),
+                expires_at,
+            };
+            let canonical = manifest.canonical_signing_bytes().unwrap();
+            manifest.signature = sign(&canonical, &signing_key).to_string();
+            manifest
+        };
+
+        // Valid: expires_at in the future, signature verifies.
+        let fresh = make_manifest(
+            (chrono::Utc::now() + chrono::Duration::days(KEY_MAX_AGE_DAYS as i64)).to_rfc3339(),
+        );
+        verify_install_manifest(&fresh).expect("valid manifest must pass install verification");
+
+        // Tampered: a valid signature over different canonical bytes fails.
+        let mut tampered = fresh.clone();
+        tampered.description = "tampered".to_string();
+        assert!(
+            verify_install_manifest(&tampered).is_err(),
+            "tampered manifest must fail install verification"
+        );
+
+        // Expired: signature verifies, but expires_at is in the past.
+        let expired = make_manifest("2020-01-01T00:00:00Z".to_string());
+        assert!(
+            verify_install_manifest(&expired).is_err(),
+            "expired manifest must fail install verification"
         );
     }
 }
