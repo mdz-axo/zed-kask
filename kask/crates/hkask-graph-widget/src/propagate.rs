@@ -122,6 +122,7 @@ mod tests {
                 .iter()
                 .map(|p| DependencyBody {
                     parent_event_ids: vec![(*p).into()],
+                    conditionals: Vec::new(),
                 })
                 .collect(),
             parents: Vec::new(),

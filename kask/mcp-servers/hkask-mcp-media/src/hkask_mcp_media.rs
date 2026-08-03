@@ -15,6 +15,7 @@
 
 mod error;
 mod gallery;
+pub mod media_block;
 mod templates;
 pub mod video;
 

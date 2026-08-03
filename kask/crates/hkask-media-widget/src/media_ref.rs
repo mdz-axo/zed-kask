@@ -74,19 +74,62 @@ pub trait MediaStorage: Send + Sync {
     fn resolve(&self, reference: &MediaRef) -> anyhow::Result<ResolvedMedia>;
 }
 
+/// Simple `MediaStorage` that resolves filesystem paths, data URIs, and URLs
+/// directly — no gallery lookup. This is the default storage for the media
+/// widget when no gallery context is available.
+pub struct PathMediaStorage;
+
+impl MediaStorage for PathMediaStorage {
+    fn resolve(&self, reference: &MediaRef) -> anyhow::Result<ResolvedMedia> {
+        let src = reference.src();
+        let kind = reference.kind().unwrap_or(MediaKind::Image);
+
+        if src.starts_with("data:") {
+            // Data URI — the bytes are inline. The widget handles decoding.
+            Ok(ResolvedMedia {
+                kind,
+                path: None,
+                bytes: None,
+                url: Some(SharedString::from(src)),
+            })
+        } else if src.starts_with("http://") || src.starts_with("https://") {
+            // Remote URL — the widget loads via the image resolver.
+            Ok(ResolvedMedia {
+                kind,
+                path: None,
+                bytes: None,
+                url: Some(SharedString::from(src)),
+            })
+        } else {
+            // Filesystem path — check it exists.
+            let path = PathBuf::from(src);
+            if !path.exists() {
+                return Err(anyhow::anyhow!("media file not found: {src}"));
+            }
+            Ok(ResolvedMedia {
+                kind,
+                path: Some(path),
+                bytes: None,
+                url: None,
+            })
+        }
+    }
+}
+
 /// Detect `MediaKind` from a file extension or data-URI MIME type.
 pub fn detect_kind(src: &str) -> MediaKind {
     if let Some(mime) = src.strip_prefix("data:")
-        && let Some((mime_type, _)) = mime.split_once(',') {
-            return match mime_type.split(';').next().unwrap_or("") {
-                "image/svg+xml" => MediaKind::Svg,
-                "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "image/bmp"
-                | "image/tiff" => MediaKind::Image,
-                "audio/wav" | "audio/mpeg" | "audio/ogg" | "audio/flac" => MediaKind::Audio,
-                "video/mp4" | "video/webm" | "video/x-matroska" => MediaKind::Video,
-                _ => MediaKind::Image,
-            };
-        }
+        && let Some((mime_type, _)) = mime.split_once(',')
+    {
+        return match mime_type.split(';').next().unwrap_or("") {
+            "image/svg+xml" => MediaKind::Svg,
+            "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "image/bmp"
+            | "image/tiff" => MediaKind::Image,
+            "audio/wav" | "audio/mpeg" | "audio/ogg" | "audio/flac" => MediaKind::Audio,
+            "video/mp4" | "video/webm" | "video/x-matroska" => MediaKind::Video,
+            _ => MediaKind::Image,
+        };
+    }
 
     let extension = src.rsplit('.').next().unwrap_or("").to_lowercase();
     match extension.as_str() {

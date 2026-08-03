@@ -21,8 +21,9 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AppContext, Bounds, ClickEvent, Context, FocusHandle, Focusable, IntoElement,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba,
-    StatefulInteractiveElement, Styled, Window, canvas, div, point, prelude::*, px, rgb,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba,
+    ScrollWheelEvent, StatefulInteractiveElement, Styled, Window, canvas, div, point, prelude::*,
+    px, rgb,
 };
 use theme::ActiveTheme;
 
@@ -38,8 +39,8 @@ const HIT_RADIUS: f32 = NODE_RADIUS * 1.6;
 /// The graph widget view. Renders inline in agent markdown (via the D18 seam
 /// composed by `hkask-viz-core`) or as a standalone panel item.
 pub struct GraphWidget {
-    /// The parsed block body — the source of truth for edges, conditionals,
-    /// and base (root) probabilities. Held so evidence overrides can re-propagate.
+    /// The parsed block body — source of truth for edges, conditionals, and
+    /// base (root) probabilities. Held so evidence overrides can re-propagate.
     body: GraphBlockBody,
     layout: LayeredLayout,
     /// Evidence overrides: node index → observed probability.
@@ -114,8 +115,8 @@ impl GraphWidget {
     ) -> Option<Point<Pixels>> {
         let (scale, ox, oy) = transform(
             bounds,
-            self.layout.width.0,
-            self.layout.height.0,
+            self.layout.width,
+            self.layout.height,
             self.pan,
             self.zoom,
         );
@@ -123,21 +124,23 @@ impl GraphWidget {
             return None;
         }
         Some(point(
-            px((screen.x.0 - ox) / scale),
-            px((screen.y.0 - oy) / scale),
+            px((screen.x.as_f32() - ox) / scale),
+            px((screen.y.as_f32() - oy) / scale),
         ))
     }
 
     /// Find the node (if any) under a graph-space point.
     fn node_at(&self, graph: Point<Pixels>) -> Option<usize> {
+        let gx = graph.x.as_f32();
+        let gy = graph.y.as_f32();
         let r = HIT_RADIUS;
         self.layout
             .nodes
             .iter()
             .enumerate()
             .find(|(_, node)| {
-                let dx = node.position.x.0 - graph.x.0;
-                let dy = node.position.y.0 - graph.y.0;
+                let dx = node.position.x.as_f32() - gx;
+                let dy = node.position.y.as_f32() - gy;
                 dx * dx + dy * dy < r * r
             })
             .map(|(i, _)| i)
@@ -163,7 +166,7 @@ impl GraphWidget {
             return;
         };
         // Pan while the left button is held.
-        if event.pressed_button == Some(gpui::MouseButton::Left) {
+        if event.pressed_button == Some(MouseButton::Left) {
             if let Some(last) = self.last_mouse {
                 let delta = event.position - last;
                 self.pan = self.pan + delta;
@@ -198,17 +201,17 @@ impl GraphWidget {
 
     fn handle_scroll(
         &mut self,
-        event: &gpui::ScrollWheelEvent,
+        event: &ScrollWheelEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(bounds) = self.last_bounds.get() else {
             return;
         };
-        let gw = self.layout.width.0;
-        let gh = self.layout.height.0;
+        let gw = self.layout.width.as_f32();
+        let gh = self.layout.height.as_f32();
         // Zoom factor from vertical scroll delta.
-        let delta_y = event.delta.pixel_delta(window.line_height()).y.0;
+        let delta_y = event.delta.pixel_delta(window.line_height()).y.as_f32();
         let factor = 1.0 - delta_y * 0.01;
         let new_zoom = (self.zoom * factor).clamp(0.1, 4.0);
         if (new_zoom - self.zoom).abs() < 1e-4 {
@@ -216,23 +219,49 @@ impl GraphWidget {
         }
         // Anchor the zoom at the cursor: keep the graph point under the cursor
         // fixed by adjusting pan.
-        let (scale_old, ox_old, oy_old) = transform(bounds, gw, gh, self.pan, self.zoom);
+        let (scale_old, ox_old, oy_old) = transform(
+            bounds,
+            self.layout.width,
+            self.layout.height,
+            self.pan,
+            self.zoom,
+        );
         if scale_old <= 0.0 {
             return;
         }
-        let graph_x = (event.position.x.0 - ox_old) / scale_old;
-        let graph_y = (event.position.y.0 - oy_old) / scale_old;
-        let fit = (bounds.size.w.0 / gw).min(bounds.size.h.0 / gh);
+        let graph_x = (event.position.x.as_f32() - ox_old) / scale_old;
+        let graph_y = (event.position.y.as_f32() - oy_old) / scale_old;
+        let fit = (bounds.size.width.as_f32() / gw).min(bounds.size.height.as_f32() / gh);
         let new_scale = fit * new_zoom;
-        let center_offset_x = (bounds.size.w.0 - gw * new_scale) / 2.0;
-        let center_offset_y = (bounds.size.h.0 - gh * new_scale) / 2.0;
-        let new_pan_x =
-            event.position.x.0 - bounds.origin.x.0 - center_offset_x - graph_x * new_scale;
-        let new_pan_y =
-            event.position.y.0 - bounds.origin.y.0 - center_offset_y - graph_y * new_scale;
+        let center_offset_x = (bounds.size.width.as_f32() - gw * new_scale) / 2.0;
+        let center_offset_y = (bounds.size.height.as_f32() - gh * new_scale) / 2.0;
+        let new_pan_x = event.position.x.as_f32()
+            - bounds.origin.x.as_f32()
+            - center_offset_x
+            - graph_x * new_scale;
+        let new_pan_y = event.position.y.as_f32()
+            - bounds.origin.y.as_f32()
+            - center_offset_y
+            - graph_y * new_scale;
         self.zoom = new_zoom;
         self.pan = point(px(new_pan_x), px(new_pan_y));
         cx.notify();
+    }
+
+    /// Subject for the header (the body's subject, if any).
+    fn subject_for_header(&self) -> String {
+        self.body.subject.clone().unwrap_or_default()
+    }
+
+    /// Joint probability for the header — only meaningful before any evidence
+    /// override (evidence changes the tree; the cached joint is stale then), so
+    /// hide it once evidence is set.
+    fn joint_probability_for_header(&self) -> Option<f64> {
+        if self.evidence.is_empty() {
+            self.body.joint_probability
+        } else {
+            None
+        }
     }
 }
 
@@ -268,12 +297,12 @@ impl Render for GraphWidget {
         let last_bounds = self.last_bounds.clone();
         let graph_canvas = canvas(
             move |_, _, _| {},
-            move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &App| {
+            move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
                 let was_none = last_bounds.replace(Some(bounds)).is_none();
                 let (scale, ox, oy) = transform(
                     bounds,
-                    draw_layout.width.0,
-                    draw_layout.height.0,
+                    draw_layout.width,
+                    draw_layout.height,
                     draw_pan,
                     draw_zoom,
                 );
@@ -303,16 +332,16 @@ impl Render for GraphWidget {
         if let Some(bounds) = bounds {
             let (scale, ox, oy) = transform(
                 bounds,
-                self.layout.width.0,
-                self.layout.height.0,
+                self.layout.width,
+                self.layout.height,
                 self.pan,
                 self.zoom,
             );
-            let bx = bounds.origin.x.0;
-            let by = bounds.origin.y.0;
+            let bx = bounds.origin.x.as_f32();
+            let by = bounds.origin.y.as_f32();
             for node in &self.layout.nodes {
-                let sx = ox + node.position.x.0 * scale - bx;
-                let sy = oy + node.position.y.0 * scale - by;
+                let sx = ox + node.position.x.as_f32() * scale - bx;
+                let sy = oy + node.position.y.as_f32() * scale - by;
                 let label = format!(
                     "{}  {}%",
                     node.name,
@@ -334,8 +363,8 @@ impl Render for GraphWidget {
             let focus = self.hovered.or(self.selected);
             if let Some(idx) = focus {
                 if let Some(node) = self.layout.nodes.get(idx) {
-                    let sx = ox + node.position.x.0 * scale - bx;
-                    let sy = oy + node.position.y.0 * scale - by;
+                    let sx = ox + node.position.x.as_f32() * scale - bx;
+                    let sy = oy + node.position.y.as_f32() * scale - by;
                     let is_evidence = self.evidence.contains_key(&idx);
                     let text_color = cx.theme().colors().text;
                     let muted = cx.theme().colors().text_muted;
@@ -373,7 +402,6 @@ impl Render for GraphWidget {
                                     .child("evidence (overridden)"),
                             )
                         })
-                        // Evidence controls (click a node first, then set/observe).
                         .child(
                             div()
                                 .flex()
@@ -443,31 +471,10 @@ impl Render for GraphWidget {
                     .children(overlays),
             )
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(Self::handle_mouse_down),
-            )
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_click(cx.listener(Self::handle_click))
             .on_scroll_wheel(cx.listener(Self::handle_scroll))
             .into_any_element()
-    }
-}
-
-impl GraphWidget {
-    /// Subject for the header (the body's subject, if any).
-    fn subject_for_header(&self) -> String {
-        self.body.subject.clone().unwrap_or_default()
-    }
-
-    /// Joint probability for the header — only meaningful before any evidence
-    /// override (evidence changes the tree; the cached joint is stale then), so
-    /// hide it once evidence is set.
-    fn joint_probability_for_header(&self) -> Option<f64> {
-        if self.evidence.is_empty() {
-            self.body.joint_probability
-        } else {
-            None
-        }
     }
 }
 
@@ -482,20 +489,22 @@ pub fn render_event_tree(body: GraphBlockBody, _window: &mut Window, cx: &mut Ap
 /// Returns `(scale, origin_x, origin_y)` in raw f32 (pixels).
 fn transform(
     bounds: Bounds<Pixels>,
-    graph_w: f32,
-    graph_h: f32,
+    graph_w: Pixels,
+    graph_h: Pixels,
     pan: Point<Pixels>,
     zoom: f32,
 ) -> (f32, f32, f32) {
-    let bw = bounds.size.w.0;
-    let bh = bounds.size.h.0;
-    if graph_w <= 0.0 || graph_h <= 0.0 {
-        return (1.0, bounds.origin.x.0, bounds.origin.y.0);
+    let bw = bounds.size.width.as_f32();
+    let bh = bounds.size.height.as_f32();
+    let gw = graph_w.as_f32();
+    let gh = graph_h.as_f32();
+    if gw <= 0.0 || gh <= 0.0 {
+        return (1.0, bounds.origin.x.as_f32(), bounds.origin.y.as_f32());
     }
-    let fit = (bw / graph_w).min(bh / graph_h);
+    let fit = (bw / gw).min(bh / gh);
     let scale = fit * zoom;
-    let ox = bounds.origin.x.0 + (bw - graph_w * scale) / 2.0 + pan.x.0;
-    let oy = bounds.origin.y.0 + (bh - graph_h * scale) / 2.0 + pan.y.0;
+    let ox = bounds.origin.x.as_f32() + (bw - gw * scale) / 2.0 + pan.x.as_f32();
+    let oy = bounds.origin.y.as_f32() + (bh - gh * scale) / 2.0 + pan.y.as_f32();
     (scale, ox, oy)
 }
 
@@ -517,8 +526,14 @@ fn draw_graph(
         let from = layout.nodes[*parent].position;
         let to = layout.nodes[*child].position;
         let mut builder = gpui::PathBuilder::stroke(px(1.5));
-        builder.move_to(point(px(ox + from.x.0 * scale), px(oy + from.y.0 * scale)));
-        builder.line_to(point(px(ox + to.x.0 * scale), px(oy + to.y.0 * scale)));
+        builder.move_to(point(
+            px(ox + from.x.as_f32() * scale),
+            px(oy + from.y.as_f32() * scale),
+        ));
+        builder.line_to(point(
+            px(ox + to.x.as_f32() * scale),
+            px(oy + to.y.as_f32() * scale),
+        ));
         if let Ok(path) = builder.build() {
             window.paint_path(path, edge_color);
         }
@@ -526,11 +541,12 @@ fn draw_graph(
 
     for (idx, node) in layout.nodes.iter().enumerate() {
         let center = point(
-            px(ox + node.position.x.0 * scale),
-            px(oy + node.position.y.0 * scale),
+            px(ox + node.position.x.as_f32() * scale),
+            px(oy + node.position.y.as_f32() * scale),
         );
         let color = node_color(&node.certainty_tier);
-        draw_circle(center, px(NODE_RADIUS * scale.max(0.4)), color, window);
+        let radius = px(NODE_RADIUS * scale.max(0.4));
+        draw_circle(center, radius, color, window);
         if hovered == Some(idx) || selected == Some(idx) {
             draw_ring(
                 center,

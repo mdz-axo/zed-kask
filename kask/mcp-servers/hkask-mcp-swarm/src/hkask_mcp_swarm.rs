@@ -2605,6 +2605,43 @@ mod tests {
         );
     }
 
+    // `swarm_fanout_local` reports the post-loop ledger `balance` as an
+    // `Option<i64>`: the real balance when the query succeeds, `null` when it
+    // fails. The prior version used `unwrap_or(0)`, fabricating a zero balance
+    // indistinguishable from a depleted ledger (the `.rules` trap: a failed
+    // measurement must be distinguishable from a measured zero —
+    // `swarm_balance_local` already returns an error on `None`). This pins the
+    // serialization contract at the fix seam so a regression back to
+    // `unwrap_or(0)` is caught: `None` must serialize to JSON `null`, not `0`.
+    #[test]
+    fn fanout_balance_serializes_null_when_ledger_query_fails() {
+        let response = serde_json::json!({
+            "results": [],
+            "total_cost": 0,
+            "total_tokens": 0,
+            "total_latency_ms": 0,
+            "balance": Option::<i64>::None,
+            "failed": 0,
+            "succeeded": 0,
+        });
+        assert!(
+            response
+                .get("balance")
+                .map(|v| v.is_null())
+                .unwrap_or(false),
+            "a failed balance query must serialize to null, not 0 — got: {}",
+            response
+                .get("balance")
+                .map(|v| v.to_string())
+                .unwrap_or_default()
+        );
+        assert_ne!(
+            response.get("balance"),
+            Some(&serde_json::json!(0)),
+            "null must not be confused with a measured zero balance"
+        );
+    }
+
     // ── End-to-end consent tests via mock ABW HTTP server ───────────────────
     //
     // These tests exercise the full `swarm_hire` and `swarm_xaman` tool
@@ -4631,4 +4668,207 @@ mod tests {
         );
         eprintln!("C2b: no verify agents remain — assert passed");
     }
+
+// ── SpendGate unit tests ───────────────────────────────────────────────
+//
+// The gate logic (`spend_gate::authorize_hire` / `complete_hire` /
+// `authorize_delegate` / `authorize_curate`) is also exercised end-to-end
+// by the `swarm_hire_*` / `swarm_xaman_*` / `swarm_create_swarm_*`
+// integration tests above. These unit tests pin the gate behavior
+// directly against a `SwarmClient` + `ConsentStore` (no `SwarmServer`,
+// no `execute_tool_semantic` envelope), so a gate regression is caught
+// before it reaches the tool surface.
+
+/// Build a `SwarmClient` against a mock ABW base URL with a configurable
+/// per-dispatch ceiling.
+fn test_client(mock_base_url: &str, ceiling: u32) -> SwarmClient {
+    let config = SwarmConfig {
+        api_base_url: mock_base_url.to_string(),
+        api_key: Some("test-key".to_string()),
+        max_credits_per_dispatch: ceiling,
+        curator_consent_default: false,
+        ..Default::default()
+    };
+    SwarmClient::new(reqwest::Client::new(), config)
+}
+
+// The `.rules` trap: a missing `total_hire_cost` is unknown, not zero —
+// the gate must refund and refuse, not pass at cost 0.
+#[tokio::test]
+async fn gate_authorize_hire_refunds_on_missing_total_hire_cost() {
+    let mock = MockAbw::new(|_method, path, _body| {
+        if path.starts_with("/api/agents/") && path.ends_with("/dependencies") {
+            // No `total_hire_cost` field — cost is unknown.
+            (200, r#"{"has_dependencies": false}"#.to_string())
+        } else {
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        }
+    });
+    let consent = StdArc::new(ConsentStore::default());
+    let client = test_client(&mock.base_url, 50);
+    let token = consent.mint("hire", "test_agent", 20).expect("mint");
+
+    let outcome = crate::spend_gate::authorize_hire(
+        &client,
+        &consent,
+        &token,
+        "test_agent",
+        20,
+        Some(20),
+        false,
+    )
+    .await;
+    assert!(outcome.is_err(), "missing total_hire_cost must be refused");
+    // The token must be refunded so the operator can retry.
+    let re_consume = consent.consume(&token, "hire", "test_agent", 10);
+    assert!(
+        re_consume.is_ok(),
+        "consent must be refunded after missing-cost refusal, got: {re_consume:?}"
+    );
+}
+
+// The per-dispatch ceiling is a hard gate: a hire costing more than
+// `max_credits_per_dispatch` is refused and the token refunded.
+#[tokio::test]
+async fn gate_authorize_hire_refunds_on_ceiling_exceeded() {
+    let mock = MockAbw::new(|_method, path, _body| {
+        if path.starts_with("/api/agents/") && path.ends_with("/dependencies") {
+            (
+                200,
+                r#"{"total_hire_cost": 100, "has_dependencies": true}"#.to_string(),
+            )
+        } else {
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        }
+    });
+    let consent = StdArc::new(ConsentStore::default());
+    // Low ceiling so the cost (100) exceeds it.
+    let client = test_client(&mock.base_url, 50);
+    let token = consent.mint("hire", "test_agent", 100).expect("mint");
+
+    let outcome = crate::spend_gate::authorize_hire(
+        &client,
+        &consent,
+        &token,
+        "test_agent",
+        100,
+        Some(100),
+        false,
+    )
+    .await;
+    assert!(
+        outcome.is_err(),
+        "hire cost above the ceiling must be refused"
+    );
+    let re_consume = consent.consume(&token, "hire", "test_agent", 10);
+    assert!(
+        re_consume.is_ok(),
+        "consent must be refunded after ceiling refusal, got: {re_consume:?}"
+    );
+}
+
+// The `/hire`→`/add` fallback: owned agents return a 400/Unavailable
+// containing "Use /add for your own agents"; `complete_hire` retries on
+// `/add` and succeeds.
+#[tokio::test]
+async fn gate_complete_hire_falls_back_to_add_on_own_agent_error() {
+    let mock = MockAbw::new(|_method, path, _body| {
+        if path.starts_with("/api/agents/") && path.ends_with("/dependencies") {
+            (
+                200,
+                r#"{"total_hire_cost": 2, "has_dependencies": false}"#.to_string(),
+            )
+        } else if path.ends_with("/hire") {
+            (400, r#"Use /add for your own agents"#.to_string())
+        } else if path.ends_with("/add") {
+            (200, r#"{"gas_charged": 2}"#.to_string())
+        } else if path == "/api/wallet" {
+            (200, WALLET_OK.to_string())
+        } else {
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        }
+    });
+    let consent = StdArc::new(ConsentStore::default());
+    let client = test_client(&mock.base_url, 50);
+    let token = consent.mint("hire", "own_agent", 5).expect("mint");
+
+    let auth = crate::spend_gate::authorize_hire(
+        &client,
+        &consent,
+        &token,
+        "own_agent",
+        5,
+        Some(5),
+        false,
+    )
+    .await
+    .expect("authorize");
+    let data = crate::spend_gate::complete_hire(&client, &consent, auth, "ws1", "own_agent", false)
+        .await
+        .expect("complete_hire falls back to /add");
+    // The /add response carries gas_charged: 2.
+    assert_eq!(data.get("gas_charged").and_then(|v| v.as_u64()), Some(2));
+    // Success: the token is consumed (not refundable).
+    let re_consume = consent.consume(&token, "hire", "own_agent", 1);
+    assert!(
+        re_consume.is_err(),
+        "consent must be consumed after a successful hire, got: {re_consume:?}"
+    );
+}
+
+// `swarm_create_swarm`'s per-hire loop uses `budget = None`, which means
+// the gate checks `actual_cost` against the token's own embedded ceiling.
+// A token minted for 1 credit must be refused when the actual cost is 2.
+#[tokio::test]
+async fn gate_authorize_hire_with_none_budget_uses_token_ceiling() {
+    let mock = MockAbw::new(|_method, path, _body| {
+        if path.starts_with("/api/agents/") && path.ends_with("/dependencies") {
+            (
+                200,
+                r#"{"total_hire_cost": 2, "has_dependencies": false}"#.to_string(),
+            )
+        } else {
+            (404, r#"{"error": "unmocked"}"#.to_string())
+        }
+    });
+    let consent = StdArc::new(ConsentStore::default());
+    let client = test_client(&mock.base_url, 50);
+    // Mint a token with ceiling 1; the actual cost (floored at the
+    // owned-add flat fee = 2) exceeds it.
+    let token = consent.mint("hire", "own_agent", 1).expect("mint");
+
+    let outcome =
+        crate::spend_gate::authorize_hire(&client, &consent, &token, "own_agent", 0, None, false)
+            .await;
+    assert!(
+        outcome.is_err(),
+        "budget=None must use the token ceiling (1); actual cost 2 must be refused"
+    );
+    let re_consume = consent.consume(&token, "hire", "own_agent", 1);
+    assert!(
+        re_consume.is_ok(),
+        "consent must be refunded after over-spend refusal, got: {re_consume:?}"
+    );
+}
+
+// `authorize_curate` returns `Ok(None)` when the operator has globally
+// opted in (`curator_consent_default = true`) — no token is consumed.
+#[tokio::test]
+async fn gate_authorize_curate_returns_none_when_consent_default_true() {
+    let mock = MockAbw::new(|_method, _path, _body| (404, r#"{"error": "unmocked"}"#.to_string()));
+    let consent = StdArc::new(ConsentStore::default());
+    let config = SwarmConfig {
+        api_base_url: mock.base_url.clone(),
+        api_key: Some("test-key".to_string()),
+        curator_consent_default: true,
+        ..Default::default()
+    };
+    let client = SwarmClient::new(reqwest::Client::new(), config);
+    let outcome = crate::spend_gate::authorize_curate(&client, &consent, None).expect("curate");
+    assert!(
+        outcome.is_none(),
+        "curator_consent_default=true must not require a token"
+    );
+}
+
 }

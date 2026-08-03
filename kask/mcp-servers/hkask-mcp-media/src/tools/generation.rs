@@ -32,10 +32,27 @@ impl MediaServer {
                 }
             }
             self.charge_budget("generate_image", &media_params).await?;
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("generate_image", &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Image generation failed: {}", e)))
+                .map_err(|e| {
+                    McpToolError::unavailable(format!("Image generation failed: {}", e))
+                })?;
+            // Attach a display hint so the model can embed the result inline.
+            if let Some(url) = result
+                .get("output_urls")
+                .and_then(|urls| urls.as_array())
+                .and_then(|urls| urls.first())
+                .and_then(|url| url.as_str())
+            {
+                let mut enriched = result;
+                enriched["display_hint"] =
+                    serde_json::Value::String(crate::media_block::image_block(url));
+                Ok(enriched)
+            } else {
+                Ok(result)
+            }
         })
         .await
     }

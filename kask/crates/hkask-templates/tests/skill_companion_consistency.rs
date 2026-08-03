@@ -230,6 +230,44 @@ fn every_skill_manifest_has_a_skill_md() {
     );
 }
 
+/// No aspirational documentation blocks. Catches the F3 friction pattern: manifests
+/// carrying commented-out blocks labelled "removed — documentation-only field not
+/// parsed by Rust; deny_unknown_fields enforces schema" that document fields the
+/// Rust schema cannot parse. After the C excise, no manifest should contain this
+/// pattern. If a new one appears, it means someone added aspirational documentation
+/// for a field the executor doesn't support — either implement the field or delete
+/// the block.
+#[test]
+fn no_aspirational_documentation_blocks() {
+    let manifests_dir = registry_manifests_dir();
+    if !manifests_dir.is_dir() {
+        return;
+    }
+
+    let mut offenders = Vec::new();
+
+    for entry in walkdir::WalkDir::new(&manifests_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !path.extension().is_some_and(|e| e == "yaml") {
+            continue;
+        }
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        if content.contains("removed — documentation-only field not parsed by Rust") {
+            offenders.push(path.file_name().unwrap().to_string_lossy().to_string());
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "manifests with aspirational documentation blocks (commented-out fields \
+         the Rust schema cannot parse): {}",
+        offenders.join(", ")
+    );
+}
+
 /// No duplicate skill names across the catalog. A name collision means the
 /// precedence resolution in `SkillSource::precedence` silently shadows one
 /// skill with another, which is a debugging dead-end.
