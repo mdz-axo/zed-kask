@@ -2,16 +2,14 @@
 
 use super::types::{DiscoveredWork, USER_AGENT};
 use super::utils::slugify;
-use hkask_capability::DelegationToken;
-use hkask_capability::ToolPort;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
+use hkask_types::ToolDispatchPort;
 
 // ── MCP web_search ─────────────────────────────────────────────────────────
 
 /// Call the MCP server's web_search tool and parse results into DiscoveredWork structs.
 pub(crate) async fn mcp_search(
-    mcp: &dyn ToolPort,
-    token: &DelegationToken,
+    mcp: &dyn ToolDispatchPort,
     query: &str,
     num_results: usize,
     strategy: &str,
@@ -22,18 +20,13 @@ pub(crate) async fn mcp_search(
         "num_results": num_results,
     });
 
-    let server_id = mcp
-        .get_tool_info("web_search")
-        .await
-        .map(|info| info.server_id)
-        .ok_or_else(|| ServiceError::Domain {
-            domain: DomainKind::Wallet,
-            kind: ErrorKind::ServiceUnavailable,
-            source: None,
-            message: "MCP web_search tool is not registered".to_string(),
-        })?;
+    // web_search lives on the hkask-mcp-research server. The allowlist is the
+    // dispatch-boundary enforcement surface (the zed-side IPC server refuses
+    // any tool outside it before minting a dispatch token).
+    let server_id = "hkask-mcp-research";
+    let allowed = vec![format!("{server_id}/web_search")];
     let result = mcp
-        .invoke(&server_id, "web_search", input, token)
+        .invoke_tool(server_id, "web_search", input, &allowed)
         .await
         .map_err(|e| {
             let msg = format!("MCP web_search failed: {e}");

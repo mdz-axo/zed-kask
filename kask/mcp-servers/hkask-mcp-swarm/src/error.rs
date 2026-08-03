@@ -10,7 +10,7 @@ use hkask_mcp_server::server::McpToolError;
 /// Errors from the ABW swarm client. Maps ABW HTTP errors AND body-embedded
 /// domain errors; never leaks reqwest types.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum SwarmError {
+pub enum SwarmError {
     /// 401 / missing or invalid API key.
     #[error("ABW authentication failed: {0}. Set HKASK_ABW_API_KEY (Pro tier required).")]
     Auth(String),
@@ -47,7 +47,7 @@ pub(crate) enum SwarmError {
 
 impl SwarmError {
     /// Convert into the MCP tool error surface with the appropriate kind.
-    pub(crate) fn into_tool_error(self) -> McpToolError {
+    pub fn into_tool_error(self) -> McpToolError {
         match self {
             Self::Auth(m) => McpToolError::permission_denied(m),
             Self::PaymentRequired(m) => McpToolError::permission_denied(m),

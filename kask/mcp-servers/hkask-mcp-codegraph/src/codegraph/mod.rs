@@ -10,7 +10,7 @@
 //!
 //! Design principles:
 //! - Native Rust, zero external binaries
-//! - Integrates with hKask Regulation, OCAP, condenser, and MCP framework
+//! - Integrates with hKask Regulation, condenser, and MCP framework
 //! - Recursive CTE traversal (SQL, not in-memory) for persistence and concurrency
 
 // sqlite-vec provides the vec0 virtual table extension at runtime;

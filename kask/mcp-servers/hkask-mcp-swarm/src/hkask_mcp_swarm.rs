@@ -64,17 +64,26 @@ mod local_runtime;
 mod request_types;
 mod sanitize;
 mod spend_gate;
+
+// ── Public local-swarm surface (reused by other kask MCP servers) ──────────
+//
+// The local-swarm runtime, agent registry, card types, and error type are
+// reused by `hkask-mcp-kata-kanban`'s `kanban_task_spawn` to delegate tasks to
+// local agents in-process. Only the local-mode execution surface is exposed;
+// the ABW client, consent store, and spend gate stay crate-private.
+pub use crate::error::SwarmError;
+pub use crate::local_registry::{
+    LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
+};
+pub use crate::local_runtime::{LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime};
+
 use crate::abw_client::SwarmClient;
 use crate::abw_util::{
     effective_hire_cost, make_swarm_slug, url_encode_segment, validate_agent_name,
 };
 use crate::config::SwarmConfig;
 use crate::consent::ConsentStore;
-use crate::error::SwarmError;
-use crate::local_registry::{
-    LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
-};
-use crate::local_runtime::{LazyLocalSwarmRuntime, MAX_FANOUT};
+use crate::local_runtime::MAX_FANOUT;
 use crate::request_types::*;
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_response, sanitize_abw_response_plain,

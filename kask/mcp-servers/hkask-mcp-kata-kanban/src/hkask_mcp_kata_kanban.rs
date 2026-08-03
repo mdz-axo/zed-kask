@@ -27,6 +27,9 @@ pub use kata::{
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, ServerContext, execute_tool_semantic};
+use hkask_mcp_swarm::{
+    LazyLocalSwarmRuntime, LocalAgentCapabilities, LocalAgentCard, LocalAgentRegistry,
+};
 use hkask_storage::HMemStore;
 use pko::kanban_type_to_pko;
 use rmcp::handler::server::wrapper::Parameters;
@@ -39,8 +42,49 @@ use types::*;
 hkask_mcp_server::mcp_server!(
     pub struct KanbanServer {
         pub service: KanbanService,
+        /// Local swarm runtime — kanban_task_spawn delegates task execution to a
+        /// local agent (ledger-funded inference + guard + skill cascade). Shared
+        /// ledger path with hkask-mcp-swarm so operator funding is reusable.
+        pub local_runtime: Arc<LazyLocalSwarmRuntime>,
+        /// Local agent registry — reusable expert agents (cards on disk). When a
+        /// spawn's `delegated_skills` are covered by an existing card, it is
+        /// reused; otherwise a task-specific agent is built in-memory.
+        pub local_registry: Arc<LocalAgentRegistry>,
     }
 );
+
+/// Build a task-specific local agent card for `kanban_task_spawn` when no
+/// reusable expert agent covers the requested skills. The agent runs in-memory
+/// (not persisted to the registry) with the delegated skills as its declared
+/// skill set — `AgentExecutor::run` executes each skill cascade against the
+/// task before the LLM call. An empty `model` lets the inference port pick its
+/// default; an empty `mcp_tools` set means the agent runs skill + LLM only.
+fn build_task_agent_card(
+    task_id: hkask_types::TaskId,
+    title: &str,
+    skills: &[String],
+) -> LocalAgentCard {
+    LocalAgentCard {
+        agent_id: format!("kanban-task-{task_id}"),
+        agent_type: "task".to_string(),
+        description: title.to_string(),
+        accepts: vec!["task".to_string()],
+        produces: vec!["task_result".to_string()],
+        dependencies: Default::default(),
+        capabilities: LocalAgentCapabilities {
+            min_provider_class: "local".to_string(),
+            system_prompt: Some(
+                "You are a task-execution agent spawned by the kata-kanban. \
+                 Complete the assigned task using your declared skills. \
+                 Produce a concise result the spawning agent can record."
+                    .to_string(),
+            ),
+            skills: skills.to_vec(),
+            ..Default::default()
+        },
+        cloud_id: None,
+    }
+}
 
 #[tool_router(server_handler)]
 impl KanbanServer {
@@ -784,6 +828,7 @@ impl KanbanServer {
                         .task_add_rjoules(tid, r, self.webid)
                         .map_err(map_kanban_error)?;
                 }
+                let skills_for_agent = delegated_skills.clone();
                 let spec = crate::SpawnSpec::new(tid)
                     .with_level(&delegation_level)
                     .with_skills(delegated_skills);
@@ -792,15 +837,101 @@ impl KanbanServer {
                 } else {
                     spec
                 };
-                match self.service.spawn_task(tid, spec, self.webid) {
-                    Ok(message) => Ok(serde_json::to_value(TaskSpawnResponse {
-                        task_id: tid.to_string(),
-                        message,
-                        pko: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
+                // Record the spawn configuration on the task (config comment).
+                self.service
+                    .spawn_task(tid, spec, self.webid)
+                    .map_err(map_kanban_error)?;
+
+                // Resolve the task text for delegation (title + description).
+                let task = self
+                    .service
+                    .task_get(tid)
+                    .map_err(map_kanban_error)?
+                    .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
+                let task_text = match task.description.as_deref() {
+                    Some(desc) if !desc.trim().is_empty() => {
+                        format!("{}: {}", task.title, desc)
+                    }
+                    _ => task.title.clone(),
+                };
+
+                // Resolve the agent: reuse an expert agent whose declared skills
+                // cover the requested set; otherwise build a task-specific agent
+                // card in-memory ("create agents w/ skills for tasks").
+                let agent = self
+                    .local_registry
+                    .list()
+                    .into_iter()
+                    .find(|card| {
+                        !skills_for_agent.is_empty()
+                            && skills_for_agent.iter().all(|s| {
+                                card.capabilities.skills.iter().any(|cs| cs == s)
+                            })
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
-                    Err(e) => Err(map_kanban_error(e)),
+                    .unwrap_or_else(|| build_task_agent_card(tid, &task.title, &skills_for_agent));
+
+                // Credits: map the gas budget to local credits (default 10),
+                // capped at the per-dispatch ceiling. The ceiling mirrors
+                // hkask-mcp-swarm (HKASK_ABW_MAX_CREDITS, default 50) — keep in
+                // sync with SwarmConfig::default().max_credits_per_dispatch.
+                let ceiling = std::env::var("HKASK_ABW_MAX_CREDITS")
+                    .ok()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(50);
+                let credits_authorized = gas_budget
+                    .map(|g| (g.min(u32::MAX as u64) as u32).min(ceiling))
+                    .unwrap_or(10)
+                    .min(ceiling);
+
+                let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+                    McpToolError::unavailable(format!(
+                        "local swarm runtime initialization failed: {e}"
+                    ))
+                })?;
+                let result = runtime
+                    .delegate(&agent, &task_text, credits_authorized, ceiling)
+                    .await
+                    .map_err(hkask_mcp_swarm::SwarmError::into_tool_error)?;
+
+                // Record the delegation result on the task (comment + status).
+                let result_note = format!(
+                    "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
+                     cost={cost} credits, balance={balance}, latency={latency_ms}ms\n\
+                     Response:\n{response}",
+                    agent_id = result.agent_id,
+                    model = result.model,
+                    tokens = result.tokens_used,
+                    cost = result.cost,
+                    balance = result.balance,
+                    latency_ms = result.latency_ms,
+                    response = result.response,
+                );
+                self.service
+                    .task_comment(tid, self.webid, &result_note)
+                    .map_err(map_kanban_error)?;
+                // Advance the task to InProgress (spawn executed the work). A
+                // failed transition (WIP limit, invalid from-state) must not
+                // fail the spawn — the delegation result is already recorded.
+                if let Err(error) =
+                    self.service.task_move(tid, TaskStatus::InProgress, self.webid)
+                {
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        task_id = %tid,
+                        %error,
+                        "could not advance task to InProgress after spawn — delegation result still recorded"
+                    );
                 }
+
+                Ok(serde_json::to_value(TaskSpawnResponse {
+                    task_id: tid.to_string(),
+                    message: format!(
+                        "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
+                        result.agent_id, task.title, result.cost, result.tokens_used
+                    ),
+                    pko: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string()))?)
             },
         )
         .await
@@ -967,7 +1098,51 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 let store = HMemStore::from_driver(driver)
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
                 let service = KanbanService::new(store);
-                Ok(KanbanServer::new(ctx.webid, service))
+
+                // Local swarm delegation surface (kanban_task_spawn). The ledger
+                // path resolution mirrors hkask-mcp-swarm's `run()` exactly so
+                // both processes share the same ledger file — operator funding
+                // via `swarm_fund_local` is reusable here. Keep these in sync.
+                let ledger_path = std::env::var("HKASK_SWARM_LEDGER_PATH")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        dirs::data_dir()
+                            .unwrap_or_else(|| std::path::Path::new(".").to_path_buf())
+                            .join("hkask")
+                            .join("swarm_ledger.db")
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                let local_runtime =
+                    Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+
+                // Local agent registry — same dir resolution as hkask-mcp-swarm
+                // (relative paths resolve under the hKask data dir, not CWD).
+                let local_agents_dir = std::env::var("HKASK_LOCAL_AGENTS_DIR")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "agents/local/curated".to_string());
+                let local_agents_dir =
+                    if std::path::Path::new(&local_agents_dir).is_absolute() {
+                        local_agents_dir
+                    } else {
+                        hkask_types::agent_paths::resolve_under_data_dir(
+                            std::path::Path::new(&local_agents_dir),
+                        )
+                        .to_string_lossy()
+                        .to_string()
+                    };
+                let local_registry = Arc::new(LocalAgentRegistry::new(local_agents_dir));
+                if let Err(error) = local_registry.load() {
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        %error,
+                        "failed to load local agent cards — kanban_task_spawn will fall back to creating task-specific agents"
+                    );
+                }
+
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),

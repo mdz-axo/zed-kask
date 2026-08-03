@@ -14,6 +14,9 @@ hkask-services-core = { path = "../../crates/hkask-services-core" }
 hkask-regulation = { path = "../../crates/hkask-regulation" }
 hkask-templates = { path = "../../crates/hkask-templates" }
 hkask-inference = { path = "../../crates/hkask-inference" }
+# Local swarm delegation — kanban_task_spawn delegates to local agents via the
+# shared local-swarm runtime (ledger + inference + guard + agent executor).
+hkask-mcp-swarm = { path = "../hkask-mcp-swarm" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 
 
@@ -28,6 +31,7 @@ tracing.workspace = true
 anyhow.workspace = true
 minijinja.workspace = true
 schemars.workspace = true
+dirs = { workspace = true }
 
 
 

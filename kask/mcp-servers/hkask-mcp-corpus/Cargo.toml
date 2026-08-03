@@ -37,7 +37,6 @@ hkask-guard = { path = "../../crates/hkask-guard" }
 
 # Persona/style services (folded in from hkask-services-{compose,corpus,inference,runtime})
 hkask-keystore = { path = "../../crates/hkask-keystore" }
-hkask-capability = { path = "../../crates/hkask-capability" }
 hkask-ledger = { path = "../../crates/hkask-ledger" }
 
 # Protocol + utilities

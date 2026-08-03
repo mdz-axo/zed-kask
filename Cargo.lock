@@ -9509,7 +9509,6 @@ dependencies = [
  "docx-rs",
  "dotenvy",
  "hkask-bridge-dublincore",
- "hkask-capability",
  "hkask-guard",
  "hkask-inference",
  "hkask-keystore",
@@ -9565,8 +9564,10 @@ version = "0.31.1"
 dependencies = [
  "anyhow",
  "chrono",
+ "dirs 6.0.0",
  "hkask-inference",
  "hkask-mcp-server",
+ "hkask-mcp-swarm",
  "hkask-regulation",
  "hkask-services-core",
  "hkask-storage",

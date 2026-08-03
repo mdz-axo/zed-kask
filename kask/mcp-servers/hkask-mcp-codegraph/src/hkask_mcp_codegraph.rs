@@ -59,9 +59,9 @@ impl CodeGraphServer {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut pipeline = self.pipeline_guard()?;
 
-        // OCAP-governed file access (#5): future integration point.
-        // When the daemon provides capability verification, filter paths here
-        // via capability tokens before passing to index_directory.
+        // File-access scoping (#5): future integration point.
+        // When per-agent path scoping is wired, filter paths here before
+        // passing to index_directory.
         // For now: index entire workspace (standalone mode).
         let results = pipeline
             .index_directory(&cwd)

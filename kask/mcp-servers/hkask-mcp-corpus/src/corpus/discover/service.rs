@@ -5,10 +5,8 @@ use super::search::{mcp_search, search_youtube_transcripts};
 use super::types::DiscoveredWork;
 use super::utils::{extract_search_terms, slugify};
 use crate::corpus::embed::EntityConfig;
-use hkask_capability::DelegationToken;
-use hkask_capability::ToolPort;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
-use hkask_types::InferencePort;
+use hkask_types::{InferencePort, ToolDispatchPort};
 
 use super::cache::download_and_cache;
 use super::config::{augment_corpus_yaml, generate_corpus_yaml};
@@ -20,17 +18,17 @@ impl DiscoveryService {
     /// Run the full discovery pipeline and generate a corpus.yaml.
     ///
     /// `mcp` is the MCP dispatch port — must be connected to a running
-    /// `hkask-mcp-research` server with configured providers.
-    /// `token` is a delegation token for OCAP-gated tool invocation.
+    /// `hkask-mcp-research` server with configured providers. Tool dispatch is
+    /// allowlist-gated at the zed-side dispatch boundary (no OCAP token — the
+    /// `allowed` set is the enforcement surface).
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  req.author_name must be non-empty; mcp must be connected; token must be valid
+    /// pre:  req.author_name must be non-empty; mcp must be connected
     /// post: returns DiscoverResult with discovered works, sources, and academic works; output and cache directories created; Err on MCP or I/O failure
     #[must_use = "result must be used"]
     pub async fn discover(
         req: &DiscoverRequest,
-        mcp: &dyn ToolPort,
-        token: &DelegationToken,
+        mcp: &dyn ToolDispatchPort,
         inference_port: &dyn InferencePort,
     ) -> Result<DiscoverResult, ServiceError> {
         // P9: Regulation span
@@ -93,7 +91,7 @@ impl DiscoveryService {
         };
         tracing::info!(target: "hkask.discover", query = %academic_query, has_bio = req.biographical_details.is_some(), "Academic search query");
 
-        match mcp_search(mcp, token, &academic_query, req.max_works, "web").await {
+        match mcp_search(mcp, &academic_query, req.max_works, "web").await {
             Ok(results) => {
                 let (academic, other): (Vec<_>, Vec<_>) = results.into_iter().partition(|w| {
                     let s = w.source.to_lowercase();
@@ -139,7 +137,7 @@ impl DiscoveryService {
         // ── Phase 2: Web search via MCP ──────────────────────────────────
         let mut web_candidates: Vec<DiscoveredWork> = Vec::new();
         if req.include_web {
-            match mcp_search(mcp, token, &search_terms, 5, "web").await {
+            match mcp_search(mcp, &search_terms, 5, "web").await {
                 Ok(results) => {
                     let web_results: Vec<DiscoveredWork> = results
                         .into_iter()

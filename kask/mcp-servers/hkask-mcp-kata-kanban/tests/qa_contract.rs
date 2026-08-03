@@ -20,9 +20,11 @@
 use hkask_mcp_kata_kanban::KanbanServer;
 use hkask_mcp_kata_kanban::KanbanService;
 use hkask_mcp_kata_kanban::types::*;
+use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_types::WebID;
+use std::sync::Arc;
 
 // ── Test harness ────────────────────────────────────────────────────────────
 
@@ -32,7 +34,17 @@ fn make_server() -> KanbanServer {
     let driver = SqliteDriver::in_memory_driver();
     let store = HMemStore::from_driver(driver).expect("hmem store init");
     let service = KanbanService::new(store);
-    KanbanServer::new(WebID::new(), service)
+    // Local swarm delegation surface. The ledger path is process-unique so
+    // parallel test processes don't contend on the same SQLite file; only the
+    // kanban_task_spawn happy path opens it (via get_or_init). The registry
+    // points at a nonexistent dir so spawns build task-specific agents.
+    let ledger_path = std::env::temp_dir()
+        .join(format!("kata-kanban-spawn-{}.db", std::process::id()))
+        .to_string_lossy()
+        .to_string();
+    let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+    let local_registry = Arc::new(LocalAgentRegistry::new("/nonexistent"));
+    KanbanServer::new(WebID::new(), service, local_runtime, local_registry)
 }
 
 /// Parse a tool's JSON string response into a serde_json::Value.
@@ -902,7 +914,13 @@ mod task_spawn {
 
     #[tokio::test]
     async fn happy() {
-        // REQ: happy
+        // The spawn now delegates to the local swarm runtime. In the unit-test
+        // environment the ledger is unfunded (no swarm_fund_local) and no
+        // inference socket is configured, so the delegate gate fires
+        // `permission_denied` (balance 0 < credits_authorized). This proves the
+        // spawn reaches the real delegation path, not the old static comment.
+        // The full happy path (funded ledger + live inference) is an
+        // integration test, not a unit test.
         let server = make_server();
         let bid = make_board(&server, "B").await;
         let tid = make_task(&server, &bid, "T").await;
@@ -917,8 +935,7 @@ mod task_spawn {
         let out = server
             .kanban_task_spawn(rmcp::handler::server::wrapper::Parameters(req))
             .await;
-        let v = parse(&out);
-        assert!(v.get("message").is_some(), "missing message: {out}");
+        assert_error_kind(&out, "permission_denied");
     }
 
     #[tokio::test]

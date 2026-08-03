@@ -36,7 +36,7 @@ use crate::sanitize::strip_leading_mentions;
 /// `INFERENCE_SOCKET_PATH` being set (a `OnceLock`, not a settings change) —
 /// the socket-becoming-available case is covered by the launch ordering, not
 /// by the observer.
-pub(crate) struct LazyLocalSwarmRuntime {
+pub struct LazyLocalSwarmRuntime {
     ledger_path: String,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
@@ -44,7 +44,7 @@ pub(crate) struct LazyLocalSwarmRuntime {
 impl LazyLocalSwarmRuntime {
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
-    pub(crate) fn lazy(ledger_path: String) -> Self {
+    pub fn lazy(ledger_path: String) -> Self {
         Self {
             ledger_path,
             inner: tokio::sync::OnceCell::new(),
@@ -54,7 +54,7 @@ impl LazyLocalSwarmRuntime {
     /// Get the runtime, initializing it on first call. Returns `Err` if
     /// initialization fails (ledger open, inference port resolution, guard
     /// init). Subsequent calls return the cached runtime.
-    pub(crate) async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, String> {
+    pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, String> {
         self.inner
             .get_or_try_init(|| async { LocalSwarmRuntime::new(&self.ledger_path).await })
             .await
@@ -70,7 +70,7 @@ impl LazyLocalSwarmRuntime {
 /// runtime debits the ledger, *then* calls `executor.scan_output` on the raw
 /// result — so a guard-quarantined result still costs credits (the compute was
 /// already spent).
-pub(crate) struct LocalSwarmRuntime {
+pub struct LocalSwarmRuntime {
     ledger: std::sync::Arc<hkask_ledger::Ledger>,
     /// The agent-run policy (inference + tool dispatch + skill exec + guard).
     /// Constructed once from the resolved IPC-bridge ports; the runtime calls
@@ -171,7 +171,7 @@ impl LocalSwarmRuntime {
     /// The operator's current ledger balance. Returns `None` on query error
     /// (the `.rules` trap — never fabricate a zero balance on a failed
     /// measurement).
-    pub(crate) fn balance(&self) -> Option<i64> {
+    pub fn balance(&self) -> Option<i64> {
         self.ledger
             .balance(&self.operator_account, Some(&self.asset))
             .ok()
@@ -328,7 +328,7 @@ impl LocalSwarmRuntime {
     /// redacted (not fatal) on violation: a false-positive pattern in
     /// legitimate tool data must not abort the delegation, but the payload
     /// must not reach the model.
-    pub(crate) async fn delegate(
+    pub async fn delegate(
         &self,
         agent: &LocalAgentCard,
         task: &str,
@@ -421,26 +421,26 @@ pub(crate) const MAX_FANOUT: usize = 10;
 
 /// Result of a local delegation.
 #[derive(Debug, Clone, serde::Serialize)]
-pub(crate) struct LocalDelegateResult {
-    pub(crate) agent_id: String,
-    pub(crate) response: String,
-    pub(crate) model: String,
-    pub(crate) tokens_used: i64,
-    pub(crate) cost: i64,
-    pub(crate) balance: i64,
+pub struct LocalDelegateResult {
+    pub agent_id: String,
+    pub response: String,
+    pub model: String,
+    pub tokens_used: i64,
+    pub cost: i64,
+    pub balance: i64,
     /// End-to-end delegation latency in milliseconds (Cybernetic Swarm Plan
     /// component C4 — HyEvo `T_q` measurement). Captured from the start of
     /// `delegate` to just before the result is returned. Pure measurement — no
     /// gate; enables future cost-aware decisions without committing to
     /// evolutionary search.
-    pub(crate) latency_ms: u64,
+    pub latency_ms: u64,
     /// Summary of tool calls made during the delegation (qualified
     /// `server/tool` name + ok/error). Empty when the agent declares no
     /// `mcp_tools` or the model made no calls.
-    pub(crate) tool_calls: Vec<serde_json::Value>,
+    pub tool_calls: Vec<serde_json::Value>,
     /// Summary of skill cascades executed before the LLM call (skill id +
     /// ok/error). Empty when the agent declares no `skills`.
-    pub(crate) executed_skills: Vec<serde_json::Value>,
+    pub executed_skills: Vec<serde_json::Value>,
 }
 
 #[cfg(test)]
