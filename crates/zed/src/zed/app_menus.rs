@@ -2,7 +2,7 @@ use collab_ui::collab_panel;
 use gpui::{App, Menu, MenuItem, OsAction};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
-use zed_actions::{Quit, assistant, debug_panel, dev, git_panel, kask_panel, project_panel};
+use zed_actions::{Quit, assistant, debug_panel, dev, git_panel, project_panel};
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     let mut view_items = vec![
@@ -45,7 +45,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         MenuItem::action("Debugger Panel", debug_panel::ToggleFocus),
         MenuItem::action("Agent Panel", assistant::ToggleFocus),
         MenuItem::action("Git Panel", git_panel::ToggleFocus),
-        MenuItem::action("Kask Panel", kask_panel::Toggle),
         MenuItem::action("Kask Extensions", kask_extensions_ui::Toggle),
         MenuItem::action("Agent Swarm", swarm_panel::Toggle),
         MenuItem::separator(),

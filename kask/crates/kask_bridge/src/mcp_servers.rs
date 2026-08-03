@@ -2,7 +2,7 @@
 //!
 //! Single source of truth for the server ID → binary name → description mapping.
 //! Previously duplicated in three places (`zed/src/main.rs`, `settings_ui/src/pages/kask_page.rs`,
-//! `kask_panel/src/kask_panel.rs`) with drift between them. This module consolidates
+//! the now-removed `kask_panel` crate) with drift between them. This module consolidates
 //! the list so all consumers reference the same data.
 //!
 //! The server IDs here match the keys used in `KaskMcpSettingsContent::overrides`
@@ -308,7 +308,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
 ];
 
 /// Just the server IDs, as a static slice of `&str`.
-/// Convenience for consumers that only need the ID list (e.g. `kask_panel`).
+/// Convenience for consumers that only need the ID list (e.g. `swarm_panel`).
 pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
     "codegraph",
     "companies",

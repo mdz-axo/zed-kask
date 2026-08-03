@@ -1,7 +1,6 @@
 //! Status bar button that toggles the Kask Extensions page.
 //!
-//! Mirrors `kask_panel::panel_button::KaskPanelButton` — a minimal
-//! `StatusItemView` that dispatches `Toggle` on click. The icon is
+//! A minimal `StatusItemView` that dispatches `Toggle` on click. The icon is
 //! `IconName::Share` (visual language for sharing/trading skills in the
 //! marketplace), distinct from `IconName::Kask` used by the kask panel.
 

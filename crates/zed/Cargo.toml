@@ -75,7 +75,7 @@ hkask-types = { path = "../../kask/crates/hkask-types" }
 hkask-regulation = { path = "../../kask/crates/hkask-regulation" }
 hkask-email = { path = "../../kask/crates/hkask-email" }
 zed_credentials_provider.workspace = true
-kask_panel.workspace = true
+
 kask_extensions_ui.workspace = true
 swarm_panel.workspace = true
 agent_settings.workspace = true

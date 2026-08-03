@@ -24,8 +24,10 @@
 //! restart starts a fresh composition conversation.
 
 mod panel_button;
+mod tool_invoker;
 
 pub use panel_button::SwarmPanelButton;
+pub use tool_invoker::{ToolInvoker, set_tool_invoker, shared_tool_invoker};
 
 use std::ops::Range;
 use std::time::Duration;
@@ -861,7 +863,7 @@ impl SwarmPanel {
 
     /// Fetch agents and swarms via the governed MCP tool path.
     fn fetch_all(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.agents_error = Some(
                 "Tool invoker not wired — the swarm MCP server is unavailable. \
                  Ensure kask MCP servers are enabled (kask.mcp.load_default)."
@@ -1145,7 +1147,7 @@ impl SwarmPanel {
     /// sets `cloud_id` to mark it as synced. On success, re-fetches the agent
     /// list so the source badge updates to `synced`.
     fn clone_to_local(&mut self, agent_name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1188,7 +1190,7 @@ impl SwarmPanel {
     /// success, re-fetches the agent list so the source badge updates to
     /// `synced`.
     fn push_to_cloud(&mut self, agent_name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1229,7 +1231,7 @@ impl SwarmPanel {
     /// roster response is ABW's raw (server-sanitized) payload; parse
     /// defensively across the plausible envelope shapes.
     fn open_swarm_detail(&mut self, workspace_id: String, name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1288,7 +1290,7 @@ impl SwarmPanel {
     /// Fetch and show a swarm's recent run status (item 3):
     /// `swarm_run_status(workspace_id)`. Rendered as a dismissible strip.
     fn show_run_status(&mut self, workspace_id: String, name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1350,7 +1352,7 @@ impl SwarmPanel {
     /// card's ABW agent is untouched. On success, re-fetches so the list and
     /// source badges update.
     fn remove_local_agent(&mut self, agent_name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1392,7 +1394,7 @@ impl SwarmPanel {
     /// agent from the roster; no credit cost; the agent itself is not
     /// deleted). On success, re-opens the detail so the fired row disappears.
     fn fire_agent(&mut self, workspace_id: String, agent_id: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1439,7 +1441,7 @@ impl SwarmPanel {
     /// This is the entry point to the cost/consent flow: read-only, spends
     /// nothing, and populates `pending_hire` so the banner renders.
     fn begin_hire(&mut self, agent_name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1550,7 +1552,7 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1659,7 +1661,7 @@ impl SwarmPanel {
     /// state. When `can_publish` is false the banner shows the failing checks
     /// and a reason input for the admin force-publish path.
     fn begin_publish(&mut self, agent_name: String, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1751,7 +1753,7 @@ impl SwarmPanel {
         reason: String,
         cx: &mut Context<Self>,
     ) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1915,7 +1917,7 @@ impl SwarmPanel {
 
     /// Create a new agent from the authoring form.
     fn create_agent(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.author.status = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -1971,7 +1973,7 @@ impl SwarmPanel {
 
     /// Create a new swarm from the compose form, hiring any listed agents.
     fn create_swarm(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.compose.status = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
@@ -2143,7 +2145,7 @@ impl SwarmPanel {
     /// Continues the active session across messages so the operator can refine
     /// the team iteratively, then surfaces any recommended agents for pre-fill.
     fn ask_xaman(&mut self, cx: &mut Context<Self>) {
-        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+        let Some(invoker) = crate::shared_tool_invoker() else {
             self.compose.xaman_response = Some("Tool invoker not wired.".into());
             cx.notify();
             return;

@@ -19,7 +19,7 @@ fs.workspace = true
 gpui.workspace = true
 hkask-types.workspace = true
 kask_bridge.workspace = true
-kask_panel.workspace = true
+
 log.workspace = true
 marketplace_ui_common.workspace = true
 project.workspace = true

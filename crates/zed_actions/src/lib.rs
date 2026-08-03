@@ -804,25 +804,6 @@ pub mod debug_panel {
     );
 }
 
-pub mod kask_panel {
-    use gpui::actions;
-    actions!(
-        kask_panel,
-        [
-            /// Toggles the kask panel.
-            Toggle,
-            /// Toggles focus on the kask panel.
-            ToggleFocus,
-            /// Opens the kanban board view in the center pane.
-            ToggleKanbanBoard,
-            /// Opens the portfolio dashboard view in the center pane.
-            TogglePortfolioDashboard,
-            /// Opens the scenarios planning view in the center pane.
-            ToggleScenarios
-        ]
-    );
-}
-
 actions!(
     debugger,
     [

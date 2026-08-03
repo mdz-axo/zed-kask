@@ -220,7 +220,7 @@ static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 /// gas = 10k calls before exhaustion; the regulation tick (10s) replenishes
 /// 10% (10k gas = 1k calls) per tick, so normal panel/curator activity never
 /// drains it while a runaway delegated loop is still bounded.
-const KASK_PANEL_GAS_BUDGET_CAP: u64 = 100_000;
+const SWARM_PANEL_GAS_BUDGET_CAP: u64 = 100_000;
 
 /// Install a panic hook that logs the panic (location + payload + backtrace)
 /// via `log::error!` so it appears in `Zed.log`, then chains to the default
@@ -707,20 +707,20 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
-        // Seed a gas budget for the `kask-panel` persona (see
-        // `KASK_PANEL_GAS_BUDGET_CAP` for the rationale — fail-closed gate,
+        // Seed a gas budget for the `swarm-panel` persona (see
+        // `SWARM_PANEL_GAS_BUDGET_CAP` for the rationale — fail-closed gate,
         // no other production budget-creation path). The McpRuntime's
         // governance gate would otherwise refuse every governed tool call
         // with `EnergyBudgetExceeded`, which includes the swarm IPC
         // `tool_invoke` dispatch the local delegate loop depends on.
         {
             use hkask_regulation::{GasBudget, GasCost};
-            let panel_webid = hkask_types::WebID::from_persona(b"kask-panel");
-            let budget = GasBudget::new(GasCost(KASK_PANEL_GAS_BUDGET_CAP));
+            let panel_webid = hkask_types::WebID::from_persona(b"swarm-panel");
+            let budget = GasBudget::new(GasCost(SWARM_PANEL_GAS_BUDGET_CAP));
             cx.foreground_executor()
                 .block_on(cybernetics_loop_inner.register_gas_budget(panel_webid, budget));
             log::info!(
-                "seeded kask-panel gas budget (cap {KASK_PANEL_GAS_BUDGET_CAP} gas)"
+                "seeded swarm-panel gas budget (cap {SWARM_PANEL_GAS_BUDGET_CAP} gas)"
             );
         }
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -1655,11 +1655,10 @@ fn main() {
                         tool_port: tool_port_for_deferred.clone(),
                         executor: cx.background_executor().clone(),
                     });
-                    kask_panel::set_tool_invoker(Some(panel_tool_invoker));
+                    swarm_panel::set_tool_invoker(Some(panel_tool_invoker));
                     log::info!(
-                        "Kask panel tool invoker wired \
-                         (curator turns now route through NativeAgent — \
-                         the ConversationView handles streaming + tool dispatch)"
+                        "Swarm panel tool invoker wired \
+                         (swarm panel ABW calls route through the governed MCP runtime)"
                     );
 
                     // ── Condenser wiring: unconditional ───────────────────────
@@ -2097,12 +2096,11 @@ fn main() {
             false,
             cx,
         );
-        kask_panel::init(cx);
         kask_extensions_ui::init(cx);
         swarm_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
-        // D1/D3/D4/D10/D12: Model-dependent kask wiring now runs in the
+        // D1/D3/D4/D12: Model-dependent kask wiring now runs in the
         // deferred task (after the Zed user resolves and the
         // LanguageModelRegistry is populated). See the deferred task above.
         // Running it here left OnceLock-based hooks unwired when no model was
@@ -2687,20 +2685,14 @@ fn sync_kask_mcp_runtime_servers(
     .detach();
 }
 
-// ── D10: Kask panel adapters ───────────────────────────────────────────────
+// ── Swarm panel tool-invoker adapter ───────────────────────────────────────
 //
-// This adapter implements kask_panel's ToolInvoker trait by delegating to the
-// McpRuntime (which implements ToolPort directly). It's defined here (in the
-// zed binary crate) because
-// kask_bridge can't depend on kask_panel (circular dependency), and the
-// composition root is the natural place for adapter construction.
-//
-// The chat panel itself no longer uses ToolInvoker — it routes through
-// NativeAgent's ToolRouter via the ConversationView. This adapter remains for
-// the per-server visualization views (KanbanBoardView, PortfolioDashboardView,
-// ScenariosView), which fetch data via direct MCP tool calls.
+// This adapter implements swarm_panel's ToolInvoker trait by delegating to
+// the McpRuntime (which implements ToolPort directly). It's defined here (in
+// the zed binary crate) because the composition root is the natural place for
+// adapter construction.
 
-/// Adapter implementing `kask_panel::ToolInvoker` via the `McpRuntime`.
+/// Adapter implementing `swarm_panel::ToolInvoker` via the `McpRuntime`.
 struct PanelToolInvoker {
     tool_port: std::sync::Arc<hkask_mcp::McpRuntime>,
     executor: gpui::BackgroundExecutor,
@@ -2736,7 +2728,7 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
     }
 }
 
-impl kask_panel::ToolInvoker for PanelToolInvoker {
+impl swarm_panel::ToolInvoker for PanelToolInvoker {
     fn invoke_tool(
         &self,
         server: &str,
@@ -2748,7 +2740,7 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
         };
         use hkask_types::WebID;
 
-        let webid = WebID::from_persona(b"kask-panel");
+        let webid = WebID::from_persona(b"swarm-panel");
         let token = panel_default_token(
             DelegationResource::Tool,
             tool.to_string(),
@@ -2766,29 +2758,6 @@ impl kask_panel::ToolInvoker for PanelToolInvoker {
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&result).unwrap_or_else(|_| result.to_string()))
-        })
-    }
-
-    fn list_tools(
-        &self,
-        server: &str,
-    ) -> gpui::Task<Result<Vec<kask_panel::ToolDescriptor>, String>> {
-        let runtime = self.tool_port.clone();
-        let server = server.to_string();
-        self.executor.spawn(async move {
-            let servers = runtime.list_servers().await;
-            let target = servers
-                .into_iter()
-                .find(|s| s.id == server)
-                .ok_or_else(|| format!("server '{server}' not registered"))?;
-            Ok(target
-                .tools
-                .into_iter()
-                .map(|tool| kask_panel::ToolDescriptor {
-                    name: tool.name,
-                    description: tool.description,
-                })
-                .collect())
         })
     }
 }
