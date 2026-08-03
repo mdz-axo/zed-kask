@@ -41,25 +41,16 @@ const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
     "image_gen_model",
 ];
 
-/// Trust provenance of a resolved manifest. Determines whether the manifest
-/// YAML came from the build-time embedded registry (trusted by construction)
-/// or the filesystem (untrusted — could be user-authored, marketplace-
-/// installed, or locally dropped).
+/// Trust provenance of a resolved manifest. Re-exported from `hkask-types`
+/// so the bridge and executor share the same type. See `hkask_types::Provenance`
+/// for the full documentation.
 ///
 /// The executor logs this so an operator can distinguish "built-in skill
-/// executed" from "filesystem skill executed" in the logs. Gating high-risk
-/// actions (flowdef sub-cascade, compute) on provenance is a future-wiring
-/// target; currently the executor logs but does not restrict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ManifestProvenance {
-    /// Compiled into the binary via `build.rs` `include_str!`. Trusted by
-    /// construction — reviewed at build time.
-    Embedded,
-    /// Read from the filesystem at runtime. Untrusted — could be user-authored,
-    /// marketplace-installed (Ed25519-verified at download but not at
-    /// execution), or locally dropped.
-    Filesystem,
-}
+/// executed" from "filesystem skill executed" in the logs, and emits
+/// `tracing::warn!` when high-risk actions (`flowdef`, `compute`) execute from
+/// filesystem-provenance manifests. Blocking these actions on provenance is a
+/// future-wiring target; currently the executor warns but does not restrict.
+use hkask_types::Provenance as ManifestProvenance;
 
 /// Bridge between zed's `SkillManifestExecutor` trait and hKask's `ManifestExecutor`.
 ///
@@ -314,7 +305,8 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             self.tools.clone(),
             hkask_types::template::LLMParameters::default(),
         )
-        .with_template_base_path(self.registry_templates_dir.clone());
+        .with_template_base_path(self.registry_templates_dir.clone())
+        .with_provenance(provenance);
 
         // Spawn manifest execution on the tokio runtime. ManifestExecutor
         // uses tokio::time::timeout internally, which requires a tokio reactor.

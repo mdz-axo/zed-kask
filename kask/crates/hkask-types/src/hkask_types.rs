@@ -61,6 +61,7 @@ pub use loops::{
 pub use observable_span::ObservableSpan;
 pub use skill::SkillPolarity;
 pub use template::LLMParameters;
+pub use template::Provenance;
 pub use template_type::TemplateType;
 pub use tool_taint::ToolTaint;
 pub use transcript::{TimedWord, TranscriptBundle, TranscriptSegment};

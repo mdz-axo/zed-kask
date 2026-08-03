@@ -9327,6 +9327,7 @@ version = "0.31.1"
 dependencies = [
  "anyhow",
  "gpui",
+ "hkask-forecast",
  "log",
  "serde",
  "serde_json",

@@ -73,20 +73,10 @@ pub fn recompute_marginals(
             marginals[idx] = node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
             continue;
         }
-        let mut marginal = 0.0;
-        for assignment in 0..(1usize << n_parents) {
-            let mut assignment_prob = 1.0;
-            for (j, &parent_marginal) in parent_marginals.iter().enumerate() {
-                assignment_prob *= if (assignment >> j) & 1 == 1 {
-                    parent_marginal
-                } else {
-                    1.0 - parent_marginal
-                };
-            }
-            if let Some(&conditional) = dep.conditionals.get(assignment) {
-                marginal += conditional * assignment_prob;
-            }
-        }
+        // Delegate the joint-marginalization formula to the shared
+        // `hkask_forecast::marginalize` so this re-propagation cannot drift from
+        // `hkask-mcp-scenarios::compute_marginal_probabilities`.
+        let marginal = hkask_forecast::marginalize(&parent_marginals, &dep.conditionals);
         marginals[idx] = marginal.clamp(0.0, 1.0);
     }
     marginals

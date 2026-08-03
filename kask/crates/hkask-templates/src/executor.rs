@@ -147,6 +147,13 @@ pub struct ManifestExecutor {
     /// Maps `step_N_result` keys to their ToolTaint label.
     /// Source: Microsoft Research FIDES (arXiv:2505.23643)
     taint_labels: Arc<std::sync::Mutex<HashMap<String, ToolTaint>>>,
+    /// Trust provenance of the manifest being executed. Used to emit
+    /// `tracing::warn!` when high-risk actions (`flowdef` sub-cascades,
+    /// `compute` primitives) execute from filesystem (untrusted) manifests.
+    /// Defaults to `Embedded` (trusted by construction). Set via
+    /// `with_provenance` by the bridge when the manifest was loaded from
+    /// the filesystem.
+    provenance: hkask_types::Provenance,
 }
 
 impl ManifestExecutor {
@@ -173,7 +180,17 @@ impl ManifestExecutor {
             spotlighter: Spotlighter::new(SpotlightMode::Delimit),
             runtime_policy: None,
             taint_labels: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            provenance: hkask_types::Provenance::Embedded,
         }
+    }
+
+    /// Set the trust provenance of the manifest being executed. Used by the
+    /// bridge to indicate whether the manifest was loaded from the embedded
+    /// registry (trusted) or the filesystem (untrusted). The executor emits
+    /// `tracing::warn!` when high-risk actions execute from filesystem manifests.
+    pub fn with_provenance(mut self, provenance: hkask_types::Provenance) -> Self {
+        self.provenance = provenance;
+        self
     }
 
     /// Set the template base path for resolving template_ref values.
@@ -798,6 +815,15 @@ impl ManifestExecutor {
                         context = self.execute_populate(step, context).await?;
                     }
                     "compute" => {
+                        if self.provenance == hkask_types::Provenance::Filesystem {
+                            tracing::warn!(
+                                target: "reg.skill.provenance",
+                                action = "compute",
+                                step = step.ordinal,
+                                compute_ref = ?step.compute_ref,
+                                "High-risk action (compute) executing from filesystem-provenance manifest (untrusted)"
+                            );
+                        }
                         context = self.execute_compute(step, context).await?;
                     }
                     "execute" | "feedback" | "validate" | "retrieve" => {
@@ -882,6 +908,15 @@ impl ManifestExecutor {
                     // This is the composability/recursion primitive — skills
                     // compose into larger skills.
                     "flowdef" => {
+                        if self.provenance == hkask_types::Provenance::Filesystem {
+                            tracing::warn!(
+                                target: "reg.skill.provenance",
+                                action = "flowdef",
+                                step = step.ordinal,
+                                template_ref = ?step.template_ref,
+                                "High-risk action (flowdef sub-cascade) executing from filesystem-provenance manifest (untrusted)"
+                            );
+                        }
                         let (new_context, gas_consumed, rjoule_consumed) = self
                             .execute_flowdef(
                                 step,

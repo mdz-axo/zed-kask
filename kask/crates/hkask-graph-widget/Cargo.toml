@@ -13,6 +13,7 @@ doctest = false
 gpui.workspace = true
 theme.workspace = true
 anyhow.workspace = true
+hkask-forecast.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true

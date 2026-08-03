@@ -308,9 +308,12 @@ pub struct ErrorHandlingConfig {
     pub retry_backoff_seconds: u32,
     pub on_validation_failure: String,
     /// Policy when an OCAP capability check denies a tool invocation.
-    /// Parsed from the manifest but not yet wired into the executor — the
-    /// executor currently propagates `TemplateError::CapabilityDenied` via `?`
-    /// without consulting this field. 10 manifests declare `escalate`.
+    /// Wired into the executor: when `invoke_tool` returns
+    /// `ToolPortError::CapabilityDenied`, the executor checks this field.
+    /// `"escalate"` emits an escalation span and returns an error;
+    /// `"abort"` emits a convergence span and breaks the cascade;
+    /// any other value (including empty) propagates the raw error.
+    /// 10 manifests declare `escalate`.
     #[serde(default)]
     pub on_capability_denied: String,
 }

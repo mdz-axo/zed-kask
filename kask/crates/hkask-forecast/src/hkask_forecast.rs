@@ -113,6 +113,47 @@ pub fn bayesian_update(prior: f64, evidence_likelihood: f64, evidence_base_rate:
     (evidence_likelihood * prior / evidence_base_rate).clamp(0.01, 0.99)
 }
 
+// ── Conditional-tree marginalization ──────────────────────────────────────
+
+/// Marginalize a conditional probability table over independent parents.
+///
+/// P(E) = Σ_a P(E|a) · Π_i P(p_i)^a_i · (1 − P(p_i))^(1 − a_i)
+///
+/// where `a` ranges over the `2^n` bitmap of parent truth assignments
+/// (`n = parent_marginals.len()`), bit `j` of `a` corresponds to
+/// `parent_marginals[j]`, and `conditionals[a] = P(E | a)`. Missing
+/// `conditionals` entries contribute 0 (matching the scenarios server's
+/// `compute_marginal_probabilities`). The result is the raw marginal — callers
+/// clamp to `[0, 1]`.
+///
+/// Cost is `O(2^n)`; callers must ensure `parent_marginals.len()` is small
+/// (the scenarios server and the graph widget both guard fan-in upstream).
+/// This is the single source of truth for the joint-marginalization formula —
+/// `hkask-mcp-scenarios::superforecast::compute_marginal_probabilities` and
+/// `hkask-graph-widget::propagate::recompute_marginals` both delegate here so the
+/// math cannot drift between them.
+#[must_use = "marginal probability should be used"]
+pub fn marginalize(parent_marginals: &[f64], conditionals: &[f64]) -> f64 {
+    let n_parents = parent_marginals.len();
+    let n_assignments = 1usize << n_parents;
+    let mut marginal = 0.0;
+    for assignment in 0..n_assignments {
+        let mut assignment_prob = 1.0;
+        for (j, &parent_marginal) in parent_marginals.iter().enumerate() {
+            let bit_set = (assignment >> j) & 1 == 1;
+            assignment_prob *= if bit_set {
+                parent_marginal
+            } else {
+                1.0 - parent_marginal
+            };
+        }
+        if let Some(&conditional) = conditionals.get(assignment) {
+            marginal += conditional * assignment_prob;
+        }
+    }
+    marginal
+}
+
 // ── Brier scoring ──────────────────────────────────────────────────────────
 
 /// Brier score for a single binary forecast: (prediction - outcome)².
@@ -275,5 +316,20 @@ mod tests {
             (adjusted - 0.65).abs() < 1e-9,
             "extreme bias clamped to 0.5 influence"
         );
+    }
+
+    #[test]
+    fn marginalize_single_parent() {
+        // P(b) = P(b|¬a)·P(¬a) + P(b|a)·P(a) = 0.1·0.2 + 0.6·0.8 = 0.5
+        let m = marginalize(&[0.8], &[0.1, 0.6]);
+        assert!((m - 0.5).abs() < 1e-9, "got {m}");
+    }
+
+    #[test]
+    fn marginalize_missing_conditionals_contribute_zero() {
+        // conditionals shorter than 2^n → the missing entry contributes 0.
+        // P(b) = P(b|¬a)·P(¬a) + 0 = 0.4·0.5 = 0.2.
+        let m = marginalize(&[0.5], &[0.4]);
+        assert!((m - 0.4 * 0.5).abs() < 1e-9, "got {m}");
     }
 }

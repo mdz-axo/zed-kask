@@ -34,6 +34,7 @@ pub use media_ref::{MediaKind, MediaRef, MediaStorage, ResolvedMedia};
 pub use media_widget::MediaWidget;
 
 use gpui::{AnyElement, App, SharedString, Window};
+use gpui_component::Theme;
 
 /// The callback type registered at the D18 seam.
 ///
@@ -42,6 +43,13 @@ use gpui::{AnyElement, App, SharedString, Window};
 /// to render the media widget; otherwise returns `None` to fall through to
 /// the default code block renderer.
 pub type MediaBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
+
+/// Ensure the gpui-component theme is initialized and synced with the
+/// window appearance. This is called before rendering any gpui-component
+/// widget (Slider, Button, etc.) so the theme colors are available.
+fn ensure_theme_initialized(window: &mut Window, cx: &mut App) {
+    Theme::sync_system_appearance(Some(window), cx);
+}
 
 /// Create the media block renderer callback for the D18 seam.
 ///
@@ -53,14 +61,14 @@ pub type MediaBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<
 /// ```
 pub fn media_block_renderer() -> MediaBlockRenderer {
     Box::new(|body, window, cx| {
-        // Only intercept blocks whose body looks like a media JSON reference.
-        // The upstream code block renderer already handles the fenced language
-        // — we check the body for a JSON object with a "kind" field.
         if !body.trim_start().starts_with('{') {
             return None;
         }
         match parse_media_block_body(body) {
-            Ok(media_ref) => Some(render_media_ref(media_ref, window, cx)),
+            Ok(media_ref) => {
+                ensure_theme_initialized(window, cx);
+                Some(render_media_ref(media_ref, window, cx))
+            }
             Err(error) => {
                 log::warn!(
                     "hkask-media-widget: failed to parse media block: {error}. Body: {body}"

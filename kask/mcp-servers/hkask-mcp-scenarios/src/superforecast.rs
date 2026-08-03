@@ -79,10 +79,11 @@ pub(crate) fn compute_marginal_probabilities(
             // Root node: use own probability
             resolved.insert(id.clone(), event.probability);
         } else {
-            // Full joint marginalization under parent independence.
+            // Full joint marginalization under parent independence, delegated
+            // to the shared `hkask_forecast::marginalize` so this and the graph
+            // widget's re-propagation stay one source of truth for the formula.
             // P(E) = Sum_a P(E|a) * Product_i P(p_i)^{a_i} * (1-P(p_i))^{1-a_i}
             let dep = &event.depends_on[0];
-            let n_assignments = 1usize << dep.parent_event_ids.len();
 
             let parent_probs: Vec<f64> = dep
                 .parent_event_ids
@@ -99,18 +100,7 @@ pub(crate) fn compute_marginal_probabilities(
                 })
                 .collect();
 
-            let mut marginal = 0.0;
-            for assignment in 0..n_assignments {
-                let mut assignment_prob = 1.0;
-                for (j, &p_prob) in parent_probs.iter().enumerate() {
-                    let bit_set = (assignment >> j) & 1 == 1;
-                    assignment_prob *= if bit_set { p_prob } else { 1.0 - p_prob };
-                }
-                if let Some(&cond) = dep.conditionals.get(assignment) {
-                    marginal += cond * assignment_prob;
-                }
-            }
-
+            let marginal = hkask_forecast::marginalize(&parent_probs, &dep.conditionals);
             resolved.insert(id.clone(), marginal.clamp(0.0, 1.0));
         }
     }
