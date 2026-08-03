@@ -37,3 +37,5 @@ workspace = true
 
 
 tokio = { workspace = true, features = ["macros", "rt"] }
+proptest.workspace = true
+hkask-test-harness.workspace = true

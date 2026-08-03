@@ -24,8 +24,6 @@ use crate::codegraph::types::{Edge, Symbol};
 /// The indexing pipeline.
 pub struct IndexPipeline {
     store: GraphStore,
-    /// Timestamp of last full index operation (X6: staleness tracking).
-    last_full_index_at: std::time::Instant,
 }
 
 /// Result of indexing a single file.
@@ -41,15 +39,7 @@ pub struct FileIndexResult {
 impl IndexPipeline {
     /// Create a new pipeline backed by the given store.
     pub fn new(store: GraphStore) -> Self {
-        Self {
-            store,
-            last_full_index_at: std::time::Instant::now(),
-        }
-    }
-
-    /// Seconds since last full index (X6: staleness for Regulation monitoring).
-    pub fn staleness_seconds(&self) -> u64 {
-        self.last_full_index_at.elapsed().as_secs()
+        Self { store }
     }
 
     /// Get a reference to the underlying store.
@@ -251,22 +241,24 @@ impl IndexPipeline {
             .and_then(|(i, _)| index_to_id.get(&i).copied())
     }
 
-    /// Finalize indexing: compute PageRank, reset staleness timestamp, emit health events.
+    /// Finalize indexing: compute PageRank and emit a health event.
+    ///
+    /// (Staleness tracking was removed: the previous `staleness_seconds` field
+    /// was never read by any Regulation sense input, and this log emitted a
+    /// hardcoded `staleness_seconds = 0` that looked measured but wasn't.)
     pub fn finalize(&mut self) -> Result<()> {
-        self.last_full_index_at = std::time::Instant::now();
         // Compute PageRank (G8)
         if let Err(e) = crate::codegraph::graph::ranking::compute_pagerank(self.store.conn()) {
             tracing::warn!(target: "hkask.codegraph.pagerank_failed", error = %e);
         }
 
-        // Emit index health event (G7) + staleness (X6)
+        // Emit index health event (G7)
         let stats = self.stats()?;
         tracing::info!(
             target: "hkask.codegraph.index_health",
             total_symbols = stats.symbols,
             total_edges = stats.edges,
             files = stats.files,
-            staleness_seconds = 0,
         );
 
         Ok(())

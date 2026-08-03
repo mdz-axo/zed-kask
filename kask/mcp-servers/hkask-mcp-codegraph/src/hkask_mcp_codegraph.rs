@@ -573,3 +573,108 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     )
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codegraph::graph::store::GraphStore;
+    use crate::codegraph::types::{Symbol, SymbolKind, Visibility};
+    use hkask_mcp_server::server::CapabilityTier;
+    use hkask_types::WebID;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Mutex};
+
+    /// Drives the real `codegraph_query` MCP tool to pin its exact-name branch
+    /// (S2): a `name` set must resolve the symbol via a direct DB lookup, not by
+    /// filtering the (limit-capped) FTS5 result set. The previous filter-over-
+    /// limited-results path returned a spurious "symbol not found" when the
+    /// exact match sat outside the first `limit` FTS5 hits.
+    #[tokio::test]
+    async fn codegraph_query_exact_name_lookup() {
+        let pipeline = IndexPipeline::new(GraphStore::open_in_memory().unwrap());
+        let target = "target_fn";
+        {
+            let store = pipeline.store();
+            let fid = store.upsert_file("src/lib.rs", "h").unwrap();
+            store
+                .insert_symbols(
+                    &[Symbol {
+                        id: None,
+                        name: target.to_string(),
+                        kind: SymbolKind::Function,
+                        file: "src/lib.rs".into(),
+                        start_line: 1,
+                        end_line: 3,
+                        signature: format!("fn {target}()"),
+                        visibility: Visibility::Public,
+                        doc_comment: None,
+                        complexity: Default::default(),
+                    }],
+                    fid,
+                )
+                .unwrap();
+        }
+        let webid = WebID::new();
+        // `codegraph_query` never uses the inference port; the MediaRouter
+        // fallback is connection-free and safe in a test.
+        let inference_port = hkask_inference::resolve_inference_port().await;
+        // `indexed_once = true` makes `ensure_indexed()` a no-op so the test
+        // never walks the real cwd — the store is pre-populated above.
+        let server = CodeGraphServer::new(
+            webid,
+            CapabilityTier::detect(&webid, &std::collections::HashMap::new()),
+            Arc::new(Mutex::new(pipeline)),
+            Arc::new(AtomicBool::new(true)),
+            inference_port,
+        );
+
+        // `execute_tool` wraps the tool result under a `content` key (the MCP
+        // response envelope), so the assertions unwrap `v["content"]`.
+
+        // 1. Exact-name lookup returns the symbol directly.
+        let req = QueryRequest {
+            query: String::new(),
+            limit: 1,
+            name: Some(target.to_string()),
+        };
+        let out = server.codegraph_query(Parameters(req)).await;
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let payload = &v["content"];
+        assert_eq!(
+            payload["name"].as_str(),
+            Some(target),
+            "exact-name lookup must return the symbol: {out}"
+        );
+        assert!(
+            payload.get("error").is_none(),
+            "exact-name lookup for an existing symbol must not error: {out}"
+        );
+
+        // 2. Missing exact name returns the error envelope (never a silent null).
+        let req = QueryRequest {
+            query: String::new(),
+            limit: 1,
+            name: Some("nonexistent_symbol".to_string()),
+        };
+        let out = server.codegraph_query(Parameters(req)).await;
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(
+            v["content"].get("error").is_some(),
+            "missing exact name must return an error envelope: {out}"
+        );
+
+        // 3. The no-name path still returns a search-results array (guards that
+        //    the exact-name refactor didn't break the FTS5 query path).
+        let req = QueryRequest {
+            query: target.to_string(),
+            limit: 10,
+            name: None,
+        };
+        let out = server.codegraph_query(Parameters(req)).await;
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(
+            v["content"].is_array(),
+            "query without a name must return a search-results array: {out}"
+        );
+    }
+}

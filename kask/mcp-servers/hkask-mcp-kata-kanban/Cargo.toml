@@ -49,3 +49,5 @@ workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 serde_json.workspace = true
+proptest.workspace = true
+hkask-test-harness.workspace = true
