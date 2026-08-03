@@ -28,6 +28,19 @@ pub(crate) struct ConsentGrant {
     pub token: String,
 }
 
+/// A pre-authorized spend session — unlike a single-use [`ConsentGrant`], a
+/// session can be consumed multiple times until the budget is exhausted.
+/// Enables headless ABW pipelines where the operator pre-authorizes a total
+/// budget upfront instead of approving each spend individually.
+#[derive(Clone)]
+struct SessionGrant {
+    token: String,
+    total_credits: u32,
+    remaining_credits: u32,
+    actions: Vec<String>, // empty = all actions allowed
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Store of active consent grants, keyed by token.
 ///
 /// Two backends:
@@ -42,6 +55,7 @@ pub(crate) struct ConsentGrant {
 ///   cannot double-spend it. Grants expire after [`CONSENT_TTL_SECS`].
 pub struct ConsentStore {
     inner: ConsentInner,
+    sessions: std::sync::Mutex<std::collections::HashMap<String, SessionGrant>>,
 }
 
 enum ConsentInner {
@@ -66,6 +80,7 @@ impl Default for ConsentStore {
     fn default() -> Self {
         Self {
             inner: ConsentInner::Memory(std::sync::Mutex::new(std::collections::HashMap::new())),
+            sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -110,8 +125,20 @@ impl ConsentStore {
                  )",
             )
             .map_err(|e| format!("failed to init consent store schema: {e}"))?;
+        driver
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS consent_sessions (\
+                     token TEXT PRIMARY KEY, \
+                     total_credits INTEGER NOT NULL, \
+                     remaining_credits INTEGER NOT NULL, \
+                     actions TEXT NOT NULL, \
+                     created_at TEXT NOT NULL \
+                 )",
+            )
+            .map_err(|e| format!("failed to init consent sessions schema: {e}"))?;
         Ok(Self {
             inner: ConsentInner::Sqlite(Arc::new(SqliteConsentStore { driver })),
+            sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
         })
     }
 
@@ -206,6 +233,112 @@ impl ConsentStore {
                     .insert(grant.token.clone(), grant);
             }
             ConsentInner::Sqlite(store) => store.refund(grant),
+        }
+    }
+
+    /// Open a pre-authorized spend session. Returns a session token that can
+    /// be used in place of per-spend consent tokens. Each `consume_session`
+    /// call deducts from `total_credits`; when `remaining_credits` reaches 0,
+    /// the session is exhausted. The session is NOT single-use — it can be
+    /// consumed multiple times until the budget is spent.
+    pub(crate) fn open_session(
+        &self,
+        total_credits: u32,
+        actions: &[String],
+    ) -> Result<String, SwarmError> {
+        match &self.inner {
+            ConsentInner::Memory(_) => {
+                let token = mint_session_token();
+                self.sessions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(
+                        token.clone(),
+                        SessionGrant {
+                            token: token.clone(),
+                            total_credits,
+                            remaining_credits: total_credits,
+                            actions: actions.to_vec(),
+                            created_at: chrono::Utc::now(),
+                        },
+                    );
+                Ok(token)
+            }
+            ConsentInner::Sqlite(store) => store.open_session(total_credits, actions),
+        }
+    }
+
+    /// Consume credits from a session. Validates the action is in the
+    /// session's allowed actions, checks remaining >= cost, deducts cost
+    /// from remaining. Returns Ok(remaining_after) on success. Returns Err
+    /// when:
+    /// - session unknown or expired
+    /// - action not in the session's allowed actions
+    /// - cost > remaining_credits
+    /// Unlike `consume` (single-use), the session stays alive after a
+    /// successful consume — only the remaining balance decreases.
+    pub(crate) fn consume_session(
+        &self,
+        token: &str,
+        action: &str,
+        cost: u32,
+    ) -> Result<u32, SwarmError> {
+        match &self.inner {
+            ConsentInner::Memory(_) => {
+                let mut sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+                let grant = sessions.get(token).ok_or_else(|| {
+                    SwarmError::ConsentDenied("unknown or expired session token".into())
+                })?;
+                let expired = chrono::Utc::now()
+                    .signed_duration_since(grant.created_at)
+                    .num_seconds()
+                    > CONSENT_TTL_SECS;
+                let action_ok =
+                    grant.actions.is_empty() || grant.actions.iter().any(|a| a == action);
+                let remaining_credits = grant.remaining_credits;
+                // Borrow of `grant` ends here (last use) — NLL releases it.
+
+                if expired {
+                    sessions.remove(token);
+                    return Err(SwarmError::ConsentDenied("session expired".into()));
+                }
+                if !action_ok {
+                    return Err(SwarmError::ConsentDenied(format!(
+                        "session does not authorize action '{action}'"
+                    )));
+                }
+                if cost > remaining_credits {
+                    return Err(SwarmError::ConsentDenied(format!(
+                        "cost {cost} exceeds session remaining {remaining_credits}"
+                    )));
+                }
+                let new_remaining = remaining_credits - cost;
+                if let Some(grant) = sessions.get_mut(token) {
+                    grant.remaining_credits = new_remaining;
+                }
+                Ok(new_remaining)
+            }
+            ConsentInner::Sqlite(store) => store.consume_session(token, action, cost),
+        }
+    }
+
+    /// Read the remaining credits on a session. Returns None if
+    /// unknown/expired.
+    pub(crate) fn session_balance(&self, token: &str) -> Option<u32> {
+        match &self.inner {
+            ConsentInner::Memory(_) => {
+                let sessions = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
+                let grant = sessions.get(token)?;
+                if chrono::Utc::now()
+                    .signed_duration_since(grant.created_at)
+                    .num_seconds()
+                    > CONSENT_TTL_SECS
+                {
+                    return None;
+                }
+                Some(grant.remaining_credits)
+            }
+            ConsentInner::Sqlite(store) => store.session_balance(token),
         }
     }
 }
@@ -341,6 +474,170 @@ impl SqliteConsentStore {
             );
         }
     }
+
+    fn open_session(&self, total_credits: u32, actions: &[String]) -> Result<String, SwarmError> {
+        let token = mint_session_token();
+        let actions_str = actions.join(",");
+        // Lazy expiry sweep — correctness is the TTL check on consume.
+        let cutoff =
+            (chrono::Utc::now() - chrono::Duration::seconds(CONSENT_TTL_SECS)).to_rfc3339();
+        let _ = self.driver.execute(
+            "DELETE FROM consent_sessions WHERE created_at < ?1",
+            &[DbValue::Text(cutoff)],
+        );
+        self.driver
+            .execute(
+                "INSERT OR REPLACE INTO consent_sessions \
+                     (token, total_credits, remaining_credits, actions, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                &[
+                    DbValue::Text(token.clone()),
+                    DbValue::Integer(i64::from(total_credits)),
+                    DbValue::Integer(i64::from(total_credits)),
+                    DbValue::Text(actions_str),
+                    DbValue::Text(chrono::Utc::now().to_rfc3339()),
+                ],
+            )
+            .map_err(|e| {
+                SwarmError::ConsentDenied(format!(
+                    "consent store unavailable — cannot record the session: {e}"
+                ))
+            })?;
+        Ok(token)
+    }
+
+    fn consume_session(&self, token: &str, action: &str, cost: u32) -> Result<u32, SwarmError> {
+        let row = self
+            .driver
+            .query_optional(
+                "SELECT remaining_credits, actions, created_at \
+                 FROM consent_sessions WHERE token = ?1",
+                &[DbValue::Text(token.to_string())],
+            )
+            .map_err(consent_store_err)?;
+        let Some(row) = row else {
+            return Err(SwarmError::ConsentDenied(
+                "unknown or expired session token".into(),
+            ));
+        };
+        let created = row.get_str(2).map_err(consent_store_err)?;
+        let created = chrono::DateTime::parse_from_rfc3339(created)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .map_err(|e| {
+                SwarmError::Unavailable(format!("consent store corrupt created_at: {e}"))
+            })?;
+        if chrono::Utc::now()
+            .signed_duration_since(created)
+            .num_seconds()
+            > CONSENT_TTL_SECS
+        {
+            let _ = self.driver.execute(
+                "DELETE FROM consent_sessions WHERE token = ?1",
+                &[DbValue::Text(token.to_string())],
+            );
+            return Err(SwarmError::ConsentDenied("session expired".into()));
+        }
+        // Check action — empty actions string means all actions allowed.
+        let actions_str = row.get_str(1).map_err(consent_store_err)?;
+        if !actions_str.is_empty() {
+            let allowed: Vec<&str> = actions_str.split(',').collect();
+            if !allowed.iter().any(|a| *a == action) {
+                return Err(SwarmError::ConsentDenied(format!(
+                    "session does not authorize action '{action}'"
+                )));
+            }
+        }
+        // Atomic deduction: UPDATE only if remaining >= cost. Two processes
+        // racing on the same session cannot double-spend — the affected-rows
+        // check is the same atomicity pattern as the single-use DELETE.
+        let updated = self
+            .driver
+            .execute(
+                "UPDATE consent_sessions SET remaining_credits = remaining_credits - ?1 \
+                 WHERE token = ?2 AND remaining_credits >= ?1",
+                &[
+                    DbValue::Integer(i64::from(cost)),
+                    DbValue::Text(token.to_string()),
+                ],
+            )
+            .map_err(consent_store_err)?;
+        if updated == 0 {
+            // Distinguish over-budget from concurrent delete/expiry.
+            let row = self
+                .driver
+                .query_optional(
+                    "SELECT remaining_credits FROM consent_sessions WHERE token = ?1",
+                    &[DbValue::Text(token.to_string())],
+                )
+                .map_err(consent_store_err)?;
+            match row {
+                Some(row) => {
+                    let remaining = u32::try_from(row.get_int(0).map_err(consent_store_err)?)
+                        .map_err(|_| {
+                            SwarmError::Unavailable(
+                                "consent store corrupt remaining_credits".into(),
+                            )
+                        })?;
+                    Err(SwarmError::ConsentDenied(format!(
+                        "cost {cost} exceeds session remaining {remaining}"
+                    )))
+                }
+                None => Err(SwarmError::ConsentDenied(
+                    "unknown or expired session token".into(),
+                )),
+            }
+        } else {
+            // Read back the new remaining balance.
+            let row = self
+                .driver
+                .query_optional(
+                    "SELECT remaining_credits FROM consent_sessions WHERE token = ?1",
+                    &[DbValue::Text(token.to_string())],
+                )
+                .map_err(consent_store_err)?;
+            let Some(row) = row else {
+                return Err(SwarmError::Unavailable(
+                    "session row vanished after update".into(),
+                ));
+            };
+            let remaining =
+                u32::try_from(row.get_int(0).map_err(consent_store_err)?).map_err(|_| {
+                    SwarmError::Unavailable("consent store corrupt remaining_credits".into())
+                })?;
+            Ok(remaining)
+        }
+    }
+
+    fn session_balance(&self, token: &str) -> Option<u32> {
+        let row = match self.driver.query_optional(
+            "SELECT remaining_credits, created_at FROM consent_sessions WHERE token = ?1",
+            &[DbValue::Text(token.to_string())],
+        ) {
+            Ok(row) => row,
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    error = %e,
+                    token = %token,
+                    "session balance query failed — returning None",
+                );
+                return None;
+            }
+        };
+        let row = row?;
+        let created = row.get_str(1).ok()?;
+        let created = chrono::DateTime::parse_from_rfc3339(created)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .ok()?;
+        if chrono::Utc::now()
+            .signed_duration_since(created)
+            .num_seconds()
+            > CONSENT_TTL_SECS
+        {
+            return None;
+        }
+        u32::try_from(row.get_int(0).ok()?).ok()
+    }
 }
 
 /// Build an opaque single-use consent token (timestamp XOR FNV-1a of the
@@ -355,6 +652,20 @@ pub fn mint_token(action: &str, target: &str) -> String {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
             ^ (fnv1a(action, target) as u128)
+    )
+}
+
+/// Build an opaque session token (timestamp-based, no FNV mixing — sessions
+/// are multi-use so replay-resistance comes from the server-side balance
+/// check, not single-use consumption). Prefixed `hkask-session-` to
+/// distinguish from single-use `hkask-consent-` tokens.
+pub fn mint_session_token() -> String {
+    format!(
+        "hkask-session-{:016x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
     )
 }
 
@@ -717,5 +1028,124 @@ mod tests {
             .consume(&token, "hire", "style_transfer", 5)
             .expect("token must still be usable after an over-spend rejection");
         assert_eq!(authorized, 10);
+    }
+
+    // ── Session tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn session_consume_succeeds_and_deducts() {
+        let store = ConsentStore::default();
+        let token = store.open_session(100, &[]).expect("open session");
+        let remaining = store
+            .consume_session(&token, "delegate", 30)
+            .expect("consume should succeed");
+        assert_eq!(remaining, 70);
+        // The session is still alive — consume again.
+        let remaining = store
+            .consume_session(&token, "hire", 20)
+            .expect("second consume should succeed");
+        assert_eq!(remaining, 50);
+    }
+
+    #[test]
+    fn session_consume_rejects_unknown_token() {
+        let store = ConsentStore::default();
+        let result = store.consume_session("hkask-session-bogus", "delegate", 10);
+        assert!(matches!(result, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    #[test]
+    fn session_consume_rejects_expired_session() {
+        let path = temp_consent_store_path("session-ttl");
+        let store = ConsentStore::open_sqlite(&path).expect("open sqlite store");
+        let token = store.open_session(100, &[]).expect("open session");
+
+        // Backdate the session beyond the TTL via a raw driver on the same
+        // file — same pattern as `consent_store_sqlite_expired_grant_is_unspendable`.
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(&path)
+            .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("pool");
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
+        let old =
+            (chrono::Utc::now() - chrono::Duration::seconds(CONSENT_TTL_SECS + 60)).to_rfc3339();
+        driver
+            .execute(
+                "UPDATE consent_sessions SET created_at = ?1 WHERE token = ?2",
+                &[DbValue::Text(old), DbValue::Text(token.clone())],
+            )
+            .expect("backdate");
+
+        let err = store.consume_session(&token, "delegate", 10).unwrap_err();
+        assert!(
+            matches!(err, SwarmError::ConsentDenied(ref m) if m.contains("expired")),
+            "expired session must be unspendable, got {err:?}"
+        );
+        std::fs::remove_dir_all(std::path::Path::new(&path).parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn session_consume_rejects_action_not_allowed() {
+        let store = ConsentStore::default();
+        let token = store
+            .open_session(100, &["hire".to_string()])
+            .expect("open session");
+        let result = store.consume_session(&token, "delegate", 10);
+        assert!(matches!(result, Err(SwarmError::ConsentDenied(_))));
+        // The session is still alive — a permitted action still works.
+        let remaining = store
+            .consume_session(&token, "hire", 10)
+            .expect("permitted action should succeed");
+        assert_eq!(remaining, 90);
+    }
+
+    #[test]
+    fn session_consume_rejects_over_budget() {
+        let store = ConsentStore::default();
+        let token = store.open_session(10, &[]).expect("open session");
+        let result = store.consume_session(&token, "delegate", 20);
+        assert!(matches!(result, Err(SwarmError::ConsentDenied(_))));
+        // The session is still alive — a spend within budget works.
+        let remaining = store
+            .consume_session(&token, "delegate", 5)
+            .expect("in-budget spend should succeed");
+        assert_eq!(remaining, 5);
+    }
+
+    #[test]
+    fn session_consume_multiple_spend_exhausts_budget() {
+        let store = ConsentStore::default();
+        let token = store.open_session(30, &[]).expect("open session");
+        let remaining = store
+            .consume_session(&token, "delegate", 10)
+            .expect("first spend");
+        assert_eq!(remaining, 20);
+        let remaining = store
+            .consume_session(&token, "delegate", 20)
+            .expect("second spend exhausts");
+        assert_eq!(remaining, 0);
+        // No budget left.
+        let result = store.consume_session(&token, "delegate", 5);
+        assert!(matches!(result, Err(SwarmError::ConsentDenied(_))));
+    }
+
+    #[test]
+    fn session_balance_returns_remaining() {
+        let store = ConsentStore::default();
+        let token = store.open_session(50, &[]).expect("open session");
+        assert_eq!(store.session_balance(&token), Some(50));
+        store
+            .consume_session(&token, "delegate", 20)
+            .expect("consume");
+        assert_eq!(store.session_balance(&token), Some(30));
+    }
+
+    #[test]
+    fn session_balance_returns_none_for_unknown() {
+        let store = ConsentStore::default();
+        assert_eq!(store.session_balance("hkask-session-unknown"), None);
     }
 }

@@ -358,3 +358,282 @@ pub(crate) fn authorize_curate(
     };
     Ok(Some(DelegateAuthorization { refund_grant }))
 }
+
+// ── Session-aware variants ──────────────────────────────────────────────────
+//
+// These mirror the single-use `authorize_*`/`complete_*` pairs but use
+// `ConsentStore::consume_session` instead of `consume`. The two-phase shape is
+// different: the validation consume (cost=0) in `authorize_*_with_session`
+// validates the session without deducting; the actual deduction happens in
+// `complete_*_with_session` on success. On failure, nothing is deducted and
+// nothing needs refunding.
+
+/// A carried authorization to hire via a pre-authorized session. Created by
+/// [`authorize_hire_with_session`]; consumed by [`complete_hire_with_session`]
+/// (which deducts the actual cost on success). The validation consume in
+/// `authorize_hire_with_session` deducts 0, so `refund` is a no-op — the actual
+/// deduction happens only in `complete_hire_with_session` on success.
+pub(crate) struct SessionHireAuthorization {
+    session_token: String,
+    actual_cost: u64,
+}
+
+impl SessionHireAuthorization {
+    /// No refund needed — the validation consume (cost=0) deducted nothing.
+    /// The actual deduction happens only in `complete_hire_with_session` on
+    /// success. Provided for API symmetry with [`HireAuthorization::refund`].
+    pub(crate) fn refund(self, _consent: &ConsentStore) {
+        // Intentionally empty.
+    }
+}
+
+/// Gate a hire using a pre-authorized session token instead of a single-use
+/// consent token. Validates the session (cost=0 — just checks existence,
+/// action scope, and expiry), re-verifies the hire cost against ABW, checks
+/// the session has enough remaining, and enforces the per-dispatch ceiling.
+/// The actual cost deduction happens in [`complete_hire_with_session`] on
+/// success, not here — so a gate failure leaves the session balance
+/// unchanged.
+pub(crate) async fn authorize_hire_with_session(
+    client: &SwarmClient,
+    consent: &ConsentStore,
+    session_token: &str,
+    agent_name: &str,
+    include_optional: bool,
+) -> Result<SessionHireAuthorization, McpToolError> {
+    // Validate the session (cost=0 — checks existence, action, expiry without
+    // deducting). A failed consume does not affect the session balance.
+    consent
+        .consume_session(session_token, "hire", 0)
+        .map_err(SwarmError::into_tool_error)?;
+
+    // Re-verify the hire cost against ABW immediately before spending.
+    let deps = client
+        .get(&format!(
+            "/agents/{}/dependencies",
+            url_encode_segment(agent_name)
+        ))
+        .await
+        .map_err(SwarmError::into_tool_error)?;
+    // Do not fabricate cost = 0 on a missing field (the `.rules` trap: a
+    // failed measurement must be distinguishable from a measured zero).
+    if deps
+        .get("total_hire_cost")
+        .and_then(|c| c.as_u64())
+        .is_none()
+    {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            agent = %agent_name,
+            "spend_gate::authorize_hire_with_session: ABW re-verify response missing total_hire_cost"
+        );
+        return Err(McpToolError::internal(
+            "hire cost unknown — ABW re-verify response missing total_hire_cost field".to_string(),
+        ));
+    }
+    // Conservative cost re-verification (same logic as `authorize_hire`).
+    let base_cost = effective_hire_cost(&deps);
+    let actual_cost = if include_optional {
+        let required = deps
+            .get("required_cost")
+            .and_then(|c| c.as_u64())
+            .unwrap_or(base_cost);
+        let optional = deps
+            .get("optional_cost")
+            .and_then(|c| c.as_u64())
+            .unwrap_or(0);
+        std::cmp::max(base_cost, required.saturating_add(optional))
+    } else {
+        base_cost
+    };
+    // Check session has enough remaining for the actual cost.
+    let remaining = consent.session_balance(session_token).ok_or_else(|| {
+        McpToolError::internal("session balance query failed — cannot verify budget".to_string())
+    })?;
+    if actual_cost > u64::from(remaining) {
+        return Err(SwarmError::PaymentRequired(format!(
+            "hire cost {actual_cost} exceeds session remaining {remaining} — \
+             open a new session with more credits"
+        ))
+        .into_tool_error());
+    }
+    // Per-dispatch ceiling (same hard gate as `authorize_hire`).
+    let ceiling = client.config().max_credits_per_dispatch;
+    if actual_cost > u64::from(ceiling) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            agent = %agent_name,
+            cost = actual_cost,
+            ceiling,
+            "spend_gate::authorize_hire_with_session: hire cost exceeds per-dispatch ceiling"
+        );
+        return Err(SwarmError::PaymentRequired(format!(
+            "hire cost {actual_cost} exceeds per-dispatch ceiling {ceiling} \
+             (raise HKASK_ABW_MAX_CREDITS to authorize)"
+        ))
+        .into_tool_error());
+    }
+    Ok(SessionHireAuthorization {
+        session_token: session_token.to_string(),
+        actual_cost,
+    })
+}
+
+/// Execute the hire POST with the `/hire`→`/add` fallback, then deduct the
+/// actual cost from the session on success. On failure the session is not
+/// deducted (the validation consume in [`authorize_hire_with_session`]
+/// deducted 0, and the actual deduction happens only here on success).
+pub(crate) async fn complete_hire_with_session(
+    client: &SwarmClient,
+    consent: &ConsentStore,
+    auth: SessionHireAuthorization,
+    workspace_id: &str,
+    agent_name: &str,
+    include_optional: bool,
+) -> Result<serde_json::Value, McpToolError> {
+    let mut auth = Some(auth);
+    let data = match client
+        .post(
+            &format!("/workspaces/{}/hire", url_encode_segment(workspace_id)),
+            &serde_json::json!({
+                "agent_id": agent_name,
+                "include_optional": include_optional,
+            }),
+        )
+        .await
+    {
+        Ok(d) => Ok(d),
+        Err(SwarmError::Unavailable(m)) if m.contains("Use /add for your own agents") => {
+            tracing::info!(
+                target: "hkask.mcp.swarm",
+                agent = %agent_name,
+                "own agent — falling back to /workspaces/{{id}}/add"
+            );
+            client
+                .post(
+                    &format!("/workspaces/{}/add", url_encode_segment(workspace_id)),
+                    &serde_json::json!({ "agent_id": agent_name }),
+                )
+                .await
+        }
+        Err(e) => Err(e),
+    }
+    .map_err(SwarmError::into_tool_error)?;
+    // Success: deduct the actual cost from the session. A concurrent consume
+    // could exhaust the session between the validation and here — log and
+    // continue (the hire already succeeded; the session balance is stale).
+    if let Some(a) = auth.take() {
+        if let Err(e) = consent.consume_session(
+            &a.session_token,
+            "hire",
+            u32::try_from(a.actual_cost).unwrap_or(u32::MAX),
+        ) {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "session deduction failed after successful hire — session balance may be stale"
+            );
+        }
+    }
+    Ok(data)
+}
+
+/// A carried authorization to delegate via a pre-authorized session. Created
+/// by [`authorize_delegate_with_session`]; consumed by
+/// [`complete_delegate_with_session`] (which deducts the authorized credits
+/// on success). The validation consume deducts 0, so `refund` is a no-op.
+pub(crate) struct SessionDelegateAuthorization {
+    session_token: String,
+    credits_authorized: u32,
+}
+
+impl SessionDelegateAuthorization {
+    /// No refund needed — the validation consume (cost=0) deducted nothing.
+    /// Provided for API symmetry with [`DelegateAuthorization::refund`].
+    pub(crate) fn refund(self, _consent: &ConsentStore) {
+        // Intentionally empty.
+    }
+}
+
+/// Gate a delegate using a pre-authorized session token. Validates the
+/// session (cost=0), enforces the per-dispatch ceiling, and checks the
+/// session has enough remaining for the authorized credits. The actual
+/// deduction happens in [`complete_delegate_with_session`] on success.
+pub(crate) fn authorize_delegate_with_session(
+    client: &SwarmClient,
+    consent: &ConsentStore,
+    session_token: &str,
+    workspace_id: &str,
+    credits_authorized: u32,
+) -> Result<SessionDelegateAuthorization, McpToolError> {
+    // Validate the session (cost=0).
+    consent
+        .consume_session(session_token, "delegate", 0)
+        .map_err(SwarmError::into_tool_error)?;
+    // Per-dispatch ceiling enforcement (mirrors `authorize_delegate`).
+    let ceiling = client.config().max_credits_per_dispatch;
+    if credits_authorized > ceiling {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            workspace = %workspace_id,
+            authorized = credits_authorized,
+            ceiling,
+            "spend_gate::authorize_delegate_with_session: authorized ceiling exceeds per-dispatch limit"
+        );
+        return Err(SwarmError::PaymentRequired(format!(
+            "authorized credits {credits_authorized} exceed per-dispatch ceiling {ceiling} \
+             (raise HKASK_ABW_MAX_CREDITS to authorize)"
+        ))
+        .into_tool_error());
+    }
+    // Check session has enough remaining.
+    let remaining = consent
+        .session_balance(session_token)
+        .ok_or_else(|| McpToolError::internal("session balance query failed".to_string()))?;
+    if u64::from(credits_authorized) > u64::from(remaining) {
+        return Err(SwarmError::PaymentRequired(format!(
+            "authorized credits {credits_authorized} exceed session remaining {remaining}"
+        ))
+        .into_tool_error());
+    }
+    Ok(SessionDelegateAuthorization {
+        session_token: session_token.to_string(),
+        credits_authorized,
+    })
+}
+
+/// Execute the delegate @mention POST, then deduct the authorized credits
+/// from the session on success. On failure the session is not deducted.
+pub(crate) async fn complete_delegate_with_session(
+    client: &SwarmClient,
+    consent: &ConsentStore,
+    auth: SessionDelegateAuthorization,
+    workspace_id: &str,
+    agent_name: &str,
+    task: &str,
+) -> Result<serde_json::Value, McpToolError> {
+    let mut auth = Some(auth);
+    // Strip leading @mentions (KA-06): a task starting with `@other_agent`
+    // would mention a different agent in the workspace chat.
+    let task_clean = crate::sanitize::strip_leading_mentions(task);
+    let data = client
+        .post(
+            &format!("/workspaces/{}/messages", url_encode_segment(workspace_id)),
+            &serde_json::json!({ "content": format!("@{} {}", agent_name, task_clean) }),
+        )
+        .await
+        .map_err(SwarmError::into_tool_error)?;
+    // Deduct from session on success. ABW charges its own credits; the session
+    // deduction is the operator's authorization tracking.
+    if let Some(a) = auth.take() {
+        if let Err(e) = consent.consume_session(&a.session_token, "delegate", a.credits_authorized)
+        {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "session deduction failed after successful delegate — session balance may be stale"
+            );
+        }
+    }
+    Ok(data)
+}

@@ -29,3 +29,11 @@ hkask-test-harness.workspace = true
 serde_json.workspace = true
 base64.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[features]
+test-utils = []
+
+[[test]]
+name = "guard_gap_properties"
+path = "tests/guard_gap_properties.rs"
+required-features = ["test-utils"]

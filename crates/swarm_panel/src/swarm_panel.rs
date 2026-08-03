@@ -122,19 +122,25 @@ fn steer_system_prompt(
          \n\
          **ABW tools** (`mode: abw`, the default): `swarm_list_agents`, \
          `swarm_get_swarm`, `swarm_hire_cost`, `swarm_request_consent`, \
-         `swarm_hire`, `swarm_delegate`, `swarm_fire` (remove from roster), \
-         `swarm_create_agent`, `swarm_create_swarm`, `swarm_generate_prompt`, \
-         `swarm_generate_ontology`, `swarm_fork_agent` (derivative fork), \
-         `swarm_run_status`, `swarm_search_knowledge` (vector knowledge-graph \
-         search), `swarm_publish_checks` + `swarm_publish_agent` (catalogue \
-         publish, with an audited admin force-publish path), `swarm_xaman`. \
-         These route to Agent Bestiary World and require the ABW API key.\n\
+         `swarm_authorize_session` (pre-authorized spend for headless \
+         pipelines), `swarm_hire`, `swarm_delegate`, \
+         `swarm_delegate_and_wait` (delegate + poll for response), \
+         `swarm_fanout` (parallel multi-agent fan-out), `swarm_fire` (remove \
+         from roster), `swarm_create_agent`, `swarm_create_swarm`, \
+         `swarm_generate_prompt`, `swarm_generate_ontology`, \
+         `swarm_fork_agent` (derivative fork), `swarm_run_status`, \
+         `swarm_search_knowledge` (vector knowledge-graph search), \
+         `swarm_publish_checks` + `swarm_publish_agent` (catalogue publish, \
+         with an audited admin force-publish path), `swarm_xaman`. These \
+         route to Agent Bestiary World and require the ABW API key.\n\
          \n\
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
          `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \
-         `swarm_delegate_local`, `swarm_fanout_local`, `swarm_clone_to_local`, \
-         `swarm_remove_local`, `swarm_create_local_agent`, \
-         `swarm_reconfigure_local_agent`, `swarm_push_to_cloud`. These run on the local \
+         `swarm_delegate_local`, `swarm_fanout_local`, \
+         `swarm_pipeline_local` (sequential pipeline with {prev_output} \
+         substitution), `swarm_clone_to_local`, `swarm_remove_local`, \
+         `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, \
+         `swarm_push_to_cloud`. These run on the local \
          substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
@@ -3760,8 +3766,11 @@ mod tests {
             "swarm_execute_agent",
             "swarm_hire_cost",
             "swarm_request_consent",
+            "swarm_authorize_session",
             "swarm_hire",
             "swarm_delegate",
+            "swarm_delegate_and_wait",
+            "swarm_fanout",
             "swarm_run_status",
             "swarm_generate_prompt",
             "swarm_generate_ontology",
@@ -3769,14 +3778,20 @@ mod tests {
             "swarm_create_swarm",
             "swarm_xaman",
             "swarm_create_app",
+            "swarm_search_knowledge",
+            "swarm_fork_agent",
             // v2 §15 local tools (Slices 9 + 11).
             "swarm_fund_local",
             "swarm_balance_local",
             "swarm_local_history",
             "swarm_delegate_local",
+            "swarm_fanout_local",
+            "swarm_pipeline_local",
             "swarm_list_local_agents",
             "swarm_clone_to_local",
             "swarm_remove_local",
+            "swarm_create_local_agent",
+            "swarm_reconfigure_local_agent",
             "swarm_push_to_cloud",
             // ABW lifecycle tools (verified live 2026-08-02): fire removes an
             // agent from a workspace roster; delete_agent permanently deletes
@@ -3797,7 +3812,7 @@ mod tests {
         // of importing the server's canonical list.
         assert_eq!(
             expected_tools.len(),
-            30,
+            39,
             "tool count changed — update this list to match hkask-mcp-swarm #[tool] fns"
         );
 
@@ -4117,6 +4132,7 @@ mod tests {
             "swarm_fund_local",
             "swarm_delegate_local",
             "swarm_fanout_local",
+            "swarm_pipeline_local",
             "swarm_clone_to_local",
             "swarm_remove_local",
             "swarm_create_local_agent",

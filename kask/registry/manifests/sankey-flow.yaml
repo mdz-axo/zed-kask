@@ -223,7 +223,7 @@ steps:
     renderer: minijinja
     template_ref: sankey-flow/sankey-write
     gas_cap: 4096
-    timeout_seconds: 30
+    timeout_seconds: 60
     input_mapping:
       domain: "{{ step_1_result.domain }}"
       conservation_mode: "{{ step_1_result.conservation_mode }}"

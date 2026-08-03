@@ -411,3 +411,94 @@ pub(crate) struct ForkAgentRequest {
     /// Carry the source's embeddings into the fork. Default false.
     pub include_embeddings: Option<bool>,
 }
+
+// ── Fan-out / pipeline / delegate-and-wait / session ──────────────────────────
+
+/// Fan-out delegation to multiple agents in an ABW workspace. Each entry is
+/// a separate `@mention` delegation, each gated by its own consent token. ABW
+/// delegation is fire-and-forget (posts the @mention, returns immediately) —
+/// the tool posts all messages and returns per-agent status. Responses arrive
+/// via `swarm_run_status` polling. Capped at `MAX_FANOUT` (10).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct FanoutRequest {
+    /// Workspace (swarm) id containing the agents.
+    pub workspace_id: String,
+    /// Delegations to post. Each must have its own consent token.
+    pub delegations: Vec<FanoutAbwEntry>,
+}
+
+/// A single fan-out delegation entry for ABW.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct FanoutAbwEntry {
+    /// Agent name to delegate to (the @mention target).
+    pub agent_name: String,
+    /// The task for the agent.
+    pub task: String,
+    /// The credit cost the operator authorized.
+    pub credits_authorized: u32,
+    /// Consent token from `swarm_request_consent` (action "delegate",
+    /// target = workspace_id). Each entry needs its own token.
+    pub consent_token: String,
+}
+
+/// Sequential pipeline: run N local agents in order, passing each agent's
+/// output as context to the next via `{prev_output}` substitution. Each step
+/// runs via `swarm_delegate_local`. Capped at `MAX_PIPELINE_STEPS` (10).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PipelineLocalRequest {
+    /// Pipeline steps, executed in order.
+    pub steps: Vec<PipelineStep>,
+}
+
+/// A single step in a local pipeline.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PipelineStep {
+    /// Agent id to delegate to. Must exist in the local registry.
+    pub agent_name: String,
+    /// Task text. May contain `{prev_output}` which is replaced with the
+    /// previous step's response text. For the first step, `{prev_output}`
+    /// is left as-is (there is no previous output).
+    pub task: String,
+    /// Maximum credits authorized for this step.
+    pub credits_authorized: u32,
+}
+
+/// Delegate a task to an ABW agent and poll `swarm_run_status` until the agent
+/// responds or the timeout is reached. Wraps `swarm_delegate` +
+/// `swarm_run_status` into a single call.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DelegateAndWaitRequest {
+    /// Workspace (swarm) id containing the agent.
+    pub workspace_id: String,
+    /// Agent name to delegate to (the @mention target).
+    pub agent_name: String,
+    /// The task for the agent.
+    pub task: String,
+    /// Consent token from `swarm_request_consent` (action "delegate",
+    /// target = workspace_id). Required.
+    pub consent_token: String,
+    /// The credit cost the operator authorized.
+    pub credits_authorized: u32,
+    /// Maximum seconds to wait for the agent's response. Default 60, max 300.
+    /// The tool polls `swarm_run_status` every 2 seconds until a response from
+    /// the delegated agent appears or the timeout is reached.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Open a pre-authorized spend session for headless ABW pipelines. Returns a
+/// session token that can be used in place of per-spend consent tokens for
+/// `swarm_hire`, `swarm_delegate`, and `swarm_create_swarm`. Each spend
+/// deducts from the session's total credits; when exhausted, the next spend
+/// requires a new session. The per-dispatch ceiling
+/// (`HKASK_ABW_MAX_CREDITS`) still gates individual spends.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct AuthorizeSessionRequest {
+    /// Total credits to pre-authorize for the session. Each spend deducts
+    /// from this total. Must be positive.
+    pub total_credits: u32,
+    /// Actions this session may authorize. Each must be "hire" or "delegate".
+    /// An empty list authorizes both.
+    #[serde(default)]
+    pub actions: Vec<String>,
+}

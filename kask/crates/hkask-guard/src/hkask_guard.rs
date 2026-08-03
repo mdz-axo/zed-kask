@@ -56,3 +56,8 @@ pub use pipeline::{
     CanaryToken, ContentGuard, GuardConfig, GuardOutput, GuardResult, GuardViolation,
 };
 pub use spotlight::{SpotlightMode, Spotlighter};
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils {
+    pub use crate::guarded_inference::{guard_input, guard_output};
+}

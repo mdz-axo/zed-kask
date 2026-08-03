@@ -21,10 +21,11 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (35 — both tool sets always available in either mode)
-//! ABW tools (24): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+//! ## Tools (39 — both tool sets always available in either mode)
+//! ABW tools (27): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
-//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
+//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
+//! `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_fanout`,
 //! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
 //! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
@@ -34,14 +35,15 @@
 //! `swarm_publish_checks` (publish preflight, fermi v0.10.15),
 //! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15),
 //! `swarm_fork_agent` (derivative fork, fermi v0.10.16).
-//! Local tools (11): `swarm_fund_local`, `swarm_balance_local`,
+//! Local tools (12): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
-//! `swarm_list_local_agents`, `swarm_clone_to_local`, `swarm_push_to_cloud`,
-//! `swarm_remove_local`, `swarm_create_local_agent`,
+//! `swarm_pipeline_local`, `swarm_list_local_agents`, `swarm_clone_to_local`,
+//! `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`,
 //! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6).
 //!
-//! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_create_swarm`,
-//! `swarm_xaman`) are consent-gated — see `kask/docs/plans/abw-swarm-intelligence.md`
+//! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`,
+//! `swarm_fanout`, `swarm_create_swarm`, `swarm_xaman`) are consent-gated — see
+//! `kask/docs/plans/abw-swarm-intelligence.md`
 //! §3.6. Workspace update has NO ABW endpoint (405, verified live) and must
 //! not be added. Workspace delete IS implemented as `swarm_delete_swarm` via
 //! the team-scoped `DELETE /api/teams/{id}` (verified live 2026-08-02);
@@ -523,6 +525,42 @@ impl SwarmServer {
         .await
     }
 
+    /// Open a pre-authorized spend session for headless ABW pipelines. Returns
+    /// a session token that can be used in place of per-spend consent tokens.
+    /// Each spend deducts from the total; when exhausted, a new session is
+    /// needed.
+    #[tool(
+        description = "Open a pre-authorized spend session for headless ABW pipelines. Returns a session token usable in place of per-spend consent tokens for swarm_hire, swarm_delegate, and swarm_fanout. Each spend deducts from total_credits. The per-dispatch ceiling still gates individual spends."
+    )]
+    pub(crate) async fn swarm_authorize_session(
+        &self,
+        parameters: Parameters<AuthorizeSessionRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_authorize_session", Some("pko"), async {
+            let req = parameters.0;
+            if req.total_credits == 0 {
+                return Err(McpToolError::invalid_argument(
+                    "total_credits must be positive".to_string(),
+                ));
+            }
+            let token = self
+                .consent
+                .open_session(req.total_credits, &req.actions)
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(serde_json::json!({
+                "session_token": token,
+                "total_credits": req.total_credits,
+                "remaining_credits": req.total_credits,
+                "actions": if req.actions.is_empty() {
+                    vec!["hire".to_string(), "delegate".to_string()]
+                } else {
+                    req.actions
+                },
+            }))
+        })
+        .await
+    }
+
     /// Hire an agent into a workspace (spends credits). Consent-gated.
     #[tool(
         description = "Hire an Agent Bestiary World agent into a workspace (swarm). Spends credits — requires a consent_token from swarm_request_consent (action 'hire', target = agent_name)."
@@ -630,6 +668,118 @@ impl SwarmServer {
                     "workspace_id": req.workspace_id,
                     "credits_authorized": req.credits_authorized,
                     "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Delegate a task to an ABW agent and poll `swarm_run_status` until the
+    /// agent responds or the timeout is reached. Wraps `swarm_delegate` +
+    /// polling.
+    #[tool(
+        description = "Delegate a task to an ABW agent and poll for the response. Posts the @mention via swarm_delegate, then polls swarm_run_status every 2 seconds until the agent responds or timeout_secs (default 60, max 300). Returns the agent's response message or a timeout."
+    )]
+    pub(crate) async fn swarm_delegate_and_wait(
+        &self,
+        parameters: Parameters<DelegateAndWaitRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_delegate_and_wait", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty()
+                || req.agent_name.trim().is_empty()
+                || req.task.trim().is_empty()
+            {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id, agent_name, and task must be non-empty".to_string(),
+                ));
+            }
+            let timeout_secs = req.timeout_secs.unwrap_or(60).min(300);
+            // Step 1: post the @mention via the existing spend gate.
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                &req.consent_token,
+                &req.workspace_id,
+                req.credits_authorized,
+            )?;
+            let post_result = spend_gate::complete_delegate(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                &req.task,
+            )
+            .await?;
+            // Record the post timestamp for filtering messages.
+            let post_time = chrono::Utc::now();
+            // Step 2: poll for the agent's response.
+            let poll_interval = std::time::Duration::from_secs(2);
+            let deadline = post_time + chrono::Duration::seconds(timeout_secs as i64);
+            let mut agent_response: Option<serde_json::Value> = None;
+            let mut poll_count = 0u32;
+            while chrono::Utc::now() < deadline {
+                poll_count += 1;
+                tokio::time::sleep(poll_interval).await;
+                let data = self
+                    .client
+                    .get(&format!(
+                        "/workspaces/{}/messages?limit=10",
+                        url_encode_segment(&req.workspace_id)
+                    ))
+                    .await
+                    .map_err(SwarmError::into_tool_error)?;
+                let empty = Vec::new();
+                let messages = data
+                    .get("messages")
+                    .and_then(|m| m.as_array())
+                    .unwrap_or(&empty);
+                // Look for a message from the delegated agent after the post
+                // time. Iterate in reverse so the latest matching message wins.
+                for msg in messages.iter().rev() {
+                    let sender = msg
+                        .get("sender")
+                        .or_else(|| msg.get("agent_name"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("");
+                    let msg_time_str = msg
+                        .get("created_at")
+                        .or_else(|| msg.get("timestamp"))
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("");
+                    let msg_time = chrono::DateTime::parse_from_rfc3339(msg_time_str)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                        .unwrap_or(chrono::Utc::now());
+                    if sender == req.agent_name && msg_time > post_time {
+                        let content = sanitize_abw_response(
+                            msg.get("content").or_else(|| msg.get("response")),
+                        );
+                        agent_response = Some(serde_json::json!({
+                            "content": content,
+                            "created_at": msg_time_str,
+                        }));
+                        break;
+                    }
+                }
+                if agent_response.is_some() {
+                    break;
+                }
+            }
+            let timed_out = agent_response.is_none();
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "delegated_to": req.agent_name,
+                    "workspace_id": req.workspace_id,
+                    "post_result": post_result,
+                    "agent_response": agent_response,
+                    "timed_out": timed_out,
+                    "poll_count": poll_count,
                 }))
                 .await)
         })
@@ -1127,6 +1277,108 @@ impl SwarmServer {
         .await
     }
 
+    /// Fan-out: delegate to multiple agents in an ABW workspace in one call.
+    /// Each delegation is a separate @mention post, each gated by its own
+    /// consent token. ABW delegation is fire-and-forget — the tool posts all
+    /// messages and returns per-agent status. Responses arrive via
+    /// `swarm_run_status` polling. Capped at MAX_FANOUT (10).
+    #[tool(
+        description = "Parallel multi-agent fan-out to an ABW workspace: post N @mention delegations in one call. Each entry needs its own consent token. ABW is fire-and-forget — responses arrive via swarm_run_status. Capped at 10 agents."
+    )]
+    pub(crate) async fn swarm_fanout(&self, parameters: Parameters<FanoutRequest>) -> String {
+        execute_tool_semantic(self, "swarm_fanout", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.workspace_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "workspace_id must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            const MAX_FANOUT_ABW: usize = 10;
+            if req.delegations.len() > MAX_FANOUT_ABW {
+                return Err(McpToolError::invalid_argument(format!(
+                    "fanout cap is {MAX_FANOUT_ABW} agents, got {}",
+                    req.delegations.len()
+                )));
+            }
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            for entry in &req.delegations {
+                if entry.agent_name.trim().is_empty() || entry.task.trim().is_empty() {
+                    failed += 1;
+                    results.push(serde_json::json!({
+                        "agent_name": entry.agent_name,
+                        "ok": false,
+                        "error": "agent_name and task must be non-empty",
+                    }));
+                    continue;
+                }
+                // Each delegation routes through the existing spend gate.
+                let auth = match spend_gate::authorize_delegate(
+                    &self.client,
+                    &self.consent,
+                    &entry.consent_token,
+                    &req.workspace_id,
+                    entry.credits_authorized,
+                ) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        failed += 1;
+                        results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": false,
+                            "error": e.to_string(),
+                        }));
+                        continue;
+                    }
+                };
+                match spend_gate::complete_delegate(
+                    &self.client,
+                    &self.consent,
+                    auth,
+                    &req.workspace_id,
+                    &entry.agent_name,
+                    &entry.task,
+                )
+                .await
+                {
+                    Ok(data) => {
+                        results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": true,
+                            "result": data,
+                        }));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": false,
+                            "error": e.to_string(),
+                        }));
+                    }
+                }
+            }
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "workspace_id": req.workspace_id,
+                    "results": results,
+                    "failed": failed,
+                    "succeeded": req.delegations.len() - failed,
+                }))
+                .await)
+        })
+        .await
+    }
+
     // ── Local mode tools (v2 §15 Slice 9) ───────────────────────────────────
 
     /// Fund the local swarm ledger. The operator deposits credits that
@@ -1367,6 +1619,101 @@ impl SwarmServer {
                 "balance": balance,
                 "failed": failed,
                 "succeeded": req.delegations.len() - failed,
+            }))
+        })
+        .await
+    }
+
+    /// Sequential pipeline: run N local agents in order, passing each agent's
+    /// output as context to the next via `{prev_output}` substitution. Capped
+    /// at `MAX_PIPELINE_STEPS` (10). No consent token — local mode.
+    #[tool(
+        description = "Sequential local pipeline: run N agents in order with {prev_output} substitution. Each step's task may contain {prev_output} which is replaced with the previous step's response. Capped at 10 steps. No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_pipeline_local(
+        &self,
+        parameters: Parameters<PipelineLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_pipeline_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.steps.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "steps must be non-empty".to_string(),
+                ));
+            }
+            const MAX_PIPELINE_STEPS: usize = 10;
+            if req.steps.len() > MAX_PIPELINE_STEPS {
+                return Err(McpToolError::invalid_argument(format!(
+                    "pipeline cap is {MAX_PIPELINE_STEPS} steps, got {}",
+                    req.steps.len()
+                )));
+            }
+            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+                McpToolError::unavailable(format!("local runtime init failed: {e}"))
+            })?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let mut results = Vec::new();
+            let mut prev_output = String::new();
+            let mut total_cost = 0i64;
+            let mut total_tokens = 0i64;
+            for (i, step) in req.steps.iter().enumerate() {
+                // Substitute {prev_output} with the previous step's response.
+                let task = if i == 0 {
+                    step.task.clone()
+                } else {
+                    step.task.replace("{prev_output}", &prev_output)
+                };
+                let agent = self.local_registry.get(&step.agent_name);
+                let Some(agent) = agent else {
+                    results.push(serde_json::json!({
+                        "step": i,
+                        "agent_name": step.agent_name,
+                        "ok": false,
+                        "error": format!(
+                            "agent '{}' not found in local registry",
+                            step.agent_name
+                        ),
+                    }));
+                    break; // pipeline stops on agent-not-found
+                };
+                match runtime
+                    .delegate(&agent, &task, step.credits_authorized, ceiling)
+                    .await
+                {
+                    Ok(r) => {
+                        prev_output = r.response.clone();
+                        total_cost += r.cost;
+                        total_tokens += r.tokens_used;
+                        results.push(serde_json::json!({
+                            "step": i,
+                            "agent_name": step.agent_name,
+                            "ok": true,
+                            "response": r.response,
+                            "model": r.model,
+                            "tokens_used": r.tokens_used,
+                            "cost": r.cost,
+                            "latency_ms": r.latency_ms,
+                        }));
+                    }
+                    Err(e) => {
+                        results.push(serde_json::json!({
+                            "step": i,
+                            "agent_name": step.agent_name,
+                            "ok": false,
+                            "error": e.to_string(),
+                        }));
+                        break; // pipeline stops on failure
+                    }
+                }
+            }
+            let balance: Option<i64> = runtime.balance();
+            Ok(serde_json::json!({
+                "steps_completed": results.len(),
+                "results": results,
+                "total_cost": total_cost,
+                "total_tokens": total_tokens,
+                "final_output": prev_output,
+                "balance": balance,
             }))
         })
         .await
@@ -2380,3 +2727,70 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_surface_is_exactly_39_registered_tools() {
+        let router = SwarmServer::combined_router();
+        let mut names: Vec<String> = router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.into_owned())
+            .collect();
+        names.sort();
+        let mut expected: Vec<String> = [
+            // ABW (27).
+            "swarm_list_agents",
+            "swarm_get_swarm",
+            "swarm_get_agent",
+            "swarm_list_apps",
+            "swarm_ontology_templates",
+            "swarm_execute_agent",
+            "swarm_hire_cost",
+            "swarm_request_consent",
+            "swarm_authorize_session",
+            "swarm_hire",
+            "swarm_delegate",
+            "swarm_delegate_and_wait",
+            "swarm_fanout",
+            "swarm_run_status",
+            "swarm_generate_prompt",
+            "swarm_generate_ontology",
+            "swarm_create_agent",
+            "swarm_create_swarm",
+            "swarm_xaman",
+            "swarm_create_app",
+            "swarm_fire",
+            "swarm_delete_agent",
+            "swarm_delete_swarm",
+            "swarm_search_knowledge",
+            "swarm_publish_checks",
+            "swarm_publish_agent",
+            "swarm_fork_agent",
+            // Local (12).
+            "swarm_fund_local",
+            "swarm_balance_local",
+            "swarm_local_history",
+            "swarm_delegate_local",
+            "swarm_fanout_local",
+            "swarm_pipeline_local",
+            "swarm_list_local_agents",
+            "swarm_clone_to_local",
+            "swarm_push_to_cloud",
+            "swarm_remove_local",
+            "swarm_create_local_agent",
+            "swarm_reconfigure_local_agent",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        expected.sort();
+        assert_eq!(
+            names, expected,
+            "registered tool surface drifted from the documented 39"
+        );
+    }
+}

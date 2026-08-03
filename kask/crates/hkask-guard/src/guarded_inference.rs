@@ -166,6 +166,33 @@ fn reject_msg(violations: &[crate::GuardViolation]) -> String {
         .join("; ")
 }
 
+/// Pre-delegation input scanning. Scans the prompt, returns the cleaned
+/// prompt if it passes, or an `InferenceError::Generation` if blocked.
+/// This is the pure function the decorator calls before delegating to the
+/// inner `InferencePort` — extracted so it can be proptest-tested without
+/// an `InferencePort`.
+pub fn guard_input(prompt: &str, guard: &ContentGuard) -> Result<String, InferenceError> {
+    let scan = guard.scan_input(prompt);
+    if !scan.passed {
+        return Err(InferenceError::Generation(reject_msg(&scan.violations)));
+    }
+    Ok(scan.output.content(prompt).to_string())
+}
+
+/// Post-delegation output scanning. Scans the result's text and reasoning
+/// for secrets, redacting in-place if detected. Returns the (possibly
+/// redacted) result. This is the pure function the decorator calls after
+/// the inner `InferencePort` returns — extracted so it can be
+/// proptest-tested without an `InferencePort`.
+pub fn guard_output(mut result: InferenceResult, guard: &ContentGuard) -> InferenceResult {
+    let out = guard.scan_output(&result.text);
+    if out.output.is_modified() {
+        result.text = out.output.content(&result.text).to_string();
+    }
+    sanitize_reasoning(guard, &mut result);
+    result
+}
+
 impl InferencePort for GuardedInferencePort {
     fn generate(
         &self,
@@ -173,26 +200,19 @@ impl InferencePort for GuardedInferencePort {
         parameters: &LLMParameters,
         tools: Option<&[ChatToolDefinition]>,
     ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        let scan = self.guard.scan_input(prompt);
-        if !scan.passed {
-            let msg = reject_msg(&scan.violations);
-            return Box::pin(async { Err(InferenceError::Generation(msg)) });
-        }
-        let cleaned = scan.output.content(prompt).to_string();
+        let cleaned = match guard_input(prompt, &self.guard) {
+            Ok(c) => c,
+            Err(e) => return Box::pin(async move { Err(e) }),
+        };
         let parameters = parameters.clone();
         let tools = tools.map(|t| t.to_vec());
         let guard = Arc::clone(&self.guard);
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
-            let mut result = inner
+            let result = inner
                 .generate(&cleaned, &parameters, tools.as_deref())
                 .await?;
-            let out = guard.scan_output(&result.text);
-            if out.output.is_modified() {
-                result.text = out.output.content(&result.text).to_string();
-            }
-            sanitize_reasoning(&guard, &mut result);
-            Ok(result)
+            Ok(guard_output(result, &guard))
         })
     }
 
@@ -203,27 +223,20 @@ impl InferencePort for GuardedInferencePort {
         model_override: Option<&str>,
         tools: Option<&[ChatToolDefinition]>,
     ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        let scan = self.guard.scan_input(prompt);
-        if !scan.passed {
-            let msg = reject_msg(&scan.violations);
-            return Box::pin(async { Err(InferenceError::Generation(msg)) });
-        }
-        let cleaned = scan.output.content(prompt).to_string();
+        let cleaned = match guard_input(prompt, &self.guard) {
+            Ok(c) => c,
+            Err(e) => return Box::pin(async move { Err(e) }),
+        };
         let model = model_override.map(str::to_string);
         let parameters = parameters.clone();
         let tools = tools.map(|t| t.to_vec());
         let guard = Arc::clone(&self.guard);
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
-            let mut result = inner
+            let result = inner
                 .generate_with_model(&cleaned, &parameters, model.as_deref(), tools.as_deref())
                 .await?;
-            let out = guard.scan_output(&result.text);
-            if out.output.is_modified() {
-                result.text = out.output.content(&result.text).to_string();
-            }
-            sanitize_reasoning(&guard, &mut result);
-            Ok(result)
+            Ok(guard_output(result, &guard))
         })
     }
 
@@ -273,25 +286,19 @@ impl InferencePort for GuardedInferencePort {
         n: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<InferenceResult>, InferenceError>> + Send + '_>>
     {
-        let scan = self.guard.scan_input(prompt);
-        if !scan.passed {
-            let msg = reject_msg(&scan.violations);
-            return Box::pin(async { Err(InferenceError::Generation(msg)) });
-        }
-        let cleaned = scan.output.content(prompt).to_string();
+        let cleaned = match guard_input(prompt, &self.guard) {
+            Ok(c) => c,
+            Err(e) => return Box::pin(async move { Err(e) }),
+        };
         let parameters = parameters.clone();
         let guard = Arc::clone(&self.guard);
         let inner = Arc::clone(&self.inner);
         Box::pin(async move {
-            let mut results = inner.generate_n(&cleaned, &parameters, n).await?;
-            for result in &mut results {
-                let out = guard.scan_output(&result.text);
-                if out.output.is_modified() {
-                    result.text = out.output.content(&result.text).to_string();
-                }
-                sanitize_reasoning(&guard, result);
-            }
-            Ok(results)
+            let results = inner.generate_n(&cleaned, &parameters, n).await?;
+            Ok(results
+                .into_iter()
+                .map(|r| guard_output(r, &guard))
+                .collect())
         })
     }
 
@@ -302,27 +309,20 @@ impl InferencePort for GuardedInferencePort {
         parameters: &LLMParameters,
         model_override: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        let scan = self.guard.scan_input(prompt);
-        if !scan.passed {
-            let msg = reject_msg(&scan.violations);
-            return Box::pin(async { Err(InferenceError::Generation(msg)) });
-        }
-        let cleaned = scan.output.content(prompt).to_string();
+        let cleaned = match guard_input(prompt, &self.guard) {
+            Ok(c) => c,
+            Err(e) => return Box::pin(async move { Err(e) }),
+        };
         let model = model_override.map(str::to_string);
         let parameters = parameters.clone();
         let guard = Arc::clone(&self.guard);
         let inner = Arc::clone(&self.inner);
         let images = images.to_vec();
         Box::pin(async move {
-            let mut result = inner
+            let result = inner
                 .generate_vision(&cleaned, &images, &parameters, model.as_deref())
                 .await?;
-            let out = guard.scan_output(&result.text);
-            if out.output.is_modified() {
-                result.text = out.output.content(&result.text).to_string();
-            }
-            sanitize_reasoning(&guard, &mut result);
-            Ok(result)
+            Ok(guard_output(result, &guard))
         })
     }
 
@@ -414,98 +414,5 @@ impl InferencePort for GuardedInferencePort {
             accumulated_reasoning: String::new(),
             scanned: false,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::GuardConfig;
-
-    /// Echo port that returns a fixed `reasoning` trace alongside the echoed
-    /// prompt — simulates thinking-mode models (Qwen3, GLM-5.2, DeepSeek-R1).
-    /// Restored from the pre-consolidation test suite so RR-0030 (canary
-    /// redaction in the reasoning field) remains mechanically enforced —
-    /// the regression library keys on this exact test name.
-    struct ReasoningEchoPort {
-        reasoning: String,
-    }
-
-    impl InferencePort for ReasoningEchoPort {
-        fn generate(
-            &self,
-            prompt: &str,
-            _params: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
-        {
-            let text = prompt.to_string();
-            let reasoning = self.reasoning.clone();
-            Box::pin(async {
-                Ok(InferenceResult {
-                    text,
-                    model: "echo".to_string(),
-                    usage: hkask_types::InferenceUsage::default(),
-                    finish_reason: "stop".to_string(),
-                    token_probabilities: None,
-                    tool_calls: vec![],
-                    reasoning: Some(reasoning),
-                })
-            })
-        }
-
-        fn generate_stream(
-            &self,
-            prompt: &str,
-            _params: &LLMParameters,
-            _tools: Option<&[ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>>
-        {
-            let text = prompt.to_string();
-            let reasoning = self.reasoning.clone();
-            Box::pin(futures_util::stream::once(async move {
-                Ok(InferenceStreamChunk {
-                    text_delta: text,
-                    reasoning_delta: reasoning,
-                    model: "echo".to_string(),
-                    finish_reason: Some("stop".to_string()),
-                    usage: None,
-                    tool_calls: vec![],
-                })
-            }))
-        }
-    }
-
-    /// RR-0030: a thinking-mode model can echo the system prompt (including the
-    /// canary token) into the reasoning trace while the visible text is clean.
-    /// The reasoning field must be scanned too (OWASP LLM07) — a canary leaked
-    /// into `reasoning` is redacted with `[REDACTED-CANARY]`.
-    #[tokio::test]
-    async fn canary_in_reasoning_field_is_redacted() {
-        let guard = ContentGuard::mandatory(&GuardConfig::default());
-        let canary = guard.canary().as_str().to_string();
-        let port = GuardedInferencePort::new(
-            Arc::new(ReasoningEchoPort {
-                reasoning: format!("thinking about the system prompt: {canary}"),
-            }),
-            guard,
-        );
-        let result = port
-            .generate(
-                "Normal text about architecture.",
-                &LLMParameters::default(),
-                None,
-            )
-            .await
-            .unwrap();
-        let reasoning = result.reasoning.expect("reasoning should be present");
-        assert!(
-            !reasoning.contains(&canary),
-            "canary must be redacted from the reasoning field"
-        );
-        assert!(
-            reasoning.contains("[REDACTED-CANARY]"),
-            "reasoning should contain the redaction marker"
-        );
     }
 }
