@@ -156,7 +156,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — image generation and media workflows",
-        credentials: Some(&["FALAI_API_KEY", "DEEPINFRA_API_KEY"]),
+        credentials: Some(&["FALAI_API_KEY", "DEEPINFRA_API_KEY", "ATLASCLOUD_API_KEY"]),
         config_env: Some(&[
             // Durable gallery DB path (WS-3). Unencrypted file SQLite — the
             // media server reads it via std::env::var; absent → in-memory.
@@ -634,11 +634,15 @@ mod tests {
         let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             keys.len(),
-            2,
-            "media server should only receive FALAI_API_KEY + DEEPINFRA_API_KEY, got {keys:?}"
+            3,
+            "media server should receive FALAI_API_KEY + DEEPINFRA_API_KEY + ATLASCLOUD_API_KEY, got {keys:?}"
         );
         assert!(keys.contains(&"FALAI_API_KEY"));
         assert!(keys.contains(&"DEEPINFRA_API_KEY"));
+        assert!(
+            keys.contains(&"ATLASCLOUD_API_KEY"),
+            "media server reads ATLASCLOUD_API_KEY — it must be in credentials"
+        );
         assert!(
             !keys.contains(&"TOGETHERAI_API_KEY"),
             "media server must not receive TOGETHERAI_API_KEY — it never reads it (vision routes via the IPC bridge)"

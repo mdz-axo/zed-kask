@@ -205,6 +205,10 @@ pub struct InferenceConfig {
     /// Env: `ZAI_API_KEY`, `ZAI_BASE_URL` (default `https://api.z.ai/api/paas/v4`).
     pub zai_base_url: String,
     pub zai_api_key: String,
+    /// AtlasCloud — task-based media API (image/video/3D/audio/ASR) + OpenAI-compatible LLM.
+    /// Env: `ATLASCLOUD_API_KEY`, `ATLASCLOUD_BASE_URL` (default `https://api.atlascloud.ai/api/v1`).
+    pub atlascloud_base_url: String,
+    pub atlascloud_api_key: String,
     pub timeout_secs: u64,
     pub pool_max_idle: usize,
     pub default_model: String,
@@ -232,6 +236,8 @@ impl Default for InferenceConfig {
             cline_api_key: String::new(),
             zai_base_url: "https://api.z.ai/api/paas/v4".to_string(),
             zai_api_key: String::new(),
+            atlascloud_base_url: "https://api.atlascloud.ai/api/v1".to_string(),
+            atlascloud_api_key: String::new(),
             timeout_secs: 120,
             pool_max_idle: 5,
             default_model: "OpenRouter/z-ai/glm-5.2".to_string(),
@@ -272,6 +278,10 @@ impl InferenceConfig {
 
         let fal_api_key = resolve_api_key("FALAI_API_KEY");
 
+        let atlascloud_base_url = std::env::var("ATLASCLOUD_BASE_URL")
+            .unwrap_or_else(|_| "https://api.atlascloud.ai/api/v1".to_string());
+        let atlascloud_api_key = resolve_api_key("ATLASCLOUD_API_KEY");
+
         Self {
             default_provider: resolve_default_provider(),
             deepinfra_base_url: di.base_url,
@@ -292,6 +302,8 @@ impl InferenceConfig {
             cline_api_key,
             zai_base_url: za.base_url,
             zai_api_key: za.api_key,
+            atlascloud_base_url,
+            atlascloud_api_key,
             timeout_secs: resolve_config_str("HKASK_HTTP_TIMEOUT_SECS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(120),

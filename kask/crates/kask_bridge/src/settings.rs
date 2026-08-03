@@ -163,6 +163,9 @@ pub struct KaskInferenceProvidersSettings {
 
     /// Enable Z.ai (OpenAI-compatible platform hosting GLM models).
     pub zai_enabled: bool,
+
+    /// Enable AtlasCloud (task-based media + OpenAI-compatible LLM).
+    pub atlascloud_enabled: bool,
 }
 
 impl KaskInferenceProvidersSettings {
@@ -181,6 +184,7 @@ impl KaskInferenceProvidersSettings {
             kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
             cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
             zai_enabled: std::env::var("ZAI_API_KEY").is_ok(),
+            atlascloud_enabled: std::env::var("ATLASCLOUD_API_KEY").is_ok(),
         }
     }
 }
@@ -1193,6 +1197,7 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
             kilocode_enabled: c.kilocode_enabled.unwrap_or(from_env.kilocode_enabled),
             cline_enabled: c.cline_enabled.unwrap_or(from_env.cline_enabled),
             zai_enabled: c.zai_enabled.unwrap_or(from_env.zai_enabled),
+            atlascloud_enabled: c.atlascloud_enabled.unwrap_or(from_env.atlascloud_enabled),
         }
     }
 }

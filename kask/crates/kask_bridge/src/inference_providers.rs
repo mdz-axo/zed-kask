@@ -99,6 +99,14 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         credential_key: "zai",
         dashboard_url: "https://z.ai/",
     },
+    InferenceProviderDescriptor {
+        id: "AtlasCloud",
+        name: "AtlasCloud",
+        api_url: "https://api.atlascloud.ai/v1",
+        env_var: "ATLASCLOUD_API_KEY",
+        credential_key: "atlascloud",
+        dashboard_url: "https://www.atlascloud.ai/",
+    },
 ];
 
 impl InferenceProviderDescriptor {

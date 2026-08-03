@@ -1605,6 +1605,7 @@ pub struct KaskInferenceProvidersSettingsContent {
     pub kilocode_enabled: Option<bool>,
     pub cline_enabled: Option<bool>,
     pub zai_enabled: Option<bool>,
+    pub atlascloud_enabled: Option<bool>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

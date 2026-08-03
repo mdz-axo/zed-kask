@@ -154,3 +154,179 @@ pub(crate) fn effective_hire_cost(deps: &serde_json::Value) -> u64 {
         std::cmp::max(total, OWNED_ADD_FLAT_FEE)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_error_detects_anthropic_credit_exhaustion() {
+        let v = serde_json::json!({
+            "response": "I encountered an error: Execution failed: API error: Your credit balance is too low to access the Anthropic API."
+        });
+        match detect_embedded_error(&v) {
+            Some(SwarmError::UpstreamModelError { provider, .. }) => {
+                assert_eq!(provider, "anthropic")
+            }
+            other => panic!("expected UpstreamModelError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn embedded_error_detects_not_funded() {
+        let v = serde_json::json!({
+            "response": "Execution failed: Agent 'david_dunning' is not funded. Its owner has not set an ANTHROPIC_API_KEY."
+        });
+        match detect_embedded_error(&v) {
+            Some(SwarmError::AgentNotFunded { agent, .. }) => {
+                assert_eq!(agent, "david_dunning")
+            }
+            other => panic!("expected AgentNotFunded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn embedded_error_ignores_clean_payload() {
+        let v = serde_json::json!({"response": "The bestiary is a living ecology of AI agents."});
+        assert!(detect_embedded_error(&v).is_none());
+    }
+
+    #[test]
+    fn extract_quoted_pulls_agent_name() {
+        assert_eq!(
+            extract_quoted("Agent 'market_analyst' is not funded"),
+            Some("market_analyst".to_string())
+        );
+        assert_eq!(extract_quoted("no quotes here"), None);
+    }
+
+    // URL encoding: path segments with special characters must be encoded
+    // so they don't corrupt the URL path.
+    #[test]
+    fn url_encode_segment_encodes_special_chars() {
+        assert_eq!(url_encode_segment("market_analyst"), "market_analyst");
+        assert_eq!(
+            url_encode_segment("agent with spaces"),
+            "agent%20with%20spaces"
+        );
+        assert_eq!(url_encode_segment("a/b"), "a%2Fb");
+        assert_eq!(url_encode_segment("a?b"), "a%3Fb");
+        assert_eq!(url_encode_segment("a&b"), "a%26b");
+        assert_eq!(url_encode_segment("a#b"), "a%23b");
+    }
+
+    // The slug must not panic on a pre-epoch clock. The prior inline version
+    // used `&string[..4]` on an empty string (from `unwrap_or_default()` on
+    // a pre-epoch `duration_since`), which panicked. The extracted helper
+    // uses safe slicing.
+    #[test]
+    fn make_swarm_slug_handles_pre_epoch_clock() {
+        // A time before UNIX_EPOCH — duration_since returns Err.
+        let pre_epoch = std::time::SystemTime::UNIX_EPOCH
+            .checked_sub(std::time::Duration::from_secs(60))
+            .expect("construct pre-epoch time");
+        let slug = make_swarm_slug("my_swarm", pre_epoch);
+        // Must not panic, must produce a valid slug.
+        assert!(slug.starts_with("my_swarm_"));
+        assert!(!slug.is_empty());
+    }
+
+    #[test]
+    fn make_swarm_slug_produces_suffix() {
+        let now = std::time::SystemTime::now();
+        let slug = make_swarm_slug("test", now);
+        assert!(slug.starts_with("test_"));
+        // The suffix is the full epoch-millis value — two swarms created with
+        // the same name at different times must NOT collide (the prior 4-digit
+        // truncation was constant for ~3.17 years).
+        let suffix = slug.strip_prefix("test_").unwrap_or("");
+        assert!(
+            suffix.len() >= 10,
+            "full millis suffix expected, got '{suffix}'"
+        );
+        assert!(
+            suffix.chars().all(|c| c.is_ascii_digit()),
+            "suffix must be digits only, got '{suffix}'"
+        );
+    }
+
+    #[test]
+    fn make_swarm_slug_disambiguates_same_name_over_time() {
+        // Two swarms with the same name created 1 second apart must produce
+        // different slugs. The prior first-4-digits-of-millis truncation made
+        // the suffix constant for ~3.17 years — this pins the fix.
+        let t0 = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let t1 = t0 + std::time::Duration::from_secs(1);
+        let slug0 = make_swarm_slug("my_swarm", t0);
+        let slug1 = make_swarm_slug("my_swarm", t1);
+        assert_ne!(
+            slug0, slug1,
+            "same-name swarms created 1s apart must not collide"
+        );
+    }
+
+    #[test]
+    fn make_swarm_slug_caps_total_length_at_64() {
+        // ABW rejects slugs longer than 64 chars (verified live 2026-08-02).
+        // A long name base must be truncated, keeping the disambiguating
+        // millis suffix, so the total never exceeds 64.
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let long_base = "a".repeat(100);
+        let slug = make_swarm_slug(&long_base, now);
+        assert!(
+            slug.len() <= 64,
+            "slug must fit ABW's 64-char cap, got {} chars: {slug}",
+            slug.len()
+        );
+        assert!(
+            slug.ends_with("_1700000000000"),
+            "millis suffix kept: {slug}"
+        );
+        // A short base is untouched.
+        assert_eq!(make_swarm_slug("alpha", now), "alpha_1700000000000");
+    }
+
+    #[test]
+    fn validate_agent_name_enforces_abw_slug_rule() {
+        assert!(validate_agent_name("sensor_advisor").is_ok());
+        assert!(validate_agent_name("abc123").is_ok());
+        // Hyphens are rejected (the verified ABW rule — uuid suffixes fail).
+        assert!(validate_agent_name("zed_kask_verify-abc").is_err());
+        // Uppercase rejected.
+        assert!(validate_agent_name("Sensor").is_err());
+        // Length bounds.
+        assert!(validate_agent_name("ab").is_err());
+        assert!(validate_agent_name(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn make_swarm_slug_trims_underscores_from_base() {
+        let now = std::time::SystemTime::now();
+        let slug = make_swarm_slug("__leading_and_trailing__", now);
+        assert!(
+            !slug.contains("__leading"),
+            "leading underscores must be trimmed"
+        );
+    }
+
+    #[test]
+    fn effective_hire_cost_floors_dependency_less_agents() {
+        // Owned, no-dependency agents quote total_hire_cost: 0 but /add
+        // charges the flat fee (verified live) — the gate must floor at it.
+        let no_deps = serde_json::json!({
+            "total_hire_cost": 0,
+            "has_dependencies": false,
+            "required": [],
+            "optional": [],
+        });
+        assert_eq!(effective_hire_cost(&no_deps), OWNED_ADD_FLAT_FEE);
+        // With dependencies, the quoted total is authoritative.
+        let with_deps = serde_json::json!({
+            "total_hire_cost": 5,
+            "has_dependencies": true,
+            "required": ["a"],
+            "optional": [],
+        });
+        assert_eq!(effective_hire_cost(&with_deps), 5);
+    }
+}

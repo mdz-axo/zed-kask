@@ -20,6 +20,7 @@
 //! Adding a provider = implement [`crate::provider::MediaProvider`] + register
 //! in [`MediaRouter::new`]; no dispatch edits.
 
+use crate::atlascloud_backend::AtlasCloudBackend;
 use crate::config::InferenceConfig;
 use crate::deepinfra_backend::DeepInfraBackend;
 use crate::fal_backend::FalBackend;
@@ -88,6 +89,13 @@ impl MediaRouter {
                 Err(_) => tracing::warn!(
                     target: "reg.inference",
                     "fal.ai backend unavailable (no API key) — media generation disabled"
+                ),
+            }
+            match AtlasCloudBackend::new(&config, Arc::clone(client)) {
+                Ok(ac) => providers.push(Arc::new(ac)),
+                Err(_) => tracing::warn!(
+                    target: "reg.inference",
+                    "AtlasCloud backend unavailable (no API key) — image/video generation fallback disabled"
                 ),
             }
         }

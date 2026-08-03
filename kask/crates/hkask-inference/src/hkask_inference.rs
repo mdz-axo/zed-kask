@@ -33,6 +33,7 @@
 //! - `OpenRouter/openai/gpt-4o` → OpenRouter (via IPC bridge)
 //! - No prefix → default model (configurable, default: OpenRouter/z-ai/glm-5.2)
 
+pub mod atlascloud_backend;
 pub mod chat_protocol;
 pub mod config;
 pub mod deepinfra_backend;
