@@ -121,7 +121,10 @@ available: `swarm_remove_local` deletes a local card (the local counterpart
 of firing).
 {% else %}
 Prefer agents already in the ABW catalogue whose dependencies are
-satisfiable by the current roster.
+satisfiable by the current roster. When a near-match agent exists but
+needs customization, fork it via `swarm_fork_agent` (fermi v0.10.16)
+to create a `{source}_fork_{n}` derivative (the source must have a
+slug-compliant name).
 {% endif %}
 
 ### If deficit_class = "coherence_deficit" + coherence_low_diversity
@@ -196,7 +199,8 @@ For every proposed move:
 - **Cost awareness**: each `swarm_delegate_local` call costs 1 credit per
   1000 tokens, capped at `credits_authorized`. No hire cost —
   `swarm_create_local_agent` creates a card for free (no `swarm_hire_local` tool,
-  move as the `credits_authorized` the operator should set for the call.
+  §15.1.1 rejected). Record estimated_credits per move as the
+  `credits_authorized` the operator should set for the call.
 {% else %}
 - **Gas awareness** (verified live 2026-08-02): own-agent hire via `/add` is
   a flat 2 cr fee; third-party `/hire` is a flat 5 cr base (quote `total` =

@@ -382,31 +382,110 @@ impl<'a> Extractor<'a> {
         });
     }
 
-    /// Extract a use import.
+    /// Extract a `use` declaration, emitting one `Imports` edge per imported
+    /// name. Walks the tree-sitter use-tree nodes so grouped imports
+    /// (`use std::{collections::HashMap, sync::Arc};`) produce clean per-target
+    /// names instead of string-splitting the raw text (which yielded malformed
+    /// names like `"Arc}"` and dropped all but one target).
     fn extract_import(&mut self, node: &Node<'_>) {
-        // Extract the full use path as a string
-        let text = self.node_text(node);
-        // Strip "use " prefix
-        let path = text.strip_prefix("use ").unwrap_or(&text).trim();
-        // Strip trailing semicolon
-        let path = path.strip_suffix(';').unwrap_or(path);
-        // Take the last segment as the import name (e.g., "std::collections::HashMap" → "HashMap")
-        let target_name = path.split("::").last().unwrap_or(path).to_string();
-
-        if path.is_empty() {
-            return;
+        let line = node.start_position().row + 1;
+        let mut local_names: Vec<String> = Vec::new();
+        // `use_declaration` has an `argument` field pointing at the use clause
+        // (a path, use_list, scoped_use_list, use_as_clause, or use_wildcard).
+        let clause = node.child_by_field_name("argument");
+        let clause = match clause {
+            Some(c) => Some(c),
+            None => node.children(node.walk()).find(|c| {
+                matches!(
+                    c.kind(),
+                    "use_list"
+                        | "scoped_use_list"
+                        | "use_as_clause"
+                        | "scoped_identifier"
+                        | "identifier"
+                        | "use_wildcard"
+                )
+            }),
+        };
+        if let Some(clause) = clause {
+            self.collect_use_targets(&clause, &mut local_names);
         }
 
-        let line = node.start_position().row + 1;
-        self.edges.push(Edge {
-            id: None,
-            from_id: 0, // placeholder
-            to_id: 0,   // placeholder
-            kind: EdgeKind::Imports,
-            file: self.file_path.clone(),
-            line,
-            target_name,
-        });
+        for name in local_names {
+            self.edges.push(Edge {
+                id: None,
+                from_id: 0, // placeholder — resolved after symbol insert
+                to_id: 0,   // placeholder
+                kind: EdgeKind::Imports,
+                file: self.file_path.clone(),
+                line,
+                target_name: name,
+            });
+        }
+    }
+
+    /// Recursively collect the locally-imported name from each leaf of a use
+    /// tree. For `use a::{b, c::D as E}` this yields `["b", "E"]` — the names a
+    /// local symbol could resolve to.
+    fn collect_use_targets(&self, node: &Node<'_>, out: &mut Vec<String>) {
+        match node.kind() {
+            "identifier" => {
+                let t = self.node_text(node);
+                if !t.is_empty() {
+                    out.push(t);
+                }
+            }
+            "scoped_identifier" => {
+                // e.g. `std::collections::HashMap` — the locally bound name is
+                // the last segment (the `name` field of a scoped_identifier).
+                let name = node
+                    .child_by_field_name("name")
+                    .map(|n| self.node_text(&n))
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| {
+                        self.node_text(node)
+                            .rsplit("::")
+                            .next()
+                            .unwrap_or("")
+                            .to_string()
+                    });
+                if !name.is_empty() {
+                    out.push(name);
+                }
+            }
+            "use_as_clause" => {
+                // `path as alias` — the local name is the alias.
+                if let Some(alias) = node.child_by_field_name("alias") {
+                    let t = self.node_text(&alias);
+                    if !t.is_empty() {
+                        out.push(t);
+                    }
+                }
+            }
+            "use_wildcard" => {
+                // `*` / `path::*` — resolves to no single symbol; skip.
+            }
+            "use_list" | "scoped_use_list" => {
+                // `{a, b, c}` or `path::{a, b}` — recurse into each list item.
+                // For scoped_use_list the `path` prefix is the module (not an
+                // imported name), so only the `list` children are collected.
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if matches!(
+                        child.kind(),
+                        "use_list"
+                            | "scoped_use_list"
+                            | "use_as_clause"
+                            | "scoped_identifier"
+                            | "identifier"
+                            | "use_wildcard"
+                    ) {
+                        self.collect_use_targets(&child, out);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Extract a field type reference for References edges.
@@ -630,4 +709,65 @@ impl<'a> Extractor<'a> {
     //
     // This is done by the `store` module (Component 2), not here.
     // The extractor only extracts raw (name, file, line) data.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codegraph::indexer::parser;
+
+    fn import_target_names(src: &str) -> Vec<String> {
+        let (tree, bytes) = parser::parse_rust_file(src.as_bytes()).unwrap();
+        let (_symbols, edges) = extract_symbols(&tree, &bytes, "test.rs");
+        edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Imports)
+            .map(|e| e.target_name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn grouped_use_emits_one_edge_per_target() {
+        // The previous string-split implementation produced a single malformed
+        // target (`"Arc}"`) for this grouped import. The tree-walker must emit
+        // two clean targets, one per imported name.
+        let src = "use std::{collections::HashMap, sync::Arc};";
+        let mut names = import_target_names(src);
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["Arc".to_string(), "HashMap".to_string()],
+            "grouped use must emit one Imports edge per target with a clean name"
+        );
+    }
+
+    #[test]
+    fn use_as_clause_targets_the_alias() {
+        // `use foo as bar` locally binds `bar`, so the resolvable target is `bar`.
+        let names = import_target_names("use std::collections::HashMap as Map;");
+        assert_eq!(names, vec!["Map".to_string()]);
+    }
+
+    #[test]
+    fn wildcard_use_emits_no_target() {
+        // `*` cannot resolve to a single symbol; no Imports edge should be emitted.
+        let names = import_target_names("use std::io::*;");
+        assert!(names.is_empty(), "wildcard use should emit no target");
+    }
+
+    #[test]
+    fn nested_grouped_use_emits_clean_targets() {
+        let src = "use std::{collections::{HashMap, BTreeMap}, sync::Arc};";
+        let mut names = import_target_names(src);
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "Arc".to_string(),
+                "BTreeMap".to_string(),
+                "HashMap".to_string()
+            ],
+            "nested grouped use must emit one clean target per leaf"
+        );
+    }
 }

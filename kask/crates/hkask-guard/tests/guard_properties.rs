@@ -319,7 +319,12 @@ proptest! {
     /// per-session marker for every mode — otherwise the LLM is told to look
     /// for a token that never appears, defeating the defense.
     #[test]
-    fn spotlight_instruction_and_output_share_marker(content in any::<String>()) {
+    fn spotlight_instruction_and_output_share_marker(
+        content in any::<String>().prop_filter(
+            "needs at least 2 whitespace tokens so Datamark interleaves a marker",
+            |s| s.split_whitespace().count() >= 2,
+        ),
+    ) {
         let modes = [
             SpotlightMode::Delimit,
             SpotlightMode::Datamark,

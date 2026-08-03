@@ -10,7 +10,7 @@ description = "Semantic and episodic memory pipelines for hKask"
 path = "src/hkask_memory.rs"
 
 [dependencies]
-hkask-types = { path = "../hkask-types" }
+hkask-types.workspace = true
 hkask-storage = { path = "../hkask-storage" }
 serde.workspace = true
 serde_json.workspace = true

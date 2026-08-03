@@ -21,8 +21,8 @@ tokio = { workspace = true, features = ["macros", "rt"] }
 
 [dependencies]
 
-hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
-hkask-types = { path = "../../crates/hkask-types" }
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 reqwest.workspace = true

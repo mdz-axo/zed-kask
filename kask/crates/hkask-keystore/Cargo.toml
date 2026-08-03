@@ -10,7 +10,7 @@ description = "OS keychain integration and AES-256-GCM encryption for hKask"
 path = "src/hkask_keystore.rs"
 
 [dependencies]
-hkask-types = { path = "../hkask-types" }
+hkask-types.workspace = true
 keyring.workspace = true
 aes-gcm.workspace = true
 argon2.workspace = true

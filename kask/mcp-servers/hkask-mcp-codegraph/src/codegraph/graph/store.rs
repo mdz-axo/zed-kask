@@ -296,6 +296,30 @@ impl GraphStore {
             .query_row("SELECT COUNT(*) FROM symbols_vec", [], |row| row.get(0))?;
         Ok(count as usize)
     }
+
+    /// All symbols with their qualified name, database ID, and owning file path.
+    ///
+    /// Used by the indexing pipeline for global edge resolution: a call/import
+    /// in file A may target a symbol defined in file B, so the resolver needs
+    /// the full symbol set (not just the current file's). Returns `(name, id, file)`.
+    pub fn all_symbols_with_file(&self) -> Result<Vec<(String, i64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.name, s.id, f.path
+             FROM symbols s JOIN code_files f ON s.file_id = f.id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
 }
 
 // ── Deserialization helpers ───────────────────────────────────────

@@ -124,6 +124,10 @@ workspace_roster should be pre-populated):
   { required[], optional[] }, total_executions }`.
 - `swarm_get_swarm` wallet read (or the wallet envelope in the response) →
   `{ balance, transactions[] }`.
+- Optionally, when an agent's `accepts[]`/`produces[]` is ambiguous about
+  whether it covers a required transform, probe its consolidated knowledge
+  graph via `swarm_search_knowledge` (fermi v0.10.26 — the embedder is
+  fixed; vector search returns real hits) to assess actual capability.
 
 Record the raw workspace_roster and wallet_state.
 {% endif %}

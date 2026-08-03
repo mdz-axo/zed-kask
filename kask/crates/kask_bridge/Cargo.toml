@@ -11,31 +11,31 @@ path = "src/kask_bridge.rs"
 
 [dependencies]
 # hKask side — port traits only (never concrete zed crates)
-hkask-types = { path = "../hkask-types" }
-hkask-capability = { path = "../hkask-capability" }
-hkask-templates = { path = "../hkask-templates" }
-hkask-memory = { path = "../hkask-memory" }
+hkask-types.workspace = true
+hkask-capability.workspace = true
+hkask-templates.workspace = true
+hkask-memory.workspace = true
 hkask-storage = { path = "../hkask-storage" }
 hkask-inference = { path = "../hkask-inference" }
-hkask-keystore = { path = "../hkask-keystore" }
-hkask-regulation = { path = "../hkask-regulation" }
-hkask-email = { path = "../hkask-email" }
+hkask-keystore.workspace = true
+hkask-regulation.workspace = true
+hkask-email.workspace = true
 hkask-services-core = { path = "../hkask-services-core" }
 hkask-condenser = { path = "../hkask-condenser" }
 
 # zed-kask side — the facilities the bridge adapts over
-language_model = { path = "../../../crates/language_model" }
-language_model_core = { path = "../../../crates/language_model_core" }
-http_client = { path = "../../../crates/http_client" }
-gpui = { path = "../../../crates/gpui" }
-gpui_tokio = { path = "../../../crates/gpui_tokio" }
-agent = { path = "../../../crates/agent" }
-settings = { path = "../../../crates/settings" }
-settings_content = { path = "../../../crates/settings_content" }
-credentials_provider = { path = "../../../crates/credentials_provider" }
-fs = { path = "../../../crates/fs" }
-util = { path = "../../../crates/util" }
-collections = { path = "../../../crates/collections" }
+language_model.workspace = true
+language_model_core.workspace = true
+http_client.workspace = true
+gpui.workspace = true
+gpui_tokio.workspace = true
+agent.workspace = true
+settings.workspace = true
+settings_content.workspace = true
+credentials_provider.workspace = true
+fs.workspace = true
+util.workspace = true
+collections.workspace = true
 schemars = { workspace = true }
 
 # Shared

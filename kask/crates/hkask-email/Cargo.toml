@@ -10,7 +10,7 @@ description = "Curator email (MXroute SMTP API outbound + algedonic alert email 
 path = "src/hkask_email.rs"
 
 [dependencies]
-hkask-regulation = { path = "../hkask-regulation" }
+hkask-regulation.workspace = true
 
 reqwest.workspace = true
 serde.workspace = true

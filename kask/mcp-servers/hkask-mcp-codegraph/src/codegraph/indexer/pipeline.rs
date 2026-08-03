@@ -164,8 +164,23 @@ impl IndexPipeline {
         Ok(results)
     }
 
-    /// Resolve call/import/reference edges by looking up target names
-    /// in the name-to-ID mapping from symbol insertion.
+    /// Resolve call/import/reference edges to database IDs and insert them.
+    ///
+    /// `to_id` resolution is **global** (against every symbol in the DB, not just
+    /// the current file's): a call in file A frequently targets a symbol defined
+    /// in file B, and the previous per-file-only map dropped every such cross-file
+    /// edge. Resolution is deterministic and scope-aware:
+    ///   1. exact full-qualified-name match (e.g. a top-level `fn foo` whose
+    ///      qualified name is exactly the callee's last segment);
+    ///   2. else last-segment match across all symbols;
+    ///   3. within the chosen candidate set, if there is exactly one, resolve it;
+    ///      if several, prefer a candidate defined in the same file as the edge;
+    ///      if still ambiguous, leave the edge unresolved rather than picking an
+    ///      arbitrary callee (the old HashMap-iteration pick produced
+    ///      nondeterministic, wrong call edges).
+    ///
+    /// `from_id` resolution stays per-file (a call occurs inside a symbol in the
+    /// current file, located by line-range containment).
     fn resolve_and_insert_edges(
         &self,
         edges: &[Edge],
@@ -173,7 +188,7 @@ impl IndexPipeline {
         symbols: &[Symbol],
         file_id: i64,
     ) -> Result<usize> {
-        // Build a map: symbol name → database ID
+        // Per-file map: qualified name -> id (for from_id / index_to_id only).
         let name_map: HashMap<&str, i64> = name_to_id
             .iter()
             .map(|(name, id)| (name.as_str(), *id))
@@ -186,12 +201,23 @@ impl IndexPipeline {
             .filter_map(|(i, sym)| name_map.get(sym.name.as_str()).map(|&id| (i, id)))
             .collect();
 
-        // For each edge, determine the from_id based on the containing function's
-        // line range, and the to_id by name resolution.
+        // Global to_id resolution maps across ALL symbols in the DB (this file's
+        // just-inserted symbols plus every previously-indexed file).
+        let global = self.store.all_symbols_with_file()?;
+        let mut by_name: HashMap<&str, Vec<(i64, &str)>> = HashMap::new();
+        let mut by_last_seg: HashMap<&str, Vec<(i64, &str)>> = HashMap::new();
+        for (name, id, file) in &global {
+            let name_ref = name.as_str();
+            by_name.entry(name_ref).or_default().push((*id, file.as_str()));
+            if let Some(last) = name.rsplit("::").next() {
+                by_last_seg.entry(last).or_default().push((*id, file.as_str()));
+            }
+        }
+
         let mut inserted = 0;
         for edge in edges {
             let from_id = self.find_containing_symbol(symbols, edge.line, &index_to_id);
-            let to_id = self.resolve_target(edge, &name_map);
+            let to_id = resolve_target_global(edge, &by_name, &by_last_seg);
 
             if let (Some(from), Some(to)) = (from_id, to_id) {
                 self.store
@@ -218,34 +244,52 @@ impl IndexPipeline {
             .min_by_key(|(_, sym)| sym.end_line - sym.start_line) // innermost (smallest span)
             .and_then(|(i, _)| index_to_id.get(&i).copied())
     }
+}
 
-    /// Resolve the target of an edge by name lookup against known symbols.
-    fn resolve_target(
-        &self,
-        edge: &Edge,
-        name_map: &std::collections::HashMap<&str, i64>,
-    ) -> Option<i64> {
-        if edge.target_name.is_empty() {
-            return None;
-        }
+/// Resolve an edge's `to_id` against the global symbol set.
+///
+/// `by_name` maps a fully-qualified name to its candidate symbols; `by_last_seg`
+/// maps the last `::`-segment of a qualified name to candidates. Exact full-name
+/// matches are preferred (more specific). When a candidate set has more than one
+/// entry, a same-file candidate (relative to the edge's file) is preferred; ties
+/// or no same-file match leave the edge unresolved rather than guessing, so call
+/// edges never point at a nondeterministically-chosen wrong callee.
+fn resolve_target_global<'a>(
+    edge: &Edge,
+    by_name: &HashMap<&'a str, Vec<(i64, &'a str)>>,
+    by_last_seg: &HashMap<&'a str, Vec<(i64, &'a str)>>,
+) -> Option<i64> {
+    if edge.target_name.is_empty() {
+        return None;
+    }
+    let target = edge.target_name.as_str();
+    // Prefer an exact full-qualified-name match (e.g. a top-level `fn foo` whose
+    // qualified name is exactly the callee). Fall back to last-segment matching.
+    let candidates: &[(i64, &'a str)] = by_name
+        .get(target)
+        .filter(|v| !v.is_empty())
+        .or_else(|| by_last_seg.get(target))
+        .map(|v| v.as_slice())?;
+    pick_candidate(candidates, edge.file.as_str())
+}
 
-        // Try exact match first
-        if let Some(&id) = name_map.get(edge.target_name.as_str()) {
-            return Some(id);
-        }
-
-        // Try matching by the last segment of qualified names
-        // e.g., edge.target_name = "HashMap" matches symbol "std::collections::HashMap"
-        for (name, &id) in name_map {
-            if let Some(last) = name.rsplit("::").next()
-                && last == edge.target_name
-            {
-                return Some(id);
+/// Pick a single candidate from a set, preferring one in the same file as the
+/// edge. Returns `None` when the set is ambiguous (no deterministic choice).
+fn pick_candidate(candidates: &[(i64, &str)], edge_file: &str) -> Option<i64> {
+    match candidates.len() {
+        0 => None,
+        1 => Some(candidates[0].0),
+        _ => {
+            let same_file: Vec<&(i64, &str)> =
+                candidates.iter().filter(|(_, f)| *f == edge_file).collect();
+            if same_file.len() == 1 {
+                Some(same_file[0].0)
+            } else {
+                None
             }
         }
-
-        None
     }
+}
 
     /// Finalize indexing: compute PageRank, reset staleness timestamp, emit health events.
     pub fn finalize(&mut self) -> Result<()> {

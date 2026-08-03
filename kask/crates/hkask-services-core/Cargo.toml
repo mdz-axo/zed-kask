@@ -11,9 +11,9 @@ path = "src/hkask_services_core.rs"
 
 [dependencies]
 hkask-storage = { path = "../hkask-storage" }
-hkask-types = { path = "../hkask-types" }
+hkask-types.workspace = true
 hkask-inference = { path = "../hkask-inference" }
-hkask-keystore = { path = "../hkask-keystore" }
+hkask-keystore.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true

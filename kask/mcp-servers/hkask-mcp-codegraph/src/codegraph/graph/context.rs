@@ -65,8 +65,9 @@ pub struct AssembledContext {
 
 /// Assemble context from the code graph for a given search query.
 ///
-/// Searches for relevant symbols, ranks by importance (PageRank, if available),
-/// and assembles a token-budgeted text block.
+/// Searches for relevant symbols (ranked by FTS5 BM25 relevance via `search`)
+/// and assembles a token-budgeted text block. PageRank is not used for ranking
+/// here — `codegraph_structure` is the PageRank-ranked tool.
 pub fn assemble_context(
     conn: &Connection,
     query: &str,

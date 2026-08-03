@@ -10,12 +10,12 @@ description = "Registry, vocabulary, and template execution for hKask"
 path = "src/hkask_templates.rs"
 
 [dependencies]
-hkask-types = { path = "../hkask-types" }
-hkask-capability = { path = "../hkask-capability" }
-hkask-forecast = { path = "../hkask-forecast" }
-hkask-lisp = { path = "../hkask-lisp" }
-hkask-guard = { path = "../hkask-guard" }
-hkask-regulation = { path = "../hkask-regulation" }
+hkask-types.workspace = true
+hkask-capability.workspace = true
+hkask-forecast.workspace = true
+hkask-lisp.workspace = true
+hkask-guard.workspace = true
+hkask-regulation.workspace = true
 minijinja.workspace = true
 serde.workspace = true
 serde_json.workspace = true

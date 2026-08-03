@@ -11,9 +11,9 @@ path = "src/hkask_storage.rs"
 
 [dependencies]
 
-hkask-types = { path = "../hkask-types", features = ["sql"] }
+hkask-types = { workspace = true, features = ["sql"] }
 
-hkask-keystore = { path = "../hkask-keystore" }
+hkask-keystore.workspace = true
 rusqlite.workspace = true
 r2d2.workspace = true
 r2d2_sqlite.workspace = true

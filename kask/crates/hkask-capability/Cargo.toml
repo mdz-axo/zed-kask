@@ -10,7 +10,7 @@ description = "In-process capability tokens for inter-agent delegation"
 path = "src/hkask_capability.rs"
 
 [dependencies]
-hkask-types = { path = "../hkask-types" }
+hkask-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

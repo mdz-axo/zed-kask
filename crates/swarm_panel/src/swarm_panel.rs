@@ -122,8 +122,13 @@ fn steer_system_prompt(
          \n\
          **ABW tools** (`mode: abw`, the default): `swarm_list_agents`, \
          `swarm_get_swarm`, `swarm_hire_cost`, `swarm_request_consent`, \
-         `swarm_hire`, `swarm_delegate`, `swarm_xaman`. These route to Agent \
-         Bestiary World and require the ABW API key.\n\
+         `swarm_hire`, `swarm_delegate`, `swarm_fire` (remove from roster), \
+         `swarm_create_agent`, `swarm_create_swarm`, `swarm_generate_prompt`, \
+         `swarm_generate_ontology`, `swarm_fork_agent` (derivative fork), \
+         `swarm_run_status`, `swarm_search_knowledge` (vector knowledge-graph \
+         search), `swarm_publish_checks` + `swarm_publish_agent` (catalogue \
+         publish, with an audited admin force-publish path), `swarm_xaman`. \
+         These route to Agent Bestiary World and require the ABW API key.\n\
          \n\
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
          `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \

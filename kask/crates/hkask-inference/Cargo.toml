@@ -10,7 +10,7 @@ description = "Multi-provider inference router for hKask — DeepInfra, Together
 path = "src/hkask_inference.rs"
 
 [dependencies]
-hkask-types = { path = "../hkask-types" }
+hkask-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
