@@ -206,6 +206,10 @@ pub struct ResultFeedbackRequest {
     /// Omit if you just want to leave a score without comments.
     #[serde(default)]
     pub comments: String,
+    /// Explicit data provider that produced the result (e.g. "fmp", "eodhd").
+    /// When omitted, the provider is inferred from the symbol/query.
+    #[serde(default)]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

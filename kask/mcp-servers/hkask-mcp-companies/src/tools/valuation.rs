@@ -1,4 +1,5 @@
 //! Valuation and forecasting tools.
+use super::portfolio::run_portfolio;
 use crate::{
     CompaniesServer, Provider, StoredForecast, current_price_from_multiple, fibo, financial_model,
     parse_symbol_from_query, portfolio::PersistedForecast, projected_terminal_multiple, scenarios,
@@ -510,9 +511,12 @@ impl CompaniesServer {
         execute_tool(self, "calibrate_forecast", async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
-                self.portfolio
-                    .validate_forecast_revision(revision_of, &req.symbol)
-                    .map_err(crate::map_portfolio_error)?;
+                let revision_of = revision_of.clone();
+                let symbol = req.symbol.clone();
+                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                    portfolio.validate_forecast_revision(&revision_of, &symbol)
+                })
+                .await?;
             }
             for (name, value) in [
                 ("growth_estimate", req.growth_estimate),
@@ -749,18 +753,15 @@ impl CompaniesServer {
             }
 
             // Brier scores on binary outcomes
-            // Multiple: was actual multiple >= forecast? (binary direction)
-            let multiple_higher = req.actual_multiple >= req.forecast_multiple;
-            let p_multiple_up = 0.5;
-            let multiple_brier = hkask_forecast::brier_score(p_multiple_up, multiple_higher);
-
+            // Multiple direction: the multiple probability is not modeled, so a
+            // coin-flip prior (p=0.5) would always yield 0.25 — uninformative.
+            // Excluded from the combined score; reported as null below.
             // Price change: was actual return within 20% tolerance of forecast?
             let return_accurate = superforecast::within_tolerance(
                 req.forecast_price_change, req.actual_price_change, 0.20,
             );
             let return_brier = hkask_forecast::brier_score(0.7, return_accurate);
-
-            let combined = (multiple_brier + return_brier) / 2.0;
+            let combined = return_brier;
 
             // Gap decomposition: use the owner's durable forecast model if requested.
             let stored_forecast = if let Some(ref forecast_id) = req.forecast_id {
@@ -893,7 +894,7 @@ impl CompaniesServer {
                         "outcome_date": req.outcome_date,
                         "actual_multiple": req.actual_multiple,
                         "actual_price_change": req.actual_price_change,
-                        "multiple_brier": multiple_brier,
+                        "multiple_brier": serde_json::Value::Null,
                         "return_brier": return_brier,
                         "combined_brier": combined,
                         "decomposition": decomposition,
@@ -922,7 +923,7 @@ impl CompaniesServer {
                     "narrative": gap_narrative,
                 },
                 "brier": {
-                    "multiple_direction": multiple_brier,
+                    "multiple_direction": serde_json::Value::Null,
                     "return_accuracy": return_brier,
                     "combined": combined,
                     "interpretation": hkask_forecast::brier_interpretation(combined),
@@ -942,7 +943,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Rate a previous tool result on a 1–5 scale with optional comments. Score: 5 = exceeded expectations, 3 = met expectations, 1 = completely missed. Both score and comments are optional — provide either, both, or neither to acknowledge you saw the result. Feeds the learning loop."
+        description = "Rate a previous tool result on a 1–5 scale with optional comments. Score: 5 = exceeded expectations, 3 = met expectations, 1 = completely missed. Both score and comments are optional — provide either, both, or neither to acknowledge you saw the result. Optional `provider` field explicitly names the data provider (e.g. \"fmp\", \"eodhd\") that produced the result; when omitted, the provider is inferred from the symbol/query. Feeds the learning loop."
     )]
     pub async fn result_feedback(
         &self,
@@ -951,6 +952,7 @@ impl CompaniesServer {
             query,
             score,
             comments,
+            provider,
         }): Parameters<types::ResultFeedbackRequest>,
     ) -> String {
         execute_tool(self, "result_feedback", async {
@@ -973,7 +975,24 @@ impl CompaniesServer {
             if let Some(sym) = parse_symbol_from_query(&query)
                 && let Ok(mut state) = self.learning.lock()
             {
-                let prov = if comments.contains("provider=eodhd") {
+                let prov = if let Some(ref p) = provider {
+                    match p.to_ascii_lowercase().as_str() {
+                        "eodhd" => Provider::Eodhd,
+                        "fmp" => Provider::Fmp,
+                        _ => {
+                            // Unknown explicit provider: fall back to heuristic.
+                            if comments.contains("provider=eodhd") {
+                                Provider::Eodhd
+                            } else if comments.contains("provider=fmp") {
+                                Provider::Fmp
+                            } else if sym.contains('.') {
+                                Provider::Eodhd
+                            } else {
+                                Provider::Fmp
+                            }
+                        }
+                    }
+                } else if comments.contains("provider=eodhd") {
                     Provider::Eodhd
                 } else if comments.contains("provider=fmp") {
                     Provider::Fmp

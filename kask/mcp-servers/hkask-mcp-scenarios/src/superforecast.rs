@@ -221,8 +221,13 @@ fn topological_sort(events: &[ScenarioEvent]) -> Result<Vec<String>, ScenarioErr
                         parent_id.clone(),
                     ));
                 }
-                adjacency.get_mut(parent_id).unwrap().push(event.id.clone());
-                *in_degree.get_mut(&event.id).unwrap() += 1;
+                adjacency
+                    .get_mut(parent_id)
+                    .ok_or_else(|| ScenarioError::EventNotFound(parent_id.clone()))?
+                    .push(event.id.clone());
+                *in_degree
+                    .get_mut(&event.id)
+                    .ok_or_else(|| ScenarioError::EventNotFound(event.id.clone()))? += 1;
             }
         }
     }
@@ -343,10 +348,26 @@ pub fn score_forecast(
             probs.push(event.probability);
             outs.push(*occurred);
             event_outcomes.push((event_id.clone(), *occurred));
+        } else {
+            tracing::warn!(
+                target: "hkask.mcp.scenarios",
+                event_id = %event_id,
+                "outcome has no matching event, skipped"
+            );
         }
     }
 
-    let bs = brier_score_multi(&probs, &outs).unwrap_or(0.33);
+    let bs = match brier_score_multi(&probs, &outs) {
+        Ok(bs) => bs,
+        Err(error) => {
+            tracing::warn!(
+                target: "hkask.mcp.scenarios",
+                %error,
+                "Brier multi-score failed, defaulting to climatology 0.33"
+            );
+            0.33
+        }
+    };
 
     ForecastOutcome {
         forecast_id: forecast_id.to_string(),

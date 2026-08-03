@@ -40,7 +40,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 
-use gpui::{AnyElement, App, Entity, Window, div};
+use gpui::{AnyElement, App, Entity, IntoElement, ParentElement, Styled, Window, div};
 
 use hkask_graph_widget::GraphWidget;
 use hkask_media_widget::MediaWidget;

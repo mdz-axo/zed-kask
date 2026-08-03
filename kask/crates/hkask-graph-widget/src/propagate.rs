@@ -82,19 +82,6 @@ pub fn recompute_marginals(
     marginals
 }
 
-/// The certainty tier for a marginal probability, matching the scenarios
-/// server's `CertaintyTier::from_probability`: proximate (≥67%), probable
-/// (33–66%), possible (<33%).
-pub fn certainty_tier(probability: f64) -> &'static str {
-    if probability >= 0.67 {
-        "proximate"
-    } else if probability >= 0.33 {
-        "probable"
-    } else {
-        "possible"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,8 +93,6 @@ mod tests {
             name: Some(id.into()),
             question: None,
             marginal_probability: Some(prob),
-            variance_contribution: None,
-            certainty_tier: None,
             depends_on: parents
                 .iter()
                 .map(|p| DependencyBody {
@@ -184,8 +169,8 @@ mod tests {
 
     #[test]
     fn certainty_tier_thresholds() {
-        assert_eq!(certainty_tier(0.9), "proximate");
-        assert_eq!(certainty_tier(0.5), "probable");
-        assert_eq!(certainty_tier(0.1), "possible");
+        assert_eq!(hkask_forecast::certainty_tier(0.9), "proximate");
+        assert_eq!(hkask_forecast::certainty_tier(0.5), "probable");
+        assert_eq!(hkask_forecast::certainty_tier(0.1), "possible");
     }
 }

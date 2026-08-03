@@ -134,6 +134,15 @@ impl From<&str> for PortfolioError {
     }
 }
 
+impl From<PortfolioError> for hkask_mcp_server::McpError {
+    fn from(e: PortfolioError) -> Self {
+        hkask_mcp_server::McpError::UnexpectedResponse {
+            context: "portfolio".to_string(),
+            detail: e.to_string(),
+        }
+    }
+}
+
 impl From<LedgerError> for PortfolioError {
     fn from(e: LedgerError) -> Self {
         Self::Ledger(e.to_string())
@@ -293,29 +302,25 @@ pub struct PortfolioManager {
     ledger_driver: Option<Arc<dyn DatabaseDriver>>,
 }
 
-impl Default for PortfolioManager {
-    fn default() -> Self {
-        Self::new(WebID::new())
-    }
-}
-
 impl PortfolioManager {
     /// Creates storage scoped to the authenticated server owner.
-    pub fn new(owner: WebID) -> Self {
+    pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("hkask");
         path.push("portfolios");
         path.push(sanitize_name(&owner.to_string()));
-        std::fs::create_dir_all(&path).expect("failed to create portfolio directory");
+        std::fs::create_dir_all(&path)
+            .map_err(|e| format!("failed to create portfolio directory: {e}"))?;
         path.push("master.db");
         // Ensure schema exists on first use — hard error, not silent skip.
-        let conn = Connection::open(&path).expect("failed to open portfolio database");
+        let conn = Connection::open(&path)
+            .map_err(|e| format!("failed to open portfolio database: {e}"))?;
         conn.execute_batch(SCHEMA_DDL)
-            .expect("failed to initialize portfolio schema");
-        Self {
+            .map_err(|e| format!("failed to initialize portfolio schema: {e}"))?;
+        Ok(Self {
             db_path: path,
             ledger_driver: None,
-        }
+        })
     }
 
     #[cfg(test)]
@@ -1272,7 +1277,9 @@ impl PortfolioManager {
         let id = uuid::Uuid::new_v4().to_string();
         let safe_filename = format!("{id}_{}", sanitize_name(filename));
         let files_dir = self.base_dir().join(portfolio).join("files");
-        let _ = std::fs::create_dir_all(&files_dir);
+        if let Err(error) = std::fs::create_dir_all(&files_dir) {
+            tracing::warn!(target: "hkask.mcp.companies", %error, "failed to create files dir");
+        }
         let file_path = files_dir.join(&safe_filename);
 
         std::fs::write(&file_path, &bytes).map_err(|e| format!("write file: {e}"))?;
@@ -1345,23 +1352,18 @@ impl PortfolioManager {
             )
             .map_err(|e| format!("lookup: {e}"))?;
 
-        std::fs::remove_file(&path).map_err(|e| {
-            format!(
-                "delete_file: failed to remove attachment file '{path}': {e}; metadata preserved"
-            )
-        })?;
-
+        // Delete the DB row first; if this fails the file is still present
+        // (storage waste) rather than a dangling metadata pointer.
         let rows = conn
             .execute("DELETE FROM files WHERE id = ?1", params![file_id])
-            .map_err(|e| {
-                format!("delete_file: attachment file removed but metadata deletion failed: {e}")
-            })?;
+            .map_err(|e| format!("delete_file: metadata deletion failed: {e}"))?;
         if rows == 0 {
-            return Err(format!(
-                "delete_file: attachment file removed but metadata for '{file_id}' was not found"
-            )
-            .into());
+            return Err(format!("delete_file: metadata for '{file_id}' was not found").into());
         }
+
+        std::fs::remove_file(&path).map_err(|e| {
+            format!("delete_file: metadata removed but failed to delete file '{path}': {e}")
+        })?;
 
         Ok(())
     }

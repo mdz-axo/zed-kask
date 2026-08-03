@@ -35,17 +35,16 @@ fn test_server() -> ScenariosServer {
     ScenariosServer::new(
         WebID::new(),
         Arc::new(Mutex::new(ForecastStore::new(None))),
-        reqwest::Client::new(),
         Mutex::new(None),
         Mutex::new(HashSet::new()),
     )
 }
 
 /// Parse the success envelope `{"content": <value>}`; falls back to the raw
-/// value for non-envelope outputs.
+/// value for non-envelope outputs. Delegates to the canonical
+/// `hkask_types::tool_response::parse_tool_response` helper.
 fn parse_content(out: &str) -> serde_json::Value {
-    let v: serde_json::Value = serde_json::from_str(out).expect("tool output is JSON");
-    v.get("content").cloned().unwrap_or(v)
+    hkask_types::tool_response::parse_tool_response(out).expect("tool output is JSON")
 }
 
 /// Extract the `kind` field from an error envelope, if present.

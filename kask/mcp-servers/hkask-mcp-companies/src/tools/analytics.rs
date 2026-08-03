@@ -1,4 +1,5 @@
 //! Portfolio analytics and DCF valuation tools.
+use super::portfolio::run_portfolio;
 use crate::{
     CompaniesServer, StoredForecast, fibo, financial_model,
     portfolio::{PersistedForecast, TxType},
@@ -22,15 +23,11 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "portfolio_attribution", async {
             // Get transactions and compute positions at start and end
-            let txs = match self
-                .portfolio
-                .get_transactions(&req.portfolio, None, None, None, None)
-            {
-                Ok(t) => t,
-                Err(e) => {
-                    return Err(crate::map_portfolio_error(e));
-                }
-            };
+            let portfolio_name = req.portfolio.clone();
+            let txs = run_portfolio(self.portfolio.clone(), move |portfolio| {
+                portfolio.get_transactions(&portfolio_name, None, None, None, None)
+            })
+            .await?;
 
             // Compute positions at from_date and to_date
             let mut positions_start: std::collections::HashMap<String, f64> =
@@ -200,12 +197,11 @@ impl CompaniesServer {
         Parameters(req): Parameters<CharacteristicsRequest>,
     ) -> String {
         execute_tool(self, "portfolio_characteristics", async {
-            let symbols = match self.portfolio.get_symbols(&req.portfolio) {
-                Ok(s) => s,
-                Err(e) => {
-                    return Err(crate::map_portfolio_error(e));
-                }
-            };
+            let portfolio_name = req.portfolio.clone();
+            let symbols = run_portfolio(self.portfolio.clone(), move |portfolio| {
+                portfolio.get_symbols(&portfolio_name)
+            })
+            .await?;
 
             if symbols.is_empty() {
                 return Ok(serde_json::json!(
@@ -214,18 +210,12 @@ impl CompaniesServer {
             }
 
             // Get positions at the as-of date
-            let txs = match self.portfolio.get_transactions(
-                &req.portfolio,
-                None,
-                None,
-                None,
-                Some(&req.date),
-            ) {
-                Ok(t) => t,
-                Err(e) => {
-                    return Err(crate::map_portfolio_error(e));
-                }
-            };
+            let portfolio_name = req.portfolio.clone();
+            let as_of = req.date.clone();
+            let txs = run_portfolio(self.portfolio.clone(), move |portfolio| {
+                portfolio.get_transactions(&portfolio_name, None, None, None, Some(&as_of))
+            })
+            .await?;
             let mut positions: std::collections::HashMap<String, f64> =
                 std::collections::HashMap::new();
             for tx in &txs {
@@ -417,9 +407,12 @@ impl CompaniesServer {
         execute_tool(self, "dcf_valuation", async {
             validate_symbol(&req.symbol)?;
             if let Some(ref revision_of) = req.revision_of {
-                self.portfolio
-                    .validate_forecast_revision(revision_of, &req.symbol)
-                    .map_err(crate::map_portfolio_error)?;
+                let revision_of = revision_of.clone();
+                let symbol = req.symbol.clone();
+                run_portfolio(self.portfolio.clone(), move |portfolio| {
+                    portfolio.validate_forecast_revision(&revision_of, &symbol)
+                })
+                .await?;
             }
 
             // Fetch all required financial statements

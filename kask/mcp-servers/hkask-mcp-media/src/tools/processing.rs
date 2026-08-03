@@ -250,7 +250,7 @@ impl MediaServer {
                 .save(&output_path)
                 .map_err(|e| McpToolError::internal(format!("Failed to save collage: {}", e)))?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "created",
                 "image_count": images.len(),
                 "layout": layout,
@@ -260,10 +260,9 @@ impl MediaServer {
                 "canvas_height": canvas_h,
                 "spacing": spacing,
                 "output": output_path.display().to_string(),
-            }).map(|result| {
+            });
                 let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+                Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }
@@ -302,18 +301,16 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "clipped",
                 "source": video_url,
                 "start_sec": start_sec,
                 "end_sec": end_sec,
                 "duration": end_sec - start_sec,
                 "output": output.display().to_string(),
-            })
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+            });
+            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }
@@ -359,7 +356,7 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "converted",
                 "source": video_url,
                 "start_sec": start,
@@ -367,11 +364,9 @@ impl MediaServer {
                 "width": w,
                 "fps": f,
                 "output": output.display().to_string(),
-            })
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+            });
+            let display_hint = crate::media_block::hint_from_output_path(&result, "image");
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }
@@ -445,18 +440,16 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "captioned",
                 "source": video_url,
                 "text": text,
                 "position": pos,
                 "font_size": size,
                 "output": output.display().to_string(),
-            })
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+            });
+            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }
@@ -517,18 +510,16 @@ impl MediaServer {
             let gif = gif_result
                 .map_err(|e| McpToolError::internal(format!("GIF step failed: {}", e)))?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "remixed",
                 "source": video_url,
                 "start_sec": start_sec,
                 "end_sec": end_sec,
                 "caption": caption_text,
                 "output": gif.display().to_string(),
-            })
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+            });
+            let display_hint = crate::media_block::hint_from_output_path(&result, "image");
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }
@@ -569,17 +560,15 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "created",
                 "frame_count": paths.len(),
                 "fps": fps,
                 "format": fmt,
                 "output": output.display().to_string(),
-            })
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+            });
+            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }
@@ -608,15 +597,13 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            Ok(serde_json::json!({
+            let result = serde_json::json!({
                 "status": "concatenated",
                 "clip_count": video_urls.len(),
                 "output": output.display().to_string(),
-            })
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            }))
+            });
+            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }

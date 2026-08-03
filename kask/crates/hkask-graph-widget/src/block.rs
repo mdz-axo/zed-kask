@@ -35,10 +35,11 @@ pub struct NodeBody {
     pub question: Option<String>,
     #[serde(default)]
     pub marginal_probability: Option<f64>,
-    #[serde(default)]
-    pub variance_contribution: Option<f64>,
-    #[serde(default)]
-    pub certainty_tier: Option<String>,
+    // `certainty_tier` and `variance_contribution` are intentionally NOT parsed
+    // here: the widget derives the tier from `marginal_probability` via
+    // `hkask_forecast::certainty_tier` (one source of truth, no drift from the
+    // server), and never displays variance contribution. Any such fields the
+    // agent emits are silently ignored (no `deny_unknown_fields`).
     #[serde(default)]
     pub depends_on: Vec<DependencyBody>,
     #[serde(default)]
@@ -59,11 +60,18 @@ pub struct DependencyBody {
 impl NodeBody {
     /// All parent ids for this node, deduplicated, from either edge
     /// representation. Order: `parents` first, then each dependency's
-    /// `parent_event_ids`.
+    /// `parent_event_ids` (first occurrence wins; later duplicates are dropped).
     pub fn parent_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.parents.clone();
-        for dep in &self.depends_on {
-            ids.extend(dep.parent_event_ids.iter().cloned());
+        let mut seen = std::collections::HashSet::new();
+        let mut ids: Vec<String> = Vec::new();
+        for id in self.parents.iter().chain(
+            self.depends_on
+                .iter()
+                .flat_map(|dep| dep.parent_event_ids.iter()),
+        ) {
+            if seen.insert(id.clone()) {
+                ids.push(id.clone());
+            }
         }
         ids
     }
@@ -75,4 +83,50 @@ impl NodeBody {
 /// as a malformed graph block.
 pub fn parse_graph_body(body: &str) -> anyhow::Result<GraphBlockBody> {
     Ok(serde_json::from_str(body.trim())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node_with_parents<'a>(
+        id: &'a str,
+        parents: &'a [&'a str],
+        dep_parents: &'a [&'a str],
+    ) -> NodeBody {
+        NodeBody {
+            id: id.into(),
+            name: Some(id.into()),
+            question: None,
+            marginal_probability: None,
+            depends_on: vec![DependencyBody {
+                parent_event_ids: dep_parents.iter().map(|p| (*p).to_string()).collect(),
+                conditionals: Vec::new(),
+            }],
+            parents: parents.iter().map(|p| (*p).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn parent_ids_deduplicates_overlapping_parents_and_deps() {
+        // `parents` has "a" and "b"; `depends_on[0].parent_event_ids` has "b"
+        // and "c". Dedup should yield ["a", "b", "c"] (first occurrence wins).
+        let node = node_with_parents("n", &["a", "b"], &["b", "c"]);
+        let ids = node.parent_ids();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    }
+
+    #[test]
+    fn parent_ids_preserves_order_first_occurrence() {
+        // "a" appears in both parents and deps — parents entry wins (first).
+        let node = node_with_parents("n", &["a"], &["a", "b"]);
+        let ids = node.parent_ids();
+        assert_eq!(ids, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn parent_ids_empty_when_no_parents() {
+        let node = node_with_parents("n", &[], &[]);
+        assert!(node.parent_ids().is_empty());
+    }
 }

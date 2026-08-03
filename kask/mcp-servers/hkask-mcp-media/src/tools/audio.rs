@@ -352,26 +352,26 @@ impl MediaServer {
                         model,
                     };
 
-                    Ok(serde_json::to_value(&bundle).unwrap_or_else(|_| {
+                    let result = serde_json::to_value(&bundle).unwrap_or_else(|_| {
                         serde_json::json!({"error": "Failed to serialize bundle"})
-                    }).map(|result| {
-                        let display_hint = crate::media_block::audio_hint_from_path(&result);
-                        crate::media_block::enrich_with_display_hint(result, display_hint)
-                    }))
-                }
-                Err(e) => Ok(serde_json::json!({
-                    "status": "partial",
-                    "duration_secs": duration_secs,
-                    "audio_path": audio_path.display().to_string(),
-                    "audio_format": "wav",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                    "transcript_error": e.to_json_string(),
-                    "message": "Audio captured successfully but transcription failed. The audio file is saved and can be transcribed later."
-                }).map(|result| {
+                    });
                     let display_hint = crate::media_block::audio_hint_from_path(&result);
-                    crate::media_block::enrich_with_display_hint(result, display_hint)
-                })),
+                    Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+                }
+                Err(e) => {
+                    let result = serde_json::json!({
+                        "status": "partial",
+                        "duration_secs": duration_secs,
+                        "audio_path": audio_path.display().to_string(),
+                        "audio_format": "wav",
+                        "sample_rate": 16000,
+                        "channels": 1,
+                        "transcript_error": e.to_json_string(),
+                        "message": "Audio captured successfully but transcription failed. The audio file is saved and can be transcribed later."
+                    });
+                    let display_hint = crate::media_block::audio_hint_from_path(&result);
+                    Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+                }
             }
         })
         .await

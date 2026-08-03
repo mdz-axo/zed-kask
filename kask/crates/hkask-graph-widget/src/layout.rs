@@ -199,7 +199,13 @@ fn layout_node(node: &NodeBody, position: Point<Pixels>) -> LayoutNode {
         name: node.name.clone().unwrap_or_else(|| node.id.clone()),
         question: node.question.clone(),
         marginal_probability: node.marginal_probability,
-        certainty_tier: node.certainty_tier.clone(),
+        // Derive the tier from the marginal (canonical thresholds live in
+        // `hkask_forecast::certainty_tier`) rather than trusting a body field,
+        // which may be absent — without this, nodes without an emitted tier
+        // would render neutral grey even though their probability is known.
+        certainty_tier: Some(
+            hkask_forecast::certainty_tier(node.marginal_probability.unwrap_or(0.0)).to_string(),
+        ),
         parents: node.parent_ids(),
         position,
     }
@@ -222,8 +228,6 @@ mod tests {
                     name: Some((*id).into()),
                     question: None,
                     marginal_probability: None,
-                    variance_contribution: None,
-                    certainty_tier: None,
                     depends_on: parents
                         .iter()
                         .map(|p| DependencyBody {

@@ -194,29 +194,4 @@ impl LearningState {
 
         result
     }
-
-    /// Export learning state as JSON for Regulation consumption / persistence.
-    pub fn export_state(&self) -> serde_json::Value {
-        let mut map = serde_json::Map::new();
-        for ((symbol, provider), (alpha, beta, n)) in &self.provider_scores {
-            let prob = if *n > 0 {
-                *alpha as f64 / (*alpha + *beta) as f64
-            } else {
-                1.0
-            };
-            let key = format!("{symbol}@{provider}");
-            map.insert(
-                key,
-                serde_json::json!({
-                    "symbol": symbol,
-                    "provider": provider.to_string(),
-                    "alpha": alpha,
-                    "beta": beta,
-                    "observations": n,
-                    "success_probability": prob,
-                }),
-            );
-        }
-        serde_json::Value::Object(map)
-    }
 }

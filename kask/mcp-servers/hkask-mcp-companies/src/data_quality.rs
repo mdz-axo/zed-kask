@@ -467,19 +467,6 @@ pub fn emit_data_quality_span(symbol: &str, tool: &str, quality: &ModelInputQual
     );
 }
 
-/// Emit a Regulation span for provider quality (normalization fidelity).
-pub fn emit_provider_quality_span(symbol: &str, tool: &str, pq: &ProviderQuality) {
-    tracing::debug!(
-        target: "hkask.mcp.companies.data_quality",
-        symbol = %symbol,
-        tool = %tool,
-        provider = %pq.provider,
-        provider_confidence = %pq.provider_confidence,
-        approximated_count = %pq.approximated_fields.len(),
-        "Provider data quality: normalization fidelity assessment"
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

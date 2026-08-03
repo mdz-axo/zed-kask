@@ -13,7 +13,7 @@ use chrono::Datelike;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
-async fn run_portfolio<T>(
+pub(crate) async fn run_portfolio<T>(
     portfolio: PortfolioManager,
     operation: impl FnOnce(PortfolioManager) -> Result<T, PortfolioError> + Send + 'static,
 ) -> Result<T, McpToolError>

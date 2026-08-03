@@ -154,6 +154,22 @@ pub fn marginalize(parent_marginals: &[f64], conditionals: &[f64]) -> f64 {
     marginal
 }
 
+/// The MAIA three-level certainty tier for a probability, matching the
+/// scenarios server's `CertaintyTier::from_probability` (which delegates here):
+/// proximate (≥67%), probable (33–66%), possible (<33%). Single source of truth
+/// for the thresholds so the server's tiering and the graph widget's node
+/// coloring cannot drift.
+#[must_use = "certainty tier should be used"]
+pub fn certainty_tier(probability: f64) -> &'static str {
+    if probability >= 0.67 {
+        "proximate"
+    } else if probability >= 0.33 {
+        "probable"
+    } else {
+        "possible"
+    }
+}
+
 // ── Brier scoring ──────────────────────────────────────────────────────────
 
 /// Brier score for a single binary forecast: (prediction - outcome)².
@@ -331,5 +347,12 @@ mod tests {
         // P(b) = P(b|¬a)·P(¬a) + 0 = 0.4·0.5 = 0.2.
         let m = marginalize(&[0.5], &[0.4]);
         assert!((m - 0.4 * 0.5).abs() < 1e-9, "got {m}");
+    }
+
+    #[test]
+    fn certainty_tier_thresholds() {
+        assert_eq!(certainty_tier(0.9), "proximate");
+        assert_eq!(certainty_tier(0.5), "probable");
+        assert_eq!(certainty_tier(0.1), "possible");
     }
 }

@@ -2374,14 +2374,20 @@ impl Element for MarkdownElement {
                                 continue;
                             }
 
-                            // zed-kask: D18 — media block renderer.
-                            // If the block language is "media" and a
-                            // renderer is registered, render the media widget
-                            // instead of the default code block. Returns None
-                            // for non-media blocks (falls through to default).
+                            // zed-kask: D18 — viz block renderer.
+                            // Only intercept fenced blocks whose language tag
+                            // is "media" or "graph" — the renderer self-selects
+                            // on the body content, but we gate on the fence
+                            // language so that ```json blocks with a `kind` field
+                            // are not misinterpreted as media blocks. Returns
+                            // None for non-viz blocks (falls through to default).
                             if let Some(renderer) = &self.media_block_renderer {
-                                // Only intercept fenced blocks (not indented).
-                                if !matches!(kind, CodeBlockKind::Indented) {
+                                let is_viz_block = matches!(
+                                    kind,
+                                    CodeBlockKind::FencedLang(lang)
+                                        if lang == "media" || lang == "graph"
+                                );
+                                if is_viz_block {
                                     let block_source = &parsed_markdown.source[range.clone()];
                                     // Strip the fence language line (first line) and
                                     // the closing fence to pass just the body content.
@@ -6143,6 +6149,61 @@ mod tests {
         assert!(
             all_text.contains("kind"),
             "without a renderer, media block should render as a normal code block; got: {all_text:?}"
+        );
+    }
+
+    // zed-kask: D18 — pins the fence-language gate. A ```json block whose
+    // body happens to contain a `kind` field must NOT be intercepted by the
+    // viz renderer — only ```media and ```graph blocks are eligible.
+    #[gpui::test]
+    fn test_media_block_renderer_does_not_intercept_json_blocks(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "```json\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') && body.contains("\"kind\"") {
+                            Some(div().child("MEDIA_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("kind"),
+            "```json block with a kind field should render as normal code, not be intercepted; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("MEDIA_WAS_HERE"),
+            "```json block should not trigger the viz renderer; got: {all_text:?}"
         );
     }
 }

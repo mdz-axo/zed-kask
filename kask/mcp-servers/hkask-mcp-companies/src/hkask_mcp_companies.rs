@@ -284,12 +284,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let fmp_api_key = ctx
                 .credentials
                 .get("HKASK_FMP_API_KEY")
-                .expect("required credential checked by run_stdio_server")
+                .ok_or_else(|| hkask_mcp_server::McpError::MissingCredentials {
+                    missing: "HKASK_FMP_API_KEY".to_string(),
+                })?
                 .clone();
             let eodhd_api_key = ctx
                 .credentials
                 .get("HKASK_EODHD_API_KEY")
-                .expect("required credential checked by run_stdio_server")
+                .ok_or_else(|| hkask_mcp_server::McpError::MissingCredentials {
+                    missing: "HKASK_EODHD_API_KEY".to_string(),
+                })?
                 .clone();
             let exa_api_key = ctx.credentials.get("HKASK_EXA_API_KEY").cloned();
             let tavily_api_key = ctx.credentials.get("HKASK_TAVILY_API_KEY").cloned();
@@ -302,7 +306,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 exa_api_key,
                 tavily_api_key,
                 brave_api_key,
-                PortfolioManager::new(ctx.webid),
+                PortfolioManager::new(ctx.webid)?,
                 std::sync::Arc::new(std::sync::Mutex::new(
                     match std::env::var("HKASK_CHRONIC_STALENESS_DAYS")
                         .ok()

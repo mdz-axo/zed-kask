@@ -199,12 +199,13 @@ pub enum CertaintyTier {
 
 impl CertaintyTier {
     pub fn from_probability(p: f64) -> Self {
-        if p >= 0.67 {
-            Self::Proximate
-        } else if p >= 0.33 {
-            Self::Probable
-        } else {
-            Self::Possible
+        // Delegate the thresholds to `hkask_forecast::certainty_tier` so the
+        // server's tiering and the graph widget's node coloring share one
+        // source of truth and cannot drift.
+        match hkask_forecast::certainty_tier(p) {
+            "proximate" => Self::Proximate,
+            "probable" => Self::Probable,
+            _ => Self::Possible,
         }
     }
 

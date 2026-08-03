@@ -40,6 +40,36 @@ pub mod types;
 
 use types::*;
 
+// ── Error classification ───────────────────────────────────────────────────
+
+/// Classify a `ScenarioError` into the appropriate `McpToolError` kind.
+///
+/// Caller-input defects (bad probabilities, cycles, unknown parents, empty
+/// input) map to `InvalidArgument`; missing entities map to `NotFound`;
+/// empty-store and computation failures map to `Internal`.
+fn map_scenario_error(error: ScenarioError) -> McpToolError {
+    match &error {
+        ScenarioError::EventNotFound(id) => {
+            McpToolError::not_found(format!("event '{id}' not found"))
+        }
+        ScenarioError::NoForecastData => {
+            McpToolError::internal("no stored forecasts found for calibration")
+        }
+        ScenarioError::Forecast(forecast_error) => {
+            McpToolError::internal(format!("forecast computation failed: {forecast_error}"))
+        }
+        // Caller-side input defects
+        ScenarioError::NoEvents
+        | ScenarioError::InvalidProbability(..)
+        | ScenarioError::InvalidDependencyProbability(..)
+        | ScenarioError::InvalidDependency(..)
+        | ScenarioError::UnknownParent(..)
+        | ScenarioError::CycleDetected
+        | ScenarioError::InsufficientPerspectives
+        | ScenarioError::EmptyInput(..) => McpToolError::invalid_argument(error.to_string()),
+    }
+}
+
 // ── Request types for MCP tools ────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -64,7 +94,7 @@ pub struct BrainstormRequest {
     pub time_horizon: Option<String>,
     /// Raw text from web searches about this subject
     pub research_context: Option<String>,
-    /// Persona names to use (e.g., ["Bull", "Bear", "Contrarian"]). Empty = use defaults.
+    /// Persona names to use (e.g., 'Bull,Bear,Contrarian'). Empty = use defaults.
     pub personas: Option<String>,
     /// Start at a specific round (1-4). Default: 1 (full protocol).
     pub start_round: Option<u8>,
@@ -265,7 +295,6 @@ pub struct StatusRequest {}
 hkask_mcp_server::mcp_server!(
     pub struct ScenariosServer {
         pub forecast_store: std::sync::Arc<std::sync::Mutex<superforecast::ForecastStore>>,
-        pub client: reqwest::Client,
         pub tree_cache: std::sync::Mutex<Option<types::EventTree>>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
     }
@@ -305,6 +334,8 @@ impl ScenariosServer {
     /// pipeline-stage tool is invoked without its expected predecessor having
     /// been called, emits a Regulation warning. Does not block execution — tool
     /// flexibility is preserved for exploratory and bypass workflows.
+    ///
+    /// In-memory only: tracking resets when the server process restarts.
     fn check_sequence(&self, tool: &str) {
         let mut called = self.called_tools.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -453,15 +484,24 @@ impl ScenariosServer {
 
             // Step 2: Quantify
             let tree = superforecast::build_event_tree(&events)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             // Step 3: Sensitivity
             let sensitivity = superforecast::sensitivity_ranking(&tree);
 
             // Step 4: Calibrate
             let calibration: Vec<_> = events.iter().map(|e| {
-                let fermi = superforecast::calibrate_from_fermi(&e.sub_questions)
-                    .unwrap_or(0.5);
+                let fermi = match superforecast::calibrate_from_fermi(&e.sub_questions) {
+                    Ok(fermi_estimate) => fermi_estimate,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.scenarios",
+                            %error,
+                            "Fermi calibration failed, defaulting to 0.5"
+                        );
+                        0.5
+                    }
+                };
                 let (cal, conf) = if let (Some(br), Some(_)) = (e.base_rate, e.reference_class.as_ref()) {
                     superforecast::outside_view_adjustment(br, fermi, 1)
                 } else { (fermi, 0.5) };
@@ -469,9 +509,39 @@ impl ScenariosServer {
             }).collect();
 
             // Step 5: Synthesize (if perspectives provided)
-            let synth = req.perspectives.as_deref()
-                .and_then(|s| serde_json::from_str::<Vec<Perspective>>(s).ok())
-                .and_then(|ps| if ps.len() >= 2 { superforecast::synthesize_perspectives(&events[0].id, &ps).ok() } else { None });
+            let synth = req.perspectives.as_deref().and_then(|s| {
+                match serde_json::from_str::<Vec<Perspective>>(s) {
+                    Ok(perspectives) => {
+                        if perspectives.len() < 2 {
+                            tracing::warn!(
+                                target: "hkask.mcp.scenarios",
+                                "scenario_full: fewer than 2 perspectives provided; skipping synthesis"
+                            );
+                            None
+                        } else {
+                            match superforecast::synthesize_perspectives(&events[0].id, &perspectives) {
+                                Ok(synthesis) => Some(synthesis),
+                                Err(error) => {
+                                    tracing::warn!(
+                                        target: "hkask.mcp.scenarios",
+                                        %error,
+                                        "scenario_full: perspective synthesis failed; skipping"
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.scenarios",
+                            %error,
+                            "scenario_full: perspectives JSON parse failed; skipping synthesis"
+                        );
+                        None
+                    }
+                }
+            });
 
             // Step 6: Assess
             let deps = events.iter().filter(|e| !e.depends_on.is_empty()).count();
@@ -534,7 +604,7 @@ impl ScenariosServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid companies output JSON: {}", e)))?;
 
             let events = superforecast::convert_companies_output(&req.symbol, &companies_json, horizon)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             let output = serde_json::json!({
                 "symbol": req.symbol,
@@ -676,10 +746,19 @@ impl ScenariosServer {
             let protocol = templates::generate_framing_session(&req.subject);
 
             // If prior answers were provided, merge them into the template
-            let prior: Option<serde_json::Value> = req
-                .prior_answers
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok());
+            let prior: Option<serde_json::Value> = req.prior_answers.as_deref().and_then(|s| {
+                match serde_json::from_str(s) {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.scenarios",
+                            %error,
+                            "prior_answers JSON parse failed; ignoring prior answers"
+                        );
+                        None
+                    }
+                }
+            });
 
             let mut output = protocol;
             if let Some(ref prior) = prior
@@ -715,7 +794,7 @@ impl ScenariosServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid answers JSON: {}", e)))?;
 
             let document = superforecast::structure_framing_document(&req.subject, &answers)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             let output = serde_json::json!({
                 "subject": req.subject,
@@ -865,8 +944,10 @@ impl ScenariosServer {
         })
         .await
     }
-    /// If research text is provided, structures it into candidate events with
-    /// dependency suggestions. Without research, returns a template for LLM completion.
+    /// Returns a scenario event-tree scaffold/template for LLM completion.
+    /// Always returns an extraction template (event schema, dependency format,
+    /// certainty tiers, Tetlock commandments); the agent fills it against
+    /// research_text if provided. Does not itself parse research into final events.
     #[tool(
         description = "Build a scenario event tree scaffold from web research. Returns an extraction template (not final events) with: event schema, dependency format, certainty tier definitions, and Tetlock's 10 commandments as methodology. The agent (LLM) fills in the event_extraction_prompt against research_text to produce ScenarioEvent JSON. Without research_text, returns a structural template. The ultimate pipeline artifact: events with calibrated probabilities, conditional dependency chains, and connections to driver/decision factors from the framing document. Feeds into scenario_quantify for probability resolution."
     )]
@@ -1116,12 +1197,10 @@ impl ScenariosServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON: {}", e)))?;
 
             let tree = superforecast::build_event_tree(&events)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             // Cache for TUI status queries
-            if let Ok(mut cache) = self.tree_cache.lock() {
-                *cache = Some(tree.clone());
-            }
+            *self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(tree.clone());
 
             let sensitivity = superforecast::sensitivity_ranking(&tree);
             let most_uncertain = sensitivity.first().map(|(id, _)| format!("Event '{}' contributes the most uncertainty", id));
@@ -1356,7 +1435,7 @@ impl ScenariosServer {
 
             // Stage 1: Fermi decomposition
             let fermi_estimate = superforecast::calibrate_from_fermi(&sub_questions)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             // Stage 2+3: Outside/inside view blending (if base rate provided)
             let (calibrated, confidence) = if let (Some(base_rate), Some(_ref_class), Some(ref_count)) =
@@ -1442,7 +1521,7 @@ impl ScenariosServer {
 
     /// Sensitivity ranking: which events drive outcome uncertainty.
     #[tool(
-        description = "Rank events by their contribution to outcome uncertainty. For each event, computes variance contribution (|P - 0.5|) — events closer to 50/50 contribute more uncertainty. Returns events ranked from most uncertain to most certain. Useful for identifying which events to spend calibration effort on."
+        description = "Rank events by their contribution to outcome uncertainty. For each event, computes an uncertainty score (1 - variance contribution; higher = more uncertainty) — events closer to 50/50 contribute more uncertainty. Returns events ranked from most uncertain to most certain. Useful for identifying which events to spend calibration effort on."
     )]
     pub async fn scenario_sensitivity(
         &self,
@@ -1453,7 +1532,7 @@ impl ScenariosServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON: {}", e)))?;
 
             let tree = superforecast::build_event_tree(&events)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             let ranking = superforecast::sensitivity_ranking(&tree);
 
@@ -1505,7 +1584,7 @@ impl ScenariosServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid perspectives JSON: {}", e)))?;
 
             let synthesis = superforecast::synthesize_perspectives(&req.event_id, &perspectives)
-                .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+                .map_err(map_scenario_error)?;
 
             let output = serde_json::json!({
                 "event_id": synthesis.event_id,
@@ -1563,7 +1642,7 @@ impl ScenariosServer {
             let curve = superforecast::compute_calibration_curve(
                 filtered_store.as_ref().unwrap_or(&store),
             )
-            .map_err(|e| McpToolError::invalid_argument(e.to_string()))?;
+            .map_err(map_scenario_error)?;
 
             let output = serde_json::json!({
                 "subject": req.subject,
@@ -1800,7 +1879,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .ok()
                         .map(std::path::PathBuf::from),
                 ))),
-                reqwest::Client::new(),
                 std::sync::Mutex::new(None),
                 std::sync::Mutex::new(HashSet::new()),
             ))

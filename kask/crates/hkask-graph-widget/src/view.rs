@@ -104,7 +104,7 @@ impl GraphWidget {
         for (i, marginal) in marginals.iter().enumerate() {
             if let Some(node) = self.layout.nodes.get_mut(i) {
                 node.marginal_probability = Some(*marginal);
-                node.certainty_tier = Some(propagate::certainty_tier(*marginal).to_string());
+                node.certainty_tier = Some(hkask_forecast::certainty_tier(*marginal).to_string());
             }
         }
         cx.notify();
@@ -417,7 +417,8 @@ impl Render for GraphWidget {
                                     .text_xs()
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.set_evidence(idx, 0.9, cx)
+                                        this.set_evidence(idx, 0.9, cx);
+                                        cx.stop_propagation();
                                     }))
                                     .child("Set P≈90%"),
                             )
@@ -427,7 +428,8 @@ impl Render for GraphWidget {
                                     .text_xs()
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.set_evidence(idx, 0.1, cx)
+                                        this.set_evidence(idx, 0.1, cx);
+                                        cx.stop_propagation();
                                     }))
                                     .child("Set P≈10%"),
                             )
@@ -438,7 +440,8 @@ impl Render for GraphWidget {
                                         .text_xs()
                                         .cursor_pointer()
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.reset_evidence(idx, cx)
+                                            this.reset_evidence(idx, cx);
+                                            cx.stop_propagation();
                                         }))
                                         .child("Reset"),
                                 )

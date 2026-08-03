@@ -68,15 +68,14 @@ fn ensure_theme_initialized(window: &mut Window, cx: &mut App) {
 /// `media_block_renderer` invocation, which fires during markdown rendering
 /// — theme changes trigger re-renders, so colors stay in sync.
 fn sync_theme_colors(cx: &mut App) {
-    let zed_colors = cx.theme().colors();
-    let zed_status = cx.theme().status();
+    let zed_colors = cx.theme().colors().clone();
+    let zed_status = cx.theme().status().clone();
     let gpui_theme = cx.global_mut::<Theme>();
-    let colors = &mut gpui_theme.colors;
+    let mut colors = gpui_theme.colors;
 
     colors.foreground = zed_colors.text;
     colors.muted_foreground = zed_colors.text_muted;
     colors.background = zed_colors.background;
-    colors.panel_background = zed_colors.panel_background;
     colors.border = zed_colors.border;
     colors.input = zed_colors.border;
     colors.primary = zed_colors.text_accent;
@@ -161,6 +160,7 @@ fn sync_theme_colors(cx: &mut App) {
     colors.sidebar_accent_foreground = zed_colors.text;
     colors.window_border = zed_colors.border;
 
+    gpui_theme.colors = colors;
     gpui_theme.tokens = gpui_component::ThemeTokens::from(gpui_theme.colors);
 }
 
