@@ -30,6 +30,9 @@ path = "src/hkask_mcp_condenser.rs"
 name = "hkask-mcp-condenser"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 
 

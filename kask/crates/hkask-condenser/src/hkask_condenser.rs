@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask Condenser — Domain logic for context condensation
 //!
 //! Pure domain crate: compression algorithms, ontology-aware saliency

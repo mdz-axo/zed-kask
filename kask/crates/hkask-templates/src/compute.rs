@@ -518,7 +518,7 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
             // sorted multiset of the roster's agent_types. Two iterations with
             // the same deficit and the same roster shape share a signature.
             let roster_types = extract_roster_agent_types(input.get("swarm_state"));
-            let mut sorted_roster = roster_types.clone();
+            let mut sorted_roster = roster_types;
             sorted_roster.sort();
             let swarm_state_signature = format!("{}|{}", deficit_class, sorted_roster.join(","));
             // Extract the deterministic task-success scalar `s`: score if
@@ -538,7 +538,7 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                 .and_then(|e| e.get("s"))
                 .and_then(|v| v.as_f64());
             // Append this iteration to the log.
-            let mut new_log = iteration_log.clone();
+            let mut new_log = iteration_log;
             new_log.push(serde_json::json!({
                 "d": d,
                 "s": s,
@@ -550,7 +550,7 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
             // null (not measured — d alone is the sensor-truth risk per C3's
             // Needs-C0 note) OR current s <= prior s. This is the anti-loop set
             // DECIDE rejects re-proposals against.
-            let mut new_failed = failed_edits.clone();
+            let mut new_failed = failed_edits;
             let s_not_improved = match (s, prior_s) {
                 (Some(cur), Some(prev)) => cur <= prev,
                 _ => true, // null or first iteration: cannot confirm improvement
@@ -572,7 +572,7 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                     .get(&agent_type)
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
-                new_influence.insert(agent_type.clone(), serde_json::json!(cur + d_delta));
+                new_influence.insert(agent_type, serde_json::json!(cur + d_delta));
             }
             // C5 fault-count aggregation: if ORIENT attributed fault to a named
             // agent this iteration, increment that agent's count in the
@@ -1958,7 +1958,7 @@ mod tests {
             score in proptest::num::f64::ANY.prop_filter("must be finite and <= 0", |s| s.is_finite() && *s <= 0.0),
             other_types in prop::collection::vec("[a-z_]+", 0..3),
         ) {
-            let mut all_types = other_types.clone();
+            let mut all_types = other_types;
             all_types.push(agent_type.clone());
             let input = serde_json::json!({
                 "proposed_moves": [{"move_type": "hire", "agent_id_or_type": agent_type}],

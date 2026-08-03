@@ -34,5 +34,8 @@ sqlx.workspace = true
 tokio.workspace = true
 utoipa.workspace = true
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

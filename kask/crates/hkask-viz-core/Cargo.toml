@@ -12,3 +12,6 @@ path = "src/hkask_viz_core.rs"
 gpui.workspace = true
 hkask_media_widget.workspace = true
 hkask_graph_widget.workspace = true
+
+[lints]
+workspace = true

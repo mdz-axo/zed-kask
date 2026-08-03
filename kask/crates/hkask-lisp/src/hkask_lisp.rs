@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! Sandboxed Lisp interpreter for deterministic manifest compute steps.
 //!
 //! Design goals (following the `rust_lisp` reference by brundonsmith):
@@ -497,7 +498,7 @@ fn eval_inner(
             }
             let head = &items[0];
             if let LispValue::Symbol(name) = head {
-                return eval_special_form(name, &items[1..], env.clone(), budget);
+                return eval_special_form(name, &items[1..], env, budget);
             }
             let func = eval_with_budget(env.clone(), head, budget)?;
             let args: Result<Vec<LispValue>, LispError> = items[1..]
@@ -630,7 +631,7 @@ fn eval_special_form(
             if args.len() != 1 {
                 return Err(LispError::Arity("not expects 1 arg".into()));
             }
-            let v = eval_with_budget(env.clone(), &args[0], budget)?;
+            let v = eval_with_budget(env, &args[0], budget)?;
             Ok(LispValue::Bool(!is_truthy(&v)))
         }
         _ => {

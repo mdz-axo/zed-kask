@@ -660,6 +660,7 @@ impl CompaniesServer {
                         "current price must be positive for reverse DCF",
                     ));
                 }
+                #[allow(clippy::redundant_clone)] // assumptions is moved at the hi_model site below
                 let lo_model = financial_model::project_model(
                     &hist,
                     &financial_model::ProjectionAssumptions {
@@ -678,7 +679,7 @@ impl CompaniesServer {
                     &hist,
                     &financial_model::ProjectionAssumptions {
                         revenue_growth: 1.00,
-                        ..assumptions.clone()
+                        ..assumptions
                     },
                     current_price,
                 );

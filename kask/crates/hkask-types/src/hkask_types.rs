@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask Types — Foundation types for the hKask tool platform
 //!
 

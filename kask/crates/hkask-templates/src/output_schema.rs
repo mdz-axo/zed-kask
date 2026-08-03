@@ -360,6 +360,8 @@ mod tests {
             })),
             phase: CascadePhase::Core,
             condition: None,
+            branching: None,
+            branching_field: None,
         };
         let template_content =
             "[inference]\ncontract:\n  output:\n    from_manifest: string\n---\nbody\n";
@@ -398,6 +400,8 @@ mod tests {
             output_schema: None,
             phase: CascadePhase::Core,
             condition: None,
+            branching: None,
+            branching_field: None,
         };
         let template_content = "[inference]\ncontract:\n  output:\n    from_template: string\n    score: number\n---\nbody\n";
         let schema =
@@ -438,6 +442,8 @@ mod tests {
             output_schema: None,
             phase: CascadePhase::Core,
             condition: None,
+            branching: None,
+            branching_field: None,
         };
         let template_content = "No frontmatter here.";
         assert!(resolve_output_schema(&step, template_content).is_none());

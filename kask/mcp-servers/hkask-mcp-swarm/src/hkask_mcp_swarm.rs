@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Swarm — Agent Bestiary World (ABW) integration server.
 //!
 //! Exposes ABW's agent catalogue, workspaces ("swarms"), and the Xaman Ek
@@ -1494,7 +1495,7 @@ impl SwarmServer {
             let system_prompt = abw_card
                 .get("system_prompt")
                 .and_then(|s| s.as_str())
-                .map(|s| sanitize_abw_text(s).to_string());
+                .map(|s| sanitize_abw_text(s));
             let string_list = |v: Option<&serde_json::Value>| {
                 v.and_then(|x| x.as_array())
                     .map(|arr| {

@@ -76,6 +76,9 @@ path = "src/hkask_mcp_corpus.rs"
 name = "hkask-mcp-corpus"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 rand.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

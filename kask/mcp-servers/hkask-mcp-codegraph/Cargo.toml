@@ -37,5 +37,8 @@ path = "src/hkask_mcp_codegraph.rs"
 name = "hkask-mcp-codegraph"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

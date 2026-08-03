@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! hKask Inference — media generation + IPC bridge client.
 //!
 //! In zed-kask, chat inference routes through the zed IPC bridge

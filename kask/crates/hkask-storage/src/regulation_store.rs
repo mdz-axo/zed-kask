@@ -535,7 +535,7 @@ mod tests {
     #[test]
     fn local_path_extraction_does_not_panic_on_exact_namespace_match() {
         let ns = SpanNamespace::new("reg.gas").unwrap();
-        let span = Span::new(ns.clone(), "reg.gas");
+        let span = Span::new(ns, "reg.gas");
         let (cat, path) = super::span_to_columns(&span);
         assert_eq!(cat, "gas");
         assert!(!path.is_empty());

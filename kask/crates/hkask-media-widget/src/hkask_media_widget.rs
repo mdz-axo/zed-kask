@@ -23,6 +23,7 @@
 //!              │  gpui::img()   │  rodio     │  ffmpeg → RGBA → RenderImage
 //!              │                │  transport │  transport controls
 //! ```
+#![warn(clippy::let_underscore_future)]
 
 pub mod audio_player;
 pub mod media_ref;

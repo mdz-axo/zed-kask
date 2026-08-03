@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP — MCP runtime and governance
 //!
 //! Provides the McpRuntime for governed tool dispatch with OCAP,

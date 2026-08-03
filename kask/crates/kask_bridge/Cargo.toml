@@ -50,6 +50,9 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 futures.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

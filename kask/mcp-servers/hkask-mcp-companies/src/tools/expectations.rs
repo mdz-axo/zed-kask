@@ -156,6 +156,7 @@ fn compute_implied_growth(
     let assumptions = financial_model::ProjectionAssumptions::from_history(&hist);
 
     // Verify price bounds
+    #[allow(clippy::redundant_clone)] // assumptions is moved at the hi_check site below
     let lo_check = financial_model::project_model(
         &hist,
         &financial_model::ProjectionAssumptions {
@@ -168,7 +169,7 @@ fn compute_implied_growth(
         &hist,
         &financial_model::ProjectionAssumptions {
             revenue_growth: 1.00,
-            ..assumptions.clone()
+            ..assumptions
         },
         current_price,
     );

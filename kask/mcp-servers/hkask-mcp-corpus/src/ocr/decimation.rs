@@ -340,7 +340,7 @@ fn otsu_binarize(image: &mut DynamicImage) {
     // Inlined from imageproc::contrast::threshold to drop the imageproc dep,
     // which pulls rayon, ttf-parser, ab_glyph, and num-complex.
     let level = otsu_level;
-    let mut binarized = gray.clone();
+    let mut binarized = gray;
     for px in binarized.iter_mut() {
         *px = if *px > level { 255 } else { 0 };
     }

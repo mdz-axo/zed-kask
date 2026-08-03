@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Condenser — Context condensation for tool outputs
 //!
 //! Loop: Episodic (Loop 2) — Confirmed. Context condensation operates on the active

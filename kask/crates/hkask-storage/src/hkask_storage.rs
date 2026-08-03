@@ -1,4 +1,5 @@
 #![deny(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask Storage — SQLite + SQLCipher storage backend
 //!
 //! Consolidated from hkask-storage + hkask-database + hkask-storage-core.

@@ -38,7 +38,7 @@ pub(crate) fn render_models_page(
     let classifier_model_input = kask_string_input(
         "kask-models-classifier",
         "Classifier Model",
-        "DeepInfra/deepseek-ai/deepseek-v4-flash",
+        "OpenRouter/deepseek/deepseek-v4-flash",
         classifier_model,
         "models",
         "classifier_model",

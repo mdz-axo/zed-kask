@@ -13,6 +13,9 @@ path = "src/hkask_mcp_research.rs"
 name = "hkask-mcp-research"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 

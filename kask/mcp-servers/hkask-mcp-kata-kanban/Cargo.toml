@@ -43,6 +43,9 @@ path = "src/hkask_mcp_kata_kanban.rs"
 name = "hkask-mcp-kata-kanban"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 serde_json.workspace = true

@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Corpus — Unified corpus MCP server.
 //!
 //! Combines the former `hkask-mcp-docproc` and `hkask-mcp-replica` servers into

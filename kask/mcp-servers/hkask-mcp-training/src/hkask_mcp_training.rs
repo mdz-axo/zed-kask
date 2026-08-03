@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Training — Model training data ingestion and fine-tuning server.
 //!
 //! Exposes 8 tools (simplified from 21 → 15 → 8 across 2026-07-19 cleanups):

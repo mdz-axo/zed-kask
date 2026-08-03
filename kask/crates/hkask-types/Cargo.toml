@@ -26,6 +26,9 @@ tracing.workspace = true
 
 rusqlite = { workspace = true, optional = true }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = { workspace = true }

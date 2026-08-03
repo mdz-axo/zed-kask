@@ -201,7 +201,7 @@ pub(crate) fn chunk_structure(
     }
     // Flush final section
     if !current_body.trim().is_empty() || !current_heading.is_empty() {
-        sections.push((current_heading.clone(), current_body.clone()));
+        sections.push((current_heading, current_body));
     }
 
     // Chunk each section, prepending the heading as context.

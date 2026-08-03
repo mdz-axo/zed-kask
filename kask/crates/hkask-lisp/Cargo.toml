@@ -12,3 +12,6 @@ path = "src/hkask_lisp.rs"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror.workspace = true
+
+[lints]
+workspace = true

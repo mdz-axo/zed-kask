@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! Shared test fixtures, property-test generators, and oracle/trace
 //! infrastructure for the evolving test harness.
 //!

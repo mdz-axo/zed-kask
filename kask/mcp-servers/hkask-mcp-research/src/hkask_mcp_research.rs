@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 #![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 pub mod research;

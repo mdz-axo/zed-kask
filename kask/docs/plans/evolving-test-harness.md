@@ -1,7 +1,7 @@
 # Evolving Test Harness for zed-kask — Design Document
 
-**Status:** Implemented (all 6 slices landed) — **but a decoupled 4th-iteration grill-me critic (§9.5) found that the implementation's data flow diverges from the design in ways that make the headline safety mechanisms inert.** The design-as-written is internally coherent; the design-as-implemented is NOT yet convergent. The blocking fixes are specified in §9.6 and must land before the convergence checklist (§12) can be marked met.
-**Date:** 2026-08-03 (design); 2026-08-03 (4th critic)
+**Status:** Implemented (all 6 slices + TDD orchestration). F1–F4, F9, and code gap #1 (branching enforcement) are **applied** — the headline safety mechanisms (EIR halt, stall detector, Cauchy convergence, sensors, TDD feedback routing) are now live. F5–F8 remain pending (see §9.6). A 5th decoupled critic should re-test convergence.
+**Date:** 2026-08-03 (design + 4th critic); 2026-08-03 (fixes applied)
 **Scope:** `hkask-test-harness`, `kask/scripts/test`, `kask/scripts/stability-gate.sh`, `kask/scripts/harness-evolve-cycle.sh`, `kask-ci.yml`, `qa-triage-cycle`, `proptest` skill, `harness-optimize` skill, `harness-evolve-cycle` manifest, `hkask-regulation` `SensorBus`/`SetPoints`, `self-improvement` skill
 
 ---
@@ -77,7 +77,7 @@ manifest (7 steps) executed by the `ManifestExecutor`.
 
 Step 1 runs `cargo test` across priority crates; step 2 classifies failures via
 the `qa-triage` classifier (`kask/registry/classify/qa-triage.yaml`,
-DeepInfra/deepseek-v4-flash); steps 3–7 route by confidence (≥ 0.95 auto-repair,
+OpenRouter/deepseek/deepseek-v4-flash); steps 3–7 route by confidence (≥ 0.95 auto-repair,
 0.70–0.94 issue+suggestion, < 0.70 human, flake → retry max 3).
 
 **Runner readiness:** `PARTIAL` — `run_command` + `classify` steps work today;
@@ -895,30 +895,28 @@ cascade-kills the stall detector, ECR semantics, EIR gate, Cauchy convergence,
 and both CyberneticsLoop sensors, while the convergence verdict actively
 converts the garbage into a false success that overrides the EIR halt.
 
-### 9.6 Required Fixes (not yet applied — blocking convergence)
+### 9.6 Required Fixes (status: F1–F4, F9 applied; F5–F8, F10 pending)
 
-These fixes must land before the §12 convergence checklist can be marked met.
-They are ordered by dependency (the data-flow fixes unblock the detector/gate
-fixes). Each is traceable to a §9.5 finding.
+These fixes were identified by the 4th critic. F1–F4 and F9 have been applied.
+F5–F8 and F10 remain. Additionally, **code gap #1 (branching enforcement)**
+has been fixed: `branching` and `branching_field` fields were added to
+`BundleManifestStep` (`hkask-templates/src/bundle/manifest.rs`) and the executor
+now evaluates them after `select`/`execute` steps (`hkask-templates/src/executor.rs`),
+with two passing tests. This makes TDD's strengthen/explore routing and
+harness-evolve-cycle's verdict branching mechanically enforced.
 
-| # | Fix | Files | Unblocks | Traceable to |
-|---|-----|-------|----------|--------------|
-| F1 | **Persist `mutation_score` into `${TRACE_DIR}/metrics.json`** from the `cargo mutants` fallback (write-back), and/or move mutation scoring into `./scripts/test --trace` so every run records it. | `stability-gate.sh` L88-103; optionally `kask/scripts/test` | #3, then #8 (EIR deterministic), #9 (sensor) | §9.5 #3 |
-| F2 | **Add a coverage producer** (e.g. `cargo llvm-cov nextest` / `tarpaulin`) to `./scripts/test --trace` and CI, writing `coverage_pct` to `metrics.json` and `coverage/<crate>.lcov` to the trace dir. If deferred, the stall detector and `TestCoverageSensor` must be gated on coverage presence (not silently read 0). | `kask/scripts/test`; `kask-ci.yml` | #2, then #4 (stall), #9 (sensor) | §9.5 #2 |
-| F3 | **Refuse convergence when metrics are absent.** Treat a missing `coverage_pct`/`mutation_score` as "no signal" (skip that axis / mark the window non-converged), not as zero delta. **Reorder the verdict so EIR > 0 is checked before `converged`** — a halt must never be masked by spurious convergence. | `stability-gate.sh` L156,192-204 | #5 | §9.5 #5 |
-| F4 | **Bootstrap N−1 and persist run history.** The runner must either (a) accept a single run-id and skip ECR/Cauchy until N≥2 (emit a `bootstrap` verdict, not crash), and (b) persist `RUN_HISTORY` across invocations (a state file under the trace dir) OR actually loop in-process across iterations without `exit`ing. | `harness-evolve-cycle.sh` L20,53,58-60,100-127; `stability-gate.sh` L29-32 | #1 | §9.5 #1 |
-| F5 | **Wire qa-triage into the cycle** (a classification step that populates `failures/<test>/classifier.json`), **or** drop the classifier EIR claim from the design and rely on the deterministic (mutant-regression) EIR component alone. If wired, diff latest vs N−1 failures so EIR counts only **new** non-real-bug failures. | `harness-evolve-cycle.yaml` (add step); `stability-gate.sh` L127-137 | #6, #8 | §9.5 #6,#8 |
-| F6 | **Enforce proposer/evaluator separation mechanically.** Add a `profile:` binding to the manifest step 3 that selects a profile with `terminal: false`, **or** route step 3 through `swarm_delegate` (no built-in tools), and assert the binding at cycle start (refuse to invoke `harness-optimize` if `is_tool_enabled("terminal")`). A SKILL.md instruction is not a gate. | `harness-evolve-cycle.yaml` step 3; `harness-evolve-cycle.sh`; new/selected agent profile | #7 | §9.5 #7 |
-| F7 | **Make the cost axis honest.** Either read `cost_tokens` from `metrics.json`, normalize, and add `w_k·Δcost_norm²` to the Cauchy norm — or remove the cost axis from §3.6, the norm, and the `converged` span message. Do not advertise a three-axis criterion that is mechanically two-axis. | `stability-gate.sh` L156; §3.6; `harness-evolve-cycle.yaml` L72 | #10 | §9.5 #10 |
-| F8 | **Reconcile the cargo-mutants stance.** Add a note to `qa-triage-cycle.yaml` (or the design) that `cargo-mutants` is used by `harness-evolve-cycle` (a separate manifest), not by `qa-triage-cycle` — the "no cargo-mutants" header scopes to that manifest only. | `qa-triage-cycle.yaml` header; §3.4 | #12 | §9.5 #12 |
-| F9 | **Resolve the doubled `kask/kask/traces/` path.** Use a repo-root-relative or absolute `TRACE_DIR` consistently, or have `scripts/test` not re-`cd`. | `kask-ci.yml` L112; `kask/scripts/test` L9,48 | #13 | §9.5 #13 |
-| F10 | **Update stale status + line refs.** Status reflects implemented state; replace specific line numbers with symbol names (they drift). | doc §1; §5 table | #11 | §9.5 #11 |
-
-**After F1–F3 land,** the stall detector, EIR halt, ECR semantics, Cauchy
-convergence, and both sensors become live (they read fields that now exist and
-are non-zero). **After F4 lands,** the runner can complete a cycle. **After F6
-lands,** the proposer/evaluator separation is a mechanical gate, not a
-convention. F1–F4 are the blocking set; F5–F10 are correctness/hygiene.
+| # | Fix | Status | Files |
+|---|-----|--------|-------|
+| F1 | **Persist `mutation_score` into `metrics.json`** from the cargo-mutants fallback (write-back) | ✅ Applied | `stability-gate.sh` L117-129 |
+| F2 | **Add a coverage producer** (cargo-llvm-cov) to `scripts/test --trace` and CI, writing `coverage_pct` to `metrics.json` | ✅ Applied | `kask/scripts/test` (cargo-llvm-cov branch + lcov parsing); `kask-ci.yml` (install cargo-llvm-cov) |
+| F3 | **Refuse convergence when metrics are absent + reorder verdict so EIR > 0 is checked before `converged`** | ✅ Applied | `stability-gate.sh` L65-75 (`metric_present` helper), L179-185 (Cauchy guard), L226-240 (verdict reorder) |
+| F4 | **Bootstrap N−1 and persist run history** | ✅ Applied | `harness-evolve-cycle.sh` L21 (HISTORY_FILE), L35-39 (load prior history), L64 (persist), L67-69 (bootstrap verdict) |
+| F5 | **Wire qa-triage into the cycle** (or drop the classifier EIR claim) | ❌ Pending — the deterministic EIR (mutant regressions) works now that F1 is fixed; the classifier component is still dead | `harness-evolve-cycle.yaml` |
+| F6 | **Enforce proposer/evaluator separation mechanically** (profile binding, not SKILL.md convention) | ❌ Pending — `is_tool_enabled` is a passive read; no profile binds `terminal: false` | `harness-evolve-cycle.yaml` step 3; agent profile |
+| F7 | **Make the cost axis honest** (implement or remove it) | ❌ Pending — the Cauchy norm in `stability-gate.sh` is 2-axis (coverage, mutation); the doc and span message claim 3-axis (cost) | `stability-gate.sh` L192; §3.6; `harness-evolve-cycle.yaml` L72 |
+| F8 | **Reconcile the cargo-mutants stance** | ✅ Applied | `qa-triage-cycle.yaml` header (added scoping note) |
+| F9 | **Resolve the doubled `kask/kask/traces/` path** | ✅ Applied | `kask-ci.yml` L116 (path: kask/traces/); `kask/scripts/test` L48 (TRACE_DIR=traces/) |
+| F10 | **Update stale status + line refs** | ✅ Applied | doc §1 status; §5 table (symbol-based refs) |
 
 ---
 
@@ -1139,7 +1137,7 @@ proposer — CI is the independent evaluator).
 | Stability gate (ECR/EIR threshold) specified concretely (design-as-written) | ✓ | §3.4 |
 | Trace-filesystem compatible with `qa-triage-cycle` and `kask-ci.yml` | ✓ | §3.2 (extends qa-triage; Slice 6 adds to kask-ci.yml) |
 | Essentialist G1 deletion test passes for every component | ✓ | §6.1 (all 7 components pass) |
-| **Grill-me critic cannot produce an Edge Cases challenge that breaks the design** | **✗ — NOT met for the design-as-implemented** | §9.5 — the 4th (decoupled) critic broke the implementation at Levels 2, 3, 4, 5. The prior 3 iterations reviewed the prose; the 4th reviewed the data flow and found `coverage_pct`/`mutation_score` are not persisted to `metrics.json`, which cascade-kills the stall detector, ECR semantics, EIR gate, Cauchy convergence, and both sensors, while spurious convergence masks the EIR halt. Blocking fixes: §9.6 F1–F4. |
+| **Grill-me critic cannot produce an Edge Cases challenge that breaks the design** | **✗ — partially met** | §9.5 — the 4th critic broke the implementation at Levels 2–5. **F1–F4, F9 are now applied** (metrics persistence, coverage producer, verdict reorder, runner bootstrap, path fix) + **code gap #1 (branching enforcement) is fixed** (executor now evaluates `branching`). The remaining breaks: F5 (qa-triage not wired — classifier EIR dead, but deterministic EIR works), F6 (proposer/evaluator separation is a convention, not a gate), F7 (cost axis not implemented). A 5th decoupled critic should re-test whether these remaining gaps break the design. |
 | First vertical slice implementable without new crates or CI changes | ✓ (landed) | Slice 1 implemented in `hkask-test-harness` + `scripts/test --trace` |
 
 **Honest status:** the design-as-written satisfies the structural criteria

@@ -74,7 +74,7 @@ pub fn generate_brainstorm_protocol(
 
     // Use user-provided persona names if given, otherwise defaults
     let personas: Vec<PersonaConfig> = if persona_names.is_empty() {
-        default_personas.clone()
+        default_personas
     } else {
         let defaults: std::collections::HashMap<&str, PersonaConfig> = default_personas
             .iter()

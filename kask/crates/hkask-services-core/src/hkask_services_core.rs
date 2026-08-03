@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask Service-Layer Foundation — shared error types, configuration, and settings.
 //!
 //! This crate is the foundation for most service-layer modules: `ServiceError`,

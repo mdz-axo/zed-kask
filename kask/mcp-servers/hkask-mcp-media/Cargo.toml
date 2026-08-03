@@ -42,6 +42,9 @@ path = "src/hkask_mcp_media.rs"
 name = "hkask-mcp-media"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

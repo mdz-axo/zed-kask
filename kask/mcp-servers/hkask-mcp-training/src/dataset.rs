@@ -1001,7 +1001,7 @@ mod tests {
             writeln!(file, "{}", serde_json::to_string(record).unwrap()).expect("write");
         }
 
-        let mut pipeline = DatasetPipeline::new(cache.clone());
+        let mut pipeline = DatasetPipeline::new(cache);
         let normalized = pipeline.ingest(&input).expect("ingest should succeed");
 
         assert!(normalized.exists(), "normalized output should exist");
@@ -1145,7 +1145,7 @@ mod tests {
             writeln!(file, "{}", serde_json::to_string(record).unwrap()).expect("write");
         }
 
-        let mut pipeline = DatasetPipeline::new(cache.clone());
+        let mut pipeline = DatasetPipeline::new(cache);
         let normalized = pipeline.ingest(&input).expect("ingest should succeed");
 
         assert!(normalized.exists(), "normalized output should exist");
@@ -1188,7 +1188,7 @@ mod tests {
             writeln!(file, "{}", serde_json::to_string(record).unwrap()).expect("write");
         }
 
-        let mut pipeline = DatasetPipeline::new(cache.clone());
+        let mut pipeline = DatasetPipeline::new(cache);
         let normalized = pipeline.ingest(&input).expect("ingest should succeed");
 
         let content = std::fs::read_to_string(&normalized).expect("read output");
@@ -1224,7 +1224,7 @@ mod tests {
             writeln!(file, "{}", serde_json::to_string(record).unwrap()).expect("write");
         }
 
-        let mut pipeline = DatasetPipeline::new(cache.clone());
+        let mut pipeline = DatasetPipeline::new(cache);
         let normalized = pipeline.ingest(&input).expect("ingest should succeed");
 
         let content = std::fs::read_to_string(&normalized).expect("read output");

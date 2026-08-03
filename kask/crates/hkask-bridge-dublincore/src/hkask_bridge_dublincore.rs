@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! Ontology vocabulary bridge — Dublin Core + BIBO + CiTO + PKO.
 //!
 //! A shared pure-vocabulary crate — canonical URI constants and mapping helpers

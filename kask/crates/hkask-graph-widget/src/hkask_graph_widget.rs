@@ -18,6 +18,7 @@
 //! Edges are child-side: each node lists its parents in
 //! `depends_on[].parent_event_ids` (the server's edge model) or, as a tolerant
 //! fallback, in a flat `parents` array.
+#![warn(clippy::let_underscore_future)]
 
 pub mod block;
 pub mod layout;

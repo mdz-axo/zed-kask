@@ -53,7 +53,13 @@ if [[ "$TRACE" -eq 1 ]]; then
 {"run_id": "${RUN_ID}", "timestamp": "$(date -u +%FT%TZ)", "packages": [$(printf '"%s",' "${PACKAGES[@]}" | sed 's/,$//')], "harness_revision": "$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"}
 EOF
 
-    if command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
+    if command -v cargo-llvm-cov &>/dev/null && command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
+        # Coverage-instrumented run: cargo-llvm-cov wraps nextest, producing both
+        # the nextest JSON test events (stdout) and an lcov coverage report.
+        cargo llvm-cov nextest --profile kask "${PACKAGES[@]}" --no-fail-fast \
+            --message-format json --lcov --output-path "${TRACE_DIR}/coverage.lcov" "$@" \
+            2>/dev/null > "${TRACE_DIR}/nextest-output.json" || true
+    elif command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
         cargo nextest run --profile kask "${PACKAGES[@]}" --no-fail-fast \
             --message-format json "$@" 2>/dev/null > "${TRACE_DIR}/nextest-output.json" || true
     else
@@ -63,9 +69,29 @@ EOF
     # Compute simple metrics from the nextest JSON output.
     TOTAL=$(grep -c '"type":"test"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null || echo 0)
     PASSED=$(grep -c '"event":"finished"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null || echo 0)
-    cat > "${TRACE_DIR}/metrics.json" <<EOF
+
+    # Coverage percentage from the lcov report (if cargo-llvm-cov produced one).
+    COVERAGE_PCT=""
+    if [[ -f "${TRACE_DIR}/coverage.lcov" ]]; then
+        TOTAL_LINES=$(grep '^LF:' "${TRACE_DIR}/coverage.lcov" | cut -d: -f2 | paste -sd+ | bc 2>/dev/null || echo 0)
+        HIT_LINES=$(grep '^LH:' "${TRACE_DIR}/coverage.lcov" | cut -d: -f2 | paste -sd+ | bc 2>/dev/null || echo 0)
+        if [[ "$TOTAL_LINES" -gt 0 ]] 2>/dev/null; then
+            COVERAGE_PCT=$(echo "scale=4; $HIT_LINES / $TOTAL_LINES" | bc 2>/dev/null || echo 0)
+        fi
+    fi
+
+    # Write metrics.json — coverage_pct is included only when available.
+    # When absent, the stability gate's metric_present check treats it as
+    # "no signal" (not zero), preventing spurious convergence (design §9.5 #5).
+    if [[ -n "$COVERAGE_PCT" ]]; then
+        cat > "${TRACE_DIR}/metrics.json" <<EOF
+{"pass_rate": ${PASSED}, "total_tests": ${TOTAL}, "run_id": "${RUN_ID}", "coverage_pct": ${COVERAGE_PCT}}
+EOF
+    else
+        cat > "${TRACE_DIR}/metrics.json" <<EOF
 {"pass_rate": ${PASSED}, "total_tests": ${TOTAL}, "run_id": "${RUN_ID}"}
 EOF
+    fi
 
     echo "Traces written to ${TRACE_DIR}"
 elif command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then

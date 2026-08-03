@@ -200,10 +200,10 @@ impl MediaServer {
                 std::collections::HashMap::new();
 
             for (tag, relative_path) in &all_tags {
-                if let Some(ref filter) = type_filter {
-                    if !filter.contains(&tag.tag_type.to_lowercase()) {
-                        continue;
-                    }
+                if let Some(ref filter) = type_filter
+                    && !filter.contains(&tag.tag_type.to_lowercase())
+                {
+                    continue;
                 }
 
                 let sim = levenshtein_similarity(&query, &tag.value);
@@ -415,15 +415,15 @@ impl MediaServer {
                 // Stage 1: scan the face reference folder for new reference
                 // faces. Default folder: ~/.hkask/faces/. Skipped silently if
                 // the folder does not exist.
-                if let Some(folder) = crate::default_face_folder() {
-                    if folder.is_dir() {
-                        match self.run_face_scan_folder(&folder, false).await {
-                            Ok(result) => {
-                                face_scan = result;
-                            }
-                            Err(e) => {
-                                face_scan_errors.push(format!("face_scan_folder: {}", e));
-                            }
+                if let Some(folder) = crate::default_face_folder()
+                    && folder.is_dir()
+                {
+                    match self.run_face_scan_folder(&folder, false).await {
+                        Ok(result) => {
+                            face_scan = result;
+                        }
+                        Err(e) => {
+                            face_scan_errors.push(format!("face_scan_folder: {}", e));
                         }
                     }
                 }
@@ -650,21 +650,15 @@ impl MediaServer {
                 if tag.tag_type != "face" {
                     continue;
                 }
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tag.value) {
-                    if parsed["face_index"].as_u64() == Some(face_group as u64) {
-                        let new_value = serde_json::json!({
-                            "face_index": face_group,
-                            "name": resolved_name,
-                        });
-                        self.persist_tag(
-                            &tag.image_id,
-                            "face",
-                            &new_value.to_string(),
-                            1.0,
-                            "user",
-                        );
-                        renamed += 1;
-                    }
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tag.value)
+                    && parsed["face_index"].as_u64() == Some(face_group as u64)
+                {
+                    let new_value = serde_json::json!({
+                        "face_index": face_group,
+                        "name": resolved_name,
+                    });
+                    self.persist_tag(&tag.image_id, "face", &new_value.to_string(), 1.0, "user");
+                    renamed += 1;
                 }
             }
 

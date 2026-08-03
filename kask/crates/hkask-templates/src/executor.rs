@@ -960,6 +960,37 @@ impl ManifestExecutor {
                     );
                 }
 
+                // ── Branching: route based on step result ───────────────────
+                // If the step has a `branching` map, read the routing key from
+                // the step result (field name from `branching_field`, default
+                // "routing") and jump to the target ordinal. This closes the
+                // feedback loop for select/execute steps — e.g., a proptest
+                // fail routes back to the tracer, a bug-hunt gap routes back
+                // to the plan. If the routing field is absent or does not
+                // match any key, execution continues to the next ordinal.
+                if let Some(ref branching) = step.branching {
+                    let field_name = step.branching_field.as_deref().unwrap_or("routing");
+                    let result_key = format!("step_{}_result", step.ordinal);
+                    if let Some(routing) = context
+                        .get(&result_key)
+                        .and_then(|v| v.get(field_name))
+                        .and_then(|v| v.as_str())
+                        && let Some(&target_ordinal) = branching.get(routing)
+                        && let Some(pos) = steps.iter().position(|s| s.ordinal == target_ordinal)
+                    {
+                        info!(
+                            target: "reg.skill.cascade.step_executed",
+                            iteration = iteration,
+                            step = step.ordinal,
+                            branch_key = %routing,
+                            branch_target = target_ordinal,
+                            "REG"
+                        );
+                        step_idx = pos;
+                        continue;
+                    }
+                }
+
                 step_idx += 1;
             }
 
@@ -2094,6 +2125,8 @@ mod tests {
             output_schema: None,
             phase: crate::bundle::cascade::CascadePhase::default(),
             condition: None,
+            branching: None,
+            branching_field: None,
         };
 
         let mut context = HashMap::new();
@@ -2308,6 +2341,8 @@ mod tests {
             output_schema: None,
             phase: crate::bundle::cascade::CascadePhase::default(),
             condition: None,
+            branching: None,
+            branching_field: None,
         };
 
         let result = executor.execute_tool_invoke(&step, &mut context).await;
@@ -2433,6 +2468,8 @@ convergence:
             output_schema: None,
             phase: crate::bundle::cascade::CascadePhase::default(),
             condition: None,
+            branching: None,
+            branching_field: None,
         };
 
         let (parent_context, _gas, _rjoule) = executor
@@ -2706,5 +2743,191 @@ convergence:
             result.contains_key("step_1_populated"),
             "populate step must produce step_1_populated"
         );
+    }
+
+    // ── Branching tests ──────────────────────────────────────────────
+
+    /// Mock inference port that returns a fixed JSON result with a `routing`
+    /// field. Counts how many times `generate` is called so the test can
+    /// verify which steps were reached.
+    struct BranchingInferencePort {
+        call_count: std::sync::Arc<std::sync::Mutex<u32>>,
+        response_text: String,
+    }
+
+    impl InferencePort for BranchingInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = std::result::Result<InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            let count = self.call_count.clone();
+            let text = self.response_text.clone();
+            Box::pin(async move {
+                *count.lock().expect("call count mutex") += 1;
+                Ok(InferenceResult {
+                    text,
+                    model: "test-model".to_string(),
+                    usage: hkask_types::InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 1,
+                        total_tokens: 2,
+                    },
+                    finish_reason: "stop".to_string(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: None,
+                })
+            })
+        }
+    }
+
+    /// Branching routes a `select` step to the target ordinal based on the
+    /// `routing` field in its result, skipping intermediate steps. This is
+    /// the feedback loop closure mechanism that TDD's strengthen/explore
+    /// steps and harness-evolve-cycle's verdict branching depend on.
+    #[tokio::test]
+    async fn branching_routes_to_target_ordinal() {
+        let call_count = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let inference = std::sync::Arc::new(BranchingInferencePort {
+            call_count: call_count.clone(),
+            response_text: r#"{"routing": "skip_to_3"}"#.to_string(),
+        });
+        let tools = std::sync::Arc::new(StubToolPort);
+        let executor = ManifestExecutor::new(inference, tools, LLMParameters::default());
+
+        // Create a temp dir with template files for the select steps.
+        let tmp = std::env::temp_dir().join("hkask-branching-route-test");
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        std::fs::write(tmp.join("step1.j2"), "test").expect("write step1 template");
+        std::fs::write(tmp.join("step2.j2"), "test").expect("write step2 template");
+        let executor = executor.with_template_base_path(tmp.clone());
+
+        let manifest_yaml = r#"
+manifest:
+  id: branching-route-test
+steps:
+  - ordinal: 1
+    action: select
+    description: step 1 with branching
+    renderer: minijinja
+    template_ref: step1.j2
+    branching:
+      skip_to_3: 3
+      proceed: 2
+  - ordinal: 2
+    action: select
+    description: step 2 should be skipped by branching
+    renderer: minijinja
+    template_ref: step2.j2
+  - ordinal: 3
+    action: abort
+    description: exit
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest =
+            load_manifest_from_yaml(manifest_yaml).expect("branching manifest must parse");
+
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("execute_manifest should succeed");
+
+        // Branching routed step 1 → step 3 (abort), skipping step 2.
+        assert!(
+            !result.contains_key("step_2_result"),
+            "step 2 should be skipped — branching routed step 1 to ordinal 3"
+        );
+        assert!(
+            result.contains_key("step_1_result"),
+            "step 1 should have executed"
+        );
+        assert_eq!(
+            *call_count.lock().expect("call count mutex"),
+            1,
+            "inference called once — step 1 only (step 2 skipped, step 3 is abort)"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// When the routing field does not match any branching key, execution
+    /// continues to the next ordinal (safe default — no branching).
+    #[tokio::test]
+    async fn branching_no_match_continues_to_next_step() {
+        let call_count = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+        let inference = std::sync::Arc::new(BranchingInferencePort {
+            call_count: call_count.clone(),
+            response_text: r#"{"routing": "unknown_key"}"#.to_string(),
+        });
+        let tools = std::sync::Arc::new(StubToolPort);
+        let executor = ManifestExecutor::new(inference, tools, LLMParameters::default());
+
+        let tmp = std::env::temp_dir().join("hkask-branching-nomatch-test");
+        std::fs::create_dir_all(&tmp).expect("create temp dir");
+        std::fs::write(tmp.join("step1.j2"), "test").expect("write step1 template");
+        std::fs::write(tmp.join("step2.j2"), "test").expect("write step2 template");
+        let executor = executor.with_template_base_path(tmp.clone());
+
+        let manifest_yaml = r#"
+manifest:
+  id: branching-nomatch-test
+steps:
+  - ordinal: 1
+    action: select
+    description: step 1 with branching
+    renderer: minijinja
+    template_ref: step1.j2
+    branching:
+      skip_to_3: 3
+      proceed: 2
+  - ordinal: 2
+    action: select
+    description: step 2 reached because routing did not match
+    renderer: minijinja
+    template_ref: step2.j2
+  - ordinal: 3
+    action: abort
+    description: exit
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest =
+            load_manifest_from_yaml(manifest_yaml).expect("branching manifest must parse");
+
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("execute_manifest should succeed");
+
+        // No match — execution continues to step 2.
+        assert!(
+            result.contains_key("step_2_result"),
+            "step 2 should be reached — routing key did not match any branching key"
+        );
+        assert_eq!(
+            *call_count.lock().expect("call count mutex"),
+            2,
+            "inference called twice — step 1 and step 2 (no branching match)"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

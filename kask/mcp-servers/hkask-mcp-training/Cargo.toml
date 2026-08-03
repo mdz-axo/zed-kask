@@ -42,6 +42,9 @@ hf-hub = "1.0.0"
 minijinja.workspace = true
 dirs = "5"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

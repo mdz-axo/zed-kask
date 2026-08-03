@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask Capability — in-process capability tokens for inter-agent delegation.
 //!
 //! A `DelegationToken` declares "holder X may perform action Y on resource Z".

@@ -35,6 +35,7 @@
 //! sufficient for a typical visible conversation. Off-screen widgets (scrolled
 //! out of view) lose their cache entry and recreate on next render, which is
 //! acceptable (the user isn't interacting with them).
+#![warn(clippy::let_underscore_future)]
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};

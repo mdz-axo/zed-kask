@@ -65,6 +65,22 @@ pub struct BundleManifestStep {
     /// "a AND b" (both truthy), "a OR b" (either truthy).
     #[serde(default)]
     pub condition: Option<String>,
+    /// Branching map: maps a routing key (read from the step result's
+    /// `branching_field`, default "routing") to a target step ordinal. When
+    /// present, the executor reads the routing key from the step result after
+    /// execution and jumps to the target step instead of continuing to the
+    /// next ordinal. Enables `select` and `execute` steps to route based on
+    /// their own output (e.g., a proptest fail → re-enter the tracer, a
+    /// bug-hunt gap → re-enter the plan). If the routing field is absent or
+    /// does not match any key, execution continues to the next ordinal
+    /// (safe default — no branching).
+    #[serde(default)]
+    pub branching: Option<std::collections::HashMap<String, u32>>,
+    /// The field name in the step result to read for `branching` lookup.
+    /// Defaults to "routing". The step result's field value (a string) must
+    /// match a key in `branching`.
+    #[serde(default)]
+    pub branching_field: Option<String>,
 }
 
 impl BundleManifestStep {

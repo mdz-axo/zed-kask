@@ -12,14 +12,15 @@
 
 /// Canonical classifier model for all classification surfaces (corpus
 /// pipeline, QA triage, convergence evaluation, h_mem extraction).
-/// DeepSeek V4 Flash: fast, cheap, strong classification quality.
+/// DeepSeek V4 Flash via OpenRouter: fast, cheap, strong classification quality.
 ///
 /// This is the single source of truth for the classifier model id. Every
 /// call site resolves it via [`classifier_model`] (env `HKASK_CLASSIFIER_MODEL`
 /// → this constant). Registry YAMLs in `registry/classify/` leave their
 /// `model:` field empty to defer to this path; `ClassifierConfig::from_def`
-/// strips the `DeepInfra/` router prefix before sending the raw id to the provider.
-pub const DEFAULT_CLASSIFIER_MODEL: &str = "DeepInfra/deepseek-ai/deepseek-v4-flash";
+/// passes the full provider-prefixed string to `InferencePort::generate_with_model`,
+/// and the `LanguageModelRegistry` resolves the `OpenRouter/` prefix to the provider.
+pub const DEFAULT_CLASSIFIER_MODEL: &str = "OpenRouter/deepseek/deepseek-v4-flash";
 
 /// Default embedding model.
 pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";

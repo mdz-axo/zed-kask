@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! Shared superforecasting computation engine (Tetlock GJP methodology).
 //!
 //! Canonical implementations used by both `hkask-mcp-scenarios` and

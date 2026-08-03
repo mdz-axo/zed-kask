@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Server — MCP server utilities and startup verification.
 //!
 //! Provides the lightweight layer that all hKask MCP servers depend on:

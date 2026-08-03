@@ -37,6 +37,9 @@ hkask-ledger = { path = "../../crates/hkask-ledger" }
 hkask-forecast = { path = "../../crates/hkask-forecast" }
 thiserror.workspace = true
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

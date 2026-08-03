@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hkask-mcp-curator — Curator MCP server library.
 //!
 //! Exposes the Curator's regulatory surface as MCP tools:

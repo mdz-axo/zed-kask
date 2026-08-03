@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! Curator email — outbound via MXroute SMTP API.
 //!
 //! Outbound: SMTP API at smtpapi.mxroute.com (alerts, notifications, test).

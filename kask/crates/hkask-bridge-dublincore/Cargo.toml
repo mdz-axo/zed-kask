@@ -11,4 +11,7 @@ path = "src/hkask_bridge_dublincore.rs"
 
 [dependencies]
 
+[lints]
+workspace = true
+
 [dev-dependencies]

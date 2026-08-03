@@ -27,6 +27,9 @@ tokio.workspace = true
 r2d2.workspace = true
 r2d2_sqlite.workspace = true
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 proptest = { workspace = true }
 walkdir.workspace = true

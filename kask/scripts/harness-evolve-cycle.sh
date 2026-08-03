@@ -35,6 +35,8 @@ export HKASK_TRACE_DIR="$TRACE_DIR"
 if [[ -f "$HISTORY_FILE" ]]; then
     mapfile -t RUN_HISTORY < "$HISTORY_FILE"
 fi
+# Iteration count reflects total runs across invocations (not in-process only).
+ITERATION=${#RUN_HISTORY[@]}
 
 echo "=== Harness Evolve Cycle ==="
 echo "Max iterations: $MAX_ITERATIONS"

@@ -32,3 +32,6 @@ ffmpeg-next = { version = "8.1", default-features = false, features = [
 default = []
 vendored = ["dep:ffmpeg-next", "ffmpeg-next/static", "ffmpeg-next/build"]
 video = ["dep:ffmpeg-next"]
+
+[lints]
+workspace = true

@@ -63,9 +63,9 @@ impl WalletStore {
             &[DbValue::Text(wallet_id.to_string())],
             |row| {
                 let chain = ChainId::from_str(row.get_str(1)?)
-                    .map_err(|e| crate::database::types::DbError::Database(e.to_string()))?;
+                    .map_err(|e| crate::database::types::DbError::Database(e))?;
                 let privacy_mode = PrivacyMode::from_str(row.get_str(4)?)
-                    .map_err(|e| crate::database::types::DbError::Database(e.to_string()))?;
+                    .map_err(|e| crate::database::types::DbError::Database(e))?;
                 Ok(DepositAddress {
                     address: row.get_str(2)?.to_string(),
                     chain,

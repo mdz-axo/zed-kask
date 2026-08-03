@@ -27,6 +27,9 @@ path = "src/hkask_mcp_curator.rs"
 name = "hkask-mcp-curator"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 uuid.workspace = true

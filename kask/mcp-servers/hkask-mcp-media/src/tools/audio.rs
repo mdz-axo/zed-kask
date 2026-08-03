@@ -342,7 +342,7 @@ impl MediaServer {
                     let audio_path_str = audio_path.display().to_string();
                     let bundle = TranscriptBundle {
                         format: "hkask-transcript-v1".to_string(),
-                        audio_path: audio_path_str.clone(),
+                        audio_path: audio_path_str,
                         repl_chat_ref: Some("repl_chat_hook".to_string()),
                         audio_duration_secs: duration,
                         full_text,

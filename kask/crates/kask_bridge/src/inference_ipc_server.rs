@@ -277,8 +277,8 @@ impl InferenceIpcServer {
         })?;
 
         let port = inference_port.clone();
-        let emb_port = embedding_port.clone();
-        let media = media_router.clone();
+        let emb_port = embedding_port;
+        let media = media_router;
         let tools = tool_port.clone();
         let skill_exec = skill_exec_port.clone();
 
@@ -297,7 +297,7 @@ impl InferenceIpcServer {
                         .providers()
                         .into_iter()
                         .flat_map(|provider| {
-                            let provider_id = provider.id().0.clone();
+                            let provider_id = provider.id().0;
                             provider.provided_models(cx).into_iter().map(move |model| {
                                 ModelListEntry {
                                     name: format!("{}/{}", provider_id, model.name().0),

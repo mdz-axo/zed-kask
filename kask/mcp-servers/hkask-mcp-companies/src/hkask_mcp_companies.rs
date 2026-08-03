@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Companies — Dual-provider company financial data (FMP + EODHD)
 //!
 //! Tools are provider-agnostic: each tool routes to FMP or EODHD based on

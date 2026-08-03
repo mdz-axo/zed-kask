@@ -26,10 +26,10 @@ impl MediaServer {
                 count: num_images,
                 ..Default::default()
             };
-            if let Some(style_name) = &style {
-                if let Some(preset) = crate::style::get_preset(style_name) {
-                    crate::style::apply_preset(&mut media_params, &preset);
-                }
+            if let Some(style_name) = &style
+                && let Some(preset) = crate::style::get_preset(style_name)
+            {
+                crate::style::apply_preset(&mut media_params, &preset);
             }
             self.charge_budget("generate_image", &media_params).await?;
             let result = self
@@ -71,12 +71,12 @@ impl MediaServer {
     ) -> String {
         execute_tool(self, "transform_image", async {
             validate_tool_url(&image_url)?;
-            if let Some(s) = strength {
-                if !(0.0..=1.0).contains(&s) {
-                    return Err(McpToolError::invalid_argument(
-                        "strength must be between 0.0 and 1.0",
-                    ));
-                }
+            if let Some(s) = strength
+                && !(0.0..=1.0).contains(&s)
+            {
+                return Err(McpToolError::invalid_argument(
+                    "strength must be between 0.0 and 1.0",
+                ));
             }
             let mut media_params = hkask_types::MediaGenerateParams {
                 image_url: Some(image_url.clone()),
@@ -84,10 +84,10 @@ impl MediaServer {
                 strength,
                 ..Default::default()
             };
-            if let Some(style_name) = &style {
-                if let Some(preset) = crate::style::get_preset(style_name) {
-                    crate::style::apply_preset(&mut media_params, &preset);
-                }
+            if let Some(style_name) = &style
+                && let Some(preset) = crate::style::get_preset(style_name)
+            {
+                crate::style::apply_preset(&mut media_params, &preset);
             }
             self.charge_budget("image_to_image", &media_params).await?;
             let result = self
@@ -151,10 +151,10 @@ impl MediaServer {
                 duration,
                 ..Default::default()
             };
-            if let Some(style_name) = &style {
-                if let Some(preset) = crate::style::get_preset(style_name) {
-                    crate::style::apply_preset(&mut media_params, &preset);
-                }
+            if let Some(style_name) = &style
+                && let Some(preset) = crate::style::get_preset(style_name)
+            {
+                crate::style::apply_preset(&mut media_params, &preset);
             }
             self.charge_budget("generate_video", &media_params).await?;
             let result = self

@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! hKask Keystore — OS keychain, encryption, and master key derivation.
 //!
 //! All keychain reads/writes go through the `keyring` crate directly

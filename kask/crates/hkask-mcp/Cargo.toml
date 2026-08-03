@@ -21,6 +21,9 @@ tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 jsonschema = "0.28"
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }

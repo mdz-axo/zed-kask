@@ -1,7 +1,10 @@
 # QA Triage Cycle — v0.31.0
 #
 # Classifier-driven autonomous QA pipeline using ONLY hKask infrastructure.
-# No external fuzzers, no bolero, no cargo-mutants.
+# No external fuzzers, no bolodo.
+# Note: cargo-mutants IS used by the separate `harness-evolve-cycle` manifest
+# (suite-level mutation testing for the evolving test harness), but NOT by this
+# manifest. The "no cargo-mutants" constraint scopes to qa-triage-cycle only.
 #
 # Architecture:
 #   1. Run contract/property tests across crates (cargo test with proptest)

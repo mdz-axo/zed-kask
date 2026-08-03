@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask Memory — Semantic and episodic memory pipelines
 //!
 //! **Recall deduplication** runs at recall time in `recall_dedup` (BLAKE3 hash

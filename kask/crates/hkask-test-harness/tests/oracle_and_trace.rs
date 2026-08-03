@@ -14,7 +14,7 @@ fn hardcoded_oracle_passes_on_match() {
     let expected = serde_json::json!({"status": "ok"});
     let oracle = hkask_test_harness::oracle_hardcoded(expected.clone());
     let input = serde_json::json!({"req": 1});
-    let output = expected.clone();
+    let output = expected;
     assert_eq!(oracle.verify(&input, &output), OracleVerdict::Pass);
 }
 

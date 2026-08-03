@@ -26,6 +26,9 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 hkask-forecast = { path = "../../crates/hkask-forecast" }
 
+[lints]
+workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -390,10 +390,10 @@ impl MediaServer {
         }): Parameters<ImageToVideoRequest>,
     ) -> String {
         execute_tool(self, "image_to_video", async {
-            if let Some(d) = duration {
-                if d <= 0.0 {
-                    return Err(McpToolError::invalid_argument("duration must be positive"));
-                }
+            if let Some(d) = duration
+                && d <= 0.0
+            {
+                return Err(McpToolError::invalid_argument("duration must be positive"));
             }
             let image_url = self
                 .resolve_image_url(image_index)

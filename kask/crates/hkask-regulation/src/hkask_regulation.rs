@@ -1,4 +1,5 @@
 #![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! hKask Regulation — Cybernetic Nervous System
 //!
 //! Homeostatic self-regulation: variety sensing, algedonic alerts, energy budgets,

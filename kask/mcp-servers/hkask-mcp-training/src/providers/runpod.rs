@@ -1208,7 +1208,7 @@ impl TrainingHost for RunpodHost {
         // the map for every job it has seen.
         if let Ok(mut ssh_map) = self.ssh_commands.lock() {
             ssh_map.insert(job_id.to_string(), ssh_command.clone());
-            ssh_map.insert(format!("{job_id}:status"), ssh_command.clone());
+            ssh_map.insert(format!("{job_id}:status"), ssh_command);
         }
 
         tracing::debug!(

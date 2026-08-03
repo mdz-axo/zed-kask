@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! # hKask Ledger — Double-Entry Accounting
 //!
 //! Immutable double-entry ledger backed by the provider-agnostic `DatabaseDriver`

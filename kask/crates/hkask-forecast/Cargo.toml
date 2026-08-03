@@ -11,3 +11,6 @@ path = "src/hkask_forecast.rs"
 
 [dependencies]
 thiserror.workspace = true
+
+[lints]
+workspace = true

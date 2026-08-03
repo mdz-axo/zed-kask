@@ -1,10 +1,11 @@
 # QA Triage Classifier — defers to the canonical classifier model.
 # Used by: kask qa triage (CLI subcommand → hkask-test-harness::triage)
 # Model: resolved from HKASK_CLASSIFIER_MODEL → DEFAULT_CLASSIFIER_MODEL
-#   (canonical: DI/deepseek-ai/deepseek-v4-flash).
+#   (canonical: OR/deepseek/deepseek-v4-flash).
 #   The `model:` field below is intentionally empty; ClassifierConfig::from_def
-#   fills it from the canonical path and strips the DI/ router prefix.
-# Provider: DeepInfra (cloud API, OpenAI-compatible)
+#   fills it from the canonical path and the LanguageModelRegistry resolves
+#   the OpenRouter/ prefix to the provider.
+# Provider: OpenRouter (cloud API, OpenAI-compatible)
 #
 # Confidence routing is enforced in Rust, not in the prompt.
 # The LLM just returns a number; the triage pipeline decides:

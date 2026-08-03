@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Media — AI media generation (image, video, voice via centralized inference router)
 //!
 //! Tool families:
@@ -894,7 +895,7 @@ impl MediaServer {
                 "SELECT absolute_path FROM gallery_images WHERE id = ?1 AND gallery_id = ?2",
                 &[
                     DbValue::Text(image_id.to_string()),
-                    DbValue::Text(ga.gallery_id.to_string()),
+                    DbValue::Text(ga.gallery_id),
                 ],
             )
             .map_err(|e| {
@@ -1474,7 +1475,7 @@ impl MediaServer {
                 "SELECT absolute_path FROM gallery_images WHERE id = ?1 AND gallery_id = ?2",
                 &[
                     DbValue::Text(image_id.to_string()),
-                    DbValue::Text(ga.gallery_id.to_string()),
+                    DbValue::Text(ga.gallery_id),
                 ],
             )
             .map_err(|e| MediaError::ImageNotFound(format!("Image not found: {}", e)))?;
@@ -1794,13 +1795,13 @@ impl MediaServer {
         ];
 
         for (code, name) in tag_map {
-            if let Some(entry) = exif.get_by_code(nom_exif::IfdIndex::MAIN, *code) {
-                if let Some(value_str) = entry.as_str() {
-                    fields.insert(
-                        name.to_string(),
-                        serde_json::Value::String(value_str.to_string()),
-                    );
-                }
+            if let Some(entry) = exif.get_by_code(nom_exif::IfdIndex::MAIN, *code)
+                && let Some(value_str) = entry.as_str()
+            {
+                fields.insert(
+                    name.to_string(),
+                    serde_json::Value::String(value_str.to_string()),
+                );
             }
         }
 
@@ -1847,10 +1848,10 @@ fn load_meme_font(font_path: Option<&str>) -> Result<ab_glyph::FontVec, MediaErr
     ];
 
     for path in &candidates {
-        if let Ok(data) = std::fs::read(path) {
-            if let Ok(font) = ab_glyph::FontVec::try_from_vec(data) {
-                return Ok(font);
-            }
+        if let Ok(data) = std::fs::read(path)
+            && let Ok(font) = ab_glyph::FontVec::try_from_vec(data)
+        {
+            return Ok(font);
         }
     }
 

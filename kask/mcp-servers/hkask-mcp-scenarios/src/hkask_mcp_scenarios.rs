@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Scenarios — domain-agnostic scenario planning server.
 //!
 //! Event-tree forecasting with conditional dependencies (MAIA methodology).
@@ -1760,7 +1761,7 @@ impl ScenariosServer {
                 calibration_curve: curve.as_ref(),
                 strategies_generated: strategies_gen,
                 strategies_implemented: strategies_impl,
-                learning_events: learning_events.clone(),
+                learning_events: learning_events,
                 has_early_warning_indicators: has_indicators,
             });
 
