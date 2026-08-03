@@ -76,8 +76,8 @@ pub trait MediaStorage: Send + Sync {
 
 /// Detect `MediaKind` from a file extension or data-URI MIME type.
 pub fn detect_kind(src: &str) -> MediaKind {
-    if let Some(mime) = src.strip_prefix("data:") {
-        if let Some((mime_type, _)) = mime.split_once(',') {
+    if let Some(mime) = src.strip_prefix("data:")
+        && let Some((mime_type, _)) = mime.split_once(',') {
             return match mime_type.split(';').next().unwrap_or("") {
                 "image/svg+xml" => MediaKind::Svg,
                 "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "image/bmp"
@@ -87,7 +87,6 @@ pub fn detect_kind(src: &str) -> MediaKind {
                 _ => MediaKind::Image,
             };
         }
-    }
 
     let extension = src.rsplit('.').next().unwrap_or("").to_lowercase();
     match extension.as_str() {

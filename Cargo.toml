@@ -381,7 +381,7 @@ kask_extensions_ui = { path = "crates/kask_extensions_ui" }
 swarm_panel = { path = "crates/swarm_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
-hkask_media_widget = { path = "kask/crates/hkask-media-widget" }
+hkask_media_widget = { path = "kask/crates/hkask-media-widget", package = "hkask-media-widget" }
 hkask_viz_core = { path = "kask/crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "kask/crates/hkask-graph-widget", package = "hkask-graph-widget" }
 diagnostics = { path = "crates/diagnostics" }

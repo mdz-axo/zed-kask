@@ -3,9 +3,9 @@
 //! with transport controls, video via FFmpeg → `RenderImage` → `img()`).
 
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     ImageSource, InteractiveElement, IntoElement, ObjectFit, ParentElement, RenderImage,
-    SharedString, StatefulInteractiveElement, Styled, StyledImage, Task, Window, div, img, px,
+    SharedString, Styled, StyledImage, Task, Window, div, img, px,
 };
 use smallvec::SmallVec;
 use theme::ActiveTheme;
@@ -62,11 +62,11 @@ impl MediaWidget {
             MediaKind::Audio => {
                 let player = Arc::new(AudioPlayer::new());
                 self.audio_player = Some(player);
-                self.transport = Some(cx.new(|cx| TransportBar::new(cx)));
+                self.transport = Some(cx.new(TransportBar::new));
             }
             MediaKind::Video => {
                 self.video_player = Some(VideoPlayer::new());
-                self.transport = Some(cx.new(|cx| TransportBar::new(cx)));
+                self.transport = Some(cx.new(TransportBar::new));
             }
         }
         cx.notify();
@@ -302,7 +302,8 @@ impl gpui::Render for MediaWidget {
                     let transport = self.transport.clone();
                     let frame = self.current_frame.clone();
                     let mut container = div()
-                        .v_flex()
+                        .flex()
+                        .flex_col()
                         .gap_1()
                         .border_1()
                         .border_color(theme.colors().border)
@@ -349,7 +350,7 @@ impl gpui::Render for MediaWidget {
 
 /// Render a `MediaRef` as a GPUI `AnyElement` — the entry point called from the
 /// D18 seam (`media_block_renderer`).
-pub fn render_media_ref(reference: MediaRef, cx: &App) -> AnyElement {
+pub fn render_media_ref(reference: MediaRef, cx: &mut App) -> AnyElement {
     let entity = cx.new(|cx| {
         let mut widget = MediaWidget::new(reference, cx);
         widget.load(cx);

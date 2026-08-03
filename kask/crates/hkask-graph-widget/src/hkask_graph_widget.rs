@@ -27,7 +27,7 @@ use gpui::{AnyElement, App, Window};
 
 /// The graph block renderer callback type (mirrors
 /// `markdown::MediaBlockRendererFn` — same erased `dyn Fn` type).
-pub type GraphBlockRenderer = Box<dyn Fn(&str, &mut Window, &App) -> Option<AnyElement>>;
+pub type GraphBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
 
 /// Create the graph block renderer for the D18 seam.
 ///

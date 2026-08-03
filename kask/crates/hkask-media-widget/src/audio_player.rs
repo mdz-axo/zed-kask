@@ -1,14 +1,14 @@
 //! Audio playback via `rodio` (already in the zed-kask workspace).
 //!
-//! Uses the rodio 0.22+ API: `DeviceSinkBuilder` → `MixerDeviceSink` + `Mixer`,
-//! `Decoder`, `Source`. Provides play/pause/seek/volume/duration/position.
+//! Uses the rodio 0.22+ API: `DeviceSinkBuilder` → `MixerDeviceSink`,
+//! `MixerDeviceSink::mixer()`, `Player::connect_new`, `Decoder`.
 
 use std::io::Cursor;
-use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use parking_lot::Mutex;
-use rodio::{Decoder, DeviceSinkBuilder, Source, mixer::Mixer};
+use rodio::{Decoder, DeviceSinkBuilder, Source};
 
 /// Audio playback state and controls, backed by `rodio`.
 pub struct AudioPlayer {
@@ -17,7 +17,7 @@ pub struct AudioPlayer {
 
 struct AudioInner {
     device_sink: Option<rodio::MixerDeviceSink>,
-    mixer: Option<rodio::mixer::Mixer>,
+    player: Option<rodio::Player>,
     duration: Duration,
     volume: f32,
     is_playing: bool,
@@ -28,7 +28,7 @@ impl AudioPlayer {
         Self {
             inner: Mutex::new(AudioInner {
                 device_sink: None,
-                mixer: None,
+                player: None,
                 duration: Duration::ZERO,
                 volume: 1.0,
                 is_playing: false,
@@ -45,31 +45,29 @@ impl AudioPlayer {
             let mut device_sink = DeviceSinkBuilder::open_default_sink()
                 .map_err(|error| anyhow::anyhow!("failed to open audio output stream: {error}"))?;
             device_sink.log_on_drop(false);
-            let (mixer, source) = rodio::mixer::mixer(2, 44100);
-            mixer.add(rodio::source::Zero::new(2, 44100));
-            device_sink.add(source);
             inner.device_sink = Some(device_sink);
-            inner.mixer = Some(mixer);
         }
 
-        let mixer = inner
-            .mixer
+        let device_sink = inner
+            .device_sink
             .as_ref()
-            .context("audio mixer not initialized")?;
-        drop(inner);
+            .context("audio device not initialized")?;
+        let mixer = device_sink.mixer();
 
-        // Decode and play.
+        // Decode the audio source.
         let cursor = Cursor::new(bytes);
         let source = Decoder::try_from(cursor)
             .map_err(|error| anyhow::anyhow!("failed to decode audio: {error}"))?;
 
         let duration = source.total_duration().unwrap_or(Duration::ZERO);
 
+        // Create a new player on the mixer and start playback.
         let player = rodio::Player::connect_new(mixer);
-        let mut inner = self.inner.lock();
         player.set_volume(inner.volume);
         player.append(source);
         player.play();
+
+        inner.player = Some(player);
         inner.duration = duration;
         inner.is_playing = true;
         drop(inner);
@@ -78,34 +76,54 @@ impl AudioPlayer {
     }
 
     pub fn pause(&self) {
-        // rodio Player doesn't expose pause via Mixer directly;
-        // we track state and stop the player.
-        self.inner.lock().is_playing = false;
+        let inner = self.inner.lock();
+        if let Some(player) = &inner.player {
+            player.pause();
+        }
     }
 
     pub fn resume(&self) {
-        self.inner.lock().is_playing = true;
+        let inner = self.inner.lock();
+        if let Some(player) = &inner.player {
+            player.play();
+        }
     }
 
     pub fn toggle(&self) {
-        let mut inner = self.inner.lock();
-        inner.is_playing = !inner.is_playing;
+        let inner = self.inner.lock();
+        if let Some(player) = &inner.player {
+            if player.is_paused() {
+                player.play();
+            } else {
+                player.pause();
+            }
+        }
     }
 
     pub fn stop(&self) {
         let mut inner = self.inner.lock();
+        if let Some(player) = inner.player.take() {
+            player.stop();
+        }
         inner.is_playing = false;
         inner.duration = Duration::ZERO;
     }
 
     pub fn seek(&self, position: Duration) {
-        // Best-effort; rodio's Player::try_seek may not be precise for all formats.
-        let _ = position;
+        let inner = self.inner.lock();
+        if let Some(player) = &inner.player
+            && let Err(error) = player.try_seek(position) {
+                log::warn!("hkask-media-widget: audio seek failed: {error}");
+            }
     }
 
     pub fn set_volume(&self, volume: f32) {
         let clamped = volume.clamp(0.0, 2.0);
-        self.inner.lock().volume = clamped;
+        let mut inner = self.inner.lock();
+        inner.volume = clamped;
+        if let Some(player) = &inner.player {
+            player.set_volume(clamped);
+        }
     }
 
     pub fn volume(&self) -> f32 {
@@ -113,7 +131,11 @@ impl AudioPlayer {
     }
 
     pub fn is_playing(&self) -> bool {
-        self.inner.lock().is_playing
+        let inner = self.inner.lock();
+        inner
+            .player
+            .as_ref()
+            .is_some_and(|player| !player.is_paused() && !player.empty())
     }
 
     pub fn duration(&self) -> Duration {
@@ -121,7 +143,12 @@ impl AudioPlayer {
     }
 
     pub fn position(&self) -> Duration {
-        Duration::ZERO
+        let inner = self.inner.lock();
+        inner
+            .player
+            .as_ref()
+            .map(|player| player.get_pos())
+            .unwrap_or(Duration::ZERO)
     }
 }
 
@@ -136,5 +163,3 @@ impl Drop for AudioPlayer {
         self.stop();
     }
 }
-
-use anyhow::Context as _;

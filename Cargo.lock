@@ -559,7 +559,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "heapless",
- "hkask-media-widget",
+ "hkask-viz-core",
  "html_to_markdown",
  "http_client",
  "idna",
@@ -9175,6 +9175,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-graph-widget"
+version = "0.31.1"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "theme",
+]
+
+[[package]]
 name = "hkask-guard"
 version = "0.31.1"
 dependencies = [
@@ -9591,6 +9603,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec 1.15.2",
+ "theme",
  "url",
 ]
 
@@ -9719,6 +9732,16 @@ dependencies = [
  "tracing",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "hkask-viz-core"
+version = "0.31.1"
+dependencies = [
+ "gpui",
+ "hkask-graph-widget",
+ "hkask-media-widget",
+ "log",
 ]
 
 [[package]]

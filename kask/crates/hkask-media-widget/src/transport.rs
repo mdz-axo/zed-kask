@@ -1,16 +1,12 @@
 //! Transport controls (play/pause/seek/volume) built from GPUI primitives.
-//!
-//! These are the minimum viable controls. When `gpui-component` is wired as
-//! a workspace dependency, these can be replaced with `gpui_component::Slider`
-//! (which has `SliderEvent::Release` for seek-on-mouse-up and
-//! `SliderScale::Logarithmic` for volume) and `gpui_component::Button`.
 
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, ParentElement, SharedString, Styled,
     Window, div, px,
 };
 use std::time::Duration;
+use theme::ActiveTheme;
 
 #[derive(Debug, Clone)]
 pub enum TransportEvent {
@@ -94,15 +90,18 @@ impl gpui::Render for TransportBar {
         let seek_fraction = self.seek_fraction();
         let volume = self.state.volume;
         let entity = cx.entity().downgrade();
-
-        let theme = cx.theme();
+        let entity2 = entity.clone();
+        let entity3 = entity.clone();
+        let theme = cx.theme().clone();
 
         div()
-            .h_flex()
+            .flex()
+            .flex_row()
             .gap_2()
             .items_center()
             .px_2()
             .py_1()
+            // Play/pause button
             .child(
                 div()
                     .id("play-pause")
@@ -110,10 +109,12 @@ impl gpui::Render for TransportBar {
                     .px_2()
                     .child(SharedString::from(play_label))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        let _ = entity.upgrade();
-                        cx.dispatch_event(TransportEvent::TogglePlay);
+                        if let Some(entity) = entity.upgrade() {
+                            entity.update(cx, |_, cx| cx.emit(TransportEvent::TogglePlay));
+                        }
                     }),
             )
+            // Stop button
             .child(
                 div()
                     .id("stop")
@@ -121,10 +122,14 @@ impl gpui::Render for TransportBar {
                     .px_1()
                     .child(SharedString::from("Stop"))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        cx.dispatch_event(TransportEvent::Stop);
+                        if let Some(entity) = entity2.upgrade() {
+                            entity.update(cx, |_, cx| cx.emit(TransportEvent::Stop));
+                        }
                     }),
             )
+            // Time display
             .child(div().text_sm().child(time_text))
+            // Seek bar
             .child(
                 div()
                     .id("seek-bar")
@@ -145,18 +150,23 @@ impl gpui::Render for TransportBar {
                             .w(px(seek_fraction * 300.0)),
                     )
                     .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _, cx| {
-                        cx.dispatch_event(TransportEvent::Seek(0.5));
+                        if let Some(entity) = entity3.upgrade() {
+                            entity.update(cx, |_, cx| cx.emit(TransportEvent::Seek(0.5)));
+                        }
                     }),
             )
+            // Duration display
             .child(
                 div()
                     .text_sm()
                     .text_color(theme.colors().text_muted)
                     .child(duration_text),
             )
+            // Volume control
             .child(
                 div()
-                    .h_flex()
+                    .flex()
+                    .flex_row()
                     .gap_1()
                     .items_center()
                     .child(SharedString::from("Vol"))

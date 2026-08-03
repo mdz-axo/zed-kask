@@ -145,7 +145,7 @@ impl VideoPlayer {
             return Ok(None);
         }
 
-        self.position = self.position + delta;
+        self.position += delta;
         if self.duration > Duration::ZERO && self.position >= self.duration {
             self.position = self.duration;
             self.state = PlaybackState::Stopped;

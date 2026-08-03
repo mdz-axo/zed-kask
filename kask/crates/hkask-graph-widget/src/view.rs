@@ -8,10 +8,11 @@
 //! viewport (`overflow_hidden`); pan/zoom is a follow-up.
 
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, Entity, FocusHandle, Focusable, IntoElement,
+    AnyElement, App, AppContext, Bounds, ClickEvent, Context, FocusHandle, Focusable, IntoElement,
     MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba, StatefulInteractiveElement, Styled,
     Window, canvas, div, point, prelude::*, px, rgb,
 };
+use theme::ActiveTheme;
 
 use crate::block::GraphBlockBody;
 use crate::layout::LayeredLayout;
@@ -72,8 +73,6 @@ impl Render for GraphWidget {
         let layout = self.layout.clone();
         let hovered = self.hovered;
         let selected = self.selected;
-        let subject = self.subject.clone();
-        let joint_probability = self.joint_probability;
 
         // Edges + node circles, drawn in graph-space pixels (origin = canvas
         // top-left, which equals the graph-sized container's origin).
@@ -81,8 +80,8 @@ impl Render for GraphWidget {
         let draw_hovered = hovered;
         let draw_selected = selected;
         let graph_canvas = canvas(
-            move |_, _, _| {},
-            move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &App| {
+            move |_: Bounds<Pixels>, _: &mut Window, _: &mut App| {},
+            move |bounds: Bounds<Pixels>, _: (), window: &mut Window, cx: &mut App| {
                 draw_graph(
                     &draw_layout,
                     bounds,
@@ -99,6 +98,8 @@ impl Render for GraphWidget {
         let text_color = cx.theme().colors().text;
         let muted_color = cx.theme().colors().text_muted;
         let accent_color = cx.theme().colors().text_accent;
+        let border_color = cx.theme().colors().border;
+        let surface_color = cx.theme().colors().elevated_surface_background;
 
         // Per-node hit areas + labels. Built in a loop so each `cx.listener`
         // borrow is released before the next; collected into a Vec so the
@@ -120,14 +121,16 @@ impl Render for GraphWidget {
                 .w(px(NODE_RADIUS * 2.0))
                 .h(px(NODE_RADIUS * 2.0))
                 .cursor_pointer()
-                .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
-                    if this.hovered != Some(idx) {
-                        this.hovered = Some(idx);
-                        cx.notify();
-                    }
-                    cx.stop_propagation();
-                }))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .on_mouse_move(
+                    cx.listener(move |this, _event: &MouseMoveEvent, _window, cx| {
+                        if this.hovered != Some(idx) {
+                            this.hovered = Some(idx);
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                     this.selected = Some(idx);
                     cx.notify();
                 }));
@@ -144,16 +147,16 @@ impl Render for GraphWidget {
         }
 
         // Tooltip for the hovered node.
-        if let Some(idx) = hovered {
-            if let Some(node) = layout.nodes.get(idx) {
+        if let Some(idx) = hovered
+            && let Some(node) = layout.nodes.get(idx) {
                 let tip = div()
                     .absolute()
                     .left(node.position.x + px(NODE_RADIUS + 10.0))
                     .top(node.position.y - px(64.0))
                     .p_2()
-                    .bg(cx.theme().colors().elevated_surface_background)
+                    .bg(surface_color)
                     .border_1()
-                    .border_color(cx.theme().colors().border)
+                    .border_color(border_color)
                     .max_w(px(300.0))
                     .child(
                         div()
@@ -175,13 +178,12 @@ impl Render for GraphWidget {
                     )));
                 overlays.push(tip.into_any_element());
             }
-        }
 
         let header = div()
             .text_xs()
             .text_color(muted_color)
-            .child(subject.clone().unwrap_or_default())
-            .when_some(joint_probability, |this, joint| {
+            .child(self.subject.clone().unwrap_or_default())
+            .when_some(self.joint_probability, |this, joint| {
                 this.child(format!("   joint = {}%", (joint * 100.0).round() as u32))
             });
 
@@ -202,7 +204,7 @@ impl Render for GraphWidget {
             .flex_col()
             // Clear hover when the pointer leaves all nodes (node handlers
             // stop propagation, so this only fires over the background).
-            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| {
+            .on_mouse_move(cx.listener(|this, _event: &MouseMoveEvent, _window, cx| {
                 if this.hovered.is_some() {
                     this.hovered = None;
                     cx.notify();
@@ -212,20 +214,20 @@ impl Render for GraphWidget {
             .child(
                 div()
                     .flex_1()
-                    .min_h_0()
                     .flex()
                     .items_center()
                     .justify_center()
                     .child(graph),
             )
+            .into_any_element()
     }
 }
 
 /// Build the inline element for the D18 seam: a full-size div wrapping the
 /// `GraphWidget` view.
-pub fn render_event_tree(body: GraphBlockBody, _window: &mut Window, cx: &App) -> AnyElement {
+pub fn render_event_tree(body: GraphBlockBody, _window: &mut Window, cx: &mut App) -> AnyElement {
     let entity = cx.new(|cx| GraphWidget::new(body, cx));
-    div().size_full().child(entity).into()
+    div().size_full().child(entity).into_any_element()
 }
 
 /// Draw edges + node circles (and a highlight ring for hovered/selected) in

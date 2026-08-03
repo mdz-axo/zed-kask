@@ -12,7 +12,6 @@
 //! 7. **Store h_mems** — budget-selected passages get metadata h_mems
 //! 8. **Centroid** — mean vector over prose passages
 
-mod download;
 mod hmems;
 mod html;
 mod ocr;

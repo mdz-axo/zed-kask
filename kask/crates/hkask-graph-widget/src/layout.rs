@@ -170,6 +170,7 @@ fn layout_node(node: &NodeBody, position: Point<Pixels>) -> LayoutNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block::DependencyBody;
 
     fn body(nodes: &[(&str, &[&str])]) -> GraphBlockBody {
         GraphBlockBody {

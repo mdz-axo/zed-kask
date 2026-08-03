@@ -20,7 +20,7 @@ use gpui::{AnyElement, App, Window};
 /// returns the first `Some(element)`. Structurally identical to
 /// `markdown::MediaBlockRendererFn` (same erased `dyn Fn` type), so it can be
 /// handed directly to `.media_block_renderer(...)`.
-pub type BlockRenderer = Box<dyn Fn(&str, &mut Window, &App) -> Option<AnyElement>>;
+pub type BlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
 
 /// Build the composed D18 block renderer.
 ///

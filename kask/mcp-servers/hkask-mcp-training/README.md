@@ -37,9 +37,11 @@ Simplified from 21 → 15 → 8 across 2026-07-19 cleanups.
 
 ## Providers
 
-Single cloud host: **Runpod**. Three harnesses: **Axolotl** (YAML, SFT),
-**TRL** (Python, SFT + preference optimization), and **Ludwig** (YAML, SFT +
-preference + GRPO/advanced PEFT).
+Three cloud hosts: **Runpod** (primary, with completion detection via
+HuggingFace artifacts), **DeepInfra** and **Nebius** (no completion detection
+yet — `training_status` reports `Running` indefinitely). Three harnesses:
+**Axolotl** (YAML, SFT), **TRL** (Python, SFT + preference optimization), and
+**Ludwig** (YAML, SFT + preference + GRPO/advanced PEFT).
 
 All three harnesses use the **same generic Docker image**
 (`docker.io/mdzaxo/hkask-training-base:latest`, ~130MB). The harness-specific
@@ -72,7 +74,30 @@ Deleted harnesses (2026-07-19): `UnslothHarness` (Python). Re-add when there's a
 |----------|-------------|
 | `RUNPOD_API_KEY` | Runpod API key |
 | `RUNPOD_TEMPLATE_ID` | Runpod GPU pod template ID with axolotl pre-installed |
-| `HKASK_PODS_FILE` | Path to RunPod pod ID persistence file (default: `data/training-pods.json`) — ensures orphaned pods can be terminated after restarts |
+| `RUNPOD_GPU_TYPE_ID` | GPU type override (default: heuristic from model size) |
+| `RUNPOD_CONTAINER_DISK_GB` | Container disk size override |
+| `RUNPOD_DOCKER_IMAGE` | Docker image override |
+| `RUNPOD_DOCKER_ARGS` | Extra Docker args for the pod |
+| `HKASK_PODS_FILE` | Path to RunPod pod ID persistence file (default: `data/training-pods.json`) |
+| `DEEPINFRA_API_KEY` | DeepInfra API key |
+| `DEEPINFRA_GPU_CONFIG` | DeepInfra GPU config override |
+| `DEEPINFRA_CONTAINER_IMAGE` | DeepInfra container image override |
+| `NEBIUS_PROJECT_ID` | Nebius project ID |
+| `NEBIUS_SUBNET_ID` | Nebius subnet ID |
+| `NEBIUS_GPU_PLATFORM` | Nebius GPU platform override |
+| `NEBIUS_GPU_PRESET` | Nebius GPU preset override |
+| `NEBIUS_IMAGE_FAMILY` | Nebius image family override |
+| `NEBIUS_CLI_PATH` | Path to Nebius CLI (default: `nebius`) |
+| `HF_TOKEN` | HuggingFace token for artifact upload (Runpod path) |
+| `HKASK_HF_ARTIFACT_OWNER` | HuggingFace artifact owner (required for Runpod) |
+| `HKASK_HF_DATASET_REPO` | HuggingFace dataset repo (required for Runpod) |
+| `HKASK_HF_MODEL_REPO` | HuggingFace model repo (required for Runpod) |
+| `HKASK_TRAINING_HOST` | Host selector: `runpod` / `deepinfra` / `nebius` |
+| `HKASK_TRAINING_CACHE_DIR` | Cache directory for datasets |
+| `HKASK_TRAINING_DB` | Job/adapter SQLite DB path |
+| `HKASK_DB_PASSPHRASE` | DB encryption passphrase |
+| `HKASK_TEMPLATE_ROOT` | Root for registry templates |
+| `HKASK_DATA_DIR` | Data directory (shared with parent process) |
 
 ## lora-training skill integration
 

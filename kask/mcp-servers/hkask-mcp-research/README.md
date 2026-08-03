@@ -24,6 +24,25 @@ Web search, extraction, and feed-based research MCP server.
 | `rss_discover_feeds` | Discover RSS/Atom feeds from a URL via HTML link autodiscovery |
 | `rss_edit_tag` | Edit tags on entries: mark read/unread, star/unstar, add/remove labels |
 
+## Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `HKASK_EXA_API_KEY` | Exa search API key |
+| `HKASK_TAVILY_API_KEY` | Tavily search API key |
+| `HKASK_BRAVE_API_KEY` | Brave search API key |
+| `HKASK_SERPAPI_API_KEY` | SerpAPI key (YouTube transcript search) |
+| `HKASK_FIRECRAWL_API_KEY` | Firecrawl extraction API key |
+| `HKASK_BROWSERBASE_API_KEY` | Browserbase headless browser API key |
+| `HKASK_RSS_DB` | RSS SQLite DB path (required for RSS tools) |
+| `HKASK_DB_PASSPHRASE` | DB encryption passphrase (required for RSS tools) |
+| `HKASK_WEB_CACHE_TTL_SECS` | Response cache TTL (default: 3600) |
+| `HKASK_WEB_CACHE_MAX_ENTRIES` | Response cache max entries (default: 1000) |
+
+Free providers (Semantic Scholar, arXiv) are always available — no API key
+required for basic web search. RSS tools require `HKASK_RSS_DB` and
+`HKASK_DB_PASSPHRASE`.
+
 ## Quick Start
 
 ```bash

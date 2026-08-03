@@ -41,7 +41,7 @@ use gpui::{AnyElement, App, SharedString, Window};
 /// valid media reference (JSON with `kind` and `src`), returns `Some(element)`
 /// to render the media widget; otherwise returns `None` to fall through to
 /// the default code block renderer.
-pub type MediaBlockRenderer = Box<dyn Fn(&str, &mut Window, &App) -> Option<AnyElement>>;
+pub type MediaBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
 
 /// Create the media block renderer callback for the D18 seam.
 ///
@@ -72,7 +72,7 @@ pub fn media_block_renderer() -> MediaBlockRenderer {
 }
 
 /// Render a `MediaRef` as a GPUI `AnyElement`.
-fn render_media_ref(reference: MediaRef, _window: &mut Window, cx: &App) -> AnyElement {
+fn render_media_ref(reference: MediaRef, _window: &mut Window, cx: &mut App) -> AnyElement {
     media_widget::render_media_ref(reference, cx)
 }
 

@@ -1316,7 +1316,7 @@ pub struct MarkdownElement {
 /// valid media reference (JSON with `kind` and `src`), returns `Some(element)`
 /// to render the media widget; otherwise returns `None` to fall through to
 /// the default code block renderer.
-pub type MediaBlockRendererFn = Box<dyn Fn(&str, &mut Window, &App) -> Option<AnyElement>>;
+pub type MediaBlockRendererFn = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
 
 impl MarkdownElement {
     pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {

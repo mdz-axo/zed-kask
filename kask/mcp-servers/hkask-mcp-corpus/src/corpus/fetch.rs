@@ -2,8 +2,8 @@
 //!
 //! Eliminates the duplicated HTTP-fetch → content-type-sniff → PDF-extract →
 //! OCR-fallback → HTML-strip pipeline that existed in both
-//! `corpus/discover/cache.rs::download_and_cache` and
-//! `corpus/embed/download.rs::download_text`.
+//! `corpus/discover/cache.rs::download_and_cache` and the former
+//! `corpus/embed/download.rs` (now deleted — callers use `fetch_text` directly).
 
 use crate::corpus::embed::{ocr_pdf_bytes, strip_html_tags};
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
