@@ -502,3 +502,35 @@ pub(crate) struct AuthorizeSessionRequest {
     #[serde(default)]
     pub actions: Vec<String>,
 }
+
+// ── A2A protocol tools ───────────────────────────────────────────────────────
+
+/// Send an A2A (Agent2Agent) protocol message to a local agent. The message is
+/// wrapped in A2A types (Message → Task → Artifact) and dispatched through the
+/// existing in-process `LocalSwarmRuntime::delegate`. The response is returned
+/// as an A2A Task with the agent's output as a text Artifact. No HTTP server —
+/// the MCP tool dispatch IS the A2A transport.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct A2aSendRequest {
+    /// Agent id to send the message to. Must exist in the local registry.
+    pub agent_name: String,
+    /// The message text to send to the agent.
+    pub message: String,
+    /// The maximum credits the operator authorizes for this call.
+    pub credits_authorized: u32,
+    /// Optional A2A context ID for grouping related tasks. If omitted, a new
+    /// context is generated. Pass the same context_id across multiple
+    /// `swarm_a2a_send` calls to group them in a conversation.
+    #[serde(default)]
+    pub context_id: Option<String>,
+}
+
+/// Get the A2A Agent Card for a local agent. The card describes the agent's
+/// capabilities, skills, and supported interface (in-process transport).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct A2aCardRequest {
+    /// Agent id to get the card for. If omitted, returns cards for all local
+    /// agents.
+    #[serde(default)]
+    pub agent_name: Option<String>,
+}

@@ -75,8 +75,18 @@ impl TemplateRenderer {
     /// `step_ordinal` is used for error messages and heal callbacks.
     pub fn load(&self, template_ref: &str, step_ordinal: u32) -> Result<String> {
         // Filesystem first — allows J2/YAML edits without recompilation.
-        if let Ok(content) = self.load_from_disk(template_ref, step_ordinal) {
-            return Ok(content);
+        match self.load_from_disk(template_ref, step_ordinal) {
+            Ok(content) => return Ok(content),
+            Err(TemplateError::NotFound(_)) => {
+                // Not on disk — fall through to embedded fallback.
+            }
+            Err(e) => {
+                // Non-NotFound error (e.g., PathTraversal) — log and fall
+                // through to embedded. The embedded copy is safe by construction.
+                tracing::warn!(
+                    "Filesystem template load failed for '{template_ref}' (step {step_ordinal}): {e}; falling back to embedded"
+                );
+            }
         }
         // Embedded fallback — for production where registry dir is absent.
         if let Some(content) = template_file(template_ref) {
@@ -85,9 +95,12 @@ impl TemplateRenderer {
         if let Some(content) = template_yaml_file(template_ref) {
             return Ok(content.to_string());
         }
-        Err(TemplateError::NotFound(format!(
-            "step {step_ordinal}: template '{template_ref}' not found on filesystem or in embedded registry"
-        )))
+        Err(TemplateError::NotFound(NotFound {
+            entity_type: "template".to_string(),
+            id: format!(
+                "step {step_ordinal}: template '{template_ref}' not found on filesystem or in embedded registry"
+            ),
+        }))
     }
 
     /// Load a template from the filesystem, trying the ref as-is, then with

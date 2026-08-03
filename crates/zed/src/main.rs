@@ -1689,13 +1689,16 @@ fn main() {
 
                     if let Some(configured) = model_registry.default_model() {
                         let async_cx = cx.to_async();
-                        // Manifest registry paths. These are *fallbacks* — the
-                        // authoritative manifests are embedded at build time
-                        // via `hkask-templates/build.rs` and consulted via
-                        // `process_manifest_yaml()`. The filesystem paths
-                        // exist for dev workflows (edit a manifest, rebuild).
-                        // For installed binaries, these may not resolve, and
-                        // that's fine — the embedded registry handles it.
+                        // Manifest registry paths. These are the *primary*
+                        // source at runtime — YAML/J2 edits take effect
+                        // immediately without recompilation. The embedded
+                        // copies (via `hkask-templates/build.rs` and
+                        // `process_manifest_yaml()`) are fallbacks for
+                        // production deployments where the registry directory
+                        // may not exist on disk.
+                        // For installed binaries without the source tree, these
+                        // may not resolve, and that's fine — the embedded
+                        // registry handles it.
                         let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
                         let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
                         if !registry_manifests_dir.is_dir() {

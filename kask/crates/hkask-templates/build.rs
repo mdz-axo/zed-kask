@@ -9,9 +9,10 @@
 //!    already embedded by scan #1.
 //!
 //! All four are embedded via `include_str!` so the runtime binary has the full
-//! registry baked in. This eliminates the install-time path-resolution problem:
-//! skills execute via the embedded manifests and templates regardless of CWD or
-//! install location. The filesystem paths in `main.rs` are dev-only fallbacks.
+//! registry available as a fallback. The filesystem is the primary source at
+//! runtime — YAML/J2 edits take effect immediately without recompilation.
+//! Embedded copies are used when the registry directory is not present on disk
+//! (production deployments without the source tree).
 //!
 //! Per-skill template manifests are the canonical source of truth (AGENTS.md),
 //! eliminating the hand-maintained `bootstrap-registry.yaml` flat index.

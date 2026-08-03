@@ -25,13 +25,8 @@ pub(crate) fn to_a2a_card(card: &LocalAgentCard, base_url: &str) -> AgentCard {
     let skills = card
         .accepts
         .iter()
-        .zip(
-            card.produces
-                .iter()
-                .chain(std::iter::repeat(&String::new())),
-        )
         .enumerate()
-        .map(|(i, accept)| AgentSkill {
+        .map(|(i, _accept)| AgentSkill {
             id: format!("{}-{}", card.agent_id, i),
             name: format!("{} capability", card.agent_type),
             description: card.description.clone(),
@@ -120,14 +115,6 @@ pub(crate) fn task_from_response(
             extensions: None,
         }]),
         history: None,
-        metadata: Some(
-            serde_json::json!({
-                "model": model,
-                "tokens_used": tokens_used,
-                "cost": cost,
-            })
-            .as_object()
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
-        ),
+        metadata: None,
     }
 }

@@ -81,26 +81,24 @@ impl KataEngine {
                 ))
             })?,
             Err(_) => {
-                // Prefer the embedded (build-time) template — works regardless
-                // of CWD or install location. Fall back to the filesystem for
-                // dev workflows where a template has been edited but not rebuilt.
-                if let Some(content) = hkask_templates::template_file(template_ref) {
+                // Filesystem first (so J2 edits take effect without recompilation),
+                // then embedded fallback for production where registry dir is absent.
+                let disk_path = std::path::PathBuf::from("registry/templates").join(template_ref);
+                let with_ext = disk_path.with_extension("j2");
+                let read_path = if with_ext.exists() {
+                    &with_ext
+                } else {
+                    &disk_path
+                };
+                if let Ok(content) = std::fs::read_to_string(read_path) {
+                    content
+                } else if let Some(content) = hkask_templates::template_file(template_ref) {
                     content.to_string()
                 } else {
-                    let disk_path =
-                        std::path::PathBuf::from("registry/templates").join(template_ref);
-                    let with_ext = disk_path.with_extension("j2");
-                    let read_path = if with_ext.exists() {
-                        &with_ext
-                    } else {
-                        &disk_path
-                    };
                     std::fs::read_to_string(read_path).map_err(|_| {
                         KataError::TemplateNotFound(format!(
-                            "Template '{}' not found in registry, embedded, or at {} or {}",
-                            template_ref,
-                            disk_path.display(),
-                            with_ext.display()
+                            "Template '{}' not found in registry, on filesystem at {} or {}, or in embedded registry",
+                            template_ref, disk_path.display(), with_ext.display(),
                         ))
                     })?
                 }

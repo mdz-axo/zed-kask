@@ -25,10 +25,11 @@ include!(concat!(env!("OUT_DIR"), "/manifest_skills.rs"));
 /// Look up an embedded process manifest (FlowDef cascade) by skill name.
 ///
 /// Process manifests live at `registry/manifests/<skill>.yaml` and are
-/// embedded at build time via `include_str!`. This is the primary lookup
+/// embedded at build time via `include_str!`. This is the fallback lookup
 /// path for `SkillManifestExecutor::has_manifest` and `execute_skill` —
-/// it works regardless of CWD or install location because the YAML is
-/// compiled into the binary.
+/// the filesystem is checked first so YAML edits take effect without
+/// recompilation. The embedded copies are used when the registry directory
+/// is not present on disk (production deployments).
 ///
 /// Returns the raw YAML content for the skill, or `None` if no embedded
 /// manifest exists for that name. Callers that need a parsed manifest

@@ -21,7 +21,7 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (39 — both tool sets always available in either mode)
+//! ## Tools (41 — both tool sets always available in either mode)
 //! ABW tools (27): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 //! `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
@@ -35,9 +35,11 @@
 //! `swarm_publish_checks` (publish preflight, fermi v0.10.15),
 //! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15),
 //! `swarm_fork_agent` (derivative fork, fermi v0.10.16).
-//! Local tools (12): `swarm_fund_local`, `swarm_balance_local`,
+//! Local tools (14): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
-//! `swarm_pipeline_local`, `swarm_list_local_agents`, `swarm_clone_to_local`,
+//! `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
+//! `swarm_a2a_card` (A2A Agent Card discovery),
+//! `swarm_list_local_agents`, `swarm_clone_to_local`,
 //! `swarm_push_to_cloud`, `swarm_remove_local`, `swarm_create_local_agent`,
 //! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6).
 //!
@@ -60,6 +62,7 @@
 use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
+mod a2a;
 mod abw_client;
 mod abw_util;
 mod agent_executor;
@@ -2241,6 +2244,88 @@ impl SwarmServer {
         .await
     }
 
+    /// Send an A2A (Agent2Agent) protocol message to a local agent. Wraps the
+    /// message in A2A types (Message → Task → Artifact) and dispatches through
+    /// the existing in-process `LocalSwarmRuntime::delegate`. The response is
+    /// returned as an A2A Task with the agent's output as a text Artifact. No
+    /// HTTP server — the MCP tool dispatch IS the A2A transport. Agents can
+    /// communicate with each other by declaring this tool in their
+    /// `capabilities.mcp_tools`.
+    #[tool(
+        description = "Send an A2A (Agent2Agent) protocol message to a local agent. Wraps in A2A types (Message/Task/Artifact) and dispatches in-process. Returns an A2A Task with the agent's response as a text Artifact. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in mcp_tools to communicate with each other."
+    )]
+    pub(crate) async fn swarm_a2a_send(&self, parameters: Parameters<A2aSendRequest>) -> String {
+        execute_tool_semantic(self, "swarm_a2a_send", Some("pko"), async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.message.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and message must be non-empty".to_string(),
+                ));
+            }
+            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+                McpToolError::unavailable(format!("local runtime init failed: {e}"))
+            })?;
+            let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry",
+                    req.agent_name
+                ))
+            })?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let result = runtime
+                .delegate(&agent, &req.message, req.credits_authorized, ceiling)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            let task = a2a::task_from_response(
+                &result.response,
+                req.context_id,
+                &result.model,
+                result.tokens_used,
+                result.cost,
+            );
+            Ok(serde_json::to_value(&task)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize A2A task" })))
+        })
+        .await
+    }
+
+    /// Get the A2A Agent Card for a local agent (or all local agents).
+    #[tool(
+        description = "Get the A2A (Agent2Agent) Agent Card for a local agent, or all local agents if agent_name is omitted. The card describes the agent's capabilities, skills, and supported interface. A2A-compliant discovery."
+    )]
+    pub(crate) async fn swarm_a2a_card(&self, parameters: Parameters<A2aCardRequest>) -> String {
+        execute_tool_semantic(self, "swarm_a2a_card", Some("dublin-core"), async {
+            let req = parameters.0;
+            let base_url = "local://swarm/agents".to_string();
+            match req.agent_name {
+                Some(name) if !name.trim().is_empty() => {
+                    let card = self.local_registry.get(&name).ok_or_else(|| {
+                        McpToolError::not_found(format!(
+                            "agent '{}' not found in local registry",
+                            name
+                        ))
+                    })?;
+                    let a2a_card = a2a::to_a2a_card(&card, &base_url);
+                    Ok(serde_json::to_value(&a2a_card).unwrap_or_else(
+                        |_| serde_json::json!({ "error": "failed to serialize agent card" }),
+                    ))
+                }
+                _ => {
+                    let cards = self.local_registry.list();
+                    let a2a_cards: Vec<_> = cards
+                        .iter()
+                        .map(|c| a2a::to_a2a_card(c, &base_url))
+                        .collect();
+                    Ok(serde_json::json!({
+                        "count": a2a_cards.len(),
+                        "agent_cards": a2a_cards,
+                    }))
+                }
+            }
+        })
+        .await
+    }
+
     /// Fire (un-hire) an agent from a workspace. The ABW counterpart of
     /// firing: removes the agent from the roster — the redundant-duplicate
     /// pruning the skill's DECIDE phase flags (`flag_redundant_duplicate`).
@@ -2733,7 +2818,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_surface_is_exactly_39_registered_tools() {
+    fn tool_surface_is_exactly_41_registered_tools() {
         let router = SwarmServer::combined_router();
         let mut names: Vec<String> = router
             .list_all()
@@ -2770,13 +2855,15 @@ mod tests {
             "swarm_publish_checks",
             "swarm_publish_agent",
             "swarm_fork_agent",
-            // Local (12).
+            // Local (14).
             "swarm_fund_local",
             "swarm_balance_local",
             "swarm_local_history",
             "swarm_delegate_local",
             "swarm_fanout_local",
             "swarm_pipeline_local",
+            "swarm_a2a_send",
+            "swarm_a2a_card",
             "swarm_list_local_agents",
             "swarm_clone_to_local",
             "swarm_push_to_cloud",
@@ -2790,7 +2877,7 @@ mod tests {
         expected.sort();
         assert_eq!(
             names, expected,
-            "registered tool surface drifted from the documented 39"
+            "registered tool surface drifted from the documented 41"
         );
     }
 }

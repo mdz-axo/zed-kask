@@ -1471,7 +1471,7 @@ impl ManifestExecutor {
     /// cascade.
     ///
     /// The sub-manifest has its own convergence threshold, gas budget, and
-    /// steps. It is loaded from the embedded registry (or filesystem fallback),
+    /// steps. It is loaded from the filesystem (or embedded registry fallback),
     /// parsed as a `BundleManifest`, and executed via `execute_manifest()`.
     ///
     /// **Gas budget closure:** The sub-cascade's gas/rjoule caps are capped to
@@ -1521,10 +1521,13 @@ impl ManifestExecutor {
         } else if let Some(content) = crate::template_file(&template_ref) {
             content.to_string()
         } else {
-            return Err(TemplateError::NotFound(format!(
-                "Step {}: flowdef sub-manifest '{}' not found on filesystem or in embedded registry",
-                step.ordinal, template_ref
-            )));
+            return Err(TemplateError::NotFound(NotFound {
+                entity_type: "flowdef sub-manifest".to_string(),
+                id: format!(
+                    "Step {}: sub-manifest '{}' not found on filesystem or in embedded registry",
+                    step.ordinal, template_ref
+                ),
+            }));
         };
 
         // Parse the sub-manifest.
@@ -1816,7 +1819,7 @@ impl ManifestExecutor {
                 let template_ref = TemplateRenderer::render_inline(template_ref_raw, context);
 
                 // Delegate resolution + loading to the renderer. The renderer
-                // owns the embedded→filesystem ladder and the .j2/.yaml fallbacks.
+                // owns the filesystem→embedded ladder and the .j2/.yaml fallbacks.
                 let template_content = self.template_renderer.load(&template_ref, step.ordinal)?;
 
                 info!(
