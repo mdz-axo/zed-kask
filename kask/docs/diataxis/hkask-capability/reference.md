@@ -16,10 +16,7 @@ a hostile in-process caller.
 | Symbol | Location |
 |--------|----------|
 | `DelegationToken` struct | `kask/crates/hkask-capability/src/token_types.rs` |
-| `DelegationTokenBuilder` | `kask/crates/hkask-capability/src/token_types.rs` |
-| `Caveat` struct | `kask/crates/hkask-capability/src/token_types.rs` |
-| `CapabilityError` enum | `kask/crates/hkask-capability/src/token_types.rs` |
-| `TokenRegistry` trait | `kask/crates/hkask-capability/src/token_types.rs` |
+| `SYSTEM_MAX_RECURSION` const | `kask/crates/hkask-capability/src/token_types.rs` |
 | `panel_default_token` (minting) | `kask/crates/hkask-capability/src/auth.rs` |
 | `ToolPort` trait | `kask/crates/hkask-capability/src/tool_port.rs` |
 | `ToolPortError` enum | `kask/crates/hkask-capability/src/tool_port.rs` |
@@ -35,17 +32,19 @@ Removed in the 2026-07-31 token-ceremony collapse: `signature`/`public_key`
 fields, `verify()`/`verify_cryptographic()`, `TokenSignature`,
 `derive_signing_key`, base64 serialization, the `SigningPayload`, the
 `AuthContext` struct, `require_read_access`/`require_write_access`,
-`NoOpTokenRegistry`, and the Kani tamper-detection harnesses. The
-`TokenRegistry` SQL store keeps its legacy `signature_hex`/`public_key_hex`
-columns (written as empty strings — no schema migration).
+`NoOpTokenRegistry`, and the Kani tamper-detection harnesses. Removed in the
+2026-08-02 config collapse: `OcapConfig` + manifest `ocap:` blocks,
+`expires_at`, `attenuation_level`/`max_attenuation`, `context_nonce`,
+`caveats`, the `DelegationTokenBuilder`, the `Caveat` struct, the
+`CapabilityError` enum, the `TokenRegistry` trait + SQL table, and
+`SYSTEM_MAX_ATTENUATION`.
 
 ## Token model
 
 The `DelegationToken` is the core capability object. It carries an id
-(deterministic content hash), a resource, a resource_id, an action, a
-delegation chain (from/to WebIDs), an optional expiry, an attenuation level,
-a max attenuation cap, a context nonce, and a list of caveats. The
-`DelegationTokenBuilder` constructs tokens via `build()` (no signing step).
+(deterministic content hash), a resource, a resource_id, an action, and a
+delegation chain (from/to WebIDs). Construct it with `DelegationToken::new`
+(there is no builder and no signing step).
 
 ```mermaid
 classDiagram
@@ -56,18 +55,7 @@ classDiagram
         +action: DelegationAction
         +delegated_from: WebID
         +delegated_to: WebID
-        +expires_at: Option~i64~
-        +attenuation_level: u8
-        +max_attenuation: u8
-        +context_nonce: String
-        +caveats: Vec~Caveat~
-    }
-    class DelegationTokenBuilder {
-        +build() DelegationToken
-    }
-    class Caveat {
-        +caveat_id: String
-        +data: String
+        +is_valid_for(resource, resource_id, action) bool
     }
     class ToolPort {
         <<interface>>
@@ -89,10 +77,8 @@ classDiagram
         Execute
     }
 
-    DelegationToken --> Caveat
     DelegationToken --> DelegationResource
     DelegationToken --> DelegationAction
-    DelegationTokenBuilder ..> DelegationToken : creates
     ToolPort --> DelegationToken : requires
 ```
 
@@ -109,10 +95,9 @@ classDiagram
    `RegulationSink` (`RegulationArchive` on the curator's pod.db in
    zed-kask).
 
-The gate does NOT verify token signatures or consult the `TokenRegistry`
-table. `TokenRegistry` is a consent-audit recording surface consumed by the
-curator MCP server's `list_tokens` tool — revocation recorded there is not
-checked at invoke time.
+The gate does NOT verify token signatures. There is no token registry; the
+former `TokenRegistry` SQL table and the curator `list_tokens` tool were
+removed as consent-audit theater with no enforcement point.
 
 ## ToolPort trait
 
@@ -148,6 +133,10 @@ against a required capability, applying the action hierarchy. The
 `hkask-mcp-<domain>` or short `<domain>`) to a capability string
 `tool:<domain>:execute`, used when constructing tokens for server-scoped
 access.
+
+`SYSTEM_MAX_RECURSION` (7) is the shared structural bound for cascade depth
+and subgoal nesting, consulted by the manifest executor and the registry
+bootstrap.
 
 ## See also
 

@@ -302,12 +302,7 @@ records. The `reg_cursors` table (`regulation_store.rs:98`) stores loop
 cursors for the Regulation cycle. Both are created inline in the
 `regulation_store.rs` module rather than in `schema.sql`.
 
-The `delegation_tokens` table (`token_registry.rs:29`) persists capability
-tokens for consent audit (recording only — the in-process capability-match
-gate does not consult this table), with `attenuation_level`,
-`max_attenuation`, `context_nonce`, and `revoked` flag. The `signature_hex`
-and `public_key_hex` columns are legacy — tokens carry no cryptographic
-material; the columns are written as empty strings. The `escalations` table (`escalation.rs:86`) stores escalation
+The `escalations` table (`escalation.rs`) stores escalation
 records for the algedonic alert path.
 
 The `reg_variety_checkpoint` table (`schema.sql:11`) tracks per-domain

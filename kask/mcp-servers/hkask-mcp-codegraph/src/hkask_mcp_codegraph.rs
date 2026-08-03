@@ -432,7 +432,7 @@ impl CodeGraphServer {
             // Resolve the embedding model and dimension.
             let model = req
                 .model
-                .unwrap_or_else(|| hkask_inference::model_constants::embedding_model());
+                .unwrap_or_else(hkask_inference::model_constants::embedding_model);
             let dim: usize = std::env::var("HKASK_EMBEDDING_DIM")
                 .ok()
                 .and_then(|v| v.parse().ok())

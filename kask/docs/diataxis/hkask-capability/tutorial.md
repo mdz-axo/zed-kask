@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Tutorial: Your First Capability Token"
 audience: [developers]
-last_updated: 2026-07-31
-version: "0.3.0"
+last_updated: 2026-08-03
+version: "0.3.1"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [lifecycle]
@@ -12,23 +12,21 @@ mds_categories: [lifecycle]
 
 This tutorial walks through creating a `DelegationToken` and invoking a
 tool through the governed membrane. You will learn how capability matching
-gates tool calls, how the action hierarchy (`Execute >= Write >= Read`)
-works, and how attenuation limits delegation depth.
+gates tool calls and how the action hierarchy (`Execute >= Write >= Read`)
+works.
 
 ## Learning path
 
 ```mermaid
 flowchart TD
-    A[Step 1: Build a token] --> B[Step 2: Invoke through the membrane]
+    A[Step 1: Mint a token] --> B[Step 2: Invoke through the membrane]
     B --> C[Step 3: Attempt a mismatched call]
-    C --> D[Step 4: Check expiry and attenuation]
 ```
 
-## Steps 1-2: Build a token and invoke
+## Steps 1-2: Mint a token and invoke
 
-Use `DelegationToken::new` (or `DelegationTokenBuilder`) with a
-`DelegationResource::Tool`, a `DelegationAction::Execute`, and a resource ID
-matching the target tool:
+Use `DelegationToken::new` with a `DelegationResource::Tool`, a
+`DelegationAction::Execute`, and a resource ID matching the target tool:
 
 ```rust
 let token = DelegationToken::new(
@@ -53,13 +51,6 @@ invoke of `"web_search"`. The capability match fails and the call is denied
 with `ToolPortError::CapabilityDenied`. This is the gate's purpose: it
 catches wiring bugs — a cascade step or panel view that names the wrong
 tool — at the membrane rather than deep inside a server.
-
-## Step 4: Expiry and attenuation
-
-`builder.expires_at(ts)` sets an expiry; `token.is_expired(now)` reports it.
-`builder.attenuation_level(n)` marks delegation depth;
-`SYSTEM_MAX_ATTENUATION` (7) caps the chain so delegation graphs stay
-auditable.
 
 ## See also
 

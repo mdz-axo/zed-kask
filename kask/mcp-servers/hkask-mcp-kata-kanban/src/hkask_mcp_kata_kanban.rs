@@ -923,7 +923,7 @@ impl KanbanServer {
                     );
                 }
 
-                Ok(serde_json::to_value(TaskSpawnResponse {
+                serde_json::to_value(TaskSpawnResponse {
                     task_id: tid.to_string(),
                     message: format!(
                         "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
@@ -931,7 +931,7 @@ impl KanbanServer {
                     ),
                     pko: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
                 })
-                .map_err(|e| McpToolError::internal(e.to_string()))?)
+                .map_err(|e| McpToolError::internal(e.to_string()))
             },
         )
         .await

@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-31
-version: "0.3.0"
+last_updated: 2026-08-03
+version: "0.3.1"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -59,18 +59,3 @@ stateDiagram-v2
     Denied --> [*]: CapabilityDenied
     BudgetExceeded --> [*]: EnergyBudgetExceeded
 ```
-
-The `TokenRegistry` SQL table (`hkask-storage`) records token issuance for
-consent audit — the curator MCP server's `list_tokens` tool reads it for
-transparency reporting and anomaly detection. The invoke gate does **not**
-consult it; a revocation recorded in the registry is an audit fact, not an
-authorization decision.
-
-## Attenuation
-
-The `DelegationToken` carries an `attenuation_level` and a `max_attenuation`
-field. When a token is delegated from one principal to another, the
-attenuation level increases; `SYSTEM_MAX_ATTENUATION` caps the chain depth.
-This is a structural bound (cascade depth, subgoal nesting) rather than a
-cryptographic one — it limits how deep delegation chains can grow so audit
-stays tractable.
