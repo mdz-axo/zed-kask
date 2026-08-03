@@ -11,6 +11,10 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
+use crate::services::consolidation::{ConsolidationRequest, ConsolidationService};
+use crate::services::prompt_builder::{
+    BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
+};
 use crate::tools::semantic::{GUARD, INPUT_GUARD_ENABLED, configured_qa_model};
 use crate::*;
 use schemars::JsonSchema;
@@ -25,6 +29,12 @@ mod qa_types;
 use clustering::{cluster_within_source, read_tagged_chunks};
 use qa_parsing::{ParsedQa, parse_qa_record};
 use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
+
+// Re-export helpers used by the service layer (services/consolidation.rs,
+// services/prompt_builder.rs) so the services don't depend on the private
+// submodule paths.
+pub(crate) use clustering::{cluster_within_source, read_tagged_chunks};
+pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
 
 #[tool_router(router = corpus_router, vis = "pub")]
 impl CorpusServer {

@@ -60,20 +60,25 @@ Do NOT use for:
 ## PDCA Loop
 
 ```
-Check: Phase 1 — SENSE     → Measure current swarm state against Onto4MAT + ABW workspace/wallet
-Plan:  Phase 2 — ORIENT    → Classify the gap: variety deficit | coherence deficit | loop-break
-Plan:  Phase 3 — DECIDE    → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
-Do:    Phase 4 — ACT       → Emit gated swarm_hire / swarm_delegate with a consent token
-Check: Phase 5 — CHECK     → Re-measure, compute swarm-state distance d, emit next_focus + algedonic
-Check: Phase 6 — CONVERGE  → Cauchy criterion on d (deterministic, no LLM judgment)
-Act:   Phase 7 — LOOP      → Re-enter SENSE with prior_iteration if not converged
+Check: Phase 1  — SENSE            → Measure current swarm state against Onto4MAT + backend workspace/wallet
+Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault attribution (C5)
+Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
+Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
+Do:    Phase 5  — ACT              → Emit gated swarm_hire / swarm_delegate / swarm_delegate_local
+Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic + blame_count (C5)
+Check: Phase 7  — CONVERGE (check)  → Cauchy criterion on d (deterministic, no LLM judgment)
+Check: Phase 8  — CONVERGE (accum) → Deterministic accumulator: iteration_log, failed_edits, influence_scores (C1/C3/C7)
+Check: Phase 9  — CONVERGE (monitor)→ Second-order monitor: reasoning-loop + sensor-truth-divergence + Go See cadence (C1/C2)
+Act:   Phase 10 — LOOP              → Re-enter SENSE with prior_iteration + threaded accumulators if not converged
 ```
 
-The shape is cybernetic (sense → orient → decide → act → check), not the
-gradient-hunter's Prior→Map→Detect→Hypothesize→Report (spatial-gradient
+The shape is cybernetic (sense → orient → decide → filter → act → check → converge),
+not the gradient-hunter's Prior→Map→Detect→Hypothesize→Report (spatial-gradient
 analysis) or the bug-hunt's Charter→Probe→Oracle→Taxonomize→Report
 (exploratory testing). The shape emerges from the domain: a swarm is a
-feedback loop, so the skill is a feedback loop.
+feedback loop, so the skill is a feedback loop. The deterministic compute steps
+(FILTER, CONVERGE) enforce the cybernetic plan's guards without an LLM — an
+LLM template cannot reliably maintain a running set/sum across LOOP iterations.
 
 ## Target condition (measurable)
 
@@ -90,11 +95,36 @@ A swarm is well-composed for a task when three conditions hold simultaneously:
 
 Cauchy criterion on the swarm-state distance
 `d = sqrt( (1 - variety_coverage)² + max(0, diversity_floor - diversity)² + (1 - loop_closure)² )`.
+When the caller supplies a deterministic `task_success` verdict (component C0),
+`d` gains a fourth axis `(1 - s)²` (s = task_success.score, or pass→1.0 /
+fail→0.0) — a healthy swarm that fails the task must NOT converge. When
+`task_success` is null (open tasks with no oracle), `d` uses the three
+swarm-health axes only; the human Go See loop (C2) covers the task-success gap,
+never an LLM judge.
 The sequence `d_1, d_2, …` has converged when `|d_i − d_{i−1}| < 0.03` for 3
 consecutive iterations. **Algedonic override:** a 402 or un-acknowledged
 curator dispatch escalates regardless of `d` — a broken algedonic channel is
 never read as "no deviation" (the `.rules` "unwrap_or(0)" trap enforced as a
 convergence invariant).
+
+## Cybernetic Swarm Plan components
+
+The skill integrates the Cybernetic Swarm Plan's deterministic components
+(C0–C8). The accumulators and guards are `compute` primitives (no LLM) — an
+LLM template cannot reliably maintain a running set/sum across LOOP
+iterations, so the enforcement points live in the deterministic math layer.
+
+| Component | What | Enforcement point |
+|-----------|------|--------------------|
+| **C0** task-success `s` | Deterministic evaluator verdict → fourth axis of `d` | CHECK template + manifest `task_success` input |
+| **C1** second-order monitor | Reasoning-loop + sensor-truth-divergence detection over the iteration log | `swarm.second_order_monitor` compute step (9) |
+| **C2** Go See cadence | Scheduled human check every N convergences + event trigger | `cadence_every` param in the monitor; SENSE surfaces `go_see` |
+| **C3** failed-edit memory | Anti-loop set; the FILTER drops moves matching prior failed signatures | `swarm.filter_proposed_moves` compute step (4) |
+| **C4** latency `T_q` | End-to-end delegation latency measurement | `LocalDelegateResult.latency_ms` |
+| **C5** fault attribution | Deterministic priority rule over the delegate trace; blame aggregation | ORIENT template + CHECK `blame_count` |
+| **C6** reconfigure_agent | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis) | `swarm_reconfigure_local_agent` tool + DECIDE move type |
+| **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm | `swarm.filter_proposed_moves` compute step (4) |
+| **C8** task-gated alignment | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port) | SENSE template `alignment` definition |
 
 ## Composed Skills
 

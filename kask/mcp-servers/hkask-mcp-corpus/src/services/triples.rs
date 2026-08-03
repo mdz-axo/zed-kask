@@ -1,0 +1,385 @@
+//! Triple extraction service — concurrent h_mem extraction from corpus chunks.
+//!
+//! Extracted from `CorpusServer::extract_triples_batch` in `tools/semantic/mod.rs`.
+//! Opens the DB once, shares it across concurrent tasks, and stores triples as
+//! h_mems with ontology-aware confidence capping.
+
+use std::sync::Arc;
+
+use hkask_mcp_server::server::McpToolError;
+use hkask_memory::SemanticMemory;
+use hkask_types::InferencePort;
+use hkask_types::Visibility;
+use hkask_types::template::LLMParameters;
+use serde_json::json;
+
+use crate::batch::{MAX_RETRIES, retry_with_backoff};
+use crate::tools::semantic::{
+    GUARD, INPUT_GUARD_ENABLED, configured_qa_model, predicate_to_dimension,
+    read_ontology_namespaces, read_ontology_tags, triple_confidence,
+};
+use crate::{embedding_dim, extract_json_from_response, owner_webid, render_docproc_template};
+
+/// Input for [`TriplesService::extract`].
+pub struct TriplesRequest {
+    pub chunks_jsonl: String,
+    pub tagged_jsonl: Option<String>,
+    pub max_triples: usize,
+    pub db_path: String,
+    pub passphrase: String,
+    pub owner: String,
+    pub concurrency: usize,
+}
+
+/// Concurrent h_mem extraction from corpus chunks.
+///
+/// Holds the shared inference router. Each call to [`extract`] opens the
+/// memory DB, loads ontology context, and processes chunks concurrently with
+/// 3-attempt retry and confidence capping.
+pub struct TriplesService {
+    inference_router: Arc<dyn InferencePort>,
+}
+
+impl TriplesService {
+    pub fn new(inference_router: Arc<dyn InferencePort>) -> Self {
+        Self { inference_router }
+    }
+
+    /// Batch extract h_mems from chunks JSONL with concurrent LLM calls.
+    ///
+    /// Opens the DB once and shares it across all concurrent tasks via `Arc<SemanticMemory>`.
+    /// Each chunk gets a 3-attempt retry with backoff. Triples are stored as h_mems
+    /// with `entity = chunk.entity_ref`.
+    ///
+    /// When `tagged_jsonl` is provided, ontology tags from the tagging step are
+    /// read and injected into the extraction prompt per-chunk, so the LLM uses
+    /// the appropriate predicates (GOLEM for narrative, schema.org for expository).
+    #[must_use = "result must be used"]
+    pub async fn extract(
+        &self,
+        request: TriplesRequest,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let TriplesRequest {
+            chunks_jsonl: chunks_path,
+            tagged_jsonl,
+            max_triples,
+            db_path,
+            passphrase,
+            owner,
+            concurrency,
+        } = request;
+
+        let content = std::fs::read_to_string(&chunks_path).map_err(|e| {
+            McpToolError::invalid_argument(format!(
+                "Cannot read chunks_jsonl '{}': {e}",
+                chunks_path
+            ))
+        })?;
+
+        // Parse chunks: each line has entity_ref and text
+        let mut chunks: Vec<(String, String)> = Vec::new();
+        for (i, line) in content.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let v: serde_json::Value = serde_json::from_str(line).map_err(|e| {
+                McpToolError::invalid_argument(format!(
+                    "chunks_jsonl line {} is not valid JSON: {e}",
+                    i + 1
+                ))
+            })?;
+            let entity_ref = v
+                .get("entity_ref")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let chunk_text = v
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if entity_ref.is_empty() || chunk_text.is_empty() {
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.triples",
+                    line = i + 1,
+                    "Skipping chunk with empty entity_ref or text"
+                );
+                continue;
+            }
+            chunks.push((entity_ref, chunk_text));
+        }
+
+        let total_chunks = chunks.len();
+        if total_chunks == 0 {
+            return Err(McpToolError::invalid_argument(
+                "chunks_jsonl contains no valid chunks",
+            ));
+        }
+
+        // Read ontology tags from tagged_jsonl (if provided) to inject into
+        // extraction prompts. Maps entity_ref -> formatted ontology context.
+        let ontology_map: std::collections::HashMap<String, String> =
+            if let Some(tagged_path) = tagged_jsonl.as_deref() {
+                read_ontology_tags(tagged_path)?
+            } else {
+                std::collections::HashMap::new()
+            };
+        let ontology_map = Arc::new(ontology_map);
+
+        // Read ontology namespace sets per chunk (M4 fix). Used to cross-check
+        // that a triple's predicate namespace was actually tagged for the
+        // chunk before bypassing the text-containment hallucination guard.
+        // Without this, any `golem:`/`eso:`/`fibo:`/`pko:` predicate bypasses
+        // the guard regardless of whether the chunk was tagged with that
+        // ontology — allowing the LLM to emit abstract-namespace predicates
+        // for chunks where that ontology was never detected.
+        let namespace_map: std::collections::HashMap<String, std::collections::HashSet<String>> =
+            if let Some(tagged_path) = tagged_jsonl.as_deref() {
+                read_ontology_namespaces(tagged_path)?
+            } else {
+                std::collections::HashMap::new()
+            };
+        let namespace_map = Arc::new(namespace_map);
+
+        // Open DB once, share across concurrent tasks
+        let dim = embedding_dim();
+        let semantic = Arc::new(
+            SemanticMemory::open(&db_path, &passphrase, dim).map_err(|e| {
+                McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
+            })?,
+        );
+        let webid = owner_webid(&owner);
+        let classifier = hkask_inference::model_constants::classifier_model();
+        // Namespace is fixed to "doc" for corpus chunk extraction (no longer a request field).
+        let ns = "doc".to_string();
+
+        let sem = Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
+        let router = Arc::clone(&self.inference_router);
+        let succeeded = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h_mems_stored = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let mut handles = Vec::with_capacity(total_chunks);
+        for (entity_ref, chunk_text) in chunks {
+            let router = Arc::clone(&router);
+            let sem = Arc::clone(&sem);
+            let semantic = Arc::clone(&semantic);
+            let classifier = classifier.clone();
+            let ns = ns.clone();
+            let succeeded = Arc::clone(&succeeded);
+            let failed = Arc::clone(&failed);
+            let h_mems_stored = Arc::clone(&h_mems_stored);
+            let ontology_map = Arc::clone(&ontology_map);
+            let namespace_map = Arc::clone(&namespace_map);
+
+            let handle = tokio::spawn(async move {
+                let _permit = sem.acquire().await;
+
+                // Build prompt from registry template
+                let ontology_context = ontology_map.get(&entity_ref).cloned().unwrap_or_default();
+                // Namespace set for this chunk (M4 cross-check). Empty if no
+                // tagged_jsonl was provided or the chunk has no ontology tags.
+                let chunk_namespaces = namespace_map.get(&entity_ref).cloned().unwrap_or_default();
+                let mut vars: std::collections::HashMap<&str, String> =
+                    std::collections::HashMap::new();
+                vars.insert("limit", max_triples.to_string());
+                vars.insert("namespace", ns.clone());
+                vars.insert("text", chunk_text.clone());
+                vars.insert("ontology_context", ontology_context.clone());
+                let prompt = render_docproc_template("extract-hmems", &vars);
+                let prompt = if prompt.is_empty() {
+                    // Fallback: includes GOLEM predicates and ontology context if available
+                    let ontology_hint = if ontology_context.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+
+"Ontology tags for this passage: {ontology_context}
+Use GOLEM predicates (golem:hasCharacter, golem:hasEvent, golem:hasTheme, golem:illustrates, etc.) for narrative passages and standard RDF predicates (schema:author, rdf:type, etc.) for expository passages.")
+                    };
+                    format!(
+                        "Extract up to {max_triples} factual RDF triples from the following text.
+
+First, classify the passage as narrative (story, characters, literary devices) or expository (concepts, analysis, arguments). Then extract triples using the appropriate predicates:
+  - Expository: schema:author, schema:mentions, rdf:type, fibo:returnOnCapital, etc.
+  - Narrative: golem:hasCharacter, golem:hasEvent, golem:hasTheme, golem:illustrates, golem:metaphorFor, etc.
+
+Each triple: (subject, predicate, object, confidence). Prefix subjects with '{ns}:'.{ontology_hint}
+
+Text:
+{chunk_text}
+
+Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\", \"confidence\": 0.95}}]}}"
+                    )
+                } else {
+                    prompt
+                };
+
+                // Input guard — operator may disable via HKASK_ENABLE_CONTENT_GUARD
+                if *INPUT_GUARD_ENABLED {
+                    let input_scan = GUARD.scan_input(&prompt);
+                    if !input_scan.passed {
+                        tracing::warn!(
+                            target: "hkask.mcp.docproc.triples",
+                            entity = %entity_ref,
+                            "Input guard rejected extraction prompt"
+                        );
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                }
+
+                let params = LLMParameters {
+                    temperature: 0.1,
+                    top_p: 0.95,
+                    max_tokens: 4096,
+                    frequency_penalty: 0.0,
+                    presence_penalty: 0.0,
+                    top_k: 0,
+                    min_p: 0.0,
+                    typical_p: 0.0,
+                    disable_thinking: true,
+                    ..Default::default()
+                };
+
+                let response = match retry_with_backoff(
+                    MAX_RETRIES,
+                    "hkask.mcp.docproc.triples",
+                    &entity_ref,
+                    || router.generate_with_model(&prompt, &params, Some(&classifier), None),
+                )
+                .await
+                {
+                    Ok(resp) => resp,
+                    Err(_) => {
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                };
+
+                // Output guard + JSON extraction
+                let output_scan = GUARD.scan_output(&response.text);
+                let content = output_scan.output.content(&response.text);
+                if !output_scan.passed {
+                    tracing::warn!(
+                        target: "reg.guard",
+                        entity = %entity_ref,
+                        violations = ?output_scan.violations.iter().map(|v| &v.scanner).collect::<Vec<_>>(),
+                        "Output guard violations in h_mem extraction — content may be sanitized"
+                    );
+                }
+                let cleaned = extract_json_from_response(content);
+                let h_mems: serde_json::Value = match serde_json::from_str(&cleaned) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.docproc.triples",
+                            entity = %entity_ref,
+                            "LLM response was not valid JSON"
+                        );
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                };
+
+                // Store triples as h_mems — preserve subject in value for knowledge graph
+                let mut stored = 0usize;
+                if let Some(arr) = h_mems.get("h_mems").and_then(|v| v.as_array()) {
+                    for triple in arr {
+                        let subject = triple.get("subject").and_then(|v| v.as_str()).unwrap_or("");
+                        let predicate = triple
+                            .get("predicate")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let object = triple.get("object").cloned().unwrap_or(json!(null));
+                        let raw_confidence = triple
+                            .get("confidence")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.8);
+                        let dimension = predicate_to_dimension(predicate);
+
+                        let confidence = triple_confidence(
+                            subject,
+                            predicate,
+                            &object,
+                            raw_confidence,
+                            &chunk_text,
+                            &chunk_namespaces,
+                        );
+                        if confidence < raw_confidence {
+                            let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
+                            let reason = if !chunk_namespaces.contains(&pred_ns)
+                                && matches!(
+                                    pred_ns.as_str(),
+                                    "golem"
+                                        | "eso"
+                                        | "fibo"
+                                        | "pko"
+                                        | "epistemic"
+                                        | "omc"
+                                        | "other"
+                                ) {
+                                format!(
+                                    "abstract namespace '{}' not in chunk ontology tags {:?} — confidence capped at 0.5",
+                                    pred_ns, chunk_namespaces
+                                )
+                            } else {
+                                "Triple subject/object not found in chunk text — confidence capped at 0.5".to_string()
+                            };
+                            tracing::warn!(
+                                target: "hkask.mcp.docproc.triples",
+                                entity = %entity_ref,
+                                subject = %subject,
+                                predicate = %predicate,
+                                "{reason}"
+                            );
+                        }
+
+                        // Store subject + object in value so build_prompts can format
+                        // triples as "subject --predicate--> object" with confidence.
+                        let value = json!({
+                            "subject": subject,
+                            "object": object,
+                        });
+                        let h_mem = hkask_storage::HMem::new(&entity_ref, predicate, value, webid)
+                            .with_visibility(Visibility::Public)
+                            .with_confidence(confidence)
+                            .with_dimension(dimension);
+                        match semantic.store(h_mem) {
+                            Ok(()) => stored += 1,
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "hkask.mcp.docproc.triples",
+                                    entity = %entity_ref,
+                                    error = %e,
+                                    "Failed to store triple h_mem"
+                                );
+                            }
+                        }
+                    }
+                }
+
+                h_mems_stored.fetch_add(stored, std::sync::atomic::Ordering::Relaxed);
+                succeeded.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        let succeeded = succeeded.load(std::sync::atomic::Ordering::Relaxed);
+        let failed = failed.load(std::sync::atomic::Ordering::Relaxed);
+        let h_mems_stored = h_mems_stored.load(std::sync::atomic::Ordering::Relaxed);
+
+        let result = json!({
+            "total_chunks": total_chunks,
+            "succeeded": succeeded,
+            "failed": failed,
+            "h_mems_stored": h_mems_stored,
+        });
+        Ok(result)
+    }
+}

@@ -37,6 +37,7 @@ pub mod model_cache;
 pub mod ocr;
 pub(crate) mod path_safety;
 pub mod runtime;
+pub mod services;
 pub mod template;
 pub mod text;
 pub mod tools;

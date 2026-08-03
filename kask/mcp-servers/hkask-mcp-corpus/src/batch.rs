@@ -24,6 +24,7 @@ pub(crate) enum BatchStatus {
 }
 
 impl BatchStatus {
+    #[cfg(test)]
     pub fn as_str(&self) -> &'static str {
         match self {
             BatchStatus::Success => "success",

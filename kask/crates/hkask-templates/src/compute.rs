@@ -698,6 +698,128 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                 "recommendation": recommendation,
             }))
         }
+        // Cybernetic Swarm Plan C3/C7 — deterministic enforcement of the
+        // failed-edit-memory and influence-weighted-rejection guards. The
+        // accumulators (swarm.converge_accumulate) are deterministic; without
+        // this filter their consumption would be an LLM-instructed guard in
+        // DECIDE (degraded fidelity — the LLM may ignore the instruction). This
+        // pure function enforces the hard stops the plan calls for:
+        //   - C3: drop a proposed move whose (decision_action, swarm_state_
+        //     signature) matches a prior failed-edit entry (d_delta <= 0, s did
+        //     not improve). The anti-loop set.
+        //   - C7: drop a `hire` move of an agent_type whose influence score is
+        //     <= 0 (the type has been measured to degrade the swarm). Prune
+        //     before search.
+        // Runs as a compute step between DECIDE and ACT; ACT consumes the
+        // filtered_moves. An empty filtered_moves is the correct cybernetic
+        // response — a stuck swarm that only re-proposes known-bad edits should
+        // stall, at which point the second-order monitor's diversify/Go See fires.
+        "swarm.filter_proposed_moves" => {
+            let proposed = input
+                .get("proposed_moves")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let failed_edits = input
+                .get("failed_edits")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let influence_scores = input.get("influence_scores").cloned();
+            // Build the C7 influence map once (agent_type -> running sum).
+            let influence_map = influence_scores
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            // Build the C3 forbidden-signature set: (decision_action,
+            // swarm_state_signature) pairs from failed edits.
+            let forbidden: Vec<(String, String)> = failed_edits
+                .iter()
+                .filter_map(|e| {
+                    let action = e
+                        .get("decision_action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let sig = e
+                        .get("swarm_state_signature")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if action.is_empty() || sig.is_empty() {
+                        None
+                    } else {
+                        Some((action.to_string(), sig.to_string()))
+                    }
+                })
+                .collect();
+            // Compute the current swarm_state_signature here (the filter runs
+            // before converge_accumulate, which computes the same signature for
+            // recording), so the filter derives it from deficit_class + roster,
+            // mirroring accumulate: deficit_class|sorted(roster agent_types).
+            let deficit_class = input
+                .get("deficit_class")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mut roster_types = extract_roster_agent_types(input.get("swarm_state"));
+            roster_types.sort();
+            let current_sig = format!("{}|{}", deficit_class, roster_types.join(","));
+            let mut filtered = Vec::new();
+            let mut rejected = Vec::new();
+            for mv in proposed {
+                let move_type = mv
+                    .get("move_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let agent_type = mv
+                    .get("agent_id_or_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // C7: reject a hire of a negatively-influential agent type.
+                let influence_rejected = move_type == "hire"
+                    && !agent_type.is_empty()
+                    && influence_map
+                        .get(&agent_type)
+                        .and_then(|v| v.as_f64())
+                        .map(|score| score <= 0.0)
+                        .unwrap_or(false);
+                if influence_rejected {
+                    rejected.push(serde_json::json!({
+                        "move": mv,
+                        "reason": "influence_guard",
+                        "detail": format!("agent type '{agent_type}' influence score <= 0 — measured to degrade the swarm (C7)"),
+                    }));
+                    continue;
+                }
+                // C3: reject a move matching a prior failed-edit signature. The
+                // signature combines the move's action + the current swarm state
+                // signature; a match means this action under this roster shape
+                // already failed to improve d.
+                let failed_match = !current_sig.is_empty()
+                    && forbidden
+                        .iter()
+                        .any(|(a, s)| *a == move_type && *s == current_sig);
+                if failed_match {
+                    rejected.push(serde_json::json!({
+                        "move": mv,
+                        "reason": "failed_edit_guard",
+                        "detail": format!("move '{move_type}' under signature '{current_sig}' matches a prior failed edit (C3 anti-loop)"),
+                    }));
+                    continue;
+                }
+                filtered.push(mv);
+            }
+            Ok(serde_json::json!({
+                // Emit the filtered list under `proposed_moves` (the canonical
+                // field name ACT and the accumulator read) so downstream steps
+                // consume `step_4_result.proposed_moves` unchanged. `rejected`
+                // is the audit trail of dropped moves + reasons.
+                "proposed_moves": filtered,
+                "rejected": rejected,
+            }))
+        }
         // ── Lisp evaluation primitive ──
         //
         // Deterministic evaluation of a Lisp form against a JSON environment.
@@ -1536,5 +1658,102 @@ mod tests {
             detail.contains("sensor filters truth"),
             "divergence detail wins over cadence detail; got {detail}"
         );
+    }
+
+    // ── swarm.filter_proposed_moves (C3/C7 deterministic enforcement) ──
+
+    #[test]
+    fn swarm_filter_rejects_negatively_influential_hire() {
+        // C7: a hire of an agent type whose influence score is <= 0 is dropped.
+        let input = serde_json::json!({
+            "proposed_moves": [
+                {"move_type": "hire", "agent_id_or_type": "debater"},
+                {"move_type": "hire", "agent_id_or_type": "researcher"}
+            ],
+            "failed_edits": [],
+            "influence_scores": {"debater": -0.2, "researcher": 0.3}
+        });
+        let result = dispatch_compute("swarm.filter_proposed_moves", &input).unwrap();
+        let filtered = result
+            .get("proposed_moves")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(
+            filtered.len(),
+            1,
+            "the negatively-influential hire is dropped"
+        );
+        assert_eq!(filtered[0]["agent_id_or_type"], "researcher");
+        let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(rejected.len(), 1);
+        assert_eq!(rejected[0]["reason"], "influence_guard");
+    }
+
+    #[test]
+    fn swarm_filter_rejects_failed_edit_signature_match() {
+        // C3: a move whose (move_type, current_swarm_state_signature) matches a
+        // prior failed edit is dropped — the anti-loop set.
+        let input = serde_json::json!({
+            "proposed_moves": [
+                {"move_type": "hire", "agent_id_or_type": "x"}
+            ],
+            "failed_edits": [
+                {"decision_action": "hire", "swarm_state_signature": "variety_deficit|writer", "d_delta": 0.0}
+            ],
+            "influence_scores": {},
+            "deficit_class": "variety_deficit",
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "writer"}]}}
+        });
+        let result = dispatch_compute("swarm.filter_proposed_moves", &input).unwrap();
+        let filtered = result
+            .get("proposed_moves")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert!(
+            filtered.is_empty(),
+            "the matching move is dropped (C3 anti-loop)"
+        );
+        let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(rejected[0]["reason"], "failed_edit_guard");
+    }
+
+    #[test]
+    fn swarm_filter_passes_clean_moves() {
+        // No failed edits, no negative influence → all moves pass.
+        let input = serde_json::json!({
+            "proposed_moves": [
+                {"move_type": "hire", "agent_id_or_type": "a"},
+                {"move_type": "delegate", "agent_id_or_type": "b"}
+            ],
+            "failed_edits": [],
+            "influence_scores": {"a": 0.5}
+        });
+        let result = dispatch_compute("swarm.filter_proposed_moves", &input).unwrap();
+        let filtered = result
+            .get("proposed_moves")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(filtered.len(), 2, "no guards fire → all moves pass");
+        let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
+        assert!(rejected.is_empty());
+    }
+
+    #[test]
+    fn swarm_filter_empty_proposed_is_valid_stall() {
+        // An empty filtered_moves is the correct cybernetic response — a stuck
+        // swarm that only re-proposes known-bad edits should stall.
+        let input = serde_json::json!({
+            "proposed_moves": [],
+            "failed_edits": [],
+            "influence_scores": {}
+        });
+        let result = dispatch_compute("swarm.filter_proposed_moves", &input).unwrap();
+        let filtered = result
+            .get("proposed_moves")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert!(filtered.is_empty());
+        let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
+        assert!(rejected.is_empty());
     }
 }

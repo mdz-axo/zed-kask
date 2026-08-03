@@ -286,3 +286,110 @@ async fn swarm_influence_scores_accumulate_per_agent_type() {
         "influence score must be finite after accumulation; got {score}"
     );
 }
+
+/// A single-pass manifest with just the filter step, to verify the C3/C7
+/// enforcement fires through the executor (not just in the unit test).
+const FILTER_MANIFEST: &str = r#"manifest:
+  id: test-swarm-filter
+  name: Test swarm filter enforcement
+  description: Integration test for C3/C7 deterministic enforcement
+  version: "0.1.0"
+  editor: test
+  visibility: Public
+  category: skill
+steps:
+  - ordinal: 1
+    action: compute
+    description: "filter_proposed_moves"
+    compute_ref: "swarm.filter_proposed_moves"
+    gas_cap: 4096
+    timeout_seconds: 30
+    phase: Core
+    input_mapping:
+      proposed_moves: "{{ proposed_moves | default([]) }}"
+      failed_edits: "{{ failed_edits | default([]) }}"
+      influence_scores: "{{ influence_scores | default({}) }}"
+      deficit_class: "{{ deficit_class | default('') }}"
+      swarm_state: "{{ swarm_state | default({}) }}"
+convergence:
+  max_iterations: 1
+  min_iterations: 10
+  threshold: 0.0
+  convergence_field: "convergence_metric"
+  on_not_reached: "abort"
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+error_handling:
+  on_gas_exceeded: "abort"
+  on_timeout: "retry"
+  max_retries: 0
+  retry_backoff_seconds: 1
+  on_validation_failure: "abort"
+ledger:
+  emit_spans: false
+  span_namespace: ""
+  variety_monitoring: false
+  algedonic_threshold: 100
+  escalation_target: "Curator"
+audit:
+  enabled: false
+  log_level: "info"
+  include_input: false
+  include_output: false
+  include_gas_cost: false
+  include_reg_events: false
+"#;
+
+#[tokio::test]
+async fn swarm_filter_enforces_failed_edit_guard_in_executor() {
+    // Seed a prior failed edit (hire under variety_deficit|writer) and a
+    // proposed hire under the same signature → the filter must drop it. This
+    // verifies the C3 enforcement fires through ManifestExecutor, not just the
+    // dispatch_compute unit test.
+    let manifest = load_manifest_from_yaml(FILTER_MANIFEST).expect("manifest parses");
+    let executor = make_executor();
+    let mut ctx = HashMap::new();
+    ctx.insert(
+        "proposed_moves".to_string(),
+        json!([{"move_type": "hire", "agent_id_or_type": "x"}]),
+    );
+    ctx.insert(
+        "failed_edits".to_string(),
+        json!([{"decision_action": "hire", "swarm_state_signature": "variety_deficit|writer", "d_delta": 0.0}]),
+    );
+    ctx.insert("influence_scores".to_string(), json!({}));
+    ctx.insert("deficit_class".to_string(), json!("variety_deficit"));
+    ctx.insert(
+        "swarm_state".to_string(),
+        json!({"workspace_roster": {"agents": [{"agent_type": "writer"}]}}),
+    );
+    let result = executor
+        .execute_manifest(&manifest, ctx)
+        .await
+        .expect("filter executes");
+    let filtered = result
+        .get("step_1_result")
+        .and_then(|v| v.get("proposed_moves"))
+        .and_then(|v| v.as_array())
+        .expect("filtered proposed_moves present");
+    assert!(
+        filtered.is_empty(),
+        "C3 enforcement: the matching hire must be dropped through the executor; got {filtered:?}"
+    );
+    let rejected = result
+        .get("step_1_result")
+        .and_then(|v| v.get("rejected"))
+        .and_then(|v| v.as_array())
+        .expect("rejected audit present");
+    assert_eq!(
+        rejected[0]["reason"], "failed_edit_guard",
+        "the rejection reason must name the C3 guard"
+    );
+}

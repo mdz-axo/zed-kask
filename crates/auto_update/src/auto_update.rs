@@ -812,9 +812,29 @@ impl AutoUpdater {
                 let github_asset =
                     kask_bridge::get_zed_kask_release_asset(github_http, OS, ARCH, pre_release)
                         .await?;
-                ReleaseAsset {
-                    version: github_asset.version,
-                    url: github_asset.url,
+                match github_asset {
+                    Some(asset) => ReleaseAsset {
+                        version: asset.version,
+                        url: asset.url,
+                    },
+                    // zed-kask: D17 — no GitHub release or no matching asset
+                    // for the current platform. This is the expected state when
+                    // no releases have been published yet. Treat it as "up to
+                    // date", not an error — the user sees Idle, not Errored.
+                    None => {
+                        this.update(cx, |this, cx| {
+                            let status = match previous_status {
+                                AutoUpdateStatus::Updated { .. } => previous_status,
+                                _ => AutoUpdateStatus::Idle,
+                            };
+                            this.status = status;
+                            log::info!(
+                                "Zed-Kask auto update: no GitHub release found — up to date"
+                            );
+                            cx.notify();
+                        });
+                        return Ok(());
+                    }
                 }
             }
         };
@@ -2090,6 +2110,58 @@ mod tests {
             AutoUpdateStatus::Updated {
                 version: semver::Version::new(0, 100, 1)
             }
+        );
+    }
+
+    // zed-kask: D17 — pins that selecting Update Zed-Kask when no GitHub
+    // releases exist surfaces Idle (up to date), NOT Errored. Without this
+    // guard the user sees an error toast on a working system.
+    #[gpui::test]
+    async fn test_github_feed_no_releases_returns_idle(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        zlog::init_test();
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.auto_update = Some(true);
+                });
+            });
+
+            cx.set_global(AppDatabase::test_new());
+
+            let current_version = semver::Version::new(0, 100, 0);
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let fake_client_http = FakeHttpClient::create(move |req| async move {
+                let path = req.uri().path();
+                if path == "/repos/mdz-axo/zed-kask/releases" {
+                    return Ok(Response::builder().status(200).body("[]".into()).unwrap());
+                }
+                Ok(Response::builder().status(404).body("".into()).unwrap())
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+        });
+
+        let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
+
+        cx.background_executor.run_until_parked();
+
+        auto_updater.update(cx, |updater, cx| {
+            updater.poll_zed_kask(UpdateCheckType::Manual, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        assert_eq!(
+            status,
+            AutoUpdateStatus::Idle,
+            "no GitHub releases should surface as Idle, not Errored"
         );
     }
 }

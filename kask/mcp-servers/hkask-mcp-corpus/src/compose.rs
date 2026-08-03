@@ -429,27 +429,6 @@ fn render_jinja2_prompt(
     no_validate: bool,
     centroid_distance_max: f64,
 ) -> Result<String, ServiceError> {
-    let mut env = minijinja::Environment::new();
-    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    env.add_template("system_prompt", template).map_err(|e| {
-        let msg = format!("Jinja2 template parse error: {e}");
-        ServiceError::Domain {
-            kind: ErrorKind::BadRequest,
-            domain: DomainKind::Wallet,
-            source: Some(Box::new(e)),
-            message: msg,
-        }
-    })?;
-    let tmpl = env.get_template("system_prompt").map_err(|e| {
-        let msg = format!("Jinja2 template lookup error: {e}");
-        ServiceError::Domain {
-            kind: ErrorKind::BadRequest,
-            domain: DomainKind::Wallet,
-            source: Some(Box::new(e)),
-            message: msg,
-        }
-    })?;
-
     let ctx = minijinja::context! {
         prompt,
         author,
@@ -458,16 +437,7 @@ fn render_jinja2_prompt(
         no_validate,
         centroid_distance_max,
     };
-
-    tmpl.render(&ctx).map_err(|e| {
-        let msg = format!("Jinja2 render error: {e}");
-        ServiceError::Domain {
-            kind: ErrorKind::BadRequest,
-            domain: DomainKind::Wallet,
-            source: Some(Box::new(e)),
-            message: msg,
-        }
-    })
+    crate::template::render_one_shot("system_prompt", template, &ctx)
 }
 
 /// Generic fallback system prompt — used when no Jinja2 template is declared.

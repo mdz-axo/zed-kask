@@ -186,7 +186,7 @@ steps:
       # Cybernetic Swarm Plan C5: the prior iteration's ACT trace (the executor
       # snapshots prev_step_N_result at the loop step) carries the delegate
       # results ORIENT attributes fault from. Absent on iteration 1 (no prior).
-      prior_act: "{{ prev_step_4_result | default(none) }}"
+      prior_act: "{{ prev_step_5_result | default(none) }}"
 
   - ordinal: 3
     action: select
@@ -229,6 +229,29 @@ steps:
       second_order: "{{ second_order | default({}) }}"
 
   - ordinal: 4
+    action: compute
+    compute_ref: swarm.filter_proposed_moves
+    description: >
+      FILTER (Cybernetic Swarm Plan C3/C7 — deterministic enforcement). A
+      compute step between DECIDE and ACT that deterministically enforces the
+      guards the plan calls for: (1) C3 — drop a proposed move whose
+      (move_type, swarm_state_signature) matches a prior failed-edit entry
+      (the anti-loop set); (2) C7 — drop a hire of an agent_type whose
+      influence score is <= 0 (measured to degrade the swarm). The
+      accumulators (failed_edits, influence_scores) are threaded from CONVERGE
+      via the loop. This is the deterministic enforcement point — without it
+      the guards would be LLM-instructed in DECIDE (degraded fidelity). An
+      empty filtered result is the correct cybernetic response: a stuck swarm
+      that only re-proposes known-bad edits should stall, at which point the
+      second-order monitor's diversify/Go See fires.
+    input_mapping:
+      proposed_moves: "{{ step_3_result.proposed_moves | default([]) }}"
+      failed_edits: "{{ failed_edits | default([]) }}"
+      influence_scores: "{{ influence_scores | default({}) }}"
+      deficit_class: "{{ step_2_result.deficit_class | default('') }}"
+      swarm_state: "{{ step_1_result | default({}) }}"
+
+  - ordinal: 5
     action: select
     description: >
       ACT: Emit the gated composition change. For each proposed hire/
@@ -248,12 +271,12 @@ steps:
     gas_cap: 4096
     timeout_seconds: 120
     input_mapping:
-      decisions: "{{ step_3_result }}"
+      decisions: "{{ step_4_result }}"
       swarm_id: "{{ swarm_id }}"
       task: "{{ task }}"
       mode: "{{ mode | default('abw') }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: select
     description: >
       CHECK: Re-measure the swarm state post-Act (re-fetch workspace +
@@ -277,7 +300,7 @@ steps:
     timeout_seconds: 120
     input_mapping:
       pre_act_state: "{{ step_1_result }}"
-      act_result: "{{ step_4_result }}"
+      act_result: "{{ step_5_result }}"
       swarm_id: "{{ swarm_id }}"
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
@@ -288,7 +311,7 @@ steps:
       agent_at_fault: "{{ prev_step_2_result.agent_at_fault | default(none) }}"
       blame_count: "{{ blame_count | default({}) }}"
 
-  - ordinal: 6
+  - ordinal: 7
     action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion on the swarm-state distance d. Deterministic."
@@ -303,7 +326,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: compute
     compute_ref: swarm.converge_accumulate
     description: >
@@ -324,13 +347,13 @@ steps:
       iteration_log: "{{ iteration_log | default([]) }}"
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
-      d: "{{ step_5_result.convergence_metric | default(0.0) }}"
-      task_success: "{{ step_5_result.task_success | default(none) }}"
+      d: "{{ step_6_result.convergence_metric | default(0.0) }}"
+      task_success: "{{ step_6_result.task_success | default(none) }}"
       deficit_class: "{{ step_2_result.deficit_class | default('') }}"
-      decisions: "{{ step_3_result | default({}) }}"
+      decisions: "{{ step_4_result | default({}) }}"
       swarm_state: "{{ step_1_result | default({}) }}"
 
-  - ordinal: 8
+  - ordinal: 9
     action: compute
     compute_ref: swarm.second_order_monitor
     description: >
@@ -344,7 +367,7 @@ steps:
       DECIDE can diversify a stuck action and the Go See cadence (C2) can fire
       on the divergence trigger.
     input_mapping:
-      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
+      iteration_log: "{{ step_8_result.iteration_log | default([]) }}"
       loop_window: 3
       # Cybernetic Swarm Plan C2 — scheduled Go See cadence: force a human
       # Go See check every 3 convergences regardless of the monitor's signals.
@@ -355,7 +378,7 @@ steps:
       # unknown-unknowns.
       cadence_every: 3
 
-  - ordinal: 9
+  - ordinal: 10
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
@@ -367,15 +390,15 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_iteration:
-        lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
-        next_focus: "{{ step_5_result.next_focus | default('') }}"
-        second_order: "{{ step_8_result | default({}) }}"
-      kata_hypotenuse: "{{ step_6_result.hypotenuse | default(1.0) }}"
-      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
-      failed_edits: "{{ step_7_result.failed_edits | default([]) }}"
-      influence_scores: "{{ step_7_result.influence_scores | default({}) }}"
-      second_order: "{{ step_8_result | default({}) }}"
-      blame_count: "{{ step_5_result.blame_count | default({}) }}"
+        lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
+        next_focus: "{{ step_6_result.next_focus | default('') }}"
+        second_order: "{{ step_9_result | default({}) }}"
+      kata_hypotenuse: "{{ step_7_result.hypotenuse | default(1.0) }}"
+      iteration_log: "{{ step_8_result.iteration_log | default([]) }}"
+      failed_edits: "{{ step_8_result.failed_edits | default([]) }}"
+      influence_scores: "{{ step_8_result.influence_scores | default({}) }}"
+      second_order: "{{ step_9_result | default({}) }}"
+      blame_count: "{{ step_6_result.blame_count | default({}) }}"
 
 error_handling:
   on_gas_exceeded: abort

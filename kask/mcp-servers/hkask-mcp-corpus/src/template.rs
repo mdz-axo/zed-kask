@@ -94,3 +94,40 @@ pub(crate) fn render_docproc_template(
         }
     }
 }
+
+// ── One-shot rendering (Strict, no cache) ───────────────────────────────────
+// Shared by `corpus/discover/llm.rs` and `compose.rs` — eliminates the
+// duplicated Environment construction + ServiceError error-wrapping boilerplate.
+
+use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
+
+/// Construct a `ServiceError` from a minijinja error.
+pub(crate) fn template_error(operation: &str, name: &str, e: minijinja::Error) -> ServiceError {
+    let message = format!("Template {operation} failed for '{name}': {e}");
+    ServiceError::Domain {
+        domain: DomainKind::Wallet,
+        kind: ErrorKind::ServiceUnavailable,
+        source: Some(Box::new(e)),
+        message,
+    }
+}
+
+/// Render a minijinja template from source with `Strict` undefined behavior.
+/// Creates a fresh `Environment` per call — no caching, no loader.
+/// Use for one-shot rendering where the template source is already in memory
+/// (loaded from disk or provided inline in config).
+pub(crate) fn render_one_shot(
+    name: &str,
+    source: impl Into<String>,
+    ctx: &minijinja::Value,
+) -> Result<String, ServiceError> {
+    let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    env.add_template_owned(name, source.into())
+        .map_err(|e| template_error("parse", name, e))?;
+    let tmpl = env
+        .get_template(name)
+        .map_err(|e| template_error("load", name, e))?;
+    tmpl.render(ctx)
+        .map_err(|e| template_error("render", name, e))
+}

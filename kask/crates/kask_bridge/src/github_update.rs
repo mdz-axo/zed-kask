@@ -41,16 +41,36 @@ pub struct ZedKaskReleaseAsset {
 /// `pre_release` controls whether to look for a prerelease (`true`) or a
 /// stable release (`false`). The caller (`auto_update`) determines this from
 /// the `ReleaseChannel`.
+///
+/// Returns `Ok(None)` when no release or no matching asset is found — this is
+/// the expected state when no GitHub releases have been published yet (or the
+/// current platform has no matching asset). The caller treats `None` as "up to
+/// date" (`AutoUpdateStatus::Idle`), not as an error. Network failures, API
+/// errors, and deserialization errors still propagate as `Err`.
 pub async fn get_zed_kask_release_asset(
     http: Arc<dyn HttpClient>,
     os: &str,
     arch: &str,
     pre_release: bool,
-) -> Result<ZedKaskReleaseAsset> {
+) -> Result<Option<ZedKaskReleaseAsset>> {
     let repo = std::env::var("HKASK_UPDATE_GITHUB_REPO")
         .unwrap_or_else(|_| DEFAULT_GITHUB_REPO.to_string());
 
-    let release = latest_github_release(&repo, true, pre_release, http).await?;
+    // `latest_github_release` returns an error when no release matches the
+    // prerelease filter. The context message is "finding a prerelease" (from
+    // the upstream `.context("finding a prerelease")?` call). This is "no
+    // release published", not a network or API error — treat it as `None`.
+    //
+    // The string match is on an upstream context message; if upstream changes
+    // it, this falls through to `Err` (safe degradation: the user sees an
+    // error instead of "up to date", but no incorrect update occurs).
+    let release = match latest_github_release(&repo, true, pre_release, http).await {
+        Ok(release) => release,
+        Err(e) if e.chain().any(|c| c.to_string().contains("finding a")) => {
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    };
 
     let version = release
         .tag_name
@@ -58,12 +78,21 @@ pub async fn get_zed_kask_release_asset(
         .unwrap_or(&release.tag_name)
         .to_string();
 
-    let asset = match_asset(&release, os, arch)?;
+    // `match_asset` returns an error when no asset matches the current
+    // platform's OS/ARCH/extension. We control this error message, so the
+    // string match is stable.
+    let asset = match match_asset(&release, os, arch) {
+        Ok(asset) => asset,
+        Err(e) if e.to_string().contains("no GitHub release asset found") => {
+            return Ok(None);
+        }
+        Err(e) => return Err(e),
+    };
 
-    Ok(ZedKaskReleaseAsset {
+    Ok(Some(ZedKaskReleaseAsset {
         version,
         url: asset.browser_download_url.clone(),
-    })
+    }))
 }
 
 /// Selects the release asset matching the current platform from a GitHub

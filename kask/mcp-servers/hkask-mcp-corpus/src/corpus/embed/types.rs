@@ -350,7 +350,6 @@ pub struct EmbedResult {
     pub dimension_centroids: Vec<DimensionCentroidResult>,
 }
 
-// ── Constants ──────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────────
 
-pub(crate) const USER_AGENT: &str = concat!("hkask-mcp-research/", env!("CARGO_PKG_VERSION"));
 pub(crate) const CURATOR_PERSONA: &[u8] = b"curator";

@@ -65,44 +65,12 @@ pub(crate) async fn extract_concepts(
 
     let model_override = parse_template_model(&template_src);
 
-    let mut env = minijinja::Environment::new();
-    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    env.add_template_owned("extract-concepts", template_src)
-        .map_err(|e| {
-            let msg = format!("Failed to parse template: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: Some(Box::new(e)),
-                message: msg,
-            }
-        })?;
-
-    let tmpl = env.get_template("extract-concepts").map_err(|e| {
-        let msg = format!("Failed to load template: {e}");
-        ServiceError::Domain {
-            domain: DomainKind::Wallet,
-            kind: ErrorKind::ServiceUnavailable,
-            source: Some(Box::new(e)),
-            message: msg,
-        }
-    })?;
-
-    let prompt = tmpl
-        .render(minijinja::context! {
-            author_name,
-            papers,
-            max_concepts => 15,
-        })
-        .map_err(|e| {
-            let msg = format!("Failed to render template: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: Some(Box::new(e)),
-                message: msg,
-            }
-        })?;
+    let ctx = minijinja::context! {
+        author_name,
+        papers,
+        max_concepts => 15,
+    };
+    let prompt = crate::template::render_one_shot("extract-concepts", template_src, &ctx)?;
 
     // Call inference through the shared port (routes through zed's
     // LanguageModelRegistry via the IPC bridge).
@@ -193,44 +161,12 @@ pub(crate) async fn infer_methods(
 
     let model_override = parse_template_model(&template_src);
 
-    let mut env = minijinja::Environment::new();
-    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    env.add_template_owned("infer-methods", template_src)
-        .map_err(|e| {
-            let msg = format!("Failed to parse template: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: Some(Box::new(e)),
-                message: msg,
-            }
-        })?;
-
-    let tmpl = env.get_template("infer-methods").map_err(|e| {
-        let msg = format!("Failed to load template: {e}");
-        ServiceError::Domain {
-            domain: DomainKind::Wallet,
-            kind: ErrorKind::ServiceUnavailable,
-            source: Some(Box::new(e)),
-            message: msg,
-        }
-    })?;
-
-    let prompt = tmpl
-        .render(minijinja::context! {
-            author_name,
-            author_domain => "academic",
-            sample_passages,
-        })
-        .map_err(|e| {
-            let msg = format!("Failed to render template: {e}");
-            ServiceError::Domain {
-                domain: DomainKind::Wallet,
-                kind: ErrorKind::ServiceUnavailable,
-                source: Some(Box::new(e)),
-                message: msg,
-            }
-        })?;
+    let ctx = minijinja::context! {
+        author_name,
+        author_domain => "academic",
+        sample_passages,
+    };
+    let prompt = crate::template::render_one_shot("infer-methods", template_src, &ctx)?;
 
     // Call inference through the shared port.
     let params = hkask_types::template::LLMParameters {

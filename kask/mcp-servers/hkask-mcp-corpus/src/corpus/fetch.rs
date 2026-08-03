@@ -5,15 +5,13 @@
 //! `corpus/discover/cache.rs::download_and_cache` and
 //! `corpus/embed/download.rs::download_text`.
 
-use crate::corpus::embed::html::strip_html_tags;
-use crate::corpus::embed::ocr::ocr_pdf_bytes;
+use crate::corpus::embed::{ocr_pdf_bytes, strip_html_tags};
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 
 fn http_error(
     msg: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 ) -> ServiceError {
-    fn http_error(msg: String, source: Option<Box<dyn std::error::Error + Send + Sync>>) -> ServiceError {
     ServiceError::Domain {
         kind: ErrorKind::ServiceUnavailable,
         domain: DomainKind::Wallet,
