@@ -17,7 +17,7 @@ mds_categories: [composition, trust, lifecycle, curation]
 
 The swarm server exposes Agent Bestiary World's agent catalogue, workspaces
 ("swarms"), agent authoring, team composition, and the Xaman Ek curator as MCP
-tools, governed by the kask MCP runtime (OCAP capability gating, gas budgeting,
+tools, governed by the kask MCP runtime (capability-match gating, gas budgeting,
 `hkask.mcp.swarm` telemetry targets). It is the substrate for the **Agent Swarm panel**
 (`crates/swarm_panel`) and the **`swarm-intelligence` skill**.
 
@@ -153,7 +153,7 @@ The server's defense-in-depth coverage (from the kali audit):
 
 - **Input filtering** — `require_auth` on all handlers, `url_encode_segment` on all path params, empty-string validation on spend paths.
 - **Data/instruction separation** — `sanitize_abw_response` wraps all LLM/ABW output in a `{content, source: "abw", trust: "untrusted"}` container and strips injection prefixes.
-- **Capability gating (OCAP)** — single-use consent tokens, scoped, ceiling-enforced, auth-gated mint.
+- **Capability gating** — single-use consent tokens, scoped, ceiling-enforced, auth-gated mint.
 - **Runtime monitoring** — `with_wallet` algedonic channel, `tracing::warn!` on stale signals, `detect_embedded_error`.
 - **Credential scoping** — `credentials: Some(&["HKASK_ABW_API_KEY"])` (never `None`); the server receives only the ABW key, not other kask secrets.
 

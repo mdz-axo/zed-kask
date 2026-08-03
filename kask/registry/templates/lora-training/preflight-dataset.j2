@@ -88,7 +88,7 @@ CITATION POLICY (P8):
   for the three-state verdict and mapping-code pattern.
 - Do not force both citations onto every finding.
 
-OCAP BOUNDARY (P4):
+CAPABILITY BOUNDARY (P4):
 - This template consumes the dataset_path and runtime-supplied profile only.
 - It does not read outside declared workspace paths, load the dataset into memory,
   execute Python, or call remote services.
@@ -126,7 +126,7 @@ MINIMAL: One KnowAct; no execution, no training, no model loading.
 EVIDENCE-BACKED ONLY (P8): detected_format comes from runtime detection;
 expected_format comes from declared trainer/purpose. No inference of format
 from filename alone when detection failed.
-OCAP BOUNDARY (P4): Workspace evidence only; no training execution or network call.
+CAPABILITY BOUNDARY (P4): Workspace evidence only; no training execution or network call.
 Regulation REGULATION (P9): Emit the registered span unconditionally.
 USERPOD HOST (P12): `userpod_host` is mandatory.
 VISIBILITY (P11): Public output; no hidden preflight controls.

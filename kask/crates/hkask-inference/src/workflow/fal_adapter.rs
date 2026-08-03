@@ -100,13 +100,13 @@ mod tests {
                 "depends": ["gen"],
                 "app": "fal-ai/seedvr2",
                 "mode": "queue",
-                "input": {"image_url": "$gen.images[0].url", "scale": 4}
+                "input": {"image_url": "$gen.images.0.url", "scale": 4}
             },
             "output": {
                 "type": "display",
                 "id": "output",
-                "depends": ["upscale"],
-                "fields": {"final_url": "$upscale.output.url", "original": "$gen.images[0].url"}
+                "depends": ["upscale", "gen"]
+                "fields": {"final_url": "$upscale.output.url", "original": "$gen.images.0.url"}
             }
         })
     }

@@ -20,7 +20,7 @@ crate:
     + Good Regulator checks + variety engineering), diagnose, grill-me, and
     adversarial-red-team are embedded as inline prompt instructions in the
     oracle phase. Emits Regulation spans (reg.bughunt.*) for observability
-    (P12). OCAP-gated: requires Tool:test:Execute and Tool:regulation:Read.
+    (P12). capability-gated: requires Tool:test:Execute and Tool:regulation:Read.
 
 templates:
   - id: bug-hunt/bug-hunt-charter

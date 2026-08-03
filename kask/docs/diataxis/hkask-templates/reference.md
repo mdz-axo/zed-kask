@@ -1,7 +1,7 @@
 ---
 title: "hkask-templates — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
+last_updated: 2026-08-02
 version: "0.2.0"
 status: "Active"
 domain: "Skills"
@@ -20,9 +20,9 @@ templates against the inference port. Template types are `Prompt` (WordAct),
 
 | Symbol | Location |
 |--------|----------|
-| `ManifestExecutor` struct | `kask/crates/hkask-templates/src/executor.rs:125` |
-| `ManifestExecutor::new` | `kask/crates/hkask-templates/src/executor.rs:154` |
-| `execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:413` |
+| `ManifestExecutor` struct | `kask/crates/hkask-templates/src/executor.rs:126` |
+| `ManifestExecutor::new` | `kask/crates/hkask-templates/src/executor.rs:160` |
+| `execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:435` |
 | `BundleManifest` struct | `kask/crates/hkask-templates/src/bundle/manifest.rs:91` |
 | `BundleManifestStep` | `kask/crates/hkask-templates/src/bundle/manifest.rs:35` |
 | `BundleSkill` | `kask/crates/hkask-templates/src/bundle/manifest.rs:24` |
@@ -111,8 +111,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TPL-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-templates/src/executor.rs:125,154,413; kask/crates/hkask-templates/src/bundle/manifest.rs:91,35,24,314; kask/crates/hkask-templates/src/bundle/cascade.rs:8; kask/crates/hkask-templates/src/bundle/config.rs:52; kask/crates/hkask-templates/src/convergence.rs:73,153,163; kask/crates/hkask-templates/src/bundle/composition.rs:72,97; kask/crates/hkask-templates/src/skill_loader.rs:64; kask/crates/hkask-templates/src/registry_sqlite.rs:65; kask/crates/hkask-templates/src/bundle/mod.rs:22
+verified_date: 2026-08-02
+verified_against: kask/crates/hkask-templates/src/executor.rs:126,160,435; kask/crates/hkask-templates/src/bundle/manifest.rs:91,35,24,314; kask/crates/hkask-templates/src/bundle/cascade.rs:8; kask/crates/hkask-templates/src/bundle/config.rs:52; kask/crates/hkask-templates/src/convergence.rs:73,153,163; kask/crates/hkask-templates/src/bundle/composition.rs:72,97; kask/crates/hkask-templates/src/skill_loader.rs:64; kask/crates/hkask-templates/src/registry_sqlite.rs:65; kask/crates/hkask-templates/src/bundle/mod.rs:22
 status: VERIFIED
 -->
 
@@ -142,19 +142,19 @@ template metadata in SQLite. An in-memory `Registry` adapter also exists (see
 
 ## Cascade actions
 
-`ManifestExecutor::execute_manifest` (`executor.rs:413`) dispatches on
+`ManifestExecutor::execute_manifest` (`executor.rs:435`) dispatches on
 `step.action`:
 
 | Action | Handler | Purpose |
 |--------|---------|---------|
-| `select` | `execute_select` (`executor.rs:1038`) | LLM inference, parse JSON, merge into context |
-| `populate` | `execute_populate` (`executor.rs:1165`) | Render-only, store under `step_N_populated` |
-| `render` | `execute_render` (`executor.rs:1200`) | RenderAct — no inference, for reference docs |
-| `flowdef` | `execute_flowdef` (`executor.rs:1249`) | Nested sub-manifest cascade (composability) |
-| `tool_invoke` | `execute_tool_invoke` (`executor.rs:1357`) | MCP tool call via `step.mcp` |
-| `compute` | `execute_compute` (`executor.rs:1415`) | Deterministic math primitive (`hkask_forecast::*`) |
-| `choice` | inline (`executor.rs:564`) | Conditional branch via `_next_ordinal` |
-| `loop` | inline (`executor.rs:580`) | PDCA re-entry from target ordinal |
+| `select` | `execute_select` (`executor.rs:1071`) | LLM inference, parse JSON, merge into context |
+| `populate` | `execute_populate` (`executor.rs:1184`) | Render-only, store under `step_N_populated` |
+| `render` | `execute_render` (`executor.rs:1240`) | RenderAct — no inference, for reference docs |
+| `flowdef` | `execute_flowdef` (`executor.rs:1300`) | Nested sub-manifest cascade (composability) |
+| `tool_invoke` | `execute_tool_invoke` (`executor.rs:1445`) | MCP tool call via `step.mcp` |
+| `compute` | `execute_compute` (`executor.rs:1503`) | Deterministic math primitive (`hkask_forecast::*`) |
+| `choice` | inline (`executor.rs:583`) | Conditional branch via `_next_ordinal` |
+| `loop` | inline (`executor.rs:602`) | PDCA re-entry from target ordinal |
 | `abort` / `escalate` | inline | Terminate cascade |
 
 Step results are stored under `step_{ordinal}_result` keys. Final-result

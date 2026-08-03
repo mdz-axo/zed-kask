@@ -688,7 +688,7 @@ status: VERIFIED
 | [`store_experience` / `generate_narrative`](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | In-process experience recording (thread→memory bridge, D6) and narrative generation; the former daemon-based implementations were removed |
 | [`ToolSpanGuard` experience callback](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | Experience callback wiring for tool span guards |
 | [Magna Carta P1](../reference/magna-carta.md#p1-user-sovereignty) | User Sovereignty — episodic memory as sovereign first-person |
-| Consent flow sequence (inlined in `sovereignty-and-ocap.md`) | Consent flow for visibility gating (DIAG-TO-006-CM) |
+| Consent flow sequence (deleted — `sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | Consent flow for visibility gating (DIAG-TO-006-CM) |
 | Regulation span emission sequence (inlined in `regulation-and-loops.md`) | Regulation span emission for memory encode spans (DIAG-TO-004) |
 
 

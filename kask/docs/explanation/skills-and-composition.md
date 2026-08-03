@@ -1029,7 +1029,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 # Kata-Kanban Execution Boundary
 
-This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available in-process through the kata-kanban MCP server, which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or OCAP declarations.
+This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available in-process through the kata-kanban MCP server, which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
 
 > **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked in-process — the kata-kanban MCP server (one of the 11 in-process MCP servers) constructs `KataEngine` and runs `execute()` within the zed-kask process. The Agent Panel and the kask panel (D10) are the user-facing entry points.
 

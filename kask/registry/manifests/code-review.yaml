@@ -40,7 +40,7 @@ manifest:
     remedies and coverage honesty, an optional user-gated fix implementation,
     and lessons_learned/next_review_focus for loop closure. Convergence is
     blocker_delta stabilization (Cauchy). Comprehensive-by-default; variety via
-    delegation, not modes. Emits reg.codereview.* spans. OCAP-gated.
+    delegation, not modes. Emits reg.codereview.* spans. capability-gated.
   functional_role: flowdef
   version: 0.31.0
   editor: curator-or-human-admin

@@ -85,13 +85,13 @@ grep keys on `Parameters(` in `src/` (where every tool's signature lives),
 not on actual test invocations. This is a known false-positive in the gate
 that this QA strategy must close.
 
-### OCAP / `reg.guard.*` reality check (material finding)
+### capability / `reg.guard.*` reality check (material finding)
 
 The Phase 2.3 contract assumes tools emit `reg.guard.*` on capability denial.
 Source inspection shows this is **not wired**:
 
 - `codegraph`'s `ensure_indexed()` carries the comment
-  *"OCAP-governed file access (#5): future integration point. When the daemon
+  *"capability-governed file access (#5): future integration point. When the daemon
   provides capability verification, filter paths here via capability tokens
   before passing to index_directory. For now: index entire workspace
   (standalone mode)."*
@@ -105,7 +105,7 @@ Source inspection shows this is **not wired**:
 - `CapabilityTier` is stored on `CodeGraphServer` and `CondenserServer` but
   is only **read** to report `mode` in `condenser_ping` — never **gated**.
 
-**Implication for the QA routine**: Phase 2.3 (OCAP/auth denial) cannot
+**Implication for the QA routine**: Phase 2.3 (capability/auth denial) cannot
 assert `reg.guard.*` emission because no tool emits it. The routine must
 instead assert the *negative* — that calling a tool without a required
 credential produces a structured `permission_denied` or
@@ -155,7 +155,7 @@ here:
    `Parameters<T>` deserialization failures, rmcp itself returns a
    `-32602 Invalid params` JSON-RPC error before the tool body runs; the
    routine asserts this surfaces as a non-panic error response.
-3. **OCAP / auth denial** — call without the required capability/token.
+3. **capability / auth denial** — call without the required capability/token.
    Assert: (a) no panic, (b) structured error returned, (c) denial is
    observable. **Because no tool currently emits `reg.guard.*` on denial
    (see Phase 1 reality check), the routine asserts the structured-error
@@ -368,11 +368,11 @@ proposal below is retained for the audit trail.
 "reg.qa.run.skipped",    // the tool call was skipped with a reason
 ```
 
-#### Gap B — No `reg.guard.*` emission on OCAP denial
+#### Gap B — No `reg.guard.*` emission on capability denial
 
 No MCP server emits `reg.guard.*` when a tool is called without the
 required capability. The Phase 2.3 contract is therefore weakened to
-"structured error, no panic" until OCAP is wired. **Filed as RR-0022**
+"structured error, no panic" until capability-match span emission is wired. **Filed as RR-0022**
 (`kask/security/backlog/RR-0022.yaml`, status: `proposed` — moved out of the
 enforced regressions directory in the 2026-08-01 prune):
 

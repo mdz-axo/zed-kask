@@ -24,7 +24,7 @@ crate:
     essentialist are embedded as inline prompt instructions in the adjudicate
     and perspectives phases. Comprehensive-by-default; variety via delegation,
     not toggleable modes (essentialist deletion test). Emits Regulation spans
-    (reg.codereview.*) for observability (P12). OCAP-gated.
+    (reg.codereview.*) for observability (P12). capability-gated.
 
 templates:
   - id: code-review/code-review-scope

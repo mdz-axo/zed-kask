@@ -551,7 +551,7 @@ mod tests {
             GraphNode::Sink {
                 id: "out".into(),
                 depends: vec!["gen".into()],
-                fields: serde_json::json!({"image": "$gen.images"}),
+                fields: serde_json::json!({"app": "$gen.app"}),
             },
         ])
     }
@@ -562,8 +562,8 @@ mod tests {
         let result = fal_shaped_graph().execute(&exec).await.unwrap();
         assert!(result.node_results.contains_key("prompt"));
         assert!(result.node_results.contains_key("gen"));
-        // Sink resolved $gen.images from the compute result.
-        assert!(result.output_fields.get("image").is_some());
+        // Sink resolved $gen.app from the compute result.
+        assert_eq!(result.output_fields["app"], "fal-ai/flux/dev");
         assert!(result.elapsed_seconds >= 0.0);
     }
 
@@ -603,7 +603,7 @@ mod tests {
             GraphNode::Sink {
                 id: "out".into(),
                 depends: vec!["b".into()],
-                fields: serde_json::json!({"b": "$b"}),
+                fields: serde_json::json!({"b": "$b.app"}),
             },
         ]);
         let exec = MockExecutor::new().fail_always("a-app");
@@ -638,7 +638,7 @@ mod tests {
             GraphNode::Sink {
                 id: "out".into(),
                 depends: vec!["c".into()],
-                fields: serde_json::json!({"c": "$c"}),
+                fields: serde_json::json!({"c": "$c.app"}),
             },
         ]);
         // Fail the first 2 attempts, succeed on the 3rd (n=2 retries → 3 attempts).
@@ -677,10 +677,13 @@ mod tests {
         let exec = MockExecutor::new();
         let r1 = g.execute(&exec).await.unwrap();
         let r2 = g2.execute(&exec).await.unwrap();
-        assert_eq!(
-            r1.node_results.keys().collect::<Vec<_>>(),
-            r2.node_results.keys().collect::<Vec<_>>()
-        );
+        // Same graph → same node set + output fields (HashMap order is
+        // randomized, so compare sorted keys; elapsed differs).
+        let mut k1: Vec<&String> = r1.node_results.keys().collect();
+        let mut k2: Vec<&String> = r2.node_results.keys().collect();
+        k1.sort();
+        k2.sort();
+        assert_eq!(k1, k2);
         assert_eq!(r1.output_fields, r2.output_fields);
     }
 
@@ -753,7 +756,7 @@ mod tests {
             GraphNode::Sink {
                 id: "out".into(),
                 depends: vec!["a".into(), "b".into()],
-                fields: serde_json::json!({"a": "$a", "b": "$b"}),
+                fields: serde_json::json!({"a": "$a.app", "b": "$b.app"}),
             },
         ]);
         g.parallel = true;
@@ -793,7 +796,7 @@ mod tests {
             GraphNode::Sink {
                 id: "out".into(),
                 depends: vec!["a".into(), "b".into()],
-                fields: serde_json::json!({"a": "$a", "b": "$b"}),
+                fields: serde_json::json!({"a": "$a.app", "b": "$b.app"}),
             },
         ]);
         g.execute(&exec).await.unwrap();

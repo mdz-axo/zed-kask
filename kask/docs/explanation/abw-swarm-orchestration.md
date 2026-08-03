@@ -31,7 +31,7 @@ ABW workspace. A **compound agent** is an ABW agent that orchestrates others
 zed-kask adds three things on top of ABW's web UI:
 
 1. **A governed substrate** — the `hkask-mcp-swarm` MCP server, which proxies
-   ABW's REST API through the kask MCP runtime (OCAP capability gating, gas
+   ABW's REST API through the kask MCP runtime (capability-match gating, gas
    budgeting, Regulation spans).
 2. **A management surface** — the Agent Swarm panel, a center-pane `Item` for
    browsing, authoring, composing, and steering swarms.
