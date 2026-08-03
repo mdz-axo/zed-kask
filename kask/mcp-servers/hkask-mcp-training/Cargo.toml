@@ -14,9 +14,9 @@ name = "hkask-mcp-training"
 path = "src/main.rs"
 
 [dependencies]
-hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
-hkask-types = { path = "../../crates/hkask-types" }
-hkask-memory = { path = "../../crates/hkask-memory" }
+hkask-mcp-server.workspace = true
+hkask-types.workspace = true
+hkask-memory.workspace = true
 hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-inference = { path = "../../crates/hkask-inference" }
 rusqlite.workspace = true
@@ -40,7 +40,7 @@ reqwest = { workspace = true, features = ["multipart"] }
 sha2.workspace = true
 hf-hub = "1.0.0"
 minijinja.workspace = true
-dirs = "5"
+dirs.workspace = true
 
 [lints]
 workspace = true

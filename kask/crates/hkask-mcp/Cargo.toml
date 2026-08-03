@@ -10,16 +10,16 @@ description = "MCP runtime and governance for hKask"
 path = "src/hkask_mcp.rs"
 
 [dependencies]
-hkask-types = { path = "../hkask-types" }
-hkask-capability = { path = "../hkask-capability" }
-hkask-regulation = { path = "../hkask-regulation" }
+hkask-types.workspace = true
+hkask-capability.workspace = true
+hkask-regulation.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io", "client", "transport-child-process"] }
 tokio-util.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-jsonschema = "0.28"
+jsonschema.workspace = true
 
 [lints]
 workspace = true

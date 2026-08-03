@@ -30,7 +30,6 @@ rusqlite = { workspace = true, optional = true }
 workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 

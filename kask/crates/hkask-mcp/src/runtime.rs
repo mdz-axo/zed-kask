@@ -92,7 +92,7 @@ impl McpTool {
             Ok(validator) => {
                 let errors: Vec<String> = validator
                     .iter_errors(input)
-                    .map(|e| format!("{}: {}", e.instance_path, e))
+                    .map(|e| format!("{}: {}", e.instance_path(), e))
                     .collect();
                 if errors.is_empty() {
                     Ok(())

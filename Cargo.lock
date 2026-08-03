@@ -566,7 +566,7 @@ dependencies = [
  "image",
  "indoc",
  "itertools 0.14.0",
- "jsonschema 0.37.4",
+ "jsonschema",
  "language",
  "language_model",
  "language_models",
@@ -4163,7 +4163,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "credentials_provider",
- "dirs 6.0.0",
+ "dirs",
  "futures 0.3.33",
  "gpui",
  "http_client",
@@ -5672,20 +5672,11 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -5696,18 +5687,6 @@ checksum = "b98cf8ebf19c3d1b223e151f99a4f9f0690dca41414773390fc824184ac833e1"
 dependencies = [
  "cfg-if 1.0.4",
  "dirs-sys-next",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.4.6",
- "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -5777,7 +5756,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "jsonschema 0.37.4",
+ "jsonschema",
  "mdbook",
  "regex",
  "schemars 1.2.2",
@@ -6057,7 +6036,7 @@ dependencies = [
  "collections",
  "db",
  "debug_adapter_extension",
- "dirs 6.0.0",
+ "dirs",
  "edit_prediction",
  "edit_prediction_context",
  "edit_prediction_metrics",
@@ -6955,17 +6934,6 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fancy-regex"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
-dependencies = [
- "bit-set 0.8.0",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
-name = "fancy-regex"
 version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "998b056554fbe42e03ae0e152895cd1a7e1002aec800fdc6635d20270260c46f"
@@ -7251,17 +7219,6 @@ name = "float_next_after"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
-
-[[package]]
-name = "fluent-uri"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1918b65d96df47d3591bed19c5cca17e3fa5d0707318e4b5ef2eae01764df7e5"
-dependencies = [
- "borrow-or-share",
- "ref-cast",
- "serde",
-]
 
 [[package]]
 name = "fluent-uri"
@@ -9197,7 +9154,6 @@ dependencies = [
  "proptest",
  "rand 0.9.5",
  "serde_json",
- "tokio",
  "tracing",
  "zeroize",
 ]
@@ -9225,7 +9181,7 @@ version = "0.31.1"
 dependencies = [
  "aes-gcm",
  "argon2",
- "dirs 6.0.0",
+ "dirs",
  "ed25519-dalek",
  "hex",
  "hkask-types",
@@ -9269,7 +9225,7 @@ dependencies = [
  "hkask-regulation",
  "hkask-test-harness",
  "hkask-types",
- "jsonschema 0.28.3",
+ "jsonschema",
  "proptest",
  "rmcp",
  "serde_json",
@@ -9309,7 +9265,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
- "dirs 6.0.0",
+ "dirs",
  "hkask-forecast",
  "hkask-ledger",
  "hkask-mcp-server",
@@ -9358,7 +9314,7 @@ dependencies = [
  "base64 0.22.1",
  "calamine",
  "chrono",
- "dirs 6.0.0",
+ "dirs",
  "docx-rs",
  "dotenvy",
  "hkask-bridge-dublincore",
@@ -9416,7 +9372,7 @@ version = "0.31.1"
 dependencies = [
  "anyhow",
  "chrono",
- "dirs 6.0.0",
+ "dirs",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-mcp-swarm",
@@ -9531,8 +9487,7 @@ name = "hkask-mcp-swarm"
 version = "0.31.1"
 dependencies = [
  "chrono",
- "dirs 6.0.0",
- "dotenvy",
+ "dirs",
  "hkask-guard",
  "hkask-inference",
  "hkask-ledger",
@@ -9547,7 +9502,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
- "tiny_http",
  "tokio",
  "tracing",
  "uuid",
@@ -9562,7 +9516,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
- "dirs 5.0.1",
+ "dirs",
  "hf-hub",
  "hkask-inference",
  "hkask-mcp-server",
@@ -9645,7 +9599,7 @@ dependencies = [
 name = "hkask-services-core"
 version = "0.31.1"
 dependencies = [
- "dirs 6.0.0",
+ "dirs",
  "hkask-inference",
  "hkask-keystore",
  "hkask-storage",
@@ -9733,7 +9687,6 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
  "uuid",
  "zeroize",
@@ -10878,31 +10831,6 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b8f66fe41fa46a5c83ed1c717b7e0b4635988f427083108c8cf0a882cc13441"
-dependencies = [
- "ahash 0.8.12",
- "base64 0.22.1",
- "bytecount",
- "email_address",
- "fancy-regex 0.14.0",
- "fraction",
- "idna",
- "itoa",
- "num-cmp",
- "once_cell",
- "percent-encoding",
- "referencing 0.28.3",
- "regex-syntax",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "uuid-simd",
-]
-
-[[package]]
-name = "jsonschema"
 version = "0.37.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73c9ffb2b5c56d58030e1b532d8e8389da94590515f118cf35b5cb68e4764a7e"
@@ -10919,7 +10847,7 @@ dependencies = [
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing 0.37.4",
+ "referencing",
  "regex",
  "regex-syntax",
  "reqwest 0.12.28",
@@ -11061,7 +10989,7 @@ dependencies = [
  "agent_ui",
  "anyhow",
  "chrono",
- "dirs 6.0.0",
+ "dirs",
  "fs",
  "futures 0.3.33",
  "gpui",
@@ -14646,7 +14574,7 @@ name = "paths"
 version = "0.1.0"
 dependencies = [
  "const_format",
- "dirs 6.0.0",
+ "dirs",
  "ignore",
  "util",
 ]
@@ -17127,25 +17055,12 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.28.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0dcb5ab28989ad7c91eb1b9531a37a1a137cc69a0499aee4117cae4a107c464"
-dependencies = [
- "ahash 0.8.12",
- "fluent-uri 0.3.2",
- "once_cell",
- "percent-encoding",
- "serde_json",
-]
-
-[[package]]
-name = "referencing"
 version = "0.37.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4283168a506f0dcbdce31c9f9cce3129c924da4c6bca46e46707fcb746d2d70c"
 dependencies = [
  "ahash 0.8.12",
- "fluent-uri 0.4.1",
+ "fluent-uri",
  "getrandom 0.3.4",
  "hashbrown 0.16.1",
  "parking_lot",
@@ -17861,7 +17776,7 @@ dependencies = [
  "bytes 1.12.1",
  "chrono",
  "data-encoding",
- "dirs 6.0.0",
+ "dirs",
  "futures 0.3.33",
  "glob",
  "jupyter-protocol",
@@ -19197,7 +19112,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32824fab5e16e6c4d86dc1ba84489390419a39f97699852b66480bb87d297ed8"
 dependencies = [
  "bstr",
- "dirs 6.0.0",
+ "dirs",
  "os_str_bytes",
 ]
 
@@ -20900,7 +20815,7 @@ dependencies = [
  "breadcrumbs",
  "collections",
  "db",
- "dirs 6.0.0",
+ "dirs",
  "editor",
  "futures 0.3.33",
  "gpui",
@@ -22516,7 +22431,7 @@ dependencies = [
  "async_zip",
  "collections",
  "command-fds",
- "dirs 6.0.0",
+ "dirs",
  "dunce",
  "futures 0.3.33",
  "futures-lite 1.13.0",
@@ -22605,7 +22520,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b082222b4f6619906941c17eb2297fff4c2fb96cb60164170522942a200bd8"
 dependencies = [
  "outref",
- "uuid",
  "vsimd",
 ]
 
@@ -25085,7 +24999,7 @@ dependencies = [
  "collections",
  "component",
  "db",
- "dirs 6.0.0",
+ "dirs",
  "fs",
  "futures 0.3.33",
  "futures-lite 1.13.0",
@@ -25404,7 +25318,7 @@ dependencies = [
  "colored",
  "const-str",
  "ctor",
- "dirs 6.0.0",
+ "dirs",
  "futures 0.3.33",
  "git-version",
  "humantime",
@@ -25980,7 +25894,7 @@ dependencies = [
  "core-foundation 0.10.1",
  "core-graphics 0.24.0",
  "core-text",
- "dirs 6.0.0",
+ "dirs",
  "dwrote",
  "float-ord",
  "freetype-sys",

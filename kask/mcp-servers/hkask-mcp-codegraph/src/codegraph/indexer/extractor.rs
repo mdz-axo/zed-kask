@@ -395,17 +395,20 @@ impl<'a> Extractor<'a> {
         let clause = node.child_by_field_name("argument");
         let clause = match clause {
             Some(c) => Some(c),
-            None => node.children(node.walk()).find(|c| {
-                matches!(
-                    c.kind(),
-                    "use_list"
-                        | "scoped_use_list"
-                        | "use_as_clause"
-                        | "scoped_identifier"
-                        | "identifier"
-                        | "use_wildcard"
-                )
-            }),
+            None => {
+                let mut cursor = node.walk();
+                node.children(&mut cursor).find(|c| {
+                    matches!(
+                        c.kind(),
+                        "use_list"
+                            | "scoped_use_list"
+                            | "use_as_clause"
+                            | "scoped_identifier"
+                            | "identifier"
+                            | "use_wildcard"
+                    )
+                })
+            }
         };
         if let Some(clause) = clause {
             self.collect_use_targets(&clause, &mut local_names);
@@ -465,10 +468,8 @@ impl<'a> Extractor<'a> {
             "use_wildcard" => {
                 // `*` / `path::*` — resolves to no single symbol; skip.
             }
-            "use_list" | "scoped_use_list" => {
-                // `{a, b, c}` or `path::{a, b}` — recurse into each list item.
-                // For scoped_use_list the `path` prefix is the module (not an
-                // imported name), so only the `list` children are collected.
+            "use_list" => {
+                // `{a, b, c}` — recurse into each list item.
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     if matches!(
@@ -482,6 +483,14 @@ impl<'a> Extractor<'a> {
                     ) {
                         self.collect_use_targets(&child, out);
                     }
+                }
+            }
+            "scoped_use_list" => {
+                // `path::{a, b}` — the `path` is the module (not an imported
+                // name); only the `list` children are collected. Recursing into
+                // all children would also emit the path segments as targets.
+                if let Some(list) = node.child_by_field_name("list") {
+                    self.collect_use_targets(&list, out);
                 }
             }
             _ => {}

@@ -208,9 +208,15 @@ impl IndexPipeline {
         let mut by_last_seg: HashMap<&str, Vec<(i64, &str)>> = HashMap::new();
         for (name, id, file) in &global {
             let name_ref = name.as_str();
-            by_name.entry(name_ref).or_default().push((*id, file.as_str()));
+            by_name
+                .entry(name_ref)
+                .or_default()
+                .push((*id, file.as_str()));
             if let Some(last) = name.rsplit("::").next() {
-                by_last_seg.entry(last).or_default().push((*id, file.as_str()));
+                by_last_seg
+                    .entry(last)
+                    .or_default()
+                    .push((*id, file.as_str()));
             }
         }
 
@@ -243,6 +249,36 @@ impl IndexPipeline {
             .filter(|(_, sym)| sym.start_line <= line && line <= sym.end_line)
             .min_by_key(|(_, sym)| sym.end_line - sym.start_line) // innermost (smallest span)
             .and_then(|(i, _)| index_to_id.get(&i).copied())
+    }
+
+    /// Finalize indexing: compute PageRank, reset staleness timestamp, emit health events.
+    pub fn finalize(&mut self) -> Result<()> {
+        self.last_full_index_at = std::time::Instant::now();
+        // Compute PageRank (G8)
+        if let Err(e) = crate::codegraph::graph::ranking::compute_pagerank(self.store.conn()) {
+            tracing::warn!(target: "hkask.codegraph.pagerank_failed", error = %e);
+        }
+
+        // Emit index health event (G7) + staleness (X6)
+        let stats = self.stats()?;
+        tracing::info!(
+            target: "hkask.codegraph.index_health",
+            total_symbols = stats.symbols,
+            total_edges = stats.edges,
+            files = stats.files,
+            staleness_seconds = 0,
+        );
+
+        Ok(())
+    }
+
+    /// Get index statistics.
+    pub fn stats(&self) -> Result<IndexStats> {
+        Ok(IndexStats {
+            files: self.store.file_count()?,
+            symbols: self.store.symbol_count()?,
+            edges: self.store.edge_count()?,
+        })
     }
 }
 
@@ -288,37 +324,6 @@ fn pick_candidate(candidates: &[(i64, &str)], edge_file: &str) -> Option<i64> {
                 None
             }
         }
-    }
-}
-
-    /// Finalize indexing: compute PageRank, reset staleness timestamp, emit health events.
-    pub fn finalize(&mut self) -> Result<()> {
-        self.last_full_index_at = std::time::Instant::now();
-        // Compute PageRank (G8)
-        if let Err(e) = crate::codegraph::graph::ranking::compute_pagerank(self.store.conn()) {
-            tracing::warn!(target: "hkask.codegraph.pagerank_failed", error = %e);
-        }
-
-        // Emit index health event (G7) + staleness (X6)
-        let stats = self.stats()?;
-        tracing::info!(
-            target: "hkask.codegraph.index_health",
-            total_symbols = stats.symbols,
-            total_edges = stats.edges,
-            files = stats.files,
-            staleness_seconds = 0,
-        );
-
-        Ok(())
-    }
-
-    /// Get index statistics.
-    pub fn stats(&self) -> Result<IndexStats> {
-        Ok(IndexStats {
-            files: self.store.file_count()?,
-            symbols: self.store.symbol_count()?,
-            edges: self.store.edge_count()?,
-        })
     }
 }
 

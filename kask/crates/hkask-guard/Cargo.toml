@@ -10,8 +10,8 @@ description = "hKask content safety guard — mandatory input/output scanning fo
 path = "src/hkask_guard.rs"
 
 [dependencies]
-hkask-regulation = { path = "../hkask-regulation" }
-hkask-types = { path = "../hkask-types" }
+hkask-regulation.workspace = true
+hkask-types.workspace = true
 llm-guard.workspace = true
 futures-util.workspace = true
 tracing.workspace = true
@@ -24,7 +24,6 @@ zeroize.workspace = true
 workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
 hkask-test-harness.workspace = true
 serde_json.workspace = true
