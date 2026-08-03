@@ -95,4 +95,3 @@ audit:
   include_output: true
   include_gas_cost: true
   include_reg_events: true
-  include_compression_metrics: true

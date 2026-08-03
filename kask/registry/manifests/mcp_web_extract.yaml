@@ -77,7 +77,6 @@ error_handling:
   max_retries: 2
   retry_backoff_seconds: 1
   on_capability_denied: escalate
-  on_search_failure: fallback
 
 # Regulation Monitoring
 ledger:
@@ -95,4 +94,3 @@ audit:
   include_output: true
   include_gas_cost: true
   include_reg_events: true
-  include_search_metrics: true

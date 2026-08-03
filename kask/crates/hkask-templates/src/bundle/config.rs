@@ -322,6 +322,7 @@ impl Default for ErrorHandlingConfig {
             max_retries: 2,
             retry_backoff_seconds: 1,
             on_validation_failure: "abort".into(),
+            on_capability_denied: "escalate".into(),
         }
     }
 }

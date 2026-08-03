@@ -389,11 +389,6 @@ error_handling:
   max_retries: 2
   retry_backoff_seconds: 2
   on_capability_denied: escalate
-  on_search_failure: fallback
-  on_extraction_failure: skip_item
-  on_cache_failure: skip_item
-  on_concept_failure: continue
-  on_method_failure: continue
 
 ledger:
   emit_spans: true

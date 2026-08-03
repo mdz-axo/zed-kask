@@ -23,10 +23,6 @@ rjoule:
 
 audit:
   enabled: true
-  log:
-    message_send: true
-    message_receive: true
-    capability_check: true
 
 ledger:
   span_namespace: reg.skill.a2a-runtime

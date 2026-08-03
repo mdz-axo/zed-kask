@@ -145,22 +145,3 @@ error_handling:
   max_retries: 2
   retry_backoff_seconds: 1
   on_validation_failure: abort
-  on_confidence_low:
-    threshold: 0.7
-    action: escalate
-    span: reg.goal.alert.escalate
-    description: "Confidence below 0.7 — escalate to human review regardless of verdict"
-  fallback:
-    - error_type: template_error
-      fallback_template: goal-analysis/create
-      action: retry_with_simpler_template
-    - error_type: llm_timeout
-      fallback_template: goal-analysis/judge_simple
-      action: use_simple_verification
-      max_fallback_retries: 2
-      on_fallback_exhausted: escalate
-      escalate_span: reg.goal.alert.storage_failure
-      description: "After 2 fallback retries with judge_simple, escalate to human rather than looping indefinitely"
-    - error_type: storage_error
-      action: emit_reg_alert
-      span: reg.goal.alert.storage_failure

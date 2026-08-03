@@ -216,7 +216,6 @@ error_handling:
   retry_backoff_seconds: 2
   on_validation_failure: abort
   on_capability_denied: escalate
-  on_retrieval_failure: fallback
 
 # Regulation Monitoring
 ledger:

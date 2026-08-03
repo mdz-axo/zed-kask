@@ -25,16 +25,9 @@ rjoule:
 
 # Error Handling
 error_handling:
-  on_critical_failure: abort
-  on_non_critical_failure: continue_with_warning
   on_timeout: retry_then_abort
   max_retries: 2
   retry_backoff_seconds: 10
-  diagnostic_output:
-    - failed_component
-    - dependency_tree
-    - readiness_probe_output
-    - reg_span_ref
 
 # Regulation Integration
 ledger:
@@ -44,7 +37,3 @@ ledger:
 audit:
   enabled: true
   log_level: info
-  include_timestamps: true
-  include_dependency_tree: true
-  git_snapshot: true
-  git_path: registry/bootstrap-archives

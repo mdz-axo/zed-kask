@@ -24,21 +24,4 @@ rjoule:
   hard_limit: true
 
 error_handling:
-  # Error classification
-  classification:
-    retryable:
-      - timeout
-      - channel_error
-      - transient_failure
-
-    non_retryable:
-      - validation_error
-      - capability_denied
-      - invalid_input
-
-  # Error escalation
-  escalation:
-    on_max_retries_exceeded: emit_reg_alert
-    on_stage_panic: escalate_to_curator
-    on_channel_failure: fallback_to_sync
 

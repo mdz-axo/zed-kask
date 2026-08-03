@@ -139,7 +139,6 @@ error_handling:
   max_retries: 2
   retry_backoff_seconds: 2
   on_capability_denied: escalate
-  on_search_failure: fallback
 
 ledger:
   emit_spans: true

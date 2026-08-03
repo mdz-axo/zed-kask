@@ -41,6 +41,26 @@ const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
     "image_gen_model",
 ];
 
+/// Trust provenance of a resolved manifest. Determines whether the manifest
+/// YAML came from the build-time embedded registry (trusted by construction)
+/// or the filesystem (untrusted — could be user-authored, marketplace-
+/// installed, or locally dropped).
+///
+/// The executor logs this so an operator can distinguish "built-in skill
+/// executed" from "filesystem skill executed" in the logs. Gating high-risk
+/// actions (flowdef sub-cascade, compute) on provenance is a future-wiring
+/// target; currently the executor logs but does not restrict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestProvenance {
+    /// Compiled into the binary via `build.rs` `include_str!`. Trusted by
+    /// construction — reviewed at build time.
+    Embedded,
+    /// Read from the filesystem at runtime. Untrusted — could be user-authored,
+    /// marketplace-installed (Ed25519-verified at download but not at
+    /// execution), or locally dropped.
+    Filesystem,
+}
+
 /// Bridge between zed's `SkillManifestExecutor` trait and hKask's `ManifestExecutor`.
 ///
 /// Holds an `InferencePort` (the bridge's `LanguageModelInferencePort` over zed's
@@ -94,14 +114,34 @@ impl BridgeManifestExecutor {
     /// authoritative for installed binaries — it works regardless of CWD or
     /// install location. The filesystem fallback exists for dev workflows
     /// where a manifest has been edited but not yet rebuilt.
-    fn manifest_yaml(&self, skill_name: &str) -> Option<std::borrow::Cow<'static, str>> {
+    ///
+    /// Returns the YAML content and its trust provenance. Embedded manifests
+    /// are trusted by construction (compiled into the binary). Filesystem
+    /// manifests are untrusted — they could be user-authored, marketplace-
+    /// installed (Ed25519-verified at download), or locally dropped. The
+    /// caller is responsible for emitting a provenance signal so an operator
+    /// reading logs can distinguish "built-in skill executed" from "filesystem
+    /// skill executed. Gating high-risk actions on provenance is a future-
+    /// wiring target; currently the executor logs but does not restrict.
+    fn manifest_yaml(
+        &self,
+        skill_name: &str,
+    ) -> Option<(std::borrow::Cow<'static, str>, ManifestProvenance)> {
         if let Some(yaml) = process_manifest_yaml(skill_name) {
-            return Some(std::borrow::Cow::Borrowed(yaml));
+            return Some((
+                std::borrow::Cow::Borrowed(yaml),
+                ManifestProvenance::Embedded,
+            ));
         }
         let path = self.manifest_path(skill_name);
         if path.is_file() {
             match std::fs::read_to_string(&path) {
-                Ok(content) => return Some(std::borrow::Cow::Owned(content)),
+                Ok(content) => {
+                    return Some((
+                        std::borrow::Cow::Owned(content),
+                        ManifestProvenance::Filesystem,
+                    ));
+                }
                 Err(e) => {
                     tracing::warn!(
                         "Failed to read manifest '{}' at {}: {e}",
@@ -131,12 +171,39 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // defaults or running the cascade. Validating before the model-default
         // injection keeps the user-supplied keys distinguishable from the
         // runtime-injected system keys (listed in SKILL_CONTEXT_SYSTEM_KEYS).
-        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
+        let (manifest_yaml, provenance) = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
                 "No manifest found for skill '{skill_name}' (checked embedded registry and {})",
                 self.manifest_path(skill_name).display()
             )
         })?;
+
+        // Emit provenance signal so an operator reading logs can distinguish
+        // "built-in skill executed" (Embedded, trusted by construction) from
+        // "filesystem skill executed" (Filesystem, untrusted). Per the .rules
+        // "Process-global hooks need a startup-failure signal" pattern, this
+        // is the effector that drives operator awareness of untrusted skill
+        // execution. Gating high-risk actions on provenance is a future-wiring
+        // target.
+        match provenance {
+            ManifestProvenance::Embedded => {
+                tracing::info!(
+                    target: "reg.skill.provenance",
+                    skill = skill_name,
+                    provenance = "embedded",
+                    "Skill manifest resolved from embedded registry (trusted)"
+                );
+            }
+            ManifestProvenance::Filesystem => {
+                tracing::warn!(
+                    target: "reg.skill.provenance",
+                    skill = skill_name,
+                    provenance = "filesystem",
+                    path = %self.manifest_path(skill_name).display(),
+                    "Skill manifest resolved from filesystem (untrusted — not build-time embedded)"
+                );
+            }
+        }
         let manifest = load_manifest_from_yaml(&manifest_yaml)
             .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
 

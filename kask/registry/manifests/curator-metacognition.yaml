@@ -90,8 +90,6 @@ error_handling:
   on_timeout: retry
   max_retries: 2
   retry_backoff_seconds: 1
-  on_synthesis_failure: degrade_gracefully
-  on_escalation_required: notify_administrator_immediately
 
 # Regulation Monitoring
 ledger:
@@ -110,4 +108,3 @@ audit:
   include_output: true
   include_gas_cost: true
   include_reg_events: true
-  include_bot_reports: true
