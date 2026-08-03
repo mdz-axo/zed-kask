@@ -1500,6 +1500,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "gpui",
  "http_client",
+ "kask_bridge",
  "log",
  "parking_lot",
  "paths",

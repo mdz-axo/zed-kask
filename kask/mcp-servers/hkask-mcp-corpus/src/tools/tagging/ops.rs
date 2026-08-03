@@ -5,6 +5,7 @@
 //! and expertise level. Uses LLM-based extraction via a Jinja2 template.
 //! Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
 
+use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::tools::semantic::GUARD;
 use crate::*;
 use hkask_inference::model_constants::classifier_model;
@@ -20,12 +21,6 @@ const MAX_CONCEPT_LEN: usize = 80;
 /// Maximum number of concepts per ontology namespace. Guards against
 /// LLM-produced concept spam that would dominate the salience graph.
 const MAX_CONCEPTS_PER_NS: usize = 30;
-
-/// Failure-rate threshold above which the pipeline reports `degraded`
-/// outcome. A run with more than 10% of chunks failing LLM extraction
-/// indicates a systemic issue (model unavailable, prompt broken, or
-/// adversarial input) and must not be reported as `success`.
-const DEGRADED_FAILURE_THRESHOLD: usize = 10; // percent
 
 /// Minimal chunk for tagging (from chunks.jsonl).
 #[derive(Debug, Clone, Deserialize)]
@@ -291,29 +286,16 @@ impl CorpusServer {
                         ..Default::default()
                     };
 
-                    // H2: Retry with exponential backoff (3 attempts)
-                    let mut _last_error = String::new();
-                    let response: Option<_> = {
-                        let mut attempts = 0u32;
-                        loop {
-                            match router
-                                .generate_with_model(&prompt, &params, Some(&model_override), None)
-                                .await
-                            {
-                                Ok(resp) => break Some(resp),
-                                Err(e) => {
-                                    attempts += 1;
-                                    _last_error = format!("{}", e);
-                                    if attempts >= 3 {
-                                        break None;
-                                    }
-                                    let backoff = std::time::Duration::from_secs(
-                                        2u64.pow(attempts) * 5
-                                    );
-                                    tokio::time::sleep(backoff).await;
-                                }
-                            }
-                        }
+                    let response: Option<_> = match retry_with_backoff(
+                        MAX_RETRIES,
+                        "hkask.mcp.docproc.tag_chunks",
+                        &chunk_id,
+                        || router.generate_with_model(&prompt, &params, Some(&model_override), None),
+                    )
+                    .await
+                    {
+                        Ok(resp) => Some(resp),
+                        Err(_) => None,
                     };
 
                     let parse_result = response
@@ -445,29 +427,8 @@ impl CorpusServer {
                 "time_seconds": elapsed,
             });
 
-            // Outcome classification. A run is `degraded` when the failure rate
-            // exceeds the threshold (default 10%). The old `f > total / 2` bar
-            // silently reported a 49% failure rate as `success` — masking
-            // systemic issues (model unavailable, prompt broken, adversarial
-            // input). The 10% threshold is conservative: any sustained failure
-            // rate above it indicates the pipeline should not be trusted to
-            // produce training data without operator review. (M1 fix.)
-            let failure_pct = (f * 100).saturating_div(total);
-            let outcome = if failure_pct >= DEGRADED_FAILURE_THRESHOLD {
-                "degraded"
-            } else {
-                "success"
-            };
-            if outcome == "degraded" {
-                tracing::warn!(
-                    target: "hkask.mcp.docproc.tag_chunks",
-                    failed = f,
-                    total = total,
-                    failure_pct = failure_pct,
-                    threshold_pct = DEGRADED_FAILURE_THRESHOLD,
-                    "Tagging run degraded — failure rate exceeds threshold"
-                );
-            }
+            let outcome = BatchOutcome::from_counts(f, total);
+            outcome.log_if_degraded("hkask.mcp.docproc.tag_chunks", "Tagging");
             Ok(result)
         })
         .await

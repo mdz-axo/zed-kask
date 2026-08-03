@@ -105,12 +105,12 @@ hkask_mcp_server::mcp_server!(
         pub gallery_store: Arc<GalleryStore>,
         pub template_env: minijinja::Environment<'static>,
         pub ffmpeg: FfmpegRunner,
-        /// rJoule budget tracker for inference cost (1 rJoule = $1 USD).
-        /// `None` = no budget enforcement (`HKASK_MEDIA_RJOULE_CAP` unset).
+        /// Resolved rJoule budget configuration for inference cost (1 rJoule = $1 USD).
+        /// `tracker = None` = no budget enforcement (`HKASK_MEDIA_RJOULE_CAP` unset/0).
         /// Gas (compute) is enforced upstream at `McpRuntime::invoke` +
-        /// `CyberneticsLoop`, so this tracker is rJoule-only — the gas cap is
-        /// inert and never charged here.
-        pub budget: Option<Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
+        /// `CyberneticsLoop`, so the tracker's gas cap is inert and never
+        /// charged here. Resolved once at startup so the gate is deterministic.
+        pub budget: MediaBudget,
     }
 );
 
@@ -118,8 +118,10 @@ mod style;
 pub mod types;
 use types::*;
 
-/// Parse a `f64` from an env var, falling back to `default` on absence or
-/// parse failure. Used for budget unit-cost configuration.
+/// Parse a `f64` from an env var, falling back to `default` on absence,
+/// parse failure, or a non-finite/negative value. Used for budget config
+/// resolved once at startup (not per call) so the gate is deterministic and
+/// tests are env-isolated.
 fn env_f64(key: &str, default: f64) -> f64 {
     std::env::var(key)
         .ok()
@@ -128,57 +130,156 @@ fn env_f64(key: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
-/// Estimate the rJoule (USD) cost of a media generation call.
-///
-/// Unit costs are configurable via env vars so operators can set real
-/// provider prices. Defaults are conservative placeholders, not real
-/// pricing — set `HKASK_MEDIA_RJOULE_PER_*` to your provider's actual
-/// rates. The estimate over-counts conservatively so the hard gate trips
-/// before the billable API call rather than after.
-fn estimate_rjoule(tool: &str, params: &hkask_types::MediaGenerateParams) -> f64 {
-    let per_image = env_f64("HKASK_MEDIA_RJOULE_PER_IMAGE", 0.05);
-    let per_transform = env_f64("HKASK_MEDIA_RJOULE_PER_TRANSFORM", 0.04);
-    let per_upscale = env_f64("HKASK_MEDIA_RJOULE_PER_UPSCALE", 0.02);
-    let per_video_second = env_f64("HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND", 1.0);
+/// Per-operation rJoule (USD) unit costs. Resolved once at startup from
+/// `HKASK_MEDIA_RJOULE_PER_*` env vars and stored in [`MediaBudget`] so
+/// [`estimate_rjoule`] is a pure function of these + the request params (no
+/// per-call env reads, deterministic in tests). Defaults are conservative
+/// placeholders, not real pricing — set them to your provider's actual rates.
+#[derive(Clone, Copy)]
+pub struct UnitCosts {
+    pub per_image: f64,
+    pub per_transform: f64,
+    pub per_upscale: f64,
+    pub per_video_second: f64,
+}
+
+impl UnitCosts {
+    /// Default conservative placeholder unit costs (1 rJoule = $1 USD).
+    pub const DEFAULT: Self = Self {
+        per_image: 0.05,
+        per_transform: 0.04,
+        per_upscale: 0.02,
+        per_video_second: 1.0,
+    };
+
+    /// Resolve unit costs from env vars, falling back to [`DEFAULT`].
+    fn from_env() -> Self {
+        Self {
+            per_image: env_f64("HKASK_MEDIA_RJOULE_PER_IMAGE", Self::DEFAULT.per_image),
+            per_transform: env_f64(
+                "HKASK_MEDIA_RJOULE_PER_TRANSFORM",
+                Self::DEFAULT.per_transform,
+            ),
+            per_upscale: env_f64("HKASK_MEDIA_RJOULE_PER_UPSCALE", Self::DEFAULT.per_upscale),
+            per_video_second: env_f64(
+                "HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND",
+                Self::DEFAULT.per_video_second,
+            ),
+        }
+    }
+}
+
+/// Resolved rJoule budget configuration for the media server. Resolved once at
+/// startup ([`build_media_budget`]) so the gate is deterministic and tests are
+/// env-isolated. `tracker = None` means enforcement is disabled
+/// (`HKASK_MEDIA_RJOULE_CAP` unset or `0`); `unit_costs` and `alert_threshold`
+/// are still carried so a disabled budget is self-describing.
+pub struct MediaBudget {
+    /// `None` = enforcement disabled (cap unset/0). Gas (compute) is enforced
+    /// upstream at `McpRuntime::invoke` + `CyberneticsLoop`, so the tracker's
+    /// gas cap is inert and never charged here.
+    tracker: Option<Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
+    unit_costs: UnitCosts,
+    /// Fraction of the cap (0.0–1.0) at which the threshold-crossing warning
+    /// fires once. The enforcement point for `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD`.
+    alert_threshold: f64,
+    /// One-shot guard for the threshold warning (mirrors `BudgetTracker`'s
+    /// private `rjoule_alerted`, which we can't reach without
+    /// `check_exhausted` — and we avoid `check_exhausted` because it spuriously
+    /// returns `Gas` when the inert gas cap is 0).
+    alerted: std::sync::atomic::AtomicBool,
+}
+
+impl MediaBudget {
+    /// A disabled budget (enforcement off) carrying the given unit costs +
+    /// alert threshold so it stays self-describing.
+    fn disabled(unit_costs: UnitCosts, alert_threshold: f64) -> Self {
+        Self {
+            tracker: None,
+            unit_costs,
+            alert_threshold,
+            alerted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+/// Build an rJoule-only `BudgetTracker` with an inert gas cap (the media server
+/// never charges gas — it is enforced upstream at `McpRuntime::invoke`). Shared
+/// by [`build_media_budget`] (production) and the gate tests.
+fn make_rjoule_tracker(
+    cap: u32,
+    alert_threshold: f64,
+) -> Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>> {
+    use hkask_templates::bundle::config::{BundleGasConfig, RjouleConfig};
+    let gas = BundleGasConfig {
+        cap: u32::MAX,
+        cost_per_iteration: 0,
+        alert_threshold: 1.0,
+        hard_limit: false,
+    };
+    let rjoule = RjouleConfig {
+        cap,
+        alert_threshold,
+        hard_limit: true,
+    };
+    Arc::new(tokio::sync::Mutex::new(
+        hkask_templates::budget::BudgetTracker::new(&gas, &rjoule),
+    ))
+}
+
+/// Estimate the rJoule (USD) cost of a media generation call. Pure function of
+/// `unit_costs` + `params` (no env reads) so it is deterministic and testable.
+/// The estimate over-counts conservatively so the hard gate trips before the
+/// billable API call rather than after.
+fn estimate_rjoule(
+    unit_costs: &UnitCosts,
+    tool: &str,
+    params: &hkask_types::MediaGenerateParams,
+) -> f64 {
     match tool {
-        "generate_image" => per_image * params.count.unwrap_or(1).max(1) as f64,
+        "generate_image" => unit_costs.per_image * params.count.unwrap_or(1).max(1) as f64,
         "image_to_image" => {
             // transform cost scales with strength (0.0..=1.0).
-            per_transform * (1.0 + params.strength.unwrap_or(1.0) as f64)
+            unit_costs.per_transform * (1.0 + params.strength.unwrap_or(1.0) as f64)
         }
         "upscale" => {
             // cost ~ pixel-area growth, so scale^2.
             let scale = params.scale.unwrap_or(2).max(1) as f64;
-            per_upscale * scale * scale
+            unit_costs.per_upscale * scale * scale
         }
-        "generate_video" => per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64,
-        // Workflow DAGs are opaque without parsing; charge the image
-        // unit as a floor so the gate is not silently bypassed.
-        "execute_workflow" => per_image,
-        _ => per_image,
+        "generate_video" => {
+            unit_costs.per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64
+        }
+        // Workflow DAGs are opaque without parsing; charge the image unit as a
+        // floor. This arm is live: `execute_workflow` calls `charge_budget`
+        // (see `tools/generation.rs`), closing the bypass.
+        "execute_workflow" => unit_costs.per_image,
+        _ => unit_costs.per_image,
     }
 }
 
 /// Pre-charge the rJoule budget for an estimated call and enforce the hard
-/// limit. Returns `Ok(())` when no budget is configured (enforcement disabled)
-/// or when the remaining budget covers the estimate; returns an `McpToolError`
+/// limit. Returns `Ok(())` when enforcement is disabled (`tracker` is `None`)
+/// or the remaining budget covers the estimate; returns an `McpToolError`
 /// when the budget is exhausted.
 ///
-/// The estimate is charged only when the remaining budget covers it; a
-/// rejected request consumes no budget (check-before-charge under the mutex,
-/// so concurrent bursts serialize and cannot all pass then overspend). This is
-/// the enforcement point for the rJoule gate; `MediaServer::charge_budget` is a
-/// thin delegate so the gate can be tested without constructing a full server.
+/// Check-before-charge under the mutex: a rejected request consumes no budget,
+/// and concurrent bursts serialize so they cannot all pass then overspend.
+/// After a successful charge, fires the threshold-crossing warning once (when
+/// `used/cap >= alert_threshold`) — the enforcement point for
+/// `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD`. This is the enforcement point for the
+/// rJoule gate; `MediaServer::charge_budget` is a thin delegate so the gate can
+/// be tested without constructing a full server.
 async fn charge_budget_gate(
-    budget: Option<&Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
+    budget: &MediaBudget,
     tool: &str,
     params: &hkask_types::MediaGenerateParams,
 ) -> Result<(), McpToolError> {
-    let Some(budget) = budget else {
-        return Ok(()); // no budget configured — enforcement disabled
+    let Some(tracker) = budget.tracker.as_ref() else {
+        return Ok(()); // enforcement disabled
     };
-    let estimate = estimate_rjoule(tool, params);
-    let mut tracker = budget.lock().await;
+    let estimate = estimate_rjoule(&budget.unit_costs, tool, params);
+    let mut tracker = tracker.lock().await;
     let remaining = tracker.remaining_rjoule();
     if remaining < estimate {
         let snap = tracker.snapshot();
@@ -193,17 +294,37 @@ async fn charge_budget_gate(
         );
         return Err(McpToolError::unavailable(format!(
             "rJoule budget exhausted: this call needs ~{estimate:.4} rJoule but only \
-             {remaining:.4} of {cap:.4} remains. Raise HKASK_MEDIA_RJOULE_CAP or wait \
-             for budget to reset.",
+             {remaining:.4} of {cap:.4} remains. Raise HKASK_MEDIA_RJOULE_CAP to allow \
+             this call.",
             cap = snap.rjoule_cap
         )));
     }
     tracker.charge_rjoule(estimate);
+    let snap = tracker.snapshot();
+    // Threshold-crossing warning (once per budget lifetime). Fires when the
+    // charge brings used/cap to >= alert_threshold.
+    if budget.alert_threshold > 0.0
+        && snap.rjoule_cap > 0.0
+        && (snap.rjoule_used / snap.rjoule_cap) >= budget.alert_threshold
+        && !budget
+            .alerted
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::warn!(
+            target: "hkask.mcp.media.budget",
+            tool = tool,
+            rjoule_used = snap.rjoule_used,
+            rjoule_cap = snap.rjoule_cap,
+            pct = (snap.rjoule_used / snap.rjoule_cap) * 100.0,
+            threshold = budget.alert_threshold,
+            "rJoule budget crossed alert threshold"
+        );
+    }
     tracing::debug!(
         target: "hkask.mcp.media.budget",
         tool = tool,
         estimate = estimate,
-        remaining = tracker.remaining_rjoule(),
+        remaining = snap.rjoule_remaining,
         "charged rJoule for media call"
     );
     Ok(())
@@ -286,15 +407,18 @@ mod levenshtein_tests {
 
 #[cfg(test)]
 mod estimate_rjoule_tests {
-    use super::estimate_rjoule;
+    use super::{UnitCosts, estimate_rjoule};
     use hkask_types::MediaGenerateParams;
 
-    // Tests run with default unit costs (no env vars set) unless overridden.
-    // Defaults: image=0.05, transform=0.04, upscale=0.02, video_sec=1.0.
+    // `estimate_rjoule` is a pure function of `UnitCosts` + params — no env reads
+    // — so these tests are fully env-isolated (the old version read
+    // `HKASK_MEDIA_RJOULE_PER_*` per call and only passed by env accident).
+    const UC: UnitCosts = UnitCosts::DEFAULT;
 
     #[test]
     fn generate_image_scales_with_count() {
         let one = estimate_rjoule(
+            &UC,
             "generate_image",
             &MediaGenerateParams {
                 count: Some(1),
@@ -302,6 +426,7 @@ mod estimate_rjoule_tests {
             },
         );
         let four = estimate_rjoule(
+            &UC,
             "generate_image",
             &MediaGenerateParams {
                 count: Some(4),
@@ -314,7 +439,7 @@ mod estimate_rjoule_tests {
 
     #[test]
     fn generate_image_count_defaults_to_one_when_unset() {
-        let est = estimate_rjoule("generate_image", &MediaGenerateParams::default());
+        let est = estimate_rjoule(&UC, "generate_image", &MediaGenerateParams::default());
         assert!(
             (est - 0.05).abs() < 1e-9,
             "unset count should charge one image"
@@ -323,8 +448,9 @@ mod estimate_rjoule_tests {
 
     #[test]
     fn transform_scales_with_strength() {
-        let none = estimate_rjoule("image_to_image", &MediaGenerateParams::default());
+        let none = estimate_rjoule(&UC, "image_to_image", &MediaGenerateParams::default());
         let full = estimate_rjoule(
+            &UC,
             "image_to_image",
             &MediaGenerateParams {
                 strength: Some(1.0),
@@ -335,6 +461,7 @@ mod estimate_rjoule_tests {
         assert!((none - 0.08).abs() < 1e-9);
         assert!((full - 0.08).abs() < 1e-9);
         let half = estimate_rjoule(
+            &UC,
             "image_to_image",
             &MediaGenerateParams {
                 strength: Some(0.5),
@@ -347,6 +474,7 @@ mod estimate_rjoule_tests {
     #[test]
     fn upscale_grows_quadratically_with_scale() {
         let x2 = estimate_rjoule(
+            &UC,
             "upscale",
             &MediaGenerateParams {
                 scale: Some(2),
@@ -354,6 +482,7 @@ mod estimate_rjoule_tests {
             },
         );
         let x4 = estimate_rjoule(
+            &UC,
             "upscale",
             &MediaGenerateParams {
                 scale: Some(4),
@@ -367,6 +496,7 @@ mod estimate_rjoule_tests {
     #[test]
     fn generate_video_scales_with_duration() {
         let five = estimate_rjoule(
+            &UC,
             "generate_video",
             &MediaGenerateParams {
                 duration: Some(5.0),
@@ -374,6 +504,7 @@ mod estimate_rjoule_tests {
             },
         );
         let ten = estimate_rjoule(
+            &UC,
             "generate_video",
             &MediaGenerateParams {
                 duration: Some(10.0),
@@ -386,13 +517,14 @@ mod estimate_rjoule_tests {
 
     #[test]
     fn unknown_tool_charges_image_floor() {
-        let est = estimate_rjoule("mystery_op", &MediaGenerateParams::default());
+        let est = estimate_rjoule(&UC, "mystery_op", &MediaGenerateParams::default());
         assert!((est - 0.05).abs() < 1e-9);
     }
 
     #[test]
     fn video_duration_clamped_to_minimum_one_second() {
         let est = estimate_rjoule(
+            &UC,
             "generate_video",
             &MediaGenerateParams {
                 duration: Some(0.0),
@@ -404,70 +536,92 @@ mod estimate_rjoule_tests {
             "zero-duration should charge 1 second"
         );
     }
+
+    #[test]
+    fn custom_unit_costs_drive_estimate() {
+        // Proves the estimate is param-driven, not env-driven: a 2x image cost
+        // doubles the estimate for the same params.
+        let uc = UnitCosts {
+            per_image: 0.10,
+            ..UnitCosts::DEFAULT
+        };
+        let est = estimate_rjoule(
+            &uc,
+            "generate_image",
+            &MediaGenerateParams {
+                count: Some(3),
+                ..Default::default()
+            },
+        );
+        assert!((est - 0.30).abs() < 1e-9);
+    }
 }
 
 #[cfg(test)]
 mod charge_budget_gate_tests {
-    use super::charge_budget_gate;
-    use hkask_templates::budget::BudgetTracker;
-    use hkask_templates::bundle::config::{BundleGasConfig, RjouleConfig};
+    use super::{MediaBudget, UnitCosts, charge_budget_gate, make_rjoule_tracker};
     use hkask_types::MediaGenerateParams;
-    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
-    // Inert gas config (mirrors `build_media_budget`): the media server never
-    // charges gas, so the gas cap is large with hard_limit=false.
-    fn inert_gas() -> BundleGasConfig {
-        BundleGasConfig {
-            cap: u32::MAX,
-            cost_per_iteration: 0,
-            alert_threshold: 1.0,
-            hard_limit: false,
+    // `charge_budget_gate` takes `&MediaBudget`; tests construct one directly (child
+    // modules can access private fields) using the shared `make_rjoule_tracker` —
+    // no env reads, fully isolated.
+    fn gated(cap: u32, alert_threshold: f64) -> MediaBudget {
+        MediaBudget {
+            tracker: Some(make_rjoule_tracker(cap, alert_threshold)),
+            unit_costs: UnitCosts::DEFAULT,
+            alert_threshold,
+            alerted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
-    fn rjoule(cap: u32) -> RjouleConfig {
-        RjouleConfig {
-            cap,
-            alert_threshold: 0.8,
-            hard_limit: true,
-        }
+    fn disabled() -> MediaBudget {
+        MediaBudget::disabled(UnitCosts::DEFAULT, 0.8)
     }
 
-    fn tracker(cap: u32) -> Arc<tokio::sync::Mutex<BudgetTracker>> {
-        Arc::new(tokio::sync::Mutex::new(BudgetTracker::new(
-            &inert_gas(),
-            &rjoule(cap),
-        )))
+    async fn remaining(budget: &MediaBudget) -> f64 {
+        budget
+            .tracker
+            .as_ref()
+            .unwrap()
+            .lock()
+            .await
+            .remaining_rjoule()
+    }
+
+    async fn used(budget: &MediaBudget) -> f64 {
+        budget.tracker.as_ref().unwrap().lock().await.rjoule_used()
     }
 
     #[tokio::test]
     async fn no_budget_is_open_gate() {
-        // None = enforcement disabled — every call passes.
-        let res = charge_budget_gate(None, "generate_image", &MediaGenerateParams::default()).await;
+        // Disabled budget (tracker None) — every call passes.
+        let res = charge_budget_gate(
+            &disabled(),
+            "generate_image",
+            &MediaGenerateParams::default(),
+        )
+        .await;
         assert!(res.is_ok());
     }
 
     #[tokio::test]
     async fn under_budget_charges_and_passes() {
         // cap 1 rJoule; one image costs 0.05 → passes, leaves 0.95.
-        let budget = tracker(1);
-        let res = charge_budget_gate(
-            Some(&budget),
-            "generate_image",
-            &MediaGenerateParams::default(),
-        )
-        .await;
+        let budget = gated(1, 0.8);
+        let res =
+            charge_budget_gate(&budget, "generate_image", &MediaGenerateParams::default()).await;
         assert!(res.is_ok());
-        assert!((budget.lock().await.remaining_rjoule() - 0.95).abs() < 1e-9);
+        assert!((remaining(&budget).await - 0.95).abs() < 1e-9);
     }
 
     #[tokio::test]
     async fn exhausted_budget_rejects_without_charging() {
-        // cap 1 rJoule; generate a 10-second video (cost 10.0) → rejected, and
-        // a rejected call consumes no budget (check-before-charge).
-        let budget = tracker(1);
+        // cap 1 rJoule; a 10-second video (cost 10.0) → rejected, and a rejected
+        // call consumes no budget (check-before-charge).
+        let budget = gated(1, 0.8);
         let res = charge_budget_gate(
-            Some(&budget),
+            &budget,
             "generate_video",
             &MediaGenerateParams {
                 duration: Some(10.0),
@@ -477,39 +631,90 @@ mod charge_budget_gate_tests {
         .await;
         assert!(res.is_err(), "over-budget call must be rejected");
         assert!(
-            (budget.lock().await.rjoule_used() - 0.0).abs() < 1e-9,
+            (used(&budget).await - 0.0).abs() < 1e-9,
             "rejected call must not consume budget"
         );
         assert!(
-            (budget.lock().await.remaining_rjoule() - 1.0).abs() < 1e-9,
+            (remaining(&budget).await - 1.0).abs() < 1e-9,
             "full budget remains after rejection"
         );
     }
 
     #[tokio::test]
     async fn successive_calls_drain_then_reject() {
-        // cap 5 rJoule; four 1-second videos (4.0) pass, fifth is rejected.
-        let budget = tracker(5);
+        // cap 5 rJoule; four 1-second videos (4.0) pass, leaving 1.0.
+        let budget = gated(5, 0.8);
         let params = MediaGenerateParams {
             duration: Some(1.0),
             ..Default::default()
         };
         for _ in 0..4 {
-            charge_budget_gate(Some(&budget), "generate_video", &params)
+            charge_budget_gate(&budget, "generate_video", &params)
                 .await
                 .unwrap();
         }
-        assert!((budget.lock().await.remaining_rjoule() - 1.0).abs() < 1e-9);
-        // Fifth 1-second video needs 1.0, remaining is 1.0 — boundary: 1.0 < 1.0
-        // is false, so it just fits. Use a 2-second call to force rejection.
+        assert!((remaining(&budget).await - 1.0).abs() < 1e-9);
+        // A 2-second call needs 2.0 > remaining 1.0 → rejected.
         let over = MediaGenerateParams {
             duration: Some(2.0),
             ..Default::default()
         };
         assert!(
-            charge_budget_gate(Some(&budget), "generate_video", &over)
+            charge_budget_gate(&budget, "generate_video", &over)
                 .await
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_workflow_charges_image_floor() {
+        // execute_workflow estimate = per_image floor (0.05); cap 1 → passes,
+        // leaves 0.95. Pins that execute_workflow is now gated (F1).
+        let budget = gated(1, 0.8);
+        let res =
+            charge_budget_gate(&budget, "execute_workflow", &MediaGenerateParams::default()).await;
+        assert!(res.is_ok());
+        assert!((remaining(&budget).await - 0.95).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn threshold_warning_fires_once_when_crossed() {
+        // cap 10, alert 0.8 → a 9-rJoule charge (90% >= 80%) sets the alert
+        // flag once. Pins the HKASK_MEDIA_RJOULE_ALERT_THRESHOLD enforcement (F3).
+        let budget = gated(10, 0.8);
+        charge_budget_gate(
+            &budget,
+            "generate_video",
+            &MediaGenerateParams {
+                duration: Some(9.0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            budget.alerted.load(Ordering::Relaxed),
+            "alert flag set after crossing 80%"
+        );
+    }
+
+    #[tokio::test]
+    async fn below_threshold_does_not_fire() {
+        // cap 10, alert 0.8 → a 5-rJoule charge (50%) does not set the flag.
+        let budget = gated(10, 0.8);
+        charge_budget_gate(
+            &budget,
+            "generate_video",
+            &MediaGenerateParams {
+                duration: Some(5.0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !budget.alerted.load(Ordering::Relaxed),
+            "alert flag not set below 80%"
         );
     }
 }
@@ -539,7 +744,7 @@ impl MediaServer {
         tool: &str,
         params: &hkask_types::MediaGenerateParams,
     ) -> Result<(), McpToolError> {
-        charge_budget_gate(self.budget.as_ref(), tool, params).await
+        charge_budget_gate(&self.budget, tool, params).await
     }
 
     /// Lock the gallery and extract essential state. Drops the lock before
@@ -1729,43 +1934,58 @@ impl MediaServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for MediaServer {}
 
-/// Construct the rJoule budget tracker from env vars.
+/// Construct the rJoule budget configuration from env vars, resolved once at
+/// startup so the gate is deterministic.
 ///
-/// `HKASK_MEDIA_RJOULE_CAP` sets the total rJoule (USD) ceiling for the
-/// server process. Unset or `0` = enforcement disabled (`None`). The gas
-/// (compute) cap is constructed inert — gas is enforced upstream at
-/// `McpRuntime::invoke` + `CyberneticsLoop`, and the media server never
-/// charges gas itself, so a gas cap here would be dead config (the
+/// `HKASK_MEDIA_RJOULE_CAP` sets the total rJoule (USD) ceiling. Unset or `0` =
+/// enforcement disabled. A set-but-malformed value (e.g. `100.5`, `1e3`) warns
+/// and fails open to disabled — the operator gets a signal rather than a
+/// silently absent gate (the "Process-global hooks need a startup-failure
+/// signal" trap). The gas (compute) cap is constructed inert — gas is enforced
+/// upstream at `McpRuntime::invoke` + `CyberneticsLoop`, and the media server
+/// never charges gas itself, so a gas cap here would be dead config (the
 /// "Advertised invariants need enforcement points" trap).
-fn build_media_budget() -> Option<Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>> {
-    use hkask_templates::bundle::config::{BundleGasConfig, RjouleConfig};
-
-    let cap: u32 = std::env::var("HKASK_MEDIA_RJOULE_CAP")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .filter(|c: &u32| *c > 0)?;
-    let alert = env_f64("HKASK_MEDIA_RJOULE_ALERT_THRESHOLD", 0.8).clamp(0.0, 1.0);
-    tracing::info!(
-        target: "hkask.mcp.media.budget",
-        rjoule_cap = cap,
-        alert_threshold = alert,
-        "rJoule budget enforcement enabled"
-    );
-    // Gas is inert: large cap, zero per-iter cost, never a hard gate.
-    let gas = BundleGasConfig {
-        cap: u32::MAX,
-        cost_per_iteration: 0,
-        alert_threshold: 1.0,
-        hard_limit: false,
-    };
-    let rjoule = RjouleConfig {
-        cap,
-        alert_threshold: alert,
-        hard_limit: true,
-    };
-    Some(Arc::new(tokio::sync::Mutex::new(
-        hkask_templates::budget::BudgetTracker::new(&gas, &rjoule),
-    )))
+fn build_media_budget() -> MediaBudget {
+    let unit_costs = UnitCosts::from_env();
+    let alert_threshold = env_f64("HKASK_MEDIA_RJOULE_ALERT_THRESHOLD", 0.8).clamp(0.0, 1.0);
+    match std::env::var("HKASK_MEDIA_RJOULE_CAP") {
+        // Unset — legitimately disabled (the default).
+        Err(_) => MediaBudget::disabled(unit_costs, alert_threshold),
+        Ok(raw) => match raw.trim().parse::<u32>() {
+            // Explicit opt-out (documented: 0 = disabled).
+            Ok(0) => {
+                tracing::info!(
+                    target: "hkask.mcp.media.budget",
+                    "HKASK_MEDIA_RJOULE_CAP=0 — rJoule enforcement disabled"
+                );
+                MediaBudget::disabled(unit_costs, alert_threshold)
+            }
+            Ok(cap) => {
+                tracing::info!(
+                    target: "hkask.mcp.media.budget",
+                    rjoule_cap = cap,
+                    alert_threshold = alert_threshold,
+                    "rJoule budget enforcement enabled"
+                );
+                MediaBudget {
+                    tracker: Some(make_rjoule_tracker(cap, alert_threshold)),
+                    unit_costs,
+                    alert_threshold,
+                    alerted: std::sync::atomic::AtomicBool::new(false),
+                }
+            }
+            // Malformed cap — warn (config error) and fail open to disabled so
+            // the operator knows their cap did not take.
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.mcp.media.budget",
+                    raw = %raw,
+                    "HKASK_MEDIA_RJOULE_CAP is set but not a positive integer — rJoule enforcement disabled (malformed config; expected a u32 rJoule ceiling, e.g. 100)"
+                );
+                MediaBudget::disabled(unit_costs, alert_threshold)
+            }
+        },
+    }
 }
 
 /// Run the media MCP server (used by binary target).

@@ -13,22 +13,13 @@ mod ontology_io;
 mod qa;
 mod triples;
 
+use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::*;
 use ontology_io::{read_ontology_namespaces, read_ontology_tags_annotated};
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::io::Write;
-
-/// Failure-rate threshold (percent) above which embedding and QA-batch runs
-/// report `degraded` outcome. Matches the threshold used by `corpus_tag_chunks`.
-/// A run exceeding this rate indicates systemic issues (model unavailable,
-/// rate limiting, adversarial input) and must not be reported as `success`.
-const DEGRADED_FAILURE_THRESHOLD: usize = 10;
-
-/// Maximum LLM retry attempts for batch QA generation. Matches the 3-attempt
-/// pattern used by `corpus_tag_chunks` and `corpus_extract_triples`.
-const QA_BATCH_MAX_RETRIES: u32 = 3;
 
 // Content safety guard — mandatory at every LLM boundary (OWASP LLM01/02/04/06).
 // The output pipeline (secret stripping) is ALWAYS active — secrets must never
@@ -346,44 +337,20 @@ impl CorpusServer {
                         }
                     }
                     let params = LLMParameters { temperature: 0.3, top_p: 0.95, max_tokens: 4096, frequency_penalty: 0.0, presence_penalty: 0.0, top_k: 0, min_p: 0.0, typical_p: 0.0, disable_thinking: true, ..Default::default() };
-                    // B5 fix: retry with exponential backoff (3 attempts) — matches the
-                    // pattern in corpus_tag_chunks and corpus_extract_triples.
-                    // Without this, a transient network error or rate limit would
-                    // cause a permanent gap in the QA training set.
-                    let mut attempts = 0u32;
-                    let response = loop {
-                        match router
-                            .generate_with_model(&prompt_text, &params, selected_model.as_deref(), None)
-                            .await
-                        {
-                            Ok(resp) => break resp,
-                            Err(e) => {
-                                attempts += 1;
-                                if attempts >= QA_BATCH_MAX_RETRIES {
-                                    tracing::warn!(
-                                        target: "hkask.mcp.docproc.qa_batch",
-                                        chunk_id = %prompt.chunk_id,
-                                        attempts = attempts,
-                                        error = %e,
-                                        "QA generation failed after {} retries",
-                                        QA_BATCH_MAX_RETRIES
-                                    );
-                                    let result = json!({"chunk_id": prompt.chunk_id, "error": format!("LLM failed after {} retries: {}", QA_BATCH_MAX_RETRIES, e)});
-                                    failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    write_qa_result(&result, &output_writer, &write_count);
-                                    return;
-                                }
-                                let backoff = std::time::Duration::from_secs(2u64.pow(attempts) * 5);
-                                tracing::warn!(
-                                    target: "hkask.mcp.docproc.qa_batch",
-                                    chunk_id = %prompt.chunk_id,
-                                    attempt = attempts,
-                                    backoff_secs = backoff.as_secs(),
-                                    error = %e,
-                                    "QA generation retry — backing off"
-                                );
-                                tokio::time::sleep(backoff).await;
-                            }
+                    let response = match retry_with_backoff(
+                        MAX_RETRIES,
+                        "hkask.mcp.docproc.qa_batch",
+                        &prompt.chunk_id,
+                        || router.generate_with_model(&prompt_text, &params, selected_model.as_deref(), None),
+                    )
+                    .await
+                    {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            let result = json!({"chunk_id": prompt.chunk_id, "error": format!("LLM failed after {} retries: {}", MAX_RETRIES, e)});
+                            failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            write_qa_result(&result, &output_writer, &write_count);
+                            return;
                         }
                     };
                     // Process the successful response — same logic as before,
@@ -445,22 +412,8 @@ impl CorpusServer {
                 "output": output,
             });
             // B5 fix: report degraded outcome when failure rate exceeds threshold.
-            let failure_pct = (failed * 100).saturating_div(total);
-            let outcome = if failure_pct >= DEGRADED_FAILURE_THRESHOLD {
-                "degraded"
-            } else {
-                "success"
-            };
-            if outcome == "degraded" {
-                tracing::warn!(
-                    target: "hkask.mcp.docproc.qa_batch",
-                    failed = failed,
-                    total = total,
-                    failure_pct = failure_pct,
-                    threshold_pct = DEGRADED_FAILURE_THRESHOLD,
-                    "QA batch run degraded — failure rate exceeds threshold"
-                );
-            }
+            let outcome = BatchOutcome::from_counts(failed, total);
+            outcome.log_if_degraded("hkask.mcp.docproc.qa_batch", "QA batch");
             Ok(result)
         }).await
     }
@@ -689,37 +642,18 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                     ..Default::default()
                 };
 
-                // 3-attempt retry with backoff
-                let mut attempts = 0u32;
-                let response = loop {
-                    match router
-                        .generate_with_model(&prompt, &params, Some(&classifier), None)
-                        .await
-                    {
-                        Ok(resp) => break resp,
-                        Err(e) => {
-                            attempts += 1;
-                            if attempts >= 3 {
-                                tracing::warn!(
-                                    target: "hkask.mcp.docproc.triples",
-                                    entity = %entity_ref,
-                                    error = %e,
-                                    "HMem extraction failed after 3 retries"
-                                );
-                                failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                return;
-                            }
-                            let backoff = std::time::Duration::from_secs(2u64.pow(attempts) * 5);
-                            tracing::warn!(
-                                target: "hkask.mcp.docproc.triples",
-                                entity = %entity_ref,
-                                attempt = attempts,
-                                backoff_secs = backoff.as_secs(),
-                                error = %e,
-                                "HMem extraction retry — backing off"
-                            );
-                            tokio::time::sleep(backoff).await;
-                        }
+                let response = match retry_with_backoff(
+                    MAX_RETRIES,
+                    "hkask.mcp.docproc.triples",
+                    &entity_ref,
+                    || router.generate_with_model(&prompt, &params, Some(&classifier), None),
+                )
+                .await
+                {
+                    Ok(resp) => resp,
+                    Err(_) => {
+                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return;
                     }
                 };
 
@@ -982,36 +916,18 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
 
         for chunk_batch in chunks.chunks(batch) {
             let batch_texts: Vec<String> = chunk_batch.iter().map(|c| c.1.clone()).collect();
-            // Retry with backoff (3 attempts) — same pattern as tag_chunks and extract_triples
-            let vectors = {
-                let mut attempts = 0u32;
-                loop {
-                    match self.inference_router.embed(&model_name, &batch_texts).await {
-                        Ok(v) => break v,
-                        Err(e) => {
-                            attempts += 1;
-                            if attempts >= 3 {
-                                failed += chunk_batch.len();
-                                tracing::warn!(
-                                    target: "hkask.mcp.docproc.embed",
-                                    batch_size = chunk_batch.len(),
-                                    attempts = attempts,
-                                    error = %e,
-                                    "Batch embedding failed after 3 retries"
-                                );
-                                break Vec::new();
-                            }
-                            let backoff = std::time::Duration::from_secs(2u64.pow(attempts) * 5);
-                            tracing::warn!(
-                                target: "hkask.mcp.docproc.embed",
-                                attempt = attempts,
-                                backoff_secs = backoff.as_secs(),
-                                error = %e,
-                                "Embedding retry — backing off"
-                            );
-                            tokio::time::sleep(backoff).await;
-                        }
-                    }
+            let vectors = match retry_with_backoff(
+                MAX_RETRIES,
+                "hkask.mcp.docproc.embed",
+                &format!("batch of {}", chunk_batch.len()),
+                || self.inference_router.embed(&model_name, &batch_texts),
+            )
+            .await
+            {
+                Ok(v) => v,
+                Err(_) => {
+                    failed += chunk_batch.len();
+                    Vec::new()
                 }
             };
             if vectors.is_empty() {
@@ -1042,26 +958,8 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
             "failed": failed,
             "model": model_name,
         });
-        // B2 fix: report degraded outcome when failure rate exceeds threshold.
-        // The old code unconditionally reported "success", masking silent batch
-        // drops that created holes in the embedding index — holes that degrade
-        // the KNN scaffold used by build_prompts.
-        let failure_pct = (failed * 100).saturating_div(total);
-        let outcome = if failure_pct >= DEGRADED_FAILURE_THRESHOLD {
-            "degraded"
-        } else {
-            "success"
-        };
-        if outcome == "degraded" {
-            tracing::warn!(
-                target: "hkask.mcp.docproc.embed",
-                failed = failed,
-                total = total,
-                failure_pct = failure_pct,
-                threshold_pct = DEGRADED_FAILURE_THRESHOLD,
-                "Embedding run degraded — failure rate exceeds threshold"
-            );
-        }
+        let outcome = BatchOutcome::from_counts(failed, total);
+        outcome.log_if_degraded("hkask.mcp.docproc.embed", "Embedding");
         Ok(result)
     }
 }

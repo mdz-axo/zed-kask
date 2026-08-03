@@ -29,7 +29,7 @@ pub struct WordCountChunker {
 
 impl ChunkingStrategy for WordCountChunker {
     fn chunk(&self, text: &str, entity_ref_prefix: &str) -> Vec<(String, String)> {
-        hkask_memory::SemanticMemory::chunk_text(
+        crate::text::chunk_text(
             text,
             entity_ref_prefix,
             self.min_words,

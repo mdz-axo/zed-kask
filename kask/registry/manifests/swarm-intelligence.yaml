@@ -360,9 +360,9 @@ steps:
       loop_target: "{{ 1 }}"
       prior_iteration:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
-        next_focus: "{{ step_6_result.next_focus | default('') }}"
+        next_focus: "{{ step_5_result.next_focus | default('') }}"
         second_order: "{{ step_8_result | default({}) }}"
-      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_6_result.hypotenuse | default(1.0) }}"
       iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
       failed_edits: "{{ step_7_result.failed_edits | default([]) }}"
       influence_scores: "{{ step_7_result.influence_scores | default({}) }}"

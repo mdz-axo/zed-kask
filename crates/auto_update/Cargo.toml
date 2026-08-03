@@ -19,6 +19,7 @@ db.workspace = true
 futures-lite.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+kask_bridge.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true

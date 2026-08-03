@@ -65,7 +65,7 @@ All models are open-weight. Provider prefixes (`FA/`, `KC/`, etc.) route to the 
 
 ## Budget governance
 
-When `HKASK_MEDIA_RJOULE_CAP` is set, the four generation tools (`generate_image`, `transform_image`, `upscale_image`, `generate_video`) pre-charge an estimated rJoule (USD) cost before dispatching to the provider and reject the request with a clear error when the remaining budget is insufficient. Compute gas is **not** tracked here — it is enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`; the media tracker is rJoule-only. The unit-cost env vars above are conservative placeholders — set them to your provider's actual rates for accurate gating. Unset `HKASK_MEDIA_RJOULE_CAP` disables enforcement entirely (the default).
+When `HKASK_MEDIA_RJOULE_CAP` is set, the five billable generation tools (`generate_image`, `transform_image`, `upscale_image`, `generate_video`, and `execute_workflow`) pre-charge an estimated rJoule (USD) cost before dispatching to the provider and reject the request with a clear error when the remaining budget is insufficient. A set-but-malformed `HKASK_MEDIA_RJOULE_CAP` (e.g. `100.5`) logs a warning and fails open to disabled rather than silently swallowing the config error. When `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD` is reached (default 80% of the cap), a one-shot budget warning fires. Compute gas is **not** tracked here — it is enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`; the media tracker is rJoule-only. The unit-cost env vars above are conservative placeholders — set them to your provider's actual rates for accurate gating. Unset or `0` `HKASK_MEDIA_RJOULE_CAP` disables enforcement entirely (the default).
 
 ## Quick Start
 

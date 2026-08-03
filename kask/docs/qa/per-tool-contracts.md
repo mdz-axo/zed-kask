@@ -287,7 +287,7 @@ Credentials: **optional** `HKASK_KANBAN_DB`, `HKASK_DB_PASSPHRASE`.
 
 Credentials: **optional** `DEEPINFRA_API_KEY`, `FALAI_API_KEY`.
 
-**rJoule budget gate:** `generate_image`, `transform_image`, `upscale_image`, and `generate_video` pre-charge an estimated rJoule (USD) cost (`estimate_rjoule`, env-var-configurable unit costs) and reject with a Category-5-style `unavailable` error when `remaining_rjoule() < estimate`. Enforcement is enabled only when `HKASK_MEDIA_RJOULE_CAP` is set (unset/0 ⇒ disabled). Compute gas is enforced upstream at `McpRuntime::invoke`, not here. The resource-bounds contract (Category 6) for these four tools should additionally assert the budget-exhausted rejection path when the cap is set.
+**rJoule budget gate:** `generate_image`, `transform_image`, `upscale_image`, `generate_video`, and `execute_workflow` pre-charge an estimated rJoule (USD) cost (`estimate_rjoule`, unit costs resolved once at startup from `HKASK_MEDIA_RJOULE_PER_*`) and reject with a Category-5-style `unavailable` error when `remaining_rjoule() < estimate` (check-before-charge: a rejected call consumes no budget). A one-shot warning fires when `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD` is crossed. Enforcement is enabled only when `HKASK_MEDIA_RJOULE_CAP` is a positive integer (unset/0 ⇒ disabled; malformed ⇒ warn + disabled). Compute gas is enforced upstream at `McpRuntime::invoke`, not here. The resource-bounds contract (Category 6) for these five tools should additionally assert the budget-exhausted rejection path and the alert-threshold crossing when the cap is set.
 
 | Tool | LLM I/O | External dep | Category 3 | Category 5 | Category 7 |
 |---|---|---|---|---|---|

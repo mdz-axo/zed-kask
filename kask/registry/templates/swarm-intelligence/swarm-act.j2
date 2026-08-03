@@ -109,6 +109,24 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
 - `remove` → `swarm_remove_local` with `{ agent_name }` (the local
   counterpart of firing — deletes the card; a synced card's ABW agent is
   untouched).
+- `reconfigure_agent` → `swarm_reconfigure_local_agent` with
+  `{ agent_name, system_prompt, model?, mcp_tools?, skills? }` (Cybernetic
+  Swarm Plan C6). The new `system_prompt` is produced upstream (seed
+  `swarm_generate_prompt` — an ABW authoring aid — with the blamed agent's
+  current prompt + the failure log, or author it locally; the prompt text
+  arrives in the move's rationale/payload). The tool preserves `agent_id`,
+  `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and
+  `cloud_id`, and reloads the registry. Reconfigure is preferred over `remove`
+  when the blamed agent's type covers a required transform (firing would
+  re-open the variety deficit). No consent token — local mode.
+- `create` → `swarm_create_local_agent` with the full card fields
+  (`agent_id`, `agent_type`, `description`, `system_prompt`, `accepts`,
+  `produces`, `model?`, `mcp_tools?`, `skills?`) when DECIDE proposes hiring an
+  agent not yet in the local registry.
+- `fanout` → `swarm_fanout_local` with `{ delegations: [{ agent_name, task,
+  credits_authorized }, ...] }` when DECIDE proposes parallel multi-agent
+  dispatch (capped at MAX_FANOUT=10; runs sequentially to avoid ledger
+  TOCTOU).
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% else %}

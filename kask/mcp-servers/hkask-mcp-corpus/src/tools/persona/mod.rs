@@ -9,7 +9,6 @@
 //! All persona tools delegate to `crate::compose` for prose generation
 //! and `hkask_storage::EmbeddingStore` for centroid retrieval.
 
-use crate::compose::cosine_distance;
 use crate::corpus::EmbedService;
 use crate::*;
 use hkask_services_core::HkaskSettings;

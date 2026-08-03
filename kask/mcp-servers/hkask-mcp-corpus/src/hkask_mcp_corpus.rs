@@ -26,6 +26,7 @@
 #![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 mod backend;
+pub mod batch;
 pub mod bridge;
 pub mod compose;
 pub mod convert;
@@ -37,13 +38,15 @@ pub mod ocr;
 pub(crate) mod path_safety;
 pub mod runtime;
 pub mod template;
+pub mod text;
 pub mod tools;
 
 // Re-export template renderer for tool modules (accessible via `use crate::*;`)
 pub(crate) use template::render_docproc_template;
 // Re-export helpers used by tool modules.
 pub(crate) use helpers::{
-    chunk_structure, chunk_word_bounds, cosine_similarity, serialize_passages, tokens_to_words,
+    chunk_structure, chunk_word_bounds, cosine_distance, cosine_similarity, serialize_passages,
+    tokens_to_words,
 };
 // LLM JSON extraction is shared via `hkask_types::json_extract` (RR-0028).
 pub(crate) use hkask_types::json_extract::extract_json_from_response;

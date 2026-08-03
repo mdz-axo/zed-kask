@@ -783,7 +783,7 @@ impl CorpusServer {
 
             // Apply Gutenberg stripping if requested
             let processed = if strip_gutenberg.unwrap_or(false) {
-                SemanticMemory::strip_gutenberg_headers(&source_text)
+                crate::text::strip_gutenberg_headers(&source_text)
             } else {
                 source_text
             };
@@ -797,7 +797,7 @@ impl CorpusServer {
                 // Multi-tier: coarse / medium / fine
                 let chunk_tier = |tier: &str, max_tok: Option<usize>, default: usize| -> Vec<_> {
                     let w = tokens_to_words(max_tok.unwrap_or(default));
-                    SemanticMemory::chunk_text(
+                    crate::text::chunk_text(
                         &processed,
                         &format!("{source_label}:{tier}"),
                         w / 4,
@@ -847,7 +847,7 @@ impl CorpusServer {
                         boundary,
                     )
                 } else {
-                    SemanticMemory::chunk_text(
+                    crate::text::chunk_text(
                         &processed,
                         &entity_ref_prefix,
                         min_words,
@@ -1070,7 +1070,7 @@ impl CorpusServer {
 
                 // Apply Gutenberg stripping if requested
                 let processed = if strip_gutenberg.unwrap_or(false) {
-                    SemanticMemory::strip_gutenberg_headers(&source_text)
+                    crate::text::strip_gutenberg_headers(&source_text)
                 } else {
                     source_text
                 };
@@ -1078,7 +1078,7 @@ impl CorpusServer {
                 let processed = crate::convert::decode_html_entities(&processed);
                 let processed = crate::convert::strip_html_comments(&processed);
 
-                let passages = SemanticMemory::chunk_text(
+                let passages = crate::text::chunk_text(
                     &processed,
                     &source_prefix,
                     min_words,

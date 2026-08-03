@@ -253,7 +253,7 @@ impl EmbedService {
                 text
             };
 
-            let cleaned = SemanticMemory::strip_gutenberg_headers(&text);
+            let cleaned = crate::text::strip_gutenberg_headers(&text);
             let entity_ref_prefix = format!("style:{}:{}", &config.author, work.slug);
             let chunker = crate::corpus::embed::WordCountChunker {
                 min_words: config.chunking.min_words,

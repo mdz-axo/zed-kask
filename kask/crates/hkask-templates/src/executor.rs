@@ -1512,7 +1512,35 @@ impl ManifestExecutor {
         let input: Value = step
             .input_mapping
             .as_ref()
-            .map(|mapping| bind_parameters(mapping, &context))
+            .map(|mapping| {
+                // Use resolve_mapping_value (not bind_parameters) so `{{ }}`
+                // Jinja expressions with defaults render correctly — the same
+                // convention every other step action (select/populate/loop/
+                // render/flowdef) uses. bind_parameters passed `{{ }}` strings
+                // through as literals, silently breaking compute steps that
+                // bound context values via Jinja (e.g. kata.convergence_check's
+                // histories degraded to empty defaults; swarm.converge_accumulate
+                // hard-errored on get_f64). $ref objects and literal values pass
+                // through unchanged, so existing compute bindings are unaffected.
+                if let Value::Object(map) = mapping {
+                    let mut out = serde_json::Map::new();
+                    for (k, v) in map {
+                        let bound =
+                            resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                        // Propagate taint from referenced Source entries to the
+                        // bound key (the .rules "input_mapping bindings must
+                        // propagate taint" trap — RR-0026/RR-0027 fixed this at
+                        // every other resolve_mapping_value call site; compute was
+                        // the remaining gap, silently absent because it used
+                        // bind_parameters which never rendered bindings).
+                        self.propagate_taint_for_binding(v, k);
+                        out.insert(k.clone(), bound);
+                    }
+                    Value::Object(out)
+                } else {
+                    mapping.clone()
+                }
+            })
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
 
         let result = dispatch_compute(compute_ref, &input)?;

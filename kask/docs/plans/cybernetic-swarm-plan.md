@@ -1342,3 +1342,58 @@ changed and the validation that passed.
   the C0 commit left swarm_panel uncompilable; the prior session's validation
   claim did not hold. Fixed here as part of C2 (the Steer prompt is C2's
   surface).
+
+### Validation follow-up (2026-08-03)
+
+A gap-review pass closed the largest validation gaps flagged in the prior
+summary:
+
+- End-to-end cascade test: tests/swarm_converge_integration.rs runs a
+  compute-only manifest (converge_accumulate -> second_order_monitor -> loop)
+  through ManifestExecutor::execute_manifest across 3 LOOP iterations. It pins
+  that iteration_log/failed_edits/influence_scores actually thread through the
+  loop step's input_mapping back into context (log grows to 3 entries, not 1),
+  and that the second-order monitor fires reasoning_loop + diversify_action on
+  a repeated-deficit+constant-d sequence. This was the biggest prior gap
+  (threading was structural, not runtime-verified). 4 tests.
+- Manifest-structure test: registry::swarm_intelligence_manifest_declares_
+  converge_accumulators pins the new CONVERGE compute steps (ordinals 7/8), the
+  loop threading of all five accumulator keys, the DECIDE/ORIENT guard inputs,
+  and the corrected kata_hypotenuse binding (step_6_result.hypotenuse, not the
+  nonexistent convergence_metric).
+- Loop-binding fix (pre-existing): the loop step bound kata_hypotenuse from
+  step_6_result.convergence_metric and next_focus from step_6_result.next_focus,
+  but kata.convergence_check returns {hypotenuse, converged, ...} — neither field
+  exists. The stale binding left the convergence tracker's hypotenuse_history
+  at the 1.0 default, which would make the Cauchy check declare premature
+  convergence. Corrected to step_6_result.hypotenuse and step_5_result.next_focus.
+- execute_compute input_mapping fix (cross-cutting, pre-existing):
+  ManifestExecutor::execute_compute used bind_parameters, which does NOT render
+  {{ }} Jinja (only $ref and literals) — so every {{ }} in a compute step's
+  input_mapping was passed as a literal string. This silently degraded
+  kata.convergence_check (histories always empty via unwrap_or_default) and
+  hard-errored swarm.converge_accumulate (get_f64 on a string). Switched
+  execute_compute to resolve_mapping_value (the convention used by
+  select/populate/loop/render/flowdef) + propagate_taint_for_binding, so {{ }}
+  with defaults renders correctly in compute input_mappings. Backward-compatible
+  (literals and $ref pass through unchanged); fixes the compute wiring for all
+  skills. The .rules "input_mapping bindings must propagate taint" trap (RR-0026/
+  RR-0027) applied — compute was the remaining resolve_mapping_value call site
+  without taint propagation.
+- ACT wiring: swarm-act.j2 gained dispatch branches for reconfigure_agent
+  (swarm_reconfigure_local_agent, C6), create (swarm_create_local_agent), and
+  fanout (swarm_fanout_local) in local mode, closing the gap where DECIDE could
+  propose moves ACT could not execute.
+
+Remaining (deferred, design calls not implementation):
+- The C3/C5/C7 *guards* in DECIDE/ORIENT are LLM-instructed (the accumulators
+  are deterministic, the rejection/attribution decisions are the LLM following a
+  rule). Promoting them to a compute/ACT-filter step would make them
+  deterministic by construction — a design decision, flagged in the plan.
+- The C2 cadence is event-driven (on the monitor's go_see recommendation), not
+  a fixed every-N-convergences counter. Acceptable per the plan's "or" but a
+  deviation from the literal spec.
+- SKILL.md companion regeneration for swarm-intelligence is not done.
+- hkask-mcp-corpus has a pre-existing unrelated build break (cosine_distance not
+  found, in untracked/modified corpus files from separate in-progress work); not
+  touched here.

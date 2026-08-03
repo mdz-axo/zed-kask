@@ -1,0 +1,197 @@
+//! Shared batch-processing infrastructure for concurrent LLM operations.
+//!
+//! Eliminates the duplicated semaphore-gated-concurrency + retry-with-backoff +
+//! degraded-outcome-classification skeleton that was hand-rolled across
+//! `corpus_generate_qa_batch`, `corpus_extract_triples`, `embed_batch_from_jsonl`,
+//! and `corpus_tag_chunks`.
+
+use std::future::Future;
+
+/// Failure-rate threshold (percent) above which a batch run reports `degraded`
+/// outcome. A run exceeding this rate indicates systemic issues (model
+/// unavailable, rate limiting, adversarial input) and must not be reported as
+/// `success`.
+pub(crate) const DEGRADED_FAILURE_THRESHOLD: usize = 10;
+
+/// Maximum LLM retry attempts for batch operations. Matches the 3-attempt
+/// pattern used across all batch tool methods.
+pub(crate) const MAX_RETRIES: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BatchStatus {
+    Success,
+    Degraded,
+}
+
+impl BatchStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BatchStatus::Success => "success",
+            BatchStatus::Degraded => "degraded",
+        }
+    }
+}
+
+/// Outcome of a batch run, classifying the failure rate against the degraded threshold.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BatchOutcome {
+    pub failed: usize,
+    pub total: usize,
+    pub status: BatchStatus,
+}
+
+impl BatchOutcome {
+    pub fn from_counts(failed: usize, total: usize) -> Self {
+        let status = if Self::is_degraded(failed, total) {
+            BatchStatus::Degraded
+        } else {
+            BatchStatus::Success
+        };
+        Self {
+            failed,
+            total,
+            status,
+        }
+    }
+
+    pub fn failure_pct(&self) -> usize {
+        (self.failed * 100).saturating_div(self.total.max(1))
+    }
+
+    pub fn is_degraded(failed: usize, total: usize) -> bool {
+        (failed * 100).saturating_div(total.max(1)) >= DEGRADED_FAILURE_THRESHOLD
+    }
+
+    pub fn log_if_degraded(&self, target: &str, operation: &str) {
+        if self.status == BatchStatus::Degraded {
+            tracing::warn!(
+                target = target,
+                failed = self.failed,
+                total = self.total,
+                failure_pct = self.failure_pct(),
+                threshold_pct = DEGRADED_FAILURE_THRESHOLD,
+                "{operation} run degraded — failure rate exceeds threshold",
+            );
+        }
+    }
+}
+
+/// Retry an async operation with exponential backoff.
+///
+/// Backoff: `2^attempts * 5` seconds (10s, 20s, 40s for attempts 1, 2, 3).
+/// Returns `Ok(result)` on success, `Err(last_error)` after `max_retries`
+/// failures. Each retry logs a warning with the attempt number and backoff.
+pub(crate) async fn retry_with_backoff<T, E, F, Fut>(
+    max_retries: u32,
+    target: &str,
+    context: &str,
+    mut f: F,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut attempts = 0u32;
+    loop {
+        match f().await {
+            Ok(result) => return Ok(result),
+            Err(e) => {
+                attempts += 1;
+                if attempts >= max_retries {
+                    tracing::warn!(
+                        target = target,
+                        context = %context,
+                        attempts = attempts,
+                        error = %e,
+                        "Operation failed after {max_retries} retries",
+                    );
+                    return Err(e);
+                }
+                let backoff = std::time::Duration::from_secs(2u64.pow(attempts) * 5);
+                tracing::warn!(
+                    target = target,
+                    context = %context,
+                    attempt = attempts,
+                    backoff_secs = backoff.as_secs(),
+                    error = %e,
+                    "Retry — backing off",
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn batch_outcome_success_when_failure_below_threshold() {
+        let outcome = BatchOutcome::from_counts(5, 95);
+        assert_eq!(outcome.status, BatchStatus::Success);
+        assert_eq!(outcome.status.as_str(), "success");
+    }
+
+    #[test]
+    fn batch_outcome_degraded_when_failure_at_threshold() {
+        // 10% failure rate = exactly at threshold
+        let outcome = BatchOutcome::from_counts(10, 100);
+        assert_eq!(outcome.status, BatchStatus::Degraded);
+    }
+
+    #[test]
+    fn batch_outcome_degraded_when_failure_above_threshold() {
+        let outcome = BatchOutcome::from_counts(20, 100);
+        assert_eq!(outcome.status, BatchStatus::Degraded);
+    }
+
+    #[test]
+    fn batch_outcome_handles_zero_total() {
+        let outcome = BatchOutcome::from_counts(0, 0);
+        assert_eq!(outcome.status, BatchStatus::Success);
+        assert_eq!(outcome.failure_pct(), 0);
+    }
+
+    #[test]
+    fn is_degraded_uses_saturating_div() {
+        assert!(!BatchOutcome::is_degraded(9, 100));
+        assert!(BatchOutcome::is_degraded(10, 100));
+        assert!(BatchOutcome::is_degraded(1, 1));
+    }
+
+    #[tokio::test]
+    async fn retry_succeeds_on_first_attempt() {
+        let result: Result<i32, String> =
+            retry_with_backoff(3, "test", "item1", || async { Ok(42) }).await;
+        assert_eq!(result, Ok(42));
+    }
+
+    #[tokio::test]
+    async fn retry_succeeds_on_second_attempt() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let attempts = AtomicU32::new(0);
+        let result: Result<i32, String> = retry_with_backoff(3, "test", "item2", || {
+            let count = attempts.fetch_add(1, Ordering::Relaxed);
+            async move {
+                if count == 0 {
+                    Err("transient".to_string())
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result, Ok(42));
+    }
+
+    #[tokio::test]
+    async fn retry_fails_after_max_retries() {
+        let result: Result<i32, String> = retry_with_backoff(2, "test", "item3", || async {
+            Err("permanent".to_string())
+        })
+        .await;
+        assert!(result.is_err());
+    }
+}

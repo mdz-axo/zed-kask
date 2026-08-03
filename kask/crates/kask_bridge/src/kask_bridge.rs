@@ -9,6 +9,7 @@
 
 mod condenser_bridge;
 mod context_injector;
+mod github_update;
 mod identity;
 mod inference;
 mod inference_ipc_server;
@@ -53,6 +54,7 @@ pub use settings::{
     KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
     KaskTrainingSettings, SwarmModeConfig,
 };
+pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
 pub use skill_executor::BridgeManifestExecutor;
 
 mod metacognition_bridge;

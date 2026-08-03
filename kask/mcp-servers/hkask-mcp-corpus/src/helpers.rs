@@ -15,6 +15,28 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     (dot / (norm_a * norm_b)).clamp(0.0, 1.0)
 }
 
+/// Cosine distance between two vectors (1 - cosine similarity, f64 precision).
+/// Returns 0.0 for identical, 1.0 for orthogonal, 2.0 for opposite or degenerate.
+#[must_use]
+pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 2.0;
+    }
+    let dot: f64 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(x, y)| (*x as f64) * (*y as f64))
+        .sum();
+    let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+    let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 2.0;
+    }
+    let similarity = dot / (norm_a * norm_b);
+    let distance = 1.0 - similarity;
+    distance.clamp(0.0, 2.0)
+}
+
 /// Approximate token-to-word conversion: 1 word ≈ 1.33 tokens.
 /// So tokens ÷ 1.33 = words. This is the standard BPE ratio for English text.
 pub(crate) fn tokens_to_words(tokens: usize) -> usize {
@@ -46,7 +68,7 @@ pub(crate) fn serialize_passages(passages: &[(String, String)]) -> Vec<serde_jso
 /// Chunk a `DocStructure` into passages, respecting heading boundaries.
 ///
 /// Groups blocks under their nearest preceding heading. Each group becomes
-/// one or more passages via `SemanticMemory::chunk_text`. When a group exceeds
+/// one or more passages via `crate::text::chunk_text`. When a group exceeds
 /// `max_words`, it is split at sentence boundaries within the group. When a
 /// group is smaller than `min_words`, it is merged with the next group if
 /// possible (to avoid tiny chunks).
@@ -68,7 +90,7 @@ pub(crate) fn chunk_structure(
     let has_headings = blocks.iter().any(|b| b.is_heading());
     if !has_headings {
         let flat_text = structure.text();
-        return SemanticMemory::chunk_text(
+        return crate::text::chunk_text(
             &flat_text,
             entity_ref_prefix,
             min_words,
@@ -120,7 +142,7 @@ pub(crate) fn chunk_structure(
         };
         let section_ref = format!("{entity_ref_prefix}:sec{idx}");
         let section_passages =
-            SemanticMemory::chunk_text(&section_text, &section_ref, min_words, max_words, boundary);
+            crate::text::chunk_text(&section_text, &section_ref, min_words, max_words, boundary);
         passages.extend(section_passages);
     }
     passages

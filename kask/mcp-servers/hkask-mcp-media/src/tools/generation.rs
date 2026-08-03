@@ -154,6 +154,7 @@ impl MediaServer {
                 workflow: Some(workflow_json.clone()),
                 ..Default::default()
             };
+            self.charge_budget("execute_workflow", &media_params).await?;
             self.vision_port
                 .media_generate("execute_workflow", &media_params)
                 .await

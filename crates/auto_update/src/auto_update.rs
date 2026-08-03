@@ -102,6 +102,12 @@ actions!(
     [
         /// Checks for available updates.
         Check,
+        // zed-kask: D17 — GitHub-backed zed-kask update feed. Dispatches a
+        // check against GitHub Releases (owner/repo configurable via
+        // `HKASK_UPDATE_GITHUB_REPO`, default `mdz-axo/zed-kask`) instead of
+        // the upstream zed.dev cloud feed.
+        /// Checks for zed-kask updates from GitHub Releases.
+        UpdateZedKask,
         /// Dismisses the update error message.
         DismissMessage,
         /// Opens the release notes for the current version in a browser.
@@ -262,6 +268,9 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action, window, cx| check(action, window, cx));
 
+        // zed-kask: D17 — register the GitHub-backed zed-kask update action.
+        workspace.register_action(|_, action, window, cx| check_zed_kask(action, window, cx));
+
         workspace.register_action(|_, action, _, cx| {
             view_release_notes(action, cx);
         });
@@ -329,6 +338,41 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
         drop(window.prompt(
             gpui::PromptLevel::Info,
             "Could not check for updates",
+            Some("Auto-updates disabled for non-bundled app."),
+            &["OK"],
+            cx,
+        ));
+    }
+}
+
+// zed-kask: D17 — GitHub-backed zed-kask update check. Mirrors `check` but
+// dispatches the GitHub Releases feed instead of the upstream zed.dev cloud
+// feed. Skips the `poll_for_updates()` guard so the GitHub path works even
+// on channels (e.g. Dev) that don't normally poll zed.dev — the GitHub feed
+// is independent of the zed.dev release channel.
+pub fn check_zed_kask(_: &UpdateZedKask, window: &mut Window, cx: &mut App) {
+    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION")
+        .map(ToOwned::to_owned)
+        .or_else(|| env::var("ZED_UPDATE_EXPLANATION").ok())
+    {
+        drop(window.prompt(
+            gpui::PromptLevel::Info,
+            "Zed-Kask was installed via a package manager.",
+            Some(&message),
+            &["OK"],
+            cx,
+        ));
+        return;
+    }
+
+    if let Some(updater) = AutoUpdater::get(cx) {
+        updater.update(cx, |updater, cx| {
+            updater.poll_zed_kask(UpdateCheckType::Manual, cx)
+        });
+    } else {
+        drop(window.prompt(
+            gpui::PromptLevel::Info,
+            "Could not check for zed-kask updates",
             Some("Auto-updates disabled for non-bundled app."),
             &["OK"],
             cx,
@@ -412,6 +456,17 @@ pub enum UpdateCheckType {
     Manual,
 }
 
+// zed-kask: D17 — which release feed to poll during `AutoUpdater::update`.
+/// The release source for an auto-update check.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum UpdateFeed {
+    /// Upstream zed.dev cloud feed (`/releases/{channel}/{version}/asset`).
+    ZedCloud,
+    /// zed-kask GitHub Releases feed (owner/repo from `HKASK_UPDATE_GITHUB_REPO`
+    /// env var, default `mdz-axo/zed-kask`).
+    Github,
+}
+
 impl UpdateCheckType {
     pub fn is_manual(self) -> bool {
         self == Self::Manual
@@ -484,6 +539,24 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
+        // zed-kask: D17 — delegates to the shared poll_with_feed with the
+        // upstream zed.dev cloud feed.
+        self.poll_with_feed(UpdateFeed::ZedCloud, check_type, cx);
+    }
+
+    // zed-kask: D17 — GitHub-backed poll entry point, invoked by the
+    // `UpdateZedKask` action. Same poll lifecycle as `poll` but resolves the
+    // release from GitHub instead of zed.dev cloud.
+    pub fn poll_zed_kask(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
+        self.poll_with_feed(UpdateFeed::Github, check_type, cx);
+    }
+
+    fn poll_with_feed(
+        &mut self,
+        feed: UpdateFeed,
+        check_type: UpdateCheckType,
+        cx: &mut Context<Self>,
+    ) {
         if check_type.is_manual() {
             self.dismissed_status = None;
         }
@@ -499,7 +572,7 @@ impl AutoUpdater {
         cx.notify();
 
         self.pending_poll = Some(cx.spawn(async move |this, cx| {
-            let result = Self::update(this.upgrade()?, cx).await;
+            let result = Self::update(this.upgrade()?, feed, cx).await;
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
@@ -702,7 +775,7 @@ impl AutoUpdater {
         })
     }
 
-    async fn update(this: Entity<Self>, cx: &mut AsyncApp) -> Result<()> {
+    async fn update(this: Entity<Self>, feed: UpdateFeed, cx: &mut AsyncApp) -> Result<()> {
         let (client, installed_version, previous_status, release_channel) =
             this.read_with(cx, |this, cx| {
                 (
@@ -721,8 +794,30 @@ impl AutoUpdater {
             cx.notify();
         });
 
-        let fetched_release_data =
-            Self::get_release_asset(&this, release_channel, None, "zed", OS, ARCH, cx).await?;
+        // zed-kask: D17 — resolve the release asset from the configured feed.
+        // The upstream zed.dev cloud path is unchanged; the GitHub path
+        // resolves via kask_bridge::github_update and converts the result to
+        // a ReleaseAsset so the rest of the pipeline (version comparison,
+        // download, install) is fully reused.
+        let fetched_release_data = match feed {
+            UpdateFeed::ZedCloud => {
+                Self::get_release_asset(&this, release_channel, None, "zed", OS, ARCH, cx).await?
+            }
+            UpdateFeed::Github => {
+                let pre_release = matches!(
+                    release_channel,
+                    ReleaseChannel::Nightly | ReleaseChannel::Dev
+                );
+                let github_http: Arc<dyn http_client::HttpClient> = client.clone();
+                let github_asset =
+                    kask_bridge::get_zed_kask_release_asset(github_http, OS, ARCH, pre_release)
+                        .await?;
+                ReleaseAsset {
+                    version: github_asset.version,
+                    url: github_asset.url,
+                }
+            }
+        };
         let fetched_version = fetched_release_data.clone().version;
         let app_commit_sha = Ok(cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full())));
         let newer_version = Self::check_if_fetched_version_is_newer(
@@ -1869,6 +1964,132 @@ mod tests {
         assert_eq!(
             newer_version.unwrap(),
             Some(fetched_version.parse().unwrap())
+        );
+    }
+
+    // zed-kask: D17 — pins the `UpdateZedKask` action exists so an upstream
+    // merge cannot silently remove it. The action is a unit struct generated
+    // by the `actions!` macro; if the macro entry is removed, this test fails
+    // to compile.
+    #[test]
+    fn test_update_zed_kask_action_exists() {
+        let _action = UpdateZedKask;
+        // Verify the action is a distinct type from `Check` (the upstream action).
+        assert!(
+            std::any::TypeId::of::<UpdateZedKask>() != std::any::TypeId::of::<Check>(),
+            "UpdateZedKask must be a distinct action type from Check"
+        );
+    }
+
+    // zed-kask: D17 — pins that `UpdateFeed::Github` resolves the release asset
+    // from GitHub Releases and surfaces the same `AutoUpdateStatus` transitions
+    // as the upstream zed.dev cloud feed (Checking -> Downloading -> Updated).
+    #[gpui::test]
+    async fn test_github_feed_update_flow(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        zlog::init_test();
+
+        let (dmg_tx, dmg_rx) = oneshot::channel::<String>();
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.auto_update = Some(true);
+                });
+            });
+
+            cx.set_global(AppDatabase::test_new());
+
+            let current_version = semver::Version::new(0, 100, 0);
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let dmg_rx = Arc::new(parking_lot::Mutex::new(Some(dmg_rx)));
+            let fake_client_http = FakeHttpClient::create(move |req| {
+                let dmg_rx = dmg_rx.clone();
+                async move {
+                    let path = req.uri().path();
+                    // GitHub Releases API: /repos/{owner}/{repo}/releases
+                    if path == "/repos/mdz-axo/zed-kask/releases" {
+                        return Ok(Response::builder().status(200).body(
+                            r#"[{"tag_name":"v0.100.1","prerelease":false,"assets":[{"name":"zed-kask-0.100.1-linux-x86_64.tar.gz","browser_download_url":"https://test.example/github-download","digest":null}],"tarball_url":"","zipball_url":""}]"#.into()
+                        ).unwrap());
+                    }
+                    // Asset download
+                    if path == "/github-download" {
+                        return Ok(Response::builder().status(200).body({
+                            let dmg_rx = dmg_rx.lock().take().unwrap();
+                            dmg_rx.await.unwrap().into()
+                        }).unwrap());
+                    }
+                    Ok(Response::builder().status(404).body("".into()).unwrap())
+                }
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+        });
+
+        let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
+
+        cx.background_executor.run_until_parked();
+
+        // Trigger the GitHub-backed update check (mirrors selecting the menu item).
+        auto_updater.update(cx, |updater, cx| {
+            updater.poll_zed_kask(UpdateCheckType::Manual, cx);
+        });
+
+        // Wait for the status to leave Idle.
+        loop {
+            cx.background_executor.timer(Duration::from_millis(0)).await;
+            cx.run_until_parked();
+            let status = auto_updater.read_with(cx, |updater, _| updater.status());
+            if !matches!(status, AutoUpdateStatus::Idle) {
+                break;
+            }
+        }
+
+        // Should be Downloading (version 0.100.1 > 0.100.0).
+        let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        assert_eq!(
+            status,
+            AutoUpdateStatus::Downloading {
+                version: semver::Version::new(0, 100, 1),
+                progress: None,
+            }
+        );
+
+        dmg_tx.send("<fake-zed-kask-update>".to_owned()).unwrap();
+
+        let tmp_dir = Arc::new(tempdir().expect("temp dir"));
+
+        cx.update(|cx| {
+            let tmp_dir = tmp_dir.clone();
+            cx.set_global(InstallOverride(Rc::new(move |target_path, _cx| {
+                let tmp_dir = tmp_dir.clone();
+                let dest_path = tmp_dir.path().join("zed-kask");
+                std::fs::copy(&target_path, &dest_path)?;
+                Ok(Some(dest_path))
+            })));
+        });
+
+        // Wait for the download to complete and the status to reach Updated.
+        loop {
+            cx.background_executor.timer(Duration::from_millis(0)).await;
+            cx.run_until_parked();
+            let status = auto_updater.read_with(cx, |updater, _| updater.status());
+            if !matches!(status, AutoUpdateStatus::Downloading { .. }) {
+                break;
+            }
+        }
+
+        let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        assert_eq!(
+            status,
+            AutoUpdateStatus::Updated {
+                version: semver::Version::new(0, 100, 1)
+            }
         );
     }
 }

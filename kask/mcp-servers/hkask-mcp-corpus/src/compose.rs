@@ -389,7 +389,8 @@ impl ComposeService {
                 .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
             match embedding_store_direct.get(&request.cognition.embedding.centroid_entity_ref) {
                 Ok(centroid_embedding) => {
-                    let distance = cosine_distance(&prose_vector, &centroid_embedding.vector);
+                    let distance =
+                        crate::cosine_distance(&prose_vector, &centroid_embedding.vector);
                     let threshold = request.cognition.validation.centroid_distance_max;
                     Some(CentroidValidation {
                         distance,
@@ -506,34 +507,6 @@ fn generic_system_prompt(
 }
 
 // ── Utility ─────────────────────────────────────────────────────────────
-
-/// Compute cosine distance between two vectors.
-/// Returns 0.0 for identical vectors, 2.0 for opposite vectors.
-///
-/// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-/// pre:  a and b must be non-empty f32 slices of equal length; mismatched or empty returns 2.0
-/// post: returns f64 in range [0.0, 2.0]; 0.0 = identical, 1.0 = orthogonal, 2.0 = opposite or degenerate
-#[must_use]
-pub fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
-    if a.len() != b.len() || a.is_empty() {
-        return 2.0;
-    }
-    let dot: f64 = a
-        .iter()
-        .zip(b.iter())
-        .map(|(x, y)| (*x as f64) * (*y as f64))
-        .sum();
-    let norm_a: f64 = a.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-    let norm_b: f64 = b.iter().map(|x| (*x as f64).powi(2)).sum::<f64>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 2.0;
-    }
-    let similarity = dot / (norm_a * norm_b);
-    // Clamp to [0, 2] — floating-point rounding can push similarity
-    // slightly above 1.0 (producing a small negative distance) or
-    // slightly below -1.0 (producing a distance slightly above 2.0).
-    // This is especially common with extreme f32 values (e.g. 1e37)
-    // where the f64 promotion doesn't fully eliminate rounding error.
-    let distance = 1.0 - similarity;
-    distance.clamp(0.0, 2.0)
-}
+// `cosine_distance` moved to `helpers.rs` (unified with `cosine_similarity`).
+// Re-exported here for existing callers that import from `compose`.
+pub use crate::helpers::cosine_distance;

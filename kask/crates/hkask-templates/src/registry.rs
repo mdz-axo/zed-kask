@@ -632,4 +632,138 @@ mod tests {
             "CHECK step input_mapping must bind `task_success` (C0)"
         );
     }
+
+    // Cybernetic Swarm Plan C1/C3/C5/C7: the `swarm-intelligence` manifest must
+    // declare the two new CONVERGE compute steps (accumulate + second-order
+    // monitor) and thread the deterministic accumulators through the loop step's
+    // input_mapping so the next iteration's DECIDE/ORIENT/CHECK can read them.
+    // Pins the manifest side (the compute primitives' math is pinned in
+    // compute.rs unit tests; the template guards are pinned by rendering).
+    #[test]
+    fn swarm_intelligence_manifest_declares_converge_accumulators() {
+        let yaml = process_manifest_yaml("swarm-intelligence")
+            .expect("swarm-intelligence manifest must be embedded");
+        let manifest =
+            load_manifest_from_yaml(yaml).expect("swarm-intelligence manifest must parse");
+
+        // Step 7 is the converge_accumulate compute primitive.
+        let accumulate = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 7)
+            .expect("swarm-intelligence has a converge_accumulate step (ordinal 7)");
+        assert_eq!(
+            accumulate.action, "compute",
+            "step 7 must be a compute step"
+        );
+        assert_eq!(
+            accumulate.compute_ref.as_deref(),
+            Some("swarm.converge_accumulate"),
+            "step 7 compute_ref must be swarm.converge_accumulate (C1/C3/C7)"
+        );
+        let acc_mapping = accumulate
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .expect("step 7 has an input_mapping");
+        for key in [
+            "iteration_log",
+            "failed_edits",
+            "influence_scores",
+            "d",
+            "decisions",
+        ] {
+            assert!(
+                acc_mapping.contains_key(key),
+                "converge_accumulate input_mapping must bind `{key}`"
+            );
+        }
+
+        // Step 8 is the second_order_monitor compute primitive.
+        let monitor = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 8)
+            .expect("swarm-intelligence has a second_order_monitor step (ordinal 8)");
+        assert_eq!(
+            monitor.compute_ref.as_deref(),
+            Some("swarm.second_order_monitor"),
+            "step 8 compute_ref must be swarm.second_order_monitor (C1)"
+        );
+
+        // The loop step (ordinal 9) threads the accumulators + blame_count
+        // back into context so the next iteration's DECIDE/ORIENT/CHECK can
+        // read them. A dropped binding silently disables a guard — this pins
+        // the threading (the advertised-invariants trap).
+        let loop_step = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 9)
+            .expect("swarm-intelligence has a loop step (ordinal 9)");
+        let loop_mapping = loop_step
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .expect("loop step has an input_mapping");
+        for key in [
+            "iteration_log",
+            "failed_edits",
+            "influence_scores",
+            "second_order",
+            "blame_count",
+        ] {
+            assert!(
+                loop_mapping.contains_key(key),
+                "loop step input_mapping must thread `{key}` back (C1/C3/C5/C7)"
+            );
+        }
+
+        // DECIDE (ordinal 3) binds the guards it consumes.
+        let decide = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 3)
+            .expect("swarm-intelligence has a DECIDE step (ordinal 3)");
+        let decide_mapping = decide
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .expect("DECIDE step has an input_mapping");
+        for key in ["failed_edits", "influence_scores", "second_order"] {
+            assert!(
+                decide_mapping.contains_key(key),
+                "DECIDE input_mapping must bind `{key}` (C3/C7/C1 guards)"
+            );
+        }
+
+        // ORIENT (ordinal 2) binds the prior ACT trace for C5 fault attribution.
+        let orient = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 2)
+            .expect("swarm-intelligence has an ORIENT step (ordinal 2)");
+        let orient_mapping = orient
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .expect("ORIENT step has an input_mapping");
+        assert!(
+            orient_mapping.contains_key("prior_act"),
+            "ORIENT input_mapping must bind `prior_act` for C5 fault attribution"
+        );
+
+        // The loop step must bind kata_hypotenuse from the field
+        // kata.convergence_check actually returns (hypotenuse), not a
+        // nonexistent convergence_metric — a stale binding leaves the
+        // convergence tracker's hypotenuse_history at the 1.0 default and
+        // causes premature Cauchy convergence. Pin the corrected binding.
+        let kata_hyp = loop_mapping
+            .get("kata_hypotenuse")
+            .and_then(|v| v.as_str())
+            .expect("loop step binds kata_hypotenuse");
+        assert!(
+            kata_hyp.contains("step_6_result.hypotenuse"),
+            "kata_hypotenuse must read step_6_result.hypotenuse (not the nonexistent convergence_metric) — got {kata_hyp}"
+        );
+    }
 }

@@ -63,11 +63,17 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
 
     vec![
         Menu {
-            name: "Zed".into(),
+            // zed-kask: D16 — leftmost app menu renamed from "Zed" to "z-k".
+            // On macOS the platform overrides this title with the app's bundle
+            // name ("Zed-Kask" via D7); the rename only takes effect on the
+            // cross-platform title-bar `ApplicationMenu` (Linux/Windows).
+            name: "z-k".into(),
             disabled: false,
             items: vec![
                 MenuItem::action("About Zed", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
+                // zed-kask: D16 — GitHub-backed zed-kask update menu item.
+                MenuItem::action("Update Zed-Kask", auto_update::UpdateZedKask),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu::new("Settings").items([
                     MenuItem::action("Open Settings", zed_actions::OpenSettings),
@@ -325,4 +331,43 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    // zed-kask: D16 — pins the leftmost app menu name is "z-k" so an upstream
+    // merge cannot silently revert it to "Zed".
+    #[test]
+    fn test_leftmost_menu_name_is_zk() {
+        let cx = TestAppContext::default();
+        let menus = cx.update(|cx| app_menus(cx));
+        let leftmost = menus
+            .first()
+            .expect("app_menus should return at least one menu");
+        assert_eq!(leftmost.name.as_ref(), "z-k");
+    }
+
+    // zed-kask: D16 — pins the "Update Zed-Kask" menu item exists in the
+    // leftmost menu so an upstream merge cannot silently remove it.
+    #[test]
+    fn test_leftmost_menu_has_update_zed_kask_item() {
+        let cx = TestAppContext::default();
+        let menus = cx.update(|cx| app_menus(cx));
+        let leftmost = menus
+            .first()
+            .expect("app_menus should return at least one menu");
+        let has_update_item = leftmost.items.iter().any(|item| {
+            matches!(
+                item,
+                MenuItem::Action { name, .. } if name.as_ref() == "Update Zed-Kask"
+            )
+        });
+        assert!(
+            has_update_item,
+            "leftmost menu should contain an 'Update Zed-Kask' action item"
+        );
+    }
 }

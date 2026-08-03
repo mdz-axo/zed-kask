@@ -10,7 +10,7 @@
 > divergences are the D-seams listed below + the `[workspace.members]` /
 > `[workspace.dependencies]` arrays in the root `Cargo.toml`.
 
-## The divergence surface (D1–D15)
+## The divergence surface (D1–D17)
 
 Every hKask integration maps to a named, isolated change in zed-kask. These
 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior
@@ -34,8 +34,10 @@ an hKask crate behind one of these seams instead.
 | D13 | OpenRouter output budget | `crates/open_router/src/open_router.rs` + `crates/language_models/src/provider/open_router.rs` + `crates/open_router/Cargo.toml` | Upstream omits `max_tokens` from completion requests entirely (`Model::max_output_tokens()` hardcodes `None`). OpenRouter then reserves the model's full default output size (e.g. 64k for claude-haiku-4.5, 128k for glm-5.2) against the key's credit limit before dispatching, and rejects with 402 on keys whose remaining limit can't cover the reservation — even for a one-line prompt. Zed-kask parses `top_provider.max_completion_tokens` from the `/models` and `/models/user` responses into a new `Model::max_output_tokens` field, which flows into the request as an explicit `max_tokens` budget. Settings-defined `available_models[].max_output_tokens` (already in `OpenRouterAvailableModel` upstream, previously unwired) overrides the API-derived value. Pinned by `test_max_completion_tokens_from_api_becomes_request_budget`. |
 | D14 | Streaming text reveal timer interval | `crates/acp_thread/src/acp_thread.rs` | Upstream hardcodes `StreamingTextBuffer::TASK_UPDATE_MS = 16` (60fps). During active streaming, this fires a `Markdown::append` + `cx.notify()` on the foreground thread 60 times per second, saturating the render loop and starving the `BlinkManager`'s 500ms timer — the cursor flashes irregularly/rapidly. Zed-kask increases it to 50ms (20fps): still smooth for text reveal (the human eye can't perceive text appearing at >20fps) but 3x less render pressure. Pinned by `test_streaming_reveal_timer_interval_kask_contract`. |
 | D15 | Bounded cursor-blink timers | `crates/editor/src/blink_manager.rs` | Two upstream timer-accumulation vectors make the cursor strobe at (N+1)× the normal rate. (1) `pause_blinking` detaches a new 500ms resume task on every selection change — rapid typing accumulates uncancellable foreground wake-ups, and blur leaves pending blink/resume callbacks valid across a later refocus. Zed-kask stores one restartable resume task, keeps `blinking_paused` consistent with the actual state, and invalidates pending callbacks on disable. (2) The `SettingsStore` observer unconditionally calls `blink_cursors` on every settings update, and `blink_cursors` spawns a fresh 500ms timer on top of any already running — each unrelated settings change (profile switch, model selection, settings.json save) stacks another blink cycle. Zed-kask only (re)starts blinking on the disabled→enabled transition. Pinned by `test_pause_blinking_restarts_single_resume_deadline`, `test_disable_cancels_pending_resume`, and `test_settings_updates_do_not_accumulate_blink_timers`. |
+| D16 | App menu rename + Update Zed-Kask menu item | `crates/zed/src/zed/app_menus.rs` | Leftmost app menu `name` changed from `"Zed"` to `"z-k"`. On macOS the platform overrides this title with the bundle name ("Zed-Kask" via D7); the rename only takes effect on the cross-platform title-bar `ApplicationMenu` (Linux/Windows, `crates/title_bar/src/application_menu.rs`). A new `MenuItem::action("Update Zed-Kask", auto_update::UpdateZedKask)` added immediately after "Check for Updates". Pinned by `test_leftmost_menu_name_is_zk` and `test_leftmost_menu_has_update_zed_kask_item` in `app_menus.rs`. |
+| D17 | GitHub-backed zed-kask update feed | `crates/auto_update/src/auto_update.rs` + `crates/auto_update/Cargo.toml` + `kask/crates/kask_bridge/src/github_update.rs` | New `UpdateZedKask` action dispatches a GitHub Releases-backed update check via `kask_bridge::get_zed_kask_release_asset` (owner/repo from `HKASK_UPDATE_GITHUB_REPO` env var, default `mdz-axo/zed-kask`). `AutoUpdater::update` accepts a `UpdateFeed` enum (`ZedCloud` / `Github`); `poll_zed_kask` spawns the GitHub feed. The release resolution (GitHub API call + asset matching by `{OS}-{ARCH}` naming convention) lives in `kask_bridge/src/github_update.rs` behind the D8 seam; the download, install, and version-comparison logic is fully reused from `auto_update` (`download_release`, `install_release`, `check_if_fetched_version_is_newer`). Surfaces the same `AutoUpdateStatus` transitions (`Idle/Checking/Downloading/Installing/Updated/Errored`). Pinned by `test_update_zed_kask_action_exists` and `test_github_feed_update_flow` in `auto_update.rs`, and `test_match_asset_*` + `test_default_github_repo_is_kask` in `github_update.rs`. |
 
-## Other zed-kask-modified files (supporting D1–D15)
+## Other zed-kask-modified files (supporting D1–D17)
 
 These files carry `// zed-kask:` comments but are supporting edits, not
 primary divergence seams:
@@ -88,7 +90,7 @@ The sole bidirectional seam is `kask_bridge` (D8), which lives under
 
 1. `git fetch upstream && git merge upstream/main`
 2. Conflicts will only appear in:
-   - The D-seam files listed above (D1–D15)
+   - The D-seam files listed above (D1–D17)
    - `[workspace.members]` / `[workspace.dependencies]` in root `Cargo.toml`
 3. Everything under `kask/` is additive → never conflicts.
 4. After resolving, run `bash kask/scripts/check-hkask-no-zed-deps.sh` to
