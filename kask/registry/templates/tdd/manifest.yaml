@@ -7,8 +7,8 @@ crate:
   description: >
     Test-driven development with red-green-refactor loop, MDS spec-anchored functional
     testing, and gap analysis. Builds features or fixes bugs one vertical slice at a
-    time. Enforces behavior testing through public interfaces, spec traceability via
-    // REQ: tags (anchored to MDS spec/goal/capture outputs), anti-horizontal-slicing,
+    time. Enforces behavior testing through public interfaces, codegraph entity anchoring via
+    dcterms:identifier tags, anti-horizontal-slicing,
     and minimal-implementation discipline. Five MDS categories: domain, composition,
     trust, lifecycle, curation.
   contract_energy_budget:
@@ -25,11 +25,11 @@ crate:
 
 templates:
   - id: tdd/tdd-plan
-    name: "Plan a TDD cycle: extract functional requirements from specifications…"
+    name: "Plan a TDD cycle: query the codegraph for entities with Dublin Core classification…"
     path: tdd-plan.j2
     type: KnowAct
     description: >
-      Plan a TDD cycle: extract functional requirements from specifications with
+      Plan a TDD cycle: query the codegraph for entities with Dublin Core classification with
       goal-principle anchoring (each requirement names its P{N} principle), identify
       public interfaces, classify behaviors by MDS category with default goal-principle
       mapping, prioritize by risk (P0-P2+), and get user approval before writing any code.
@@ -40,7 +40,7 @@ templates:
     type: KnowAct
     description: >
       Execute a tracer bullet: write ONE failing test for ONE behavior anchored to a
-      spec requirement AND goal principle via expect: field with [P{N}] tag (per
+      codegraph entity AND goal principle via expect: field with [P{N}] tag (per
       PRINCIPLES.md §1.6). Contract-first: full v0.28.0 structure with expect:,
       [P{N}] Constraining: annotations, and pre:/post:. Then minimal code to satisfy
       the contract.
@@ -79,30 +79,30 @@ templates:
       stubs. Contract completeness audit including expect: user expectation, [P{N}]
       goal-principle anchoring, and [P{N}] Constraining: annotations per v0.28.0
       extended syntax. Emits reg.contract.violated spans for missing/malformed contracts.
-      Tests describe behavior not implementation, spec traceability via // REQ: tags,
+      Tests describe behavior not implementation, codegraph entity anchoring via dcterms:identifier tags,
       functional coverage gaps identified.
     generates_spans:
       - reg.contract.violated
       - reg.contract.coverage
 
   - id: tdd/tdd-explore
-    name: "Explore for spec blind spots via bug-hunt…"
+    name: "Explore for codegraph blind spots via bug-hunt…"
     path: tdd-explore.j2
     type: KnowAct
     description: >
-      Explore for spec blind spots by dispatching to the bug-hunt skill with a
+      Explore for codegraph blind spots by dispatching to the bug-hunt skill with a
       charter scoped to the slice's code. bug-hunt finds bugs the spec did not
       name (Weinberg: absent tests = quality threat). Findings not covered by an
-      existing tracer bullet become new functional requirements routing back to
+      existing tracer bullet become new codegraph entities routing back to
       the plan. Dispatches only when coverage is thin OR the slice touches Trust
       (P0) code — not on every low-risk slice.
 
   - id: tdd/tdd-gap-check
-    name: "Functional gap analysis: compare specification requirements against…"
+    name: "Codegraph gap analysis: compare codegraph entities against…"
     path: tdd-gap-check.j2
     type: KnowAct
     description: >
-      Functional gap analysis: compare specification requirements against tested
+      Codegraph gap analysis: compare codegraph entities against tested
       behaviors including goal-principle alignment cross-reference against MDS
       category defaults, constraining principle completeness (Magna Carta P1-P4),
       and expectation quality scoring (0-3 scale). Identify uncovered requirements

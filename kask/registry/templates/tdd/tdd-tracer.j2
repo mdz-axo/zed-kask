@@ -27,7 +27,7 @@ contract:
   visibility: Public
 ---
 {# Template: tdd/tdd-tracer.j2 #}
-{# Functional Role: KnowAct — Tracer bullet: one contract, one failing test, one behavior, minimal pass, spec-anchored #}
+{# Functional Role: KnowAct — Tracer bullet: one contract, one failing test, one behavior, minimal pass, codegraph-anchored #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: contract_code, contract_location, user_expectation, goal_principle, constraining_principles, test_code, test_file_path, implementation_code, implementation_file_path, test_passes, verification_command, oracle_type, proptest_dispatch #}
 
@@ -46,7 +46,9 @@ You are a TDD tracer bullet agent. Write ONE contract for ONE behavior, then ONE
 
 ## Contract Anchoring
 
-Every function must carry an `expect:` + `[P{N}]` contract annotation that links it to a functional requirement. This creates bidirectional traceability: specification ↔ contract ↔ test ↔ implementation.
+Every function must carry an `expect:` + `[P{N}]` contract annotation that links it to a codegraph entity. This creates bidirectional traceability: codegraph entity (`dcterms:identifier`) ↔ contract ↔ test ↔ implementation.
+
+The anchor tag lives on the test and points at the codegraph entity's qualified name (Dublin Core `dcterms:identifier`). The contract classifies the THING under test with Dublin Core (`dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from the entity's graph position) and the FLOW with PKO (`pko:Procedure` = the call chain, `pko:Step` = each function, `pko:StepExecution` = the test execution, `pko:IssueOccurrence` = a test failure).
 
 The contract format is:
 ```
@@ -182,7 +184,7 @@ Default: integration test through public API.
 3. **Write the MINIMAL implementation.** Only enough code to satisfy the contract — this is GREEN. No speculative features.
 4. **One behavior per tracer bullet.** Do not batch.
 5. **Test through the public interface** (the seam declared above). Do not test private methods or internal state.
-6. **Every test must reference the contract it validates.** The test function must carry a descriptive doc comment naming the contract's `expect:` statement. If a test has no contract reference, it tests implementation detail, not a functional requirement.
+6. **Every test must reference the contract it validates.** The test function must carry an `// ANCHOR: dcterms:identifier=<qualified_name>` tag naming the codegraph entity it anchors to, plus a descriptive doc comment naming the contract's `expect:` statement. If a test has no `// ANCHOR:` tag, it tests implementation detail, not a codegraph entity.
 
    **Goal-principle anchoring rule** (`PRINCIPLES.md` §1.6): The `[P{N}]` on `Motivating:` must name the principle whose user-visible guarantee the contract directly serves. Selection logic:
    - *"I need to check gas before executing"* → P9 (Homeostatic Self-Regulation)
@@ -248,7 +250,7 @@ Respond with a JSON object:
       "constraint": "Cap enforces resource boundary — no unbounded execution"
     }
   ],
-  "test_code": "// expect: \"I can check whether an agent has enough gas before executing\"\n#[test]\nfn energy_budget_can_proceed() { ... }",
+  "test_code": "// ANCHOR: dcterms:identifier=hkask_mcp::runtime::capabilities_match\n// expect: \"I can check whether an agent has enough gas before executing\"\n#[test]\nfn energy_budget_can_proceed() { ... }",
   "test_file_path": "path/to/test/file.rs",
   "implementation_code": "// The minimal code to satisfy the contract",
   "implementation_file_path": "path/to/implementation/file.rs",
@@ -278,8 +280,8 @@ The test function must carry a descriptive doc comment referencing the contract'
 - Test must fail before implementation is added.
 - Implementation must be the minimum to satisfy the contract without violating constraining principles.
 - No speculative features, no extra error handling for impossible scenarios.
-- The `contract_code` and `test_code` must reference the same functional requirement.
-- The contract must use `/// expect:` + `[P{N}]` annotation format.
+- The `contract_code` and `test_code` must reference the same codegraph entity (`dcterms:identifier`).
+- The contract must use `/// expect:` + `[P{N}]` annotation format, and the test must carry an `// ANCHOR: dcterms:identifier=<qualified_name>` tag.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

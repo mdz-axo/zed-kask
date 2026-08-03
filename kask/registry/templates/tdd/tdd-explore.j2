@@ -16,7 +16,7 @@ contract:
   visibility: Public
 ---
 {# Template: tdd/tdd-explore.j2 #}
-{# Functional Role: KnowAct — Explore for spec blind spots via bug-hunt #}
+{# Functional Role: KnowAct — Explore for codegraph blind spots via bug-hunt #}
 {# Implementation: Jinja2 prompt #}
 {# Produces: bug_hunt_findings, new_gaps, routing, bug_hunt_dispatch, rationale #}
 {# Design: kask/docs/plans/evolving-test-harness.md §3.5; test-harness-skill-evolution.md §2.6 #}
@@ -28,16 +28,16 @@ verbosity = "standard"
 max_tokens = 6144
 thinking_budget = "full"
 
-You are a TDD exploration agent. The gap-check (step 5) has identified spec
-coverage gaps. Your job is to find the gaps the **spec itself** missed — bugs in
-behaviors the specification never named (Weinberg: absent tests = quality
+You are a TDD exploration agent. The gap-check (step 5) has identified codegraph
+coverage gaps. Your job is to find the gaps the **codegraph itself** missed — bugs in
+behaviors the code structure never surfaced (Weinberg: absent tests = quality
 threat). You do this by dispatching to the `bug-hunt` skill with a charter scoped
 to the slice's code.
 
-TDD is spec-driven: it tests what the spec says. bug-hunt is exploratory: it
-finds what the spec did not anticipate. This step closes that loop — bug-hunt
-findings that are NOT covered by an existing tracer bullet become new functional
-requirements, routing back to the plan (step 1) for a new tracer bullet.
+TDD is codegraph-driven: it tests what the codegraph surfaces. bug-hunt is exploratory: it
+finds what the code structure did not anticipate. This step closes that loop — bug-hunt
+findings that are NOT covered by an existing tracer bullet become new codegraph
+entities, routing back to the plan (step 1) for a new tracer bullet.
 
 ## Crate
 
@@ -47,7 +47,7 @@ requirements, routing back to the plan (step 1) for a new tracer bullet.
 
 {{ risk_profile }}
 
-## Spec Coverage Gaps (from tdd-gap-check)
+## Codegraph Coverage Gaps (from tdd-gap-check)
 
 ```json
 {{ gaps | tojson }}
@@ -78,8 +78,8 @@ When dispatching, invoke the `bug-hunt` skill with a charter scoped to this
 slice:
 
 - `target_area`: the crate and module(s) this slice touched
-- `charter_focus`: "spec blind spots — behaviors the functional spec did not
-  name but the code exhibits" (not a broad expedition; a focused probe)
+- `charter_focus`: "codegraph blind spots — behaviors the code structure did not
+  surface but the code exhibits" (not a broad expedition; a focused probe)
 - `crate_scope`: {{ crate_scope }}
 - `mutation_report`: omit (TDD does not consume mutation reports here; that is
   harness-optimize's role)
@@ -100,7 +100,7 @@ For each finding, determine whether it is covered by an existing tracer bullet:
 
 | Finding verdict | Already covered? | Classification |
 |-----------------|------------------|----------------|
-| `BUG` (Tier 1, confidence ≥ 0.90) | No matching tested behavior | **New gap** — a spec blind spot. The spec missed a behavior; route to plan. |
+| `BUG` (Tier 1, confidence ≥ 0.90) | No matching tested behavior | **New gap** — a codegraph blind spot. The codegraph missed a behavior; route to plan. |
 | `BUG` | Matching tested behavior exists | The existing test should have caught it — the test is weak. Route to `replan` (strengthen the test, possibly via proptest). |
 | `POTENTIAL_BUG` (Tier 2) | No matching behavior | **New gap** (lower priority) — route to plan if P0/P1, defer if P2. |
 | `OBSERVATION` (Tier 3) | — | Not a gap — informational. Record but do not route. |
@@ -114,7 +114,7 @@ covered only if a tracer bullet explicitly tests `f`'s error path.
 
 | Condition | Routing |
 |-----------|---------|
-| One or more `new_gaps` with P0/P1 severity | `replan` → step 1 (the findings become new functional requirements → new tracer bullets) |
+| One or more `new_gaps` with P0/P1 severity | `replan` → step 1 (the findings become new codegraph entities → new tracer bullets) |
 | `new_gaps` are all P2 | `converge` → step 6 (record the gaps as deferrals for `OPEN_QUESTIONS.md`; do not block convergence) |
 | No new gaps | `converge` → step 6 |
 
@@ -140,14 +140,14 @@ Respond with a JSON object:
       "finding_id": "BUG-001",
       "requirement": "Drop must not panic on partial initialization state",
       "priority": "P0",
-      "rationale": "spec did not name Drop behavior under partial init — spec blind spot"
+      "rationale": "codegraph did not surface Drop behavior under partial init — codegraph blind spot"
     }
   ],
   "routing": "replan|converge",
   "bug_hunt_dispatch": {
     "skill": "bug-hunt",
     "target_area": "{{ crate_scope }}",
-    "charter_focus": "spec blind spots",
+    "charter_focus": "codegraph blind spots",
     "dispatched": true
   },
   "rationale": "why this routing — cite the findings and whether they are covered by existing tracer bullets"
@@ -159,7 +159,7 @@ Respond with a JSON object:
 - Dispatch to bug-hunt ONLY when coverage is thin OR the slice is Trust (P0). Do not run a full bug-hunt expedition on every low-risk slice — that is unbounded cost.
 - bug-hunt findings MUST cite file:line and include verbatim evidence (bug-hunt's no-fiction rule). A finding without a citation is rejected, not classified as a gap.
 - A `BUG` finding covered by an existing tracer bullet means the test is weak, not that there is no gap — route to `replan` to strengthen the test (possibly dispatch to proptest on the next strengthen step).
-- `new_gaps` with P0/P1 severity MUST route to `replan` — they are spec blind spots that close the loop back to the plan. P2 gaps may defer.
+- `new_gaps` with P0/P1 severity MUST route to `replan` — they are codegraph blind spots that close the loop back to the plan. P2 gaps may defer.
 - Do NOT fabricate findings. Only report what bug-hunt actually discovered. If bug-hunt returns no findings, `bug_hunt_findings` is empty and `routing` is `converge`.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).

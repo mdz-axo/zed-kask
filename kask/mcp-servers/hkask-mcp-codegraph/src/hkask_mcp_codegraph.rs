@@ -182,21 +182,26 @@ impl CodeGraphServer {
         execute_tool(self, "codegraph_query", async {
             self.ensure_indexed()?;
             let pipeline = self.pipeline_guard()?;
-            let results =
-                graph::search::search(pipeline.store().conn(), &req.query, req.limit as usize)
-                    .map_err(db_err)?;
-            // If name provided, return exact symbol match (replaces codegraph_node).
-            // Returns an explicit error when the name is not found, matching
-            // codegraph_traverse's contract — never a silent null.
+            // If a name is provided, look it up directly in the database rather
+            // than filtering the (limit-capped) FTS5 result set — the exact
+            // match may exist outside the first `limit` hits, in which case the
+            // old filter path returned a spurious "symbol not found".
             if let Some(ref name) = req.name {
-                let exact = results.iter().find(|r| r.symbol.name == *name);
-                return match exact {
-                    Some(r) => Ok(serde_json::json!(&r.symbol)),
+                return match pipeline.store().find_symbol_by_name(name).map_err(db_err)? {
+                    Some(id) => match pipeline.store().get_symbol(id).map_err(db_err)? {
+                        Some(symbol) => Ok(serde_json::json!(&symbol)),
+                        None => Ok(serde_json::json!({
+                            "error": format!("symbol not found: {name}")
+                        })),
+                    },
                     None => Ok(serde_json::json!({
                         "error": format!("symbol not found: {name}")
                     })),
                 };
             }
+            let results =
+                graph::search::search(pipeline.store().conn(), &req.query, req.limit as usize)
+                    .map_err(db_err)?;
             Ok(serde_json::json!(results))
         })
         .await

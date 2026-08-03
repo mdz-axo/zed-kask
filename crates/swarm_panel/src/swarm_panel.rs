@@ -9,9 +9,12 @@
 //!
 //! Layout mirrors `KaskExtensionsPage`: headline, search bar, filter toggle
 //! (All / Swarms / Agents), a uniform list of `MarketplaceCard`s, and an
-//! empty state that surfaces fetch errors. v1 is read-only — hire/fire and
-//! spend actions are gated behind the cost/consent gate (see
-//! `kask/docs/plans/abw-swarm-intelligence.md` §3.6).
+//! empty state that surfaces fetch errors. The panel wires lifecycle actions
+//! to `invoke_tool` calls: hire (cost/consent-gated), clone-to-local,
+//! push-to-cloud, remove-local, fire, delete, and publish (fermi v0.10.15 —
+//! preflight via `swarm_publish_checks`, then `swarm_publish_agent`, with an
+//! audited admin force-publish path). Spend actions are gated behind the
+//! cost/consent gate (see `kask/docs/plans/abw-swarm-intelligence.md` §3.6).
 //!
 //! **Steer mode** hosts a `ConversationView` scoped to the swarm MCP server,
 //! mirroring `KaskPanel`'s per-tab agent pattern. The operator asks the
@@ -588,6 +591,14 @@ pub struct SwarmPanel {
     /// In-flight consent prompt for a hire action: the agent being considered
     /// plus its pre-flight cost estimate. `Some` renders the consent banner.
     pending_hire: Option<PendingHire>,
+    /// In-flight publish prompt (fermi v0.10.15). `Some` renders the publish
+    /// banner — a Confirm path when `can_publish`, or a force-publish path with
+    /// a reason input when checks fail.
+    pending_publish: Option<PendingPublish>,
+    /// Single-line editor for the force-publish reason (audited to
+    /// `admin_bypass_events`). Only read when the operator confirms a force
+    /// publish.
+    publish_reason: Entity<Editor>,
     /// The workspace (swarm) id new hires target. Defaults to the first
     /// workspace once swarms load; selectable when there are several.
     selected_workspace: Option<String>,
@@ -659,6 +670,17 @@ struct PendingHire {
     max_credits: u32,
 }
 
+/// In-flight publish prompt (fermi v0.10.15). `swarm_publish_checks` returns
+/// `can_publish` plus the failing checks; when `can_publish` is false the banner
+/// shows the checks and a reason input for the admin force-publish path
+/// (`?force=true&reason=…`, audited to `admin_bypass_events`).
+#[derive(Clone, Debug)]
+struct PendingPublish {
+    agent_name: String,
+    can_publish: bool,
+    failing_checks: Vec<String>,
+}
+
 /// One agent row in a swarm's roster (drill-down view, item 4).
 #[derive(Clone, Debug)]
 struct SwarmRosterAgent {
@@ -706,6 +728,15 @@ impl SwarmPanel {
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
                 input.set_placeholder_text("Search agents and swarms...", window, cx);
+                input
+            });
+            let publish_reason = cx.new(|cx| {
+                let mut input = Editor::single_line(window, cx);
+                input.set_placeholder_text(
+                    "Reason for force-publish (audited to admin_bypass_events)",
+                    window,
+                    cx,
+                );
                 input
             });
             let subscriptions = [cx.subscribe(&query_editor, Self::on_query_change)];
@@ -789,6 +820,8 @@ impl SwarmPanel {
                 wallet_balance: None,
                 local_balance: None,
                 pending_hire: None,
+                pending_publish: None,
+                publish_reason,
                 selected_workspace: None,
                 spend_in_flight: None,
                 swarm_detail: None,
@@ -1610,6 +1643,147 @@ impl SwarmPanel {
         cx.notify();
     }
 
+    /// Preflight a publish — calls `swarm_publish_checks` (fermi v0.10.15) and
+    /// opens the publish banner. Read-only: spends nothing and mutates no ABW
+    /// state. When `can_publish` is false the banner shows the failing checks
+    /// and a reason input for the admin force-publish path.
+    fn begin_publish(&mut self, agent_name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        if self.pending_publish.take().is_some() {
+            log::info!("swarm-panel: replaced pending publish with a new request");
+        }
+        self.hire_error = None;
+        cx.spawn(async move |this, cx| {
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_publish_checks",
+                    json!({ "agent_name": agent_name }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(output) => {
+                        let Some(checks) = parse_tool_response(&output) else {
+                            this.hire_error = Some(
+                                format!("Unexpected publish-checks response: {output}").into(),
+                            );
+                            cx.notify();
+                            return;
+                        };
+                        match Self::parse_publish_checks(agent_name.clone(), &checks) {
+                            Ok(pending) => {
+                                this.pending_publish = Some(pending);
+                            }
+                            Err(msg) => {
+                                this.hire_error = Some(msg.into());
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        this.hire_error =
+                            Some(format!("Failed to preflight publish: {err}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Confirm the publish. When `can_publish` is true, publishes directly.
+    /// When false, reads the reason editor and force-publishes (admin path,
+    /// audited to `admin_bypass_events`); an empty reason is refused client-side
+    /// so the audit row is never blank.
+    fn confirm_publish(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_publish.clone() else {
+            return;
+        };
+        let agent_name = pending.agent_name.clone();
+        let (force, reason) = if pending.can_publish {
+            (false, String::new())
+        } else {
+            let reason = self.publish_reason.read(cx).text(cx);
+            if reason.trim().is_empty() {
+                self.hire_error = Some(
+                    "A reason is required to force-publish past failing checks \
+                     (audited to admin_bypass_events)."
+                        .into(),
+                );
+                cx.notify();
+                return;
+            }
+            (true, reason)
+        };
+        self.do_publish(agent_name, force, reason, cx);
+    }
+
+    /// Operator cancelled the publish — clear the banner without publishing.
+    fn cancel_publish(&mut self, cx: &mut Context<Self>) {
+        if self.pending_publish.take().is_some() {
+            log::info!("swarm-panel: operator cancelled publish (gate aborted)");
+        }
+        cx.notify();
+    }
+
+    /// Invoke `swarm_publish_agent` and re-fetch on success. Restores the
+    /// banner on error so the operator can retry without re-preflighting.
+    fn do_publish(
+        &mut self,
+        agent_name: String,
+        force: bool,
+        reason: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = kask_panel::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let pending = self.pending_publish.clone();
+        self.spend_in_flight = Some(format!("publish-{agent_name}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_publish_agent",
+                        json!({
+                            "agent_name": agent_name,
+                            "force": force,
+                            "reason": reason,
+                        }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            this.pending_publish = None;
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            // Restore the banner so the operator can retry from
+                            // the checks they already reviewed.
+                            this.pending_publish = pending;
+                            this.hire_error = Some(format!("Failed to publish: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;
         // Move focus to the target mode's first field — otherwise focus stays
@@ -2314,6 +2488,49 @@ impl SwarmPanel {
         Some((SharedString::from(label), color))
     }
 
+    /// Parse the unwrapped `swarm_publish_checks` response (fermi v0.10.15)
+    /// into a `PendingPublish`. The contract key is `can_publish` (bool); a
+    /// missing key is an `Err` rather than a silent false (guessing false would
+    /// route every publish through the force path). Failing checks are read
+    /// tolerantly from `checks` or `failing_checks`, each entry a string or an
+    /// object with a `check`/`name`/`message`/`description` text field — the
+    /// exact per-check shape is not part of the verified API surface, so we
+    /// extract whatever text we can without fabricating.
+    fn parse_publish_checks(
+        agent_name: String,
+        checks: &serde_json::Value,
+    ) -> Result<PendingPublish, String> {
+        let Some(can_publish) = checks.get("can_publish").and_then(|v| v.as_bool()) else {
+            return Err(format!("missing can_publish in publish-checks: {checks}"));
+        };
+        let failing_checks = checks
+            .get("checks")
+            .or_else(|| checks.get("failing_checks"))
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| {
+                        c.as_str()
+                            .map(String::from)
+                            .or_else(|| c.get("check").and_then(|v| v.as_str()).map(String::from))
+                            .or_else(|| c.get("name").and_then(|v| v.as_str()).map(String::from))
+                            .or_else(|| c.get("message").and_then(|v| v.as_str()).map(String::from))
+                            .or_else(|| {
+                                c.get("description")
+                                    .and_then(|v| v.as_str())
+                                    .map(String::from)
+                            })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(PendingPublish {
+            agent_name,
+            can_publish,
+            failing_checks,
+        })
+    }
+
     fn render_card(&mut self, entry: SwarmEntry, cx: &mut Context<Self>) -> MarketplaceCard {
         match entry {
             SwarmEntry::Agent(agent) => {
@@ -2329,11 +2546,16 @@ impl SwarmPanel {
                 // local counterpart of firing). Synced cards are kept — the
                 // sync link would be orphaned.
                 let show_remove = source == AgentSource::Local;
+                // Publish button: visible for agents with an ABW presence
+                // (Cloud or Synced). Local-only cards have no ABW agent to
+                // publish — push to cloud first.
+                let show_publish = source != AgentSource::Local;
                 // Pre-clone agent_name for each button closure that needs it.
                 let hire_name = agent_name.clone();
                 let clone_name = agent_name.clone();
                 let push_name = agent_name.clone();
                 let remove_name = agent_name.clone();
+                let publish_name = agent_name.clone();
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -2437,6 +2659,22 @@ impl SwarmPanel {
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.push_to_cloud(push_name.clone(), cx);
+                                            }),
+                                        ),
+                                    )
+                                })
+                                .when(show_publish, |this| {
+                                    this.child(
+                                        Button::new(
+                                            SharedString::from(format!("publish-{publish_name}")),
+                                            "Publish…",
+                                        )
+                                        .style(ButtonStyle::Subtle)
+                                        .label_size(LabelSize::XSmall)
+                                        .disabled(self.spend_in_flight.is_some())
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.begin_publish(publish_name.clone(), cx);
                                             }),
                                         ),
                                     )
@@ -2993,6 +3231,100 @@ impl SwarmPanel {
                 }),
         )
     }
+
+    /// The publish banner (fermi v0.10.15). Mirrors the consent banner: a
+    /// Confirm path when `can_publish`, or a force-publish path listing the
+    /// failing checks plus a reason input (audited to `admin_bypass_events`).
+    fn render_publish_banner(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let pending = self.pending_publish.clone()?;
+        let border = cx.theme().colors().border;
+        let warning = cx.theme().status().warning;
+        let busy = self.spend_in_flight.is_some();
+
+        let header = if pending.can_publish {
+            format!("Publish '{}' to the catalogue?", pending.agent_name)
+        } else {
+            format!(
+                "Cannot publish '{}' yet — fix the checks or force-publish as admin:",
+                pending.agent_name
+            )
+        };
+
+        Some(
+            v_flex()
+                .w_full()
+                .gap_2()
+                .p_3()
+                .rounded_sm()
+                .border_1()
+                .border_color(border)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(Label::new("Publish").color(Color::Default))
+                        .child(Label::new(header).size(LabelSize::Small).color(
+                            if pending.can_publish {
+                                Color::Muted
+                            } else {
+                                Color::Warning
+                            },
+                        )),
+                )
+                .when(!pending.can_publish, |this| {
+                    this.child(
+                        v_flex()
+                            .gap_0p5()
+                            .children(pending.failing_checks.iter().map(|c| {
+                                Label::new(format!("• {c}"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Warning)
+                            }))
+                            .child(
+                                div()
+                                    .border_1()
+                                    .border_color(border)
+                                    .rounded_sm()
+                                    .child(self.publish_reason.clone()),
+                            ),
+                    )
+                })
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(div().flex_1())
+                        .child(
+                            Button::new(
+                                "confirm-publish",
+                                if pending.can_publish {
+                                    "Confirm"
+                                } else {
+                                    "Force publish"
+                                },
+                            )
+                            .style(ButtonStyle::Filled)
+                            .label_size(LabelSize::XSmall)
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.confirm_publish(cx);
+                            })),
+                        )
+                        .child(
+                            Button::new("cancel-publish", "Cancel")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cancel_publish(cx);
+                                })),
+                        ),
+                )
+                .when(!pending.can_publish, |this| {
+                    this.child(div().w_full().h(px(2.)).bg(warning))
+                }),
+        )
+    }
 }
 
 impl Render for SwarmPanel {
@@ -3107,6 +3439,7 @@ impl Render for SwarmPanel {
                             ),
                     )
                     .children(self.render_consent_banner(cx))
+                    .children(self.render_publish_banner(cx))
                     // Hire-flow errors surface near the consent banner.
                     .when_some(self.hire_error.clone(), |this, err| {
                         this.child(
@@ -3447,6 +3780,11 @@ mod tests {
             "swarm_fire",
             "swarm_delete_agent",
             "swarm_delete_swarm",
+            // Publish (fermi v0.10.15): publish_checks preflights; publish_agent
+            // publishes to the catalogue (optionally force-published as admin
+            // with an audited reason). Wired to the panel's Publish button.
+            "swarm_publish_checks",
+            "swarm_publish_agent",
         ];
 
         // Pin the count so adding or removing a server tool without updating
@@ -3454,7 +3792,7 @@ mod tests {
         // of importing the server's canonical list.
         assert_eq!(
             expected_tools.len(),
-            28,
+            30,
             "tool count changed — update this list to match hkask-mcp-swarm #[tool] fns"
         );
 
@@ -3937,5 +4275,103 @@ mod tests {
             within_budget,
             "within-ceiling hire must be within_budget=true"
         );
+    }
+
+    // Publish-checks parse (fermi v0.10.15). Pins the `can_publish` contract
+    // key and the tolerant failing-checks extraction, so a server shape change
+    // surfaces here rather than silently routing every publish through the
+    // force path.
+    #[test]
+    fn parse_publish_checks_reads_can_publish_true() {
+        let checks = serde_json::json!({
+            "can_publish": true,
+            "checks": []
+        });
+        let pending =
+            SwarmPanel::parse_publish_checks("sensor_advisor".to_string(), &checks).expect("parse");
+        assert!(pending.can_publish);
+        assert!(pending.failing_checks.is_empty());
+        assert_eq!(pending.agent_name, "sensor_advisor");
+    }
+
+    #[test]
+    fn parse_publish_checks_collects_failing_checks_as_strings() {
+        let checks = serde_json::json!({
+            "can_publish": false,
+            "checks": ["missing description", "system_prompt empty"]
+        });
+        let pending =
+            SwarmPanel::parse_publish_checks("alpha".to_string(), &checks).expect("parse");
+        assert!(!pending.can_publish);
+        assert_eq!(
+            pending.failing_checks,
+            vec!["missing description", "system_prompt empty"]
+        );
+    }
+
+    #[test]
+    fn parse_publish_checks_extracts_object_check_text_fields() {
+        // The per-check object shape is not part of the verified API surface;
+        // tolerate `check`/`name`/`message`/`description` text fields.
+        let checks = serde_json::json!({
+            "can_publish": false,
+            "checks": [
+                {"check": "name"},
+                {"name": "desc"},
+                {"message": "tags"},
+                {"description": "prompt"},
+                {"unrelated": 7}
+            ]
+        });
+        let pending =
+            SwarmPanel::parse_publish_checks("alpha".to_string(), &checks).expect("parse");
+        assert_eq!(
+            pending.failing_checks,
+            vec!["name", "desc", "tags", "prompt"]
+        );
+    }
+
+    #[test]
+    fn parse_publish_checks_accepts_failing_checks_alias() {
+        // Some servers emit `failing_checks`; tolerate it as a fallback.
+        let checks = serde_json::json!({
+            "can_publish": false,
+            "failing_checks": ["no tags"]
+        });
+        let pending =
+            SwarmPanel::parse_publish_checks("alpha".to_string(), &checks).expect("parse");
+        assert_eq!(pending.failing_checks, vec!["no tags"]);
+    }
+
+    #[test]
+    fn parse_publish_checks_missing_can_publish_is_error() {
+        // A missing `can_publish` must be an error, not a silent false —
+        // guessing false would route every publish through the force path.
+        let checks = serde_json::json!({ "checks": [] });
+        let result = SwarmPanel::parse_publish_checks("alpha".to_string(), &checks);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn staleness_chip_none_without_timestamp() {
+        // Local cards carry no `updated_at` — never fabricate an age.
+        assert!(SwarmPanel::staleness_chip(&None).is_none());
+    }
+
+    #[test]
+    fn staleness_chip_none_on_unparseable_timestamp() {
+        assert!(SwarmPanel::staleness_chip(&Some("not-a-date".to_string())).is_none());
+    }
+
+    #[test]
+    fn staleness_chip_warns_past_30_days() {
+        // A timestamp 40 days in the past renders a Warning chip.
+        let old = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::days(40))
+            .expect("40 days ago")
+            .to_rfc3339();
+        let (label, color) = SwarmPanel::staleness_chip(&Some(old)).expect("chip");
+        assert_eq!(color, Color::Warning);
+        assert!(label.contains("40d ago"));
     }
 }

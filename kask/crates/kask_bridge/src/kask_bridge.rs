@@ -56,7 +56,7 @@ pub use settings::{
     KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
     KaskTrainingSettings, SwarmModeConfig,
 };
-pub use skill_executor::BridgeManifestExecutor;
+pub use skill_executor::{BridgeManifestExecutor, ProfileResolver};
 
 mod metacognition_bridge;
 pub use metacognition_bridge::BridgeMetacognitionProvider;

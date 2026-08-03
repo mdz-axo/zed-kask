@@ -52,6 +52,16 @@ const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
 /// future-wiring target; currently the executor warns but does not restrict.
 use hkask_types::Provenance as ManifestProvenance;
 
+/// Resolves whether a tool is enabled in the current agent profile.
+/// Used by `BridgeManifestExecutor` to enforce proposer/evaluator separation:
+/// a step declaring `profile: ask` must not have `terminal` available.
+/// The caller (main.rs) provides an implementation that reads from
+/// `AgentProfileSettings::is_tool_enabled`. If not wired, the bridge warns
+/// but does not enforce (the `.rules` "startup-failure signal" pattern).
+pub trait ProfileResolver: Send + Sync {
+    fn is_tool_enabled(&self, tool_name: &str) -> bool;
+}
+
 /// Bridge between zed's `SkillManifestExecutor` trait and hKask's `ManifestExecutor`.
 ///
 /// Holds an `InferencePort` (the bridge's `LanguageModelInferencePort` over zed's
@@ -70,6 +80,8 @@ pub struct BridgeManifestExecutor {
     /// tokio), so without this guard, any skill with a manifest would panic
     /// with "there is no reactor running".
     tokio_handle: tokio::runtime::Handle,
+    /// Profile resolver for proposer/evaluator separation enforcement.
+    profile_resolver: Option<Arc<dyn ProfileResolver>>,
 }
 
 impl BridgeManifestExecutor {
@@ -92,12 +104,22 @@ impl BridgeManifestExecutor {
             registry_manifests_dir,
             registry_templates_dir,
             tokio_handle,
+            profile_resolver: None,
         }
     }
 
     fn manifest_path(&self, skill_name: &str) -> PathBuf {
         self.registry_manifests_dir
             .join(format!("{skill_name}.yaml"))
+    }
+
+    /// Wire a profile resolver for proposer/evaluator separation enforcement.
+    /// When a manifest step declares `profile: ask`, the bridge checks
+    /// `resolver.is_tool_enabled("terminal")` and refuses if true.
+    #[must_use]
+    pub fn with_profile_resolver(mut self, resolver: Arc<dyn ProfileResolver>) -> Self {
+        self.profile_resolver = Some(resolver);
+        self
     }
 
     /// Resolve a skill's manifest YAML, preferring the embedded (build-time)
@@ -213,6 +235,39 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
                 manifest.category
             ));
+        }
+
+        // Profile enforcement (proposer/evaluator separation): if any step
+        // declares a `profile`, verify that `terminal` is NOT enabled.
+        let needs_profile_check = manifest.steps.iter().any(|s| s.profile.is_some());
+        if needs_profile_check {
+            match &self.profile_resolver {
+                Some(resolver) => {
+                    if resolver.is_tool_enabled("terminal") {
+                        let step = manifest.steps.iter()
+                            .find(|s| s.profile.is_some())
+                            .expect("checked above");
+                        let profile_name = step.profile.as_ref().expect("checked above");
+                        return Err(format!(
+                            "Step {} declares profile '{}' but the `terminal` tool is enabled. \
+                             This violates proposer/evaluator separation — a proposer with terminal \
+                             can evaluate its own tests (self-confirming loop anti-pattern). \
+                             Remediation: remove `terminal` from the '{}' profile in settings, \
+                             or bind this step to a profile without `terminal` (e.g. `ask`).",
+                            step.ordinal, profile_name, profile_name
+                        ));
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        target: "reg.skill.profile_enforcement",
+                        skill = skill_name,
+                        "Profile enforcement not wired — a step declares a profile but no ProfileResolver is set. \
+                         Proposer/evaluator separation is NOT enforced. \
+                         Remediation: wire a ProfileResolver via BridgeManifestExecutor::with_profile_resolver in main.rs.",
+                    );
+                }
+            }
         }
 
         // Layer A: enforce the manifest's declared `inputs` contract at the

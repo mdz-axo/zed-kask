@@ -2,14 +2,14 @@
 template_type: KnowAct
 contract:
   input:
-    spec_requirements: array
+    codegraph_entities: array
     tested_behaviors: array
     crate_scope: string
     collection_coherence: object
     bug_hunt_findings: array
     surviving_mutants: array
   output:
-    covered_requirements: array
+    covered_entities: array
     gaps: array
     deferrals: array
     coverage_percentage: float
@@ -20,9 +20,9 @@ contract:
   visibility: Public
 ---
 {# Template: tdd/tdd-gap-check.j2 #}
-{# Functional Role: KnowAct — Functional gap analysis: spec requirements vs tested behaviors #}
+{# Functional Role: KnowAct — Codegraph gap analysis: codegraph entities vs tested behaviors #}
 {# Implementation: Jinja2 prompt #}
-{# Produces: covered_requirements, gaps, deferrals, coverage_percentage, goal_principle_alignment, constraining_completeness, expectation_quality #}
+{# Produces: covered_entities, gaps, deferrals, coverage_percentage, goal_principle_alignment, constraining_completeness, expectation_quality #}
 
 [inference]
 temperature = 0.1
@@ -31,7 +31,7 @@ verbosity = "standard"
 max_tokens = 4096
 thinking_budget = "full"
 
-You are a TDD functional gap analysis agent. Compare specification requirements against tested behaviors to identify coverage gaps. Every requirement in scope must either have a tracer bullet or a documented deferral.
+You are a TDD codegraph gap analysis agent. Compare codegraph entities against tested behaviors to identify coverage gaps. Every codegraph entity in scope must either have a tracer bullet or a documented deferral.
 
 {% if crate_scope %}
 ## Crate
@@ -39,22 +39,22 @@ You are a TDD functional gap analysis agent. Compare specification requirements 
 **{{ crate_scope }}**
 {% endif %}
 
-{% if spec_requirements and spec_requirements|length > 0 %}
-## Specification Requirements (from MDS.md)
+{% if codegraph_entities and codegraph_entities|length > 0 %}
+## Codegraph Entities (from codegraph_query)
 
-These are the structured Spec objects from the specification system that this TDD session covers:
+These are the codegraph entities (functions, structs, traits) in scope for this TDD session, classified by Dublin Core (`dcterms:type` = SymbolKind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from the entity's graph position):
 
 ```json
-{{ spec_requirements | tojson }}
+{{ codegraph_entities | tojson }}
 ```
 {% else %}
-## Specification Requirements
+## Codegraph Entities
 
-No structured specification_requirements were provided (the SpecStore runtime is not yet implemented). Derive the functional requirements manually from `docs/architecture/core/MDS.md` — identify the relevant domain section, list its capabilities/grants, and match tested behaviors to them via their `// REQ:` tags and contract annotations.
+No codegraph_entities were provided. Query the codegraph via the `codegraph_query` MCP tool to enumerate symbols in the crate scope, then use `codegraph_traverse` to follow caller/callee/implementation edges and derive each entity's MDS category from its graph position (what crate/module it sits in). Match tested behaviors to entities via their `// ANCHOR: dcterms:identifier=<qualified_name>` tags and contract annotations.
 {% endif %}
 
 {% if collection_coherence %}
-## Collection Coherence (from MDS.md)
+## Collection Coherence (derived from codegraph entity positions)
 
 ```json
 {{ collection_coherence | tojson }}
@@ -62,11 +62,11 @@ No structured specification_requirements were provided (the SpecStore runtime is
 {% endif %}
 
 {% if bug_hunt_findings %}
-## Bug-Hunt Findings (spec blind spots)
+## Bug-Hunt Findings (codegraph blind spots)
 
 These are findings from a prior `bug-hunt` expedition. Findings NOT covered by
-a tested behavior below are spec blind spots — behaviors the spec never named
-(Weinberg: absent tests = quality threat). Each must become a new gap.
+a tested behavior below are codegraph blind spots — behaviors the code structure
+never surfaced (Weinberg: absent tests = quality threat). Each must become a new gap.
 
 ```json
 {{ bug_hunt_findings | tojson }}
@@ -78,8 +78,8 @@ a tested behavior below are spec blind spots — behaviors the spec never named
 
 These are mutants that survived the test suite (from a prior mutation-testing
 run via `harness-optimize` / `harness-evolve-cycle`). A surviving mutant on a
-spec-covered function means the universal test is missing or weak — the
-function has a tracer bullet but its contract is not verified across the input
+codegraph-covered entity means the universal test is missing or weak — the
+entity has a tracer bullet but its contract is not verified across the input
 space. Each is a gap recommending a proptest universal test (step 3 strengthen).
 
 ```json
@@ -97,15 +97,15 @@ These are the behaviors that have tracer bullets (tests) written for them:
 
 ## Analysis Rules
 
-1. **Match by functional requirement**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a functional requirement from MDS.md. If a behavior has no contract annotation, flag it as unanchored.
-2. **Gap = no tracer bullet for a requirement**: If a functional requirement has no matching tested behavior (no contract annotation matching it), it is a coverage gap.
-3. **Unanchored = no contract annotation on a behavior**: If a tested behavior has no contract annotation linking it to a functional requirement, it tests something not in the specification — flag it for review.
+1. **Match by codegraph entity**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a codegraph entity (`dcterms:identifier`). If a behavior has no contract annotation, flag it as unanchored.
+2. **Gap = no tracer bullet for a codegraph entity**: If a codegraph entity has no matching tested behavior (no contract annotation matching it), it is a coverage gap.
+3. **Unanchored = no contract annotation on a behavior**: If a tested behavior has no contract annotation linking it to a codegraph entity, it tests something not in the codegraph — flag it for review.
 4. **Priority is derived from MDS category**: P0 = Trust, P1 = Domain, Composition, P2 = Lifecycle, Curation.
-5. **Incomplete specs**: If `is_complete()` returns false for a spec, its unsatisfied `Criterion` items are additional coverage gaps. Note: `is_complete()` is not yet available (the SpecStore runtime is not yet implemented) — fall back to manual completeness checking against MDS.md §3 (Completeness Predicate), verifying each `criterion.satisfied` flag by inspection.
+5. **Codegraph coverage check**: Use `codegraph_query` and `codegraph_traverse` to verify each entity's coverage. An entity with no callers is orphaned (dead code or missing integration) — flag for review. An entity with no test is a coverage gap. Use `codegraph_impact` to assess blast radius — entities with high impact and no test are P0 gaps.
 6. **Deferrals go to OPEN_QUESTIONS.md**: Every deferred gap must have a documented rationale.
-7. **Probabilistic contracts**: If a spec requirement governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic function is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
-8. **Bug-hunt spec blind spots**: If `bug_hunt_findings` is provided, each finding with `verdict: BUG` (Tier 1) that is NOT covered by a tested behavior is a spec blind spot — a new gap. The spec missed a behavior. The finding's `summary` becomes the gap `requirement`; priority follows the finding's `severity` (CRITICAL→P0, HIGH→P1, MEDIUM→P2). A finding covered by an existing tracer bullet means the test is weak — recommend strengthening via proptest (step 3).
-9. **Surviving mutants**: If `surviving_mutants` is provided, each mutant on a spec-covered function is a gap — the function has a representative test but its contract is not verified across the input space. Recommend a proptest universal test (step 3 strengthen) targeting the mutant's function. A mutant on a function with NO tracer bullet is a P1 gap (the function is entirely untested).
+7. **Probabilistic contracts**: If a codegraph entity governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic entity is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
+8. **Bug-hunt codegraph blind spots**: If `bug_hunt_findings` is provided, each finding with `verdict: BUG` (Tier 1) that is NOT covered by a tested behavior is a codegraph blind spot — a new gap. The codegraph missed a behavior. The finding's `summary` becomes the gap `requirement`; priority follows the finding's `severity` (CRITICAL→P0, HIGH→P1, MEDIUM→P2). A finding covered by an existing tracer bullet means the test is weak — recommend strengthening via proptest (step 3).
+9. **Surviving mutants**: If `surviving_mutants` is provided, each mutant on a codegraph-covered entity is a gap — the entity has a representative test but its contract is not verified across the input space. Recommend a proptest universal test (step 3 strengthen) targeting the mutant's entity. A mutant on an entity with NO tracer bullet is a P1 gap (the entity is entirely untested).
 
 ### Contract Quality Analysis
 
@@ -117,7 +117,7 @@ Beyond coverage, verify that each contract's layers (per Contract Architecture) 
    - **2 (functional)**: `expect:` describes what the user needs, not how (e.g., `expect: "I can check remaining gas before execution" [P9]`).
    - **3 (anchored)**: `expect:` describes what the user functionally needs AND names the motivating principle with clear rationale — the full traceability chain is intact.
 
-9. **Goal principle correctness**: Does the `[P{N}]` on `expect:` match the spec's declared goal principle? Does the principle's semantic guarantee actually justify this contract? A mismatch is a gap — correct the principle annotation. Triple: `Contract → hasGoalPrinciple → WRONG_Principle`.
+9. **Goal principle correctness**: Does the `[P{N}]` on `expect:` match the entity's declared goal principle? Does the principle's semantic guarantee actually justify this contract? A mismatch is a gap — correct the principle annotation. Triple: `Contract → hasGoalPrinciple → WRONG_Principle`.
 
 10. **Constraining principle completeness**: Are all applicable constraining principles declared? To check: for each of P1–P12, ask "would implementing this contract without this principle violate it?" If yes, the principle should appear as `[P{N}] Constraining:`. Missing constraints are coverage gaps. Triple: `Contract → hasConstrainingPrinciple → MISSING`.
 
@@ -127,11 +127,11 @@ Beyond coverage, verify that each contract's layers (per Contract Architecture) 
 
 ### Goal Principle Alignment Cross-Reference
 
-For each covered requirement, verify bi-directional contract anchoring against the MDS category defaults from `tdd-plan.j2`:
+For each covered entity, verify bi-directional contract anchoring against the MDS category defaults from `tdd-plan.j2`:
 
 13. **MDS category alignment**: Check whether the contract's `[P{N}]` goal principle matches the MDS category's default goal principle. A Trust category contract without P4 anchoring is misaligned. Flag mismatches with rationale explaining why the deviation is acceptable or requiring correction.
 
-14. **Magna Carta completeness**: For each covered requirement, list which Magna Carta principles (P1-P4) are missing from `[P{N}] Constraining:` annotations. A Trust category contract without `[P4] Constraining` is a P0 gap.
+14. **Magna Carta completeness**: For each covered entity, list which Magna Carta principles (P1-P4) are missing from `[P{N}] Constraining:` annotations. A Trust category contract without `[P4] Constraining` is a P0 gap.
 
 15. **Expectation quality scoring**: Score each contract's `expect:` field on the 0-3 scale defined above. Contracts scoring 0 or 1 must appear as gaps.
 
@@ -149,14 +149,17 @@ Respond with a JSON object:
 
 ```json
 {
-  "covered_requirements": [
+  "covered_entities": [
     {
-      "fr_reference": "Fail-closed capability checker",
+      "entity_identifier": "hkask_mcp::runtime::capabilities_match",
+      "dcterms_type": "function",
+      "dcterms_source": "hkask-mcp/src/runtime.rs:142",
+      "dcterms_subject": "Trust",
       "requirement": "Fail-closed capability checker",
       "test_name": "capability_check_denies_when_no_checker",
       "seam": "capabilities_match (hkask-mcp/src/runtime.rs)",
       "priority": "P0",
-      "is_complete": true,
+      "codegraph_covered": true,
       "is_probabilistic": false,
       "has_prob_contract": null,
       "contract_quality": {
@@ -170,39 +173,45 @@ Respond with a JSON object:
   ],
   "gaps": [
     {
-      "fr_reference": "Encrypted storage at rest",
+      "entity_identifier": "hkask_storage::encrypted_store",
+      "dcterms_type": "struct",
+      "dcterms_source": "hkask-storage/src/encrypted_store.rs:1",
+      "dcterms_subject": "Trust",
       "requirement": "Encrypted storage at rest",
       "priority": "P0",
       "recommendation": "tracer-bullet",
-      "rationale": "P0 security requirement must have test coverage",
-      "unsatisfied_criteria": ["Criterion descriptions from GoalSpec"],
+      "rationale": "P0 security entity must have test coverage",
+      "untested_edges": ["codegraph edges not exercised by tests"],
       "gap_type": "missing_coverage|missing_user_expectation|wrong_goal_principle|missing_constraint|missing_goal_principle_tag|missing_constraining_annotation|contract_annotation_mismatch|constraint_not_enforced"
     }
   ],
   "deferrals": [
     {
-      "fr_reference": "Algedonic alerting threshold configuration",
+      "entity_identifier": "hkask_regulation::algedonic::threshold_config",
+      "dcterms_type": "function",
+      "dcterms_source": "hkask-regulation/src/algedonic.rs:88",
+      "dcterms_subject": "Lifecycle",
       "requirement": "Algedonic alerting threshold configuration",
       "priority": "P2",
       "rationale": "Deferred: alert thresholds not configurable in current sprint",
-      "open_questions_entry": "fr_reference: Algedonic alerting threshold configuration — deferred pending configurable threshold implementation"
+      "open_questions_entry": "entity_identifier: hkask_regulation::algedonic::threshold_config — deferred pending configurable threshold implementation"
     }
   ],
   "coverage_percentage": 85.7,
   "goal_principle_alignment": [
     {
-      "fr_reference": "P9-regulation-energy-budget-can-proceed",
-      "mds_category": "Trust (REQ-TRU)",
+      "entity_identifier": "hkask_regulation::energy_budget::can_proceed",
+      "mds_category": "Trust",
       "contract_goal_principle": "P9",
       "mds_default_goal_principle": "P4 (Clear Boundaries)",
       "aligned": false,
-      "rationale": "Contract uses P9 (Homeostatic Self-Regulation) for a Trust category requirement. P9 is valid for observability aspects of trust but P4 (Clear Boundaries) is the primary MDS default. Deviation acceptable because contract directly addresses energy budgeting self-regulation."
+      "rationale": "Contract uses P9 (Homeostatic Self-Regulation) for a Trust category entity. P9 is valid for observability aspects of trust but P4 (Clear Boundaries) is the primary MDS default. Deviation acceptable because contract directly addresses energy budgeting self-regulation."
     }
   ],
   "constraining_completeness": [
     {
-      "fr_reference": "P9-regulation-energy-budget-can-proceed",
-      "mds_category": "Trust (REQ-TRU)",
+      "entity_identifier": "hkask_regulation::energy_budget::can_proceed",
+      "mds_category": "Trust",
       "declared_constraints": ["P4"],
       "missing_magna_carta": ["P1", "P2"],
       "rationale": "P1 (User Sovereignty) missing — should constrain 'who can check gas?' P2 (Affirmative Consent) missing — should constrain 'who approved this budget?' Magna Carta principle P4 is declared but P1 and P2 are not."
@@ -210,7 +219,7 @@ Respond with a JSON object:
   ],
   "expectation_quality": [
     {
-      "fr_reference": "P9-regulation-energy-budget-can-proceed",
+      "entity_identifier": "hkask_regulation::energy_budget::can_proceed",
       "score": 3,
       "assessment": "anchored",
       "expect_text": "I can check whether an agent has enough gas before executing",
@@ -220,17 +229,17 @@ Respond with a JSON object:
 }
 ```
 
-`coverage_percentage` = (covered requirements / total requirements) × 100.
+`coverage_percentage` = (covered entities / total entities) × 100.
 
 ## Constraints
 
-- Every functional requirement in `spec_requirements` must appear in exactly one of: `covered_requirements`, `gaps`, or `deferrals`.
+- Every codegraph entity in `codegraph_entities` must appear in exactly one of: `covered_entities`, `gaps`, or `deferrals`.
 - P0 gaps MUST recommend `tracer-bullet` (never `defer`).
 - P1 gaps SHOULD recommend `tracer-bullet`; deferrals require explicit rationale.
 - P2+ gaps MAY recommend `defer-to-OPEN_QUESTIONS`.
 - Unanchored behaviors (no contract annotation) must be flagged in the analysis.
-- Specs where `is_complete()` is false have unsatisfied `Criterion` items that should appear as gaps. Note: `is_complete()` is not yet available (SpecStore not implemented) — check completeness manually against MDS.md §3.
-- Check overall collection coherence and missing MDS categories against MDS.md.
+- Entities with no callers (orphaned, via `codegraph_traverse`) or no test are coverage gaps — use `codegraph_query` and `codegraph_traverse` to verify.
+- Check overall collection coherence and missing MDS categories derived from codegraph entity positions.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

@@ -224,6 +224,13 @@ impl AlertEmailSink for CuratorAlertEmailSink {
 mod tests {
     use super::*;
 
+    // These tests mutate process-global env vars (HKASK_ALERT_EMAIL,
+    // HKASK_SMTP_USERNAME, …). Parallel execution races a `set_var` in one
+    // test against a `remove_var` in another, producing flaky verdicts. The
+    // lock serializes only the env-mutating tests; `try_from_settings_*`
+    // and `email_mode_display` touch no env and run unlocked.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn email_mode_display() {
         assert_eq!(EmailMode::Alert.to_string(), "alert");
@@ -234,6 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_email_returns_not_configured_when_env_missing() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         unsafe {
             std::env::remove_var("HKASK_MXROUTE_SERVER");
             std::env::remove_var("HKASK_SMTP_USERNAME");
@@ -248,6 +256,7 @@ mod tests {
         // Env vars are not set in the test environment (and the
         // send_email_returns_not_configured test above removes them), so
         // try_from_env should return None.
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         unsafe {
             std::env::remove_var("HKASK_ALERT_EMAIL");
             std::env::remove_var("HKASK_SMTP_USERNAME");
@@ -258,6 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn try_from_env_uses_alert_email_when_set() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         unsafe {
             std::env::set_var("HKASK_ALERT_EMAIL", "ops@example.com");
         }
@@ -271,6 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn try_from_env_falls_back_to_smtp_username() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         unsafe {
             std::env::remove_var("HKASK_ALERT_EMAIL");
             std::env::set_var("HKASK_SMTP_USERNAME", "curator@example.com");
