@@ -1250,8 +1250,95 @@ changed and the validation that passed.
   is omitted) — forward-compatible with all current callers. C8 only changes
   the *weighting* of alignment (still in [0,1]); both are forward-compatible.
 - The `{{`/`}}` brace escape in the Steer prompt's JSON example was replaced
-  with a brace-free phrasing ("an object whose `pass` field is true or false")
-  after the Rust `format!` lexer rejected `{{"pass": true}}` in that inline-
-  backtick context. The existing `{{\"mode\": ...}}` example (in a ```json
-  fence, with real format args) still compiles. No semantic change to the
-  curator's instructions.
+  with a brace-free phrasing (an object whose pass field is true or false)
+  after the Rust format! lexer rejected `{{"pass": true}}` in that inline-
+  backtick context. The existing `{{"mode": ...}}` example (in a json fence,
+  with real format args) still compiles. No semantic change to the curator's
+  instructions.
+
+### C1/C3/C7 — deterministic accumulators + second-order monitor (2026-08-03)
+
+- Files: kask/crates/hkask-templates/src/compute.rs — two new deterministic
+  compute_ref primitives. swarm.converge_accumulate maintains three
+  accumulators across LOOP iterations (an LLM template cannot reliably
+  maintain a running set/sum): iteration_log (per-iteration d/s/deficit_class/
+  decision_action), failed_edits (C3 anti-loop set, recorded when d_delta <= 0
+  and s did not improve), and influence_scores (C7 per-agent_type running sum of
+  d_delta). Plus three helper fns centralizing fragile field extraction in
+  tested Rust. swarm.second_order_monitor reads iteration_log and emits two S1
+  §5.4 signals: reasoning_loop (same deficit+action for loop_window iterations
+  with no d improvement) and sensor_truth_divergence (d non-increasing while s
+  non-increasing over >=3 measured points — the §5 Go See diagnosis
+  automated). 8 unit tests pin the primitives.
+- kask/registry/manifests/swarm-intelligence.yaml — two new CONVERGE compute
+  steps (ordinals 7-8) after kata.convergence_check; the loop step (ordinal 9)
+  threads iteration_log/failed_edits/influence_scores/second_order/blame_count
+  back into context. ORIENT (step 2) and DECIDE (step 3) input_mapping bind
+  the carried accumulators; CHECK (step 5) binds agent_at_fault (from
+  prev_step_2_result) and blame_count.
+- Validation: cargo test -p hkask-templates --lib swarm → 8 passed;
+  manifest_load_validation + template_rendering pass; clippy clean.
+
+### C5 — deterministic fault attribution (2026-08-03)
+
+- Files: swarm-orient.j2 — contract gains prior_act input + agent_at_fault
+  output; a Step 4 applies the deterministic priority rule (terminal-output
+  failure -> earliest broken tool call -> failed skill -> guard redaction ->
+  tie-break by delegation order). swarm-check.j2 — contract gains
+  blame_count/agent_at_fault inputs + blame_count output; Step 7 aggregates
+  blame_count[agent] += 1 across iterations (argmax is agent_sel, the C6
+  candidate). The manifest threads agent_at_fault from prev_step_2_result and
+  blame_count through the loop.
+- Behavior: fault attribution is a deterministic rule over the delegate trace
+  (JudgeFlow with the LLM Judge replaced by a rule — the divergence IS the
+  point per Constraint 3). ORIENT runs before ACT, so it attributes fault from
+  the prior iteration's ACT trace (prev_step_4_result, snapshotted by the
+  executor at the loop step); absent on iteration 1.
+
+### C6 — reconfigure_agent DECIDE action + tool (2026-08-03)
+
+- Files:
+  - kask/mcp-servers/hkask-mcp-swarm/src/local_registry.rs —
+    LocalAgentRegistry::write_card (the enforcement point): re-sanitizes the
+    id, path-contains against the registry root, writes agent_card.json, and
+    reloads. 2 unit tests pin it (preserves cloud_id/agent_type/dependencies;
+    rejects an unsafe id).
+  - kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs — new tool
+    swarm_reconfigure_local_agent (tool 31) that updates ONLY the system_prompt
+    (and optionally model/mcp_tools/skills when non-empty), preserving
+    agent_id/agent_type/description/accepts/produces/dependencies/cloud_id,
+    via write_card. The tool-surface test + module doc updated (30 -> 31).
+  - swarm-decide.j2 — new reconfigure_agent move type (when
+    orientation.agent_at_fault is non-null): seed swarm_generate_prompt with
+    the failure log -> write via swarm_reconfigure_local_agent -> reload.
+    Reconfigure preferred over fire when the blamed type covers a required
+    transform.
+- Validation: cargo test -p hkask-mcp-swarm → 113 passed (incl. the 2
+  write_card tests + the renamed tool-surface test); clippy clean.
+
+### C2 — Go See scheduled loop (2026-08-03)
+
+- Files:
+  - swarm-sense.j2 — consumes prior_iteration.second_order; when the
+    monitor's recommendation is go_see, surfaces a Go See directive in
+    next_focus_hint with the §5 checklist (is s filtering task-failure truth?
+    are .rules priors still verified? are the Steer guides effective?).
+  - crates/swarm_panel/src/swarm_panel.rs — steer_system_prompt gains a Go See
+    + second-order-monitor paragraph (C1/C2) and names the reconfigure tool.
+    Also fixed a pre-existing build break: the C0 edit had dropped the closing
+    quote of the format! string, leaving swarm_panel uncompilable at HEAD;
+    restored it. The Local-tools list updated 8 -> 11 to match the 31-tool
+    surface.
+- Validation: cargo test -p swarm_panel -- steer → 8 passed (incl. new
+  steer_prompt_describes_go_see_loop); clippy clean.
+
+### Notes (2026-08-03)
+
+- The accumulators (C1/C3/C7) are compute primitives, not template state — an
+  LLM template cannot reliably maintain a running set/sum across LOOP
+  iterations. This realizes the plan's deterministic requirement at the
+  enforcement-point level (the .rules advertised-invariants trap).
+- The Steer prompt build break (dropped closing quote) predated this session —
+  the C0 commit left swarm_panel uncompilable; the prior session's validation
+  claim did not hold. Fixed here as part of C2 (the Steer prompt is C2's
+  surface).

@@ -16,10 +16,6 @@ use hkask_types::document::{Block, DocStructure, Page};
 pub struct DocxBackend;
 
 impl DocumentBackend for DocxBackend {
-    fn format(&self) -> &'static str {
-        "docx"
-    }
-
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError> {
         let bytes = std::fs::read(path).map_err(|source| BackendError::Read {
             path: path.to_string(),
@@ -202,11 +198,6 @@ fn table_cell_text(cell: &docx_rs::TableCell) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn format_name() {
-        assert_eq!(DocxBackend.format(), "docx");
-    }
 
     #[test]
     fn heading_level_from_title() {

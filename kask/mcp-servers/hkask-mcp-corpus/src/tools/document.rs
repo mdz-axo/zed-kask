@@ -78,7 +78,29 @@ impl CorpusServer {
                         }
                     };
 
-                    let (text, word_count, outcome) = self.run_ocr_pipeline(vec![image], &model).await;
+                    let page_images = vec![image];
+                    let expected = page_images.len();
+                    let emb_model = default_embedding_model();
+                    let emb: Option<(&dyn hkask_types::InferencePort, &str)> =
+                        Some((&self.inference_router, emb_model));
+                    let outcome = pipeline::run_pipeline(
+                        page_images,
+                        expected,
+                        Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
+                        &self.ocr_thresholds,
+                        Some(&model),
+                        emb,
+                        Some(ocr_concurrency()),
+                    )
+                    .await;
+                    self.persist_pipeline_outcome(&outcome).await;
+                    let text = outcome
+                        .results
+                        .iter()
+                        .map(|r| r.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    let word_count = text.split_whitespace().count();
                     let result = serde_json::json!({
                         "format": format, "path": path, "method": "ocr_pipeline",
                         "model": model, "text": text, "word_count": word_count,

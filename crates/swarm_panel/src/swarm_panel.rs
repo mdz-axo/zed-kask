@@ -124,8 +124,9 @@ fn steer_system_prompt(
          \n\
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
          `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \
-         `swarm_delegate_local`, `swarm_clone_to_local`, `swarm_remove_local`, \
-         `swarm_push_to_cloud`. These run on the local \
+         `swarm_delegate_local`, `swarm_fanout_local`, `swarm_clone_to_local`, \
+         `swarm_remove_local`, `swarm_create_local_agent`, \
+         `swarm_reconfigure_local_agent`, `swarm_push_to_cloud`. These run on the local \
          substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
@@ -191,7 +192,21 @@ fn steer_system_prompt(
          oracle, OMIT `task_success` — the skill falls back to the three\n\
          swarm-health axes and the human Go See loop covers the gap. Do NOT\n\
          use an LLM to score the output as `task_success`; the judge must be\n\
-         deterministic (the cybernetic plan's determinism constraint).
+         deterministic (the cybernetic plan's determinism constraint).\n\
+         \n\
+         Cybernetic Swarm Plan — second-order monitor + Go See (C1/C2). The\n\
+         skill's CONVERGE runs a deterministic second-order monitor (C1) over\n\
+         the iteration log: it flags reasoning loops (same deficit+action\n\
+         repeating with no d improvement) and sensor-truth divergence (d\n\
+         improving while s declines — the swarm looks healthier but fails more\n\
+         tasks). When the monitor recommends go_see, surface a Go See\n\
+         directive (C2): the operator should descend this Steer conversation\n\
+         with the section 5 checklist — is s filtering task-failure truth, are\n\
+         .rules priors still verified against the codebase, are these Steer\n\
+         guides having the intended effect. DECIDE also applies a failed-edit\n\
+         memory (C3), per-agent-type influence guards (C7), and a\n\
+         reconfigure_agent action (C6) via swarm_reconfigure_local_agent when\n\
+         ORIENT attributes fault (C5).\n"
     )
     .into()
 }
@@ -3681,8 +3696,11 @@ mod tests {
             "swarm_local_history",
             "swarm_fund_local",
             "swarm_delegate_local",
+            "swarm_fanout_local",
             "swarm_clone_to_local",
             "swarm_remove_local",
+            "swarm_create_local_agent",
+            "swarm_reconfigure_local_agent",
             "swarm_push_to_cloud",
         ] {
             assert!(
@@ -3768,6 +3786,30 @@ mod tests {
         assert!(
             prompt.contains("OMIT"),
             "steer prompt must tell the curator to OMIT task_success for open tasks"
+        );
+    }
+
+    // Cybernetic Swarm Plan C2: the Steer prompt must name the Go See cadence
+    // and the second-order monitor so the operator knows the human-check loop
+    // is event-driven (on sensor-truth divergence) and what the checklist is.
+    #[test]
+    fn steer_prompt_describes_go_see_loop() {
+        let prompt = steer_system_prompt(Some("ws_test"), kask_bridge::SwarmModeConfig::Local);
+        assert!(
+            prompt.contains("Go See"),
+            "steer prompt must name the Go See loop (C2)"
+        );
+        assert!(
+            prompt.contains("second-order monitor"),
+            "steer prompt must name the deterministic second-order monitor (C1)"
+        );
+        assert!(
+            prompt.contains("go_see"),
+            "steer prompt must name the go_see recommendation that triggers the loop"
+        );
+        assert!(
+            prompt.contains("swarm_reconfigure_local_agent"),
+            "steer prompt must name the reconfigure tool (C6)"
         );
     }
 

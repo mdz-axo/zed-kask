@@ -9,10 +9,6 @@ use hkask_types::document::{Block, DocStructure, Page};
 pub struct XlsxBackend;
 
 impl DocumentBackend for XlsxBackend {
-    fn format(&self) -> &'static str {
-        "xlsx"
-    }
-
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError> {
         let mut workbook = open_workbook_auto(path).map_err(|e| BackendError::Parse {
             format: "xlsx",
@@ -80,11 +76,6 @@ fn cell_to_string(cell: &Data) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn format_name() {
-        assert_eq!(XlsxBackend.format(), "xlsx");
-    }
 
     #[test]
     fn cell_to_string_float_whole() {

@@ -10,10 +10,6 @@ use pptx_to_md::PptxContainer;
 pub struct PptxBackend;
 
 impl DocumentBackend for PptxBackend {
-    fn format(&self) -> &'static str {
-        "pptx"
-    }
-
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError> {
         let mut container =
             PptxContainer::open(std::path::Path::new(path)).map_err(|e| BackendError::Parse {
@@ -45,15 +41,5 @@ impl DocumentBackend for PptxBackend {
             });
         }
         Ok(markdown_to_structure(&markdown, "pptx"))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_name() {
-        assert_eq!(PptxBackend.format(), "pptx");
     }
 }

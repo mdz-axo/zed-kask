@@ -77,9 +77,6 @@ classifier:
     Quality flags: clear, actionable, verbose, vague, well_structured,
     needs_example, precise, accessible, authoritative, outdated.
 
-  base_url: https://api.deepinfra.com/v1/openai/chat/completions
-  api_key_env: DEEPINFRA_API_KEY
-
   temperature: 0.0
   max_tokens: 300
 

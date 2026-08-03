@@ -27,9 +27,6 @@ classifier:
      "affected_file":"relative path","affected_line":0,
      "is_flake":false,"suggested_fuzz_target":"description"}
 
-  base_url: https://api.deepinfra.com/v1/openai/chat/completions
-  api_key_env: DEEPINFRA_API_KEY
-
   temperature: 0.0
   max_tokens: 500
 

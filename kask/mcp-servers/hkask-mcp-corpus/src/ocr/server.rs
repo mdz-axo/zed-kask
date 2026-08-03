@@ -6,7 +6,7 @@
 
 use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
 use crate::ocr::llm_ocr::LlmOcrExecutor;
-use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
+use crate::ocr::pipeline::{OcrError, OcrExecutor};
 use crate::ocr::tesseract::TesseractExecutor;
 use crate::ocr::{OcrBackend, OcrResult};
 use crate::*;
@@ -61,45 +61,6 @@ impl OcrExecutor for PipelineExecutor {
 }
 
 impl CorpusServer {
-    /// Run the OCR pipeline on page images and return joined text + outcome.
-    ///
-    /// Consolidates 3 duplicated invocation blocks in `corpus_convert`
-    /// (Candidate 1 — architectural deepening). Handles embedding router
-    /// construction, pipeline execution, persistence, and text joining.
-    pub async fn run_ocr_pipeline(
-        &self,
-        page_images: Vec<image::DynamicImage>,
-        model: &str,
-    ) -> (String, usize, crate::ocr::PipelineOutcome) {
-        let expected = page_images.len();
-        let emb_model = default_embedding_model();
-        let emb: Option<(&dyn hkask_types::InferencePort, &str)> =
-            Some((&self.inference_router, emb_model));
-
-        let outcome = pipeline::run_pipeline(
-            page_images,
-            expected,
-            Arc::clone(&self.pipeline_executor) as Arc<dyn OcrExecutor>,
-            &self.ocr_thresholds,
-            Some(model),
-            emb,
-            Some(ocr_concurrency()),
-        )
-        .await;
-
-        self.persist_pipeline_outcome(&outcome).await;
-
-        let text = outcome
-            .results
-            .iter()
-            .map(|r| r.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let word_count = text.split_whitespace().count();
-
-        (text, word_count, outcome)
-    }
-
     /// Persist pipeline outcome for Regulation observability.
     pub async fn persist_pipeline_outcome(&self, outcome: &crate::ocr::PipelineOutcome) {
         let data = serde_json::json!({

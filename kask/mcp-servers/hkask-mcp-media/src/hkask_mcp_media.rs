@@ -164,10 +164,10 @@ fn estimate_rjoule(tool: &str, params: &hkask_types::MediaGenerateParams) -> f64
 /// or when the remaining budget covers the estimate; returns an `McpToolError`
 /// when the budget is exhausted.
 ///
-/// The estimate is charged *before* dispatch so a concurrent burst cannot
-/// all pass the gate and then overspend. A rejected request keeps the charge
-/// recorded (conservative — may over-count, never under-counts). This is the
-/// enforcement point for the rJoule gate; `MediaServer::charge_budget` is a
+/// The estimate is charged only when the remaining budget covers it; a
+/// rejected request consumes no budget (check-before-charge under the mutex,
+/// so concurrent bursts serialize and cannot all pass then overspend). This is
+/// the enforcement point for the rJoule gate; `MediaServer::charge_budget` is a
 /// thin delegate so the gate can be tested without constructing a full server.
 async fn charge_budget_gate(
     budget: Option<&Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
@@ -449,8 +449,8 @@ mod charge_budget_gate_tests {
 
     #[tokio::test]
     async fn under_budget_charges_and_passes() {
-        // cap 1.0 rJoule; one image costs 0.05 → passes, leaves 0.95.
-        let budget = tracker(1.0 as u32);
+        // cap 1 rJoule; one image costs 0.05 → passes, leaves 0.95.
+        let budget = tracker(1);
         let res = charge_budget_gate(
             Some(&budget),
             "generate_image",
@@ -462,8 +462,9 @@ mod charge_budget_gate_tests {
     }
 
     #[tokio::test]
-    async fn exhausted_budget_rejects() {
-        // cap 1 rJoule; generate a 10-second video (cost 10.0) → rejected.
+    async fn exhausted_budget_rejects_without_charging() {
+        // cap 1 rJoule; generate a 10-second video (cost 10.0) → rejected, and
+        // a rejected call consumes no budget (check-before-charge).
         let budget = tracker(1);
         let res = charge_budget_gate(
             Some(&budget),
@@ -475,8 +476,14 @@ mod charge_budget_gate_tests {
         )
         .await;
         assert!(res.is_err(), "over-budget call must be rejected");
-        // The rejection keeps the charge recorded (conservative over-count).
-        assert!(budget.lock().await.rjoule_used() > 0.0);
+        assert!(
+            (budget.lock().await.rjoule_used() - 0.0).abs() < 1e-9,
+            "rejected call must not consume budget"
+        );
+        assert!(
+            (budget.lock().await.remaining_rjoule() - 1.0).abs() < 1e-9,
+            "full budget remains after rejection"
+        );
     }
 
     #[tokio::test]

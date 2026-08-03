@@ -25,10 +25,6 @@ use hkask_types::document::{Block, DocStructure, Page};
 /// Implementations are format-specific. The caller selects the backend based
 /// on file extension (see `convert::detect_format`).
 pub trait DocumentBackend {
-    /// Format name this backend handles (e.g., "docx", "xlsx", "pptx").
-    #[allow(dead_code)]
-    fn format(&self) -> &'static str;
-
     /// Parse the file at `path` into a `DocStructure`.
     fn parse(&self, path: &str) -> Result<DocStructure, BackendError>;
 }

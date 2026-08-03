@@ -90,10 +90,6 @@ pub struct ClassifierDef {
     pub timeout_secs: u64,
     pub system_prompt: String,
     #[serde(default)]
-    pub base_url: String,
-    #[serde(default)]
-    pub api_key_env: String,
-    #[serde(default)]
     pub temperature: f64,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
@@ -121,8 +117,6 @@ impl Default for ClassifierDef {
             concurrency: 1,
             timeout_secs: 30,
             system_prompt: String::new(),
-            base_url: String::new(),
-            api_key_env: String::new(),
             temperature: 0.0,
             max_tokens: 15,
             fallback_category: "Statement".to_string(),
@@ -184,8 +178,6 @@ pub fn load_classifier_config(
 #[derive(Clone)]
 pub struct ClassifierConfig {
     pub model: String,
-    pub api_key: String,
-    pub base_url: String,
     pub system_prompt: String,
     pub concurrency: usize,
     pub timeout: Duration,
@@ -198,14 +190,8 @@ pub struct ClassifierConfig {
 }
 
 impl ClassifierConfig {
-    /// Build from a ClassifierDef, resolving API key from environment.
-    /// Auto-derives token costs from provider name when not specified in YAML.
+    /// Build from a ClassifierDef, resolving the canonical model and auto-deriving token costs.
     pub fn from_def(def: &ClassifierDef) -> Self {
-        let api_key = if def.api_key_env.is_empty() {
-            String::new()
-        } else {
-            std::env::var(&def.api_key_env).unwrap_or_default()
-        };
         // Auto-derive pricing from provider if not explicitly configured
         let (input_nj, output_nj) =
             if def.cost_input_nj_per_token == 0 && def.cost_output_nj_per_token == 0 {
@@ -226,12 +212,6 @@ impl ClassifierConfig {
         };
         Self {
             model,
-            api_key,
-            base_url: if def.base_url.is_empty() {
-                "https://api.deepinfra.com/v1/openai/chat/completions".to_string()
-            } else {
-                def.base_url.clone()
-            },
             system_prompt: def.system_prompt.clone(),
             concurrency: def.concurrency,
             timeout: Duration::from_secs(def.timeout_secs),
