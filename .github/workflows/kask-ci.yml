@@ -160,4 +160,4 @@ jobs:
         with:
           tool: cargo-machete
       - name: Check for unused dependencies
-        run: cargo machete --workspace
+        run: cargo machete
