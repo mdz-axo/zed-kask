@@ -13,8 +13,6 @@ manifest:
   editor: hKask-Administrator
   visibility: Public
 
-# Metacognition Template Reference
-# metacognition_template: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema) registry/templates/curator-metacognition.yaml
 
 # Energy Budget Configuration
 gas:
@@ -103,36 +101,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 100
   escalation_target: hKask-Administrator
-
-# Bot Report Integration
-# bot_reporting: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   ingest_from:
-#     - regulation-curator-bot
-#     - memory-curator-bot
-#     - inference-curator-bot
-#     - mcp-dispatch-bot
-#     # - ensemble-curator-bot  # Deferred (2026-06-14)
-#     - git-curator-bot
-#     - registry-dispatch-bot
-#   synthesis_interval: hourly
-#   alert_triggers:
-#     - variety_deficit_gt_100
-#     - bot_coordination_failure
-#     - system_degradation_detected
-#     - gas_budget_critical
-
-# Administrator Coordination
-# administrator: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   notification_channels:
-#     - kask_chat
-#     - system_log
-#   report_format: markdown_synthesis
-#   include:
-#     - system_health_summary
-#     - active_alerts
-#     - bot_status
-#     - calibration_changes
-#     - evolution_recommendations
 
 # Audit Trail
 audit:

@@ -256,10 +256,6 @@ impl Render for GraphWidget {
         }
 
         let bounds = self.last_bounds.get();
-        let gw = self.layout.width.0;
-        let gh = self.layout.height.0;
-        let (scale, ox, oy) =
-            transform(bounds.unwrap_or_default_zero(), gw, gh, self.pan, self.zoom);
 
         // Canvas: draws edges + node circles using its OWN bounds (fresh each
         // paint) + the captured pan/zoom. Caches bounds for the overlay/hit-tests
@@ -305,6 +301,13 @@ impl Render for GraphWidget {
         // cached bounds + transform (container-relative coords).
         let mut overlays: Vec<AnyElement> = Vec::new();
         if let Some(bounds) = bounds {
+            let (scale, ox, oy) = transform(
+                bounds,
+                self.layout.width.0,
+                self.layout.height.0,
+                self.pan,
+                self.zoom,
+            );
             let bx = bounds.origin.x.0;
             let by = bounds.origin.y.0;
             for node in &self.layout.nodes {
@@ -591,18 +594,5 @@ fn draw_ring(center: Point<Pixels>, radius: Pixels, color: gpui::Hsla, window: &
     builder.close();
     if let Ok(path) = builder.build() {
         window.paint_path(path, color);
-    }
-}
-
-/// Extension so `transform` can be called with a default before bounds are known.
-trait BoundsExt {
-    fn unwrap_or_default_zero() -> Bounds<Pixels>;
-}
-impl BoundsExt for Bounds<Pixels> {
-    fn unwrap_or_default_zero() -> Bounds<Pixels> {
-        Bounds {
-            origin: point(px(0.0), px(0.0)),
-            size: gpui::size(px(1.0), px(1.0)).into(),
-        }
     }
 }

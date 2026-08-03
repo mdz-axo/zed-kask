@@ -21,28 +21,4 @@ rjoule:
   alert_threshold: 0.8
   hard_limit: true
 
-# gas_budget: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   caps:
-#     template_render: 1000
-#     manifest_execute: 5000
-#     memory_write: 500
-#   cost:
-#     per_token: 0.25
-#     minimum: 1
-#     maximum: 10000
-#   alerts:
-#     warning_threshold: 0.8
-#     critical_threshold: 0.95
 
-# span_emission: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   emit_on_consume: true
-#   namespace: reg.gas
-
-# degradation: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   stages:
-#     - at_percent: 80
-#       action: reduce_quality
-#     - at_percent: 90
-#       action: skip_optional
-#     - at_percent: 95
-#       action: curator_escalation

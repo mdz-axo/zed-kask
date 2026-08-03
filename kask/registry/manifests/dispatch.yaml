@@ -21,19 +21,6 @@ rjoule:
   alert_threshold: 0.8
   hard_limit: true
 
-# matroshka: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   max_depth: 7
-#   enforce: true
-#   depth_counter:
-#     enabled: true
-#     inherit_from_parent: true
-#     default: 0
-#     increment_on_dispatch: true
-#   reg_monitoring:
-#     span_namespace: hkask.template.matroshka_depth
-#     alert_if_exceeds: 6
-#     rationale: "Warning before hard limit at 7"
-
 steps:
   - ordinal: 1
     action: select

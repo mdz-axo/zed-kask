@@ -168,34 +168,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 5
 
-# outcomes: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: board_monitored
-#     condition: "board_summary generated"
-#     action: "Board state assessed"
-#   - name: agents_coordinated
-#     condition: "comments responded to"
-#     action: "Agent communication handled"
-#   - name: tasks_advanced
-#     condition: "tasks moved between columns"
-#     action: "Board flow maintained"
-#   - name: verification_complete
-#     condition: "all review tasks verified"
-#     action: "Deliverables evaluated"
-#   - name: escalated
-#     condition: "escalation issued"
-#     action: "Human operator notified"
-
-# metrics: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: tasks_in_review
-#     description: "Number of tasks awaiting verification"
-#     span: reg.kanban.management.review_count
-#   - name: blocked_tasks
-#     description: "Number of blocked tasks"
-#     span: reg.kanban.management.blocked
-#   - name: cycle_time
-#     description: "Average time tasks spend in each column"
-#     span: reg.kanban.management.cycle_time
-
 audit:
   enabled: true
   include_input: true

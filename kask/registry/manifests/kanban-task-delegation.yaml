@@ -89,22 +89,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 3
 
-# outcomes: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: task_spawned
-#     condition: "spawn configured successfully"
-#     action: "UserPod spawned for task execution"
-#   - name: task_executing
-#     condition: "agent working on task"
-#     action: "Task execution in progress"
-
-# metrics: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: delegation_level
-#     description: "Delegation level used for spawn"
-#     span: reg.kanban.delegation.level
-#   - name: spawn_count
-#     description: "Number of tasks delegated"
-#     span: reg.kanban.delegation.count
-
 audit:
   enabled: true
   include_input: true

@@ -53,19 +53,6 @@ inputs:
     type: array
     required: false
 
-# matryoshka: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   max_depth: 7
-#   enforce: true
-#   depth_counter:
-#     enabled: true
-#     inherit_from_parent: true
-#     default: 0
-#     increment_on_dispatch: true
-#   reg_monitoring:
-#     span_namespace: reg.goal
-#     alert_if_exceeds: 6
-#     rationale: "Warning before hard limit at 7"
-
 ledger:
   span_namespace: reg.skill.goal-analysis
   # variety_monitoring config (metric: active_goals_per_user, threshold: 10,

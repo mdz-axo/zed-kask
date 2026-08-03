@@ -49,6 +49,11 @@ pub struct NodeBody {
 pub struct DependencyBody {
     #[serde(default)]
     pub parent_event_ids: Vec<String>,
+    /// Full joint conditional table P(this | parent truth assignment), indexed
+    /// by bitmap across the parents (`len == 2^parent_event_ids.len()`). Matches
+    /// `scenario_quantify`'s `depends_on[].conditionals`.
+    #[serde(default)]
+    pub conditionals: Vec<f64>,
 }
 
 impl NodeBody {

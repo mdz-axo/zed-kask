@@ -64,9 +64,5 @@ steps:
         latency_ms:
           type: number
 
-# matroshka: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   max_depth: 5
-#   enforce: true
-
 ledger:
   span_namespace: reg.skill.inference-dispatch

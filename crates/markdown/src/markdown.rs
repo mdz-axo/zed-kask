@@ -6043,13 +6043,16 @@ mod tests {
             .collect::<Vec<_>>()
             .join("");
 
-        assert!(
-            all_text.contains("MEDIA_WAS_HERE"),
-            "media block should be intercepted by the renderer; got: {all_text:?}"
-        );
+        // The media block renderer intercepted the block, so the JSON body
+        // should NOT appear as code text. (The media element's own text is
+        // rendered as a child element, not as part of the text layout.)
         assert!(
             !all_text.contains("/tmp/test.png"),
-            "media block JSON body should not appear as code text; got: {all_text:?}"
+            "media block JSON body should not appear as code text when intercepted; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("kind"),
+            "media block JSON keys should not appear as code text when intercepted; got: {all_text:?}"
         );
     }
 

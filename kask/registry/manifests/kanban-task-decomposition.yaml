@@ -198,22 +198,6 @@ ledger:
   variety_monitoring: true
   algedonic_threshold: 5
 
-# outcomes: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: tasks_created
-#     condition: "tasks.length > 0"
-#     action: "Board populated with decomposed tasks"
-#   - name: recomposition_defined
-#     condition: "recomposition.strategy is defined"
-#     action: "Recomposition strategy embedded in plan"
-
-# metrics: (removed — documentation-only field not parsed by Rust; deny_unknown_fields enforces schema)
-#   - name: task_count
-#     description: "Number of tasks produced by decomposition"
-#     span: reg.kanban.decompose.tasks_created
-#   - name: avg_story_points
-#     description: "Average story points per task"
-#     span: reg.kanban.decompose.avg_points
-
 audit:
   enabled: true
   include_input: true
