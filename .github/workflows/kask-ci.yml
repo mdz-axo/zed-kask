@@ -107,3 +107,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check mcp-servers.txt matches BUILTIN_SERVERS
         run: cd kask && bash scripts/check-mcp-servers.sh
+
+  deps:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kask-deps-ubuntu-24.04
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - name: Check for unused dependencies
+        run: cargo machete --workspace

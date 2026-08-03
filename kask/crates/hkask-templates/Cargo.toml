@@ -31,6 +31,7 @@ zeroize.workspace = true
 [dev-dependencies]
 proptest = { workspace = true }
 walkdir.workspace = true
+hkask-test-harness = { workspace = true }
 
 [[test]]
 name = "manifest_fuzz"

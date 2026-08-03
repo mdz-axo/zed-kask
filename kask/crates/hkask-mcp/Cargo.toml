@@ -24,10 +24,15 @@ jsonschema = "0.28"
 [dev-dependencies]
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
+hkask-test-harness = { workspace = true }
 
 [[test]]
 name = "tool_input_fuzz"
 path = "tests/tool_input_fuzz.rs"
+
+[[test]]
+name = "invoke_gate"
+path = "tests/invoke_gate.rs"
 
 [[test]]
 name = "mcp_lifecycle_integration"

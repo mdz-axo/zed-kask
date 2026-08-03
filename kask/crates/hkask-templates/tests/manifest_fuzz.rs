@@ -9,46 +9,11 @@
 //! - P4 (Clear Boundaries): input surfaces must reject invalid input gracefully, never panic
 //! - P1 (Correctness): serialization is lossless — round-trip preserves all fields
 
+use hkask_test_harness::arb_json_value;
 use hkask_types::RegistryEntry;
 use hkask_types::template_type::TemplateType;
 use proptest::prelude::*;
 use serde_json::Value as JsonValue;
-
-/// Recursive JSON value strategy — produces structured trees, not raw bytes.
-/// JSON is a subset of YAML, so `serde_yaml_neo` can parse these strings,
-/// exercising kask's derived `Deserialize` for `RegistryEntry` on valid YAML
-/// structures that may or may not match the `RegistryEntry` schema.
-fn arb_json_value() -> BoxedStrategy<JsonValue> {
-    let leaf = prop_oneof![
-        Just(JsonValue::Null),
-        any::<bool>().prop_map(JsonValue::Bool),
-        any::<i64>().prop_map(|n| serde_json::json!(n)),
-        any::<u64>().prop_map(|n| serde_json::json!(n)),
-        any::<f64>()
-            .prop_filter("must be finite", |f| f.is_finite())
-            .prop_map(|n| serde_json::json!(n)),
-        any::<String>().prop_map(JsonValue::String),
-    ];
-    leaf.prop_recursive(
-        4,  // max depth
-        64, // desired size
-        8,  // expected branch size
-        |element| {
-            prop_oneof![
-                prop::collection::vec(element.clone(), 0..8).prop_map(JsonValue::Array),
-                prop::collection::vec((any::<String>(), element), 0..8).prop_map(|pairs| {
-                    let mut map = serde_json::Map::new();
-                    for (k, v) in pairs {
-                        map.insert(k, v);
-                    }
-                    JsonValue::Object(map)
-                }),
-            ]
-            .boxed()
-        },
-    )
-    .boxed()
-}
 
 /// Strategy for valid `TemplateType` variants.
 fn arb_template_type() -> BoxedStrategy<TemplateType> {

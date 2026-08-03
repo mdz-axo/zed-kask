@@ -290,6 +290,7 @@ members = [
     "kask/crates/hkask-media-widget",
     "kask/crates/hkask-viz-core",
     "kask/crates/hkask-graph-widget",
+        "kask/crates/hkask-test-harness",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
@@ -875,6 +876,7 @@ hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
+hkask-test-harness = { path = "kask/crates/hkask-test-harness" }
 llm-guard = "=0.2.0"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"

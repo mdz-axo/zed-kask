@@ -10,11 +10,9 @@
 //! in `compute.rs` don't cover — the largest validation gap identified for the
 //! Cybernetic Swarm Plan C1/C3/C7 components.
 
-mod common;
-
-use common::NoopToolPort;
 use hkask_templates::executor::ManifestExecutor;
 use hkask_templates::load_manifest_from_yaml;
+use hkask_test_harness::NoopToolPort;
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use serde_json::{Value, json};

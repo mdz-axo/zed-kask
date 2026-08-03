@@ -9415,6 +9415,7 @@ version = "0.31.1"
 dependencies = [
  "hkask-capability",
  "hkask-regulation",
+ "hkask-test-harness",
  "hkask-types",
  "jsonschema 0.28.3",
  "proptest 1.10.0",
@@ -9844,6 +9845,7 @@ dependencies = [
  "hkask-guard",
  "hkask-lisp",
  "hkask-regulation",
+ "hkask-test-harness",
  "hkask-types",
  "minijinja",
  "proptest 1.10.0",
@@ -9858,6 +9860,16 @@ dependencies = [
  "tracing",
  "walkdir",
  "zeroize",
+]
+
+[[package]]
+name = "hkask-test-harness"
+version = "0.31.1"
+dependencies = [
+ "hkask-capability",
+ "hkask-types",
+ "proptest 1.10.0",
+ "serde_json",
 ]
 
 [[package]]
