@@ -222,7 +222,36 @@ static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 /// drains it while a runaway delegated loop is still bounded.
 const KASK_PANEL_GAS_BUDGET_CAP: u64 = 100_000;
 
+/// Install a panic hook that logs the panic (location + payload + backtrace)
+/// via `log::error!` so it appears in `Zed.log`, then chains to the default
+/// hook (stderr). Without this, a main-thread GPUI panic aborts the process
+/// and leaves no trace in `Zed.log` — the default hook writes to stderr, which
+/// the log file does not capture, so a desktop-launched crash is invisible.
+/// `force_capture()` ignores `RUST_BACKTRACE` so the trace is always recorded
+/// on the crash path (the cost is fine for a rare, fatal panic).
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+        let payload = info.payload();
+        let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string panic payload>".to_string()
+        };
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log::error!("PANIC at {location}: {msg}\nbacktrace:\n{backtrace}");
+        default_hook(info);
+    }));
+}
+
 fn main() {
+    install_panic_hook();
     STARTUP_TIME.get_or_init(|| Instant::now());
 
     // If this process was re-executed as a Linux sandbox helper, run that mode
@@ -1906,56 +1935,63 @@ fn main() {
                 // consumers with different governance requirements; the
                 // parallel instances are by design, not a bug.
                 if !servers_to_start_clone.is_empty() {
-                    // The `enter()` guard is safe here because this code runs
-                    // on the GPUI **foreground** thread (inside `cx.spawn`),
-                    // which is single-threaded — the guard's thread-local
-                    // stays valid across `.await` points. `start_server_with_env`
-                    // uses `tokio::process::Command` and `tokio::spawn`, both
-                    // of which need the tokio context set on the current
-                    // thread. The loop also calls `mcp_env_with_credentials`
-                    // which needs `AsyncApp` (not `Send`), so the loop body
-                    // cannot be moved into `Tokio::spawn`. Do NOT move this
-                    // loop to `cx.background_spawn` — the `enter()` guard
-                    // would be dropped before the future is polled on the
-                    // worker thread (see .rules).
-                    let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
-                    let _tokio_guard = tokio_handle.enter();
+                    // Build env + record baseline on the foreground
+                    // (`kask_server_env` needs `AsyncApp`, not `Send`). The
+                    // tokio-dependent `register_server` / `start_server_with_env`
+                    // are dispatched through `Tokio::spawn` below — the reactor
+                    // is entered on the worker thread, so no foreground `enter()`
+                    // guard is held across awaits. The earlier `let _tokio_guard
+                    // = ...enter()` held-across-awaits form was the `.rules`
+                    // "background_spawn of tokio-dependent futures" trap: a
+                    // second overlapping `cx.spawn` (e.g. the settings-change
+                    // restart observer) would acquire a second `EnterGuard`,
+                    // interleave at await points, and panic with "EnterGuard
+                    // values dropped out of order". Do NOT move this loop to
+                    // `cx.background_spawn` — GPUI's background executor has no
+                    // tokio reactor (see .rules).
                     for server_id in &servers_to_start_clone {
                         let binary = format!("hkask-mcp-{server_id}");
                         let mcp_env = kask_server_env(server_id, cx).await;
                         // Record the env baseline BEFORE starting so the
                         // settings-change restart observer can diff against it
                         // (an empty baseline = not yet launched = no-op). On
-                        // start failure the baseline is dropped so a later
-                        // settings change retries.
+                        // start failure the baseline is dropped (inside the
+                        // `Tokio::spawn` below) so a later settings change retries.
                         kask_mcp_restart_env_for_deferred
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
                             .insert(server_id.clone(), mcp_env.clone());
-                        mcp_runtime_for_deferred
-                            .register_server(hkask_mcp::McpServer {
-                                id: server_id.to_string(),
-                                name: server_id.to_string(),
-                                tools: vec![],
-                            })
-                            .await;
-                        match mcp_runtime_for_deferred
-                            .start_server_with_env(server_id, &binary, mcp_env)
-                            .await
-                        {
-                            Ok(()) => log::info!("Kask MCP server '{server_id}' started (McpRuntime)"),
-                            Err(e) => {
-                                log::warn!(
-                                    "Kask MCP server '{server_id}' failed to start: {e} \
-                                     — set HKASK_MCP_{}_BIN to the binary path",
-                                    server_id.to_uppercase()
-                                );
-                                kask_mcp_restart_env_for_deferred
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .remove(server_id);
+                        let runtime = mcp_runtime_for_deferred.clone();
+                        let restart_env = kask_mcp_restart_env_for_deferred.clone();
+                        let server_id_owned = server_id.to_string();
+                        gpui_tokio::Tokio::spawn(cx, async move {
+                            runtime
+                                .register_server(hkask_mcp::McpServer {
+                                    id: server_id_owned.clone(),
+                                    name: server_id_owned.clone(),
+                                    tools: vec![],
+                                })
+                                .await;
+                            match runtime
+                                .start_server_with_env(&server_id_owned, &binary, mcp_env)
+                                .await
+                            {
+                                Ok(()) => log::info!(
+                                    "Kask MCP server '{server_id_owned}' started (McpRuntime)"
+                                ),
+                                Err(e) => {
+                                    log::warn!(
+                                        "Kask MCP server '{server_id_owned}' failed to start: {e} \n                                         — set HKASK_MCP_{}_BIN to the binary path",
+                                        server_id_owned.to_uppercase()
+                                    );
+                                    restart_env
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .remove(&server_id_owned);
+                                }
                             }
-                        }
+                        })
+                        .detach();
                     }
                 }
             }).detach();
@@ -2545,11 +2581,21 @@ fn sync_kask_mcp_runtime_servers(
 ) {
     let server_ids: Vec<&'static str> = kask_bridge::BUILT_IN_MCP_SERVERS_IDS.to_vec();
     cx.spawn(async move |cx| {
-        // `start_server_with_env` drives tokio primitives (process, rmcp),
-        // so the tokio context must be entered on this foreground thread —
-        // same pattern as the deferred launch loop (see its .rules comment).
-        let tokio_handle = gpui_tokio::Tokio::handle_async(&*cx);
-        let _tokio_guard = tokio_handle.enter();
+        // Build the changed-server list on the foreground — `kask_server_env`
+        // needs `AsyncApp` (not `Send`). Do NOT hold a tokio `enter()` guard
+        // across these `.await`s: when this observer fires twice (e.g. a mode
+        // toggle plus a window-close registry churn), two `cx.spawn` tasks each
+        // acquired a guard and interleaved at await points, panicking with
+        // "EnterGuard values dropped out of order" (tokio runtime/context/
+        // current.rs). The tokio-dependent stop/start is dispatched into
+        // `Tokio::spawn` below, which enters the reactor on the worker thread
+        // — no foreground guard held across awaits (the `.rules` "background_
+        // spawn of tokio-dependent futures" pattern).
+        let mut changed: Vec<(
+            &'static str,
+            String,
+            std::collections::HashMap<String, String>,
+        )> = Vec::new();
         for server_id in server_ids {
             let env = kask_server_env(server_id, cx).await;
             let previous = last_env
@@ -2566,26 +2612,40 @@ fn sync_kask_mcp_runtime_servers(
                 continue;
             }
             log::info!("Kask MCP server '{server_id}' env changed — restarting (McpRuntime)");
-            mcp_runtime.stop_server(server_id).await;
-            let binary = format!("hkask-mcp-{server_id}");
-            match mcp_runtime
-                .start_server_with_env(server_id, &binary, env.clone())
-                .await
-            {
-                Ok(()) => {
-                    *last_env
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .get_mut(server_id)
-                        .expect("baseline recorded before start") = env;
-                }
-                Err(e) => {
-                    // Keep the old baseline so a subsequent settings change
-                    // retries the restart.
-                    log::warn!("Kask MCP server '{server_id}' restart failed: {e}");
+            changed.push((server_id, format!("hkask-mcp-{server_id}"), env));
+        }
+        if changed.is_empty() {
+            return;
+        }
+        // `stop_server` / `start_server_with_env` drive tokio primitives
+        // (process, rmcp). `McpRuntime: Send + Sync` (its `governance` field is
+        // `Option<ToolGovernance>`, all-Send-Sync; `RegulationSink: Send +
+        // Sync`), so this future is `Send` and `Tokio::spawn` accepts it.
+        let runtime = mcp_runtime.clone();
+        let last_env = last_env.clone();
+        gpui_tokio::Tokio::spawn(cx, async move {
+            for (server_id, binary, env) in changed {
+                runtime.stop_server(server_id).await;
+                match runtime
+                    .start_server_with_env(server_id, &binary, env.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        *last_env
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .get_mut(server_id)
+                            .expect("baseline recorded before start") = env;
+                    }
+                    Err(e) => {
+                        // Keep the old baseline so a subsequent settings
+                        // change retries the restart.
+                        log::warn!("Kask MCP server '{server_id}' restart failed: {e}");
+                    }
                 }
             }
-        }
+        })
+        .detach();
     })
     .detach();
 }

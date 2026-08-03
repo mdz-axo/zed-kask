@@ -301,7 +301,10 @@ impl ServiceConfig {
                     source: Some(Box::new(e)),
                 })?;
                 Ok(std::sync::Arc::new(
-                    hkask_storage::database::sqlite::SqliteDriver::new(pool),
+                    hkask_storage::database::sqlite::SqliteDriver::new_labeled(
+                        pool,
+                        self.db_path.as_str(),
+                    ),
                 ))
             }
             DbProvider::Postgres => {

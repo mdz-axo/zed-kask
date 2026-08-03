@@ -167,4 +167,64 @@ impl MediaServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Expand a short media prompt into a rich, detailed prompt using a vision LLM (Fooocus 'V2' pattern). The user writes 'a cat in space' and the system expands it to include lighting, composition, style, atmosphere, and quality modifiers. Optionally apply a style preset (default, anime, realistic, cinematic, minimal) to the expanded prompt."
+    )]
+    pub async fn expand_prompt(
+        &self,
+        Parameters(ExpandPromptRequest { prompt, style }): Parameters<ExpandPromptRequest>,
+    ) -> String {
+        execute_tool(self, "expand_prompt", async {
+            if prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("prompt must not be empty"));
+            }
+
+            // Build the expansion instruction for the vision LLM.
+            let expansion_instruction = format!(
+                "Expand this short media prompt into a rich, detailed prompt for image/video generation. \
+                 Add specific details about lighting, composition, style, atmosphere, and quality. \
+                 Keep the original intent. Do not add quotes or explanations. Output only the expanded prompt. \
+                 Original prompt: {prompt}"
+            );
+
+            // Call the vision LLM via the IPC bridge.
+            let llm_params = hkask_types::template::LLMParameters::default();
+            let result = self
+                .vision_port
+                .generate_vision(&expansion_instruction, &[], &llm_params, None)
+                .await
+                .map_err(|e| {
+                    McpToolError::unavailable(format!(
+                        "Prompt expansion failed (requires vision LLM via IPC bridge): {e}"
+                    ))
+                })?;
+
+            let expanded = result.text.trim().to_string();
+
+            // Apply style preset if set.
+            let final_prompt = if let Some(style_name) = &style {
+                let preset = crate::style::get_preset(style_name).ok_or_else(|| {
+                    McpToolError::invalid_argument(format!(
+                        "Unknown style: {style_name}. Available: default, anime, realistic, cinematic, minimal"
+                    ))
+                })?;
+                let mut params = hkask_types::MediaGenerateParams {
+                    prompt: Some(expanded.clone()),
+                    ..Default::default()
+                };
+                crate::style::apply_preset(&mut params, &preset);
+                params.prompt.unwrap_or(expanded)
+            } else {
+                expanded
+            };
+
+            Ok(serde_json::json!({
+                "original_prompt": prompt,
+                "expanded_prompt": final_prompt,
+                "style": style,
+            }))
+        })
+        .await
+    }
 }

@@ -118,8 +118,9 @@ impl RealMemoryPort {
     ) -> Result<Self, String> {
         let db = Database::open(db_path, passphrase).map_err(|e| e.to_string())?;
         let pool = db.sqlite_pool().map_err(|e| e.to_string())?;
-        let driver: Arc<dyn hkask_storage::DatabaseDriver> =
-            Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
+        let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
+            hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path),
+        );
 
         // Episodic store — first-person, Private, perspective-bound
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
@@ -579,8 +580,9 @@ pub fn open_curator_regulation_archive(
             return None;
         }
     };
-    let driver: Arc<dyn hkask_storage::DatabaseDriver> =
-        Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
+        hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path.as_str()),
+    );
     match hkask_storage::RegulationArchive::from_driver(driver) {
         Ok(archive) => Some(Arc::new(archive)),
         Err(e) => {
@@ -830,8 +832,9 @@ fn open_curator_stores(
             return (None, None);
         }
     };
-    let driver: Arc<dyn hkask_storage::DatabaseDriver> =
-        Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
+        hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, curator_db_path.as_str()),
+    );
     // HMem store for the curator's episodic memory (first-person, Private).
     let h_mem_store_episodic = match HMemStore::from_driver(Arc::clone(&driver)) {
         Ok(s) => s,

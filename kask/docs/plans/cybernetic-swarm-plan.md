@@ -525,6 +525,10 @@ S3/S4/S5/S7 and is presented first because it gates three of the components.
 
 ## 7. Integration plan (components, ranked and sequenced)
 
+**Implementation status (2026-08-02):** C0, C4, and C8 are **implemented and
+validated** — see Appendix C for the per-component validation record. C1, C2,
+C3, C5, C6, C7 are pending.
+
 The components from §6, with blocking relationships and the determinism /
 no-backward-compat constraints applied. C0 is the precondition; the rest follow
 the dependency hierarchy (§3): D1 reliability mechanisms (C1, C5, C6, C7) gate
@@ -1179,3 +1183,75 @@ system it was introduced for).
 > be verified against the codebase") applies to the agent's own plan drafts,
 > not just to runtime convention priors. The generalizable process change:
 > grep before you depend.
+
+
+## Appendix C — Implementation record (2026-08-02)
+
+Foundation slice implemented and validated. Each component lists the files
+changed and the validation that passed.
+
+### C4 — latency `T_q` in `LocalDelegateResult` (S4 HyEvo, Step 4)
+
+- **Files:** `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs` — added
+  `use std::time::Instant;`, a `latency_ms: u64` field on `LocalDelegateResult`
+  (with doc), `let started = Instant::now();` at the top of `delegate`, and
+  `latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64` in
+  the result construction.
+- **Validation:** `cargo test -p hkask-mcp-swarm -- delegate` → 19 passed,
+  0 failed (incl. the new latency assertion in `delegate_succeeds_when_funded`).
+  `./script/clippy -p hkask-mcp-swarm` clean.
+
+### C0 — deterministic task-success `s` (precondition, spans S3/S4/S5/S7, Step 1)
+
+- **Files:**
+  - `kask/registry/manifests/swarm-intelligence.yaml` — new `task_success`
+    input (object, required: false); CHECK step `input_mapping` binds
+    `task_success: "{{ task_success | default(none) }}"`; CHECK description
+    documents the optional fourth axis `(1 - s)^2`.
+  - `kask/registry/templates/swarm-intelligence/swarm-check.j2` — contract
+    input/output gain `task_success: object|null`; Step 3 conditionally adds
+    the fourth term to `d` when `task_success` is present (and explicitly
+    forbids fabricating `s` when null — open tasks fall to Go See); Step 5
+    `next_focus` gains the `"task_success"` axis; output echoes `task_success`.
+  - `crates/swarm_panel/src/swarm_panel.rs` — `steer_system_prompt` gains a
+    paragraph instructing the curator to pass a deterministic `task_success`
+    for oracle tasks and OMIT it for open tasks (no LLM judge).
+- **Validation:**
+  - `cargo test -p hkask-templates` → `all_manifests_load_successfully`,
+    `all_templates_render`, `all_skill_manifests_are_well_formed` pass (the
+    manifest YAML parses; the conditional Jinja renders).
+  - New test `registry::tests::swarm_intelligence_manifest_declares_task_success`
+    (in `kask/crates/hkask-templates/src/registry.rs`) asserts the
+    `task_success` input is declared and the CHECK step binds it — passes.
+  - `cargo test -p swarm_panel -- steer` → 6 passed, incl. the new
+    `steer_prompt_describes_task_success`. `./script/clippy -p swarm_panel
+    -p hkask-templates` clean.
+- **Behavior:** when `task_success` is null (the default for all current
+  callers), `d` is unchanged — the three swarm-health axes. When a caller
+  supplies a deterministic verdict, `d` gains `(1 - s)^2`; a healthy swarm
+  that fails the task no longer converges.
+
+### C8 — task-gated sparse alignment in SENSE (S6 OFA-MAS TAGSE, Step 8)
+
+- **Files:** `kask/registry/templates/swarm-intelligence/swarm-sense.j2` — the
+  `alignment` definition (Step 3) changed from uniform delegation-graph
+  density to task-gated edge relevance: each `produces`/`accepts` edge
+  contributes proportional to its relevance to `required_transforms`,
+  regularized toward sparsity (most edges contribute ~0 for a given task).
+  Vacuous-truth fallback: when `required_transforms` is empty (trivial_task),
+  alignment = the uniform density (task-gating needs a task to gate on).
+- **Validation:** `cargo test -p hkask-templates --test template_rendering` →
+  `all_templates_render` passes; `--test manifest_load_validation` and
+  `--test yaml_schema_validation` pass. No Rust change; clippy N/A.
+
+### Notes
+
+- When `task_success` is null, C0's `d` formula is unchanged (the fourth term
+  is omitted) — forward-compatible with all current callers. C8 only changes
+  the *weighting* of alignment (still in [0,1]); both are forward-compatible.
+- The `{{`/`}}` brace escape in the Steer prompt's JSON example was replaced
+  with a brace-free phrasing ("an object whose `pass` field is true or false")
+  after the Rust `format!` lexer rejected `{{"pass": true}}` in that inline-
+  backtick context. The existing `{{\"mode\": ...}}` example (in a ```json
+  fence, with real format args) still compiles. No semantic change to the
+  curator's instructions.

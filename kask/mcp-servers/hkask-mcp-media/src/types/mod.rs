@@ -78,6 +78,18 @@ fn default_mode() -> String {
     "read-only".to_string()
 }
 
+/// Request to expand a short media prompt into a rich, detailed prompt
+/// using a vision LLM (Fooocus "V2" pattern). Optionally applies a
+/// style preset (default, anime, realistic, cinematic, minimal).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExpandPromptRequest {
+    /// The short media prompt to expand (e.g., "a cat in space").
+    pub prompt: String,
+    /// Optional style preset to apply to the expanded prompt.
+    /// Available: default, anime, realistic, cinematic, minimal.
+    pub style: Option<String>,
+}
+
 fn default_true() -> bool {
     true
 }

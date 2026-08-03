@@ -1410,7 +1410,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         path = %path,
                         "Gallery store using durable file DB"
                     );
-                    Arc::new(SqliteDriver::new(pool))
+                    Arc::new(SqliteDriver::new_labeled(pool, path.as_str()))
                 }
                 Err(e) => {
                     tracing::warn!(

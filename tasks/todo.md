@@ -97,3 +97,96 @@
 
 - `.rules` / `GEMINI.md` fusion traps (3 entries) — retire in dedicated follow-up per "No drive-by additions"
 - Operator settings migration — stale `kask-fusion/fusion` + AA-discovered favorites persist in user `settings.json` (manual cleanup)
+
+## Debug — Agent Swarm panel: clicking "Local" closes/panics the app (2026-08-02)
+
+**Repro:** Open the Agent Swarm panel → click the "Local" backend toggle (the
+`ABW | Local` ToggleButtonGroup in the header, `crates/swarm_panel/src/
+swarm_panel.rs` render ~L3015). The zed-kask app exits.
+
+**Findings so far (2026-08-02):**
+- `Zed.log` (`~/.local/share/zed/logs/Zed.log`) has NO fatal panic — only the
+  known non-fatal rust-analyzer `old_memo.revisions.changed_at` LSP panics.
+- **Root cause of the missing log: `crates/zed` installs NO panic hook**
+  (`grep -r "set_hook|panic_hook|take_hook" crates/zed/**/*.rs` → 0 matches).
+  The default Rust panic hook prints to **stderr**, which `Zed.log` does not
+  capture. A main-thread GPUI panic aborts the process and leaves no trace in
+  the log when zed-kask is launched from a desktop launcher (no terminal
+  stderr). This is why the crash is invisible in the log.
+- **Ruled out by inspection** (none of these panic):
+  - `SwarmConfig::from_env` (`kask/mcp-servers/hkask-mcp-swarm/src/config.rs`)
+    — every env read is `.unwrap_or(default)`; no `unwrap`/`expect`/indexing.
+  - `LocalSwarmRuntime::new` (`local_runtime.rs` L86) — returns `Result`,
+    uses `?`/`map_err`; no panicking ops.
+  - `sync_kask_mcp_servers` (`crates/zed/src/main.rs` L2449) — the
+    synchronous SettingsStore observer that fires on the toggle; no
+    `unwrap`/`expect` (`settings.mcp.overrides.get(...).unwrap_or(&true)`).
+  - `SwarmPanel` production code — `grep "\.unwrap\(\)|\.expect\("` matches
+    only in `mod tests`, not in render/handlers.
+- **Leading hypothesis (needs a backtrace to confirm):** a GPUI main-thread
+  panic on the toggle path. `set_swarm_mode` (`swarm_panel.rs` L1625) runs
+  inside the panel's `cx.listener`, writes `kask.swarm.mode` via
+  `SettingsStore::update_settings_file`, then `self.steer_conversation.take()`
+  drops the Steer `ConversationView` if one is open. If the Steer conversation
+  had focus, dropping a focused entity during the panel's own update can trip
+  GPUI's focus/borrow machinery (the `.rules` "entity updated while already
+  being updated" / center-pane focus traps). Repro correlation to check: does
+  the crash only happen when Steer is open before clicking Local?
+
+**Next steps (capture the backtrace, then pinpoint):**
+1. **Launch zed-kask from a terminal** with `RUST_BACKTRACE=full` and
+   reproduce — the panic + backtrace print to stderr (the terminal), giving
+   the exact file:line.
+2. **Install a panic hook** in `crates/zed/src/main.rs` that `log::error!`s
+   the panic message + backtrace (and chains to the default hook) so future
+   main-thread panics appear in `Zed.log` instead of being lost to stderr.
+   One-time enabler that fixes the "no trace in the log" gap for ALL panics,
+   not just this one.
+3. Once the backtrace is captured, fix the root cause (likely the
+   `steer_conversation.take()` during update → defer the drop to a task that
+   runs after the update closure returns, or avoid dropping a focused
+   `ConversationView` mid-update).
+
+**RESOLVED (2026-08-03):** The panic hook captured the exact panic:
+```
+thread 'main' panicked at tokio-1.53.1/.../runtime/context/current.rs:82:21:
+`EnterGuard` values dropped out of order. Guards returned by
+`tokio::runtime::Handle::enter()` must be dropped in the reverse order as
+they were acquired.
+```
+Root cause: `sync_kask_mcp_runtime_servers` (`crates/zed/src/main.rs`) held
+`let _tokio_guard = tokio_handle.enter()` across `.await`s inside a `cx.spawn`.
+The log shows the swarm restart fired twice (a mode toggle plus a window-close
+registry churn), so two `cx.spawn` tasks each acquired an `EnterGuard` and
+interleaved at await points on the single foreground thread → out-of-order
+drop → panic. This is the `.rules` "background_spawn of tokio-dependent
+futures" / `Tokio::handle_async(&*cx).enter()` trap.
+
+Fix: removed the foreground `enter()` guard; build the changed-server list on
+the foreground (needs `AsyncApp`), then dispatch the tokio-dependent
+`stop_server` / `start_server_with_env` through `gpui_tokio::Tokio::spawn`
+(entering the reactor on the worker thread — no manual guard held across
+awaits). `McpRuntime: Send + Sync` (its `governance` field is all-Send-Sync;
+`RegulationSink: Send + Sync`), so the future is `Send` and `Tokio::spawn`
+accepts it. The deferred launch loop's `enter()` guard (~L1948) is the only
+remaining await-held guard; it runs once at startup and can't self-overlap,
+so it's safe.
+
+Files: `crates/zed/src/main.rs` — `install_panic_hook()` (new) called first in
+`main()`; `sync_kask_mcp_runtime_servers` restructured.
+Validation: `cargo check -p zed` clean. Repro (toggle Local / close the swarm
+panel) should no longer panic; if any panic recurs, the hook now logs it to
+`Zed.log` as `PANIC at <file:line>: <msg>\nbacktrace: ...`.
+
+**Follow-up (separate observation, 2026-08-03):** the user noted "this time the
+tool invoker wasn't wired" — i.e. the swarm server's tool-dispatch hook
+(`set_tool_invoker`) was unset, so `swarm_delegate` falls back to the
+unavailable stub. This is distinct from the panic. Likely the deferred task
+that wires `set_tool_invoker` (the `.rules` "Model-dependent kask wiring must
+run in the deferred task") didn't reach the wiring, or the swarm server was
+restarted by `sync_kask_mcp_runtime_servers` after the wiring and the new
+child process didn't inherit it. Trace: confirm `set_tool_invoker` is called
+in the deferred task and that a settings-change restart of the swarm server
+doesn't lose it (the hook is process-global, so a child restart shouldn't
+affect it — but verify the wiring isn't gated on a condition that's false at
+that point).
