@@ -461,12 +461,6 @@ error_handling:
   on_concept_failure: continue
   on_method_failure: continue
 
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true
-
 ledger:
   emit_spans: true
   span_namespace: reg.skill.mcp-replica-discovery

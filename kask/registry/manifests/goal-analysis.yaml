@@ -177,9 +177,3 @@ error_handling:
     - error_type: storage_error
       action: emit_reg_alert
       span: reg.goal.alert.storage_failure
-
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true

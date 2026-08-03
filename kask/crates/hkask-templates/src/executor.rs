@@ -421,7 +421,7 @@ impl ManifestExecutor {
         tool_ref: &str,
         input: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        self.invoke_tool(tool_ref, input, 0, None)
+        self.invoke_tool(tool_ref, input, 0)
             .await
             .map(|(result, _)| result)
     }
@@ -431,7 +431,6 @@ impl ManifestExecutor {
         tool_name: &str,
         input: Value,
         action_number: u64,
-        expiry_seconds: Option<u32>,
     ) -> Result<(Value, ToolTaint)> {
         let tool_info = self.tools.get_tool_info(tool_name).await.ok_or_else(|| {
             TemplateError::NotFound(NotFound {
@@ -467,33 +466,13 @@ impl ManifestExecutor {
         }
 
         let executor_webid = WebID::from_persona(b"manifest-executor");
-        // Mint the OCAP token. Cascade-minted tokens expire after the
-        // manifest's `ocap.capability_expiry_seconds` (Some); ad-hoc `call_tool`
-        // invocations carry no expiry (None) and never expire. The runtime gate
-        // (`McpRuntime::invoke` → `is_valid_for_at`) rejects expired tokens.
-        let token = match expiry_seconds {
-            Some(secs) => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
-                hkask_capability::DelegationToken::new_with_expiry(
-                    DelegationResource::Tool,
-                    tool_name.to_string(),
-                    DelegationAction::Execute,
-                    executor_webid,
-                    executor_webid,
-                    now + secs as i64,
-                )
-            }
-            None => hkask_capability::panel_default_token(
-                DelegationResource::Tool,
-                tool_name.to_string(),
-                DelegationAction::Execute,
-                executor_webid,
-                executor_webid,
-            ),
-        };
+        let token = hkask_capability::DelegationToken::new(
+            DelegationResource::Tool,
+            tool_name.to_string(),
+            DelegationAction::Execute,
+            executor_webid,
+            executor_webid,
+        );
 
         let result = self
             .tools
@@ -899,13 +878,7 @@ impl ManifestExecutor {
                         context = self.execute_compute(step, context).await?;
                     }
                     "execute" | "feedback" | "validate" | "retrieve" => {
-                        context = self
-                            .execute_tool_invoke(
-                                step,
-                                context,
-                                manifest.ocap.capability_expiry_seconds,
-                            )
-                            .await?;
+                        context = self.execute_tool_invoke(step, context).await?;
                     }
                     // RenderAct: render a template (`.j2` or `.yaml`) without
                     // inference. The action is the rendering — the output is
@@ -1550,7 +1523,6 @@ impl ManifestExecutor {
         &self,
         step: &BundleManifestStep,
         mut context: HashMap<String, Value>,
-        expiry_seconds: u32,
     ) -> Result<HashMap<String, Value>> {
         let mcp_ref_raw = step.mcp.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
@@ -1576,7 +1548,7 @@ impl ManifestExecutor {
             });
 
         let (result, tool_taint) = self
-            .invoke_tool(&mcp_ref, input, context.len() as u64, Some(expiry_seconds))
+            .invoke_tool(&mcp_ref, input, context.len() as u64)
             .await?;
 
         let result_key = format!("step_{}_result", step.ordinal);
@@ -3761,7 +3733,7 @@ mod tests {
             LLMParameters::default(),
         );
         let (result, _taint) = executor
-            .invoke_tool("read", serde_json::json!({}), 1, None)
+            .invoke_tool("read", serde_json::json!({}), 1)
             .await
             .expect("SourceToolPort invoke should succeed");
         let text = result.as_str().expect("spotlighted output is a string");
@@ -3790,9 +3762,7 @@ mod tests {
                 ..Default::default()
             },
         )));
-        let result = executor
-            .invoke_tool("read", serde_json::json!({}), 1, None)
-            .await;
+        let result = executor.invoke_tool("read", serde_json::json!({}), 1).await;
         let err = result.expect_err("RequireHuman verdict must abort the invocation");
         assert!(
             err.to_string().contains("requires human confirmation"),

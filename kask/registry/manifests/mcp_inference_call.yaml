@@ -79,13 +79,6 @@ error_handling:
   on_capability_denied: escalate
   on_model_unavailable: fallback
 
-# OCAP Configuration
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true
-
 # Regulation Monitoring
 ledger:
   emit_spans: true

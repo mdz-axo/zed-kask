@@ -221,12 +221,6 @@ error_handling:
   retry_backoff_seconds: 1
   on_validation_failure: abort
 
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true
-
 # Safety governance (Section 9.1 of the paper):
 # - Verifier-gated updates: all updates must pass verifier checks before commitment
 # - Critic decoupling: evaluator must be decoupled from generator

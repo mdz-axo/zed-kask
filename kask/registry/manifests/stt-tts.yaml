@@ -116,12 +116,6 @@ error_handling:
   retry_backoff_seconds: 2
   on_validation_failure: abort
 
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true
-
 # gap_declaration is a documentation-only block describing design gaps and
 # approvals. It is not a BundleManifest schema field, so it is recorded as a
 # comment to satisfy deny_unknown_fields while preserving the audit trail.

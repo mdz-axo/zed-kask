@@ -689,6 +689,13 @@ re-implement `value.get("content")` locally. Hit 2026-08-02:
 the envelope top level, returned `None` on a live create-swarm response, and
 panicked a live probe.
 
+## MCP tool error classification — classify per variant, not blanket `internal`
+
+Inline `McpToolError::internal(format!("…: {e}"))` over every variant of a domain
+error mis-classifies `NotFound`/`Unavailable`/auth variants as `Internal`. Use a
+`map_<domain>_error(e) -> McpToolError` fn that classifies per variant (see
+`map_media_error`, `map_portfolio_error`, `hkask-mcp-training/src/tools/error_mapping.rs`).
+
 ## Live-mutation probe suites must run serialized
 
 A probe that asserts "no `zed-kask-verify-*` artifacts remain" (the

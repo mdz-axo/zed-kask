@@ -13,8 +13,6 @@
 #![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 #![allow(clippy::collapsible_if, clippy::cloned_ref_to_slice_refs)]
 
-pub mod omc;
-
 mod error;
 mod gallery;
 mod templates;
@@ -223,7 +221,10 @@ impl MediaServer {
     async fn require_vision(&self) -> Result<(&'static str, &'static str), McpToolError> {
         self.resolve_vision_model().await.ok_or_else(|| {
             McpToolError::unavailable(
-                "No vision-capable provider configured (set DEEPINFRA_API_KEY, OPENROUTER_API_KEY, or TOGETHERAI_API_KEY)",
+                "No vision-capable provider configured. Vision LLMs route through zed's \
+                 LanguageModelRegistry via the inference IPC bridge — enable a vision \
+                 model in the kask inference provider settings. The media server process \
+                 itself only reads FALAI_API_KEY / DEEPINFRA_API_KEY for generation.",
             )
         })
     }
@@ -1391,6 +1392,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Gracefully degrade if DB initialization fails — gallery tools
     // will return errors but the server stays alive.
     // GalleryStore schema initialized by from_driver().
+    //
+    // Durability gap (G14, see kask/docs/plans/media-system-refactor.md §6):
+    // the in-memory DB is rebuilt every server start. Generated assets
+    // downloaded to the filesystem gallery survive, but tag/face/lineage
+    // metadata is lost on restart. WS-3 will switch this to a durable DB
+    // path (HKASK_MEDIA_DB, following the HKASK_DB_PATH pattern).
     let gallery_store = {
         let db = Database::in_memory().expect("in-memory DB");
         let pool = db.sqlite_pool().expect("sqlite pool");
@@ -1429,13 +1436,43 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 "FALAI_API_KEY",
                 "fal.ai API key for image/video generation",
             ),
-            hkask_mcp_server::CredentialRequirement::optional(
-                "TOGETHERAI_API_KEY",
-                "Together AI API key for vision LLMs",
-            ),
         ],
     )
     .await
+}
+
+// ── Dead-surface removal pins ────────────────────────────────────────────
+//
+// The MovieLabs OMC bridge was removed: it had zero call sites — write-only
+// documentation masquerading as architecture (the "advertised invariants need
+// enforcement points" trap). This test pins the removal so the module is not
+// re-added without a consumer. See kask/docs/plans/media-system-refactor.md
+// §6 (F-1).
+#[cfg(test)]
+mod dead_surface_pins {
+    #[test]
+    fn omc_module_not_present() {
+        // The source file must not be re-added.
+        let omc_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/omc.rs");
+        assert!(
+            !omc_path.exists(),
+            "src/omc.rs must not be re-added without a consumer — it was dead surface"
+        );
+        // The lib root must not re-declare the module. A line-level scan
+        // avoids matching this test's own text.
+        let lib_root = include_str!("hkask_mcp_media.rs");
+        let redeclared = lib_root.lines().any(|line| {
+            let t = line.trim();
+            t == "pub mod omc;"
+                || t == "mod omc;"
+                || t.starts_with("pub mod omc")
+                || t.starts_with("mod omc")
+        });
+        assert!(
+            !redeclared,
+            "do not re-declare the omc module without a consumer"
+        );
+    }
 }
 
 // ── Integration tests ────────────────────────────────────────────────────

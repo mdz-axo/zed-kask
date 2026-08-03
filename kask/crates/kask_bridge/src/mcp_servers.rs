@@ -156,7 +156,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "media",
         binary: "hkask-mcp-media",
         description: "Media — image generation and media workflows",
-        credentials: Some(&["FALAI_API_KEY", "DEEPINFRA_API_KEY", "TOGETHERAI_API_KEY"]),
+        credentials: Some(&["FALAI_API_KEY", "DEEPINFRA_API_KEY"]),
         config_env: Some(&[
             "HKASK_MEDIA_TTS_MODEL",
             "HKASK_MEDIA_STT_MODEL",
@@ -603,6 +603,49 @@ mod tests {
         assert!(
             !filtered.iter().any(|(k, _)| k == "DEEPINFRA_API_KEY"),
             "swarm server must not receive inference keys"
+        );
+    }
+
+    // The media server should only receive the keys it actually reads
+    // (FALAI_API_KEY, DEEPINFRA_API_KEY), not other inference keys or
+    // unrelated secrets. Vision routes through the IPC bridge to zed's
+    // LanguageModelRegistry — the media server process never reads
+    // TOGETHERAI_API_KEY / OPENROUTER_API_KEY. This pins the allowlist
+    // against a future edit that re-widens it. See
+    // kask/docs/plans/media-system-refactor.md §6 (F-2).
+    #[test]
+    fn media_credentials_only_include_used_keys() {
+        let all_credentials: Vec<(String, String)> = [
+            "DEEPINFRA_API_KEY",
+            "FALAI_API_KEY",
+            "TOGETHERAI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "KILOCODE_API_KEY",
+            "HKASK_SMTP_PASSWORD",
+        ]
+        .iter()
+        .map(|env| (env.to_string(), "url".to_string()))
+        .collect();
+        let filtered = filter_credentials_for_server("media", &all_credentials);
+        let keys: Vec<&str> = filtered.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys.len(),
+            2,
+            "media server should only receive FALAI_API_KEY + DEEPINFRA_API_KEY, got {keys:?}"
+        );
+        assert!(keys.contains(&"FALAI_API_KEY"));
+        assert!(keys.contains(&"DEEPINFRA_API_KEY"));
+        assert!(
+            !keys.contains(&"TOGETHERAI_API_KEY"),
+            "media server must not receive TOGETHERAI_API_KEY — it never reads it (vision routes via the IPC bridge)"
+        );
+        assert!(
+            !keys.contains(&"OPENROUTER_API_KEY"),
+            "media server must not receive OPENROUTER_API_KEY — vision routes via the IPC bridge, not the media process"
+        );
+        assert!(
+            !keys.contains(&"HKASK_SMTP_PASSWORD"),
+            "media server must not receive SMTP credentials"
         );
     }
 

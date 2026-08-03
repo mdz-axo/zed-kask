@@ -137,12 +137,6 @@ error_handling:
   retry_backoff_seconds: 1
   on_validation_failure: abort
 
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true
-
 # Recommends: improv skill for constructive coaching postures.
 # - Q4 (Next step? What do you expect?) → Yes But
 # - Q5 (How quickly can we go and see?) → Plussing

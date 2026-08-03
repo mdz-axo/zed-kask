@@ -387,12 +387,6 @@ error_handling:
   retry_backoff_seconds: 1
   on_validation_failure: abort
 
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 7200    # High-tier evolutionary runs take longer
-  template_scoped: true
-
 # Regulation: prompt-enhance is a curation activity — the Curator optimizes
 # prompts. Uses the canonical reg.skill namespace. Emits tracing events
 # under reg.skill.prompt-enhance with operation fields specific to the

@@ -45,10 +45,12 @@ pub fn map_host_provider_error(e: HostProviderError) -> McpToolError {
 pub fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolError {
     let message = e.to_string();
     match e {
-        TrainingArtifactError::InvalidConfiguration => McpToolError::failed_precondition(message),
-        TrainingArtifactError::Upload
-        | TrainingArtifactError::Retrieval
-        | TrainingArtifactError::InvalidManifest => McpToolError::internal(message),
+        TrainingArtifactError::InvalidConfiguration(_) => {
+            McpToolError::failed_precondition(message)
+        }
+        TrainingArtifactError::Upload(_)
+        | TrainingArtifactError::Retrieval(_)
+        | TrainingArtifactError::InvalidManifest(_) => McpToolError::internal(message),
     }
 }
 

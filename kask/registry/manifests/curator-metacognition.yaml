@@ -95,14 +95,6 @@ error_handling:
   on_synthesis_failure: degrade_gracefully
   on_escalation_required: notify_administrator_immediately
 
-# OCAP Configuration — see the unified OCAP pattern (McpRuntime::invoke is the
-# real gate; the 4 fields below are declared config, not yet enforced at runtime).
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: HMAC-SHA256
-  capability_expiry_seconds: 7200
-  template_scoped: true
-
 # Regulation Monitoring
 ledger:
   emit_spans: true

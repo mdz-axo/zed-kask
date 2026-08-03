@@ -182,12 +182,6 @@ error_handling:
   retry_backoff_seconds: 2
   on_validation_failure: abort
 
-ocap:
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 7200    # Evolution cycles run longer than kata
-  template_scoped: true
-
 # Regulation: GEPA is a curation activity — the Curator optimizes artifacts.
 # Uses the canonical reg.curation namespace. GEPA does not introduce new
 # RegSpan variants; it emits tracing events under reg.curation with
