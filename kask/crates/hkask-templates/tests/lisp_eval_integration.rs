@@ -91,11 +91,6 @@ error_handling:
   max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: "abort"
-ocap:
-  delegation_chain_required: false
-  signature_algorithm: "ed25519"
-  capability_expiry_seconds: 3600
-  template_scoped: false
 ledger:
   emit_spans: false
   span_namespace: ""
@@ -198,11 +193,6 @@ error_handling:
   max_retries: 0
   retry_backoff_seconds: 1
   on_validation_failure: "abort"
-ocap:
-  delegation_chain_required: false
-  signature_algorithm: "ed25519"
-  capability_expiry_seconds: 3600
-  template_scoped: false
 ledger:
   emit_spans: false
   span_namespace: ""

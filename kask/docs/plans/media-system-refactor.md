@@ -402,6 +402,14 @@ Add the pipeline compose templates (§5.2) to `kask/registry/templates/media/man
 
 ## Phase 6 — Immediate, low-risk fixes (do first)
 
+**Status: APPLIED and VALIDATED.** The `omc.rs` deletion, the `TOGETHERAI_API_KEY` allowlist trim, the `require_vision` error-string fix, and the durability-gap comment are landed. Both pinning tests pass:
+- `dead_surface_pins::omc_module_not_present` — `cargo test -p hkask-mcp-media dead_surface_pins` → ok.
+- `media_credentials_only_include_used_keys` — `cargo test -p kask_bridge media_credentials_only_include_used_keys` → ok (all 103 `kask_bridge` lib tests pass, no regressions).
+
+`./script/clippy -p hkask-mcp-media` and `./script/clippy -p kask_bridge` are both clean under `--deny warnings`.
+
+**Build-unblock note (not part of this work):** `main` was non-compiling because commit `31c9341120` ("Remove OcapConfig and unify error mapping") removed `OcapConfig` from `bundle/config.rs` but left `manifest_loader.rs` importing it and assigning `BundleManifest.ocap`. A working-tree fix to `manifest_loader.rs` (removing the `OcapConfig` import, the `ManifestFile.ocap` field, and the `ocap:` assignment — verified that no manifest in `registry/manifests/` carries an `ocap:` block, so `deny_unknown_fields` breaks nothing) unblocked the build and allowed the `kask_bridge` test to run. That fix was not authored in this pass; commit it separately to restore a compiling `main`.
+
 These are verified Prohibition-level findings independent of any work stream:
 
 1. **Delete `omc.rs`** (`hkask_mcp_media/src/omc.rs`) and the `pub mod omc;` line (`hkask_mcp_media.rs:16`). Zero call sites (F-1). If ontology mapping is wanted later, wire it to a real consumer (e.g., tag provenance) rather than leaving a write-only module. *Add a grep-assertion test that `omc::` is not referenced, or re-add it only with a consumer.*

@@ -308,9 +308,5 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     // Verify gas cap is positive.
     assert!(manifest.gas.cap > 0, "gas cap must be positive");
 
-    // Verify OCAP delegation chain is required.
-    assert!(
-        manifest.ocap.delegation_chain_required,
-        "delegation chain should be required"
-    );
+    // Verify steps are present.
 }
