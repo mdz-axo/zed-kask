@@ -15,15 +15,18 @@
 //! setting evidence overrides that node's marginal and re-propagates the whole
 //! tree via `propagate::recompute_marginals`.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, AppContext, Bounds, ClickEvent, Context, FocusHandle, Focusable, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba,
-    ScrollWheelEvent, StatefulInteractiveElement, Styled, Window, canvas, div, point, prelude::*,
-    px, rgb,
+    AnyElement, App, AppContext, Bounds, ClickEvent, Context, Entity, FocusHandle, Focusable,
+    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render,
+    Rgba, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window, canvas, div, point,
+    prelude::*, px, rgb,
 };
 use theme::ActiveTheme;
 
@@ -477,10 +480,74 @@ impl Render for GraphWidget {
     }
 }
 
+/// Process-foreground cache of live `GraphWidget` entities keyed by the block
+/// body, so pan/zoom/evidence survive `ConversationView` re-renders (which would
+/// otherwise `cx.new` a fresh entity each time and wipe interaction state). The
+/// markdown renderer invokes `render_event_tree` on every re-layout; without this
+/// cache the widget is recreated per token during streaming.
+///
+/// Foreground-thread-only (markdown layout runs on the GPUI foreground thread),
+/// so a `thread_local` is correct and avoids any `Send`/`Sync` question about
+/// `Entity`. Bounded by `GRAPH_CACHE_CAP` with FIFO eviction.
+const GRAPH_CACHE_CAP: usize = 64;
+
+thread_local! {
+    static GRAPH_CACHE: RefCell<GraphEntityCache> = RefCell::new(GraphEntityCache::default());
+}
+
+#[derive(Default)]
+struct GraphEntityCache {
+    by_hash: HashMap<u64, Entity<GraphWidget>>,
+    order: VecDeque<u64>,
+}
+
+impl GraphEntityCache {
+    fn get_or_insert(
+        &mut self,
+        cx: &mut App,
+        hash: u64,
+        build: impl FnOnce(&mut Context<GraphWidget>) -> GraphWidget,
+    ) -> Entity<GraphWidget> {
+        if let Some(entity) = self.by_hash.get(&hash) {
+            return entity.clone();
+        }
+        while self.by_hash.len() >= GRAPH_CACHE_CAP {
+            match self.order.pop_front() {
+                Some(old) => {
+                    self.by_hash.remove(&old);
+                }
+                None => break,
+            }
+        }
+        let entity = cx.new(build);
+        self.by_hash.insert(hash, entity.clone());
+        self.order.push_back(hash);
+        entity
+    }
+}
+
+fn body_hash(body: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    body.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Build the inline element for the D18 seam: a full-size div wrapping the
-/// `GraphWidget` view.
-pub fn render_event_tree(body: GraphBlockBody, _window: &mut Window, cx: &mut App) -> AnyElement {
-    let entity = cx.new(|cx| GraphWidget::new(body, cx));
+/// `GraphWidget` view. The entity is cached by `body_text` so interaction state
+/// (pan/zoom/evidence) persists across `ConversationView` re-renders instead of
+/// being wiped by a fresh `cx.new` each re-layout.
+pub fn render_event_tree(
+    body: GraphBlockBody,
+    body_text: &str,
+    _window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let hash = body_hash(body_text);
+    let entity = GRAPH_CACHE.with(|cache| {
+        cache
+            .borrow_mut()
+            .get_or_insert(cx, hash, |cx| GraphWidget::new(body, cx))
+    });
     div().size_full().child(entity).into_any_element()
 }
 

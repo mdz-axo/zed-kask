@@ -5,7 +5,7 @@
 use gpui::{
     AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
     ImageSource, InteractiveElement, IntoElement, ObjectFit, ParentElement, RenderImage,
-    SharedString, Styled, StyledImage, Task, Window, div, img, px,
+    SharedString, Styled, StyledImage, Subscription, Task, Window, div, img, px,
 };
 use smallvec::SmallVec;
 use theme::ActiveTheme;
@@ -29,6 +29,7 @@ pub struct MediaWidget {
     current_frame: Option<Arc<RenderImage>>,
     playback_task: Option<Task<()>>,
     error: Option<SharedString>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl MediaWidget {
@@ -43,6 +44,7 @@ impl MediaWidget {
             current_frame: None,
             playback_task: None,
             error: None,
+            _subscriptions: Vec::new(),
         };
         widget.initialize(cx);
         widget
@@ -62,11 +64,25 @@ impl MediaWidget {
             MediaKind::Audio => {
                 let player = Arc::new(AudioPlayer::new());
                 self.audio_player = Some(player);
-                self.transport = Some(cx.new(TransportBar::new));
+                let transport = cx.new(TransportBar::new);
+                self._subscriptions.push(cx.subscribe(
+                    &transport,
+                    |this, _transport, event: &TransportEvent, cx| {
+                        this.handle_transport_event(event, cx);
+                    },
+                ));
+                self.transport = Some(transport);
             }
             MediaKind::Video => {
                 self.video_player = Some(VideoPlayer::new());
-                self.transport = Some(cx.new(TransportBar::new));
+                let transport = cx.new(TransportBar::new);
+                self._subscriptions.push(cx.subscribe(
+                    &transport,
+                    |this, _transport, event: &TransportEvent, cx| {
+                        this.handle_transport_event(event, cx);
+                    },
+                ));
+                self.transport = Some(transport);
             }
         }
         cx.notify();
@@ -97,15 +113,37 @@ impl MediaWidget {
                             }
                         }
                     } else {
-                        match std::fs::read(&src) {
-                            Ok(bytes) => {
-                                if let Err(error) = player.play_bytes(bytes) {
-                                    self.error = Some(SharedString::from(error.to_string()));
+                        match std::fs::metadata(&src) {
+                            Ok(metadata) => {
+                                // Guard against reading unbounded files into memory —
+                                // a malicious ```media block could point at /dev/zero
+                                // or a multi-GB file, causing memory exhaustion.
+                                const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
+                                if metadata.len() > MAX_AUDIO_FILE_SIZE {
+                                    self.error = Some(SharedString::from(format!(
+                                        "audio file too large ({} bytes, max {}); refusing to read",
+                                        metadata.len(),
+                                        MAX_AUDIO_FILE_SIZE
+                                    )));
+                                } else {
+                                    match std::fs::read(&src) {
+                                        Ok(bytes) => {
+                                            if let Err(error) = player.play_bytes(bytes) {
+                                                self.error =
+                                                    Some(SharedString::from(error.to_string()));
+                                            }
+                                        }
+                                        Err(error) => {
+                                            self.error = Some(SharedString::from(format!(
+                                                "failed to read audio file: {error}"
+                                            )));
+                                        }
+                                    }
                                 }
                             }
                             Err(error) => {
                                 self.error = Some(SharedString::from(format!(
-                                    "failed to read audio file: {error}"
+                                    "failed to stat audio file: {error}"
                                 )));
                             }
                         }
@@ -252,13 +290,6 @@ impl EventEmitter<TransportEvent> for MediaWidget {}
 
 impl gpui::Render for MediaWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(transport) = &self.transport {
-            cx.subscribe(transport, |this, _transport, event: &TransportEvent, cx| {
-                this.handle_transport_event(event, cx);
-            })
-            .detach();
-        }
-
         let theme = cx.theme();
 
         let main_content = match &self.reference {

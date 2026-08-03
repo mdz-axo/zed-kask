@@ -6039,7 +6039,7 @@ mod tests {
             .text
             .lines
             .iter()
-            .map(|line| line.layout.wrapped_text().to_string())
+            .map(|line| line.layout.wrapped_text())
             .collect::<Vec<_>>()
             .join("");
 
@@ -6088,7 +6088,7 @@ mod tests {
             .text
             .lines
             .iter()
-            .map(|line| line.layout.wrapped_text().to_string())
+            .map(|line| line.layout.wrapped_text())
             .collect::<Vec<_>>()
             .join("");
 
@@ -6136,7 +6136,7 @@ mod tests {
             .text
             .lines
             .iter()
-            .map(|line| line.layout.wrapped_text().to_string())
+            .map(|line| line.layout.wrapped_text())
             .collect::<Vec<_>>()
             .join("");
 

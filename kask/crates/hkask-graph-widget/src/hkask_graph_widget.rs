@@ -45,7 +45,7 @@ pub fn graph_block_renderer() -> GraphBlockRenderer {
         }
         match block::parse_graph_body(body) {
             Ok(parsed) if parsed.viz.as_deref() == Some("event_tree") => {
-                Some(view::render_event_tree(parsed, window, cx))
+                Some(view::render_event_tree(parsed, body, window, cx))
             }
             Ok(_) => None,
             Err(error) => {

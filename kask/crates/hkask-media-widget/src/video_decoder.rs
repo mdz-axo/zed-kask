@@ -74,11 +74,10 @@ impl VideoPlayer {
         }
     }
 
-    /// Start playback.
+    /// Start playback. Transitions from any state (including Stopped after
+    /// `open`) to Playing.
     pub fn play(&mut self) {
-        if self.state != PlaybackState::Stopped {
-            self.state = PlaybackState::Playing;
-        }
+        self.state = PlaybackState::Playing;
     }
 
     /// Pause playback.

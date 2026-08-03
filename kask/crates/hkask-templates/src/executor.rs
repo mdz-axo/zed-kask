@@ -2350,4 +2350,253 @@ convergence:
              enters the parent context unlabeled and bypasses the Source→Sink block"
         );
     }
+
+    // ── on_capability_denied policy enforcement ──────────────────────────
+
+    /// Tool port stub that always returns `CapabilityDenied` — simulates an
+    /// OCAP token that does not permit the requested action.
+    struct CapabilityDeniedToolPort;
+
+    impl hkask_capability::ToolPort for CapabilityDeniedToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: Value,
+            _token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async {
+                Err(hkask_capability::ToolPortError::CapabilityDenied(
+                    "OCAP token does not permit this action".to_string(),
+                ))
+            })
+        }
+
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async {
+                Some(hkask_capability::ToolInfo {
+                    name: "denied".to_string(),
+                    description: "Tool that always returns CapabilityDenied".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "stub".to_string(),
+                    required_capability: None,
+                    taint: ToolTaint::Pure,
+                })
+            })
+        }
+
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec![] })
+        }
+    }
+
+    /// Helper: build a manifest YAML with an execute step and a given
+    /// `on_capability_denied` policy.
+    fn capability_denied_manifest(policy: &str) -> String {
+        format!(
+            r#"
+manifest:
+  id: cap-denied-test
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: invoke a tool that will be denied
+    mcp: "stub/denied"
+error_handling:
+  on_capability_denied: {policy}
+gas:
+  cap: 10000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#
+        )
+    }
+
+    /// `on_capability_denied: escalate` — the executor must emit an escalation
+    /// span and return an error containing "capability denied", not the raw
+    /// `CapabilityDenied` error.
+    #[tokio::test]
+    async fn on_capability_denied_escalate_returns_escalation_error() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(CapabilityDeniedToolPort),
+            LLMParameters::default(),
+        );
+        let manifest = load_manifest_from_yaml(&capability_denied_manifest("escalate"))
+            .expect("manifest must parse");
+        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        let err = result.expect_err("escalate policy must return an error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("capability denied"),
+            "escalate error must mention capability denied: {msg}"
+        );
+        assert!(
+            msg.contains("Cascade escalated"),
+            "escalate error must indicate cascade escalation: {msg}"
+        );
+    }
+
+    /// `on_capability_denied: abort` — the executor must break the cascade
+    /// with a convergence span and return Ok (the cascade converged).
+    #[tokio::test]
+    async fn on_capability_denied_abort_converges_cascade() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(CapabilityDeniedToolPort),
+            LLMParameters::default(),
+        );
+        let manifest = load_manifest_from_yaml(&capability_denied_manifest("abort"))
+            .expect("manifest must parse");
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("abort policy must converge the cascade, not error");
+        // The convergence report should be in the context.
+        let status = result
+            .get("_convergence")
+            .and_then(|v| v.get("status"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            status,
+            Some("converged"),
+            "abort policy must produce a converged status"
+        );
+    }
+
+    /// Non-escalate, non-abort `on_capability_denied` policy (e.g. `propagate`)
+    /// — the executor must propagate the raw `CapabilityDenied` error.
+    /// The `Default` impl sets `on_capability_denied: "escalate"`, so this test
+    /// explicitly sets a custom value to reach the `_` arm.
+    #[tokio::test]
+    async fn on_capability_denied_nonstandard_propagates_raw_error() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(CapabilityDeniedToolPort),
+            LLMParameters::default(),
+        );
+        let yaml = r#"
+manifest:
+  id: cap-denied-propagate-test
+  category: skill
+steps:
+  - ordinal: 1
+    action: execute
+    description: invoke a tool that will be denied
+    mcp: "stub/denied"
+error_handling:
+  on_capability_denied: propagate
+gas:
+  cap: 10000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 1
+  alert_threshold: 0.8
+  hard_limit: true
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest = load_manifest_from_yaml(yaml).expect("manifest must parse");
+        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        let err = result.expect_err("nonstandard policy must propagate the error");
+        assert!(
+            err.to_string().contains("Capability denied"),
+            "nonstandard policy must propagate the raw CapabilityDenied error: {err}"
+        );
+    }
+
+    // ── Provenance ─────────────────────────────────────────────────────
+
+    /// `with_provenance` builder sets the provenance field.
+    #[test]
+    fn with_provenance_sets_filesystem() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(StubToolPort),
+            LLMParameters::default(),
+        );
+        assert_eq!(
+            executor.provenance,
+            hkask_types::Provenance::Embedded,
+            "default provenance must be Embedded"
+        );
+        let executor = executor.with_provenance(hkask_types::Provenance::Filesystem);
+        assert_eq!(
+            executor.provenance,
+            hkask_types::Provenance::Filesystem,
+            "with_provenance must set the provenance to Filesystem"
+        );
+    }
+
+    /// `Filesystem` provenance does not block execution — the executor warns
+    /// but still runs the cascade. A populate step (no inference, no tool)
+    /// must succeed with `Filesystem` provenance.
+    #[tokio::test]
+    async fn filesystem_provenance_does_not_block_populate() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(StubToolPort),
+            LLMParameters::default(),
+        )
+        .with_provenance(hkask_types::Provenance::Filesystem);
+
+        let yaml = r#"
+manifest:
+  id: provenance-test
+  category: skill
+steps:
+  - ordinal: 1
+    action: populate
+    description: produce a simple artifact
+    template_ref: "hello world"
+gas:
+  cap: 10000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 0
+  alert_threshold: 0.8
+  hard_limit: true
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest = load_manifest_from_yaml(yaml).expect("manifest must parse");
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("Filesystem provenance must not block populate steps");
+        assert!(
+            result.contains_key("step_1_populated"),
+            "populate step must produce step_1_populated"
+        );
+    }
 }

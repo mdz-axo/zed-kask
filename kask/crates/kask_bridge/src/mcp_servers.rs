@@ -240,6 +240,16 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // (Zed's working dir, typically home or project root — not the
             // zed-kask repo), and local agent cards are never found.
             "HKASK_DATA_DIR",
+            // The swarm server constructs a `ContentGuard` via
+            // `hkask_guard::GuardConfig::from_env()`, which reads
+            // `HKASK_GUARD_TOKEN_LIMIT` (the input-token DoS budget, OWASP
+            // LLM04). Without this entry a kask-settings-derived override
+            // would be silently dropped (the `.rules` trap: allowlists must
+            // align with actual env-var reads). A shell-exported value still
+            // reaches the child via parent-env inheritance (no `env_clear`),
+            // but the allowlist is the record of what the server is permitted
+            // to read.
+            "HKASK_GUARD_TOKEN_LIMIT",
         ]),
     },
     BuiltinMcpServer {
@@ -782,6 +792,7 @@ mod tests {
             "/custom/dir".to_string(),
         );
         config_env.insert("HKASK_DATA_DIR".to_string(), "/data/hkask".to_string());
+        config_env.insert("HKASK_GUARD_TOKEN_LIMIT".to_string(), "64000".to_string());
         config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "ops@example.com".to_string(),
@@ -805,6 +816,64 @@ mod tests {
         assert!(
             !filtered.contains_key("HKASK_CODEGRAPH_DB"),
             "swarm server must not receive codegraph config"
+        );
+    }
+
+    // The under-granting direction: every env var the swarm server actually
+    // reads (directly via `std::env::var` in its source, or transitively via
+    // `hkask_guard::GuardConfig::from_env()`) MUST be in its `config_env` or
+    // `credentials` allowlist. The `.rules` trap: under-granting silently
+    // drops operator overrides (the server falls back to default). The
+    // over-grant test above checks that unrelated vars are excluded; this
+    // test checks that no read var is forgotten. When a new env var read is
+    // added to the swarm server, this list MUST be updated — that is the
+    // point (it forces allowlist alignment to be reviewed, not silently
+    // drifted). Verified against `grep std::env::var
+    // kask/mcp-servers/hkask-mcp-swarm/src/**/*.rs` + `GuardConfig::from_env`
+    // in `hkask-guard/src/pipeline.rs`.
+    #[test]
+    fn swarm_config_env_includes_all_read_vars() {
+        // The env vars the swarm server reads at runtime (non-test).
+        // `HKASK_ABW_API_KEY` is a credential (read via `ServerContext`), not
+        // `config_env`; assert it via the credential allowlist instead.
+        let read_config_vars = [
+            "HKASK_ABW_API_URL",
+            "HKASK_ABW_MAX_CREDITS",
+            "HKASK_ABW_CURATOR_CONSENT_DEFAULT",
+            "HKASK_ABW_DEFAULT_AGENT_MODEL",
+            "HKASK_SWARM_MODE",
+            "HKASK_LOCAL_AGENTS_DIR",
+            "HKASK_SWARM_LEDGER_PATH",
+            "HKASK_SWARM_CONSENT_STORE",
+            "HKASK_MCP_SERVER_IDS",
+            "HKASK_DATA_DIR",
+            // Transitive: read by `hkask_guard::GuardConfig::from_env()` which
+            // the swarm server calls in `LocalSwarmRuntime::new` (now via
+            // `AgentExecutor::new`).
+            "HKASK_GUARD_TOKEN_LIMIT",
+        ];
+        let mut config_env = std::collections::HashMap::new();
+        for v in &read_config_vars {
+            config_env.insert(v.to_string(), "sentinel".to_string());
+        }
+        let filtered = filter_config_env_for_server("swarm", &config_env);
+        for v in &read_config_vars {
+            assert!(
+                filtered.contains_key(*v),
+                "swarm server reads {v} but it is not in the config_env allowlist — \
+                 a kask-settings-derived override would be silently dropped (.rules trap)"
+            );
+        }
+        // The credential (secret) read is gated by the credentials allowlist,
+        // not config_env. Assert it via the credential-filter path.
+        let credentials: Vec<(String, String)> = [("HKASK_ABW_API_KEY", "secret")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let filtered_creds = filter_credentials_for_server("swarm", &credentials);
+        assert!(
+            filtered_creds.iter().any(|(k, _)| k == "HKASK_ABW_API_KEY"),
+            "swarm server reads HKASK_ABW_API_KEY but it is not in the credentials allowlist"
         );
     }
 }
