@@ -1870,6 +1870,56 @@ fn measure_text(font: &ab_glyph::FontVec, scale: ab_glyph::PxScale, text: &str) 
     (total_width.ceil() as u32, height)
 }
 
+/// Draw text onto an image with alpha-blended glyph rasterization.
+///
+/// Replaces `imageproc::drawing::draw_text_mut` — uses only `ab_glyph`'s
+/// built-in rasterizer + `image` pixel manipulation, dropping `imageproc`
+/// and its `nalgebra` transitive dep tree (~155 packages).
+fn draw_text_mut(
+    img: &mut image::DynamicImage,
+    color: image::Rgba<u8>,
+    x: i32,
+    y: i32,
+    scale: ab_glyph::PxScale,
+    font: &ab_glyph::FontVec,
+    text: &str,
+) {
+    use ab_glyph::{Font, ScaleFont};
+    let scaled = font.as_scaled(scale);
+    let mut pen = ab_glyph::point(x as f32, y as f32 + scaled.ascent());
+    let Some(img_buf) = img.as_mut_rgba8() else {
+        return;
+    };
+    for ch in text.chars() {
+        let mut glyph = scaled.scaled_glyph(ch);
+        glyph.position = pen;
+        let advance = scaled.h_advance(glyph.id);
+        if let Some(outlined) = scaled.outline_glyph(glyph) {
+            let bb = outlined.px_bounds();
+            outlined.draw(|gx, gy, coverage| {
+                let px = (bb.min.x + gx as f32) as i32;
+                let py = (bb.min.y + gy as f32) as i32;
+                if px >= 0
+                    && py >= 0
+                    && (px as u32) < img_buf.width()
+                    && (py as u32) < img_buf.height()
+                {
+                    let pixel = img_buf.get_pixel_mut(px as u32, py as u32);
+                    let alpha = (coverage * 255.0).round() as u8;
+                    if alpha > 0 {
+                        for i in 0..4 {
+                            pixel[i] = ((pixel[i] as u32 * (255 - alpha as u32)
+                                + color[i] as u32 * alpha as u32)
+                                / 255) as u8;
+                        }
+                    }
+                }
+            });
+        }
+        pen.x += advance;
+    }
+}
+
 /// Cosine similarity between two vectors.
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {

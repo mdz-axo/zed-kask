@@ -383,7 +383,6 @@ swarm_panel = { path = "crates/swarm_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_media_widget = { path = "kask/crates/hkask-media-widget", package = "hkask-media-widget" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 hkask_viz_core = { path = "kask/crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "kask/crates/hkask-graph-widget", package = "hkask-graph-widget" }
 diagnostics = { path = "crates/diagnostics" }
@@ -991,7 +990,6 @@ zstd = "0.11"
 
 # hKask workspace dependencies (kask/ crates inherit these)
 # Only deps not already defined above in the root [workspace.dependencies].
-imageproc = { version = "0.27", default-features = false, features = ["rayon", "text"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob", "backup"] }
@@ -1071,16 +1069,6 @@ libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev =
 notify = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
-
-# zed-kask: D18 — patch gpui-component's zed git deps to our local fork paths.
-# This tells Cargo: when any dependency (gpui-component) asks for gpui/gpui_platform/
-# gpui_web/gpui_macros/reqwest_client from zed-industries/zed, use our local crates.
-[patch."https://github.com/zed-industries/zed"]
-gpui = { path = "crates/gpui" }
-gpui_platform = { path = "crates/gpui_platform" }
-gpui_web = { path = "crates/gpui_web" }
-gpui_macros = { path = "crates/gpui_macros" }
-reqwest_client = { path = "crates/reqwest_client" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

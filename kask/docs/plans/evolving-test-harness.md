@@ -1,8 +1,8 @@
 # Evolving Test Harness for zed-kask — Design Document
 
-**Status:** Proposed (unimplemented)
-**Date:** 2026-08-03
-**Scope:** `hkask-test-harness`, `kask/scripts/test`, `kask-ci.yml`, `qa-triage-cycle`, `proptest` skill, `hkask-regulation` `SensorBus`, `self-improvement` skill
+**Status:** Implemented (all 6 slices landed) — **but a decoupled 4th-iteration grill-me critic (§9.5) found that the implementation's data flow diverges from the design in ways that make the headline safety mechanisms inert.** The design-as-written is internally coherent; the design-as-implemented is NOT yet convergent. The blocking fixes are specified in §9.6 and must land before the convergence checklist (§12) can be marked met.
+**Date:** 2026-08-03 (design); 2026-08-03 (4th critic)
+**Scope:** `hkask-test-harness`, `kask/scripts/test`, `kask/scripts/stability-gate.sh`, `kask/scripts/harness-evolve-cycle.sh`, `kask-ci.yml`, `qa-triage-cycle`, `proptest` skill, `harness-optimize` skill, `harness-evolve-cycle` manifest, `hkask-regulation` `SensorBus`/`SetPoints`, `self-improvement` skill
 
 ---
 
@@ -222,6 +222,13 @@ the existing `test` job. Slices 1–5 do not touch CI. The trace filesystem is
 produced locally by `kask/scripts/test --trace` and by CI; both write the same
 layout.
 
+> ⚠ **Implementation gap (§9.5 #2, #3):** as implemented, `metrics.json` is
+> written by `scripts/test --trace` with only `{pass_rate, total_tests, run_id}`
+> — **`coverage_pct` has no producer anywhere** (no llvm-cov/tarpaulin step
+> landed), and `mutation_score` is only injected by CI's separate jq step, not
+> in the loop path. The `coverage/<crate>.lcov` files in the layout above do
+> not exist yet. Fix: §9.6 F1, F2.
+
 ### 3.3 Component 2 — Oracle Taxonomy in `hkask-test-harness`
 
 **Design constraint (HarnessLLM):** the harness must support all three oracle
@@ -350,6 +357,14 @@ tool (installed like nextest via `taiki-e/install-action`), not a workspace
 crate. No new crate — the gate is a shell script reading JSON via `jq` and
 invoking `cargo mutants`.
 
+> ⚠ **Implementation gaps (§9.5 #3, #5, #6):** (a) the gate's `cargo mutants`
+> fallback computes `mutation_score` into a shell var + `/tmp/mutants-out.json`
+> but does **not** write it back to `${TRACE}/metrics.json`, so `prev_mutation_score`
+> is always 0 in the loop path (ECR collapses to `mutation_score/1`). (b) The
+> verdict block checks `converged` **before** `eir_total > 0`, so spurious
+> convergence on all-zero metrics masks the EIR halt. (c) The EIR classifier
+> counts **all** `is_real_bug: false` failures, not new-vs-N−1. Fixes: §9.6 F1, F3, F5.
+
 ### 3.5 Component 4 — `harness-optimize` Skill (Proposer)
 
 **Design constraint (Meta-Harness + Recursive Self-Improvement):** a coding-agent
@@ -387,7 +402,15 @@ a polite instruction in a skill template. Alternatively, the proposer may run as
 a **swarm delegate** (`hkask-mcp-swarm` `agent_executor.rs`), which has no
 built-in tools at all (only MCP tools from `declared_tools`) — the same effect.
 This is the enforcement point the first critic demanded (§9.2), corrected to the
-right mechanism by the second critic (§9.3).
+> right mechanism by the second critic (§9.3).
+
+> ⚠ **Implementation gap (§9.5 #7):** as implemented, this separation is a
+> **convention, not a mechanical gate.** `is_tool_enabled` is a passive read;
+> no agent profile binds `terminal: false` for `harness-optimize`; the manifest
+> step 3 is free-text prose; the runner prints "AGENT ACTION REQUIRED" and does
+> not spawn a constrained agent. An operator running the cycle with the default
+> profile gets a proposer that can `cargo nextest run` its own draft. This is
+> the `.rules` "Advertised invariants need enforcement points" trap. Fix: §9.6 F6.
 
 **Pairwise refinement (Recursive Self-Improvement paper):** the proposer compares
 revision N vs N−1, not against an undefined "optimal." It asks: "what did N−1
@@ -453,6 +476,15 @@ converged, and the operator is alerted. The stall detector is non-degenerate
 because mutation score is non-degenerate: trivial tests that don't kill mutants
 produce `Δmutation_score = 0`, while meaningful tests that catch bugs produce
 `Δmutation_score > 0` — the two are distinguishable.
+
+> ⚠ **Implementation gaps (§9.5 #4, #5, #10):** (a) the Cauchy norm in
+> `stability-gate.sh` is `sqrt(1.0·d_cov² + 2.0·d_ms²)` — **the cost axis
+> (`w_k=0.5`, `cost_tokens`, `cost_norm`) is not implemented**, despite being
+> named in the `converged` span message. (b) The stall detector requires
+> `d_cov > 0.02` but `coverage_pct` is always 0 (no producer) → it can never
+> fire. (c) With all metrics 0, `norm = 0 < ε` → spurious `converged`, checked
+> before EIR. Fixes: §9.6 F2 (coverage producer), F3 (refuse convergence on
+> absent metrics + reorder verdict), F7 (cost axis honesty).
 
 When the stall detector does **not** fire and the Cauchy criterion does fire
 (the triple genuinely stabilizes), the loop terminates with a
@@ -544,8 +576,8 @@ trace filesystem is the shared medium that closes the loop.
 | 1 | Requisite Variety | `TestCoverageSensor` + `MutationScoreSensor` count distinct failure modes (qa-triage `failure_type` field aggregated across traces) and measure bug-finding ability (mutation score). Set-point: failure-mode variety ≥ code's fault class count; mutation score ≥ floor. | `SensorBus::sense_all` in `cybernetics_loop.rs` `sense()` (Slice 5) |
 | 2 | Good Regulator | Trace filesystem stores actual test behavior (raw output + shrunk counterexamples + coverage lines), not idealized pass/fail. ECR/Acc anchored to **mutation testing** (inject deliberate faults, measure if the suite catches them) — the gate models the system's actual bug-finding ability, not an LLM's imagination. The `RR-*.yaml` regression library is a regression-prevention guard (don't break existing fixes), separate from the bug-finding metric. | `kask/traces/<run-id>/coverage/<crate>.lcov` (Slice 1); `cargo mutants` output in `metrics.json` (Slice 2); `kask/security/regressions/RR-*.yaml` + `lib-regressions.sh` (existing, regression-prevention guard) |
 | 3 | Feedback Loop Closure | Test failures → `qa-triage-cycle` → proposed fix; code changes → `harness-optimize` → new tests → CI → traces → sensors → `CyberneticsLoop`. Trace filesystem is the shared medium. | `harness-evolve-cycle` manifest steps 1→3→1 (Slice 3); `TestCoverageSensor` feeds `sense()` (Slice 5) |
-| 4 | Homeostatic Regulation | `SetPoints.coverage_floor` + `mutation_score_floor`. `CyberneticsLoop.verify_impact` classifies each harness revision Accept/Stage/Block. Deviation (coverage or mutation score below floor) → corrective action (generate tests). | `verify_impact` in `cybernetics_loop.rs` L1088–1267 (existing); new sensors feed it (Slice 5) |
-| 5 | Algedonic Signal | EIR > 0 → `RuntimeAlert{severity: Critical, escalated: true, domain: "test-harness"}` via `alerts_tx` → `MetacognitionLoop` → toast + email. Stall detector → `stalled_escalate` → same algedonic path. Iteration cap → `reg.harness.iteration_cap_reached` + Critical alert. Reuses the existing three-tier escalation. | `harness-evolve-cycle` step 4 + step 7 → `alerts_tx.send(CurationInput::Alert(...))` (Slice 3); `CyberneticsLoop.act` L1002–1076 (existing three-tier dispatch) |
+| 4 | Homeostatic Regulation | `SetPoints.coverage_floor` + `mutation_score_floor`. `CyberneticsLoop.verify_impact` classifies each harness revision Accept/Stage/Block. Deviation (coverage or mutation score below floor) → corrective action (generate tests). | `verify_impact` in `cybernetics_loop.rs` (existing, classifies via `classify_decision`); new sensors feed it (Slice 5). ⚠ sensors read fields absent from `metrics.json` as implemented — see §9.5 #9, fix F1/F2 |
+| 5 | Algedonic Signal | EIR > 0 → `RuntimeAlert{severity: Critical, escalated: true, domain: "test-harness"}` via `alerts_tx` → `MetacognitionLoop` → toast + email. Stall detector → `stalled_escalate` → same algedonic path. Iteration cap → `reg.harness.iteration_cap_reached` + Critical alert. Reuses the existing three-tier escalation. | `harness-evolve-cycle` step 4 + step 7 → `alerts_tx.send(CurationInput::Alert(...))` (Slice 3); `CyberneticsLoop::act` (existing three-tier dispatch). ⚠ the EIR halt is inert as implemented (§9.5 #8) — fix F1/F5 |
 | 6 | Self-Improvement | `harness-optimize` skill (Σ pathway of `self-improvement`), pairwise refinement, max 5 iterations, Cauchy convergence on (coverage, mutation-score, cost) + stall detector for coverage-without-bugs. | `harness-evolve-cycle` manifest step 6 loop bound + step 5/7 split terminal spans (Slice 3); `stability-gate.sh` Cauchy + stall check (Slice 2) |
 
 Each principle points to a line of code or a manifest step that enforces it —
@@ -682,14 +714,21 @@ current state (IS) and target state (OUGHT).
 
 ---
 
-## 9. Grill-Me Self-Challenge (decoupled critic, 2 iterations)
+## 9. Grill-Me Self-Challenge (decoupled critic, 4 iterations)
 
-The critic is a separate agent (spawned after the design was written). Two
-iterations were run. The first found two breaks (LLM-judges-LLM circularity +
-Cauchy-doesn't-fire-on-trivial-tests). The second found a deeper break (the
-regression-library fix was degenerate) and a misattributed enforcement point.
-The design was revised after each. The final state is below; the full critic
-outputs are in §9.1 (first) and §9.3 (second).
+The critic is a separate agent (spawned after the design was written). The first
+three iterations were run by the authoring agent's own sessions (§9.1–§9.4).
+The first found two breaks (LLM-judges-LLM circularity + Cauchy-doesn't-fire-on-
+trivial-tests). The second found a deeper break (the regression-library fix was
+degenerate) and a misattributed enforcement point. The third fixed both.
+
+**A fourth iteration was then run by a genuinely decoupled critic** (a fresh
+sub-agent with no prior context, given the verified codebase state). It broke
+the design-**as-implemented** at Levels 2, 3, 4, and 5 — the prior three
+iterations reviewed the prose; the fourth reviewed the data flow. Its findings
+(§9.5) and the required fixes (§9.6) are the current open work. The §9 Recall /
+Mechanism / Rationale / Edge Cases / Synthesis answers below reflect the
+design-as-written; §9.5 records where the implementation diverges.
 
 **Recall:** Can the design be summarized in one sentence?
 > A trace-filesystem-backed test harness whose suite-level improvements are
@@ -821,6 +860,65 @@ the missing prerequisite the second critic identified — it is now in-scope
 longer the bug-finding oracle. The stall detector, Cauchy norm, stability
 threshold, and `MutationScoreSensor` are all non-degenerate because mutation
 score moves when the test suite changes.
+
+### 9.5 Decoupled Critic Output — Fourth Iteration (breaks the design-as-implemented)
+
+A fourth critic was spawned as a fresh sub-agent with no prior context, given
+the verified codebase state (all 6 slices implemented) and told to review the
+**design-as-implemented**, not the prose. It found that the prior three
+iterations reviewed the design's internal coherence but never checked whether
+the metrics the oracle produces actually reach the file the gate and sensors
+read. The single-point failure is the `metrics.json` data flow.
+
+| # | Level | Verdict | Finding | Evidence |
+|---|-------|---------|---------|----------|
+| 1 | Mechanism | **BREAKS** | Runner crashes on first invocation — `RUN_HISTORY` starts empty, accumulates 1 run-id, but `stability-gate.sh` requires ≥2; no N−1 bootstrap. Every branch `exit`s, so the `while true` loop never iterates more than once; `RUN_HISTORY` is in-process and not persisted across re-invocations. | `harness-evolve-cycle.sh` L20,53,58-60; `stability-gate.sh` L29-32 |
+| 2 | Mechanism | **BREAKS** | `metrics.json` never contains `coverage_pct` — no coverage tool (llvm-cov/tarpaulin) anywhere. `scripts/test --trace` writes only `{pass_rate, total_tests, run_id}`. The doc's §3.2 trace layout shows `coverage/<crate>.lcov` but no producer exists. CI's Slice 6 added mutation testing + artifact upload, NOT coverage. | `kask/scripts/test` L65-67; `kask-ci.yml` (no coverage step) |
+| 3 | Mechanism | **BREAKS** | `metrics.json` never contains `mutation_score` except CI's separate jq step. The gate's own `cargo mutants` fallback writes to `/tmp/mutants-out.json` and a shell var — it does **not** write `mutation_score` back to `${LATEST_TRACE}/metrics.json`. So in the loop path `prev_mutation_score` is always 0. | `stability-gate.sh` L88-103 (no write-back); `kask-ci.yml` L101 (CI-only) |
+| 4 | Edge Cases | **BREAKS** | Stall detector can never fire — it requires `d_cov > 0.02` but `coverage_pct` is always 0 (break #2). The design's headline answer to "tests that pass but catch no bugs" (§3.6) is dead code. | `stability-gate.sh` L180-181 |
+| 5 | Edge Cases | **BREAKS (most dangerous)** | Cauchy convergence fires spuriously on all-zero metrics (`norm = 0 < ε` for all windows → `converged`) **and** is checked before EIR in the verdict block, so spurious convergence masks the EIR halt. A system with real test-bug introductions AND absent metrics reports `converged` and never halts. | `stability-gate.sh` L156,192-204 |
+| 6 | Edge Cases | **BREAKS** | EIR classifier counts ALL `is_real_bug: false` failures in the latest run, not NEW vs N−1 → permanent `halt_escalate` on pre-existing flaky tests. (Currently moot — break #8 — but would surface if qa-triage were wired in.) | `stability-gate.sh` L127-137 |
+| 7 | Rationale | **BREAKS** | Proposer/evaluator separation is an unenforced convention. `is_tool_enabled` is a passive read; no profile binds `terminal: false` for `harness-optimize`; the manifest step 3 is free-text prose; the runner just prints "AGENT ACTION REQUIRED". This is the `.rules` "Advertised invariants need enforcement points" trap. | `agent_profile.rs` L115; `harness-evolve-cycle.yaml` L49-51; `harness-evolve-cycle.sh` L112-127 |
+| 8 | Mechanism | **BREAKS** | EIR is entirely dead in the loop — `failures/*/classifier.json` is never produced (no qa-triage step in `harness-evolve-cycle`; `scripts/test` creates no `failures/` dir). `eir_deterministic = 0` because `prev_mutation_score` is always 0 (break #3). `eir_total = 0` unconditionally → the EIR halt gate can never fire. | `harness-evolve-cycle.yaml` (no qa-triage step); `kask/scripts/test` |
+| 9 | Rationale | **BREAKS** | `TestCoverageSensor`/`MutationScoreSensor` always return `None` — they read `coverage_pct`/`mutation_score` via `value.get(...)?.as_f64()?`, and both fields are absent from `metrics.json` (breaks #2,#3). The `coverage_floor`/`mutation_score_floor` set-points are permanently unenforced. | `sensor_provider.rs` L416-426, L483-493 |
+| 10 | Recall | **BREAKS** | Cost axis (`w_k=0.5`, `cost_tokens`, `cost_norm`) is documented in §3.6 and named in the `converged` span message but absent from `stability-gate.sh` (norm is `sqrt(1.0·d_cov² + 2.0·d_ms²)` — two-axis, not three). The converged span names a three-axis criterion that is mechanically two-axis. | `stability-gate.sh` L156; `harness-evolve-cycle.yaml` L72 |
+| 11 | Recall | partial (known) | Status line was stale ("Proposed (unimplemented)"); `verify_impact`/`act` line refs drift. | doc L3; `cybernetics_loop.rs` ~L1099/~L857 |
+| 12 | Recall | partial (known) | `qa-triage-cycle.yaml` header says "no cargo-mutants" while `harness-evolve-cycle` introduces it — unreconciled tension. | `qa-triage-cycle.yaml` header |
+| 13 | Recall | partial (known) | CI artifact path `kask/kask/traces/` (doubled `kask`) from `cd kask` + relative `TRACE_DIR`. | `kask-ci.yml` L112 |
+
+**Root cause:** the prior three iterations reviewed the design's internal
+coherence (oracle choice, OCAP mechanism attribution) but never verified the
+data-flow contract — that the metrics the oracle produces are the same fields
+the gate and sensors read. `coverage_pct` has no producer anywhere;
+`mutation_score` is not persisted in the loop path. This single gap
+cascade-kills the stall detector, ECR semantics, EIR gate, Cauchy convergence,
+and both CyberneticsLoop sensors, while the convergence verdict actively
+converts the garbage into a false success that overrides the EIR halt.
+
+### 9.6 Required Fixes (not yet applied — blocking convergence)
+
+These fixes must land before the §12 convergence checklist can be marked met.
+They are ordered by dependency (the data-flow fixes unblock the detector/gate
+fixes). Each is traceable to a §9.5 finding.
+
+| # | Fix | Files | Unblocks | Traceable to |
+|---|-----|-------|----------|--------------|
+| F1 | **Persist `mutation_score` into `${TRACE_DIR}/metrics.json`** from the `cargo mutants` fallback (write-back), and/or move mutation scoring into `./scripts/test --trace` so every run records it. | `stability-gate.sh` L88-103; optionally `kask/scripts/test` | #3, then #8 (EIR deterministic), #9 (sensor) | §9.5 #3 |
+| F2 | **Add a coverage producer** (e.g. `cargo llvm-cov nextest` / `tarpaulin`) to `./scripts/test --trace` and CI, writing `coverage_pct` to `metrics.json` and `coverage/<crate>.lcov` to the trace dir. If deferred, the stall detector and `TestCoverageSensor` must be gated on coverage presence (not silently read 0). | `kask/scripts/test`; `kask-ci.yml` | #2, then #4 (stall), #9 (sensor) | §9.5 #2 |
+| F3 | **Refuse convergence when metrics are absent.** Treat a missing `coverage_pct`/`mutation_score` as "no signal" (skip that axis / mark the window non-converged), not as zero delta. **Reorder the verdict so EIR > 0 is checked before `converged`** — a halt must never be masked by spurious convergence. | `stability-gate.sh` L156,192-204 | #5 | §9.5 #5 |
+| F4 | **Bootstrap N−1 and persist run history.** The runner must either (a) accept a single run-id and skip ECR/Cauchy until N≥2 (emit a `bootstrap` verdict, not crash), and (b) persist `RUN_HISTORY` across invocations (a state file under the trace dir) OR actually loop in-process across iterations without `exit`ing. | `harness-evolve-cycle.sh` L20,53,58-60,100-127; `stability-gate.sh` L29-32 | #1 | §9.5 #1 |
+| F5 | **Wire qa-triage into the cycle** (a classification step that populates `failures/<test>/classifier.json`), **or** drop the classifier EIR claim from the design and rely on the deterministic (mutant-regression) EIR component alone. If wired, diff latest vs N−1 failures so EIR counts only **new** non-real-bug failures. | `harness-evolve-cycle.yaml` (add step); `stability-gate.sh` L127-137 | #6, #8 | §9.5 #6,#8 |
+| F6 | **Enforce proposer/evaluator separation mechanically.** Add a `profile:` binding to the manifest step 3 that selects a profile with `terminal: false`, **or** route step 3 through `swarm_delegate` (no built-in tools), and assert the binding at cycle start (refuse to invoke `harness-optimize` if `is_tool_enabled("terminal")`). A SKILL.md instruction is not a gate. | `harness-evolve-cycle.yaml` step 3; `harness-evolve-cycle.sh`; new/selected agent profile | #7 | §9.5 #7 |
+| F7 | **Make the cost axis honest.** Either read `cost_tokens` from `metrics.json`, normalize, and add `w_k·Δcost_norm²` to the Cauchy norm — or remove the cost axis from §3.6, the norm, and the `converged` span message. Do not advertise a three-axis criterion that is mechanically two-axis. | `stability-gate.sh` L156; §3.6; `harness-evolve-cycle.yaml` L72 | #10 | §9.5 #10 |
+| F8 | **Reconcile the cargo-mutants stance.** Add a note to `qa-triage-cycle.yaml` (or the design) that `cargo-mutants` is used by `harness-evolve-cycle` (a separate manifest), not by `qa-triage-cycle` — the "no cargo-mutants" header scopes to that manifest only. | `qa-triage-cycle.yaml` header; §3.4 | #12 | §9.5 #12 |
+| F9 | **Resolve the doubled `kask/kask/traces/` path.** Use a repo-root-relative or absolute `TRACE_DIR` consistently, or have `scripts/test` not re-`cd`. | `kask-ci.yml` L112; `kask/scripts/test` L9,48 | #13 | §9.5 #13 |
+| F10 | **Update stale status + line refs.** Status reflects implemented state; replace specific line numbers with symbol names (they drift). | doc §1; §5 table | #11 | §9.5 #11 |
+
+**After F1–F3 land,** the stall detector, EIR halt, ECR semantics, Cauchy
+convergence, and both sensors become live (they read fields that now exist and
+are non-zero). **After F4 lands,** the runner can complete a cycle. **After F6
+lands,** the proposer/evaluator separation is a mechanical gate, not a
+convention. F1–F4 are the blocking set; F5–F10 are correctness/hygiene.
 
 ---
 
@@ -1036,10 +1134,37 @@ proposer — CI is the independent evaluator).
 
 | Criterion | Met? | Where |
 |-----------|------|-------|
-| All 5 papers' design constraints addressed | ✓ | §4 traceability table |
-| All 6 Agent Cybernetics principles have a measurable mechanism | ✓ | §5 mechanism table (each with enforcement point) |
-| Stability gate (ECR/EIR threshold) specified concretely | ✓ | §3.4 (ECR/Acc/mutation_score from mutation testing — non-degenerate; EIR deterministic component from mutant regressions + classifier component for flaky tests; `RR-*.yaml` regression-prevention guard; halt rule + threshold formula) |
+| All 5 papers' design constraints addressed (design-as-written) | ✓ | §4 traceability table |
+| All 6 Agent Cybernetics principles have a measurable mechanism (design-as-written) | ✓ | §5 mechanism table |
+| Stability gate (ECR/EIR threshold) specified concretely (design-as-written) | ✓ | §3.4 |
 | Trace-filesystem compatible with `qa-triage-cycle` and `kask-ci.yml` | ✓ | §3.2 (extends qa-triage; Slice 6 adds to kask-ci.yml) |
 | Essentialist G1 deletion test passes for every component | ✓ | §6.1 (all 7 components pass) |
-| Grill-me critic cannot produce an Edge Cases challenge that breaks the design | ✓ (after 3 iterations) | §9 — 1st critic broke on LLM-judges-LLM + Cauchy-doesn't-fire; 2nd critic broke on degenerate regression-library oracle + misattributed OCAP; 3rd iteration fixed both (mutation testing as non-degenerate oracle + `terminal` tool disabled + stall detector on mutation score + split terminal spans). The critic's deepest insight (the oracle itself can be degenerate) is addressed by mutation testing being non-degenerate in the harness-improvement context. |
-| First vertical slice implementable without new crates or CI changes | ✓ | Slice 1 (existing crate + script change only) |
+| **Grill-me critic cannot produce an Edge Cases challenge that breaks the design** | **✗ — NOT met for the design-as-implemented** | §9.5 — the 4th (decoupled) critic broke the implementation at Levels 2, 3, 4, 5. The prior 3 iterations reviewed the prose; the 4th reviewed the data flow and found `coverage_pct`/`mutation_score` are not persisted to `metrics.json`, which cascade-kills the stall detector, ECR semantics, EIR gate, Cauchy convergence, and both sensors, while spurious convergence masks the EIR halt. Blocking fixes: §9.6 F1–F4. |
+| First vertical slice implementable without new crates or CI changes | ✓ (landed) | Slice 1 implemented in `hkask-test-harness` + `scripts/test --trace` |
+
+**Honest status:** the design-as-written satisfies the structural criteria
+(papers, principles, G1, traceability). The design-as-implemented does **not**
+satisfy the grill-me criterion: a decoupled critic produced an Edge Cases
+challenge (§9.5 #5 — spurious convergence on all-zero metrics masks the EIR
+halt) that breaks the implemented safety properties. Convergence is blocked on
+§9.6 fixes F1–F4 (persist the metrics, add a coverage producer, refuse
+convergence on absent metrics + reorder the verdict ahead of EIR, bootstrap the
+runner). Once F1–F4 land, the 4th critic's breaks are addressed and this
+criterion can be re-tested with a 5th decoupled critic.
+
+---
+
+## 13. Implementation Status (post-4th-critic)
+
+All six slices are implemented in the codebase, but the 4th critic found the
+implementation diverges from the design on the data-flow contract. The table
+maps each slice to its implementation location and its open fix.
+
+| Slice | Implemented at | Open fix (§9.6) |
+|-------|----------------|-----------------|
+| 1 — Trace filesystem + oracle taxonomy | `hkask-test-harness/src/hkask_test_harness.rs`; `scripts/test --trace`; `tests/oracle_and_trace.rs` | None (live) |
+| 2 — Stability gate | `kask/scripts/stability-gate.sh` | F1 (persist mutation_score), F3 (refuse convergence on absent metrics + reorder verdict), F7 (cost axis) |
+| 3 — `harness-evolve-cycle` manifest | `kask/registry/manifests/harness-evolve-cycle.yaml`; `kask/scripts/harness-evolve-cycle.sh` | F4 (bootstrap N−1 + persist history), F5 (qa-triage step or drop classifier EIR), F6 (enforce `terminal:false` binding) |
+| 4 — `harness-optimize` skill | `.agents/skills/harness-optimize/SKILL.md` | F6 (separation is a convention, not a gate) |
+| 5 — CyberneticsLoop sensors | `sensor_provider.rs` (`TestCoverageSensor`/`MutationScoreSensor`); `set_points.rs`; `signals.rs` | F1, F2 (sensors read fields absent from `metrics.json` → always `None`) |
+| 6 — CI evaluator | `.github/workflows/kask-ci.yml` (cargo-mutants + trace upload) | F2 (no coverage producer), F9 (doubled `kask/kask/traces/` path) |

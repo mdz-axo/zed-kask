@@ -47,6 +47,14 @@ inputs:
   - name: spec_context
     type: string
     required: false
+  # Harness-integration inputs (optional — consumed when available from prior
+  # harness-evolve-cycle runs or bug-hunt expeditions).
+  - name: surviving_mutants
+    type: array
+    required: false
+  - name: bug_hunt_findings
+    type: array
+    required: false
 
 steps:
   - ordinal: 1
@@ -61,6 +69,7 @@ steps:
       crate_scope: "{{ crate_scope }}"
       code_context: "{{ code_context | default({}) }}"
       spec_context: "{{ spec_context | default('') }}"
+      surviving_mutants: "{{ surviving_mutants | default([]) }}"
 
   - ordinal: 2
     action: select
@@ -80,6 +89,28 @@ steps:
 
   - ordinal: 3
     action: select
+    description: >
+      Strengthen the GREEN tracer bullet by dispatching to the proptest skill for
+      the universal test (contract post:/inv: across the input space). A proptest
+      fail is a second source of RED routing back to the tracer (impl) or the
+      plan (contract). Skips cleanly for hardcoded (fixed-value) contracts.
+    renderer: minijinja
+    template_ref: tdd/tdd-strengthen
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      contract_code: "{{ step_2_result.contract_code | default('') }}"
+      oracle_type: "{{ step_2_result.oracle_type | default('hardcoded') }}"
+      crate_scope: "{{ crate_scope }}"
+      behavior_description: "{{ step_2_result.user_expectation | default(task_description) }}"
+      test_style: "{{ step_1_result.behaviors_to_test[0].test_type | default('integration') }}"
+    branching:
+      proceed: 4
+      retracer: 2
+      replan: 1
+
+  - ordinal: 4
+    action: select
     description: Propose safe GREEN-phase refactors.
     renderer: minijinja
     template_ref: tdd/tdd-refactor
@@ -90,9 +121,13 @@ steps:
       passing_tests: "{{ [step_2_result] }}"
       refactor_candidates: "{{ step_1_result.public_interface | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: select
-    description: Verify TDD completion quality and contract discipline.
+    description: >
+      Verify TDD completion quality and contract discipline. Runs the suite with
+      trace collection (./scripts/test --trace) so the run is visible to the
+      suite-level harness-optimize loop. Consumes the proptest verdict from
+      step 3 to confirm the universal test passes.
     renderer: minijinja
     template_ref: tdd/tdd-verify
     gas_cap: 4000
@@ -100,26 +135,58 @@ steps:
     input_mapping:
       crate_scope: "{{ crate_scope }}"
       behaviors_tested: "{{ [step_2_result] }}"
-      test_commands: "{{ ['cargo test -p ' ~ crate_scope] }}"
+      proptest_verdict: "{{ step_3_result.proptest_verdict | default('skipped') }}"
+      universal_test_file_path: "{{ step_3_result.universal_test_file_path | default('') }}"
+      test_commands: "{{ ['./scripts/test --trace'] }}"
       clippy_commands: "{{ ['cargo clippy -p ' ~ crate_scope ~ ' -- -D warnings'] }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: select
-    description: Analyze requirement coverage gaps and deferrals.
+    description: >
+      Analyze requirement coverage gaps and deferrals. Consumes bug-hunt
+      findings (if provided as input) and surviving mutants (if available from
+      a prior harness-evolve-cycle run) as additional gap sources.
     renderer: minijinja
     template_ref: tdd/tdd-gap-check
     gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
       spec_requirements: "{{ step_1_result.functional_requirements | default([]) }}"
-      tested_behaviors: "{{ step_4_result.behavior_coverage | default([]) }}"
+      tested_behaviors: "{{ step_5_result.behavior_coverage | default([]) }}"
       crate_scope: "{{ crate_scope }}"
       collection_coherence: "{{ {} }}"
+      bug_hunt_findings: "{{ bug_hunt_findings | default([]) }}"
+      surviving_mutants: "{{ surviving_mutants | default([]) }}"
 
-  - ordinal: 6
+  - ordinal: 7
+    action: select
+    description: >
+      Explore for spec blind spots by dispatching to the bug-hunt skill with a
+      charter scoped to the slice's code. Findings not covered by an existing
+      tracer bullet become new functional requirements routing back to the
+      plan. Dispatches only when coverage is thin OR the slice touches Trust
+      (P0) — not on every low-risk slice.
+    renderer: minijinja
+    template_ref: tdd/tdd-explore
+    gas_cap: 8000
+    timeout_seconds: 180
+    input_mapping:
+      crate_scope: "{{ crate_scope }}"
+      risk_profile: "{{ step_1_result.risk_profile | default('') }}"
+      gaps: "{{ step_6_result.gaps | default([]) }}"
+      behaviors_tested: "{{ step_5_result.behavior_coverage | default([]) }}"
+    branching:
+      replan: 1
+      converge: 8
+
+  - ordinal: 8
     action: compute
     compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
+    description: >
+      CHECK CONVERGENCE: Cauchy criterion. Deterministic. Convergence requires
+      the artifact triple to stabilize AND proptest_violations == 0 (step 3)
+      AND bug_hunt_new_gaps == 0 (step 7) — false convergence with open
+      violations/gaps is prevented.
     input_mapping:
       hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
@@ -131,12 +198,12 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 9
     action: loop
     description: Re-enter TDD cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_8_result.convergence_metric | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

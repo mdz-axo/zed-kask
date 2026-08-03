@@ -1,20 +1,17 @@
-//! Transport controls built on `gpui-component` (12.4k★).
+//! Transport controls using a lightweight GPUI-native slider.
 //!
-//! Uses `gpui_component::Slider` which has:
-//! - `SliderEvent::Release` for seek-on-mouse-up (added per issue #2025
-//!   explicitly for media players)
-//! - `SliderScale::Logarithmic` for volume (docs cite this exact use case)
-//!
-//! The slider values are updated in `render()` (where `&mut Window` is
-//! available) rather than in `set_state()` (where it isn't).
+//! Replaces the 618-dependency `gpui-component` crate with a simple
+//! inline slider (`SimpleSlider`). Provides seek-on-release semantics
+//! for media players and logarithmic scale for volume control.
 
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, SharedString, Styled, Window, div, px,
 };
-use gpui_component::slider::{Slider, SliderEvent, SliderScale, SliderState, SliderValue};
 use std::time::Duration;
 use theme::ActiveTheme;
+
+use crate::simple_slider::{SimpleSlider, SimpleSliderEvent};
 
 #[derive(Debug, Clone)]
 pub enum TransportEvent {
@@ -36,21 +33,15 @@ pub struct TransportState {
 pub struct TransportBar {
     focus_handle: FocusHandle,
     state: TransportState,
-    seek_slider: Entity<SliderState>,
-    volume_slider: Entity<SliderState>,
+    seek_slider: Entity<SimpleSlider>,
+    volume_slider: Entity<SimpleSlider>,
     is_dragging_seek: bool,
 }
 
 impl TransportBar {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let seek_slider = cx.new(|_| SliderState::new().min(0.0).max(1.0).step(0.001));
-        let volume_slider = cx.new(|_| {
-            SliderState::new()
-                .min(0.001)
-                .max(1.0)
-                .step(0.01)
-                .scale(SliderScale::Logarithmic)
-        });
+        let seek_slider = cx.new(|cx| SimpleSlider::new(cx, 0.0, 1.0, 0.001));
+        let volume_slider = cx.new(|cx| SimpleSlider::new(cx, 0.001, 1.0, 0.01).logarithmic());
 
         cx.subscribe(&seek_slider, Self::on_seek_slider_event)
             .detach();
@@ -74,36 +65,29 @@ impl TransportBar {
 
     fn on_seek_slider_event(
         &mut self,
-        _slider: Entity<SliderState>,
-        event: &SliderEvent,
+        _slider: Entity<SimpleSlider>,
+        event: &SimpleSliderEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
-            SliderEvent::Change(_) => {
+            SimpleSliderEvent::Change(_) => {
                 self.is_dragging_seek = true;
             }
-            SliderEvent::Release(value) => {
+            SimpleSliderEvent::Release(value) => {
                 self.is_dragging_seek = false;
-                let fraction = match value {
-                    SliderValue::Single(v) => *v,
-                    SliderValue::Range(start, _) => *start,
-                };
-                cx.emit(TransportEvent::Seek(fraction));
+                cx.emit(TransportEvent::Seek(*value));
             }
         }
     }
 
     fn on_volume_slider_event(
         &mut self,
-        _slider: Entity<SliderState>,
-        event: &SliderEvent,
+        _slider: Entity<SimpleSlider>,
+        event: &SimpleSliderEvent,
         cx: &mut Context<Self>,
     ) {
         let volume = match event {
-            SliderEvent::Change(v) | SliderEvent::Release(v) => match v {
-                SliderValue::Single(v) => *v,
-                SliderValue::Range(_, end) => *end,
-            },
+            SimpleSliderEvent::Change(v) | SimpleSliderEvent::Release(v) => *v,
         };
         cx.emit(TransportEvent::VolumeChange(volume));
     }
@@ -143,16 +127,13 @@ impl Focusable for TransportBar {
 }
 
 impl gpui::Render for TransportBar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Update slider values before rendering (set_value requires &mut Window).
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_dragging_seek {
-            self.seek_slider.update(cx, |slider, cx| {
-                slider.set_value(SliderValue::Single(self.seek_fraction()), window, cx);
-            });
+            self.seek_slider
+                .update(cx, |slider, cx| slider.set_value(self.seek_fraction(), cx));
         }
-        self.volume_slider.update(cx, |slider, cx| {
-            slider.set_value(SliderValue::Single(self.state.volume), window, cx);
-        });
+        self.volume_slider
+            .update(cx, |slider, cx| slider.set_value(self.state.volume, cx));
 
         let play_label = if self.state.is_playing {
             "Pause"
@@ -196,21 +177,13 @@ impl gpui::Render for TransportBar {
                     }),
             )
             .child(div().text_sm().child(time_text))
-            .child(
-                div()
-                    .flex_1()
-                    .child(Slider::new(&self.seek_slider).horizontal()),
-            )
+            .child(div().flex_1().child(self.seek_slider.clone()))
             .child(
                 div()
                     .text_sm()
                     .text_color(cx.theme().colors().text_muted)
                     .child(duration_text),
             )
-            .child(
-                div()
-                    .w(px(80.0))
-                    .child(Slider::new(&self.volume_slider).horizontal()),
-            )
+            .child(div().w(px(80.0)).child(self.volume_slider.clone()))
     }
 }

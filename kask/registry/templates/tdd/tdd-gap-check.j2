@@ -6,6 +6,8 @@ contract:
     tested_behaviors: array
     crate_scope: string
     collection_coherence: object
+    bug_hunt_findings: array
+    surviving_mutants: array
   output:
     covered_requirements: array
     gaps: array
@@ -53,6 +55,32 @@ These are the structured Spec objects from the specification system that this TD
 ```
 {% endif %}
 
+{% if bug_hunt_findings %}
+## Bug-Hunt Findings (spec blind spots)
+
+These are findings from a prior `bug-hunt` expedition. Findings NOT covered by
+a tested behavior below are spec blind spots — behaviors the spec never named
+(Weinberg: absent tests = quality threat). Each must become a new gap.
+
+```json
+{{ bug_hunt_findings | tojson }}
+```
+{% endif %}
+
+{% if surviving_mutants %}
+## Surviving Mutants (from harness-evolve-cycle)
+
+These are mutants that survived the test suite (from a prior mutation-testing
+run via `harness-optimize` / `harness-evolve-cycle`). A surviving mutant on a
+spec-covered function means the universal test is missing or weak — the
+function has a tracer bullet but its contract is not verified across the input
+space. Each is a gap recommending a proptest universal test (step 3 strengthen).
+
+```json
+{{ surviving_mutants | tojson }}
+```
+{% endif %}
+
 ## Tested Behaviors
 
 These are the behaviors that have tracer bullets (tests) written for them:
@@ -70,6 +98,8 @@ These are the behaviors that have tracer bullets (tests) written for them:
 5. **Incomplete specs**: If `is_complete()` returns false for a spec, its unsatisfied `Criterion` items are additional coverage gaps.
 6. **Deferrals go to OPEN_QUESTIONS.md**: Every deferred gap must have a documented rationale.
 7. **Probabilistic contracts**: If a spec requirement governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic function is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
+8. **Bug-hunt spec blind spots**: If `bug_hunt_findings` is provided, each finding with `verdict: BUG` (Tier 1) that is NOT covered by a tested behavior is a spec blind spot — a new gap. The spec missed a behavior. The finding's `summary` becomes the gap `requirement`; priority follows the finding's `severity` (CRITICAL→P0, HIGH→P1, MEDIUM→P2). A finding covered by an existing tracer bullet means the test is weak — recommend strengthening via proptest (step 3).
+9. **Surviving mutants**: If `surviving_mutants` is provided, each mutant on a spec-covered function is a gap — the function has a representative test but its contract is not verified across the input space. Recommend a proptest universal test (step 3 strengthen) targeting the mutant's function. A mutant on a function with NO tracer bullet is a P1 gap (the function is entirely untested).
 
 ### Contract Quality Analysis
 

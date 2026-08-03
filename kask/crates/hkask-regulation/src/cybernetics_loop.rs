@@ -42,7 +42,7 @@ use crate::well::WellManager;
 
 use crate::algedonic::{AlertSeverity, RuntimeAlert};
 use crate::regulation_policy::{
-    self, RegulationPolicy, classify_decision, default_substitution_ladder,
+    self, RegulationPolicy, RegulationReason, classify_decision, default_substitution_ladder,
     extract_deficit_threshold,
 };
 use crate::types::loops::{
@@ -1438,7 +1438,7 @@ impl CyberneticsLoop {
 
         match proposed.reason {
             // -- EnergyRemaining BelowSetPoint ------------------------------
-            "energy_budget_low" => {
+            RegulationReason::EnergyBudgetLow => {
                 if !matches!(
                     self.set_points.inference_throttle_mode,
                     InferenceThrottleMode::Autonomous
@@ -1459,7 +1459,7 @@ impl CyberneticsLoop {
                     "energy_remaining".into(),
                 ))
             }
-            "budget_guard_escalation" => {
+            RegulationReason::BudgetGuardEscalation => {
                 let curator_timeout_secs = match self.set_points.inference_throttle_mode {
                     InferenceThrottleMode::CuratorMediated {
                         curator_timeout_secs,
@@ -1497,7 +1497,7 @@ impl CyberneticsLoop {
                     ),
                 ))
             }
-            "energy_depletion_auto_adjust" => {
+            RegulationReason::EnergyDepletionAutoAdjust => {
                 if matches!(
                     self.set_points.inference_throttle_mode,
                     InferenceThrottleMode::Off
@@ -1520,7 +1520,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- VarietyDeficit AboveSetPoint -------------------------------
-            "variety_deficit_exceeded" => {
+            RegulationReason::VarietyDeficitExceeded => {
                 let at = self.try_substitute(VarietyDeficit, Escalate).await;
                 Some(RegulatoryAction::new(
                     Curation,
@@ -1535,7 +1535,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- ErrorRate AboveSetPoint ------------------------------------
-            "error_rate_exceeded" => {
+            RegulationReason::ErrorRateExceeded => {
                 let at = self.try_substitute(ErrorRate, CircuitBreak).await;
                 Some(RegulatoryAction::new(
                     Inference,
@@ -1550,7 +1550,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- ConnectorLatency AboveSetPoint -----------------------------
-            "connector_latency_exceeded" => {
+            RegulationReason::ConnectorLatencyExceeded => {
                 let at = self.try_substitute(ConnectorLatency, Throttle).await;
                 Some(RegulatoryAction::new(
                     Cybernetics,
@@ -1565,7 +1565,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- CommunicationQueueDepth AboveSetPoint ----------------------
-            "communication_backpressure" => {
+            RegulationReason::CommunicationBackpressure => {
                 tracing::info!(
                     target: "reg.cybernetics.backpressure",
                     queue_depth = dev.signal.value,
@@ -1586,7 +1586,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- WalletBalanceRatio BelowSetPoint ---------------------------
-            "wallet_balance_low" => {
+            RegulationReason::WalletBalanceLow => {
                 let severity = if dev.signal.value <= 0.0 {
                     "critical"
                 } else {
@@ -1613,7 +1613,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- WalletKeyHealth AboveSetPoint ------------------------------
-            "wallet_key_unhealthy" => {
+            RegulationReason::WalletKeyUnhealthy => {
                 tracing::info!(
                     target: "reg.wallet",
                     "API key health alert — exhausted or expired"
@@ -1631,7 +1631,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- SeamCoverage BelowSetPoint ---------------------------------
-            "seam_coverage_degraded" => {
+            RegulationReason::SeamCoverageDegraded => {
                 let drop_magnitude = dev.signal.set_point - dev.signal.value;
                 let severity = if drop_magnitude > 5.0 {
                     "critical"
@@ -1661,7 +1661,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- SeamCoverage AboveSetPoint ---------------------------------
-            "seam_coverage_improved" => {
+            RegulationReason::SeamCoverageImproved => {
                 let improvement = dev.signal.value - dev.signal.set_point;
                 tracing::info!(
                     target: "hkask.architecture.seam",
@@ -1684,7 +1684,7 @@ impl CyberneticsLoop {
                 ))
             }
             // -- ToolReliability BelowSetPoint ------------------------------
-            "tool_reliability_degraded" => {
+            RegulationReason::ToolReliabilityDegraded => {
                 tracing::warn!(
                     target: "reg.tool",
                     reliability = dev.signal.value,
@@ -1707,8 +1707,8 @@ impl CyberneticsLoop {
             _ => {
                 tracing::debug!(
                     target: "reg.outcome",
-                    reason = proposed.reason,
-                    "Unknown regulation reason — no action built"
+                    reason = proposed.reason.as_str(),
+                    "Unhandled regulation reason — no action built"
                 );
                 None
             }

@@ -742,9 +742,9 @@ impl MediaServer {
                 let x = ((img_w as i32 - tw as i32) / 2).max(0);
                 let y = (img_h as f32 * 0.05) as i32;
                 for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    imageproc::drawing::draw_text_mut(&mut img, black, x + dx, y + dy, scale, &font, &text_upper);
+                    draw_text_mut(&mut img, black, x + dx, y + dy, scale, &font, &text_upper);
                 }
-                imageproc::drawing::draw_text_mut(&mut img, white, x, y, scale, &font, &text_upper);
+                draw_text_mut(&mut img, white, x, y, scale, &font, &text_upper);
             }
 
             if let Some(ref text) = bottom_text {
@@ -753,9 +753,9 @@ impl MediaServer {
                 let x = ((img_w as i32 - tw as i32) / 2).max(0);
                 let y = (img_h as i32 - th as i32 - (img_h as f32 * 0.05) as i32).max(0);
                 for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                    imageproc::drawing::draw_text_mut(&mut img, black, x + dx, y + dy, scale, &font, &text_upper);
+                    draw_text_mut(&mut img, black, x + dx, y + dy, scale, &font, &text_upper);
                 }
-                imageproc::drawing::draw_text_mut(&mut img, white, x, y, scale, &font, &text_upper);
+                draw_text_mut(&mut img, white, x, y, scale, &font, &text_upper);
             }
 
             let mut buf = std::io::Cursor::new(Vec::new());

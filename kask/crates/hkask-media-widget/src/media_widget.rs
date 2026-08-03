@@ -65,8 +65,9 @@ impl MediaWidget {
         // so the transport bar (Slider, Button) stays in sync even when no
         // media block is visible.
         self._subscriptions
-            .push(cx.observe_global::<theme::GlobalTheme>(|_this, cx| {
-                crate::sync_theme_colors(cx);
+            .push(cx.observe_global::<theme::GlobalTheme>(|_this, _cx| {
+                // Theme is read directly via cx.theme() in render — no external
+                // theme sync needed now that gpui-component is removed.
             }));
 
         let kind = match &self.reference {

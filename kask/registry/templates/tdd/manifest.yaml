@@ -45,6 +45,19 @@ templates:
       [P{N}] Constraining: annotations, and pre:/post:. Then minimal code to satisfy
       the contract.
 
+  - id: tdd/tdd-strengthen
+    name: "Strengthen a GREEN tracer bullet with a proptest universal test…"
+    path: tdd-strengthen.j2
+    type: KnowAct
+    description: >
+      Strengthen a GREEN tracer bullet by dispatching to the proptest skill for
+      the universal test that verifies the contract's post:/inv: across the full
+      input space. Uses programmatic oracles (oracle_reference / oracle_invariant)
+      per the HarnessLLM constraint. A proptest fail is a second source of RED
+      routing back to the tracer (impl wrong) or the plan (contract wrong).
+      Skips cleanly for hardcoded (fixed-value) contracts. Execution mode:
+      standalone (TDD can run tests).
+
   - id: tdd/tdd-refactor
     name: "Refactor while GREEN: extract duplication, deepen modules, apply…"
     path: tdd-refactor.j2
@@ -71,6 +84,18 @@ templates:
     generates_spans:
       - reg.contract.violated
       - reg.contract.coverage
+
+  - id: tdd/tdd-explore
+    name: "Explore for spec blind spots via bug-hunt…"
+    path: tdd-explore.j2
+    type: KnowAct
+    description: >
+      Explore for spec blind spots by dispatching to the bug-hunt skill with a
+      charter scoped to the slice's code. bug-hunt finds bugs the spec did not
+      name (Weinberg: absent tests = quality threat). Findings not covered by an
+      existing tracer bullet become new functional requirements routing back to
+      the plan. Dispatches only when coverage is thin OR the slice touches Trust
+      (P0) code — not on every low-risk slice.
 
   - id: tdd/tdd-gap-check
     name: "Functional gap analysis: compare specification requirements against…"
