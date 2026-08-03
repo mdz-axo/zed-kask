@@ -1476,7 +1476,44 @@ execution telemetry via context; absent → agent_at_fault = null (never
 fabricate outcomes from the plan's emitted_calls — the .rules never-fabricate
 trap). C5/C6 (reconfigure the blamed agent) are therefore wired-but-inert in
 the pure planning cascade: fault_count stays empty, agent_sel is never
-computed, and C6 does not fire until a delegate-result feed is wired. This is
-the honest end state — C5's accumulator is deterministic; the rule waits on
-telemetry, not on a compute promotion. Final: cargo test -p hkask-templates
+computed, and C6 does not fire until a delegate-result feed is wired.
+
+### Steering modes — the execution boundary resolution (2026-08-03)
+
+The delegate-result telemetry path was resolved via a `steering_mode` context
+input (advisory|steering), not an `action: execute` FlowDef step:
+
+- **advisory** (default): the plan IS the output; the operator executes
+  manually and feeds `delegate_results` back on the next invocation (Option A).
+- **steering**: the **Kask Curator** (local swarms) or **Xaman Ek** (cloud
+  swarms) executes the plan and feeds results back autonomously (Option B).
+  ACT emits a `steering_directive` the Curator acts on.
+
+Local swarms: the Kask Curator (`Agent::Curator`, `CURATOR_AGENT_ID`) is the
+in-process agent that runs zed-kask — it has governed tool access (the MCP
+servers via McpRuntime), sovereign memory, and the regulation/metacognition
+loops. In steering mode it calls `swarm_delegate_local` per emitted call,
+collects `LocalDelegateResult`s, and re-invokes swarm-intelligence with
+`delegate_results` set to that array — closing the loop without a new FlowDef
+execution surface (the Curator's normal tool-call turn IS the execution). The
+Curator steers using swarm-intelligence itself, OR a more focused swarm
+steering skill (a future artifact codifying just the execute-and-feed-back
+loop).
+
+Cloud swarms: Xaman Ek has steering **built in** (cloud-side). The zed-kask
+side calls `swarm_xaman` with the plan as a steering message (session_type
+`composition_design`); Xaman Ek executes and `delegate_results` flow back.
+
+The `delegate_results` contract is an array of `LocalDelegateResult`-shaped
+objects (agent_id, response, model, tokens_used, cost, balance, latency_ms,
+tool_calls[] {tool, ok, error?}, executed_skills[] {skill, ok, error?}).
+ORIENT attributes fault from `delegate_results[].tool_calls[].ok` /
+`executed_skills[].ok`; fault_count accumulates (deterministic, in
+swarm.converge_accumulate); C6 reconfigures the most-blamed agent. The skill
+inputs `delegate_results` + `steering_mode` are declared in the manifest;
+ORIENT binds `delegate_results` (replaced the prior `prior_act` binding); ACT
+binds `steering_mode` and emits `steering_directive`. Manifest-structure test
+pins the `delegate_results` binding. This is the honest end state — C5's
+accumulator is deterministic; the rule fires on real telemetry supplied by the
+Curator (steering) or operator (advisory). Final: cargo test -p hkask-templates
 (136 lib + integration) passes.

@@ -174,8 +174,10 @@ The Curator (local) calls `swarm_delegate_local` for each emitted call,
 collects the `LocalDelegateResult` objects, and re-invokes swarm-intelligence
 with `delegate_results` set to that array — closing the feedback loop
 autonomously (Option B). For cloud swarms, delegate to Xaman Ek via
-`swarm_xaman` with the plan as the message; Xaman Ek's execution capability is
-ABW-side (the steering skill in its profile, or built-in).
+`swarm_xaman` with the plan as the message; Xaman Ek has steering **built in**
+(cloud-side) and executes the plan. Locally, the Kask Curator steers using
+swarm-intelligence itself, OR a more focused swarm steering skill (a future
+artifact codifying just the execute-and-feed-back loop).
 {% else %}
 In advisory mode (the default), the plan IS the final output. Set
 steering_directive = null — the operator executes the emitted_calls manually
