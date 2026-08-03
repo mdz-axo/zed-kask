@@ -22,6 +22,11 @@ pub use server::{
     validate_tool_url, validate_tool_url_permissive,
 };
 
+pub use tool_schema::AnyJsonValue;
+
+/// Tool input schema helpers for MCP servers.
+pub mod tool_schema;
+
 /// Run an MCP server with stdio transport.
 ///
 /// This is the canonical entry point for all hKask MCP servers.

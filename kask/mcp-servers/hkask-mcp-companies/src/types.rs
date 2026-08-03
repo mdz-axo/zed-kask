@@ -3,6 +3,7 @@
 //! Extracted from main.rs — these are the tool input structs that derive
 //! Deserialize + JsonSchema for MCP parameter deserialization.
 
+use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -547,9 +548,14 @@ pub struct ScreenerRequest {
     /// Maximum results (default 20)
     #[serde(default = "default_screener_limit")]
     pub limit: u32,
-    /// Override specific criteria directly (bypasses prompt parsing for these fields)
+    /// Override specific criteria directly (bypasses prompt parsing for these fields).
+    ///
+    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not `serde_json::Value`)
+    /// so the generated tool input schema is the empty object `{}` rather than the
+    /// bare boolean `true` schemars emits for `Value` — Ollama rejects boolean
+    /// property schemas with `400 cannot unmarshal bool into ... api.ToolProperty`.
     #[serde(default)]
-    pub criteria_overrides: serde_json::Value,
+    pub criteria_overrides: AnyJsonValue,
 }
 
 fn default_screener_limit() -> u32 {
@@ -574,4 +580,37 @@ pub struct EpValuationRequest {
     pub moat_result: Option<crate::economic_profit::FadeHorizon>,
     /// Stage 1 years: hold current EP constant before fade (1–5, default 3).
     pub stage1_years: Option<u8>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schemars::schema_for;
+
+    /// `criteria_overrides` is typed [`AnyJsonValue`] so its schema is the empty
+    /// object `{}`, never the bare boolean `true` that `serde_json::Value`
+    /// produces. Ollama's Go API rejects boolean property schemas with
+    /// `400 cannot unmarshal bool into ... api.ToolProperty`, failing the whole
+    /// chat-completion request — pin the object-shaped schema so a regression
+    /// (e.g. reverting to `serde_json::Value`) is caught here, not at runtime.
+    #[test]
+    fn screener_request_criteria_overrides_schema_is_object_not_boolean() {
+        let schema = schema_for!(ScreenerRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let properties = value
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("ScreenerRequest schema has a properties object");
+        let criteria = properties
+            .get("criteria_overrides")
+            .expect("criteria_overrides property present");
+        assert!(
+            criteria.is_object(),
+            "criteria_overrides schema must be a JSON object (AnyJsonValue), got: {criteria}"
+        );
+        assert!(
+            !criteria.is_boolean(),
+            "criteria_overrides schema must not be the bare boolean true"
+        );
+    }
 }

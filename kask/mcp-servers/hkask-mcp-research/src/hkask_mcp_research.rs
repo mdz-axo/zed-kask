@@ -309,7 +309,7 @@ impl ResearchServer {
             let opts = ExtractOptions {
                 format: fmt.clone(),
                 json_prompt,
-                json_schema,
+                json_schema: json_schema.map(hkask_mcp_server::AnyJsonValue::into_inner),
                 main_content_only: main_content_only.unwrap_or(true),
                 wait_for_ms: wait_for_ms.unwrap_or(0),
             };

@@ -5,6 +5,7 @@ mod ranking;
 mod rate_limiter;
 mod validation;
 
+use hkask_mcp_server::AnyJsonValue;
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::McpErrorKind;
 use schemars::JsonSchema;
@@ -70,7 +71,13 @@ pub struct ExtractRequest {
     pub url: String,
     pub format: Option<String>,
     pub json_prompt: Option<String>,
-    pub json_schema: Option<serde_json::Value>,
+    /// Optional JSON Schema describing the structured output to extract.
+    ///
+    /// Accepts arbitrary JSON. Typed as [`AnyJsonValue`] (not `serde_json::Value`)
+    /// so the generated tool input schema is the empty object `{}` rather than the
+    /// bare boolean `true` schemars emits for `Value` — Ollama rejects boolean
+    /// property schemas with `400 cannot unmarshal bool into ... api.ToolProperty`.
+    pub json_schema: Option<AnyJsonValue>,
     pub main_content_only: Option<bool>,
     pub wait_for_ms: Option<u64>,
 }
@@ -410,3 +417,36 @@ pub struct PingOutput {
 // port — see docs/explanation/architecture-patterns.md. The port-level
 // check was speculative and never wired. If per-tool capability gating is
 // needed at the port in the future, reintroduce it with a real wiring plan.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schemars::schema_for;
+
+    /// `json_schema` is typed [`AnyJsonValue`] so its schema is the empty
+    /// object `{}`, never the bare boolean `true` that `serde_json::Value`
+    /// produces. Ollama's Go API rejects boolean property schemas with
+    /// `400 cannot unmarshal bool into ... api.ToolProperty`, failing the whole
+    /// chat-completion request — pin the object-shaped schema so a regression
+    /// (e.g. reverting to `serde_json::Value`) is caught here, not at runtime.
+    #[test]
+    fn extract_request_json_schema_field_schema_is_object_not_boolean() {
+        let schema = schema_for!(ExtractRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let properties = value
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("ExtractRequest schema has a properties object");
+        let json_schema_prop = properties
+            .get("json_schema")
+            .expect("json_schema property present");
+        assert!(
+            json_schema_prop.is_object(),
+            "json_schema schema must be a JSON object (AnyJsonValue), got: {json_schema_prop}"
+        );
+        assert!(
+            !json_schema_prop.is_boolean(),
+            "json_schema schema must not be the bare boolean true"
+        );
+    }
+}

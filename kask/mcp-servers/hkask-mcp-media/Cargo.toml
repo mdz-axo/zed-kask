@@ -13,6 +13,7 @@ hkask-mcp-server = { path = "../../crates/hkask-mcp-server" }
 hkask-types = { path = "../../crates/hkask-types" }
 hkask-inference = { path = "../../crates/hkask-inference" }
 
+hkask-templates = { path = "../../crates/hkask-templates" }
 hkask-storage = { path = "../../crates/hkask-storage" }
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }

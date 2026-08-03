@@ -647,6 +647,13 @@ impl LocalSwarmRuntime {
 /// is the credit gate, this is the round gate).
 pub(crate) const MAX_TOOL_ROUNDS: usize = 4;
 
+/// Maximum agents dispatched in a single `swarm_fanout_local` call (Cybernetic
+/// Swarm Plan — bounds the cost amplification of one fan-out: N agents ×
+/// MAX_TOOL_ROUNDS × per-dispatch ceiling). Each delegation runs sequentially
+/// (the local ledger is single-writer; concurrent debits would race the
+/// balance read), so this is also the worst-case serial latency multiplier.
+pub(crate) const MAX_FANOUT: usize = 10;
+
 /// Maximum declared skills executed per delegation. Each skill is a cascade
 /// with its own gas budget on the zed side; the cap bounds context bloat and
 /// cascade amplification from a maliciously-large `skills` list.

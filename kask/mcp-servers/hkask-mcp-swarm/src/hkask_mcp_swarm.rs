@@ -334,6 +334,47 @@ pub(crate) struct RemoveLocalRequest {
     pub agent_name: String,
 }
 
+/// Create a new local agent card programmatically (Cybernetic Swarm Plan —
+/// `reconfigure_agent` / fan-out composition needs a programmatic create
+/// path; `swarm_clone_to_local` only copies from ABW). Writes
+/// `agents/local/curated/<id>/agent_card.json` and reloads the registry. No
+/// consent token — local mode has no consent gate (the ledger balance is the
+/// gate for *execution*, but card creation is free).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct CreateLocalAgentRequest {
+    pub agent_id: String,
+    pub agent_type: String,
+    pub description: String,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub accepts: Vec<String>,
+    #[serde(default)]
+    pub produces: Vec<String>,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub mcp_tools: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+}
+
+/// Parallel multi-agent fan-out (Cybernetic Swarm Plan — PSO social term).
+/// Dispatch N local agents in one call and aggregate. Each delegation runs
+/// sequentially to avoid ledger TOCTOU (the local ledger is single-writer;
+/// concurrent debits would race the balance read). Capped at `MAX_FANOUT`.
+/// No consent token — local mode.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct FanoutLocalRequest {
+    pub delegations: Vec<FanoutEntry>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct FanoutEntry {
+    pub agent_name: String,
+    pub task: String,
+    pub credits_authorized: u32,
+}
+
 /// Fire (un-hire) an agent from an ABW workspace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct FireRequest {
@@ -1797,7 +1838,98 @@ impl SwarmServer {
         .await
     }
 
-    // ── Local agent store tools (v2 §15 Slice 11) ───────────────────────────
+    /// Parallel multi-agent fan-out: dispatch N local agents in one call and
+    /// aggregate (Cybernetic Swarm Plan — PSO social term + C4 latency
+    /// measurement). Each delegation runs sequentially to avoid ledger TOCTOU
+    /// (the local ledger is single-writer; concurrent debits would race the
+    /// balance read). Capped at `MAX_FANOUT`. No consent token — local mode.
+    /// Returns per-agent results plus aggregates (total cost/tokens/latency,
+    /// balance, failed/succeeded counts).
+    #[tool(
+        description = "Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Each delegation runs sequentially to avoid ledger TOCTOU. Capped at MAX_FANOUT (10). No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_fanout_local(
+        &self,
+        parameters: Parameters<FanoutLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_fanout_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.len() > MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "fanout cap is {MAX_FANOUT} agents, got {}",
+                    req.delegations.len()
+                )));
+            }
+            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+                McpToolError::unavailable(format!("local runtime init failed: {e}"))
+            })?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            let mut total_cost = 0i64;
+            let mut total_tokens = 0i64;
+            let mut total_latency_ms = 0u64;
+            for entry in &req.delegations {
+                let agent = self.local_registry.get(&entry.agent_name);
+                let Some(agent) = agent else {
+                    failed += 1;
+                    results.push(serde_json::json!({
+                        "agent_name": entry.agent_name,
+                        "ok": false,
+                        "error": format!("agent '{}' not found in local registry", entry.agent_name),
+                    }));
+                    continue;
+                };
+                match runtime
+                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+                    .await
+                {
+                    Ok(r) => {
+                        total_cost += r.cost;
+                        total_tokens += r.tokens_used;
+                        total_latency_ms = total_latency_ms.saturating_add(r.latency_ms);
+                        results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": true,
+                            "response": r.response,
+                            "model": r.model,
+                            "tokens_used": r.tokens_used,
+                            "cost": r.cost,
+                            "latency_ms": r.latency_ms,
+                            "tool_calls": r.tool_calls,
+                            "executed_skills": r.executed_skills,
+                        }));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(serde_json::json!({
+                            "agent_name": entry.agent_name,
+                            "ok": false,
+                            "error": e.to_string(),
+                        }));
+                    }
+                }
+            }
+            let balance = runtime.balance().unwrap_or(0);
+            Ok(serde_json::json!({
+                "results": results,
+                "total_cost": total_cost,
+                "total_tokens": total_tokens,
+                "total_latency_ms": total_latency_ms,
+                "balance": balance,
+                "failed": failed,
+                "succeeded": req.delegations.len() - failed,
+            }))
+        })
+        .await
+    }
+
+    // Local agent store tools (v2 §15 Slice 11).
 
     /// List agents from the local registry. Returns the cards loaded from
     /// `agents/local/curated/`. Each card carries a `cloud_id` field: when
