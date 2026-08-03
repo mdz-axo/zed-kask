@@ -151,6 +151,13 @@ jobs:
       - name: Check mcp-servers.txt matches BUILTIN_SERVERS
         run: cd kask && bash scripts/check-mcp-servers.sh
 
+  hkask-no-zed-deps:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check hKask crates do not depend on zed-kask crates (DIVERGENCE.md §13.1)
+        run: cd kask && bash scripts/check-hkask-no-zed-deps.sh
+
   deps:
     runs-on: ubuntu-24.04
     steps:

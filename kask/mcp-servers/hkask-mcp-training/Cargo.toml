@@ -38,7 +38,7 @@ blake3.workspace = true
 reqwest = { workspace = true, features = ["multipart"] }
 
 sha2.workspace = true
-hf-hub = "1.0.0"
+hf-hub.workspace = true
 minijinja.workspace = true
 dirs.workspace = true
 

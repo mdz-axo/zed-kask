@@ -26,8 +26,8 @@
 # Only dependency *sections* are scanned (via awk), so `[package] workspace = true`
 # and other non-dependency fields do not false-positive.
 #
-# Enabled in CI via `.github/workflows/ci.yml` invariants job.
-# Run locally: `scripts/check-hkask-no-zed-deps.sh`
+# Enabled in CI via the `hkask-no-zed-deps` job in
+# `.github/workflows/kask-ci.yml`. Run locally: `scripts/check-hkask-no-zed-deps.sh`
 
 set -euo pipefail
 cd "$(dirname "$0")/.."

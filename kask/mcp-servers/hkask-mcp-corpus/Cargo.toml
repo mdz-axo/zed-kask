@@ -24,11 +24,11 @@ reqwest.workspace = true
 
 # Office format backends (S2: backend/pipeline separation)
 # docx-rs: DOCX reader (paragraphs, tables, lists, headings)
-docx-rs = "0.4"
+docx-rs.workspace = true
 # calamine: XLSX/XLS/ODS reader (pure Rust, MIT)
-calamine = "0.36"
+calamine.workspace = true
 # pptx-to-md: PPTX/ODP reader (extracts slide text to markdown)
-pptx-to-md = "0.1"
+pptx-to-md.workspace = true
 
 # Knowledge pipeline (from doc-knowledge)
 hkask-memory.workspace = true
@@ -62,7 +62,7 @@ serde_yaml_neo.workspace = true
 # Folded-service dependencies
 uuid.workspace = true
 chrono.workspace = true
-pdf-extract = "0.12"
+pdf-extract.workspace = true
 anyhow.workspace = true
 
 # Service layer (shared settings, models, paths)
@@ -84,3 +84,5 @@ rand.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest.workspace = true
 tempfile.workspace = true
+hkask-test-harness.workspace = true
+serde_json.workspace = true

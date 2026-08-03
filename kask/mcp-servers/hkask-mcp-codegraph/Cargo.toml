@@ -21,7 +21,7 @@ rusqlite = { workspace = true, features = ["bundled"] }
 
 
 # Codegraph engine dependencies
-sqlite-vec = "0.1"
+sqlite-vec.workspace = true
 thiserror = { workspace = true }
 blake3 = { workspace = true }
 walkdir = { workspace = true }
