@@ -114,12 +114,12 @@ check_regressions() {
         if [ "$test_rc" -ne 0 ]; then
           echo "::error::Regression $rr_id violated: $rr_title"
           echo "  cargo-test: '$rr_pattern' failed in crate '$crate_name' (exit $test_rc)"
-          printf '%s\n' "$test_output" | grep -E 'error\[|^error:|test result:|running [0-9]+ tests' | sed 's/^/    /' || true
+          printf '%s\n' "$test_output" | grep -E 'error\[|^error:|test result:|running [0-9]+ tests?' | sed 's/^/    /' || true
           cargo_test_failures=$((cargo_test_failures + 1))
-        elif ! printf '%s\n' "$test_output" | grep -qE 'running [1-9][0-9]* tests'; then
+        elif ! printf '%s\n' "$test_output" | grep -qE 'running [1-9][0-9]* tests?'; then
           echo "::error::Regression $rr_id orphaned: $rr_title"
           echo "  cargo-test: '$rr_pattern' matched 0 tests in crate '$crate_name' — enforcement test is missing (status: enforced but no live test)."
-          printf '%s\n' "$test_output" | grep -E 'running [0-9]+ tests' | sed 's/^/    /' || true
+          printf '%s\n' "$test_output" | grep -E 'running [0-9]+ tests?' | sed 's/^/    /' || true
           cargo_test_failures=$((cargo_test_failures + 1))
         fi
       elif [ "$rr_status" = "pending" ]; then

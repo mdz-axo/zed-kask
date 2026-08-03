@@ -8,7 +8,7 @@ contract:
     codegraph_entities: string
     surviving_mutants: array
   output:
-    codegraph_entities: array
+    planned_entities: array
     behaviors_to_test: array
     public_interface: array
     priority_order: array
@@ -139,7 +139,7 @@ Respond with a JSON object:
 
 ```json
 {
-  "codegraph_entities": [
+  "planned_entities": [
     {
       "dcterms_identifier": "hkask_mcp::runtime::capabilities_match",
       "dcterms_type": "function",

@@ -40,3 +40,6 @@ workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = { workspace = true }
+hkask-test-harness = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }

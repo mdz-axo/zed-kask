@@ -1042,7 +1042,7 @@ impl ManifestExecutor {
                         );
                         step_idx = pos;
                         continue;
-                    } else if context.get(&result_key).is_none() {
+                    } else if !context.contains_key(&result_key) {
                         // The step declared a `branching` map but its action did
                         // not emit a `step_{ordinal}_result` key (e.g. `populate`
                         // stores `step_{ordinal}_populated`). The branching map can
@@ -2043,5 +2043,342 @@ steps:
             "fallback must pass when discover_tools omits terminal; got: {:?}",
             result.err()
         );
+    }
+
+    // ── Restored security regressions (RR-0011/0012/0026/0027/0033/0034) ──
+    // These were dropped during test-harness consolidation but are keyed by name
+    // in kask/security/regressions/RR-NNNN.yaml (kind: cargo-test), so they must
+    // live in this `mod tests` (the gate runs `cargo test --lib`) and keep their
+    // exact names. They pin the FIDES taint, spotlight, and runtime-policy
+    // invariants that the property tests in tests/ do not cover.
+
+    /// Build a minimal executor with `taint_labels` pre-populated, for testing
+    /// `propagate_taint_for_binding` / `extract_referenced_keys` in isolation.
+    /// The taint methods never call inference/tools, so the shared stubs suffice.
+    fn test_executor_with_taint(taint: Vec<(&str, ToolTaint)>) -> ManifestExecutor {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+        let mut labels = executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned");
+        for (key, label) in taint {
+            labels.insert(key.to_string(), label);
+        }
+        drop(labels);
+        executor
+    }
+
+    /// RR-0026: an inline-Jinja binding of a Source-tainted entry must
+    /// propagate the taint label. Before the fix, `context.insert` (not
+    /// `insert_tainted`) was used, so the new key was silently labeled Pure —
+    /// bypassing the FIDES Source→Sink block.
+    #[test]
+    fn propagate_taint_from_inline_jinja_source() {
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
+        let value = serde_json::json!("{{ step_1_result }}");
+        executor.propagate_taint_for_binding(&value, "bound_data");
+        let labels = executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned");
+        assert_eq!(
+            labels.get("bound_data").copied(),
+            Some(ToolTaint::Source),
+            "Source taint must propagate through inline-Jinja bindings"
+        );
+    }
+
+    /// RR-0027: `execute_populate` must call `propagate_taint_for_binding`
+    /// before `context.insert`, otherwise Source-tainted values bound via
+    /// `$ref` lose their label and bypass the FIDES Source→Sink block. Same
+    /// closure-break class as RR-0026, missed because `execute_populate` uses
+    /// `bind_parameters` (not `resolve_mapping_value`).
+    #[tokio::test]
+    async fn execute_populate_propagates_source_taint() {
+        let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
+
+        let step = BundleManifestStep {
+            ordinal: 2,
+            action: "populate".to_string(),
+            description: "bind step_1_result into data".to_string(),
+            renderer: None,
+            template_ref: Some("{{data}}".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: Some(serde_json::json!({
+                "data": {"$ref": "step_1_result"}
+            })),
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "step_1_result".to_string(),
+            Value::String("untrusted external content".to_string()),
+        );
+
+        let result = executor
+            .execute_populate(&step, context)
+            .await
+            .expect("execute_populate should succeed with an inline template and $ref binding");
+
+        let labels = executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned");
+        assert_eq!(
+            labels.get("data").copied(),
+            Some(ToolTaint::Source),
+            "execute_populate must propagate Source taint through $ref bindings (RR-0027)"
+        );
+        assert_eq!(
+            result.get("step_2_populated").and_then(|v| v.as_str()),
+            Some("untrusted external content"),
+        );
+        assert_eq!(
+            labels.get("step_2_populated").copied(),
+            Some(ToolTaint::Source),
+            "rendered output derived from Source bindings must inherit the label"
+        );
+    }
+
+    /// Tool port stub that reports a Source-tainted tool and returns a fixed
+    /// payload. Used by the spotlight and sub-cascade taint tests to drive the
+    /// real `invoke_tool` / `execute_flowdef` paths.
+    struct SourceToolPort;
+
+    impl hkask_capability::ToolPort for SourceToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: Value,
+            _token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async { Ok(serde_json::json!("untrusted sub-cascade output")) })
+        }
+
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async {
+                Some(hkask_capability::ToolInfo {
+                    name: "read".to_string(),
+                    description: "Source tool stub".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "hkask-mcp-stub".to_string(),
+                    required_capability: None,
+                    taint: ToolTaint::Source,
+                })
+            })
+        }
+
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec!["read".to_string()] })
+        }
+    }
+
+    /// RR-0011: tool outputs must be spotlighted before entering the LLM
+    /// context — a refactor that drops the spotlight call from `invoke_tool`
+    /// must fail this test (a grep only proves the call exists somewhere).
+    #[tokio::test]
+    async fn tool_output_is_spotlighted_on_the_invoke_path() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(SourceToolPort),
+            LLMParameters::default(),
+        );
+        let (result, _taint) = executor
+            .invoke_tool("read", serde_json::json!({}), 1, false)
+            .await
+            .expect("SourceToolPort invoke should succeed");
+        let text = result.as_str().expect("spotlighted output is a string");
+        assert!(
+            text.contains("untrusted sub-cascade output"),
+            "payload must survive spotlighting: {text}"
+        );
+        assert_ne!(
+            text, "untrusted sub-cascade output",
+            "output must be transformed by the spotlighter (delimited), not passed through raw"
+        );
+    }
+
+    /// RR-0012: the runtime policy must gate tool invocation — a `RequireHuman`
+    /// verdict must prevent the tool from being invoked at all.
+    #[tokio::test]
+    async fn runtime_policy_block_prevents_tool_invocation() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(SourceToolPort),
+            LLMParameters::default(),
+        )
+        .with_runtime_policy(Arc::new(hkask_regulation::DefaultPolicy::new(
+            hkask_regulation::PolicyConfig {
+                human_in_loop_tools: ["read".to_string()].into_iter().collect(),
+                ..Default::default()
+            },
+        )));
+        let result = executor
+            .invoke_tool("read", serde_json::json!({}), 1, false)
+            .await;
+        let err = result.expect_err("RequireHuman verdict must abort the invocation");
+        assert!(
+            err.to_string().contains("requires human confirmation"),
+            "error must surface the policy verdict: {err}"
+        );
+    }
+
+    /// RR-0033: the refinement-loop snapshot copies `step_N_result` values to
+    /// `prev_step_N_result` keys — it must also copy the taint label, otherwise
+    /// a Source-tainted artifact referenced as `prev_step_N_result` bypasses the
+    /// FIDES Source→Sink block. The render step uses inline mode (renderer
+    /// unset → template_ref is the template string), so "artifact" renders to
+    /// itself with no file I/O.
+    #[tokio::test]
+    async fn loop_snapshot_propagates_source_taint_to_prev_key() {
+        let executor = test_executor_with_taint(vec![]);
+
+        let manifest_yaml = r#"
+manifest:
+  id: taint-loop-snapshot-test
+steps:
+  - ordinal: 1
+    action: render
+    description: produce the artifact
+    template_ref: "artifact"
+  - ordinal: 2
+    action: loop
+    description: re-enter for one refinement pass
+    input_mapping:
+      loop_target: "1"
+convergence:
+  max_iterations: 5
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest =
+            load_manifest_from_yaml(manifest_yaml).expect("test manifest YAML must parse");
+
+        executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned")
+            .insert("step_1_result".to_string(), ToolTaint::Source);
+
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("cascade with a loop pass should succeed");
+
+        assert!(
+            result.contains_key("prev_step_1_result"),
+            "the loop snapshot must produce prev_step_1_result"
+        );
+        let labels = executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned");
+        assert_eq!(
+            labels.get("prev_step_1_result").copied(),
+            Some(ToolTaint::Source),
+            "the prev_step_N_result snapshot must carry the Source label (RR-0033)"
+        );
+    }
+
+    /// RR-0034: when a sub-cascade's final step result is Source-tainted, the
+    /// `step_{ordinal}_result` inserted into the parent context must carry the
+    /// same label — otherwise a Source-tainted sub-result enters the parent
+    /// unlabeled and bypasses the Source→Sink block.
+    #[tokio::test]
+    async fn sub_cascade_final_result_taint_labels_parent_step_key() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(SourceToolPort),
+            LLMParameters::default(),
+        );
+
+        let tmp = std::env::temp_dir().join("hkask-flowdef-taint-test");
+        std::fs::create_dir_all(&tmp).expect("create temp template dir");
+        std::fs::write(
+            tmp.join("taint-sub.yaml"),
+            r#"
+manifest:
+  id: taint-sub-test
+steps:
+  - ordinal: 1
+    action: execute
+    description: read untrusted data
+    mcp: "hkask-mcp-stub/read"
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#,
+        )
+        .expect("write sub-manifest");
+        let executor = executor.with_template_base_path(tmp.clone());
+
+        let step = BundleManifestStep {
+            ordinal: 7,
+            action: "flowdef".to_string(),
+            description: "run the tainting sub-cascade".to_string(),
+            renderer: None,
+            template_ref: Some("taint-sub".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: None,
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        let (parent_context, _gas, _rjoule) = executor
+            .execute_flowdef(&step, HashMap::new(), 100, 100.0)
+            .await
+            .expect("sub-cascade with a Source tool should succeed");
+
+        let step_result = parent_context
+            .get("step_7_result")
+            .and_then(|v| v.as_str())
+            .expect("the parent's step key holds the sub-cascade's final result");
+        assert!(
+            step_result.contains("untrusted sub-cascade output"),
+            "the parent's step key holds the sub-cascade's final result (spotlight-wrapped): {step_result}"
+        );
+        let labels = executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned");
+        assert_eq!(
+            labels.get("step_7_result").copied(),
+            Some(ToolTaint::Source),
+            "the parent's step_7_result must inherit the sub-cascade's final-result Source label (RR-0034)"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

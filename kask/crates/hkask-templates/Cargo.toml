@@ -54,3 +54,7 @@ path = "tests/bootstrap_test.rs"
 [[test]]
 name = "executor_properties"
 path = "tests/executor_properties.rs"
+
+[[test]]
+name = "compute_properties"
+path = "tests/compute_properties.rs"
