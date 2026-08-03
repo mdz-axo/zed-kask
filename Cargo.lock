@@ -7107,6 +7107,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ffmpeg-next"
+version = "8.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c4bd5ab1ac61f29c634df1175d350ded29cf74c3c6d4f7030431a5ae3c7d5d"
+dependencies = [
+ "bitflags 2.13.1",
+ "ffmpeg-sys-next",
+ "libc",
+]
+
+[[package]]
+name = "ffmpeg-sys-next"
+version = "8.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a314bc0e022a33a99567ed4bd2576bd58ffd8fcff7891c29194cfecc26a62547"
+dependencies = [
+ "bindgen 0.72.1",
+ "cc",
+ "libc",
+ "num_cpus",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9548,6 +9573,21 @@ dependencies = [
  "tracing",
  "uuid",
  "zed-reqwest",
+]
+
+[[package]]
+name = "hkask-media-widget"
+version = "0.31.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "ffmpeg-next",
+ "gpui",
+ "log",
+ "rodio",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]

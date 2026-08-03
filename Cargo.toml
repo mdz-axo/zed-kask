@@ -287,6 +287,7 @@ members = [
     "kask/crates/hkask-bridge-dublincore",
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
+    "kask/crates/hkask-media-widget",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
@@ -378,6 +379,7 @@ kask_extensions_ui = { path = "crates/kask_extensions_ui" }
 swarm_panel = { path = "crates/swarm_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
+hkask_media_widget = { path = "kask/crates/hkask-media-widget" }
 diagnostics = { path = "crates/diagnostics" }
 dialoguer = { version = "0.12", default-features = false }
 editor = { path = "crates/editor" }
@@ -491,6 +493,7 @@ remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+ffmpeg-next = { version = "8.1", default-features = false, features = ["codec", "format", "software-resampling", "software-scaling"] }
 reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }

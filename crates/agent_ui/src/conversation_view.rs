@@ -3465,6 +3465,8 @@ fn render_agent_markdown(
             wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
             border: false,
         })
+        // zed-kask: D18 — render ```media fenced blocks via hkask-media-widget.
+        .media_block_renderer(hkask_media_widget::media_block_renderer())
         .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);

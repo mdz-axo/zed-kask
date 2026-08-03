@@ -798,4 +798,60 @@ mod tests {
             "kata_hypotenuse must read step_7_result.hypotenuse (not the nonexistent convergence_metric) — got {kata_hyp}"
         );
     }
+
+    // swarm-steering: the focused local-swarm steering skill (create-skill
+    // artifact). Pins the manifest side: the emitted_calls input, the single
+    // DIRECT step, and the process-manifest id. The template side is pinned by
+    // rendering; the SKILL.md companion by the X4 invariant.
+    #[test]
+    fn swarm_steering_manifest_declares_directive_step() {
+        let yaml = process_manifest_yaml("swarm-steering")
+            .expect("swarm-steering manifest must be embedded");
+        let manifest = load_manifest_from_yaml(yaml).expect("swarm-steering manifest must parse");
+
+        // The required `emitted_calls` input is declared.
+        let inputs = manifest
+            .inputs
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .expect("swarm-steering declares inputs");
+        let has_emitted_calls = inputs
+            .iter()
+            .any(|i| i.get("name").and_then(|v| v.as_str()) == Some("emitted_calls"));
+        assert!(
+            has_emitted_calls,
+            "swarm-steering inputs must include `emitted_calls` (the plan to execute)"
+        );
+
+        // The single DIRECT step (ordinal 1) is a select that binds
+        // emitted_calls + task + swarm_id + credits_authorized.
+        let direct = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 1)
+            .expect("swarm-steering has a DIRECT step (ordinal 1)");
+        assert_eq!(
+            direct.action, "select",
+            "step 1 must be a select (directive producer, not executor)"
+        );
+        let mapping = direct
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .expect("DIRECT step has an input_mapping");
+        for key in ["emitted_calls", "task", "swarm_id", "credits_authorized"] {
+            assert!(
+                mapping.contains_key(key),
+                "DIRECT step input_mapping must bind `{key}`"
+            );
+        }
+
+        // Single-pass (max_iterations 1) — a one-shot directive producer, not
+        // a convergence loop.
+        let max_iter = manifest.convergence.max_iterations;
+        assert_eq!(
+            max_iter, 1,
+            "swarm-steering is single-pass (max_iterations 1) — it produces a directive, the Curator/human executes"
+        );
+    }
 }

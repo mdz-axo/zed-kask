@@ -1301,9 +1301,22 @@ pub struct MarkdownElement {
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
+    // zed-kask: D18 — media block renderer. If registered, called for every
+    // fenced code block. Returns Some(div) to intercept the block (e.g. for
+    // ```media blocks), or None to fall through to the default renderer.
+    // The actual renderer implementation lives in kask/crates/hkask-media-widget.
+    media_block_renderer: Option<MediaBlockRendererFn>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
 }
+
+/// zed-kask: D18 — callback type for the media block renderer.
+///
+/// Called with the body text of a fenced code block. If the body is a
+/// valid media reference (JSON with `kind` and `src`), returns `Some(element)`
+/// to render the media widget; otherwise returns `None` to fall through to
+/// the default code block renderer.
+pub type MediaBlockRendererFn = Box<dyn Fn(&str, &mut Window, &App) -> Option<AnyElement>>;
 
 impl MarkdownElement {
     pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle) -> Self {
@@ -1321,6 +1334,8 @@ impl MarkdownElement {
             on_source_click: None,
             on_checkbox_toggle: None,
             image_resolver: None,
+            // zed-kask: D18
+            media_block_renderer: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
         }
@@ -1397,6 +1412,12 @@ impl MarkdownElement {
         resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
     ) -> Self {
         self.image_resolver = Some(Box::new(resolver));
+        self
+    }
+
+    // zed-kask: D18 — register a media block renderer.
+    pub fn media_block_renderer(mut self, renderer: MediaBlockRendererFn) -> Self {
+        self.media_block_renderer = Some(renderer);
         self
     }
 
@@ -2339,6 +2360,19 @@ impl Element for MarkdownElement {
                                 );
                                 rendered_mermaid_block = true;
                                 continue;
+                            }
+
+                            // zed-kask: D18 — media block renderer.
+                            // If the block language is "media" and a
+                            // renderer is registered, render the media widget
+                            // instead of the default code block. Returns None
+                            // for non-media blocks (falls through to default).
+                            if let Some(renderer) = &self.media_block_renderer {
+                                let block_body = &parsed_markdown.source[range.clone()];
+                                if let Some(media_element) = renderer(block_body, window, cx) {
+                                    builder.push_sourced_element(range.clone(), media_element);
+                                    continue;
+                                }
                             }
 
                             let language = match kind {
