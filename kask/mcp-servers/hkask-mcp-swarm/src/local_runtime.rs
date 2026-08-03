@@ -147,6 +147,7 @@ impl LocalSwarmRuntime {
     /// Ensures the operator account exists (same as `new`) so `balance`/
     /// `fund`/`debit` work out of the box.
     #[cfg(test)]
+    #[expect(dead_code)]
     pub(crate) fn with_deps(
         ledger: hkask_ledger::Ledger,
         inference: std::sync::Arc<dyn hkask_types::InferencePort>,

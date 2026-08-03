@@ -119,10 +119,35 @@ impl SwarmClient {
         self.send(self.http.delete(self.url(path))).await
     }
 
+    /// Generalized request carrying a query string and an optional JSON body.
+    /// The verb helpers (`get`/`post`/`delete`) take only a path; ABW endpoints
+    /// added after fermi v0.10.15/v0.10.26 take query parameters
+    /// (`/agents/{id}/knowledge/search?q=`, `/agents/{id}/publish?force=…&reason=…`)
+    /// that the helpers cannot carry. This is the deep path for those — it keeps
+    /// the auth/timeout/error-mapping behavior of `send` without spawning a
+    /// one-liner per query-string verb. Existing call sites keep the helpers.
+    pub(crate) async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, SwarmError> {
+        let mut builder = self.http.request(method, self.url(path));
+        if !query.is_empty() {
+            builder = builder.query(query);
+        }
+        if let Some(payload) = body {
+            builder = builder.json(payload);
+        }
+        self.send(builder).await
+    }
+
     /// Send a PATCH request. The workspace-update endpoint is 405 on ABW
     /// (verified live 2026-08-02 — no PATCH /workspaces/{id}); this exists
     /// only for the live probe that pins that fact.
     #[cfg(test)]
+    #[expect(dead_code)]
     pub(crate) async fn patch(
         &self,
         path: &str,

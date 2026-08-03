@@ -15,10 +15,20 @@ test-group = "sequential-db-tests"
 
 [test-groups]
 sequential-db-tests = { max-threads = 1 }
+# hkask-email tests mutate process-global env vars (HKASK_ALERT_EMAIL,
+# HKASK_SMTP_USERNAME) — parallel execution races (set vs remove), producing
+# flaky `try_from_env_uses_alert_email_when_set` failures. Serialize them.
+sequential-env-tests = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(db)'
 test-group = 'sequential-db-tests'
+
+# hkask-email env-mutating tests must not run in parallel with each other
+# (they set/remove HKASK_ALERT_EMAIL and HKASK_SMTP_USERNAME process-globally).
+[[profile.default.overrides]]
+filter = 'package(hkask-email) and (test(try_from_env) or test(try_from_settings) or test(send_email_returns_not_configured))'
+test-group = 'sequential-env-tests'
 
 # Run slowest tests first.
 #

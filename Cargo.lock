@@ -20229,6 +20229,7 @@ dependencies = [
  "agent",
  "agent_ui",
  "anyhow",
+ "chrono",
  "editor",
  "fs",
  "gpui",

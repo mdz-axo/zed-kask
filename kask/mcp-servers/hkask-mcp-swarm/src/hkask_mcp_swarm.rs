@@ -21,15 +21,17 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (31 — both tool sets always available in either mode)
-//! ABW tools (20): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+//! ## Tools (34 — both tool sets always available in either mode)
+//! ABW tools (23): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
-//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
-//! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
+//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,//! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
 //! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
 //! (permanent agent deletion, verified live), `swarm_delete_swarm`
-//! (permanent workspace deletion via the team-scoped route, verified live).
+//! (permanent workspace deletion via the team-scoped route, verified live),
+//! `swarm_search_knowledge` (vector knowledge-graph search, fermi v0.10.26),
+//! `swarm_publish_checks` (publish preflight, fermi v0.10.15),
+//! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15).
 //! Local tools (11): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
 //! `swarm_list_local_agents`, `swarm_clone_to_local`, `swarm_push_to_cloud`,
@@ -174,6 +176,12 @@ impl SwarmServer {
                         "dependencies": a.get("dependencies"),
                         "execution_stats": a.get("execution_stats"),
                         "dreaming": a.get("dreaming"),
+                        // fermi v0.10.27: `agents.updated_at` (backfilled from
+                        // `created_at`). A freshness signal for staleness checks —
+                        // the agent analogue of the superforecasting
+                        // `chronic_staleness_days` setting. Forwarded so the panel
+                        // and the curator can surface stale agents.
+                        "updated_at": a.get("updated_at"),
                     })
                 })
                 .collect();
@@ -2036,6 +2044,136 @@ impl SwarmServer {
                 .client
                 .with_wallet(serde_json::json!({
                     "deleted_workspace": req.workspace_id,
+                    "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Search an agent's consolidated dreaming-memory knowledge graph via ABW
+    /// vector search. The embedder was broken platform-wide for 6 weeks; fixed
+    /// in fermi v0.10.26 (OpenAI `text-embedding-3-large` @ 1024, matching the
+    /// pgvector column). Returns matching knowledge fragments. Requires API key.
+    #[tool(
+        description = "Vector-search an Agent Bestiary World agent's consolidated dreaming-memory knowledge graph (GET /api/agents/{id}/knowledge/search?q=). Returns matching knowledge fragments. Requires API key."
+    )]
+    pub(crate) async fn swarm_search_knowledge(
+        &self,
+        parameters: Parameters<SearchKnowledgeRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_search_knowledge", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            if req.query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "query must be non-empty".to_string(),
+                ));
+            }
+            let path = format!(
+                "/agents/{}/knowledge/search",
+                url_encode_segment(&req.agent_name)
+            );
+            let data = self
+                .client
+                .request(
+                    reqwest::Method::GET,
+                    &path,
+                    &[("q", req.query.as_str())],
+                    None,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self.client.with_wallet(data).await)
+        })
+        .await
+    }
+
+    /// Preflight an agent publish — `GET /api/agents/{id}/publish-checks`
+    /// (fermi v0.10.15). Returns `can_publish` plus the failing checks
+    /// (name/description/system_prompt/tags). Requires API key.
+    #[tool(
+        description = "Preflight an Agent Bestiary World agent publish (GET /api/agents/{id}/publish-checks). Returns can_publish and the list of failing checks. Requires API key."
+    )]
+    pub(crate) async fn swarm_publish_checks(
+        &self,
+        parameters: Parameters<PublishChecksRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_publish_checks", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let data = self
+                .client
+                .get(&format!(
+                    "/agents/{}/publish-checks",
+                    url_encode_segment(&req.agent_name)
+                ))
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self.client.with_wallet(data).await)
+        })
+        .await
+    }
+
+    /// Publish an agent to the public catalogue — `POST /api/agents/{id}/publish`
+    /// (fermi v0.10.5/v0.10.15). With `force=true` (admin), failing checks are
+    /// bypassed and `reason` is audited to `admin_bypass_events` (mig-164).
+    /// Requires API key.
+    #[tool(
+        description = "Publish an Agent Bestiary World agent to the public catalogue (POST /api/agents/{id}/publish). With force=true (admin), failing checks are bypassed and reason is audited to admin_bypass_events. Requires API key."
+    )]
+    pub(crate) async fn swarm_publish_agent(
+        &self,
+        parameters: Parameters<PublishAgentRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_publish_agent", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let force = req.force.unwrap_or(false);
+            let reason = req.reason.unwrap_or_default();
+            if force && reason.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "reason is required when force is true (audited to admin_bypass_events)"
+                        .to_string(),
+                ));
+            }
+            let path = format!("/agents/{}/publish", url_encode_segment(&req.agent_name));
+            let query: Vec<(&str, &str)> = if force {
+                vec![("force", "true"), ("reason", reason.as_str())]
+            } else {
+                Vec::new()
+            };
+            let data = self
+                .client
+                .request(reqwest::Method::POST, &path, &query, None)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "published": req.agent_name,
+                    "force_used": force,
                     "result": data,
                 }))
                 .await)

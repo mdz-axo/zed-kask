@@ -4,19 +4,24 @@ contract:
   input:
     bug_description: string
     symptom: string
-    code_context: object
-    spec_reference: string
+    target_file: string
+    symbol_name: string
   output:
-    mds_category: string
-    functional_requirements: array
-    spec_gaps: array
+    dcterms_type: string
+    dcterms_identifier: string
+    dcterms_source: string
+    dcterms_subject: string
+    pko_procedure: array
+    pko_step: string
+    pko_issue_occurrence: object
+    impact_radius: array
     anchor_summary: string
 energy_cap: 3072
 visibility: Public
 ---
 {# Template: diagnose/diagnose-spec-anchor.j2 #}
-{# KnowAct — Anchor the diagnosis to functional requirements before building the feedback loop #}
-{# ℏKask v0.31.0 — A Minimal Viable Container for UserPods #}
+{# KnowAct — Anchor the diagnosis to the code graph via Dublin Core (things) + PKO (flows) #}
+{# Replaces spec-anchoring: the bug is placed in the actual code structure, not a spec document #}
 
 [inference]
 temperature = 0.1
@@ -25,7 +30,12 @@ verbosity = "terse"
 max_tokens = 3072
 thinking_budget = "full"
 
-You are a spec-anchoring agent for hKask diagnosis. Before building a feedback loop, anchor the bug to functional requirements. Every diagnosis traces back to a spec. If no spec covers the symptom, that's a spec gap — call it out explicitly.
+You are an ontological anchoring agent for hKask diagnosis. Before building a feedback loop, anchor the bug to the actual code structure using a dual ontology:
+
+- **Dublin Core** classifies the THING affected — what kind of entity, its identifier, its source location, its subject domain.
+- **PKO (Procedural Knowledge Ontology)** classifies the FLOW the bug occurs in — the call chain as a Procedure, each function as a Step, the bug as an IssueOccurrence at a specific StepExecution.
+
+This replaces spec-anchoring. The bug is grounded in the real code graph, not in a specification document that may be stale or absent.
 
 ## Bug Description
 
@@ -35,54 +45,63 @@ You are a spec-anchoring agent for hKask diagnosis. Before building a feedback l
 
 {{ symptom }}
 
-{% if code_context %}
-## Code Context
+{% if target_file %}
+## Target File
 
-```json
-{{ code_context | tojson }}
-```
+{{ target_file }}
 {% endif %}
 
-{% if spec_reference %}
-## Relevant Specification
+{% if symbol_name %}
+## Symbol Name
 
-{{ spec_reference }}
-{% else %}
-## Specification Note
-
-No explicit spec reference was provided. Use the functional specification at `docs/architecture/core/FUNCTIONAL_SPECIFICATION.md` as the default reference. If you cannot access it, identify the MDS category from the bug description and symptom alone, and note the spec gap.
+{{ symbol_name }}
 {% endif %}
 
 ## Process
 
-### Step 1: Classify by MDS Category
+### Step 1: Find the affected entity (Dublin Core thing)
 
-hKask's functional specification uses 5 MDS categories (consolidated from the original 9 DDMVSS categories — see `docs/architecture/core/MDS.md`):
+Call the `codegraph_query` MCP tool to locate the affected symbol(s):
+- If a `symbol_name` was provided, query with `name: "{{ symbol_name }}"`.
+- Otherwise, derive candidate symbol names from the `bug_description` and `target_file` and query with `query: "<derived terms>"`.
+- If `target_file` was provided, match symbols whose source file matches.
 
-| Category | Scope | DDMVSS mapping | Example bugs |
-|----------|-------|---------------|-------------|
-| **Domain** | Core agent behavior, session lifecycle, skill execution | Domain | Agent hangs, wrong skill activated |
-| **Composition** | Skill composition, bundle orchestration, PDCA convergence, CLI/API/MCP protocol | Composition + Interface | Skill bundle fails, incorrect CLI output |
-| **Trust** | Tool access, OCAP delegation, permission boundaries, WebID, userpod host | Capability + Trust | Tool call rejected, missing Regulation span |
-| **Lifecycle** | Bootstrap, shutdown, persistence, observability, logging, metrics | Lifecycle + Observability + Persistence | Bootstrap fails, corrupted wallet, missing trace |
-| **Curation** | Documentation, skill registry, template validation, spec coherence | Curation | Template validation false positive |
+From the query results, identify the primary affected symbol. Classify it using Dublin Core vocabulary:
 
-A bug may span multiple categories. Identify the PRIMARY category and any secondary categories.
+| Dublin Core term | Maps to |
+|---|---|
+| `dcterms:type` | The codegraph `SymbolKind` (function, struct, trait, module, impl, etc.) — this is the THING type |
+| `dcterms:identifier` | The symbol's qualified name (e.g. `hkask_test_harness::write_trace`) |
+| `dcterms:source` | The file path and line number (e.g. `kask/crates/hkask-test-harness/src/hkask_test_harness.rs:179`) |
+| `dcterms:subject` | The MDS domain category, DERIVED from the entity's ontological position — not looked up from a spec. A function in the capability crate → "Trust"; a function in the template executor → "Composition"; a persistence function → "Lifecycle". The subject is a tag on the thing, derived from where it sits in the graph. |
 
-### Step 2: Map Symptom to Functional Requirements
+### Step 2: Locate the flow (PKO procedure)
 
-For the primary MDS category, identify the functional requirement (FR#) from the specification that governs the misbehaving code. State:
-- The FR# reference
-- The requirement text
-- Which criterion the bug violates
-- Whether the violation is partial (edge case) or complete (requirement wholly unmet)
+Call the `codegraph_traverse` MCP tool to trace the call chain:
+- Traverse INCOMING (callers): `codegraph_traverse` with `symbol: "<primary symbol>", direction: "incoming", max_depth: 5` — find who calls the affected function.
+- Traverse OUTGOING (callees): `codegraph_traverse` with `symbol: "<primary symbol>", direction: "outgoing", max_depth: 3` — find what the affected function calls.
 
-### Step 3: Flag Spec Gaps
+The call chain IS a PKO Procedure:
+- `pko:Procedure` — the overall execution path from entry point to the buggy function (the incoming traversal result).
+- `pko:Step` — each function in the chain is a Step. The buggy function is the Step where the `pko:IssueOccurrence` occurs.
+- `pko:hasStep` / `pko:nextStep` — the ordering of Steps in the Procedure (the call chain order).
+- `pko:StepExecution` — the specific execution of the buggy Step where the issue manifests.
+- `pko:IssueOccurrence` — the bug itself: what went wrong at this StepExecution.
 
-If no functional requirement covers the misbehavior:
-- Call it out: "Spec gap: no requirement governs [behavior]"
-- This is a finding, not a failure
-- Recommend what requirement should exist
+If the affected entity implements a trait (codegraph `EdgeKind::Implements`), note it — the bug may be in the trait contract, not just the impl.
+
+### Step 3: Assess blast radius (PKO impact)
+
+Call the `codegraph_impact` MCP tool: `codegraph_impact` with `symbol: "<primary symbol>", max_depth: 3`.
+
+This reveals what ELSE is affected — every caller of the buggy function, transitively. This is the `pko:IssueOccurrence` scope: the set of Procedures that flow through the buggy Step and are therefore impacted.
+
+### Step 4: Classify the issue ontologically
+
+Combine the Dublin Core (what) and PKO (where in the flow) anchors into an ontological classification:
+
+- **What** (Dublin Core): the affected thing is a `dcterms:type` = `<SymbolKind>`, identified as `dcterms:identifier` = `<qualified_name>`, sourced from `dcterms:source` = `<file:line>`, subject `dcterms:subject` = `<MDS category derived from graph position>`.
+- **Where** (PKO): the issue is a `pko:IssueOccurrence` at the `pko:StepExecution` of `<function name>`, which is `pko:hasStep` in the `pko:Procedure` `<call chain summary>`. The impact radius is `<N callers affected transitively>`.
 
 ## Output Requirements
 
@@ -90,35 +109,38 @@ Respond with a JSON object:
 
 ```json
 {
-  "mds_category": {
-    "primary": "Domain|Composition|Trust|Lifecycle|Curation",
-    "secondary": ["optional secondary categories"]
+  "dcterms_type": "function|struct|trait|module|impl|...",
+  "dcterms_identifier": "hkask_test_harness::write_trace",
+  "dcterms_source": "kask/crates/hkask-test-harness/src/hkask_test_harness.rs:179",
+  "dcterms_subject": "Lifecycle",
+  "pko_procedure": [
+    {"step": "BridgeManifestExecutor::execute", "edge": "calls"},
+    {"step": "ManifestExecutor::execute_manifest", "edge": "calls"},
+    {"step": "write_trace", "edge": "calls", "issue": true}
+  ],
+  "pko_step": "write_trace",
+  "pko_issue_occurrence": {
+    "description": "filename collision silently overwrites traces with same (kind, name)",
+    "error_type": "data_loss",
+    "edge_kind": "calls",
+    "trait_impl": null
   },
-  "functional_requirements": [
-    {
-      "fr_reference": "FR-XXX or descriptive identifier",
-      "requirement_text": "What the spec requires",
-      "violation": "How the bug violates this requirement",
-      "violation_type": "partial|complete"
-    }
+  "impact_radius": [
+    "BridgeManifestExecutor::execute",
+    "ManifestExecutor::execute_manifest",
+    "proptest-analyze.j2 (via write_trace)"
   ],
-  "spec_gaps": [
-    {
-      "behavior": "The misbehavior not covered by any spec",
-      "recommendation": "What requirement should exist"
-    }
-  ],
-  "anchor_summary": "One-sentence summary: bug X violates requirement Y in category Z"
+  "anchor_summary": "pko:IssueOccurrence at write_trace (dcterms:type=function, dcterms:subject=Lifecycle) in the procedure execute_manifest → write_trace; impact radius: 3 callers"
 }
 ```
 
-If no functional requirements are identified and no spec covers the bug, set `functional_requirements` to an empty array and populate `spec_gaps`.
-
 ## Constraints
 
-- Every diagnosis must trace to a spec requirement or flag a spec gap.
-- Do not fabricate FR# references — derive from actual specification documents or explicitly note the gap.
-- If the spec is unavailable, classify by MDS category from the bug description alone and flag the spec access gap.
+- Every diagnosis must be anchored to a real codegraph entity. Do not fabricate symbols — use `codegraph_query` results.
+- The `dcterms:subject` (MDS category) is DERIVED from the entity's position in the code graph, not looked up from a spec document.
+- If the codegraph is unavailable (not indexed, MCP server not running), fall back to classifying from the `bug_description` and `target_file` alone, and note that the anchor is unverified (no graph traversal).
+- The `pko:procedure` array must reflect the actual call chain from `codegraph_traverse`, ordered from entry point to the buggy step.
+- Do not fabricate call chains — only include steps returned by the codegraph tools.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

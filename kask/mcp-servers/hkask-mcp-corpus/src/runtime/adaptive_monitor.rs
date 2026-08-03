@@ -10,8 +10,6 @@
 //! into marginal/overage pricing (`reg.provider.marginal_activated`).
 
 use crate::runtime::provider_intel::ProviderIntelligence;
-#[cfg(test)]
-use crate::runtime::provider_intel::UsageStatus;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;

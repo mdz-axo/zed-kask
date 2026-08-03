@@ -30,3 +30,4 @@ settings_content.workspace = true
 ui.workspace = true
 workspace.workspace = true
 anyhow.workspace = true
+chrono.workspace = true

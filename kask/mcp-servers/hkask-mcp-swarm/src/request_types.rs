@@ -352,3 +352,45 @@ pub(crate) struct DeleteSwarmRequest {
     /// The workspace (swarm) id to delete.
     pub workspace_id: String,
 }
+
+// ── Knowledge search (fermi v0.10.26 embedder fix) ───────────────────────────
+
+/// Search an agent's consolidated dreaming-memory knowledge graph via ABW's
+/// vector search (`GET /api/agents/{id}/knowledge/search?q=`). The embedder was
+/// broken platform-wide for 6 weeks (an Anthropic embeddings endpoint that does
+/// not exist); v0.10.26 fixed it to OpenAI `text-embedding-3-large` @ 1024,
+/// matching the existing pgvector column. Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct SearchKnowledgeRequest {
+    /// Agent name (slug) or UUID.
+    pub agent_name: String,
+    /// Natural-language query to vector-search the agent's knowledge graph.
+    pub query: String,
+}
+
+// ── Publish (fermi v0.10.15 admin force-publish) ───────────────────────────
+
+/// Preflight an agent publish — `GET /api/agents/{id}/publish-checks`. Returns
+/// `can_publish` and the list of failing checks (name/description/system_prompt/
+/// tags). Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PublishChecksRequest {
+    /// Agent name (slug) or UUID.
+    pub agent_name: String,
+}
+
+/// Publish an agent to the public catalogue — `POST /api/agents/{id}/publish`.
+/// With `force=true` (admin only), failing checks are bypassed and `reason` is
+/// audited to `admin_bypass_events` (mig-164, wired in fermi v0.10.5/v0.10.15).
+/// Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct PublishAgentRequest {
+    /// Agent name (slug) or UUID to publish.
+    pub agent_name: String,
+    /// Force-publish past failing checks (admin only). When `true`, `reason` is
+    /// required and audited.
+    pub force: Option<bool>,
+    /// Justification for force-publish. Required when `force` is `true`;
+    /// ignored otherwise.
+    pub reason: Option<String>,
+}

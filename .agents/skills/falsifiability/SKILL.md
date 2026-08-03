@@ -55,7 +55,7 @@ role of `mcda` and `diagnose`:
   explored" — currently a dead reference this skill wires up).
 - **diagnose** step 3 (generate 3–5 falsifiable hypotheses) and its elimination
   logic delegate to `falsifiability-hypothesize` + `falsifiability-discriminate`
-  + `falsifiability-eliminate`, keeping its bug-specific FR#/spec anchoring.
++ `falsifiability-eliminate`, keeping its bug-specific codegraph ontological anchoring (Dublin Core + PKO).
 - **hypothesis-framer** step 10 (testability assessment) delegates to
   `falsifiability-admit`.
 - **superforecasting** inside view is split: hypothesis generation delegates

@@ -329,6 +329,9 @@ struct AgentCard {
     description: String,
     author: String,
     executions: u64,
+    /// ISO-8601 timestamp of the agent's last update (fermi v0.10.27
+    /// `agents.updated_at`). `None` for local cards (no ABW freshness signal).
+    updated_at: Option<String>,
     /// Where this agent card lives: cloud (ABW only), local (local registry
     /// only), or synced (both, linked by `cloud_id`).
     source: AgentSource,
@@ -361,6 +364,10 @@ struct AgentInfo {
     description: Option<String>,
     author: Option<String>,
     execution_stats: Option<ExecutionStats>,
+    /// fermi v0.10.27: agent last-update timestamp. Forwarded by
+    /// `swarm_list_agents`; absent on local cards and on ABW responses predating
+    /// the column (backfilled to `created_at` server-side).
+    updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -865,6 +872,7 @@ impl SwarmPanel {
                                                     .execution_stats
                                                     .and_then(|s| s.total_executions)
                                                     .unwrap_or(0),
+                                                updated_at: a.updated_at,
                                                 source: AgentSource::Cloud,
                                             })
                                         })
@@ -1039,6 +1047,7 @@ impl SwarmPanel {
                                         description: local.description,
                                         author: String::new(),
                                         executions: 0,
+                                        updated_at: None,
                                         source: AgentSource::Local,
                                     }));
                                 }
@@ -2281,6 +2290,30 @@ impl SwarmPanel {
             )
     }
 
+    /// Compute a freshness chip for a cloud agent from its `updated_at`
+    /// timestamp (fermi v0.10.27). Returns `None` for local cards (no
+    /// timestamp) or when the timestamp can't be parsed — never fabricates an
+    /// age. Cloud agents render the age muted, switching to Warning past 30 days
+    /// (the same heuristic window kask uses for chronic staleness).
+    fn staleness_chip(updated_at: &Option<String>) -> Option<(SharedString, Color)> {
+        let ts = updated_at.as_ref()?;
+        let dt = chrono::DateTime::parse_from_rfc3339(ts.trim()).ok()?;
+        let days = chrono::Utc::now()
+            .signed_duration_since(dt.with_timezone(&chrono::Utc))
+            .num_days();
+        let label = if days <= 0 {
+            "updated today".to_string()
+        } else {
+            format!("updated {days}d ago")
+        };
+        let color = if days >= 30 {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+        Some((SharedString::from(label), color))
+    }
+
     fn render_card(&mut self, entry: SwarmEntry, cx: &mut Context<Self>) -> MarketplaceCard {
         match entry {
             SwarmEntry::Agent(agent) => {
@@ -2333,6 +2366,16 @@ impl SwarmPanel {
                                             ))
                                             .color(Color::Accent)
                                             .size(LabelSize::XSmall),
+                                        )
+                                        .when_some(
+                                            Self::staleness_chip(&agent.updated_at),
+                                            |this, (label, color)| {
+                                                this.child(
+                                                    Label::new(label)
+                                                        .color(color)
+                                                        .size(LabelSize::XSmall),
+                                                )
+                                            },
                                         ),
                                 )
                                 .child(Label::new(agent.description).color(Color::Muted)),

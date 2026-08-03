@@ -12,18 +12,18 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 ## When to Use
 
 - A hard bug or performance regression resists quick fixes and needs disciplined root-cause analysis
-- You need to anchor a bug to functional requirements before debugging (Phase 0)
+: You need to anchor a bug to the code graph before debugging (Phase 0)
 - You need to build a fast, deterministic feedback loop to reproduce the bug
 - You need to generate multiple falsifiable hypotheses rather than anchoring on the first plausible idea
 - You need to instrument code with targeted probes mapped to specific hypotheses
 - You need to apply a fix with a regression test written *before* the fix, then clean up instrumentation
 - You need to measure whether diagnosis convergence is sufficient to exit the loop
-- The bug spans multiple MDS categories (Domain, Composition, Trust, Lifecycle, Curation) and needs classification
-- A spec gap may be the real finding — no functional requirement governs the misbehaving code
+: The bug spans multiple Dublin Core entity types or PKO procedure paths and needs ontological classification
+- A codegraph gap may be the real finding — the affected entity has no callers or is orphaned in the graph
 
 ## Instructions
 
-1. **Anchor to functional requirements (Phase 0).** Before building a feedback loop, classify the bug by MDS category (Domain, Composition, Trust, Lifecycle, Curation). Map the symptom to functional requirement references (FR#). State the requirement text, which criterion the bug violates, and whether the violation is partial or complete. If no functional requirement covers the misbehavior, flag it as a spec gap — this is a finding, not a failure. Recommend what requirement should exist. Every diagnosis must trace to a spec requirement or note the gap explicitly. Do not fabricate FR# references.
+1. **Anchor to the code graph (Phase 0).** Before building a feedback loop, anchor the bug to the actual code structure using a dual ontology. Call `codegraph_query` to find the affected symbol, `codegraph_traverse` to trace the call chain (callers + callees), and `codegraph_impact` for blast radius. Classify the THING using Dublin Core (`dcterms:type` = entity kind, `dcterms:identifier` = qualified name, `dcterms:source` = file:line, `dcterms:subject` = MDS category derived from graph position). Classify the FLOW using PKO (`pko:Procedure` = the call chain, `pko:Step` = each function, `pko:IssueOccurrence` = the bug at a specific `pko:StepExecution`). Every diagnosis must be anchored to a real codegraph entity or note that the graph is unavailable.
 
 2. **Build the feedback loop and reproduce the bug.** Construct the fastest, most deterministic feedback loop. Try strategies in order: failing test at the reaching seam → `cargo test` with specific test name → CLI invocation with fixture input → HTTP script → replay captured input → throwaway harness → property/fuzz loop → `git bisect run` → differential loop. Prioritize speed, signal sharpness, and determinism — a 2-second deterministic loop beats a 30-second flaky loop. For non-deterministic bugs, the goal is a higher reproduction rate, not a clean repro: loop 100×, parallelise, add stress. Do not proceed to hypothesising without a loop you believe in.
 
@@ -39,7 +39,7 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 
 | Template | Type | Purpose |
 |----------|------|--------|
-| `diagnose-spec-anchor.j2` | `KnowAct` | Anchor a bug diagnosis to functional requirements: classify by MDS category, map symptom to FR# references, flag spec gaps. Phase 0 of the diagnosis pipeline. Every diagnosis traces to a spec or notes the gap. |
+| `diagnose-spec-anchor.j2` | `KnowAct` | Anchor a bug diagnosis to the code graph via Dublin Core (things) + PKO (flows). Uses codegraph_query/traverse/impact MCP tools. Phase 0 of the diagnosis pipeline. Replaces spec-anchoring — the bug is grounded in the real code graph, not a spec document. |
 | `diagnose-loop.j2` | `KnowAct` | Build a feedback loop for the bug. Evaluate repro strategies, select the fastest deterministic signal, and confirm the bug reproduces before hypothesising. |
 | `diagnose-instrument.j2` | `KnowAct` | Instrument the code with targeted probes mapped to specific hypotheses. Change one variable at a time. Use tagged diagnostic logs or breakpoints. |
 | `diagnose-fix.j2` | `KnowAct` | Apply fix with regression test (before the fix). Verify original repro no longer reproduces. Clean up instrumentation. Write post-mortem. |
@@ -56,5 +56,5 @@ Disciplined diagnosis loop for hard bugs and performance regressions. Cybernetic
 - Write the regression test BEFORE the fix; if no correct seam exists, do not write a shallow test that gives false confidence
 - All `[DIAG-xxxx]` instrumentation tags must be removed before declaring done
 - The commit/PR message must state the confirmed hypothesis
-- Do not fabricate FR# references — derive from actual specification documents or explicitly note the gap
+- Do not fabricate codegraph entities — derive from actual `codegraph_query` results or note the graph is unavailable
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
