@@ -10,21 +10,20 @@
 
 pub mod budget;
 pub mod bundle;
-pub mod compute;
+mod compute;
 pub mod condition;
 pub mod convergence;
 pub mod crate_loader;
 pub mod executor;
-pub mod input_mapping;
+mod input_mapping;
 pub mod inputs;
 pub mod manifest_loader;
-pub mod output_schema;
+mod output_schema;
 pub mod ports;
 pub mod prompt_strategy;
 pub mod registry;
 pub mod registry_sqlite;
 pub mod skill_loader;
-pub mod taint_context;
 pub mod template_renderer;
 
 pub use bundle::BundleManifest;

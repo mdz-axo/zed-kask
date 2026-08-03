@@ -355,7 +355,7 @@ All architecture documents MUST map to at least one of the 5 MDS categories defi
 
 1. **Domain** — Bounded context, ν-events, entities
 2. **Composition** — Registry, cascade rules, template types, MCP/in-process surfaces, equivalence matrix
-3. **Trust** — Threat model, OCAP boundaries, keystore, capability tokens, attenuation policy
+3. **Trust** — Threat model, capability-match gate, keystore, capability tokens
 4. **Lifecycle** — Bootstrap, evolution, deprecation, Regulation spans, variety counters, storage schema, memory pipelines, encryption
 5. **Curation** — Evaluation gradient, coherence metric, curator authority, writing quality
 
@@ -391,7 +391,7 @@ The verification checklist (§10) is extended with MDS alignment checks:
 |----------|-----------------|--------------|
 | **Domain** | Bounded context, ν-event types, entity definitions | Terms allocated |
 | **Composition** | Registry schema, cascade rules, template types, surface definitions, equivalence matrix | Template types documented; MCP ≡ in-process surfaces verified for core operations |
-| **Trust** | Threat model, mitigations, keystore config, OCAP policy, attenuation rules | STRIDE-lite analysis complete; capability grant table present |
+| **Trust** | Threat model, mitigations, keystore config, capability-match gate | STRIDE-lite analysis complete; capability gate documented |
 | **Lifecycle** | Bootstrap sequence, evolution rules, deprecation policy, Regulation span registry, storage schema, encryption config | All operations emit spans; bitemporal semantics documented |
 | **Curation** | Decision gradient, coherence metric, writing quality assessment | Curator authority bounded; ≥3/4 writing dimensions passing |
 

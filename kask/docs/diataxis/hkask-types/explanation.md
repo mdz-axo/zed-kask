@@ -164,7 +164,7 @@ skill output.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
   the D1–D14 integration seams.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
-  P4 (OCAP boundaries) and P9 (feedback loops) that the guard layer enforces.
+  P4 (clear boundaries) and P9 (feedback loops) that the guard layer enforces.
 
 ---
 

@@ -86,10 +86,9 @@ The `ToolInvoker` trait (`kask_panel.rs:89`) and `set_tool_invoker` hook
 (`KanbanBoardView`, `PortfolioDashboardView`, `ScenariosView`), which
 fetch data via direct MCP tool calls — not through the curator agent. The
 chat panel itself does not use this hook; it routes through
-`NativeAgent`'s `ToolRouter`, which is OCAP-gated and streaming-aware. The
+`NativeAgent`'s `ToolRouter`, which is capability-gated and streaming-aware. The
 bridge provides the `PanelToolInvoker` implementation (in `main.rs`),
-which wraps `BridgeToolPort` with a `DelegationToken` minted from the
-`a2a_secret`.
+which wraps `BridgeToolPort` with a `DelegationToken` minted in-process.
 
 ## See also
 

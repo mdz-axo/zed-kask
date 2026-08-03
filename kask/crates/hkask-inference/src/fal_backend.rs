@@ -11,16 +11,16 @@ use crate::chat_protocol::{
     validate_prompt,
 };
 use crate::config::InferenceConfig;
-use crate::fal_workflow::{self, WorkflowNode, WorkflowResult};
+use crate::fal_workflow::{ExecutionMode, WorkflowResult};
 use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages};
 use crate::provider::{MediaOp, MediaProvider};
+use crate::workflow::NodeExecutor;
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceStreamChunk,
     MediaGenerateParams,
 };
 use serde_json::Value;
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -572,15 +572,13 @@ impl FalBackend {
 
     // ── Workflow execution ─────────────────────────────────────────────
 
-    async fn execute_node(&self, app: &str, input: &Value) -> Result<Value, InferenceError> {
-        self.fal_sync_post(app, input.clone()).await
-    }
-
     /// Execute a workflow plan JSON against Fal GPU infrastructure.
     ///
-    /// Parses the DAG, topologically sorts nodes, executes each model
-    /// call sequentially, resolves `$references` between nodes, and
-    /// returns output URLs with metadata.
+    /// Delegates to the general workflow engine (`crate::workflow`): fal.ai's
+    /// `Input`/`Run`/`Display` DAG is parsed into `Source`/`Compute`/`Sink` and
+    /// executed in dependency order with `$reference` resolution. Results are
+    /// byte-identical to the pre-refactor implementation (sequential,
+    /// abort-on-failure — fal.ai JSON carries no failure policy).
     ///
     /// expect: "The system regulates text/image/speech generation through provider membranes"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated workflow execution
@@ -593,78 +591,8 @@ impl FalBackend {
         &self,
         workflow: &Value,
     ) -> Result<WorkflowResult, InferenceError> {
-        let start = std::time::Instant::now();
-
-        let nodes = fal_workflow::parse_workflow_nodes(workflow)?;
-        fal_workflow::validate_workflow_structure(&nodes)?;
-
-        let node_map: HashMap<&str, &WorkflowNode> = nodes.iter().map(|n| (n.id(), n)).collect();
-        let order = fal_workflow::topological_sort(&nodes)?;
-
-        tracing::debug!(
-            target: "hkask.fal",
-            node_count = nodes.len(),
-            execution_order = ?order.iter().map(|id| id.as_str()).collect::<Vec<_>>(),
-            "Workflow execution started"
-        );
-
-        let mut results: HashMap<String, Value> = HashMap::new();
-        let mut output_fields = Value::Null;
-        let mut output_urls: Vec<String> = Vec::new();
-
-        for node_id in &order {
-            let node = node_map.get(node_id.as_str()).ok_or_else(|| {
-                InferenceError::Generation(format!("Node '{node_id}' not found in workflow"))
-            })?;
-
-            match node {
-                WorkflowNode::Input { input, .. } => {
-                    results.insert(node_id.clone(), input.clone());
-                }
-                WorkflowNode::Run {
-                    app,
-                    input,
-                    depends,
-                    mode,
-                    ..
-                } => {
-                    let resolved_input =
-                        fal_workflow::resolve_references(input, &results, depends)?;
-                    let node_result = match mode {
-                        fal_workflow::ExecutionMode::Sync => {
-                            self.execute_node(app, &resolved_input).await?
-                        }
-                        fal_workflow::ExecutionMode::Queue => {
-                            self.fal_queue_post(app, resolved_input).await?
-                        }
-                    };
-                    results.insert(node_id.clone(), node_result);
-                }
-                WorkflowNode::Display {
-                    fields, depends, ..
-                } => {
-                    let resolved = fal_workflow::resolve_references(fields, &results, depends)?;
-                    output_fields = resolved.clone();
-                    output_urls = fal_workflow::extract_urls(&resolved);
-                }
-            }
-        }
-
-        let elapsed = start.elapsed().as_secs_f64();
-
-        tracing::debug!(
-            target: "hkask.fal",
-            output_count = output_urls.len(),
-            elapsed_seconds = elapsed,
-            "Workflow execution complete"
-        );
-
-        Ok(WorkflowResult {
-            output_urls,
-            output_fields,
-            node_results: results,
-            elapsed_seconds: elapsed,
-        })
+        let graph = crate::workflow::fal_adapter::parse_fal_workflow(workflow)?;
+        graph.execute(self).await
     }
 }
 
@@ -747,6 +675,24 @@ impl MediaProvider for FalBackend {
                         InferenceError::Json(format!("WorkflowResult serialize failed: {e}"))
                     })
                 }
+            }
+        })
+    }
+}
+
+/// Drives the general workflow engine's `Compute` nodes against the fal.ai
+/// provider: `Sync` → `fal_sync_post`, `Queue` → `fal_queue_post`.
+impl NodeExecutor for FalBackend {
+    fn execute_node<'a>(
+        &'a self,
+        app: &'a str,
+        input: Value,
+        mode: ExecutionMode,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
+        Box::pin(async move {
+            match mode {
+                ExecutionMode::Sync => self.fal_sync_post(app, input).await,
+                ExecutionMode::Queue => self.fal_queue_post(app, input).await,
             }
         })
     }

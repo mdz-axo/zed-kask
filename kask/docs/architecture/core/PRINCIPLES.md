@@ -59,10 +59,10 @@ Within user-defined boundaries, hKask remains maximally generative. No hidden or
 
 They are the floor, not the ceiling — the Generative Space requires a safe container.
 
-#### P4 — Clear Boundaries (OCAP)
+#### P4 — Clear Boundaries
 P1–P3 are enforced through explicit capability boundaries. No ambient authority and no admin bypass. Per **Miller's Object Capability model** (Miller, 2006): no ambient authority; every capability is an unforgeable reference; attenuation preserves safety.[^miller-ocap]
 
-**P4.1 — Per-User Data Directory as OCAP Enforcement Perimeter (v0.31.1, re-anchored):** The per-user data directory IS the OCAP enforcement perimeter. Each user's encrypted SQLCipher file (`{data_dir}/agents/{sanitized_name}/pod.db`) is the isolation boundary — no connection handle to another user's file means no cross-user data access is structurally possible. The `hkask-pods` crate (ActivePods, PodDeployment, PodFactory, PodRegistry, `PerPodToolBinding`, etc.) was **deleted** in the 2026-07-25 cleanup; the per-user data directory replaces the pod abstraction as the enforcement perimeter. Capability tokens (`DelegationToken`) are scoped to the active user's WebID at composition-root wiring time; verification is performed by `capabilities_match` in `hkask-mcp/src/runtime.rs` (the former `CapabilityChecker` struct was removed). Tool dispatch is scoped to the active user's MCP server bindings — cross-user dispatch is an invalid state because no user has a handle to another user's data directory.
+**P4.1 — Per-User Data Directory as Capability Enforcement Perimeter (v0.31.1, re-anchored):** The per-user data directory IS the enforcement perimeter. Each user's encrypted SQLCipher file (`{data_dir}/agents/{sanitized_name}/pod.db`) is the isolation boundary — no connection handle to another user's file means no cross-user data access is structurally possible. The `hkask-pods` crate (ActivePods, PodDeployment, PodFactory, PodRegistry, `PerPodToolBinding`, etc.) was **deleted** in the 2026-07-25 cleanup; the per-user data directory replaces the pod abstraction as the enforcement perimeter. Capability tokens (`DelegationToken`) are scoped to the active user's WebID at composition-root wiring time; verification is performed by `is_valid_for` in `hkask-mcp/src/runtime.rs`. Tool dispatch is scoped to the active user's MCP server bindings — cross-user dispatch is an invalid state because no user has a handle to another user's data directory.
 
 ---
 

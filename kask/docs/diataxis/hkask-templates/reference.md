@@ -23,7 +23,6 @@ templates against the inference port. Template types are `Prompt` (WordAct),
 | `ManifestExecutor` struct | `kask/crates/hkask-templates/src/executor.rs:125` |
 | `ManifestExecutor::new` | `kask/crates/hkask-templates/src/executor.rs:154` |
 | `execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:413` |
-| `execute_knowact` | `kask/crates/hkask-templates/src/executor.rs:258` |
 | `BundleManifest` struct | `kask/crates/hkask-templates/src/bundle/manifest.rs:91` |
 | `BundleManifestStep` | `kask/crates/hkask-templates/src/bundle/manifest.rs:35` |
 | `BundleSkill` | `kask/crates/hkask-templates/src/bundle/manifest.rs:24` |

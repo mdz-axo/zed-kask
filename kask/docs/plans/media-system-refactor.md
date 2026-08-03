@@ -367,7 +367,7 @@ This pass authors **3 pipeline manifests** (see §5 / the manifest files) using 
 | **Embeddings** | Face + semantic embeddings are **local** (`face_registry.embedding` BLOB; semantic via local `EmbeddingStore`). Never provider-side. | Existing `face_registry` schema; WS-3 keeps embeddings local. |
 | **Portability** | A gallery is a directory + a SQLite DB. Copying the directory + DB to another host reproduces the full gallery (images + tags + lineage + faces). | `lineage_survives_restart_with_durable_db` test + a documented export/import path. |
 | **Provider removal** | Removing a provider leaves assets intact (they're local files). `gallery_generation.provider` becomes a historical label; `gallery_reproduce` fails with a clear "provider unavailable" error if the provider is gone — the asset itself is still viewable. | `reproduce_provider_removed_returns_clear_error_asset_intact` test. |
-| **OCAP** | Media generation is governed by the existing `McpRuntime::invoke` OCAP gate + gas gate (per `.rules`). Asset ownership does not grant new OCAP surface. | Existing `is_valid_for_at_rejects_expired_token` + gas tests. No new advertised invariant without an enforcement point. |
+| **Capability gate** | Media generation is governed by the existing `McpRuntime::invoke` capability-match gate + gas gate (per `.rules`). Asset ownership does not grant new capability surface. | Existing `is_valid_for` + gas tests. No new advertised invariant without an enforcement point. |
 
 ---
 

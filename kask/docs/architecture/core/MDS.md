@@ -120,7 +120,7 @@ Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve
 |---|----------|----------------------|---------------|-----------------|
 | 1 | **Domain** | Every entity has a named term and a bounded-context map | Domain ontology sketch | → Composition (verbs), → Lifecycle (persistence) |
 | 2 | **Composition** | Every domain verb has a granted composition, registered interface, and composable path | Capability grant table, interface equivalence matrix, registry schema | → Domain (ontology), → Trust (tokens) |
-| 3 | **Trust** | Every capability operation has a threat-model entry and an OCAP-bound mitigation | Threat model, keystore config, capability attenuation policy | → Composition (capabilities), → Lifecycle (audit) |
+| 3 | **Trust** | Every capability operation has a threat-model entry and a capability-match-gate mitigation | Threat model, keystore config, capability-match gate | → Composition (capabilities), → Lifecycle (audit) |
 | 4 | **Lifecycle** | Bootstrap, evolution, deprecation, lifecycle, and persistence are expressible as spec transitions | Bootstrap manifest, evolution rules, deprecation policy, Regulation span registry | → Domain (entities), → Trust (audit) |
 | 5 | **Curation** | Every spec artifact has been evaluated for coherence by a curator with documented rationale | Curation decision log, coherence score | → Domain (grounding), → Lifecycle (health) |
 
@@ -310,9 +310,6 @@ registry:
   discriminator: template_type
   cascade_depth_max: 7
 
-ocap_policy:
-  attenuation_max: 7
-  token_ttl_seconds: 3600
 ```
 
 > **Note:** The `api` interface column from the pre-fork template is **removed** (the standalone `hkask-api` HTTP server is deleted). It is replaced by `in_process`, reflecting zed-kask's in-process composition root. MCP and CLI remain as equivalent surfaces to the same functional core.
@@ -333,9 +330,9 @@ threat_model:
       vector: supply_chain
       mitigation: cargo_deny + pinned_versions
 
-ocap_boundaries:
-  - "Every resource access passes through require_capability + require_sovereignty"
-  - "Tokens are unforgeable, attenuating, no admin override"
+capability_gate:
+  - "Tool invocation requires in-process DelegationToken with matching (resource, resource_id, action)"
+  - "Tokens are minted and consumed in-process — no signature verification, no unforgeability, no expiry"
 
 keystore:
   encryption: AES-256-GCM
@@ -583,11 +580,11 @@ status: VERIFIED
 
 Domain crates **never** depend on zed-kask crates. MCP servers **never** link zed-kask crates directly — they reach the in-process components via `kask_bridge` (D8), preserving the P1 isolation boundary at the MCP seam. zed-kask surfaces reach hKask through the guard layer (D4) and in-process transport (D1–D3). Note: `KaskCore` was never implemented as a singleton; the composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3).
 
-### OCAP Boundaries
+### Capability-Match Gate
 
 | Boundary | Enforcement | Principle |
 |----------|-------------|-----------|
-| Tool invocation | `capabilities_match` gating via `governed_tool` (D4 guard layer; enforcement in `hkask-mcp/src/runtime.rs`) | P4 |
+| Tool invocation | `DelegationToken::is_valid_for` or `verify_capability_domain` via `McpRuntime::invoke` (gas gate via `CyberneticsLoop`) | P4 |
 | Inference calls | `governed_inference` membrane with gas budget checks | P4 |
 | MCP server isolation | In-process via `kask_bridge` (D8); MCP servers do not link zed-kask crates | P1 |
 | Capability attenuation | Max depth limit, TTL expiry on tokens | P4 |

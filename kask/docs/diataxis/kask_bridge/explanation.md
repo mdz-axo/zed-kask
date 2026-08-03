@@ -12,7 +12,7 @@ mds_categories: [trust, curation]
 
 The composition root is the single place where zed and hKask are wired
 together. It runs in two phases inside `crates/zed/src/main.rs`: an early
-block that wires the `a2a_secret` and a logging `BridgeMemoryPort` before
+block that wires a logging `BridgeMemoryPort` before
 any thread can complete a turn, and a deferred task that runs after the zed
 user resolves and a default language model becomes available. The
 model-dependent hooks (`set_manifest_executor`, `set_thread_condenser`,

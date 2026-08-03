@@ -24,7 +24,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [Principle 1: User Sovereignty](#principle-1-user-sovereignty) | SOLID-grounded data ownership and atomic consent |
 | [Principle 2: Affirmative Consent](#principle-2-affirmative-consent) | Default deny, scoped consent, fail-closed |
 | [Principle 3: Generative Space](#principle-3-generative-space) | Settings exposure, user curation, open-source commitment |
-| [Principle 4: Clear Boundaries](#principle-4-clear-boundaries-ocap) | OCAP enforcement of principles 1–3 |
+| [Principle 4: Clear Boundaries](#principle-4-clear-boundaries) | Capability enforcement of principles 1–3 |
 | [Catch and Release](#catch-and-release) | Data sovereignty catch-and-release model |
 | [The Curator as Enforcer](#the-curator-as-enforcer) | Curator role in enforcing the Magna Carta |
 | [Regulation Integration](#regulation-integration) | Algedonic alerts and sovereignty monitoring |
@@ -46,7 +46,7 @@ hKask operates under a Magna Carta — a charter of liberties that honors user s
 1. **User Sovereignty** — Data is owned by the user, correctly categorized, portable, and consent is atomic. Grounded in Berners-Lee's SOLID architecture principles.[^solid]
 2. **Affirmative Consent** — Default is deny. Nothing passes without an explicit yes. Consent is scoped, versioned, and expiring.
 3. **Generative Space** — Within boundaries, hKask is maximally generative. Inference and tooling expose all probabilistic/generative settings to users. No privileged engineer access. Open-source only.
-4. **Clear Boundaries (OCAP)** — Principles 1–3 are enforced through explicit OCAP boundaries. Every agent, pod, and template invocation operates within unforgeable capability tokens.[^miller-ocap]
+4. **Clear Boundaries** — Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability tokens.[^miller-ocap]
 
 ---
 
@@ -67,7 +67,7 @@ Data sovereignty boundaries implement the principle of informational self-determ
 > OCAP capability-match gate in `McpRuntime::invoke`.
 
 **Default hKask Configuration:**
-- **Sovereign (Private):** episodic_memory, personal_context, capability_tokens, ocap_boundaries
+- **Sovereign (Private):** episodic_memory, personal_context, capability_tokens, capability_boundaries
 - **Shared:** semantic_memory, template_invocations
 - **Public:** template_registry
 
@@ -178,30 +178,30 @@ User preferences are inherently idiosyncratic and diverge from LLM aggregate def
 
 ## Principle 4: Clear Boundaries (OCAP)
 
-Principles 1–3 are enforced through Object Capability (OCAP) boundaries. Every agent, pod, and template invocation operates within explicit, unforgeable capability tokens.
+Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability tokens.
 
 ### Dual Enforcement Gate
 
 Every resource access in hKask passes through two gates:
 
-1. **`require_capability`** — Verify that the caller holds an unforgeable capability token for the requested operation
+1. **`require_capability`** — Verify that the caller holds an in-process capability token for the requested operation
 2. **`require_sovereignty`** — Verify that the data category access is permitted by the user's sovereignty boundary and explicit consent
 
 There is no bypass. No code path can access resources without going through both gates.
 
 ### Token Properties
 
-- **Unforgeable** — Capability tokens cannot be created from nothing. They can only be delegated by a holder.
-- **Attenuating** — Delegation can only reduce permissions, never increase them. A delegated token has equal or fewer permissions than the granter's token.
-- **No admin override** — There is no "god token" or admin bypass. All access goes through the same gates.
+- **In-process** — Tokens are minted and consumed in-process via `DelegationToken::new()`. There is no cryptographic signature or unforgeability — the token is a plain struct passed by reference.
+- **Capability-matched** — `McpRuntime::invoke` checks `token.is_valid_for(resource, resource_id, action)` — a triple match of the token's declared capability against the invoked tool.
+- **No admin override** — There is no "god token" or admin bypass. All access goes through the same `is_valid_for` gate.
 
 ### OCAP and Generative Access
 
-The capability tokens for generative settings (P3) are obtained through the affirmative consent process (P2). OCAP gates everything, but P3 ensures the gates for generative settings are equally and transparently accessible through the consent hierarchy. No special role or elevated capability is required beyond what P2's affirmative consent provides.
+The capability tokens for generative settings (P3) are obtained through the affirmative consent process (P2). The capability-match gate gates everything, but P3 ensures the gates for generative settings are equally and transparently accessible through the consent hierarchy. No special role or elevated capability is required beyond what P2's affirmative consent provides.
 
 ### Verification as Holistic Enforcement
 
-Principle 4 is verified by checking that P1–P3 are correctly implemented as OCAP boundaries. This is the structural audit that confirms the gates exist, are not bypassable, and that tokens are unforgeable and attenuating.
+Principle 4 is verified by checking that P1–P3 are correctly implemented as capability boundaries. This is the structural audit that confirms the gates exist, are not bypassable, and that tokens are checked by the capability-match gate.
 
 ---
 
@@ -209,7 +209,7 @@ Principle 4 is verified by checking that P1–P3 are correctly implemented as OC
 
 | Catch | Release |
 |-------|---------|
-| OCAP boundaries | Generative template space |
+| Capability boundaries | Generative template space |
 | Sovereignty enforcement | High-temp anti-normative generation |
 | Affirmative consent | User-curated experience |
 | Variety monitoring | Clean, merged code |
@@ -341,7 +341,7 @@ assertions:
 | p3c | Generative Space | Generative resources are open-source with exposed weights and settings | Structural + behavioral |
 | p3e | Generative Space | User preference overrides take precedence over LLM aggregate defaults | Absence check |
 | p4a | Clear Boundaries | Every access path goes through `require_capability` + `require_sovereignty` | Structural + behavioral |
-| p4b | Clear Boundaries | Capability tokens are unforgeable and attenuating — no bypass exists | Structural |
+| p4b | Clear Boundaries | Capability tokens checked by `is_valid_for` — no bypass exists | Structural |
 | p4c | Clear Boundaries | Generative settings tokens obtainable through P2's affirmative consent | Structural |
 | p4d | Clear Boundaries | Connected inference providers expose settings (open-source requirement) | Structural |
 
@@ -419,7 +419,7 @@ impl SovereigntyChecker {
 
 The Magna Carta is not aspirational. It is enforced:
 
-1. **OCAP Boundaries** — Capability tokens verify authority[^miller-ocap]
+1. **Capability Boundaries** — In-process capability tokens verify authority[^miller-ocap]
 2. **Sovereignty Checks** — Every invocation checked
 3. **Consent Verification** — Scoped, versioned, expiring consent
 4. **Regulation Alerts** — Violations trigger immediate alerts

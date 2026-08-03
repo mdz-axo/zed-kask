@@ -271,8 +271,8 @@ The kask panel provides per-MCP-server one-on-one interaction (direct tool invoc
 
 ### 12.3 Design (D10 — native GPUI kask panel)
 - **zed side:** `Item` impl `crates/kask_panel` (implements `pub trait Item`, `crates/workspace/src/item.rs`; opens in the center pane via `workspace.add_item_to_active_pane(...)` — NOT a dock `Panel`). Renders: a list of the 11 on-disk MCP servers (from the in-process tool registry, §2.4); selecting one opens a per-server sub-view.
-- **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the OCAP-gated path (same `McpRuntime::invoke` / `ToolGovernance` /gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
-- **OCAP:** the panel invokes tools under the caller's `DelegationToken` (scoped to `webid`) exactly as the agent does — direct invocation does NOT bypass OCAP. Double-gate (F10) applies: panel invokes are still `McpRuntime::invoke` / `ToolGovernance`-gated.
+- **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the capability-gated path (same `McpRuntime::invoke` / `ToolGovernance` /gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
+- **Capability gate:** the panel invokes tools under the caller's `DelegationToken` (scoped to `webid`) exactly as the agent does — direct invocation does NOT bypass the capability-match gate. Double-gate (F10) applies: panel invokes are still `McpRuntime::invoke` / `ToolGovernance`-gated.
 
 ### 12.4 Implementation (complete)
 
@@ -280,7 +280,7 @@ D10 is ✅ DONE. The kask panel is deployed on demand via `kask_panel::init(cx)`
 
 ### 12.5 Verified facts
 
-- **Direct invocation does not bypass sovereignty** — it reuses the OCAP-gated `McpRuntime::invoke` / `ToolGovernance` path; only the LLM is bypassed, not OCAP/gas.
+- **Direct invocation does not bypass sovereignty** — it reuses the capability-gated `McpRuntime::invoke` / `ToolGovernance` path; only the LLM is bypassed, not the capability-match gate/gas.
 - **Variety/regulation:** direct one-on-one invokes still emit `reg.tool.*` and consume gas — the cybernetic loop sees panel activity, so regulation is not bypassed.
 
 ---

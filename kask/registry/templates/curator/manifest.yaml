@@ -27,10 +27,8 @@ templates:
     type: KnowAct
     status: wired
     description: >
-      Diagnose system issues from bot reports and Regulation alerts. Invoked by
-      MetacognitionLoop::compute_with_templates() via ManifestExecutor::
-      execute_knowact(). Produces diagnosis + remediation_plan with
-      calibrated actions.
+      Diagnose system issues from bot reports and Regulation alerts. Produces
+      diagnosis + remediation_plan with calibrated actions.
 
   - id: curator/metacognition-escalate
     name: "Format human-facing escalation notifications"
