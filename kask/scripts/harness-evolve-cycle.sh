@@ -15,9 +15,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MAX_ITERATIONS=5
-TRACE_DIR="${HKASK_TRACE_DIR:-kask/traces}"
+TRACE_DIR="${HKASK_TRACE_DIR:-traces}"
 ITERATION=0
 RUN_HISTORY=()  # accumulates run-ids for the stability gate
+HISTORY_FILE="${TRACE_DIR}/.run-history"  # persists across invocations
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -28,6 +29,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 export HKASK_TRACE_DIR="$TRACE_DIR"
+
+# Load persisted run history so the loop survives cross-invocation handoffs
+# (the proceed branch exits for agent action; the agent re-invokes this script).
+if [[ -f "$HISTORY_FILE" ]]; then
+    mapfile -t RUN_HISTORY < "$HISTORY_FILE"
+fi
 
 echo "=== Harness Evolve Cycle ==="
 echo "Max iterations: $MAX_ITERATIONS"
@@ -51,18 +58,32 @@ while true; do
         exit 1
     fi
     RUN_HISTORY=("$LATEST_RUN" "${RUN_HISTORY[@]}")
+    # Persist so the next invocation has N-1 available (F4: bootstrap N-1).
+    mkdir -p "$TRACE_DIR"
+    printf '%s\n' "${RUN_HISTORY[@]}" > "$HISTORY_FILE"
 
-    # Step 2: Run stability gate
+    # Step 2: Run stability gate (requires >=2 run-ids; bootstrap on first run)
     echo "[step 2] Running stability gate..."
-    GATE_ARGS=()
-    for run_id in "${RUN_HISTORY[@]:0:4}"; do
-        GATE_ARGS+=("$run_id")
-    done
+    GATE_OUTPUT=""
+    if [[ ${#RUN_HISTORY[@]} -lt 2 ]]; then
+        GATE_OUTPUT="VERDICT: proceed
+reason: bootstrap — first run, no N-1 to compare yet"
+    else
+        GATE_ARGS=()
+        for run_id in "${RUN_HISTORY[@]:0:4}"; do
+            GATE_ARGS+=("$run_id")
+        done
 
-    GATE_OUTPUT=$(./scripts/stability-gate.sh "${GATE_ARGS[@]}" 2>&1 || true)
-    VERDICT=$(echo "$GATE_OUTPUT" | grep '^VERDICT:' | cut -d' ' -f2)
+        GATE_OUTPUT=$(./scripts/stability-gate.sh "${GATE_ARGS[@]}" 2>&1 || true)
+    fi
     echo "$GATE_OUTPUT"
     echo ""
+
+    # Re-read the verdict (either from the gate or the bootstrap branch above).
+    VERDICT=$(echo "$GATE_OUTPUT" | grep '^VERDICT:' | cut -d' ' -f2)
+    if [[ -z "$VERDICT" ]]; then
+        VERDICT="proceed"
+    fi
 
     # Step 3: Branch on verdict
     case "$VERDICT" in

@@ -1214,7 +1214,6 @@ impl ForecastStore {
 /// This closes the learning loop between LLM reasoning and computational
 /// verification — the key bridge between the superforecasting skill and
 /// the scenarios MCP server.
-#[allow(clippy::too_many_arguments)]
 #[must_use = "validation result should be inspected"]
 pub fn cross_validate(
     event_id: &str,

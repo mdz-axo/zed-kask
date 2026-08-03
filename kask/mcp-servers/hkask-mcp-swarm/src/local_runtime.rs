@@ -550,7 +550,6 @@ mod tests {
         /// Fixed result JSON for every dispatched call.
         result: serde_json::Value,
         /// Recorded (server, tool, args, allowlist) tuples, in dispatch order.
-        #[allow(clippy::type_complexity)]
         calls: std::sync::Mutex<Vec<(String, String, serde_json::Value, Vec<String>)>>,
     }
 

@@ -478,7 +478,6 @@ impl ConvergenceTracker {
     /// Writes the 14-field `_convergence` JSON into the context. This is the
     /// single source of truth for the `_convergence` shape — previously
     /// assembled ad-hoc at 11 call sites in the executor.
-    #[allow(clippy::too_many_arguments)]
     pub fn finalize_report(
         &self,
         context: &mut HashMap<String, Value>,

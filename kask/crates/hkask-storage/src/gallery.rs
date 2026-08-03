@@ -280,7 +280,6 @@ impl GalleryStore {
     /// Add an image to the gallery index.
     ///
     /// expect: "The system provides durable storage for gallery data"
-    #[allow(clippy::too_many_arguments)]
     /// Add an image to a gallery.
     ///
     /// expect: "The system provides durable storage for gallery data"
@@ -820,7 +819,6 @@ impl GalleryStore {
 
     /// Record the generation lineage for a gallery image. The image must
     /// already exist in `gallery_images` (the FK is enforced).
-    #[allow(clippy::too_many_arguments)]
     pub fn record_generation(
         &self,
         image_id: &str,

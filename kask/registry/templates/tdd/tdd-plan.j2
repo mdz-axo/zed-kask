@@ -6,6 +6,7 @@ contract:
     crate_scope: string
     code_context: object
     spec_context: string
+    surviving_mutants: array
   output:
     functional_requirements: array
     behaviors_to_test: array
@@ -13,6 +14,7 @@ contract:
     priority_order: array
     assumptions: array
     plan_approved: boolean
+    risk_profile: object
   energy_cap: 6144
   visibility: Public
 ---
@@ -79,6 +81,20 @@ For each FR#, extract:
 No functional specification context was provided. Identify the relevant domain requirements from `FUNCTIONAL_SPECIFICATION.md` §2-§3 before planning tests. A feature without a documented requirement cannot be properly anchored.
 {% endif %}
 
+{% if surviving_mutants %}
+## Surviving Mutants (from harness-evolve-cycle)
+
+A prior mutation-testing run found mutants that survived the test suite — these
+are functions with surviving mutants that the test suite does NOT adequately
+cover. When planning behaviors, prioritize functions in this list: a surviving
+mutant means the existing tests miss a fault class in that function. Plan a
+tracer bullet (and a proptest universal test in step 3) for each.
+
+```json
+{{ surviving_mutants | tojson }}
+```
+{% endif %}
+
 ## Rust Conventions
 
 1. Use `#[cfg(test)]` module for unit tests alongside the code they test.
@@ -98,7 +114,8 @@ No functional specification context was provided. Identify the relevant domain r
 2. **Behaviors to test**: List the specific observable behaviors this task requires. Each behavior must be testable through a public interface. Classify each behavior's test type: `unit` (single function contract), `integration` (cross-module contract chain), `contract` (type invariants across operations), `fuzz` (panic-free on arbitrary input), `system` (cross-crate end-to-end workflow).
 3. **Public interface**: Describe the interface changes needed.
 4. **Priority order**: Rank behaviors by risk. P0 = security/correctness-critical (Trust). P1 = correctness (Domain, Composition). P2 = ergonomics (Lifecycle, Curation).
-5. **Assumptions**: List every assumption. For each, state confidence (high/medium/low) and the alternative interpretation.
+5. **Risk profile**: Summarize the risk classification for downstream steps. `highest_priority` is the most severe priority in the slice (P0 > P1 > P2). `touches_trust` is `true` when any behavior is P0 (Trust) — this drives step 7 (explore), which dispatches to `bug-hunt` on Trust code even when spec coverage looks complete (Trust code has the highest cost of failure). `trust_behaviors` lists the P0 behavior descriptions so the explore step can scope its charter.
+6. **Assumptions**: List every assumption. For each, state confidence (high/medium/low) and the alternative interpretation.
 
 ### MDS Category Test Strategies
 
@@ -177,7 +194,12 @@ Respond with a JSON object:
       "alternative": "The other interpretation"
     }
   ],
-  "plan_approved": false
+  "plan_approved": false,
+  "risk_profile": {
+    "highest_priority": "P0|P1|P2",
+    "touches_trust": true,
+    "trust_behaviors": ["behavior description 1", "behavior description 2"]
+  }
 }
 ```
 

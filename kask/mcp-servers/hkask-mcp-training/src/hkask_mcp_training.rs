@@ -137,7 +137,6 @@ impl TrainingServer {
     /// when `adapter_weight_path` is provided. When `None`, placeholder values
     /// are used (zero checksum, empty path) — the adapter cannot be deployed
     /// until real values are provided.
-    #[allow(clippy::too_many_arguments)]
     fn build_trained_adapter(
         id: String,
         name: String,

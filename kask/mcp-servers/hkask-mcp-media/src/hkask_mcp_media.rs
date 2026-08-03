@@ -9,9 +9,7 @@
 //! - Voice: voice_design, generate_speech
 //! - Audio: transcribe, transcribe_bundle, audio_capture, record_and_transcribe
 
-// Pre-existing clippy lints from original bin-only codebase (addressed in separate refactoring pass).
 #![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
-#![allow(clippy::collapsible_if, clippy::cloned_ref_to_slice_refs)]
 
 mod error;
 mod gallery;

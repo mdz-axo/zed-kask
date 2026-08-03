@@ -785,7 +785,6 @@ impl<'a> ConvertService<'a> {
     /// optionally index passages, and atomically publish the JSONL via a
     /// `.tmp` rename. Returns a summary JSON (`input_dir`, `output`,
     /// `total_documents`, `total_chunks`, `indexed`).
-    #[allow(clippy::too_many_arguments)]
     #[must_use = "result must be used"]
     pub async fn chunk_directory(
         &self,

@@ -465,7 +465,6 @@ struct PodDeploySpec<'a> {
 /// TRL, etc. The harness is selected by the `harness` parameter, which is
 /// resolved by the caller from `job.params.harness` (operator-accepted) or
 /// `job.harness` (server default).
-#[allow(clippy::too_many_arguments)]
 pub fn generate_install_script(
     job: &TrainingJob,
     harness: TrainingHarnessId,

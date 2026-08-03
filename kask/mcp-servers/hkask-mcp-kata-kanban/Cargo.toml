@@ -44,6 +44,5 @@ name = "hkask-mcp-kata-kanban"
 path = "src/main.rs"
 
 [dev-dependencies]
-proptest = "1"
 tokio = { workspace = true, features = ["macros", "rt"] }
 serde_json.workspace = true

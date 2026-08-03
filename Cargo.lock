@@ -346,7 +346,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "proptest 1.10.0",
+ "proptest",
  "quick-xml 0.38.4",
  "rand 0.9.5",
  "regex",
@@ -6244,7 +6244,7 @@ dependencies = [
  "parking_lot",
  "pretty_assertions",
  "project",
- "proptest 1.10.0",
+ "proptest",
  "proptest-derive",
  "rand 0.9.5",
  "regex",
@@ -8435,7 +8435,7 @@ dependencies = [
  "pollster 0.4.0",
  "postage",
  "profiling",
- "proptest 1.10.0",
+ "proptest",
  "rand 0.9.5",
  "raw-window-handle",
  "refineable",
@@ -9128,7 +9128,7 @@ version = "0.31.1"
 dependencies = [
  "hex",
  "hkask-types",
- "proptest 1.10.0",
+ "proptest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -9142,7 +9142,7 @@ dependencies = [
  "criterion",
  "hkask-bridge-dublincore",
  "hkask-mcp-server",
- "proptest 1.10.0",
+ "proptest",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -9266,7 +9266,7 @@ dependencies = [
  "hkask-test-harness",
  "hkask-types",
  "jsonschema 0.28.3",
- "proptest 1.10.0",
+ "proptest",
  "rmcp",
  "serde_json",
  "thiserror 2.0.19",
@@ -9371,7 +9371,7 @@ dependencies = [
  "minijinja",
  "pdf-extract",
  "pptx-to-md",
- "proptest 1.10.0",
+ "proptest",
  "rand 0.9.5",
  "regex",
  "rmcp",
@@ -9422,7 +9422,6 @@ dependencies = [
  "hkask-templates",
  "hkask-types",
  "minijinja",
- "proptest 1.11.0",
  "rmcp",
  "schemars 1.2.2",
  "serde",
@@ -9536,7 +9535,7 @@ dependencies = [
  "hkask-mcp-server",
  "hkask-storage",
  "hkask-types",
- "proptest 1.10.0",
+ "proptest",
  "r2d2",
  "r2d2_sqlite",
  "rmcp",
@@ -9596,7 +9595,6 @@ dependencies = [
  "log",
  "parking_lot",
  "rodio",
- "serde",
  "serde_json",
  "smallvec 1.15.2",
  "theme",
@@ -9611,7 +9609,7 @@ dependencies = [
  "chrono",
  "hkask-storage",
  "hkask-types",
- "proptest 1.10.0",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -9628,7 +9626,7 @@ dependencies = [
  "hkask-storage",
  "hkask-types",
  "parking_lot",
- "proptest 1.10.0",
+ "proptest",
  "serde",
  "serde_json",
  "serde_yaml_neo",
@@ -9692,7 +9690,7 @@ dependencies = [
  "hkask-test-harness",
  "hkask-types",
  "minijinja",
- "proptest 1.10.0",
+ "proptest",
  "r2d2",
  "r2d2_sqlite",
  "rusqlite",
@@ -9711,7 +9709,7 @@ version = "0.31.1"
 dependencies = [
  "hkask-capability",
  "hkask-types",
- "proptest 1.10.0",
+ "proptest",
  "serde_json",
 ]
 
@@ -9722,7 +9720,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "hex",
- "proptest 1.10.0",
+ "proptest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -16210,25 +16208,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proptest"
-version = "1.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
-dependencies = [
- "bit-set 0.8.0",
- "bit-vec 0.8.0",
- "bitflags 2.13.1",
- "num-traits",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
- "rand_xorshift",
- "regex-syntax",
- "rusty-fork",
- "tempfile",
- "unarray",
-]
-
-[[package]]
 name = "proptest-derive"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16395,7 +16374,7 @@ dependencies = [
  "httparse",
  "percent-encoding",
  "piper",
- "proptest 1.10.0",
+ "proptest",
  "thiserror 2.0.19",
  "tokio",
  "url",
@@ -20106,7 +20085,7 @@ dependencies = [
  "ctor",
  "heapless",
  "log",
- "proptest 1.10.0",
+ "proptest",
  "rand 0.9.5",
  "rayon",
  "tracing",
@@ -25116,7 +25095,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "proptest 1.10.0",
+ "proptest",
  "proptest-derive",
  "remote",
  "schemars 1.2.2",

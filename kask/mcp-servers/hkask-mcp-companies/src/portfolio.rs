@@ -1247,7 +1247,6 @@ impl PortfolioManager {
 
     /// Attach a file to a company/security. Receives base64-encoded content,
     /// writes to `portfolios/{name}/files/{uuid}_{filename}`, returns the file ID.
-    #[allow(clippy::too_many_arguments)]
     pub fn attach_file(
         &self,
         portfolio: &str,

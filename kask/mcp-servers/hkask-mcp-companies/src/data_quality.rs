@@ -242,7 +242,6 @@ pub struct ModelInputQuality {
 
 impl ModelInputQuality {
     /// Build from multi-year financial statement data.
-    #[allow(clippy::too_many_arguments)]
     pub fn from_historical_series(
         revenue: &[f64],
         cogs: &[f64],

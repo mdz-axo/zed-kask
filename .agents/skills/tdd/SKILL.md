@@ -33,6 +33,8 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 9. Rank behaviors by risk: P0 = security/correctness-critical (Trust), P1 = correctness (Domain, Composition), P2 = ergonomics (Lifecycle, Curation).
 10. List every assumption with confidence (high/medium/low) and the alternative interpretation.
 11. Do NOT write any code — this is planning only.
+12. If `surviving_mutants` is provided (from a prior harness-evolve-cycle run), prioritize functions with surviving mutants — plan a tracer bullet (and a step-3 proptest universal test) for each under-tested function.
+13. Emit a `risk_profile` output: `highest_priority` (P0 > P1 > P2 — the most severe priority in the slice), `touches_trust` (true when any behavior is P0 / Trust), `trust_behaviors` (the P0 behavior descriptions). This drives step 7 (explore) to dispatch to `bug-hunt` on Trust code even when spec coverage looks complete — Trust code has the highest cost of failure and warrants exploratory testing regardless of spec coverage.
 
 ### tdd-tracer
 

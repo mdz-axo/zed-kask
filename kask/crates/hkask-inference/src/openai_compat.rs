@@ -128,7 +128,6 @@ fn redact_secret_tokens(body: &str) -> String {
 /// post: returns Ok(InferenceResult) with generated text, model, usage stats
 /// post: if connection fails → Err(InferenceError::Connection)
 /// post: if prompt is empty → Err(InferenceError::Generation)
-#[allow(clippy::too_many_arguments)]
 pub async fn openai_compatible_generate(
     client: &Client,
     base_url: &str,
@@ -221,7 +220,6 @@ pub async fn openai_compatible_generate(
 /// pre:  params is a valid LLMParameters
 /// post: returns Ok(InferenceResult) with generated text, model, usage stats
 /// post: if connection fails → Err(InferenceError::Connection)
-#[allow(clippy::too_many_arguments)]
 pub async fn openai_compatible_generate_messages(
     client: &Client,
     base_url: &str,

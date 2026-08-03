@@ -29,11 +29,11 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 1. Build a lightweight `crate_model` first (Good Regulator compliance — Conant-Ashby): read `Cargo.toml`, `lib.rs`/`main.rs`, and module structure; describe architecture, data_flow, critical_paths, dependency_surface, and observed_characteristics (async, unsafe, trait_objects, concurrency, ffi, macros, proc_macros).
 2. If `prior_expedition` is present, consume it: distill `lessons_learned` into 1-3 probe-strategy adjustments, extend the probe pattern list with `pattern_signatures`, and (if present) make `next_charter_focus` the primary `target_area` unless already exhausted.
 3. If `mutation_report` is present (from the `harness-optimize` skill's mutation testing output in the trace filesystem), prioritize `target_area` toward functions with surviving mutants — those are the concrete locations where the test suite is blind. Mutation testing finds syntactic blind spots (the suite doesn't notice `+` → `-`); bug-hunt finds semantic blind spots (the suite doesn't test the error path, the race condition). Mutation-guided chartering focuses exploratory probing exactly where the suite is weakest.
-3. Generate a Hendrickson-format charter: "Explore [target] using [strategy] to discover [quality threat]."
-4. Pick the most promising strategy from Bach's HTSM (Project Environment, Product Elements, Quality Criteria), justified against the crate model — not generic categories.
-5. Select 2-3 Beizer categories given the crate model and quality criteria (e.g., heavy async usage → `timing` overrides `requirements` regardless of generic prevalence).
-6. Emit probe_instructions that are actionable with available MCP tools.
-7. Respond with a JSON object containing `charter_statement`, `target_area`, `strategy`, `expected_category`, `beizer_focus`, `crate_model`, `probe_instructions`, and `prior_feedback_consumed`.
+4. Generate a Hendrickson-format charter: "Explore [target] using [strategy] to discover [quality threat]."
+5. Pick the most promising strategy from Bach's HTSM (Project Environment, Product Elements, Quality Criteria), justified against the crate model — not generic categories.
+6. Select 2-3 Beizer categories given the crate model and quality criteria (e.g., heavy async usage → `timing` overrides `requirements` regardless of generic prevalence).
+7. Emit probe_instructions that are actionable with available MCP tools.
+8. Respond with a JSON object containing `charter_statement`, `target_area`, `strategy`, `expected_category`, `beizer_focus`, `crate_model`, `probe_instructions`, and `prior_feedback_consumed`.
 
 ### bug-hunt-probe
 

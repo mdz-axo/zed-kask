@@ -152,7 +152,6 @@ macro_rules! mcp_server {
         }
 
         impl $name {
-            #[allow(clippy::too_many_arguments)]
             pub fn new(
                 webid: hkask_types::WebID,
                 $($field : $ty),*

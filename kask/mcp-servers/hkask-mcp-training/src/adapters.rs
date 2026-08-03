@@ -130,7 +130,6 @@ impl JobStore {
     }
 
     /// Store a new training job.
-    #[allow(clippy::too_many_arguments)]
     pub fn store(
         &self,
         id: &str,

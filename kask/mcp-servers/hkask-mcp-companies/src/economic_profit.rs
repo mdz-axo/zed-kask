@@ -192,7 +192,6 @@ pub struct EpSignal {
 /// - `stage1_years`: years to hold EP constant before fade begins.
 ///
 ///   AFG four value drivers (Obrycki & Resendes, 2000): Profitability = (ROIC - WACC) × Invested Capital, Competition = decay rate → 0, Growth = invested capital growth, Cost of capital = WACC.
-#[allow(clippy::too_many_arguments)]
 pub fn value_economic_profit(
     latest_book_value: f64,
     latest_roic: f64,

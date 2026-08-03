@@ -585,7 +585,6 @@ fn transform(
 
 /// Draw edges + node circles (and a highlight ring for hovered/selected) in
 /// screen-space, given the transform origin and scale.
-#[allow(clippy::too_many_arguments)]
 fn draw_graph(
     layout: &LayeredLayout,
     ox: f32,

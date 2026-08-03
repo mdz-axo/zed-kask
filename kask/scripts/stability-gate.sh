@@ -16,7 +16,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-TRACE_DIR="${HKASK_TRACE_DIR:-kask/traces}"
+TRACE_DIR="${HKASK_TRACE_DIR:-traces}"
 REGRESSIONS_DIR="security/regressions"
 VERBOSE=0
 
@@ -59,6 +59,22 @@ read_metric() {
     fi
 }
 
+# Reports 1 if the field is present (and non-null) in metrics.json, 0 otherwise.
+# Used to refuse convergence when metrics are absent — a missing metric is
+# "no signal", not "zero deviation" (the unwrap_or(0) trap).
+metric_present() {
+    local trace_dir="$1"
+    local field="$2"
+    local metrics="${trace_dir}/metrics.json"
+    if [[ -f "$metrics" ]] && command -v jq &>/dev/null; then
+        local val
+        val=$(jq -r ".${field} // \"__absent__\"" "$metrics" 2>/dev/null || echo "__absent__")
+        [[ "$val" != "__absent__" ]]
+    else
+        return 1
+    fi
+}
+
 # ── Regression-prevention guard (RR-*.yaml) ────────────────────────────────
 
 regression_violated=0
@@ -98,6 +114,19 @@ if [[ "$mutation_score" == "0" ]] && command -v cargo-mutants &>/dev/null; then
         killed=$(jq '[.[] | select(.status == "killed")] | length' /tmp/mutants-out.json 2>/dev/null || echo 0)
         if [[ "$total" -gt 0 ]]; then
             mutation_score=$(echo "scale=4; $killed / $total" | bc 2>/dev/null || echo 0)
+            # Write mutation_score back into metrics.json so subsequent runs (N-1)
+            # and the MutationScoreSensor can read it. Without this write-back,
+            # prev_mutation_score is always 0 and the ECR/EIR computation is degenerate.
+            metrics_file="${LATEST_TRACE}/metrics.json"
+            if [[ -f "$metrics_file" ]]; then
+                tmp_metrics=$(mktemp)
+                if jq --argjson ms "$mutation_score" '. + {mutation_score: $ms}' \
+                    "$metrics_file" > "$tmp_metrics" 2>/dev/null; then
+                    mv "$tmp_metrics" "$metrics_file"
+                else
+                    rm -f "$tmp_metrics"
+                fi
+            fi
         fi
     fi
 fi
@@ -147,6 +176,13 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
     for i in 0 1 2; do
         run_a="${TRACE_DIR}/${RUN_IDS[$((i+1))]}"
         run_b="${TRACE_DIR}/${RUN_IDS[$i]}"
+        # Refuse convergence when metrics are absent — a missing metric is
+        # "no signal", not "zero delta". All-zero metrics would otherwise
+        # yield norm = 0 < epsilon and spuriously count as converged.
+        if ! metric_present "$run_a" "mutation_score" \
+            || ! metric_present "$run_b" "mutation_score"; then
+            continue
+        fi
         ms_a=$(read_metric "$run_a" "mutation_score")
         ms_b=$(read_metric "$run_b" "mutation_score")
         cov_a=$(read_metric "$run_a" "coverage_pct")
@@ -188,16 +224,18 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
 fi
 
 # ── Verdict ────────────────────────────────────────────────────────────────
+# EIR > 0 is checked BEFORE convergence: a halt must never be masked by
+# spurious convergence on absent/all-zero metrics (design §9.5 #5).
 
-if [[ "$converged" -eq 1 ]]; then
+if [[ $(echo "$eir_total > 0" | bc 2>/dev/null || echo 0) -eq 1 ]]; then
+    echo "VERDICT: halt_escalate"
+    echo "reason: EIR > 0 (test-bug introductions or mutant regressions)"
+elif [[ "$converged" -eq 1 ]]; then
     echo "VERDICT: converged"
     echo "reason: Cauchy criterion met (weighted norm < 0.03 for 3 consecutive iterations)"
 elif [[ "$stalled" -eq 1 ]]; then
     echo "VERDICT: stalled_escalate"
     echo "reason: coverage climbing while mutation score flat for 3 consecutive iterations"
-elif [[ $(echo "$eir_total > 0" | bc 2>/dev/null || echo 0) -eq 1 ]]; then
-    echo "VERDICT: halt_escalate"
-    echo "reason: EIR > 0 (test-bug introductions or mutant regressions)"
 else
     echo "VERDICT: proceed"
     echo "reason: EIR = 0, no stall, no regression violations"

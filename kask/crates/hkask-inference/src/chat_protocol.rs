@@ -157,7 +157,6 @@ pub fn build_vision_request(
 
 /// Shared vision inference — sends OpenAI multimodal request and parses response.
 /// Used by DeepInfra, Together, OpenRouter, and KiloCode backends.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn vision_infer(
     client: &reqwest::Client,
     base_url: &str,

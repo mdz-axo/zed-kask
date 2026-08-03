@@ -811,7 +811,6 @@ pub fn sensitivity_analysis(
     let base = project_model(hist, base_assumptions, 0.0);
     let base_intrinsic = base.intrinsic_per_share;
 
-    #[allow(clippy::type_complexity)]
     let drivers: [(
         &str,
         &str,
