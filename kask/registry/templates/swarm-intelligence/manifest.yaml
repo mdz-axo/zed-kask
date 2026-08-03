@@ -62,7 +62,11 @@ templates:
       capabilities, dependencies) and the wallet balance/transactions via
       hkask-mcp-swarm's `swarm_get_swarm`; in `local` mode, read the local
       agent registry via `swarm_list_local_agents` and the local ledger
-      balance. Compute Onto4MAT team properties: alignment
+      balance. Optionally probe an agent's consolidated knowledge graph via
+      `swarm_search_knowledge` (fermi v0.10.26 — the embedder was broken
+      platform-wide for 6 weeks and is now fixed) when the roster's
+      accepts/produces is ambiguous about whether an agent covers a required
+      transform. Compute Onto4MAT team properties: alignment
       (delegation-graph density from produces/accepts overlap), cohesion
       (fraction of required dependencies satisfied), separation (distinct
       (agent_type, model, temperature) tuples / agent count). Derive
@@ -98,19 +102,25 @@ templates:
     path: swarm-decide.j2
     type: KnowAct
     description: >
-      Propose composition adjustments mapped onto the swarm's hire/delegate
-      vocabulary (no fire tool yet — redundant duplicates are flagged, not
-      fired), isomorphic to swarm-algorithm tuning: variety
+      Propose composition adjustments mapped onto the swarm's hire/fire/delegate
+      vocabulary (redundant duplicates are fired via `swarm_fire`, not just
+      flagged), isomorphic to swarm-algorithm tuning: variety
       deficit → hire agents covering missing transforms (ACO pheromone
       deposition); coherence + low diversity → hire diverse agent (raise PSO
-      c1, lower omega) and flag redundant duplicates (ACO evaporation,
-      operator prunes manually);
+      c1, lower omega) and fire redundant duplicates (ACO evaporation,
+      via `swarm_fire`);
       coherence + high diversity + low alignment → assign coordinator
       compound agent (raise PSO c2, Reynolds alignment); loop-break → emit
       reconciliation repair, not a composition change. Mode-agnostic (v2
       §15): operates on the state shape, not the data source. In local mode,
-      "hire" means the operator adds the agent card to the local registry
-      (no `swarm_hire_local` tool — §15.1.1 rejected). Respects the
+      "hire" means creating the agent card via `swarm_create_local_agent`
+      (programmatic) or cloning from ABW via `swarm_clone_to_local` (no
+      `swarm_hire_local` tool — §15.1.1 rejected; the team is emergent from
+      the call pattern). When ORIENT attributes fault to a specific agent
+      (Cybernetic Swarm Plan C6), propose a `reconfigure_agent` move via
+      `swarm_generate_prompt` (seeded with the blamed agent's failure log)
+      + `swarm_reconfigure_local_agent` (preserves id/type/deps, reloads the
+      registry). Respects the
       no-delegation-chains invariant (delegates lose
       delegate_to_agent/execute_agent). References swarm-patterns.yaml for
       the tuning palette.
@@ -160,10 +170,10 @@ templates:
     type: RenderAct
     description: >
       Reference: the swarm-algorithm tuning palette mapped onto ABW's
-      hire/delegate vocabulary (fire is not yet implemented — redundancy
-      moves flag duplicates for manual pruning). PSO velocity terms (c1
+      hire/fire/delegate vocabulary (fire via `swarm_fire` — redundancy
+      moves fire duplicates via `swarm_fire`, not flag-for-manual-pruning). PSO velocity terms (c1
       cognitive, c2 social, omega inertia) → ABW composition moves. ACO
-      pheromone deposition/evaporation → hire/flag-redundant. Reynolds
+      pheromone deposition/evaporation → hire/fire-redundant. Reynolds
       separation/alignment/cohesion → diversity/coordination/coherence.
       Onto4MAT team properties as the measurable substrate. Includes the
       three deficit classes and their tuning responses, plus the canonical

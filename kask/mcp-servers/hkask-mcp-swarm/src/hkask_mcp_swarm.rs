@@ -21,17 +21,19 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (34 — both tool sets always available in either mode)
-//! ABW tools (23): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+//! ## Tools (35 — both tool sets always available in either mode)
+//! ABW tools (24): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
-//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,//! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
+//! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
+//! `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
 //! `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
 //! (permanent agent deletion, verified live), `swarm_delete_swarm`
 //! (permanent workspace deletion via the team-scoped route, verified live),
 //! `swarm_search_knowledge` (vector knowledge-graph search, fermi v0.10.26),
 //! `swarm_publish_checks` (publish preflight, fermi v0.10.15),
-//! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15).
+//! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15),
+//! `swarm_fork_agent` (derivative fork, fermi v0.10.16).
 //! Local tools (11): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
 //! `swarm_list_local_agents`, `swarm_clone_to_local`, `swarm_push_to_cloud`,
@@ -2174,6 +2176,53 @@ impl SwarmServer {
                 .with_wallet(serde_json::json!({
                     "published": req.agent_name,
                     "force_used": force,
+                    "result": data,
+                }))
+                .await)
+        })
+        .await
+    }
+
+    /// Fork an ABW agent into a derivative — `POST /api/agents/{id}/fork`
+    /// (fermi v0.10.16 fixed the fork path, which 500'd for everyone since
+    /// mig-006 due to an `agents.owner_id` column reference). Creates
+    /// `{source}_fork_{n}` with author-royalty tracking; the derived name is
+    /// slug-validated (a legacy-name source with `-` or `/` is refused with a
+    /// detailed 400 — rename via `/api/admin/agents/legacy-slugs` first).
+    /// Requires API key.
+    #[tool(
+        description = "Fork an Agent Bestiary World agent into a derivative (POST /api/agents/{id}/fork). Creates {source}_fork_{n} with author-royalty tracking. The source must have a slug-compliant name (legacy names with '-' or '/' are refused — admin-rename first). Requires API key."
+    )]
+    pub(crate) async fn swarm_fork_agent(
+        &self,
+        parameters: Parameters<ForkAgentRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_fork_agent", Some("pko"), async {
+            self.client
+                .require_auth()
+                .map_err(SwarmError::into_tool_error)?;
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            let payload = serde_json::json!({
+                "include_ontology": req.include_ontology.unwrap_or(false),
+                "include_embeddings": req.include_embeddings.unwrap_or(false),
+            });
+            let data = self
+                .client
+                .post(
+                    &format!("/agents/{}/fork", url_encode_segment(&req.agent_name)),
+                    &payload,
+                )
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(self
+                .client
+                .with_wallet(serde_json::json!({
+                    "forked_from": req.agent_name,
                     "result": data,
                 }))
                 .await)

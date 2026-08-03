@@ -95,8 +95,15 @@ proptest! {
             "parse_tool_response returned None on a valid envelope: {serialized}"
         );
 
-        // Reference: the expected unwrapped value is the original payload.
-        let oracle = oracle_reference(|input: &Value| input.clone());
+        // Reference: the expected unwrapped value is the original payload after a
+        // JSON serialize→parse round-trip. `parse_tool_response` itself parses the
+        // serialized envelope, so the inner payload traverses one serialize→parse
+        // cycle; the reference must do the same to keep f64 rounding identical on
+        // both sides (the proptest re-parse trick for float comparisons).
+        let oracle = oracle_reference(|input: &Value| {
+            let serialized = serde_json::to_string(input).expect("Value serializes");
+            serde_json::from_str::<Value>(&serialized).expect("Value parses")
+        });
         let verdict = oracle.verify(&payload, &parsed.unwrap());
         prop_assert_eq!
             (
@@ -379,9 +386,9 @@ proptest! {
         });
 
         for (ordinal, value) in &stored {
-            let key = format!("step_{ordinal}_result");
+            let key = format!("step_{}_result", ordinal);
             // Key format round-trips.
-            prop_assert_eq!
+            prop_assert_eq!(
                 parse_step_result_ordinal(&key),
                 Some(*ordinal),
                 "key '{}' does not parse back to ordinal {}",
@@ -398,7 +405,7 @@ proptest! {
                 "retrieved": retrieved,
             });
             let verdict = oracle.verify(&Value::Null, &output);
-            prop_assert_eq!
+            prop_assert_eq!(
                 verdict,
                 OracleVerdict::Pass,
                 "step_{}_result not retrievable",

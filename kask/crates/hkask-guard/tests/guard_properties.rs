@@ -367,7 +367,8 @@ fn longest_common_hex_run(a: &str, b: &str) -> String {
         let mut runs = Vec::new();
         let mut current = String::new();
         for c in s.chars() {
-            if c.is_ascii_hexdigit() && c.is_ascii_uppercase() {
+            // Uppercase-hex run: 0-9 or A-F (digits are case-neutral).
+            if c.is_ascii_hexdigit() && !c.is_ascii_lowercase() {
                 current.push(c);
             } else if !current.is_empty() {
                 runs.push(std::mem::take(&mut current));

@@ -241,11 +241,19 @@ mod tests {
 
     #[tokio::test]
     async fn send_email_returns_not_configured_when_env_missing() {
-        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
-        unsafe {
-            std::env::remove_var("HKASK_MXROUTE_SERVER");
-            std::env::remove_var("HKASK_SMTP_USERNAME");
-            std::env::remove_var("HKASK_SMTP_PASSWORD");
+        // Scope the env-mutating critical section so the std MutexGuard is
+        // dropped before the await point (clippy::await_holding_lock).
+        // `send_email` reads these env vars synchronously at the start of its
+        // body before any await, and `#[tokio::test]` uses a current-thread
+        // runtime, so no other task can mutate env between the block end and
+        // the synchronous reads.
+        {
+            let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+            unsafe {
+                std::env::remove_var("HKASK_MXROUTE_SERVER");
+                std::env::remove_var("HKASK_SMTP_USERNAME");
+                std::env::remove_var("HKASK_SMTP_PASSWORD");
+            }
         }
         let result = send_email("recipient@example.com", "subject", "body", EmailMode::Alert).await;
         assert!(matches!(result, Err(EmailError::NotConfigured(_))));

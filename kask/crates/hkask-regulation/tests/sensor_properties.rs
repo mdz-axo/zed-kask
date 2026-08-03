@@ -162,7 +162,7 @@ proptest! {
             }
             let v = output.get("value").and_then(|x| x.as_f64()).unwrap_or(f64::INFINITY);
             let metric = output.get("metric").and_then(|x| x.as_str()).unwrap_or("");
-            if !(v < sp) {
+            if v.partial_cmp(&sp) != Some(std::cmp::Ordering::Less) {
                 return Err(format!("signal value {v} must be < set_point {sp}"));
             }
             if metric != SignalMetric::TestCoverage.as_str() {
@@ -197,7 +197,7 @@ proptest! {
             }
             let v = output.get("value").and_then(|x| x.as_f64()).unwrap_or(f64::INFINITY);
             let metric = output.get("metric").and_then(|x| x.as_str()).unwrap_or("");
-            if !(v < sp) {
+            if v.partial_cmp(&sp) != Some(std::cmp::Ordering::Less) {
                 return Err(format!("signal value {v} must be < set_point {sp}"));
             }
             if metric != SignalMetric::MutationScore.as_str() {

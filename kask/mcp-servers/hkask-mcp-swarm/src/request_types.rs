@@ -394,3 +394,20 @@ pub(crate) struct PublishAgentRequest {
     /// ignored otherwise.
     pub reason: Option<String>,
 }
+
+/// Fork an ABW agent into a derivative — `POST /api/agents/{id}/fork`
+/// (fermi v0.10.16 fixed the fork path, which 500'd for everyone since
+/// mig-006 due to an `agents.owner_id` column reference). Creates
+/// `{source}_fork_{n}` with author-royalty tracking; the derived name is
+/// slug-validated (a legacy-name source containing `-` or `/` is refused with
+/// a detailed 400 — those need an admin rename via `/api/admin/agents/legacy-slugs`
+/// first). Requires API key.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ForkAgentRequest {
+    /// Source agent name (slug) or UUID to fork.
+    pub agent_name: String,
+    /// Carry the source's ontology into the fork. Default false.
+    pub include_ontology: Option<bool>,
+    /// Carry the source's embeddings into the fork. Default false.
+    pub include_embeddings: Option<bool>,
+}

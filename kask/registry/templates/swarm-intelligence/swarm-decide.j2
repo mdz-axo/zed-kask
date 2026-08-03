@@ -112,10 +112,10 @@ and the accepts/produces it must cover. Prefer agents already in the
 catalogue whose dependencies are satisfiable by the current roster.
 
 {% if mode == "local" %}
-In local mode, "hire" means the operator should add the agent card to
-`agents/local/curated/<id>/agent_card.json` (or clone it from ABW via the
-panel's "Clone to Local" button). The DECIDE phase proposes which agents to
-add; the operator does the file write. There is no `swarm_hire_local` tool
+In local mode, "hire" means creating the agent card via
+`agents/local/curated/<id>/agent_card.json` programmatically (`swarm_create_local_agent`),
+or cloning it from ABW via `swarm_clone_to_local`. The DECIDE phase proposes which
+agents to add. There is no `swarm_hire_local` tool
 (§15.1.1 rejected — the team is emergent from the call pattern). Pruning is
 available: `swarm_remove_local` deletes a local card (the local counterpart
 of firing).
@@ -194,8 +194,8 @@ For every proposed move:
   exist in the catalogue).
 {% if mode == "local" %}
 - **Cost awareness**: each `swarm_delegate_local` call costs 1 credit per
-  1000 tokens, capped at `credits_authorized`. No hire cost (no
-  `swarm_hire_local` tool — §15.1.1 rejected). Record estimated_credits per
+  1000 tokens, capped at `credits_authorized`. No hire cost —
+  `swarm_create_local_agent` creates a card for free (no `swarm_hire_local` tool,
   move as the `credits_authorized` the operator should set for the call.
 {% else %}
 - **Gas awareness** (verified live 2026-08-02): own-agent hire via `/add` is
