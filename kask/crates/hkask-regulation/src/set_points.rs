@@ -130,6 +130,18 @@ pub const DEFAULT_BLOCK_WORSENING_RATIO: f64 = 0.20;
 /// `compute()` tries the next action in the substitution ladder.
 pub const DEFAULT_SUBSTITUTION_AFTER: u32 = 2;
 
+/// Default test coverage floor (0.70 = 70% coverage).
+///
+/// When the latest trace run's `coverage_pct` drops below this, the
+/// Cybernetics Loop's `TestCoverageSensor` produces a signal.
+pub const DEFAULT_COVERAGE_FLOOR: f64 = 0.70;
+
+/// Default mutation score floor (0.50 = 50% of mutants killed).
+///
+/// When the latest trace run's `mutation_score` drops below this, the
+/// Cybernetics Loop's `MutationScoreSensor` produces a signal.
+pub const DEFAULT_MUTATION_SCORE_FLOOR: f64 = 0.50;
+
 /// Homeostatic set-points for the Cybernetics Loop.
 ///
 /// These define the reference values against which sensed signals
@@ -201,6 +213,15 @@ pub struct SetPoints {
     /// Autonomous: pre-authorized by user (P2 consent via config).
     /// CuratorMediated: escalate to Curator with fallback after timeout.
     pub inference_throttle_mode: InferenceThrottleMode,
+    // ── Trace-derived quality floors (v0.32.0) ──
+    /// Minimum test coverage fraction before the Cybernetics Loop alerts.
+    /// Read from the latest trace run's `metrics.json` `coverage_pct`.
+    /// Default: 0.70.
+    pub coverage_floor: f64,
+    /// Minimum mutation score fraction before the Cybernetics Loop alerts.
+    /// Read from the latest trace run's `metrics.json` `mutation_score`.
+    /// Default: 0.50.
+    pub mutation_score_floor: f64,
 }
 
 /// Configurable thresholds for Curation decisions (spec coherence, drift).
@@ -232,6 +253,8 @@ pub struct SetPointsConfig {
     pub action_substitutions: Option<std::collections::HashMap<String, Vec<String>>>,
     pub substitution_after: Option<u32>,
     pub inference_throttle_mode: Option<InferenceThrottleMode>,
+    pub coverage_floor: Option<f64>,
+    pub mutation_score_floor: Option<f64>,
 }
 
 impl SetPointsConfig {
@@ -272,6 +295,8 @@ impl Default for SetPoints {
             action_substitutions: std::collections::HashMap::new(),
             substitution_after: DEFAULT_SUBSTITUTION_AFTER,
             inference_throttle_mode: InferenceThrottleMode::Off,
+            coverage_floor: DEFAULT_COVERAGE_FLOOR,
+            mutation_score_floor: DEFAULT_MUTATION_SCORE_FLOOR,
         }
     }
 }
@@ -337,6 +362,10 @@ impl SetPoints {
             inference_throttle_mode: config
                 .inference_throttle_mode
                 .unwrap_or(defaults.inference_throttle_mode),
+            coverage_floor: config.coverage_floor.unwrap_or(defaults.coverage_floor),
+            mutation_score_floor: config
+                .mutation_score_floor
+                .unwrap_or(defaults.mutation_score_floor),
         }
     }
 
@@ -348,6 +377,8 @@ impl SetPoints {
             ("error_rate_max", self.error_rate_max),
             ("seam_coverage_min", self.seam_coverage_min),
             ("guard_violation_rate_max", self.guard_violation_rate_max),
+            ("coverage_floor", self.coverage_floor),
+            ("mutation_score_floor", self.mutation_score_floor),
         ] {
             if !(0.0..=1.0).contains(&value) {
                 return Err(anyhow::anyhow!("{name} must be in [0.0, 1.0], got {value}"));

@@ -81,6 +81,14 @@ pub enum SignalMetric {
     /// 0.0 = 0% success rate, 1.0 = 100% success rate.
     /// Set-point: reliability_threshold (default 0.80).
     ToolReliability,
+    /// Test coverage fraction (Cybernetics Loop 6).
+    /// Read from the latest trace run's `metrics.json` `coverage_pct`.
+    /// Set-point: coverage_floor (default 0.70).
+    TestCoverage,
+    /// Mutation score fraction (Cybernetics Loop 6).
+    /// Read from the latest trace run's `metrics.json` `mutation_score`.
+    /// Set-point: mutation_score_floor (default 0.50).
+    MutationScore,
 }
 
 impl std::fmt::Display for SignalMetric {
@@ -127,6 +135,8 @@ impl SignalMetric {
             SignalMetric::RegulatoryPlateau => "regulatory_plateau",
             SignalMetric::ActionDecisionBlocked => "action_decision_blocked",
             SignalMetric::ToolReliability => "tool_reliability",
+            SignalMetric::TestCoverage => "test_coverage",
+            SignalMetric::MutationScore => "mutation_score",
         }
     }
 }

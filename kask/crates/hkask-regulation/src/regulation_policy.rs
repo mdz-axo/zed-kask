@@ -512,7 +512,9 @@ pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [Act
         | SignalMetric::ConsolidationCandidates
         | SignalMetric::PendingEscalations
         | SignalMetric::SeamCoverage
-        | SignalMetric::ToolReliability => &[],
+        | SignalMetric::ToolReliability
+        | SignalMetric::TestCoverage
+        | SignalMetric::MutationScore => &[],
     }
 }
 

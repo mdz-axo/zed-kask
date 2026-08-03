@@ -151,6 +151,17 @@ impl CyberneticsLoop {
                 Arc::clone(&ledger),
                 set_points.variety_max_deficit,
             )));
+            let trace_dir = std::path::PathBuf::from(
+                std::env::var("HKASK_TRACE_DIR").unwrap_or_else(|_| "kask/traces".to_string()),
+            );
+            registry.register(Arc::new(crate::sensor_provider::TestCoverageSensor::new(
+                trace_dir.clone(),
+                set_points.coverage_floor,
+            )));
+            registry.register(Arc::new(crate::sensor_provider::MutationScoreSensor::new(
+                trace_dir,
+                set_points.mutation_score_floor,
+            )));
             Arc::new(registry)
         };
 

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Shared test fixtures, property-test generators, and oracle/trace
 //! infrastructure for the evolving test harness.
 //!
@@ -184,8 +185,7 @@ pub fn write_trace(run_id: &str, entry: &TraceEntry) -> std::io::Result<PathBuf>
     let filename = format!("{}-{}.json", entry.kind, safe_name);
     let path = run_dir.join(&filename);
 
-    let json = serde_json::to_string_pretty(&entry.to_json())
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(&entry.to_json()).map_err(std::io::Error::other)?;
     fs::write(&path, json)?;
     Ok(path)
 }

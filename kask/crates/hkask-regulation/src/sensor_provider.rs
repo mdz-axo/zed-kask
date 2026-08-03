@@ -371,7 +371,139 @@ impl Sensor for ToolReliabilitySensor {
     }
 }
 
-#[cfg(test)]
+/// Senses test coverage from the latest trace run's `metrics.json`.
+///
+/// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `kask/traces`).
+/// Produces a signal only when `coverage_pct` is below the coverage floor.
+pub struct TestCoverageSensor {
+    trace_dir: std::path::PathBuf,
+    set_point: f64,
+}
+
+impl TestCoverageSensor {
+    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
+    pub fn new(trace_dir: std::path::PathBuf, set_point: f64) -> Self {
+        Self {
+            trace_dir,
+            set_point,
+        }
+    }
+
+    /// Find the run directory whose `metrics.json` was most recently modified.
+    /// Returns `None` if the trace dir is missing or no run has a `metrics.json`.
+    fn latest_metrics_path(&self) -> Option<std::path::PathBuf> {
+        let entries = std::fs::read_dir(&self.trace_dir).ok()?;
+        let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
+        for entry in entries.flatten() {
+            let metrics = entry.path().join("metrics.json");
+            if !metrics.is_file() {
+                continue;
+            }
+            let modified = std::fs::metadata(&metrics)
+                .and_then(|m| m.modified())
+                .ok()?;
+            match &newest {
+                Some((_, best)) if &modified <= best => {}
+                _ => newest = Some((metrics, modified)),
+            }
+        }
+        newest.map(|(p, _)| p)
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for TestCoverageSensor {
+    async fn sense(&self) -> Option<Signal> {
+        let path = self.latest_metrics_path()?;
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let coverage = value.get("coverage_pct")?.as_f64()?;
+        if coverage >= self.set_point {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::TestCoverage,
+            coverage,
+            self.set_point,
+        ))
+    }
+
+    fn metric(&self) -> Option<SignalMetric> {
+        Some(SignalMetric::TestCoverage)
+    }
+
+    fn loop_id(&self) -> Option<LoopId> {
+        Some(LoopId::Cybernetics)
+    }
+}
+
+/// Senses mutation score from the latest trace run's `metrics.json`.
+///
+/// Data source: the trace filesystem (`HKASK_TRACE_DIR`, default `kask/traces`).
+/// Produces a signal only when `mutation_score` is below the mutation score floor.
+pub struct MutationScoreSensor {
+    trace_dir: std::path::PathBuf,
+    set_point: f64,
+}
+
+impl MutationScoreSensor {
+    /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
+    pub fn new(trace_dir: std::path::PathBuf, set_point: f64) -> Self {
+        Self {
+            trace_dir,
+            set_point,
+        }
+    }
+
+    /// Find the run directory whose `metrics.json` was most recently modified.
+    /// Returns `None` if the trace dir is missing or no run has a `metrics.json`.
+    fn latest_metrics_path(&self) -> Option<std::path::PathBuf> {
+        let entries = std::fs::read_dir(&self.trace_dir).ok()?;
+        let mut newest: Option<(std::path::PathBuf, std::time::SystemTime)> = None;
+        for entry in entries.flatten() {
+            let metrics = entry.path().join("metrics.json");
+            if !metrics.is_file() {
+                continue;
+            }
+            let modified = std::fs::metadata(&metrics)
+                .and_then(|m| m.modified())
+                .ok()?;
+            match &newest {
+                Some((_, best)) if &modified <= best => {}
+                _ => newest = Some((metrics, modified)),
+            }
+        }
+        newest.map(|(p, _)| p)
+    }
+}
+
+#[async_trait::async_trait]
+impl Sensor for MutationScoreSensor {
+    async fn sense(&self) -> Option<Signal> {
+        let path = self.latest_metrics_path()?;
+        let contents = std::fs::read_to_string(&path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let score = value.get("mutation_score")?.as_f64()?;
+        if score >= self.set_point {
+            return None;
+        }
+        Some(Signal::new(
+            LoopId::Cybernetics,
+            SignalMetric::MutationScore,
+            score,
+            self.set_point,
+        ))
+    }
+
+    fn metric(&self) -> Option<SignalMetric> {
+        Some(SignalMetric::MutationScore)
+    }
+
+    fn loop_id(&self) -> Option<LoopId> {
+        Some(LoopId::Cybernetics)
+    }
+}
 mod tests {
     use super::*;
 

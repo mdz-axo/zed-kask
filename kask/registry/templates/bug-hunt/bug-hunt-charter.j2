@@ -67,6 +67,25 @@ consume them to amplify this charter rather than starting from scratch.
 No prior expedition — this is a first pass. Build the charter from scratch.
 {% endif %}
 
+{% if mutation_report and mutation_report | length > 0 %}
+## Mutation Report (harness-optimize integration)
+
+The mutation testing output from the trace filesystem shows surviving mutants —
+functions where the test suite is blind. Each surviving mutant is a concrete
+location where bug-hunt should focus exploratory probing. Mutation testing
+finds syntactic blind spots (the suite doesn't notice `+` → `-`); bug-hunt
+finds semantic blind spots (the suite doesn't test the error path, the race
+condition). Together they cover both axes.
+
+```json
+{{ mutation_report | tojson }}
+```
+
+Prioritize `target_area` toward functions with surviving mutants. Adjust
+`beizer_focus` to match the mutation types (e.g., boundary condition mutants →
+`data` category, control flow mutants → `structural` category).
+{% endif %}
+
 ## Step 1 — Crate Model (Good Regulator compliance)
 
 Before selecting Beizer categories, build a lightweight model of the target
