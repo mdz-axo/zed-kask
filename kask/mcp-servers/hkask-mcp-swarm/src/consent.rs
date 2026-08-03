@@ -60,7 +60,7 @@ struct SqliteConsentStore {
 /// unlike the in-memory fallback they survive a server restart — the TTL
 /// bounds that durability: an operator authorization older than this is
 /// unspendable.
-const CONSENT_TTL_SECS: i64 = 3600;
+pub(crate) const CONSENT_TTL_SECS: i64 = 3600;
 
 impl Default for ConsentStore {
     fn default() -> Self {

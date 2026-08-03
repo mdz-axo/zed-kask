@@ -69,6 +69,24 @@ impl SqliteDriver {
         Arc::new(Self::new(Self::in_memory_pool().expect("in-memory pool")))
     }
 
+    /// Create a pool for a file-backed SQLite database (WAL mode, FKs on).
+    /// For stores that want durable, unencrypted storage without the
+    /// SQLCipher/passphrase layer (e.g. the media gallery — non-secret
+    /// metadata + lineage). WAL gives concurrent-reader, single-writer
+    /// semantics without read-locking writers.
+    pub fn file_pool(path: &str) -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
+        });
+        Pool::builder().build(manager)
+    }
+
+    /// Create a file-backed driver (panics on pool error; for tests / when
+    /// the caller has already validated the path).
+    pub fn file_driver(path: &str) -> Arc<dyn super::driver::DatabaseDriver> {
+        Arc::new(Self::new(Self::file_pool(path).expect("file pool")))
+    }
+
     /// Acquire a raw `rusqlite::Connection` from the pool.
     ///
     /// Used by stores that need direct rusqlite access (e.g., sqlite-vec

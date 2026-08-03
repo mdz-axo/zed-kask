@@ -164,3 +164,127 @@ impl LocalAgentRegistry {
         self.cards.lock().unwrap().is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_registry_missing_dir_loads_zero() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_nonexistent_dir");
+        let _ = std::fs::remove_dir_all(&dir); // clean slate
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        assert!(!registry.is_loaded());
+        let count = registry.load().expect("missing dir should not error");
+        assert_eq!(count, 0);
+        assert!(registry.is_loaded());
+        assert!(registry.list().is_empty());
+        assert!(registry.get("any_agent").is_none());
+    }
+
+    #[test]
+    fn local_registry_loads_cards_from_dir() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_local_registry");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("alpha_agent")).unwrap();
+        std::fs::write(
+            dir.join("alpha_agent").join("agent_card.json"),
+            serde_json::json!({
+                "agent_id": "alpha_agent",
+                "agent_type": "research",
+                "description": "Alpha test agent",
+                "accepts": ["query"],
+                "produces": ["analysis"],
+                "dependencies": { "required": [], "optional": [] },
+                "capabilities": {
+                    "model": "ollama/qwen3:8b",
+                    "min_provider_class": "local",
+                    "system_prompt": "You are alpha."
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("beta_agent")).unwrap();
+        std::fs::write(
+            dir.join("beta_agent").join("agent_card.json"),
+            serde_json::json!({
+                "agent_id": "beta_agent",
+                "agent_type": "sentiment"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        let count = registry.load().expect("load should succeed");
+        assert_eq!(count, 2);
+        let cards = registry.list();
+        // Sorted by agent_id.
+        assert_eq!(cards[0].agent_id, "alpha_agent");
+        assert_eq!(cards[1].agent_id, "beta_agent");
+        let alpha = registry.get("alpha_agent").expect("alpha should be found");
+        assert_eq!(alpha.agent_type, "research");
+        assert_eq!(alpha.accepts, vec!["query".to_string()]);
+        assert_eq!(alpha.produces, vec!["analysis".to_string()]);
+        assert_eq!(alpha.capabilities.model, "ollama/qwen3:8b");
+        assert_eq!(alpha.capabilities.min_provider_class, "local");
+        // Beta has minimal fields — defaults should fill in.
+        let beta = registry.get("beta_agent").expect("beta should be found");
+        assert!(beta.accepts.is_empty());
+        assert!(beta.produces.is_empty());
+        assert!(beta.dependencies.required.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_registry_skips_dirs_without_card() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_skip_dirs");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("has_card")).unwrap();
+        std::fs::write(
+            dir.join("has_card").join("agent_card.json"),
+            serde_json::json!({ "agent_id": "has_card", "agent_type": "test" }).to_string(),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("no_card")).unwrap(); // no agent_card.json
+
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        let count = registry.load().expect("load should succeed");
+        assert_eq!(count, 1);
+        assert!(registry.get("has_card").is_some());
+        assert!(registry.get("no_card").is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_registry_reload_replaces_cache() {
+        let dir = std::env::temp_dir().join("hkask_swarm_test_reload");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("first")).unwrap();
+        std::fs::write(
+            dir.join("first").join("agent_card.json"),
+            serde_json::json!({ "agent_id": "first", "agent_type": "test" }).to_string(),
+        )
+        .unwrap();
+
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        assert_eq!(registry.load().unwrap(), 1);
+        assert!(registry.get("first").is_some());
+
+        // Add a second card and reload.
+        std::fs::create_dir_all(dir.join("second")).unwrap();
+        std::fs::write(
+            dir.join("second").join("agent_card.json"),
+            serde_json::json!({ "agent_id": "second", "agent_type": "test" }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(registry.load().unwrap(), 2);
+        assert!(registry.get("first").is_some());
+        assert!(registry.get("second").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

@@ -1340,4 +1340,55 @@ mod tests {
         let store = setup();
         assert!(store.get_workflow("nonexistent").is_err());
     }
+
+    /// Durable file-backed gallery DB (G14): lineage written through one
+    /// `SqliteDriver` (file) must survive dropping that driver and reopening
+    /// the same file with a fresh driver — the contract `HKASK_MEDIA_DB` relies
+    /// on. Uses a uuid-named temp dir (no `tempfile` dev-dep in this crate).
+    #[test]
+    fn gallery_lineage_survives_across_driver_instances() {
+        use crate::database::sqlite::SqliteDriver;
+        let dir =
+            std::env::temp_dir().join(format!("hkask_storage_durability_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("gallery.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // First instance: create gallery, add image, record lineage.
+        let image_id = {
+            let driver = SqliteDriver::file_driver(&db_path_str);
+            let store = GalleryStore::from_driver(driver).unwrap();
+            let gallery = store.create("/tmp/gal", GalleryMode::ReadOnly).unwrap();
+            let img = store
+                .add_image(&gallery.id, "a.png", "/tmp/gal/a.png", "h", 1, 1, "png", 1)
+                .unwrap();
+            store
+                .record_generation(
+                    &img.id,
+                    "generate_image",
+                    Some("p"),
+                    None,
+                    None,
+                    Some(7),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap();
+            img.id
+        };
+        // First driver dropped (WAL checkpoints on close). Reopen the same
+        // file with a fresh driver — the lineage must persist.
+        let driver = SqliteDriver::file_driver(&db_path_str);
+        let store = GalleryStore::from_driver(driver).unwrap();
+        let lineage = store
+            .get_generation(&image_id)
+            .unwrap()
+            .expect("lineage must persist across restart");
+        assert_eq!(lineage.op, "generate_image");
+        assert_eq!(lineage.prompt.as_deref(), Some("p"));
+        assert_eq!(lineage.seed, Some(7));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

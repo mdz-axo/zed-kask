@@ -27,7 +27,7 @@ use gallery::vision::{self};
 use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::database::value::DbValue;
-use hkask_storage::{Database, GalleryMode, GalleryStore, GalleryStoreError};
+use hkask_storage::{GalleryMode, GalleryStore, GalleryStoreError};
 use hkask_types::InferencePort;
 use hkask_types::VoiceDesign;
 
@@ -1388,20 +1388,43 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // `InferenceIpcClient` to proxy media calls through the IPC bridge.
     let vision_port = hkask_inference::resolve_inference_port().await;
 
-    // Create an in-memory GalleryStore for the media server.
-    // Gracefully degrade if DB initialization fails — gallery tools
-    // will return errors but the server stays alive.
-    // GalleryStore schema initialized by from_driver().
-    //
-    // Durability gap (G14, see kask/docs/plans/media-system-refactor.md §6):
-    // the in-memory DB is rebuilt every server start. Generated assets
-    // downloaded to the filesystem gallery survive, but tag/face/lineage
-    // metadata is lost on restart. WS-3 will switch this to a durable DB
-    // path (HKASK_MEDIA_DB, following the HKASK_DB_PATH pattern).
+    // Build the GalleryStore. Durable (file-backed SQLite) when
+    // `HKASK_MEDIA_DB` is set; otherwise in-memory (tag/face/lineage
+    // metadata is lost on restart — the G14 gap, now opt-in rather than
+    // forced). The file DB is unencrypted (gallery metadata is not a
+    // secret), so it does NOT use `HKASK_DB_PASSPHRASE` — avoiding leaking
+    // the global SQLCipher key to this child process. Schema is initialized
+    // by `from_driver()`.
     let gallery_store = {
-        let db = Database::in_memory().expect("in-memory DB");
-        let pool = db.sqlite_pool().expect("sqlite pool");
-        let driver = Arc::new(SqliteDriver::new(pool));
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
+            match std::env::var("HKASK_MEDIA_DB").ok().filter(|s| !s.is_empty()) {
+                Some(path) => match SqliteDriver::file_pool(&path) {
+                    Ok(pool) => {
+                        tracing::info!(
+                            target: "hkask.mcp.media",
+                            path = %path,
+                            "Gallery store using durable file DB"
+                        );
+                        Arc::new(SqliteDriver::new(pool))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.media",
+                            path = %path,
+                            error = %e,
+                            "HKASK_MEDIA_DB open failed — falling back to in-memory gallery DB"
+                        );
+                        SqliteDriver::in_memory_driver()
+                    }
+                },
+                None => {
+                    tracing::warn!(
+                        target: "hkask.mcp.media",
+                        "HKASK_MEDIA_DB not set — gallery DB is in-memory;                          tag/face/lineage metadata will not persist across restarts"
+                    );
+                    SqliteDriver::in_memory_driver()
+                }
+            };
         match GalleryStore::from_driver(driver) {
             Ok(store) => {
                 tracing::info!(target: "hkask.mcp.media", "Gallery store initialized");

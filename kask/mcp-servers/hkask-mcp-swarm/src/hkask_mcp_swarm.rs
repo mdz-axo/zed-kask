@@ -49,882 +49,49 @@
 //! `hkask-guard`. No ABW calls are made in `Local` mode.
 
 use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
+#[cfg(test)]
 use hkask_storage::database::value::DbValue;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
+#[cfg(test)]
 use std::sync::Arc;
 
+mod abw_client;
 mod abw_util;
 mod config;
 mod consent;
 mod error;
 mod local_registry;
+mod local_runtime;
 mod sanitize;
+use crate::abw_client::SwarmClient;
 #[cfg(test)]
-use crate::abw_util::OWNED_ADD_FLAT_FEE;
+use crate::abw_util::{OWNED_ADD_FLAT_FEE, detect_embedded_error, extract_quoted};
 use crate::abw_util::{
-    detect_embedded_error, effective_hire_cost, extract_quoted, make_swarm_slug,
-    url_encode_segment, validate_agent_name,
+    effective_hire_cost, make_swarm_slug, url_encode_segment, validate_agent_name,
 };
 use crate::config::SwarmConfig;
 #[cfg(test)]
-use crate::config::SwarmMode;
-#[cfg(test)]
-use crate::config::resolve_local_agents_dir;
+use crate::consent::CONSENT_TTL_SECS;
 use crate::consent::{ConsentGrant, ConsentStore};
 use crate::error::SwarmError;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
 };
+use crate::local_runtime::LazyLocalSwarmRuntime;
+#[cfg(test)]
+use crate::local_runtime::LocalSwarmRuntime;
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_response, sanitize_abw_response_plain,
     sanitize_abw_text, sanitize_agent_id, sanitize_run_status_message, sanitize_workspace_payload,
     strip_leading_mentions,
 };
 
-// ── HTTP client ────────────────────────────────────────────────────────────
-
-/// Thin reqwest wrapper isolating every ABW-specific assumption (base URL,
-/// auth header, error mapping) behind one seam. The panel, settings, and
-/// tools never construct raw requests.
-pub struct SwarmClient {
-    http: reqwest::Client,
-    config: SwarmConfig,
-}
-
-impl SwarmClient {
-    fn new(http: reqwest::Client, config: SwarmConfig) -> Self {
-        Self { http, config }
-    }
-
-    /// Read-only access to the resolved config (for budget-gate checks).
-    fn config(&self) -> &SwarmConfig {
-        &self.config
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!(
-            "{}/api{}",
-            self.config.api_base_url.trim_end_matches('/'),
-            path
-        )
-    }
-
-    /// True when an API key is configured. Read tools that need auth check
-    /// this first and fail with a remediation message rather than a raw 401.
-    fn is_authenticated(&self) -> bool {
-        self.config.api_key.is_some()
-    }
-
-    fn require_auth(&self) -> Result<&str, SwarmError> {
-        self.config
-            .api_key
-            .as_deref()
-            .ok_or_else(|| SwarmError::Auth("no API key configured".to_string()))
-    }
-
-    /// Send a request, attaching the bearer token when present, and map the
-    /// response (status AND body) into `Result<Value, SwarmError>`.
-    async fn send(
-        &self,
-        builder: reqwest::RequestBuilder,
-    ) -> Result<serde_json::Value, SwarmError> {
-        let builder = match &self.config.api_key {
-            Some(key) => builder.bearer_auth(key),
-            None => builder,
-        };
-        let resp = builder
-            .send()
-            .await
-            .map_err(|e| SwarmError::Unavailable(e.to_string()))?;
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-
-        match status.as_u16() {
-            200..=299 => {
-                // DELETE endpoints and other no-content responses return an
-                // empty body — treat that as a successful null result rather
-                // than a parse failure.
-                if body.trim().is_empty() {
-                    return Ok(serde_json::Value::Null);
-                }
-                let value: serde_json::Value = serde_json::from_str(&body)
-                    .map_err(|e| SwarmError::ApiVersionMismatch(format!("parse error: {e}")))?;
-                // ABW wraps upstream LLM errors into 200 envelopes. Detect the
-                // pattern ("I encountered an error" / "credit balance is too low")
-                // so callers get a typed error instead of a success-looking payload.
-                if let Some(err) = detect_embedded_error(&value) {
-                    return Err(err);
-                }
-                Ok(value)
-            }
-            401 | 403 => Err(SwarmError::Auth(body.trim().to_string())),
-            402 => Err(SwarmError::PaymentRequired(body.trim().to_string())),
-            429 => Err(SwarmError::RateLimited(body.trim().to_string())),
-            500 if body.contains("not funded") => {
-                let agent = extract_quoted(&body).unwrap_or_default();
-                Err(SwarmError::AgentNotFunded {
-                    agent,
-                    message: body.trim().to_string(),
-                })
-            }
-            _ => Err(SwarmError::Unavailable(format!(
-                "HTTP {status}: {}",
-                body.trim()
-            ))),
-        }
-    }
-
-    async fn get(&self, path: &str) -> Result<serde_json::Value, SwarmError> {
-        self.send(self.http.get(self.url(path))).await
-    }
-
-    async fn post(
-        &self,
-        path: &str,
-        payload: &serde_json::Value,
-    ) -> Result<serde_json::Value, SwarmError> {
-        self.send(self.http.post(self.url(path)).json(payload))
-            .await
-    }
-
-    /// Send a DELETE request (fire, workspace/agent teardown). Empty 2xx
-    /// bodies are mapped to `null` by `send`.
-    async fn delete(&self, path: &str) -> Result<serde_json::Value, SwarmError> {
-        self.send(self.http.delete(self.url(path))).await
-    }
-
-    /// Send a PATCH request. The workspace-update endpoint is 405 on ABW
-    /// (verified live 2026-08-02 — no PATCH /workspaces/{id}); this exists
-    /// only for the live probe that pins that fact.
-    #[cfg(test)]
-    async fn patch(
-        &self,
-        path: &str,
-        payload: &serde_json::Value,
-    ) -> Result<serde_json::Value, SwarmError> {
-        self.send(self.http.patch(self.url(path)).json(payload))
-            .await
-    }
-
-    /// Fetch the operator's current wallet balance (the algedonic sense input).
-    /// Returns `None` when unauthenticated (catalogue-only mode). A query
-    /// failure emits a warning and returns `None` rather than fabricating a
-    /// balance — the `.rules` trap about `unwrap_or(0)` on regulation signals:
-    /// a failed measurement must be distinguishable from a measured zero.
-    async fn wallet_balance(&self) -> Option<i64> {
-        if !self.is_authenticated() {
-            return None;
-        }
-        match self.get("/wallet").await {
-            Ok(v) => v.get("balance").and_then(|b| b.as_i64()),
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    "wallet balance query failed ({e}) — treating signal as stale, not zero"
-                );
-                None
-            }
-        }
-    }
-
-    /// Attach the current wallet balance to a tool response under a `wallet`
-    /// key, so the algedonic signal rides every tool's return path instead of
-    /// requiring a separate poll. No-op when unauthenticated or the balance
-    /// query fails (the response is still useful without it).
-    async fn with_wallet(&self, mut value: serde_json::Value) -> serde_json::Value {
-        if let Some(balance) = self.wallet_balance().await
-            && let Some(obj) = value.as_object_mut()
-        {
-            obj.insert(
-                "wallet".to_string(),
-                serde_json::json!({ "balance": balance }),
-            );
-        }
-        value
-    }
-}
-
-// ── Local swarm runtime (v2 §15 Slice 9) ───────────────────────────────────
-//
-// Holds the local ledger, inference port, and content guard. Constructed
-// once at server startup and shared across tool calls via `Arc`.
-//
-// The ledger is operator-funded (§15.6 — the strongest objection). If
-// unfunded, `swarm_delegate_local` returns `PaymentRequired`, the same
-// error ABW returns. No auto-replenishment — the corrective signal must
-// be real.
-//
-// The inference port is resolved once at startup via
-// `hkask_inference::resolve_inference_port()`. This routes through zed's
-// IPC bridge when available, or falls back to MediaRouter.
-//
-// The content guard scans both input (prompt injection) and output (secret
-// leakage, canary exfiltration) per OWASP LLM Top 10.
-
-/// The local swarm runtime — ledger + inference + guard.
-///
-/// Constructed lazily on first tool call (the `run_server` factory closure
-/// is sync — it cannot `.await` the inference port resolution). `lazy()`
-/// stores the config; `get_or_init()` does the async init on first use.
-///
-/// Design tradeoff (R1): the `OnceCell` caches the resolved ports forever.
-/// If the server starts before `HKASK_INFERENCE_SOCKET` is set (e.g.
-/// the McpRuntime launch fires before the deferred task sets the socket),
-/// `resolve_tool_dispatch_port` returns the `UnavailableToolDispatch` stub
-/// and the stub is cached for the process lifetime. This is a transient
-/// degradation, not a silent failure: the stub errors are `tracing::warn!`-logged
-/// and carry a clear remediation message. The `SettingsStore` restart observer
-/// (`sync_kask_mcp_runtime_servers` in `main.rs`) detects the env diff and
-/// restarts the server with a fresh `OnceCell` on the next kask settings
-/// change. In practice the governed servers are launched in the deferred
-/// task after the IPC socket is already set (`main.rs` sets
-/// `INFERENCE_SOCKET_PATH` before the governed launch loop), so the env at
-/// launch includes the socket and the stub is never cached. The
-/// `SettingsStore` observer fires on kask settings changes, not on
-/// `INFERENCE_SOCKET_PATH` being set (a `OnceLock`, not a settings change) —
-/// the socket-becoming-available case is covered by the launch ordering, not
-/// by the observer.
-pub struct LazyLocalSwarmRuntime {
-    ledger_path: String,
-    inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
-}
-
-impl LazyLocalSwarmRuntime {
-    /// Store the config without initializing. The runtime is constructed
-    /// on first call to `get_or_init`.
-    pub fn lazy(ledger_path: String) -> Self {
-        Self {
-            ledger_path,
-            inner: tokio::sync::OnceCell::new(),
-        }
-    }
-
-    /// Get the runtime, initializing it on first call. Returns `Err` if
-    /// initialization fails (ledger open, inference port resolution, guard
-    /// init). Subsequent calls return the cached runtime.
-    pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, String> {
-        self.inner
-            .get_or_try_init(|| async { LocalSwarmRuntime::new(&self.ledger_path).await })
-            .await
-    }
-}
-
-/// The initialized local swarm runtime — ledger + inference + guard.
-pub struct LocalSwarmRuntime {
-    ledger: std::sync::Arc<hkask_ledger::Ledger>,
-    inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-    guard: std::sync::Arc<hkask_guard::ContentGuard>,
-    /// Tool dispatch back to the zed process (governed `McpRuntime` via the
-    /// IPC bridge). Resolved once at construction — see `resolve_tool_dispatch_port`.
-    tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
-    /// Skill execution back to the zed process (`ManifestExecutor` via the
-    /// IPC bridge). Resolved once at construction — see `resolve_skill_exec_port`.
-    skill_exec: std::sync::Arc<dyn hkask_types::SkillExecPort>,
-    /// The operator's account id in the ledger (funded via `swarm_fund_local`).
-    operator_account: String,
-    /// The asset name for local credits.
-    asset: String,
-}
-
-impl LocalSwarmRuntime {
-    /// Construct the runtime. Opens (or creates) the ledger at `db_path`,
-    /// resolves the inference port, and initializes the guard.
-    ///
-    /// The operator account is ensured in the ledger namespace "local_swarm".
-    /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
-    pub async fn new(db_path: &str) -> Result<Self, String> {
-        // Open the ledger at the file path. Create the directory if needed.
-        if let Some(parent) = std::path::Path::new(db_path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create ledger dir {}: {e}", parent.display()))?;
-        }
-        let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path)
-            .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
-        let pool = r2d2::Pool::builder()
-            .max_size(4)
-            .build(manager)
-            .map_err(|e| format!("failed to create ledger pool: {e}"))?;
-        let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
-            std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
-        let ledger = hkask_ledger::Ledger::from_driver(driver)
-            .map_err(|e| format!("failed to init ledger: {e}"))?;
-
-        // Resolve the inference port (zed IPC bridge or MediaRouter fallback).
-        let inference = hkask_inference::resolve_inference_port().await;
-
-        // Resolve the tool dispatch port (zed IPC bridge or unavailable stub).
-        let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
-
-        // Resolve the skill execution port (zed IPC bridge or unavailable stub).
-        let skill_exec = hkask_inference::resolve_skill_exec_port().await;
-
-        // Initialize the content guard with mandatory scanners.
-        let guard_config = hkask_guard::GuardConfig::from_env();
-        let guard = hkask_guard::ContentGuard::mandatory(&guard_config);
-
-        // Ensure the operator account exists.
-        let operator_account = "operator".to_string();
-        let asset = "credits".to_string();
-        ledger
-            .ensure_account(&operator_account, "local_swarm")
-            .map_err(|e| format!("failed to ensure operator account: {e}"))?;
-
-        Ok(Self {
-            ledger: std::sync::Arc::new(ledger),
-            inference,
-            guard: std::sync::Arc::new(guard),
-            tool_dispatch,
-            skill_exec,
-            operator_account,
-            asset,
-        })
-    }
-
-    /// Test-only constructor with injected dependencies. Mirrors the
-    /// `StubInferencePort` pattern in `hkask-templates` and `hkask-guard`:
-    /// the production `new(db_path)` resolves the inference port from env
-    /// (zed IPC bridge or MediaRouter fallback), which is unsuitable for
-    /// unit tests. This constructor accepts a pre-built ledger, inference
-    /// port, guard, and the two zed-side ports so tests can exercise the
-    /// `fund`/`debit`/`delegate` logic without a real backend.
-    ///
-    /// Ensures the operator account exists (same as `new`) so `balance`/
-    /// `fund`/`debit` work out of the box.
-    #[cfg(test)]
-    pub(crate) fn with_deps(
-        ledger: hkask_ledger::Ledger,
-        inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-        guard: hkask_guard::ContentGuard,
-        tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
-        skill_exec: std::sync::Arc<dyn hkask_types::SkillExecPort>,
-    ) -> Result<Self, String> {
-        let operator_account = "operator".to_string();
-        let asset = "credits".to_string();
-        ledger
-            .ensure_account(&operator_account, "local_swarm")
-            .map_err(|e| format!("failed to ensure operator account: {e}"))?;
-        Ok(Self {
-            ledger: std::sync::Arc::new(ledger),
-            inference,
-            guard: std::sync::Arc::new(guard),
-            tool_dispatch,
-            skill_exec,
-            operator_account,
-            asset,
-        })
-    }
-
-    /// The operator's current ledger balance. Returns `None` on query error
-    /// (the `.rules` trap — never fabricate a zero balance on a failed
-    /// measurement).
-    fn balance(&self) -> Option<i64> {
-        self.ledger
-            .balance(&self.operator_account, Some(&self.asset))
-            .ok()
-    }
-
-    /// Recent ledger transactions for the operator account, newest first,
-    /// capped at `limit`. Each entry carries the operator-relevant signed
-    /// amount (fund = +, debit = −) and the metadata `action` ("fund" |
-    /// "debit"). Returns `Err` on a query failure — a failed query is not an
-    /// empty history (the `.rules` trap).
-    fn history(&self, limit: usize) -> Result<Vec<serde_json::Value>, String> {
-        let range = hkask_ledger::DateRange {
-            start: "0000-01-01T00:00:00Z".to_string(),
-            end: "9999-12-31T23:59:59Z".to_string(),
-        };
-        let filter = hkask_ledger::QueryFilter {
-            account: Some(self.operator_account.clone()),
-            asset: Some(self.asset.clone()),
-            namespace: None,
-        };
-        let mut txs = self
-            .ledger
-            .query(&range, &filter)
-            .map_err(|e| format!("ledger query failed: {e}"))?;
-        // The ledger query returns oldest-first; the tool wants newest-first.
-        txs.reverse();
-        txs.truncate(limit);
-        Ok(txs
-            .into_iter()
-            .map(|tx| {
-                // The operator-relevant posting: fund = external→operator
-                // (+), debit = operator→external (−).
-                let amount = tx
-                    .postings
-                    .iter()
-                    .find_map(|p| {
-                        if p.destination == self.operator_account {
-                            Some(p.amount)
-                        } else if p.source == self.operator_account {
-                            Some(-p.amount)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0);
-                let kind = tx
-                    .metadata
-                    .get("action")
-                    .and_then(|a| a.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                serde_json::json!({
-                    "id": tx.id,
-                    "timestamp": tx.timestamp,
-                    "reference": tx.reference,
-                    "kind": kind,
-                    "amount": amount,
-                    "asset": self.asset,
-                })
-            })
-            .collect())
-    }
-
-    /// Deposit credits into the operator's account. Returns the new balance.
-    /// Used by `swarm_fund_local`.
-    fn fund(&self, amount: i64) -> Result<i64, String> {
-        if amount <= 0 {
-            return Err("fund amount must be positive".to_string());
-        }
-        let tx_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        let reference = format!("fund-{tx_id}");
-        let tx = hkask_ledger::LedgerTransaction {
-            id: tx_id,
-            timestamp: now,
-            reference,
-            postings: vec![hkask_ledger::Posting {
-                source: "external".to_string(),
-                destination: self.operator_account.clone(),
-                asset: self.asset.clone(),
-                amount,
-            }],
-            metadata: serde_json::json!({ "action": "fund" }),
-        };
-        self.ledger
-            .commit(&tx)
-            .map_err(|e| format!("ledger commit failed: {e}"))?;
-        self.balance().ok_or_else(|| {
-            "balance query failed after fund — ledger may be in a bad state".to_string()
-        })
-    }
-
-    /// Debit credits from the operator's account. Returns the new balance.
-    /// Returns `Err(PaymentRequired)` if the balance is insufficient.
-    fn debit(&self, amount: i64, reference: &str) -> Result<i64, SwarmError> {
-        if amount <= 0 {
-            return Err(SwarmError::PaymentRequired(
-                "debit amount must be positive".to_string(),
-            ));
-        }
-        let balance = self.balance().ok_or_else(|| {
-            SwarmError::Unavailable("ledger balance query failed — cannot verify funds".to_string())
-        })?;
-        if balance < amount {
-            return Err(SwarmError::PaymentRequired(format!(
-                "insufficient local credits: have {balance}, need {amount} \
-                 — fund via swarm_fund_local"
-            )));
-        }
-        let tx_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        let tx = hkask_ledger::LedgerTransaction {
-            id: tx_id,
-            timestamp: now,
-            reference: reference.to_string(),
-            postings: vec![hkask_ledger::Posting {
-                source: self.operator_account.clone(),
-                destination: "external".to_string(),
-                asset: self.asset.clone(),
-                amount,
-            }],
-            metadata: serde_json::json!({ "action": "debit" }),
-        };
-        self.ledger
-            .commit(&tx)
-            .map_err(|e| SwarmError::Unavailable(format!("ledger commit failed: {e}")))?;
-        self.balance().ok_or_else(|| {
-            SwarmError::Unavailable(
-                "balance query failed after debit — ledger may be in a bad state".to_string(),
-            )
-        })
-    }
-
-    /// Scan input text through the content guard. Returns `Err` if the guard
-    /// rejects the input (prompt injection, role override, etc.).
-    fn scan_input(&self, text: &str) -> Result<(), SwarmError> {
-        let result = self.guard.scan_input(text);
-        if !result.passed {
-            let violations: Vec<String> = result
-                .violations
-                .iter()
-                .map(|v| format!("{}: {}", v.scanner, v.description))
-                .collect();
-            return Err(SwarmError::Unavailable(format!(
-                "input guard rejected: {}",
-                violations.join("; ")
-            )));
-        }
-        Ok(())
-    }
-
-    /// Scan output text through the content guard. Returns the (possibly
-    /// sanitized) output text, or `Err` if canary exfiltration is detected.
-    ///
-    /// Policy: canary exfiltration is a hard failure (the system prompt was
-    /// leaked — OWASP LLM07), but secret leakage is sanitized and returned
-    /// (the output may be legitimately useful despite a false-positive secret
-    /// match). This asymmetry is intentional: canary = exfiltration = reject;
-    /// secret = leakage = sanitize and return. Do not "fix" this by making
-    /// both paths hard-fail — that would reject legitimate outputs that
-    /// happen to match a secret scanner pattern.
-    fn scan_output(&self, text: &str) -> Result<String, SwarmError> {
-        let result = self.guard.scan_output(text);
-        if self.guard.check_canary(text) {
-            return Err(SwarmError::Unavailable(
-                "canary token detected in output — system prompt exfiltration suspected"
-                    .to_string(),
-            ));
-        }
-        if !result.passed {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                violations = ?result.violations,
-                "output guard violations — sanitizing"
-            );
-        }
-        Ok(result.output.content(text).to_string())
-    }
-
-    /// Execute a local agent: scan input → run the tool loop (declare the
-    /// card's `mcp_tools`, dispatch model tool calls through the zed IPC
-    /// bridge) → compute cost → debit ledger → scan output. Returns the
-    /// response text, model, token usage, cost, remaining balance, and a
-    /// tool-call summary. The debit happens before the output guard scan so
-    /// a guard-quarantined result still costs credits (matching ABW's
-    /// "compute was spent" semantics).
-    ///
-    /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
-    /// the only tool set shown to the model AND the qualified list travels
-    /// with every dispatch so the zed-side IPC server enforces it at the
-    /// dispatch boundary (a tool outside the card's declared set is never
-    /// minted a panel token). Tool *results* are third-party data injected
-    /// into the model's context — each is run through the input guard and
-    /// redacted (not fatal) on violation: a false-positive pattern in
-    /// legitimate tool data must not abort the delegation, but the payload
-    /// must not reach the model.
-    async fn delegate(
-        &self,
-        agent: &LocalAgentCard,
-        task: &str,
-        credits_authorized: u32,
-        max_credits_per_dispatch: u32,
-    ) -> Result<LocalDelegateResult, SwarmError> {
-        // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
-        let task_clean = strip_leading_mentions(task);
-
-        // Scan the input through the guard.
-        self.scan_input(&task_clean)?;
-
-        // Check the per-dispatch ceiling.
-        if credits_authorized > max_credits_per_dispatch {
-            return Err(SwarmError::PaymentRequired(format!(
-                "credits_authorized {credits_authorized} exceeds per-dispatch ceiling \
-                 {max_credits_per_dispatch} (raise HKASK_ABW_MAX_CREDITS to authorize)"
-            )));
-        }
-
-        // Check the ledger balance — the operator must have funded it.
-        // The pre-inference check uses `credits_authorized` (the operator's
-        // declared budget). The actual debit after inference uses the real
-        // token-based cost, capped at `credits_authorized`.
-        let balance = self.balance().ok_or_else(|| {
-            SwarmError::Unavailable("ledger balance query failed — cannot verify funds".to_string())
-        })?;
-        if balance < i64::from(credits_authorized) {
-            return Err(SwarmError::PaymentRequired(format!(
-                "insufficient local credits: have {balance}, need {credits_authorized} \
-                 — fund via swarm_fund_local"
-            )));
-        }
-
-        // Build the prompt: system prompt + task.
-        let system_prompt = agent
-            .capabilities
-            .system_prompt
-            .as_deref()
-            .unwrap_or("You are a helpful assistant.");
-
-        // Guard-scan the system_prompt before injecting it into the prompt.
-        // The task was already scanned above, and each skill output is scanned
-        // below — but the system_prompt was not. For locally-authored cards the
-        // operator controls it; for cloned cards (`swarm_clone_to_local`) it is
-        // third-party ABW data that could carry prompt injection. The clone path
-        // strips obvious patterns via `sanitize_abw_text`, but the guard is the
-        // hard gate: a system_prompt that trips the input guard IS fatal.
-        // The `.rules` trap: the input guard is the advertised enforcement point
-        // for the delegate path — it must scan all untrusted text that reaches the
-        // model, not just the task.
-        self.scan_input(system_prompt)?;
-
-        // Run the declared skills (capped) against the task BEFORE the LLM
-        // call. Each cascade runs on the zed side (`ManifestExecutor`, own
-        // gas/OCAP enforcement). Skill output is untrusted context — it flows
-        // into the prompt, so it is guard-scanned before injection; a skill
-        // output that trips the input guard IS fatal (an injection from a
-        // skill is a finding, not a cosmetic issue). A missing skill or
-        // cascade failure is recorded, not fatal — the delegation proceeds
-        // with whatever context the successful skills produced.
-        let mut executed_skills: Vec<serde_json::Value> = Vec::new();
-        let mut skill_context = String::new();
-        for skill in agent
-            .capabilities
-            .skills
-            .iter()
-            .take(MAX_SKILLS_PER_DELEGATION)
-        {
-            match self.skill_exec.execute_skill(skill, &task_clean).await {
-                Ok(output) => {
-                    self.scan_input(&output)?;
-                    executed_skills.push(serde_json::json!({ "skill": skill, "ok": true }));
-                    skill_context.push_str(&format!("\n\n## Skill '{skill}' output\n{output}"));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        skill,
-                        error = %e,
-                        "declared skill failed — delegation proceeds without it"
-                    );
-                    executed_skills.push(serde_json::json!({
-                        "skill": skill,
-                        "ok": false,
-                        "error": e,
-                    }));
-                }
-            }
-        }
-        let prompt = format!("{system_prompt}{skill_context}\n\n---\n\nTask: {task_clean}");
-
-        // Build the declared tool set from the card's `mcp_tools` (qualified
-        // `server/tool` names). This list is the allowlist: a model call for
-        // any tool not declared here is never dispatched.
-        let declared_tools: Vec<(String, String)> = agent
-            .capabilities
-            .mcp_tools
-            .iter()
-            .filter_map(|qualified| {
-                qualified
-                    .split_once('/')
-                    .map(|(s, t)| (s.to_string(), t.to_string()))
-            })
-            .collect();
-        // The qualified allowlist travels with every dispatch so the zed-side
-        // IPC server can enforce it at the dispatch boundary — a tool outside
-        // the card's declared set is never minted a panel token there.
-        let qualified_allowed: Vec<String> = declared_tools
-            .iter()
-            .map(|(s, t)| format!("{s}/{t}"))
-            .collect();
-        let tool_defs: Vec<hkask_types::ChatToolDefinition> = declared_tools
-            .iter()
-            .map(|(server, tool)| hkask_types::ChatToolDefinition {
-                tool_type: "function".to_string(),
-                function: hkask_types::ChatToolFunction {
-                    name: format!("{server}/{tool}"),
-                    description: format!("Invoke `{tool}` on the `{server}` MCP server."),
-                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
-                },
-            })
-            .collect();
-        let tools_slice: Option<&[hkask_types::ChatToolDefinition]> =
-            (!tool_defs.is_empty()).then_some(&tool_defs[..]);
-
-        // Run the tool loop: messages → inference → (tool calls → dispatch →
-        // append results) → inference … The round cap bounds cost
-        // amplification; the per-dispatch ceiling is the credit gate.
-        let params = hkask_types::LLMParameters::default();
-        let model_override = if agent.capabilities.model.is_empty() {
-            None
-        } else {
-            Some(agent.capabilities.model.clone())
-        };
-        let mut messages = vec![hkask_types::ChatMessage {
-            role: "user".to_string(),
-            content: prompt,
-        }];
-        let mut tool_calls_made: Vec<serde_json::Value> = Vec::new();
-        let mut total_tokens: i64 = 0;
-        let mut final_text = String::new();
-        let mut final_model = String::new();
-        for _round in 0..MAX_TOOL_ROUNDS {
-            let result = self
-                .inference
-                .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
-                .await
-                .map_err(|e| SwarmError::UpstreamModelError {
-                    provider: "local".to_string(),
-                    message: format!("inference failed: {e}"),
-                })?;
-            total_tokens += i64::from(result.usage.total_tokens);
-            final_model = result.model.clone();
-            if result.tool_calls.is_empty() {
-                final_text = result.text;
-                break;
-            }
-
-            // Dispatch each model tool call, allowlisted against the card's
-            // declared mcp_tools. Results are appended as a user message so
-            // the next round sees them (provider-safe message shape).
-            let mut round_results = Vec::new();
-            for call in &result.tool_calls {
-                let qualified = &call.tool;
-                let declared = declared_tools
-                    .iter()
-                    .find(|(s, t)| format!("{s}/{t}") == *qualified);
-                let (outcome, summary) = match declared {
-                    Some((server, tool)) => {
-                        match self
-                            .tool_dispatch
-                            .invoke_tool(server, tool, call.args.clone(), &qualified_allowed)
-                            .await
-                        {
-                            Ok(value) => {
-                                let text = serde_json::to_string(&value)
-                                    .unwrap_or_else(|_| value.to_string());
-                                // Redact-and-continue (see fn doc): a tool result
-                                // that trips the input guard is quarantined from the
-                                // model context, but the delegation proceeds — tool
-                                // output is data, and a false positive must not abort
-                                // the run.
-                                let (injected, ok, error) = match self.scan_input(&text) {
-                                    Ok(()) => (text, true, None),
-                                    Err(e) => (
-                                        format!(
-                                            "[redacted: tool output tripped the input guard — not injected]"
-                                        ),
-                                        false,
-                                        Some(e.to_string()),
-                                    ),
-                                };
-                                let mut summary =
-                                    serde_json::json!({ "tool": qualified, "ok": ok });
-                                if let Some(err) = error {
-                                    summary["error"] = serde_json::Value::String(err);
-                                }
-                                (
-                                    format!("Tool call '{qualified}' returned:\n{injected}"),
-                                    summary,
-                                )
-                            }
-                            Err(e) => {
-                                let msg = format!("dispatch failed: {e}");
-                                (
-                                    format!("Tool call '{qualified}' {msg}"),
-                                    serde_json::json!({
-                                        "tool": qualified,
-                                        "ok": false,
-                                        "error": e.to_string(),
-                                    }),
-                                )
-                            }
-                        }
-                    }
-                    None => (
-                        format!(
-                            "Tool call '{qualified}' is not in this agent's declared mcp_tools \
-                             allowlist — not dispatched"
-                        ),
-                        serde_json::json!({
-                            "tool": qualified,
-                            "ok": false,
-                            "error": "not in declared mcp_tools allowlist",
-                        }),
-                    ),
-                };
-                tool_calls_made.push(summary);
-                round_results.push(outcome);
-            }
-            messages.push(hkask_types::ChatMessage {
-                role: "assistant".to_string(),
-                content: format!("(requested {} tool call(s))", result.tool_calls.len()),
-            });
-            messages.push(hkask_types::ChatMessage {
-                role: "user".to_string(),
-                content: round_results.join("\n\n"),
-            });
-        }
-
-        // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
-        // `execution_fee`), summed across tool-loop rounds, capped at
-        // `credits_authorized`.
-        let tokens = total_tokens;
-        let base_cost = std::cmp::max(1, tokens / 1000);
-        let cost = std::cmp::min(base_cost, i64::from(credits_authorized));
-
-        // Debit the ledger immediately after inference succeeds — before the
-        // output guard scan. This matches ABW's "compute was spent" semantics:
-        // a guard-quarantined result still costs credits because the inference
-        // compute already happened. Moving the debit before `scan_output` (which
-        // uses `?` to return early) ensures the operator is charged even when
-        // the output is rejected for canary exfiltration or secret leakage.
-        let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
-        let new_balance = self.debit(cost, &reference)?;
-
-        // Scan the output through the guard. If this rejects (canary
-        // exfiltration, secret leakage), the debit has already happened — the
-        // compute was spent. The error propagates, but the operator's balance
-        // reflects the cost of the rejected call.
-        let output_text = self.scan_output(&final_text)?;
-
-        Ok(LocalDelegateResult {
-            agent_id: agent.agent_id.clone(),
-            response: output_text,
-            model: final_model,
-            tokens_used: tokens,
-            cost,
-            balance: new_balance,
-            tool_calls: tool_calls_made,
-            executed_skills,
-        })
-    }
-}
-
-/// Maximum tool-call rounds per delegation. Each round is a full inference
-/// call; the cap bounds cost amplification (the per-dispatch credit ceiling
-/// is the credit gate, this is the round gate).
-const MAX_TOOL_ROUNDS: usize = 4;
-
-/// Maximum declared skills executed per delegation. Each skill is a cascade
-/// with its own gas budget on the zed side; the cap bounds context bloat and
-/// cascade amplification from a maliciously-large `skills` list.
-const MAX_SKILLS_PER_DELEGATION: usize = 3;
-
-/// Result of a local delegation.
-#[derive(Debug, Clone, serde::Serialize)]
-struct LocalDelegateResult {
-    agent_id: String,
-    response: String,
-    model: String,
-    tokens_used: i64,
-    cost: i64,
-    balance: i64,
-    /// Summary of tool calls made during the delegation (qualified
-    /// `server/tool` name + ok/error). Empty when the agent declares no
-    /// `mcp_tools` or the model made no calls.
-    tool_calls: Vec<serde_json::Value>,
-    /// Summary of skill cascades executed before the LLM call (skill id +
-    /// ok/error). Empty when the agent declares no `skills`.
-    executed_skills: Vec<serde_json::Value>,
-}
-
 // ── Request types ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListAgentsRequest {
+pub(crate) struct ListAgentsRequest {
     /// Filter by agent type (e.g. "research", "creative", "meta"). Optional.
     pub agent_type: Option<String>,
     /// Filter by tag. Optional.
@@ -934,13 +101,13 @@ pub struct ListAgentsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetSwarmRequest {
+pub(crate) struct GetSwarmRequest {
     /// Workspace ID (UUID) or slug. Lists workspaces when omitted.
     pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExecuteAgentRequest {
+pub(crate) struct ExecuteAgentRequest {
     /// Agent name (e.g. "market_analyst").
     pub agent_name: String,
     /// The query or task for the agent.
@@ -948,28 +115,28 @@ pub struct ExecuteAgentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetAgentRequest {
+pub(crate) struct GetAgentRequest {
     /// Agent name or id.
     pub agent_name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListAppsRequest {
+pub(crate) struct ListAppsRequest {
     /// Max apps to return. Default 50.
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct OntologyTemplatesRequest {}
+pub(crate) struct OntologyTemplatesRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct HireCostRequest {
+pub(crate) struct HireCostRequest {
     /// Agent name (e.g. "social_media_studio").
     pub agent_name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct RequestConsentRequest {
+pub(crate) struct RequestConsentRequest {
     /// The action to authorize: "hire" or "delegate".
     pub action: String,
     /// The target: agent name (hire) or workspace id (delegate).
@@ -979,7 +146,7 @@ pub struct RequestConsentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct HireRequest {
+pub(crate) struct HireRequest {
     /// Workspace (swarm) id to hire into.
     pub workspace_id: String,
     /// Agent name to hire.
@@ -994,7 +161,7 @@ pub struct HireRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DelegateRequest {
+pub(crate) struct DelegateRequest {
     /// Workspace (swarm) id containing the agent.
     pub workspace_id: String,
     /// Agent name to delegate to (the @mention target).
@@ -1009,7 +176,7 @@ pub struct DelegateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SwarmRunRequest {
+pub(crate) struct SwarmRunRequest {
     /// Workspace (swarm) id to read the run status from.
     pub workspace_id: String,
     /// Max messages to return. Default 50.
@@ -1019,7 +186,7 @@ pub struct SwarmRunRequest {
 // ── Authoring & composition ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GeneratePromptRequest {
+pub(crate) struct GeneratePromptRequest {
     /// Natural-language description of what the agent should do.
     pub description: String,
     /// Agent name (lowercase_with_underscores).
@@ -1029,13 +196,13 @@ pub struct GeneratePromptRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct GenerateOntologyRequest {
+pub(crate) struct GenerateOntologyRequest {
     /// Natural-language description of the agent's knowledge domain.
     pub domain_description: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateAgentRequest {
+pub(crate) struct CreateAgentRequest {
     /// Agent name (lowercase_with_underscores) — becomes the system identifier.
     pub agent_name: String,
     /// Agent type (e.g. "research", "creative", "meta").
@@ -1068,7 +235,7 @@ pub struct CreateAgentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateSwarmRequest {
+pub(crate) struct CreateSwarmRequest {
     /// Workspace (swarm) name.
     pub name: String,
     /// Mission / description. Optional.
@@ -1082,7 +249,7 @@ pub struct CreateSwarmRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct XamanRequest {
+pub(crate) struct XamanRequest {
     /// Message for Xaman Ek.
     pub message: String,
     /// Session type: "composition_design" (team planning), "workspace_help",
@@ -1100,7 +267,7 @@ pub struct XamanRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateAppRequest {
+pub(crate) struct CreateAppRequest {
     /// The Xaman Ek session id to turn into an App.
     pub session_id: String,
 }
@@ -1108,7 +275,7 @@ pub struct CreateAppRequest {
 // ── Local mode request types (v2 §15 Slice 9) ──────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FundLocalRequest {
+pub(crate) struct FundLocalRequest {
     /// Number of local credits to deposit into the operator's ledger
     /// account. Must be positive.
     pub credits: i64,
@@ -1116,10 +283,10 @@ pub struct FundLocalRequest {
 
 /// Read-only balance query — no fields.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct BalanceLocalRequest {}
+pub(crate) struct BalanceLocalRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DelegateLocalRequest {
+pub(crate) struct DelegateLocalRequest {
     /// The agent id to delegate to. Must exist in the local agent registry
     /// (`agents/local/curated/<id>/agent_card.json`).
     pub agent_name: String,
@@ -1135,7 +302,7 @@ pub struct DelegateLocalRequest {
 // ── Local mode request types (v2 §15 Slice 11) ─────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ListLocalAgentsRequest {
+pub(crate) struct ListLocalAgentsRequest {
     /// Optional filter by agent_type. When empty, returns all local agents.
     #[serde(default)]
     pub agent_type: Option<String>,
@@ -1145,7 +312,7 @@ pub struct ListLocalAgentsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CloneToLocalRequest {
+pub(crate) struct CloneToLocalRequest {
     /// The ABW agent id to clone to the local registry. The server fetches
     /// the agent card from ABW, sets `min_provider_class: local`, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id`
@@ -1154,7 +321,7 @@ pub struct CloneToLocalRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct PushToCloudRequest {
+pub(crate) struct PushToCloudRequest {
     /// The local agent id to push to ABW. The server reads the local card,
     /// creates or updates the ABW agent via `swarm_create_agent`, and sets
     /// `cloud_id` on the local card to the ABW agent id.
@@ -1163,14 +330,14 @@ pub struct PushToCloudRequest {
 
 /// Read-only local ledger history query.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct LocalHistoryRequest {
+pub(crate) struct LocalHistoryRequest {
     /// Max transactions to return (default 50, capped at 500).
     pub limit: Option<u32>,
 }
 
 /// Remove a local agent card.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct RemoveLocalRequest {
+pub(crate) struct RemoveLocalRequest {
     /// The local agent id to remove. The server deletes its card directory
     /// (`agents/local/curated/<id>/`) after path-safety checks. A synced
     /// card's ABW agent is NOT touched.
@@ -1179,7 +346,7 @@ pub struct RemoveLocalRequest {
 
 /// Fire (un-hire) an agent from an ABW workspace.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FireRequest {
+pub(crate) struct FireRequest {
     /// The workspace (swarm) id.
     pub workspace_id: String,
     /// The agent to fire — the roster's `agent_name` or `agent_id` (ABW
@@ -1189,7 +356,7 @@ pub struct FireRequest {
 
 /// Permanently delete an ABW agent.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DeleteAgentRequest {
+pub(crate) struct DeleteAgentRequest {
     /// The agent to delete — the `agent_id` or `agent_name` from
     /// `swarm_list_agents` (for owned agents the catalogue carries a uuid in
     /// `agent_id` and the slug in `agent_name`; the tool resolves either).
@@ -1198,7 +365,7 @@ pub struct DeleteAgentRequest {
 
 /// Permanently delete an ABW workspace (swarm).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct DeleteSwarmRequest {
+pub(crate) struct DeleteSwarmRequest {
     /// The workspace (swarm) id to delete.
     pub workspace_id: String,
 }
@@ -1206,7 +373,7 @@ pub struct DeleteSwarmRequest {
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
-    pub struct SwarmServer {
+    pub(crate) struct SwarmServer {
         pub client: std::sync::Arc<SwarmClient>,
         pub consent: std::sync::Arc<ConsentStore>,
         pub local_registry: std::sync::Arc<LocalAgentRegistry>,
@@ -1228,7 +395,7 @@ impl SwarmServer {
     #[tool(
         description = "List Agent Bestiary World catalogue agents with metadata (name, type, description, tags, pricing, execution stats). Optionally filter by agent_type or tag. Keyless."
     )]
-    pub async fn swarm_list_agents(&self, parameters: Parameters<ListAgentsRequest>) -> String {
+    pub(crate) async fn swarm_list_agents(&self, parameters: Parameters<ListAgentsRequest>) -> String {
         execute_tool_semantic(self, "swarm_list_agents", Some("dublin-core"), async {
             // The ABW `/agents` catalogue endpoint is open (no API key required).
             // The module doc (L10) and the tool doc both say "Keyless". The prior
@@ -1300,7 +467,7 @@ impl SwarmServer {
     #[tool(
         description = "List your Agent Bestiary World workspaces (agent swarms) with budgets and agent counts, or pass workspace_id (UUID or slug) for the full roster of hired agents. Requires API key."
     )]
-    pub async fn swarm_get_swarm(&self, parameters: Parameters<GetSwarmRequest>) -> String {
+    pub(crate) async fn swarm_get_swarm(&self, parameters: Parameters<GetSwarmRequest>) -> String {
         execute_tool_semantic(self, "swarm_get_swarm", Some("dublin-core"), async {
             self.client
                 .require_auth()
@@ -1348,7 +515,7 @@ impl SwarmServer {
     #[tool(
         description = "Get the full agent card (capabilities, dependencies, ontology, execution stats, versions) for one Agent Bestiary World agent. Requires API key."
     )]
-    pub async fn swarm_get_agent(&self, parameters: Parameters<GetAgentRequest>) -> String {
+    pub(crate) async fn swarm_get_agent(&self, parameters: Parameters<GetAgentRequest>) -> String {
         execute_tool_semantic(self, "swarm_get_agent", Some("dublin-core"), async {
             self.client
                 .require_auth()
@@ -1397,12 +564,12 @@ impl SwarmServer {
     #[tool(
         description = "List published Agent Bestiary World Apps (reusable agent-team manifests composed via Xaman Ek). The sharing/discovery surface. Requires API key."
     )]
-    pub async fn swarm_list_apps(&self, parameters: Parameters<ListAppsRequest>) -> String {
+    pub(crate) async fn swarm_list_apps(&self, parameters: Parameters<ListAppsRequest>) -> String {
         execute_tool_semantic(self, "swarm_list_apps", Some("dublin-core"), async {
             self.client
                 .require_auth()
                 .map_err(SwarmError::into_tool_error)?;
-            let limit = parameters.0.limit.unwrap_or(50) as usize;
+            let limit = parameters.0.limit.unwrap_or(50);
             // Apps live under the catalogue's app projection.
             let data = self
                 .client
@@ -1431,7 +598,7 @@ impl SwarmServer {
     #[tool(
         description = "List the seed-ontology templates (entity-relationship starting points) available for new agents. Read-only. Requires API key."
     )]
-    pub async fn swarm_ontology_templates(
+    pub(crate) async fn swarm_ontology_templates(
         &self,
         _parameters: Parameters<OntologyTemplatesRequest>,
     ) -> String {
@@ -1458,7 +625,7 @@ impl SwarmServer {
     #[tool(
         description = "Execute an Agent Bestiary World agent with a query (single turn, no tools — text consultation). Costs token fees. Requires API key; the agent's owner must have funded it."
     )]
-    pub async fn swarm_execute_agent(&self, parameters: Parameters<ExecuteAgentRequest>) -> String {
+    pub(crate) async fn swarm_execute_agent(&self, parameters: Parameters<ExecuteAgentRequest>) -> String {
         execute_tool_semantic(self, "swarm_execute_agent", Some("pko"), async {
             self.client
                 .require_auth()
@@ -1497,7 +664,7 @@ impl SwarmServer {
     #[tool(
         description = "Estimate the credit cost of hiring an Agent Bestiary World agent (including its required/optional dependency team). Read-only pre-flight for the cost/consent gate — spends nothing. Requires API key."
     )]
-    pub async fn swarm_hire_cost(&self, parameters: Parameters<HireCostRequest>) -> String {
+    pub(crate) async fn swarm_hire_cost(&self, parameters: Parameters<HireCostRequest>) -> String {
         execute_tool_semantic(self, "swarm_hire_cost", Some("dublin-core"), async {
             self.client
                 .require_auth()
@@ -1570,7 +737,7 @@ impl SwarmServer {
     #[tool(
         description = "Record operator consent for a credit spend and return a single-use consent token. Called by the swarm panel after the operator confirms. The token must be passed to swarm_hire/swarm_delegate."
     )]
-    pub async fn swarm_request_consent(
+    pub(crate) async fn swarm_request_consent(
         &self,
         parameters: Parameters<RequestConsentRequest>,
     ) -> String {
@@ -1615,7 +782,7 @@ impl SwarmServer {
     #[tool(
         description = "Hire an Agent Bestiary World agent into a workspace (swarm). Spends credits — requires a consent_token from swarm_request_consent (action 'hire', target = agent_name)."
     )]
-    pub async fn swarm_hire(&self, parameters: Parameters<HireRequest>) -> String {
+    pub(crate) async fn swarm_hire(&self, parameters: Parameters<HireRequest>) -> String {
         execute_tool_semantic(self, "swarm_hire", Some("pko"), async {
             self.client
                 .require_auth()
@@ -1804,7 +971,7 @@ impl SwarmServer {
     #[tool(
         description = "Delegate a task to an agent in an Agent Bestiary World workspace via @mention (full tool access, gas-charged). Spends credits — requires a consent_token from swarm_request_consent (action 'delegate', target = workspace_id)."
     )]
-    pub async fn swarm_delegate(&self, parameters: Parameters<DelegateRequest>) -> String {
+    pub(crate) async fn swarm_delegate(&self, parameters: Parameters<DelegateRequest>) -> String {
         execute_tool_semantic(self, "swarm_delegate", Some("pko"), async {
             self.client
                 .require_auth()
@@ -1912,7 +1079,7 @@ impl SwarmServer {
     #[tool(
         description = "Read an Agent Bestiary World workspace's recent run status: the latest chat messages and agent activity. Read-only. Requires API key."
     )]
-    pub async fn swarm_run_status(&self, parameters: Parameters<SwarmRunRequest>) -> String {
+    pub(crate) async fn swarm_run_status(&self, parameters: Parameters<SwarmRunRequest>) -> String {
         execute_tool_semantic(self, "swarm_run_status", Some("dublin-core"), async {
             self.client
                 .require_auth()
@@ -1961,7 +1128,7 @@ impl SwarmServer {
     #[tool(
         description = "Generate an ABW system prompt for a new agent from a natural-language description. Authoring aid — read-only, spends nothing. Requires API key."
     )]
-    pub async fn swarm_generate_prompt(
+    pub(crate) async fn swarm_generate_prompt(
         &self,
         parameters: Parameters<GeneratePromptRequest>,
     ) -> String {
@@ -2006,7 +1173,7 @@ impl SwarmServer {
     #[tool(
         description = "Generate a seed ontology (Mermaid ER diagram) for an agent's knowledge domain. Authoring aid — read-only. Requires API key."
     )]
-    pub async fn swarm_generate_ontology(
+    pub(crate) async fn swarm_generate_ontology(
         &self,
         parameters: Parameters<GenerateOntologyRequest>,
     ) -> String {
@@ -2046,7 +1213,7 @@ impl SwarmServer {
     #[tool(
         description = "Create a new Agent Bestiary World agent from a name, system prompt, and config. The agent appears in your library (draft) and can be hired into swarms. Requires API key."
     )]
-    pub async fn swarm_create_agent(&self, parameters: Parameters<CreateAgentRequest>) -> String {
+    pub(crate) async fn swarm_create_agent(&self, parameters: Parameters<CreateAgentRequest>) -> String {
         execute_tool_semantic(self, "swarm_create_agent", Some("pko"), async {
             self.client
                 .require_auth()
@@ -2111,7 +1278,7 @@ impl SwarmServer {
     #[tool(
         description = "Create a new Agent Bestiary World swarm (workspace) with a name and mission. Optionally hire agents into it (each hire is consent-gated via consent_tokens). This is the composition surface. Requires API key."
     )]
-    pub async fn swarm_create_swarm(&self, parameters: Parameters<CreateSwarmRequest>) -> String {
+    pub(crate) async fn swarm_create_swarm(&self, parameters: Parameters<CreateSwarmRequest>) -> String {
         execute_tool_semantic(self, "swarm_create_swarm", Some("pko"), async {
             self.client
                 .require_auth()
@@ -2328,7 +1495,7 @@ impl SwarmServer {
     #[tool(
         description = "Ask Xaman Ek, the Agent Bestiary World curator. Use session_type 'composition_design' to plan a team (agent recommendations + I/O compatibility), 'workspace_help' for workspace questions, or 'free'. Returns the curator's response and, when a composition plan is ready, ready_to_create + in_progress. Requires API key."
     )]
-    pub async fn swarm_xaman(&self, parameters: Parameters<XamanRequest>) -> String {
+    pub(crate) async fn swarm_xaman(&self, parameters: Parameters<XamanRequest>) -> String {
         execute_tool_semantic(self, "swarm_xaman", Some("pko"), async {
             self.client
                 .require_auth()
@@ -2449,7 +1616,7 @@ impl SwarmServer {
     #[tool(
         description = "Materialize a Xaman Ek composition-design session into an App (a reusable agent-team manifest) via /api/xaman/sessions/{id}/create-app. Returns the app's slug and url, or structured issues if the plan is incomplete. Requires API key."
     )]
-    pub async fn swarm_create_app(&self, parameters: Parameters<CreateAppRequest>) -> String {
+    pub(crate) async fn swarm_create_app(&self, parameters: Parameters<CreateAppRequest>) -> String {
         execute_tool_semantic(self, "swarm_create_app", Some("pko"), async {
             self.client
                 .require_auth()
@@ -2489,7 +1656,7 @@ impl SwarmServer {
     #[tool(
         description = "Deposit local credits into the swarm ledger. The operator funds the local economy — no auto-replenishment. If unfunded, swarm_delegate_local returns PaymentRequired. Returns the new balance."
     )]
-    pub async fn swarm_fund_local(&self, parameters: Parameters<FundLocalRequest>) -> String {
+    pub(crate) async fn swarm_fund_local(&self, parameters: Parameters<FundLocalRequest>) -> String {
         execute_tool_semantic(self, "swarm_fund_local", Some("pko"), async {
             let req = parameters.0;
             if req.credits <= 0 {
@@ -2518,7 +1685,7 @@ impl SwarmServer {
     #[tool(
         description = "Read the local swarm ledger balance (credits). Operator-funded via swarm_fund_local; unfunded reads 0. No ABW calls, no spend. Returns balance + asset."
     )]
-    pub async fn swarm_balance_local(
+    pub(crate) async fn swarm_balance_local(
         &self,
         _parameters: Parameters<BalanceLocalRequest>,
     ) -> String {
@@ -2549,7 +1716,7 @@ impl SwarmServer {
     #[tool(
         description = "Read the local swarm ledger's recent transactions (fund and debit entries) for the operator account. Newest first. Each entry has id, timestamp, reference, kind (fund/debit), amount (signed), asset. Read-only — no spend, no ABW calls."
     )]
-    pub async fn swarm_local_history(&self, parameters: Parameters<LocalHistoryRequest>) -> String {
+    pub(crate) async fn swarm_local_history(&self, parameters: Parameters<LocalHistoryRequest>) -> String {
         execute_tool_semantic(self, "swarm_local_history", Some("pko"), async {
             let req = parameters.0;
             let limit = req.limit.unwrap_or(50).min(500) as usize;
@@ -2583,7 +1750,7 @@ impl SwarmServer {
     #[tool(
         description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud), scans I/O via hkask-guard, debits the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). Agents may also declare capabilities.skills — each is executed against the task through the zed-side ManifestExecutor before the LLM call (capped at 3). No ABW calls. No consent token — the balance check is the gate. Returns the response, model, token usage, cost, remaining balance, tool_calls summary, and executed_skills summary."
     )]
-    pub async fn swarm_delegate_local(
+    pub(crate) async fn swarm_delegate_local(
         &self,
         parameters: Parameters<DelegateLocalRequest>,
     ) -> String {
@@ -2629,7 +1796,7 @@ impl SwarmServer {
     #[tool(
         description = "List all local agents from agents/local/curated/. Each agent card carries a cloud_id field: when present, the agent is synced with an ABW agent; when absent, it is local-only. Returns agents[] with agent_id, agent_type, description, accepts[], produces[], cloud_id."
     )]
-    pub async fn swarm_list_local_agents(
+    pub(crate) async fn swarm_list_local_agents(
         &self,
         parameters: Parameters<ListLocalAgentsRequest>,
     ) -> String {
@@ -2660,7 +1827,7 @@ impl SwarmServer {
     #[tool(
         description = "Clone an ABW agent to the local registry. Fetches the card from ABW, sets min_provider_class: local, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. Requires ABW API key."
     )]
-    pub async fn swarm_clone_to_local(
+    pub(crate) async fn swarm_clone_to_local(
         &self,
         parameters: Parameters<CloneToLocalRequest>,
     ) -> String {
@@ -2831,7 +1998,7 @@ impl SwarmServer {
     #[tool(
         description = "Push a local agent to ABW. Creates or updates the ABW agent from the local card, and sets cloud_id on the local card to mark it as synced. Requires ABW API key."
     )]
-    pub async fn swarm_push_to_cloud(&self, parameters: Parameters<PushToCloudRequest>) -> String {
+    pub(crate) async fn swarm_push_to_cloud(&self, parameters: Parameters<PushToCloudRequest>) -> String {
         execute_tool_semantic(self, "swarm_push_to_cloud", Some("pko"), async {
             self.client
                 .require_auth()
@@ -2919,7 +2086,7 @@ impl SwarmServer {
     #[tool(
         description = "Remove a local agent card from the local registry (deletes agents/local/curated/<id>/). The local counterpart of firing an agent. A synced card's ABW agent is NOT touched. No consent token — local mode has no consent gate."
     )]
-    pub async fn swarm_remove_local(&self, parameters: Parameters<RemoveLocalRequest>) -> String {
+    pub(crate) async fn swarm_remove_local(&self, parameters: Parameters<RemoveLocalRequest>) -> String {
         execute_tool_semantic(self, "swarm_remove_local", Some("pko"), async {
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
@@ -2988,7 +2155,7 @@ impl SwarmServer {
     #[tool(
         description = "Fire (un-hire) an agent from an ABW workspace (swarm). Removes the agent from the roster; the agent itself is NOT deleted (use swarm_delete_agent for that). No credit cost. Requires API key."
     )]
-    pub async fn swarm_fire(&self, parameters: Parameters<FireRequest>) -> String {
+    pub(crate) async fn swarm_fire(&self, parameters: Parameters<FireRequest>) -> String {
         execute_tool_semantic(self, "swarm_fire", Some("pko"), async {
             self.client
                 .require_auth()
@@ -3029,7 +2196,7 @@ impl SwarmServer {
     #[tool(
         description = "Permanently delete an ABW agent (irreversible — removes it from your library and all workspace rosters). Accepts the agent_id or agent_name from swarm_list_agents. A synced local card is NOT touched — use swarm_remove_local to sever the local link. Requires API key."
     )]
-    pub async fn swarm_delete_agent(&self, parameters: Parameters<DeleteAgentRequest>) -> String {
+    pub(crate) async fn swarm_delete_agent(&self, parameters: Parameters<DeleteAgentRequest>) -> String {
         execute_tool_semantic(self, "swarm_delete_agent", Some("pko"), async {
             self.client
                 .require_auth()
@@ -3112,7 +2279,7 @@ impl SwarmServer {
     #[tool(
         description = "Permanently delete an ABW workspace (swarm) by id — the counterpart of swarm_create_swarm. Irreversible: the workspace and its roster are removed. Verified route: DELETE /api/teams/{id}. Requires API key."
     )]
-    pub async fn swarm_delete_swarm(&self, parameters: Parameters<DeleteSwarmRequest>) -> String {
+    pub(crate) async fn swarm_delete_swarm(&self, parameters: Parameters<DeleteSwarmRequest>) -> String {
         execute_tool_semantic(self, "swarm_delete_swarm", Some("pko"), async {
             self.client
                 .require_auth()
@@ -3384,18 +2551,6 @@ mod tests {
             Some("market_analyst".to_string())
         );
         assert_eq!(extract_quoted("no quotes here"), None);
-    }
-
-    #[test]
-    fn config_defaults_match_documented_surface() {
-        let c = SwarmConfig::default();
-        assert_eq!(c.api_base_url, "https://agent-bestiary.world");
-        assert!(!c.curator_consent_default);
-        assert!(c.api_key.is_none());
-        // KA-05: the default agent model must be a config field, not a code
-        // literal in the handler. The default exists so the handler can read
-        // it; the operator overrides via HKASK_ABW_DEFAULT_AGENT_MODEL.
-        assert!(!c.default_agent_model.is_empty());
     }
 
     // The module doc claims 28 tools (20 ABW + 8 local). Enforce the count
@@ -3683,14 +2838,6 @@ mod tests {
         let token = store.mint("curate", "xaman", 0).expect("mint");
         let result = store.consume(&token, "curate", "xaman", 0);
         assert!(result.is_ok());
-    }
-
-    // Config: `curator_consent_default` must be `false` by default and
-    // readable from the `HKASK_ABW_CURATOR_CONSENT_DEFAULT` env var.
-    #[test]
-    fn config_curator_consent_default_is_false_by_default() {
-        let c = SwarmConfig::default();
-        assert!(!c.curator_consent_default);
     }
 
     // ── Consent refund (BH-04) ─────────────────────────────────────────────
@@ -4087,15 +3234,6 @@ mod tests {
     // refused — the panel's "confirm to override" was a no-op.
 
     #[test]
-    fn config_max_credits_per_dispatch_default_is_50() {
-        // Pin the default so a silent drift (e.g. raising it to u32::MAX to
-        // effectively disable the gate) is caught. The operator overrides via
-        // HKASK_ABW_MAX_CREDITS.
-        let c = SwarmConfig::default();
-        assert_eq!(c.max_credits_per_dispatch, 50);
-    }
-
-    #[test]
     fn hire_cost_within_budget_flag_respects_ceiling() {
         // `swarm_hire_cost` computes `within_budget = total <= ceiling`. This
         // is the banner signal; the enforcement is in `swarm_hire`. Pin the
@@ -4163,204 +3301,6 @@ mod tests {
         store
             .consume(&token, "delegate", "ws-123", 1000)
             .expect("refunded delegate token should re-consume");
-    }
-
-    // ── SwarmMode parsing (v2 §15 Slice 8) ───────────────────────────────────
-
-    #[test]
-    fn swarm_mode_default_is_abw() {
-        assert_eq!(SwarmMode::default(), SwarmMode::Abw);
-    }
-
-    #[test]
-    fn swarm_mode_from_str_parses_abw() {
-        assert_eq!("abw".parse::<SwarmMode>().unwrap(), SwarmMode::Abw);
-        assert_eq!("ABW".parse::<SwarmMode>().unwrap(), SwarmMode::Abw);
-        assert_eq!(" abw ".parse::<SwarmMode>().unwrap(), SwarmMode::Abw);
-    }
-
-    #[test]
-    fn swarm_mode_from_str_parses_local() {
-        assert_eq!("local".parse::<SwarmMode>().unwrap(), SwarmMode::Local);
-        assert_eq!("LOCAL".parse::<SwarmMode>().unwrap(), SwarmMode::Local);
-    }
-
-    #[test]
-    fn swarm_mode_from_str_rejects_unknown() {
-        assert!("hybrid".parse::<SwarmMode>().is_err());
-        assert!("".parse::<SwarmMode>().is_err());
-        assert!("remote".parse::<SwarmMode>().is_err());
-    }
-
-    #[test]
-    fn swarm_mode_display_roundtrips() {
-        assert_eq!(SwarmMode::Abw.to_string(), "abw");
-        assert_eq!(SwarmMode::Local.to_string(), "local");
-    }
-
-    #[test]
-    fn swarm_config_default_mode_is_abw() {
-        let config = SwarmConfig::default();
-        assert_eq!(config.mode, SwarmMode::Abw);
-        assert_eq!(config.local_agents_dir, "agents/local/curated");
-    }
-
-    // v2 §15: a relative `local_agents_dir` must resolve under the hKask
-    // data dir, not the MCP server's CWD. The swarm server inherits Zed's
-    // working directory (home or project root — not the zed-kask repo), so a
-    // relative default would never find agent cards. Mirrors the
-    // `resolve_under_data_dir` pattern used by every other kask MCP server.
-    // An absolute `HKASK_LOCAL_AGENTS_DIR` override is used as-is.
-    //
-    // Tests the pure `resolve_local_agents_dir` helper (extracted from
-    // `from_env`) because this crate is `#![forbid(unsafe_code)]` and cannot
-    // call `std::env::set_var` in tests.
-    #[test]
-    fn resolve_local_agents_dir_keeps_absolute_path_as_is() {
-        let resolved = resolve_local_agents_dir("/absolute/custom/agents");
-        assert_eq!(
-            resolved, "/absolute/custom/agents",
-            "absolute path must be used as-is"
-        );
-    }
-
-    #[test]
-    fn resolve_local_agents_dir_joins_relative_under_data_dir() {
-        // The default relative path is joined under the data dir. We can't
-        // assert the exact result (it depends on HKASK_DATA_DIR / XDG_DATA_HOME
-        // / HOME at test time), but it must end with the relative suffix and
-        // must NOT be the bare relative path (which would resolve against CWD).
-        let resolved = resolve_local_agents_dir("agents/local/curated");
-        assert!(
-            resolved.ends_with("agents/local/curated"),
-            "relative path must be joined under data dir, got: {resolved}"
-        );
-        assert_ne!(
-            resolved, "agents/local/curated",
-            "relative path must not resolve against CWD (would never find cards \
-             when the MCP server inherits Zed's working dir)"
-        );
-    }
-
-    // ── LocalAgentRegistry (v2 §15 Slice 8) ─────────────────────────────────
-
-    #[test]
-    fn local_registry_missing_dir_loads_zero() {
-        let dir = std::env::temp_dir().join("hkask_swarm_test_nonexistent_dir");
-        let _ = std::fs::remove_dir_all(&dir); // clean slate
-        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
-        assert!(!registry.is_loaded());
-        let count = registry.load().expect("missing dir should not error");
-        assert_eq!(count, 0);
-        assert!(registry.is_loaded());
-        assert!(registry.list().is_empty());
-        assert!(registry.get("any_agent").is_none());
-    }
-
-    #[test]
-    fn local_registry_loads_cards_from_dir() {
-        let dir = std::env::temp_dir().join("hkask_swarm_test_local_registry");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("alpha_agent")).unwrap();
-        std::fs::write(
-            dir.join("alpha_agent").join("agent_card.json"),
-            serde_json::json!({
-                "agent_id": "alpha_agent",
-                "agent_type": "research",
-                "description": "Alpha test agent",
-                "accepts": ["query"],
-                "produces": ["analysis"],
-                "dependencies": { "required": [], "optional": [] },
-                "capabilities": {
-                    "model": "ollama/qwen3:8b",
-                    "min_provider_class": "local",
-                    "system_prompt": "You are alpha."
-                }
-            })
-            .to_string(),
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.join("beta_agent")).unwrap();
-        std::fs::write(
-            dir.join("beta_agent").join("agent_card.json"),
-            serde_json::json!({
-                "agent_id": "beta_agent",
-                "agent_type": "sentiment"
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
-        let count = registry.load().expect("load should succeed");
-        assert_eq!(count, 2);
-        let cards = registry.list();
-        // Sorted by agent_id.
-        assert_eq!(cards[0].agent_id, "alpha_agent");
-        assert_eq!(cards[1].agent_id, "beta_agent");
-        let alpha = registry.get("alpha_agent").expect("alpha should be found");
-        assert_eq!(alpha.agent_type, "research");
-        assert_eq!(alpha.accepts, vec!["query".to_string()]);
-        assert_eq!(alpha.produces, vec!["analysis".to_string()]);
-        assert_eq!(alpha.capabilities.model, "ollama/qwen3:8b");
-        assert_eq!(alpha.capabilities.min_provider_class, "local");
-        // Beta has minimal fields — defaults should fill in.
-        let beta = registry.get("beta_agent").expect("beta should be found");
-        assert!(beta.accepts.is_empty());
-        assert!(beta.produces.is_empty());
-        assert!(beta.dependencies.required.is_empty());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn local_registry_skips_dirs_without_card() {
-        let dir = std::env::temp_dir().join("hkask_swarm_test_skip_dirs");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("has_card")).unwrap();
-        std::fs::write(
-            dir.join("has_card").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "has_card", "agent_type": "test" }).to_string(),
-        )
-        .unwrap();
-        std::fs::create_dir_all(dir.join("no_card")).unwrap(); // no agent_card.json
-
-        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
-        let count = registry.load().expect("load should succeed");
-        assert_eq!(count, 1);
-        assert!(registry.get("has_card").is_some());
-        assert!(registry.get("no_card").is_none());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn local_registry_reload_replaces_cache() {
-        let dir = std::env::temp_dir().join("hkask_swarm_test_reload");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("first")).unwrap();
-        std::fs::write(
-            dir.join("first").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "first", "agent_type": "test" }).to_string(),
-        )
-        .unwrap();
-
-        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
-        assert_eq!(registry.load().unwrap(), 1);
-        assert!(registry.get("first").is_some());
-
-        // Add a second card and reload.
-        std::fs::create_dir_all(dir.join("second")).unwrap();
-        std::fs::write(
-            dir.join("second").join("agent_card.json"),
-            serde_json::json!({ "agent_id": "second", "agent_type": "test" }).to_string(),
-        )
-        .unwrap();
-        assert_eq!(registry.load().unwrap(), 2);
-        assert!(registry.get("first").is_some());
-        assert!(registry.get("second").is_some());
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── LocalSwarmRuntime: ledger + guard logic (v2 §15 Slice 9) ─────────────
@@ -4467,6 +3407,7 @@ mod tests {
         /// Fixed result JSON for every dispatched call.
         result: serde_json::Value,
         /// Recorded (server, tool, args, allowlist) tuples, in dispatch order.
+        #[allow(clippy::type_complexity)]
         calls: std::sync::Mutex<Vec<(String, String, serde_json::Value, Vec<String>)>>,
     }
 
@@ -6925,7 +5866,7 @@ mod tests {
         let agent_label = candidate
             .get("agent_name")
             .and_then(|v| v.as_str())
-            .unwrap_or_else(|| agent_id.as_str())
+            .unwrap_or(agent_id.as_str())
             .to_string();
         eprintln!("P0 candidate: {agent_label} ({agent_id})");
 
@@ -7418,7 +6359,7 @@ mod tests {
                     if has_delete {
                         // Print the delete-y paths, truncated.
                         let snippet: String = text
-                            .split(|c: char| c == ',' || c == '\n')
+                            .split([',', '\n'])
                             .filter(|p| {
                                 p.to_lowercase().contains("workspace")
                                     && p.to_lowercase().contains("delete")
