@@ -1509,16 +1509,22 @@ impl ManifestExecutor {
         // Resolve {{key}} references from context before loading.
         let template_ref = TemplateRenderer::render_inline(template_ref, &context);
 
-        // Load the sub-manifest YAML. Try embedded .yaml first, then embedded
-        // .j2 (shouldn't happen for flowdef, but handle gracefully), then
-        // filesystem fallback.
-        let manifest_yaml = if let Some(content) = crate::template_yaml_file(&template_ref) {
+        // Load the sub-manifest YAML. Filesystem first (so YAML edits take
+        // effect without recompilation), then embedded .j2/.yaml as fallback.
+        let manifest_yaml = if let Ok(content) = self
+            .template_renderer
+            .load_from_disk(&template_ref, step.ordinal)
+        {
+            content
+        } else if let Some(content) = crate::template_yaml_file(&template_ref) {
             content.to_string()
         } else if let Some(content) = crate::template_file(&template_ref) {
             content.to_string()
         } else {
-            self.template_renderer
-                .load_from_disk(&template_ref, step.ordinal)?
+            return Err(TemplateError::NotFound(format!(
+                "Step {}: flowdef sub-manifest '{}' not found on filesystem or in embedded registry",
+                step.ordinal, template_ref
+            )));
         };
 
         // Parse the sub-manifest.

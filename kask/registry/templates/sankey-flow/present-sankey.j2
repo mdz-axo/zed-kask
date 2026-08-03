@@ -1,13 +1,49 @@
-{# RenderAct — surface the finalized Sankey markdown as the cascade's final output.
+{# RenderAct — format and surface the finalized Sankey as the cascade's final output.
    This is a pure Jinja2 template (no frontmatter) executed by the `render` action.
-   The output is stored as step_N_result (Value::String) and becomes the cascade's
-   final output via extract_final_step_result (highest ordinal).
+   It wraps the adapt step's mermaid source in a titled, annotated document with:
+   - A title derived from domain + subject
+   - A description paragraph (domain, weight unit, conservation mode, ontology)
+   - The Mermaid sankey-beta diagram in a fenced code block
+   - A flow annotation table (source → target, weight, provenance)
+   - A conservation check line
+   - A notes section (abbreviations, placeholders, structural deviations)
+   - An output path for file save
 
-   The adapt step (step 2) produces {mermaid_source, markdown, output_path} where
-   markdown contains the fenced ```mermaid block. This render step flattens the
-   markdown to a raw string so the model sees the mermaid block directly and
-   reproduces it in its assistant message. Deterministic (no LLM call). #}
-{{ markdown }}
+   Deterministic — no LLM call. All formatting is Jinja2 template logic. #}
+
+{# ── Title ── #}
+{%- set domain_title = domain | replace("-", " ") | title -%}
+{%- set subject_title = subject | replace("-", " ") | title -%}
+
+# {{ domain_title }}: {{ subject_title }}
+
+{# ── Description ── #}
+
+This diagram visualizes a {{ domain | replace("-", " ") }} flow with {{ node_count }} nodes and {{ edge_count }} edges. Weights are in {{ weight_unit }}. Conservation mode: **{{ conservation_mode }}**{% if conservation_mode == "mandatory" %} — inflow equals outflow at every internal node.{% elif conservation_mode == "asserted" %} — conservation may or may not hold; discrepancies are flagged.{% elif conservation_mode == "none" %} — flows are not conserved; asymmetry is intentional and not balanced with fabricated loss branches.{% endif %}
+
+{# ── Mermaid diagram ── #}
+
+```mermaid
+{{ mermaid_source }}
+```
+
+{# ── Flow annotations ── #}
+
+| Source | Target | Weight | Notes |
+|--------|--------|--------|-------|
+{%- for edge in edges %}
+| {{ edge.source }} | {{ edge.target }} | {{ edge.weight }} | {{ edge.weight_source | default("(not specified)") }} |
+{%- endfor %}
+
+{# ── Conservation check ── #}
+
+**Conservation:** {{ conservation_check }}
+
+{# ── Notes ── #}
+{% if adapt_notes %}
+
+**Notes:** {{ adapt_notes }}
+{% endif %}
 
 ---
 

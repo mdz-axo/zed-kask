@@ -151,30 +151,24 @@ impl BridgeManifestExecutor {
         self
     }
 
-    /// Resolve a skill's manifest YAML, preferring the embedded (build-time)
-    /// copy and falling back to the filesystem path. The embedded copy is
-    /// authoritative for installed binaries — it works regardless of CWD or
-    /// install location. The filesystem fallback exists for dev workflows
-    /// where a manifest has been edited but not yet rebuilt.
+    /// Resolve a skill's manifest YAML, preferring the filesystem copy and
+    /// falling back to the embedded (build-time) copy. The filesystem copy is
+    /// authoritative during development — YAML/J2 edits take effect immediately
+    /// without recompilation. The embedded copy is a fallback for production
+    /// deployments where the registry directory may not exist on disk.
     ///
-    /// Returns the YAML content and its trust provenance. Embedded manifests
-    /// are trusted by construction (compiled into the binary). Filesystem
-    /// manifests are untrusted — they could be user-authored, marketplace-
-    /// installed (Ed25519-verified at download), or locally dropped. The
-    /// caller is responsible for emitting a provenance signal so an operator
-    /// reading logs can distinguish "built-in skill executed" from "filesystem
-    /// skill executed. Gating high-risk actions on provenance is a future-
-    /// wiring target; currently the executor logs but does not restrict.
+    /// Returns the YAML content and its trust provenance. Filesystem manifests
+    /// are the primary source (trusted in dev, untrusted in production per
+    /// provenance signal). Embedded manifests are trusted by construction
+    /// (compiled into the binary). The caller emits a provenance signal so an
+    /// operator reading logs can distinguish "built-in skill executed" from
+    /// "filesystem skill executed". Gating high-risk actions on provenance is a
+    /// future-wiring target; currently the executor logs but does not restrict.
     fn manifest_yaml(
         &self,
         skill_name: &str,
     ) -> Option<(std::borrow::Cow<'static, str>, ManifestProvenance)> {
-        if let Some(yaml) = process_manifest_yaml(skill_name) {
-            return Some((
-                std::borrow::Cow::Borrowed(yaml),
-                ManifestProvenance::Embedded,
-            ));
-        }
+        // Filesystem first — allows YAML/J2 edits without recompilation.
         let path = self.manifest_path(skill_name);
         if path.is_file() {
             match std::fs::read_to_string(&path) {
@@ -192,6 +186,13 @@ impl BridgeManifestExecutor {
                     );
                 }
             }
+        }
+        // Embedded fallback — for production where registry dir is absent.
+        if let Some(yaml) = process_manifest_yaml(skill_name) {
+            return Some((
+                std::borrow::Cow::Borrowed(yaml),
+                ManifestProvenance::Embedded,
+            ));
         }
         None
     }

@@ -124,18 +124,28 @@ steps:
   - ordinal: 3
     action: render
     description: >
-      SURFACE the finalized Sankey markdown as the cascade's final output.
-      The adapt step produces {mermaid_source, markdown, output_path}; this
-      render step flattens the markdown to a raw string so the model sees the
-      mermaid block directly and reproduces it in its assistant message.
-      Deterministic (no LLM call).
+      FORMAT and surface the finalized Sankey as the cascade's final output.
+      Wraps the adapt step's mermaid source in a titled, annotated markdown
+      document with a title, description, the mermaid diagram, a conservation
+      check, a data table annotating each flow with its weight and provenance,
+      and references. Deterministic (no LLM call) — pure Jinja2 formatting.
     renderer: minijinja
     template_ref: sankey-flow/present-sankey
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      markdown: "{{ step_2_result.markdown }}"
+      mermaid_source: "{{ step_2_result.mermaid_source }}"
       output_path: "{{ step_2_result.output_path }}"
+      node_count: "{{ step_2_result.node_count }}"
+      edge_count: "{{ step_2_result.edge_count }}"
+      conservation_check: "{{ step_2_result.conservation_check }}"
+      adapt_notes: "{{ step_2_result.adapt_notes | default('') }}"
+      domain: "{{ step_1_result.domain }}"
+      subject: "{{ step_1_result.subject }}"
+      weight_unit: "{{ step_1_result.weight_unit }}"
+      conservation_mode: "{{ step_1_result.conservation_mode }}"
+      nodes: "{{ step_1_result.nodes | default([]) }}"
+      edges: "{{ step_1_result.edges | default([]) }}"
 
 error_handling:
   on_gas_exceeded: abort

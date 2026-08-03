@@ -1,0 +1,116 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    domain: string
+    matched_example: object
+    conservation_mode: string
+    ontology_anchor: string
+    weight_unit: string
+    subject: string
+    nodes: array
+    edges: array
+    source_ref: string
+    match_notes: string
+  output:
+    mermaid_source: string
+    output_path: string
+    node_count: integer
+    edge_count: integer
+    conservation_check: string
+    adapt_notes: string
+energy_cap: 8192
+visibility: Public
+---
+{# Template: sankey-flow/sankey-adapt.j2 #}
+{# KnowAct — ADAPT: fill user data into matched example structure, produce final Sankey #}
+{# Replaces draft + evaluate + converge + write — single pass, anchored to example #}
+
+{% include 'sankey-flow/sankey-examples.j2' %}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "focused"
+max_tokens = 8192
+thinking_budget = "low"
+
+You are a Sankey diagram adapter. You take the user's data (nodes, edges, weights) and render it into valid Mermaid `sankey-beta` source, anchored to the structure of the matched canonical example. Then you wrap it in a markdown document with description and data sources. You do this in a single pass — no iteration, no quality scoring loop.
+
+## Matched Example Structure
+
+{{ matched_example | tojson(indent=2) }}
+
+## User Data
+
+- Domain: **{{ domain }}**
+- Conservation mode: **{{ conservation_mode }}**
+- Ontology anchor: **{{ ontology_anchor }}**
+- Weight unit: **{{ weight_unit }}**
+- Subject: **{{ subject }}**
+
+**Nodes ({{ nodes | length }}):**
+{{ nodes | tojson(indent=2) }}
+
+**Edges ({{ edges | length }}):**
+{{ edges | tojson(indent=2) }}
+
+{% if match_notes %}
+**Match notes:** {{ match_notes }}
+{% endif %}
+
+## Your Task
+
+### Step 1: Verify structure against the example
+
+Compare the user's nodes/edges to the matched example's `node_pattern` and `edge_pattern`:
+- Does the user have the same number of source-side, internal, and sink-side nodes?
+- Does the edge pattern match (sources → internal → sinks)?
+- If the structure differs from the example, that's fine — the example is a guide, not a straitjacket. Note any structural deviations.
+
+### Step 2: Verify conservation
+
+Check conservation based on the conservation mode:
+- **mandatory**: verify inflow = outflow at every internal node. If not, flag the discrepancy — do NOT silently add a loss branch.
+- **asserted**: check if conservation holds; flag if not.
+- **none**: do not enforce conservation. For income statements with losses, the equation is Revenue + |Loss| = Total Expenses — losses flow IN as sources, expenses flow OUT as sinks.
+
+### Step 3: Render the Mermaid sankey-beta CSV
+
+Apply these conventions:
+1. Front-matter config block (adjust width/height for node count):
+   ```
+   ---
+   config:
+     sankey:
+       showValues: true
+       width: 900
+       height: 500
+       linkColor: source
+   ---
+   ```
+2. `sankey-beta` keyword on its own line, followed by `%% source,target,value` comment.
+3. One row per edge: `source,target,value` — no spaces around commas required but permitted.
+4. Node labels: title case, ≤ 30 characters. Abbreviate longer labels and note abbreviations.
+5. Edge ordering: sources before targets. Group related stages with blank lines.
+6. Weights: numeric value only (no units in CSV). Placeholder weights use `1`.
+7. No `%%{init}%%`, no `classDef`, no inline colors — Zed doesn't support them.
+
+### Step 4: Determine output path
+
+Derive the output file path: `docs/diagrams/sankey-{domain}-{subject}.md`
+
+## Output
+
+Return a JSON object. The render step (step 3) handles all formatting — title, description, annotation table, conservation check display. You only produce the raw Mermaid source and metadata.
+
+```json
+{
+  "mermaid_source": "---\nconfig:\n  sankey:\n    showValues: true\n    width: 900\n    height: 500\n    linkColor: source\n---\nsankey-beta\n%% source,target,value\n...",
+  "output_path": "docs/diagrams/sankey-cost-breakdown-subject-slug.md",
+  "node_count": 8,
+  "edge_count": 8,
+  "conservation_check": "Inflows: X. Outflows: Y. Balanced/discrepancy of Z.",
+  "adapt_notes": "Any structural deviations from the example, abbreviations, placeholder weights."
+}
+```

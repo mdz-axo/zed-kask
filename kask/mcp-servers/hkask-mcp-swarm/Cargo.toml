@@ -38,6 +38,7 @@ chrono = { workspace = true }
 r2d2 = { workspace = true }
 r2d2_sqlite = { workspace = true }
 dirs = { workspace = true }
+a2a = { workspace = true }
 
 [lints]
 workspace = true

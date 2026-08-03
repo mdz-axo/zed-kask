@@ -997,6 +997,7 @@ sqlx = { version = "0.8", default-features = false, features = ["postgres", "run
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
 # Single-source-of-truth for kask-only third-party crates consumed by hKask crates.
+a2a = { package = "a2a-lf", version = "0.3" }
 sqlite-vec = "0.1"
 docx-rs = "0.4"
 calamine = "0.36"

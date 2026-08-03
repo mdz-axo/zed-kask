@@ -1,0 +1,146 @@
+{# Canonical Sankey example library — embedded as few-shot context for the adapt step.
+   Each example is a structural template: node pattern, edge pattern, conservation mode,
+   and a filled instance showing how real data maps to the structure.
+   The adapt step matches the user's prompt to the closest example and fills in their data. #}
+
+{# ── Income Statement (cost-breakdown / FIBO) ── #}
+{% set income_statement_example = {
+  "domain": "cost-breakdown",
+  "match_triggers": ["income statement", "revenue", "expenses", "profit", "loss", "earnings", "P&L", "financial statement", "10-K", "10-Q"],
+  "conservation_mode": "none",
+  "ontology_anchor": "FIBO",
+  "weight_unit": "currency (e.g., USD millions)",
+  "structure_description": "Revenue flows in from product/segment sources, unifies at a Total Revenue node (the '=' sign), then breaks out into expense categories and profit/loss. Negative profits (losses) flow BACK INTO the revenue pool as inflows — Revenue + |Loss| = Total Expenses. This is the income statement equation: Revenue = Expenses + Profits, where Profits can be negative.",
+  "node_pattern": {
+    "sources": ["Revenue Segment A", "Revenue Segment B", "Net Loss (if negative — flows in as a source)", "Tax Benefit (if negative tax — flows in)", "Other Income (if net positive — flows in)"],
+    "internal": ["Total Revenue"],
+    "sinks": ["Cost of Revenue", "R&D Expenses", "SG&A Expenses", "Other Expenses"]
+  },
+  "edge_pattern": "Each revenue segment → Total Revenue. Each loss/benefit item → Total Revenue (as inflow). Total Revenue → each expense category. Conservation: sum(all inflows) = sum(all outflows).",
+  "filled_instance": {
+    "subject": "RocketLab FY2025 Income Statement",
+    "mermaid_source": "sankey-beta\n\n\"Launch Services\",\"Total Revenue\",199000\n\"Space Systems\",\"Total Revenue\",402800\n\"Net Loss\",\"Total Revenue\",198209\n\"Tax Benefit\",\"Total Revenue\",27688\n\"Other Income\",\"Total Revenue\",2941\n\"Total Revenue\",\"Cost of Revenue\",394618\n\"Total Revenue\",\"R&D Expenses\",270716\n\"Total Revenue\",\"SG&A Expenses\",165303",
+    "conservation_check": "Inflows: 199000 + 402800 + 198209 + 27688 + 2941 = 830638. Outflows: 394618 + 270716 + 165303 = 830637. Balanced (rounding).",
+    "data_sources": "Segment revenue from 10-K; expense breakdown from income statement API"
+  }
+} %}
+
+{# ── Budget / Cost Allocation (cost-breakdown / FIBO) ── #}
+{% set budget_example = {
+  "domain": "cost-breakdown",
+  "match_triggers": ["budget", "allocation", "spend", "cost breakdown", "department budget"],
+  "conservation_mode": "mandatory",
+  "ontology_anchor": "FIBO",
+  "weight_unit": "currency",
+  "structure_description": "A total budget flows out to departments, each department splits into sub-categories. Conservation is mandatory: every dollar is accounted for.",
+  "node_pattern": {
+    "sources": ["Total Budget"],
+    "internal": ["Department A", "Department B"],
+    "sinks": ["Sub-category 1", "Sub-category 2", "Sub-category 3"]
+  },
+  "edge_pattern": "Total Budget → each department. Each department → its sub-categories. Conservation: department inflow = sum of its sub-category outflows.",
+  "filled_instance": {
+    "subject": "Q3 Budget Allocation",
+    "mermaid_source": "sankey-beta\n\nQ3 Budget,Engineering,500\nQ3 Budget,Sales,300\nQ3 Budget,Marketing,200\nEngineering,Platform,200\nEngineering,Product,300\nSales,Direct,200\nSales,Partner,100",
+    "conservation_check": "Root outflow: 500+300+200=1000. Engineering: 500 in, 200+300=500 out. Sales: 300 in, 200+100=300 out. Conserved.",
+    "data_sources": "User-provided budget figures"
+  }
+} %}
+
+{# ── Data Pipeline (data-pipeline / PKO) ── #}
+{% set data_pipeline_example = {
+  "domain": "data-pipeline",
+  "match_triggers": ["data flow", "pipeline", "ETL", "data pipeline", "ingestion", "streaming"],
+  "conservation_mode": "asserted",
+  "ontology_anchor": "PKO",
+  "weight_unit": "records/day or bytes/sec",
+  "structure_description": "Data sources flow into a transformer/aggregator, which flows to sinks. Conservation is asserted: inflow should equal outflow, but loss/dedup branches are common.",
+  "node_pattern": {
+    "sources": ["Kafka Events", "Postgres CDC"],
+    "internal": ["Enricher"],
+    "sinks": ["Snowflake", "S3 Archive"]
+  },
+  "edge_pattern": "Each source → transformer. Transformer → each sink. If outflow > inflow, flag as discrepancy (don't silently add a loss branch).",
+  "filled_instance": {
+    "subject": "Data Pipeline Flow",
+    "mermaid_source": "sankey-beta\n\nKafka Events,Enricher,1200\nPostgres CDC,Enricher,300\nEnricher,Snowflake,1500\nEnricher,S3 Archive,120",
+    "conservation_check": "Enricher: 1500 in, 1620 out. Discrepancy of 120 flagged — user stated S3 gets 10% of Kafka, implying an unreported branch.",
+    "data_sources": "User-provided throughput estimates"
+  }
+} %}
+
+{# ── User Journey / Funnel (user-journey / PKO) ── #}
+{% set funnel_example = {
+  "domain": "user-journey",
+  "match_triggers": ["funnel", "user journey", "conversion", "onboarding", "signup flow", "lead funnel"],
+  "conservation_mode": "none",
+  "ontology_anchor": "PKO",
+  "weight_unit": "user count",
+  "structure_description": "Funnel stages with implicit drop-off. Conservation is none — users churn between stages. Loss branches (Churned at X) are inferred to make the Sankey readable, but they are NOT conserved (a user can be in multiple branches).",
+  "node_pattern": {
+    "sources": ["Visitors"],
+    "internal": ["Signups", "Demos"],
+    "sinks": ["Closed", "Churned at Signup", "Churned at Demo", "Churned at Close"]
+  },
+  "edge_pattern": "Each stage → next stage (converted) + churn node (lost). Churn = stage inflow - next stage inflow.",
+  "filled_instance": {
+    "subject": "Lead Funnel",
+    "mermaid_source": "sankey-beta\n\nVisitors,Signups,200\nVisitors,Churned at Signup,800\nSignups,Demos,50\nSignups,Churned at Demo,150\nDemos,Closed,10\nDemos,Churned at Close,40",
+    "conservation_check": "None — funnel does not conserve. Churn branches are inferred for readability.",
+    "data_sources": "User-provided funnel counts"
+  }
+} %}
+
+{# ── Balance Sheet (cost-breakdown / FIBO) ── #}
+{% set balance_sheet_example = {
+  "domain": "cost-breakdown",
+  "match_triggers": ["balance sheet", "assets", "liabilities", "equity"],
+  "conservation_mode": "mandatory",
+  "ontology_anchor": "FIBO",
+  "weight_unit": "currency",
+  "structure_description": "Assets on one side, Liabilities + Equity on the other. The accounting equation: Assets = Liabilities + Equity. Conservation is mandatory.",
+  "node_pattern": {
+    "sources": ["Total Assets"],
+    "internal": [],
+    "sinks": ["Current Assets", "Non-current Assets", "Current Liabilities", "Non-current Liabilities", "Equity"]
+  },
+  "edge_pattern": "Total Assets splits into asset categories. A separate 'Total Liabilities + Equity' node splits into liability and equity categories. The two sides must balance.",
+  "filled_instance": {
+    "subject": "Balance Sheet Structure",
+    "mermaid_source": "sankey-beta",
+    "conservation_check": "Assets = Liabilities + Equity (mandatory).",
+    "data_sources": "Balance sheet from financial statement API"
+  }
+} %}
+
+{# ── Process Flow (process / PKO) ── #}
+{% set process_example = {
+  "domain": "process",
+  "match_triggers": ["process", "workflow", "manufacturing", "throughput", "production"],
+  "conservation_mode": "asserted",
+  "ontology_anchor": "PKO",
+  "weight_unit": "items/hr or units/day",
+  "structure_description": "Process steps in sequence with throughput rates. Conservation is asserted: throughput should be conserved unless there's yield loss.",
+  "node_pattern": {
+    "sources": ["Raw Input"],
+    "internal": ["Step 1", "Step 2", "Step 3"],
+    "sinks": ["Finished Product", "Scrap/Yield Loss"]
+  },
+  "edge_pattern": "Linear chain with optional yield-loss branches at each step.",
+  "filled_instance": {
+    "subject": "Manufacturing Process",
+    "mermaid_source": "sankey-beta",
+    "conservation_check": "Asserted — yield loss branches are explicit if present.",
+    "data_sources": "User-provided process data"
+  }
+} %}
+
+{# ── Example registry — the match step searches this list ── #}
+{% set example_registry = [
+  income_statement_example,
+  budget_example,
+  data_pipeline_example,
+  funnel_example,
+  balance_sheet_example,
+  process_example
+] %}

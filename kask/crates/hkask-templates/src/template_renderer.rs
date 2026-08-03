@@ -63,23 +63,31 @@ impl TemplateRenderer {
         &self.base_path
     }
 
-    /// Load a template by ref, preferring the embedded (build-time) copy and
-    /// falling back to the filesystem path.
+    /// Load a template by ref, preferring the filesystem copy and falling
+    /// back to the embedded (build-time) copy.
     ///
-    /// Resolution order: embedded `.j2` → embedded `.yaml` → filesystem as-is
-    /// → filesystem `.j2` → filesystem `.yaml`. This covers all four Pattern A
-    /// template types: WordAct/KnowAct (`.j2`), FlowDef sub-manifests (`.yaml`),
-    /// and RenderAct (either).
+    /// Resolution order: filesystem as-is → filesystem `.j2` → filesystem `.yaml`
+    /// → embedded `.j2` → embedded `.yaml`. The filesystem is primary so YAML/J2
+    /// edits take effect immediately without recompilation. Embedded copies are
+    /// a fallback for production deployments where the registry directory may
+    /// not exist on disk.
     ///
     /// `step_ordinal` is used for error messages and heal callbacks.
     pub fn load(&self, template_ref: &str, step_ordinal: u32) -> Result<String> {
+        // Filesystem first — allows J2/YAML edits without recompilation.
+        if let Ok(content) = self.load_from_disk(template_ref, step_ordinal) {
+            return Ok(content);
+        }
+        // Embedded fallback — for production where registry dir is absent.
         if let Some(content) = template_file(template_ref) {
             return Ok(content.to_string());
         }
         if let Some(content) = template_yaml_file(template_ref) {
             return Ok(content.to_string());
         }
-        self.load_from_disk(template_ref, step_ordinal)
+        Err(TemplateError::NotFound(format!(
+            "step {step_ordinal}: template '{template_ref}' not found on filesystem or in embedded registry"
+        )))
     }
 
     /// Load a template from the filesystem, trying the ref as-is, then with
@@ -190,7 +198,9 @@ pub fn render_minijinja(
 
     // Loader: the synthetic "step" name resolves to the in-memory main
     // template; any other name (from `{% include %}`) resolves from the
-    // embedded registry first, then from disk under `template_base_path`,
+    // filesystem first (so J2 edits take effect without recompilation),
+    // then from the embedded registry as a fallback (for production
+    // deployments where the registry directory may not exist on disk),
     // mirroring the `template_ref` resolution rules (including the `.j2`
     // extension fallback).
     let main_template = template.to_string();
@@ -200,14 +210,7 @@ pub fn render_minijinja(
             if name == "step" {
                 return Ok(Some(main_template.clone()));
             }
-            // Prefer the embedded (build-time) template — works regardless
-            // of CWD or install location. Try .j2 first, then .yaml.
-            if let Some(content) = template_file(name) {
-                return Ok(Some(content.to_string()));
-            }
-            if let Some(content) = template_yaml_file(name) {
-                return Ok(Some(content.to_string()));
-            }
+            // Filesystem first — allows J2/YAML edits without recompilation.
             // safe_join rejects any segment starting with '.' or containing '\\',
             // preventing `{% include "../../etc/passwd" %}` path traversal.
             let primary = match safe_template_join(&base, name) {
@@ -232,6 +235,13 @@ pub fn render_minijinja(
                 {
                     return Ok(Some(content));
                 }
+            }
+            // Embedded fallback — for production where registry dir is absent.
+            if let Some(content) = template_file(name) {
+                return Ok(Some(content.to_string()));
+            }
+            if let Some(content) = template_yaml_file(name) {
+                return Ok(Some(content.to_string()));
             }
             Ok(None)
         },
