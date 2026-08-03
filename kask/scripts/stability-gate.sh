@@ -19,6 +19,7 @@ cd "$(dirname "$0")/.."
 TRACE_DIR="${HKASK_TRACE_DIR:-traces}"
 REGRESSIONS_DIR="security/regressions"
 VERBOSE=0
+MUTATION_SCORE_FLOOR="${HKASK_MUTATION_SCORE_FLOOR:-0.50}"
 
 if [[ "${1:-}" == "--verbose" ]]; then
     VERBOSE=1
@@ -215,8 +216,13 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
         # Refuse convergence when metrics are absent — a missing metric is
         # "no signal", not "zero delta". All-zero metrics would otherwise
         # yield norm = 0 < epsilon and spuriously count as converged.
+        # B7: guard BOTH mutation_score AND coverage_pct — without the coverage
+        # guard, convergence silently degrades to 1-axis when cargo-llvm-cov is
+        # absent (5th critic B7).
         if ! metric_present "$run_a" "mutation_score" \
-            || ! metric_present "$run_b" "mutation_score"; then
+            || ! metric_present "$run_b" "mutation_score" \
+            || ! metric_present "$run_a" "coverage_pct" \
+            || ! metric_present "$run_b" "coverage_pct"; then
             continue
         fi
         ms_a=$(read_metric "$run_a" "mutation_score")
@@ -244,7 +250,13 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
         fi
     done
     if [[ $cauchy_count -ge 3 ]]; then
-        converged=1
+        # B5: refuse convergence when mutation_score is below floor —
+        # converging on a suite that kills 0% of mutants is false success.
+        if [[ $(echo "$mutation_score >= $MUTATION_SCORE_FLOOR" | bc 2>/dev/null || echo 0) -eq 1 ]]; then
+            converged=1
+        else
+            echo "convergence blocked: mutation_score $mutation_score < floor $MUTATION_SCORE_FLOOR" >&2
+        fi
     fi
 fi
 
@@ -256,6 +268,10 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
     for i in 0 1 2; do
         run_a="${TRACE_DIR}/${RUN_IDS[$((i+1))]}"
         run_b="${TRACE_DIR}/${RUN_IDS[$i]}"
+        # B6: refuse stall detection when mutation_score is absent.
+        if ! metric_present "$run_a" "mutation_score"             || ! metric_present "$run_b" "mutation_score"; then
+            continue
+        fi
         ms_a=$(read_metric "$run_a" "mutation_score")
         ms_b=$(read_metric "$run_b" "mutation_score")
         cov_a=$(read_metric "$run_a" "coverage_pct")

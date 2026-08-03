@@ -82,11 +82,14 @@ pub struct BundleManifestStep {
     #[serde(default)]
     pub branching_field: Option<String>,
     /// Agent profile required for this step. When present, the executor verifies
-    /// that the `terminal` tool is NOT available before executing the step —
-    /// enforcing proposer/evaluator separation (a proposer with `terminal` can
-    /// evaluate its own tests, a self-confirming loop anti-pattern). The check
-    /// is effect-based (queries `discover_tools`), not name-based, so it catches
-    /// a user who customizes a built-in profile to re-enable `terminal`.
+    /// that the `terminal` tool is NOT available — enforcing proposer/evaluator
+    /// separation (a proposer with `terminal` can evaluate its own tests, a
+    /// self-confirming loop anti-pattern). The check uses a `terminal_check`
+    /// callback (wired by the bridge with `AgentProfileSettings::is_tool_enabled`)
+    /// when available; falls back to `ToolPort::discover_tools()` (MCP tools
+    /// only — won't find built-in `terminal` in production) when the callback
+    /// is absent. Production enforcement requires the bridge to wire the
+    /// callback via `ManifestExecutor::with_terminal_check`.
     /// Example: `profile: ask` (the built-in `ask` profile omits `terminal`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,

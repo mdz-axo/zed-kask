@@ -5,7 +5,6 @@
 //!
 //! Existing items:
 //! - [`arb_json_value`]: recursive JSON value strategy for proptest
-//! - [`NoopToolPort`]: stub `ToolPort` returning NotFound for all invocations
 //! - [`test_token_for_tool`]: deterministic `DelegationToken` fixture for governance tests
 //! - [`test_agent_webid`]: the `delegated_to` WebID for gas-budget seeding
 //!
@@ -13,21 +12,14 @@
 //! - [`Oracle`] trait + [`OracleVerdict`]: three oracle strategies (HarnessLLM)
 //! - [`oracle_hardcoded`] / [`oracle_reference`] / [`oracle_invariant`] / [`oracle_inconclusive`]: constructors
 //! - [`write_trace`] + [`TraceEntry`]: structured trace persistence (explicit trace dir, collision-safe)
+//! - [`arb_delegation_token`] / [`arb_trace_entry`]: proptest generators for governance + trace property tests
 
-use hkask_capability::{
-    DelegationAction, DelegationResource, DelegationToken, ToolFuture, ToolInfo, ToolPort,
-    ToolPortError,
-};
-use hkask_types::template::LLMParameters;
-use hkask_types::{
-    ChatToolDefinition, InferenceError, InferencePort, InferenceResult, NotFound, WebID,
-};
+use hkask_capability::{DelegationAction, DelegationResource, DelegationToken};
+use hkask_types::WebID;
 use proptest::prelude::*;
 use serde_json::Value as JsonValue;
 use std::fs;
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 
 // ── Oracle taxonomy (HarnessLLM §3) ───────────────────────────────────────
 
@@ -302,39 +294,6 @@ pub fn arb_json_value() -> BoxedStrategy<JsonValue> {
     .boxed()
 }
 
-// ── ToolPort stub ────────────────────────────────────────────────────────
-
-/// Stub `ToolPort` that returns `NotFound` for every invocation and
-/// `None`/empty for discovery. Use in tests that need a `ToolPort` fixture
-/// but don't exercise the invoke path.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoopToolPort;
-
-impl ToolPort for NoopToolPort {
-    fn invoke<'a>(
-        &'a self,
-        _server: &'a str,
-        tool: &'a str,
-        _args: JsonValue,
-        _token: &'a DelegationToken,
-    ) -> ToolFuture<'a, Result<JsonValue, ToolPortError>> {
-        Box::pin(async move {
-            Err(ToolPortError::NotFound(NotFound {
-                entity_type: "tool".to_string(),
-                id: tool.to_string(),
-            }))
-        })
-    }
-
-    fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
-        Box::pin(async { Vec::new() })
-    }
-
-    fn get_tool_info<'a>(&'a self, _tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
-        Box::pin(async { None })
-    }
-}
-
 // ── Token fixture ────────────────────────────────────────────────────────
 
 /// Deterministic `DelegationToken` fixture for governance tests.
@@ -358,30 +317,6 @@ pub fn test_token_for_tool(tool_name: &str) -> DelegationToken {
 #[must_use]
 pub fn test_agent_webid() -> WebID {
     WebID::from_persona(b"test-agent")
-}
-
-// ── PanicInferencePort ───────────────────────────────────────────────────
-
-/// `InferencePort` that fails loudly if inference is invoked. Use in tests
-/// that exercise compute-only or tool-only paths and should never call the
-/// LLM. Unlike a silent noop, this returns an error so the test fails instead
-/// of silently passing by skipping the inference path.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PanicInferencePort;
-
-impl InferencePort for PanicInferencePort {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &LLMParameters,
-        _tools: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        Box::pin(async {
-            Err(InferenceError::Generation(
-                "PanicInferencePort: inference was called in a test that should not invoke LLM inference".into(),
-            ))
-        })
-    }
 }
 
 // ── Proptest generators ─────────────────────────────────────────────────
@@ -446,7 +381,7 @@ pub fn arb_trace_entry() -> BoxedStrategy<TraceEntry> {
         .prop_map(
             |(kind, name, result, duration_ms, shrunk, oracle_type, metadata)| TraceEntry {
                 kind: kind.to_string(),
-                name: name.to_string(),
+                name,
                 result: result.to_string(),
                 duration_ms,
                 shrunk_counterexample: shrunk,

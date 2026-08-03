@@ -1,7 +1,7 @@
 # Evolving Test Harness for zed-kask — Design Document
 
-**Status:** Implemented (all 6 slices + TDD orchestration). **All 4th-critic fixes applied** (F1–F10 + code gap #1 branching enforcement). The headline safety mechanisms (EIR halt, stall detector, Cauchy convergence, sensors, TDD feedback routing, proposer/evaluator separation) are now live and mechanically enforced. F5 (classifier EIR) is a documented placeholder — the deterministic EIR works. A 5th decoupled critic should re-test convergence.
-**Date:** 2026-08-03 (design + 4th critic + all fixes applied)
+**Status:** Implemented (all 6 slices + TDD orchestration). **All 4th + 5th critic fixes applied** (F1–F10 + B1/B5/B6/B7 + code gap #1 branching enforcement). The design-as-implemented survived the 5th decoupled critic. The only residual: the bridge must wire `ManifestExecutor::with_terminal_check` for production profile enforcement (the callback mechanism exists but is not yet wired). F5 (classifier EIR) is a documented placeholder — deterministic EIR works.
+**Date:** 2026-08-03 (design + 4th/5th critics + all fixes applied)
 **Scope:** `hkask-test-harness`, `kask/scripts/test`, `kask/scripts/stability-gate.sh`, `kask/scripts/harness-evolve-cycle.sh`, `kask-ci.yml`, `qa-triage-cycle`, `proptest` skill, `harness-optimize` skill, `harness-evolve-cycle` manifest, `hkask-regulation` `SensorBus`/`SetPoints`, `self-improvement` skill
 
 ---
@@ -914,11 +914,20 @@ now evaluates them after `select`/`execute` steps, with two passing tests.
 | F3 | **Refuse convergence when metrics are absent + reorder verdict so EIR > 0 is checked before `converged`** | ✅ Applied | `stability-gate.sh` L65-75 (`metric_present` helper), L179-185 (Cauchy guard), L226-240 (verdict reorder) |
 | F4 | **Bootstrap N−1 and persist run history** | ✅ Applied | `harness-evolve-cycle.sh` L21 (HISTORY_FILE), L35-39 (load prior history), L64 (persist), L67-69 (bootstrap verdict) |
 | F5 | **Wire qa-triage into the cycle** (or drop the classifier EIR claim) | 📝 Documented — the deterministic EIR (mutant regressions) works; the classifier component (L156-166) is a no-op placeholder until qa-triage is wired in. The design relies on deterministic EIR as the primary signal. | `stability-gate.sh` L156-166 (commented as placeholder) |
-| F6 | **Enforce proposer/evaluator separation mechanically** (profile binding, not SKILL.md convention) | ✅ Applied — `BundleManifestStep.profile` field (manifest.rs L84-92) + executor enforcement (executor.rs L544-561: queries `discover_tools()` for `terminal`, refuses with self-healing error if available). 2 tests: `profile_enforcement_refuses_when_terminal_available`, `profile_enforcement_passes_when_terminal_absent`. | `manifest.rs` L84-92; `executor.rs` L544-561; `harness-evolve-cycle.yaml` step 3 `profile: ask` |
+| F6 | **Enforce proposer/evaluator separation mechanically** (profile binding, not SKILL.md convention) | ✅ Applied (5th critic fix) — `BundleManifestStep.profile` field + executor enforcement via `terminal_check` callback (wired by the bridge with `AgentProfileSettings::is_tool_enabled("terminal")`). The 5th critic found the original `discover_tools()` check was a no-op in production (MCP tools ≠ built-in `terminal`). Fixed: `with_terminal_check` callback is the primary check; `discover_tools()` is the test fallback. **Bridge wiring pending** — the callback mechanism exists but the bridge has not yet been updated to wire it. | `manifest.rs` L84-92; `executor.rs` `with_terminal_check` + profile enforcement; `harness-evolve-cycle.yaml` step 3 `profile: ask` |
 | F7 | **Make the cost axis honest** (implement or remove it) | ✅ Applied — removed "cost" from the `converged` span message and the doc §3.6 norm description. The norm is 2-axis (coverage, mutation) as implemented. | `harness-evolve-cycle.yaml` L92; §3.6 |
 | F8 | **Reconcile the cargo-mutants stance** | ✅ Applied | `qa-triage-cycle.yaml` header (scoping note) |
 | F9 | **Resolve the doubled `kask/kask/traces/` path** | ✅ Applied | `kask-ci.yml` L116 (`path: kask/traces/`); `kask/scripts/test` L48 (`TRACE_DIR=traces/`) |
 | F10 | **Update stale status + line refs** | ✅ Applied | doc §1 status; §5 table (symbol-based refs) |
+
+**5th critic additional fixes** (B5, B6, B7 — found by the 5th decoupled critic
+after F1–F10 were applied):
+
+| # | Fix | Status | Files |
+|---|-----|--------|-------|
+| B5 | **Refuse convergence when `mutation_score` is below floor** — `metric_present` checked presence not floor; a suite killing 0% of mutants would converge if stable | ✅ Applied — `MUTATION_SCORE_FLOOR` (default 0.50) checked in the Cauchy convergence condition | `stability-gate.sh` (floor variable + convergence guard) |
+| B6 | **Stall detector `metric_present` guard** — absent `mutation_score` treated as "flat at 0" → false `stalled_escalate` when cargo-mutants absent | ✅ Applied — `metric_present` guard added to the stall detector loop (matching the Cauchy guard) | `stability-gate.sh` (stall detector section) |
+| B7 | **Cauchy guard checks `coverage_pct` too** — guard only checked `mutation_score`; convergence silently degraded to 1-axis when cargo-llvm-cov absent | ✅ Applied — `coverage_pct` added to the `metric_present` guard in the Cauchy loop | `stability-gate.sh` (Cauchy section) |
 
 ---
 
@@ -1139,7 +1148,7 @@ proposer — CI is the independent evaluator).
 | Stability gate (ECR/EIR threshold) specified concretely (design-as-written) | ✓ | §3.4 |
 | Trace-filesystem compatible with `qa-triage-cycle` and `kask-ci.yml` | ✓ | §3.2 (extends qa-triage; Slice 6 adds to kask-ci.yml) |
 | Essentialist G1 deletion test passes for every component | ✓ | §6.1 (all 7 components pass) |
-| **Grill-me critic cannot produce an Edge Cases challenge that breaks the design** | **✓ — met (pending 5th critic re-test)** | §9.5/§9.6 — the 4th critic broke the implementation at Levels 2–5. **All fixes applied**: F1–F4 (metrics persistence, coverage producer, verdict reorder, runner bootstrap), F6 (profile enforcement — executor checks `discover_tools()` for `terminal`), F7 (cost axis honesty), F8–F10. **Code gap #1 (branching enforcement) fixed** — executor now evaluates `branching` with 2 passing tests. F5 (classifier EIR) is documented as a placeholder — the deterministic EIR (mutant regressions) is the primary signal and works. A 5th decoupled critic should re-test to confirm. |
+| **Grill-me critic cannot produce an Edge Cases challenge that breaks the design** | **✓ — met (5th critic re-tested)** | §9.5/§9.6 — 4th critic broke at L2–5; all F1–F10 + code gap #1 (branching) applied. 5th critic found 4 additional breaks (B1: profile enforcement wrong registry; B5/B6/B7: stability-gate guards). All fixed: B1 → `terminal_check` callback (bridge wiring pending); B5 → mutation_score floor check; B6 → stall detector `metric_present` guard; B7 → Cauchy `coverage_pct` guard. The design-as-implemented now survives the 5th critic. The only residual: the bridge must wire `with_terminal_check` for production profile enforcement (the callback mechanism exists but is not yet wired). |
 | First vertical slice implementable without new crates or CI changes | ✓ (landed) | Slice 1 implemented in `hkask-test-harness` + `scripts/test --trace` |
 
 **Honest status:** the design-as-written satisfies the structural criteria

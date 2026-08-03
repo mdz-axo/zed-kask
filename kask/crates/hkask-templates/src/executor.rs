@@ -154,6 +154,15 @@ pub struct ManifestExecutor {
     /// `with_provenance` by the bridge when the manifest was loaded from
     /// the filesystem.
     provenance: hkask_types::Provenance,
+    /// Optional callback to check if the `terminal` built-in tool is enabled
+    /// for the current agent profile. Wired by the bridge with
+    /// `AgentProfileSettings::is_tool_enabled("terminal")`. When present,
+    /// profile enforcement uses this (the correct check — `terminal` is a
+    /// built-in agent tool, not an MCP tool, so `discover_tools()` won't find
+    /// it in production). When absent (unit tests), falls back to
+    /// `ToolPort::discover_tools()` (which works with test stubs that
+    /// advertise `terminal`).
+    terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl ManifestExecutor {
@@ -181,6 +190,7 @@ impl ManifestExecutor {
             runtime_policy: None,
             taint_labels: Arc::new(std::sync::Mutex::new(HashMap::new())),
             provenance: hkask_types::Provenance::Embedded,
+            terminal_check: None,
         }
     }
 
@@ -190,6 +200,19 @@ impl ManifestExecutor {
     /// `tracing::warn!` when high-risk actions execute from filesystem manifests.
     pub fn with_provenance(mut self, provenance: hkask_types::Provenance) -> Self {
         self.provenance = provenance;
+        self
+    }
+
+    /// Wire a callback that checks whether the `terminal` built-in tool is
+    /// enabled for the current agent profile. Used by the bridge to enforce
+    /// proposer/evaluator separation (F6) — `terminal` is a built-in agent
+    /// tool, not an MCP tool, so `discover_tools()` cannot detect it in
+    /// production. The bridge wires this with
+    /// `AgentProfileSettings::is_tool_enabled("terminal")`. When absent,
+    /// profile enforcement falls back to `discover_tools()` (MCP tools only).
+    #[must_use]
+    pub fn with_terminal_check(mut self, check: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.terminal_check = Some(check);
         self
     }
 
@@ -550,8 +573,18 @@ impl ManifestExecutor {
                 // profile to re-enable `terminal`. See .rules "Advertised
                 // invariants need enforcement points".
                 if let Some(ref profile_name) = step.profile {
-                    let available = self.tools.discover_tools().await;
-                    if available.iter().any(|t| t == "terminal") {
+                    let terminal_available = match &self.terminal_check {
+                        Some(check) => check(),
+                        None => {
+                            // Fallback: discover_tools() returns MCP tools only.
+                            // In production, `terminal` is a built-in agent tool
+                            // and won't be found here — the bridge must wire
+                            // `with_terminal_check` for production enforcement.
+                            let available = self.tools.discover_tools().await;
+                            available.iter().any(|t| t == "terminal")
+                        }
+                    };
+                    if terminal_available {
                         return Err(TemplateError::Manifest(format!(
                             "Step {} declares profile '{}' but the `terminal` tool is available. \
                              This violates proposer/evaluator separation — a proposer with terminal \
