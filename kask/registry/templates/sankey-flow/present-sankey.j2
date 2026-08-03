@@ -3,12 +3,10 @@
    The output is stored as step_N_result (Value::String) and becomes the cascade's
    final output via extract_final_step_result (highest ordinal).
 
-   The write step (step 6) produces {output_path, markdown} where markdown contains
-   the fenced ```mermaid block. Without this render step, extract_final_step_result
-   picks step_6_result — a JSON object — and the model must discover and extract the
-   markdown field. This render step flattens it to a raw string so the model sees the
-   mermaid block directly and reproduces it in its assistant message, which acp_thread
-   renders. #}
+   The adapt step (step 2) produces {mermaid_source, markdown, output_path} where
+   markdown contains the fenced ```mermaid block. This render step flattens the
+   markdown to a raw string so the model sees the mermaid block directly and
+   reproduces it in its assistant message. Deterministic (no LLM call). #}
 {{ markdown }}
 
 ---

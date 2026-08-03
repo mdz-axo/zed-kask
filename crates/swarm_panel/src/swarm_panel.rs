@@ -137,7 +137,7 @@ fn steer_system_prompt(
          **Local tools** (`mode: local`): `swarm_list_local_agents`, \
          `swarm_balance_local`, `swarm_local_history`, `swarm_fund_local`, \
          `swarm_delegate_local`, `swarm_fanout_local`, \
-         `swarm_pipeline_local` (sequential pipeline with {prev_output} \
+         `swarm_pipeline_local` (sequential pipeline with {{prev_output}} \
          substitution), `swarm_clone_to_local`, `swarm_remove_local`, \
          `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, \
          `swarm_push_to_cloud`. These run on the local \

@@ -1,73 +1,61 @@
 # Sankey Flow Process Manifest
-# hKask v0.31.0 — Dynamic, template-driven Sankey diagramming
+# hKask v0.31.0 — Example-anchored Sankey diagramming
 # Anchored in PKO (Procedural Knowledge Ontology), PROV-O, FIBO, Mermaid sankey-beta
 # Canonical references: Schmidt (2008) J. Industrial Ecology 12(1):82–94, 12(2):173–185
 #
-# PDCA cycle:
-#   1. CLASSIFY  — determine flow domain, conservation mode, ontology anchor
-#   2. GATHER    — interrogation loop OR research delegation (Path A / Path B)
-#   3. DRAFT     — render sankey-beta CSV with front-matter config
-#   4. EVALUATE  — score against four weighted criteria (data integrity hard-fail)
-#   5. CONVERGE  — check threshold; loop to DRAFT with directives if needed
-#   6. WRITE     — finalize into docs/diagrams/sankey-{domain}-{subject}.md
-#   7. LOOP      — PDCA re-entry if unconverged
+# Architecture: example-anchored match-adapt-render
+#   1. MATCH  — classify domain + match against canonical example library + extract user data
+#   2. ADAPT  — fill user data into matched example structure, render Mermaid + markdown
+#   3. RENDER — deterministic Jinja2 render to surface the markdown (no LLM call)
+#
+# The old 7-step PDCA loop (classify → gather → draft → evaluate → converge → loop → write)
+# was overengineered: it made up to 21 LLM calls and never converged because the evaluate
+# step kept flagging intentional design choices (e.g., non-conserving loss-making income
+# statements) as quality gaps. The example-anchored approach converges in 2 LLM calls
+# because the adapt step self-corrects against the matched example's structure in a
+# single pass, rather than iterating through an abstract quality scoring loop.
 #
 # Ontological grounding:
 #   A Sankey is a visualization of a PKO Procedure — nodes are Steps, edges are
 #   nextStep flows, weights are StepExecution quantities, conservation is
-#   StepVerification, interrogation questions are UserQuestionOccurrence,
-#   refinement directives are UserFeedbackOccurrence, weight sources are
-#   prov:wasDerivedFrom. State axis: output is a bibo:Document, Mermaid source
-#   is a dcterms:Dataset. Domain supplements: FIBO for financial domains.
-#
-# Composition / delegation:
-#   Step 2 (GATHER) may delegate to other skills via template_ref cross-refs:
-#     - structured-extraction/identify-entities  (Path B: document source)
-#     - sequential-inquiry/reasoning-engine       (Path B: ambiguous source)
-#     - graph-audit/graph-audit-code              (Path B: codebase source)
-#   Delegation is conditional on the classify step's `source_ref` field.
-#   When source_ref is empty, Path A (direct interrogation) runs in-skill.
+#   StepVerification. Weight sources are prov:wasDerivedFrom.
+#   State axis: output is a bibo:Document, Mermaid source is a dcterms:Dataset.
+#   Domain supplements: FIBO for financial domains.
 
 manifest:
   id: sankey-flow
   category: skill
   name: Sankey Flow
   description: >
-    Dynamic Sankey flow diagramming. Takes a natural-language prompt, classifies
-    which flow domain is most relevant (process, data-pipeline, resource-allocation,
-    user-journey, energy-material, decision-funnel, value-stream, cost-breakdown,
-    conversion, system-architecture), gathers the quantities needed to draw
-    weighted flows via direct interrogation or research delegation, and renders a
-    Mermaid sankey-beta diagram that renders natively in Zed. Anchors flows to
-    PKO (a Sankey is a visualization of a PKO Procedure). Per-domain conservation
-    modes (mandatory/asserted/none). Hard rule: never fabricate weights —
-    data-integrity=1.0 forces DIVERGED. Convergent PDCA, threshold 0.15, max 3
-    iterations.
+    Dynamic Sankey flow diagramming. Takes a natural-language prompt, matches it
+    against a library of canonical Sankey examples (income statement, budget,
+    data pipeline, funnel, balance sheet, process flow), adapts the matched
+    example's structure to the user's actual data, and renders a Mermaid
+    sankey-beta diagram that renders natively in Zed. Anchors flows to PKO
+    (a Sankey is a visualization of a PKO Procedure). Per-domain conservation
+    modes (mandatory/asserted/none). Hard rule: never fabricate weights.
+    Example-anchored convergence: the adapt step self-corrects against the
+    matched example's structure in a single pass — no multi-iteration PDCA loop.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 
 convergence:
-  convergence_mode: "cauchy"
-  cauchy_epsilon: 0.03
-  cauchy_window: 3
-  max_iterations: 10
-  min_iterations: 2
+  convergence_mode: "fixed"
+  max_iterations: 1
   on_not_reached: escalate
-  target_artifacts_field: "current_artifacts"
 
 gas:
-  # Slightly higher than diataxis-diagram (60000) because Path B delegation
-  # spawns sub-skills whose gas is drawn from this cap. Reserve covers one
-  # delegated extraction call (~8000) plus the in-skill PDCA loop.
-  cap: 70000
+  # 2 LLM calls (match + adapt) + 1 deterministic render. Much lower than the
+  # old 7-step PDCA loop (up to 21 LLM calls).
+  cap: 20000
   cost_per_iteration: 100
   alert_threshold: 0.8
   hard_limit: true
 
 rjoule:
-  cap: 2
+  cap: 1
   alert_threshold: 0.8
   hard_limit: true
 
@@ -80,18 +68,8 @@ inputs:
     type: string
     description: >
       Optional reference to an external source (URL, file path, crate path).
-      When present, the gather step takes Path B (research delegation) instead
-      of Path A (direct interrogation). Populated by the agent between step 1
-      (classify) and step 2 (gather) if the classify step identifies a source.
-    required: false
-  - name: extracted_spec
-    type: string
-    description: >
-      Pre-extracted Sankey spec (nodes + weighted edges) from a delegated
-      extraction skill. Populated by the agent between step 2 (gather) and
-      step 3 (draft) when Path B delegation returns. Optional — if not
-      provided, the gather template outputs interrogation questions (Path A)
-      or extraction guidance (Path B) for the agent to act on.
+      When present, the match step notes it and the adapt step includes it in
+      data source provenance.
     required: false
   - name: hint
     type: string
@@ -102,14 +80,15 @@ steps:
   - ordinal: 1
     action: select
     description: >
-      CLASSIFY the prompt against the 10-domain flow catalog. Produce a
-      classification verdict: chosen domain, rationale, weight unit,
-      conservation mode (mandatory/asserted/none), ontology anchor (PKO, FIBO),
-      candidate node set, candidate edge set, and source_ref if the prompt
-      references an external source. If the prompt spans two domains, classify
-      both and plan two diagrams.
+      MATCH the prompt against the canonical example library. Classify the
+      domain, find the closest structural example (income statement, budget,
+      data pipeline, funnel, balance sheet, process flow), and extract the
+      user's actual nodes, edges, and weights in a single pass. If data is
+      missing, mark weights as 1 (placeholder) and note it — do NOT interrogate
+      the user. For income statements with losses, negative profits flow into
+      the Total Revenue node as sources (Revenue + |Loss| = Total Expenses).
     renderer: minijinja
-    template_ref: sankey-flow/sankey-classify
+    template_ref: sankey-flow/sankey-match
     gas_cap: 4096
     timeout_seconds: 60
     input_mapping:
@@ -119,151 +98,44 @@ steps:
   - ordinal: 2
     action: select
     description: >
-      GATHER — compute the spec gap and either run the interrogation loop
-      (Path A, no source) or delegate extraction (Path B, source present).
-
-      Path A (direct interrogation): compute which of {nodes, edges, weights,
-      conservation} are missing/partial. Prioritize by blocking power
-      (nodes > edges > weights > conservation). Batch ≤ 5 constrained-answer
-      questions. State default assumptions and ask for confirmation. Hard rule:
-      never fabricate weights — mark unknowns as value=1 (unitless placeholder).
-
-      Path B (research delegation): delegate to structured-extraction (document
-      source), sequential-inquiry (ambiguous source), or graph-audit code mode
-      (codebase source) with a schema matching the Sankey spec. After delegation,
-      validate the extracted spec and fall back to Path A for any remaining gaps.
-
-      If extracted_spec is pre-populated, validate completeness and skip gather.
+      ADAPT the user's data into the matched example's structure. Verify
+      structure against the example (node count, edge pattern, conservation
+      mode). Render the Mermaid sankey-beta CSV with front-matter config. Wrap
+      in a markdown document with description, conservation check, data
+      sources with PROV-O provenance, and references. Single pass — no
+      iteration, no quality scoring loop. Self-correct against the example
+      structure if the draft deviates.
     renderer: minijinja
-    template_ref: sankey-flow/sankey-gather
-    gas_cap: 6144
-    timeout_seconds: 120
-    input_mapping:
-      domain: "{{ step_1_result.domain }}"
-      conservation_mode: "{{ step_1_result.conservation_mode }}"
-      ontology_anchor: "{{ step_1_result.ontology_anchor | default('PKO') }}"
-      candidate_nodes: "{{ step_1_result.candidate_nodes | default([]) }}"
-      candidate_edges: "{{ step_1_result.candidate_edges | default([]) }}"
-      source_ref: "{{ source_ref | default(step_1_result.source_ref | default('')) }}"
-      extracted_spec: "{{ extracted_spec | default('') }}"
-
-  - ordinal: 3
-    action: select
-    description: >
-      DRAFT the Sankey — convert gathered nodes and weighted edges into
-      sankey-beta CSV (source,target,value per row). Apply conventions: title
-      case labels ≤ 30 chars, sources before targets in CSV ordering, front-
-      matter config block (width/height/showValues/linkColor), blank CSV lines
-      to group stages. For mandatory-conservation domains, verify inflow=outflow
-      at every internal node before drafting; flag discrepancies in the
-      description rather than silently balancing. For none-conservation domains,
-      do not add loss branches to "balance" the flow. Accepts refinement
-      directives from the evaluate step for iterative improvement.
-    renderer: minijinja
-    template_ref: sankey-flow/sankey-draft
+    template_ref: sankey-flow/sankey-adapt
     gas_cap: 8192
     timeout_seconds: 60
     input_mapping:
       domain: "{{ step_1_result.domain }}"
+      matched_example: "{{ step_1_result.matched_example }}"
       conservation_mode: "{{ step_1_result.conservation_mode }}"
-      ontology_anchor: "{{ step_1_result.ontology_anchor | default('PKO') }}"
+      ontology_anchor: "{{ step_1_result.ontology_anchor }}"
       weight_unit: "{{ step_1_result.weight_unit }}"
-      nodes: "{{ step_2_result.nodes | default([]) }}"
-      edges: "{{ step_2_result.edges | default([]) }}"
-      refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
-      gather_notes: "{{ step_2_result.gather_notes | default('') }}"
+      subject: "{{ step_1_result.subject }}"
+      nodes: "{{ step_1_result.nodes | default([]) }}"
+      edges: "{{ step_1_result.edges | default([]) }}"
+      source_ref: "{{ source_ref | default(step_1_result.source_ref | default('')) }}"
+      match_notes: "{{ step_1_result.match_notes | default('') }}"
 
-  - ordinal: 4
-    action: select
-    description: >
-      EVALUATE the draft against four weighted criteria: node completeness
-      (0.30), edge fidelity (0.25), data integrity (0.35), readability (0.10).
-      Data integrity subsumes weight provenance and conservation honesty — a
-      fabricated weight scores 1.0 (hard failure forcing DIVERGED), silent
-      conservation "balancing" in mandatory domains scores > 0, missing
-      provenance for a weight scores 0.5. Produces specific, actionable
-      refinement directives for criteria above 0.00.
-    renderer: minijinja
-    template_ref: sankey-flow/sankey-evaluate
-    gas_cap: 6144
-    timeout_seconds: 60
-    input_mapping:
-      domain: "{{ step_1_result.domain }}"
-      conservation_mode: "{{ step_1_result.conservation_mode }}"
-      mermaid_source: "{{ step_3_result.mermaid_source }}"
-      nodes: "{{ step_2_result.nodes | default([]) }}"
-      edges: "{{ step_2_result.edges | default([]) }}"
-      gather_notes: "{{ step_2_result.gather_notes | default('') }}"
-
-  - ordinal: 5
-    action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 6
-    action: select
-    description: >
-      WRITE the diagram to docs/diagrams/sankey-{domain}-{subject}.md. Wraps
-      the sankey-beta source in a code block, adds a description paragraph
-      stating domain, weight unit, conservation mode, PKO anchoring, any
-      abbreviations, any unweighted-placeholder edges, any conservation
-      discrepancies. Includes a Data sources section with PROV-O provenance
-      (prov:wasDerivedFrom) per weight, and a References section citing
-      canonical Sankey resources (Schmidt 2008, FIBO, PROV-O, PKO) when relevant.
-    renderer: minijinja
-    template_ref: sankey-flow/sankey-write
-    gas_cap: 4096
-    timeout_seconds: 60
-    input_mapping:
-      domain: "{{ step_1_result.domain }}"
-      conservation_mode: "{{ step_1_result.conservation_mode }}"
-      ontology_anchor: "{{ step_1_result.ontology_anchor | default('PKO') }}"
-      weight_unit: "{{ step_1_result.weight_unit }}"
-      mermaid_source: "{{ step_3_result.mermaid_source }}"
-      subject: "{{ step_1_result.subject | default(step_1_result.domain) }}"
-      node_count: "{{ step_3_result.node_count | default(0) }}"
-      edge_count: "{{ step_3_result.edge_count | default(0) }}"
-      evaluation_result: "{{ step_4_result }}"
-      gather_notes: "{{ step_2_result.gather_notes | default('') }}"
-
-  - ordinal: 7
+  - ordinal: 3
     action: render
     description: >
-      SURFACE the finalized Sankey markdown (containing the fenced ```mermaid
-      block) as the cascade's final output. The write step (step 6) produces
-      {output_path, markdown}; without this render step, extract_final_step_result
-      returns that JSON object and the model must discover the markdown field.
-      This render step flattens it to a raw markdown string so the model sees the
-      mermaid block directly and reproduces it in its assistant message, which
-      acp_thread renders. The render action is deterministic (no LLM call).
+      SURFACE the finalized Sankey markdown as the cascade's final output.
+      The adapt step produces {mermaid_source, markdown, output_path}; this
+      render step flattens the markdown to a raw string so the model sees the
+      mermaid block directly and reproduces it in its assistant message.
+      Deterministic (no LLM call).
     renderer: minijinja
     template_ref: sankey-flow/present-sankey
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      markdown: "{{ step_6_result.markdown }}"
-      output_path: "{{ step_6_result.output_path }}"
-
-  - ordinal: 8
-    action: loop
-    description: >
-      If convergence not met (metric > 0.15) and refinement directives exist,
-      loop back to DRAFT (step 3) with those directives as focused improvement
-      targets. Each iteration narrows the gap. If data_integrity = 1.0, do NOT
-      loop — escalate to re-gather (the fabrication cannot be refined away).
-    input_mapping:
-      loop_target: "{{ 3 }}"
-      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
+      markdown: "{{ step_2_result.markdown }}"
+      output_path: "{{ step_2_result.output_path }}"
 
 error_handling:
   on_gas_exceeded: abort
