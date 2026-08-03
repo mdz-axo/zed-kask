@@ -1,18 +1,30 @@
-//! Media router — fal.ai/DeepInfra media generation only.
+//! Media router — pluggable multi-provider media generation.
 //!
 //! In zed-kask, chat inference routes through the zed IPC bridge
 //! (`InferenceIpcClient` → `LanguageModelRegistry`). This router handles only
-//! media generation (image/video/speech/transcription) via fal.ai and DeepInfra
-//! backends — capabilities not covered by zed's `LanguageModel` abstraction.
+//! media generation (image/video/speech/transcription) via the
+//! [`ProviderRegistry`] — capabilities not covered by zed's `LanguageModel`
+//! (chat-completions-only) abstraction.
 //!
 //! The `InferencePort` impl returns clear errors for chat/vision/embed/list_models
 //! — those are the IPC bridge's responsibility. The `InferenceIpcServer` holds a
 //! `MediaRouter` as its `media_router` and dispatches `media_generate` requests
 //! to it.
+//!
+//! Media is routed to zed via the IPC bridge, but terminates here (the hKask
+//! `MediaRouter`) rather than zed's `LanguageModelRegistry`, because media
+//! generation uses non-chat APIs (fal.ai queue/run + app-id routing; DeepInfra
+//! inference/tts/transcription with binary returns) that `LanguageModel`
+//! cannot represent. If zed later adds a media trait to its registry, this
+//! terminal can delegate to it instead — until then the providers live here.
+//! Adding a provider = implement [`crate::provider::MediaProvider`] + register
+//! in [`MediaRouter::new`]; no dispatch edits.
 
 use crate::config::InferenceConfig;
 use crate::deepinfra_backend::DeepInfraBackend;
 use crate::fal_backend::FalBackend;
+use crate::fal_workflow::WorkflowResult;
+use crate::provider::{MediaOp, MediaProvider, ProviderRegistry};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, EmbedFuture, InferenceError, InferencePort, InferenceResult,
@@ -22,22 +34,32 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Media generation router — fal.ai + DeepInfra backends only.
+/// Media generation router — a pluggable provider registry.
 ///
-/// Constructed from `InferenceConfig::from_env()`. Backends are created lazily:
-/// a backend is only `Some` if its API key is present. Media methods that need
-/// a missing backend return a clear `Connection` error.
+/// Constructed from `InferenceConfig::from_env()`. Providers are created
+/// lazily: a provider is only registered if its API key is present. Media
+/// methods that find no supporting provider return a clear `Connection`
+/// error. The registry order encodes the preference policy: DeepInfra first
+/// (cheapest for background removal / TTS / STT, with fal.ai fallback),
+/// fal.ai for everything else.
 pub struct MediaRouter {
-    fal: Option<FalBackend>,
-    deepinfra: Option<DeepInfraBackend>,
+    registry: ProviderRegistry,
 }
 
 impl MediaRouter {
     /// Build the media router from an `InferenceConfig`.
     ///
-    /// Constructs backends lazily — a backend is only created if its
-    /// configuration is valid (non-empty API key). A `None` backend is
-    /// rejected by the media method that needs it with a clear error.
+    /// Constructs providers lazily — a provider is only created if its
+    /// configuration is valid (non-empty API key). Providers that fail to
+    /// construct are not registered and emit a `reg.inference` warn. The
+    /// registry order is DeepInfra-first so the runtime fallback preserves
+    /// the prior DeepInfra-first / fal-fallback policy for the three shared
+    /// ops (remove_background, generate_speech, transcribe).
+    ///
+    /// expect: "The system creates provider membranes requiring valid API keys"
+    /// \[P4\] Motivating: Clear Boundaries — providers registered only with valid keys
+    /// pre:  none (reads config)
+    /// post: returns MediaRouter whose registry holds all constructible providers
     #[must_use]
     pub fn new(config: InferenceConfig) -> Self {
         let shared_client = config
@@ -46,24 +68,43 @@ impl MediaRouter {
             .map_err(|e| tracing::warn!(target: "reg.inference", "HTTP client build failed: {}", e))
             .ok();
 
-        let fal = shared_client
-            .as_ref()
-            .and_then(|c| FalBackend::new(&config, Arc::clone(c)).ok());
-        let deepinfra = shared_client
-            .as_ref()
-            .and_then(|c| DeepInfraBackend::new(&config, Arc::clone(c)).ok());
+        let mut providers: Vec<Arc<dyn MediaProvider>> = Vec::new();
 
-        if fal.is_none() {
-            tracing::warn!(target: "reg.inference", "fal.ai backend unavailable (no API key) — media generation disabled");
-        }
-        if deepinfra.is_none() {
-            tracing::warn!(target: "reg.inference", "DeepInfra backend unavailable (no API key) — speech/transcription fallback disabled");
+        if let Some(client) = &shared_client {
+            // DeepInfra first: preferred for remove_background / speech /
+            // transcribe (cheapest). Registered before fal.ai so the registry
+            // tries it first and falls back to fal.ai on runtime error.
+            match DeepInfraBackend::new(&config, Arc::clone(client)) {
+                Ok(di) => providers.push(Arc::new(di)),
+                Err(_) => tracing::warn!(
+                    target: "reg.inference",
+                    "DeepInfra backend unavailable (no API key) — \
+                     speech/transcription fallback disabled"
+                ),
+            }
+            match FalBackend::new(&config, Arc::clone(client)) {
+                Ok(fal) => providers.push(Arc::new(fal)),
+                Err(_) => tracing::warn!(
+                    target: "reg.inference",
+                    "fal.ai backend unavailable (no API key) — media generation disabled"
+                ),
+            }
         }
 
-        Self { fal, deepinfra }
+        if providers.is_empty() {
+            tracing::warn!(
+                target: "reg.inference",
+                "no media providers configured — all media generation will fail \
+                 (set FALAI_API_KEY and/or DEEPINFRA_API_KEY)"
+            );
+        }
+
+        Self {
+            registry: ProviderRegistry::new(providers),
+        }
     }
 
-    /// Generate an image from a text prompt via fal.ai.
+    /// Generate an image from a text prompt.
     #[must_use = "result must be used"]
     pub async fn generate_image(
         &self,
@@ -71,13 +112,16 @@ impl MediaRouter {
         image_size: Option<&str>,
         num_images: Option<u32>,
     ) -> Result<serde_json::Value, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend unavailable for image generation".into())
-        })?;
-        backend.generate_image(prompt, image_size, num_images).await
+        let params = MediaGenerateParams {
+            prompt: Some(prompt.to_string()),
+            size: image_size.map(|s| s.to_string()),
+            count: num_images,
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::GenerateImage, &params).await
     }
 
-    /// Transform an existing image with a prompt (image-to-image) via fal.ai.
+    /// Transform an existing image with a prompt (image-to-image).
     #[must_use = "result must be used"]
     pub async fn image_to_image(
         &self,
@@ -85,10 +129,13 @@ impl MediaRouter {
         prompt: &str,
         strength: Option<f32>,
     ) -> Result<serde_json::Value, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend unavailable for image-to-image".into())
-        })?;
-        backend.image_to_image(image_url, prompt, strength).await
+        let params = MediaGenerateParams {
+            image_url: Some(image_url.to_string()),
+            prompt: Some(prompt.to_string()),
+            strength,
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::ImageToImage, &params).await
     }
 
     /// Remove background from an image. DeepInfra first (cheapest), fal.ai fallback.
@@ -97,51 +144,46 @@ impl MediaRouter {
         &self,
         image_url: &str,
     ) -> Result<serde_json::Value, InferenceError> {
-        if let Some(ref di) = self.deepinfra {
-            match di.remove_background(image_url).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.inference",
-                        error = %e,
-                        "DeepInfra background removal failed, falling back to fal.ai"
-                    );
-                }
-            }
-        }
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("No backend available for background removal".into())
-        })?;
-        backend.remove_background(image_url).await
+        let params = MediaGenerateParams {
+            image_url: Some(image_url.to_string()),
+            ..Default::default()
+        };
+        self.registry
+            .execute(MediaOp::RemoveBackground, &params)
+            .await
     }
 
-    /// Upscale an image via fal.ai SeedVR2.
+    /// Upscale an image.
     #[must_use = "result must be used"]
     pub async fn upscale(
         &self,
         image_url: &str,
         scale: Option<u32>,
     ) -> Result<serde_json::Value, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend unavailable for upscaling".into())
-        })?;
-        backend.upscale(image_url, scale).await
+        let params = MediaGenerateParams {
+            image_url: Some(image_url.to_string()),
+            scale,
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::Upscale, &params).await
     }
 
-    /// Generate a video from a text prompt via fal.ai.
+    /// Generate a video from a text prompt.
     #[must_use = "result must be used"]
     pub async fn generate_video(
         &self,
         prompt: &str,
         duration: Option<f32>,
     ) -> Result<serde_json::Value, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend unavailable for video generation".into())
-        })?;
-        backend.generate_video(prompt, duration).await
+        let params = MediaGenerateParams {
+            prompt: Some(prompt.to_string()),
+            duration,
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::GenerateVideo, &params).await
     }
 
-    /// Animate a still image into a video via fal.ai Seedance.
+    /// Animate a still image into a video.
     #[must_use = "result must be used"]
     pub async fn image_to_video(
         &self,
@@ -149,10 +191,13 @@ impl MediaRouter {
         prompt: Option<&str>,
         duration: Option<f32>,
     ) -> Result<serde_json::Value, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend unavailable for image-to-video".into())
-        })?;
-        backend.image_to_video(image_url, prompt, duration).await
+        let params = MediaGenerateParams {
+            image_url: Some(image_url.to_string()),
+            prompt: prompt.map(|p| p.to_string()),
+            duration,
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::ImageToVideo, &params).await
     }
 
     /// Generate speech from text. DeepInfra first, fal.ai fallback.
@@ -162,35 +207,29 @@ impl MediaRouter {
         text: &str,
         voice: &str,
     ) -> Result<serde_json::Value, InferenceError> {
-        if let Some(ref di) = self.deepinfra {
-            match di.generate_speech(text, voice, None).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.inference",
-                        error = %e,
-                        "DeepInfra TTS failed, falling back to fal.ai"
-                    );
-                }
-            }
-        }
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("No backend available for speech generation".into())
-        })?;
-        backend.generate_speech(text, voice).await
+        let params = MediaGenerateParams {
+            text: Some(text.to_string()),
+            voice: Some(voice.to_string()),
+            ..Default::default()
+        };
+        self.registry
+            .execute(MediaOp::GenerateSpeech, &params)
+            .await
     }
 
-    /// Segment/extract a specific object from an image via fal.ai Florence-2.
+    /// Segment/extract a specific object from an image.
     #[must_use = "result must be used"]
     pub async fn segment_object(
         &self,
         image_url: &str,
         object_description: &str,
     ) -> Result<serde_json::Value, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend required for object segmentation".into())
-        })?;
-        backend.segment_object(image_url, object_description).await
+        let params = MediaGenerateParams {
+            image_url: Some(image_url.to_string()),
+            object_description: Some(object_description.to_string()),
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::SegmentObject, &params).await
     }
 
     /// Transcribe speech audio to text. DeepInfra first, fal.ai fallback.
@@ -200,34 +239,34 @@ impl MediaRouter {
         audio_url: &str,
         language: Option<&str>,
     ) -> Result<serde_json::Value, InferenceError> {
-        if let Some(ref di) = self.deepinfra {
-            match di.transcribe(audio_url, language).await {
-                Ok(result) => return Ok(result),
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.inference",
-                        error = %e,
-                        "DeepInfra STT failed, falling back to fal.ai"
-                    );
-                }
-            }
-        }
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("No backend available for speech transcription".into())
-        })?;
-        backend.transcribe(audio_url).await
+        let params = MediaGenerateParams {
+            audio_url: Some(audio_url.to_string()),
+            language: language.map(|l| l.to_string()),
+            ..Default::default()
+        };
+        self.registry.execute(MediaOp::Transcribe, &params).await
     }
 
     /// Execute a multi-step Fal media workflow.
+    ///
+    /// Routed through the registry: only fal.ai supports `ExecuteWorkflow`.
+    /// The registry returns the serialized `WorkflowResult`; this method
+    /// deserializes it back to the typed struct to preserve the public API.
     #[must_use = "result must be used"]
     pub async fn execute_workflow(
         &self,
         workflow: &serde_json::Value,
-    ) -> Result<crate::fal_workflow::WorkflowResult, InferenceError> {
-        let backend = self.fal.as_ref().ok_or_else(|| {
-            InferenceError::Connection("fal.ai backend unavailable for workflow execution".into())
-        })?;
-        backend.execute_workflow(workflow).await
+    ) -> Result<WorkflowResult, InferenceError> {
+        let params = MediaGenerateParams {
+            workflow: Some(workflow.clone()),
+            ..Default::default()
+        };
+        let value = self
+            .registry
+            .execute(MediaOp::ExecuteWorkflow, &params)
+            .await?;
+        serde_json::from_value(value)
+            .map_err(|e| InferenceError::Json(format!("WorkflowResult deserialize failed: {e}")))
     }
 }
 
@@ -313,60 +352,86 @@ impl InferencePort for MediaRouter {
         let op = op.to_string();
         let params = params.clone();
         Box::pin(async move {
-            match op.as_str() {
-                "generate_image" => {
-                    let prompt = params.prompt.as_deref().unwrap_or("");
-                    self.generate_image(prompt, params.size.as_deref(), params.count)
-                        .await
-                }
-                "image_to_image" => {
-                    let image_url = params.image_url.as_deref().unwrap_or("");
-                    let prompt = params.prompt.as_deref().unwrap_or("");
-                    self.image_to_image(image_url, prompt, params.strength)
-                        .await
-                }
-                "remove_background" => {
-                    let image_url = params.image_url.as_deref().unwrap_or("");
-                    self.remove_background(image_url).await
-                }
-                "upscale" => {
-                    let image_url = params.image_url.as_deref().unwrap_or("");
-                    self.upscale(image_url, params.scale).await
-                }
-                "generate_video" => {
-                    let prompt = params.prompt.as_deref().unwrap_or("");
-                    self.generate_video(prompt, params.duration).await
-                }
-                "image_to_video" => {
-                    let image_url = params.image_url.as_deref().unwrap_or("");
-                    self.image_to_video(image_url, params.prompt.as_deref(), params.duration)
-                        .await
-                }
-                "generate_speech" => {
-                    let text = params.text.as_deref().unwrap_or("");
-                    let voice = params.voice.as_deref().unwrap_or("Rachel");
-                    self.generate_speech(text, voice).await
-                }
-                "segment_object" => {
-                    let image_url = params.image_url.as_deref().unwrap_or("");
-                    let object_description = params.object_description.as_deref().unwrap_or("");
-                    self.segment_object(image_url, object_description).await
-                }
-                "transcribe" => {
-                    let audio_url = params.audio_url.as_deref().unwrap_or("");
-                    self.transcribe(audio_url, params.language.as_deref()).await
-                }
-                "execute_workflow" => {
-                    let workflow = params.workflow.clone().unwrap_or(serde_json::Value::Null);
-                    let result = self.execute_workflow(&workflow).await?;
-                    serde_json::to_value(result).map_err(|e| {
-                        InferenceError::Json(format!("WorkflowResult serialize failed: {e}"))
-                    })
-                }
-                other => Err(InferenceError::Connection(format!(
-                    "unknown media op: {other}"
-                ))),
-            }
+            let media_op = MediaOp::from_str(&op)?;
+            self.registry.execute(media_op, &params).await
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::InferenceConfig;
+
+    /// No API keys → empty registry → every op reports "no provider configured".
+    #[test]
+    fn media_router_without_keys_has_no_providers() {
+        let router = MediaRouter::new(InferenceConfig::default());
+        assert!(router.registry.is_empty(), "no API keys → empty registry");
+        assert!(!router.registry.supports(MediaOp::GenerateImage));
+        assert!(!router.registry.supports(MediaOp::RemoveBackground));
+    }
+
+    /// A fal.ai key alone registers fal.ai, which supports all media ops
+    /// (including image generation and remove_background via fal.ai's own
+    /// endpoints — the DeepInfra fallback is simply absent).
+    #[test]
+    fn media_router_with_fal_key_supports_all_ops() {
+        let config = InferenceConfig {
+            fal_api_key: "test-key".into(),
+            ..Default::default()
+        };
+        let router = MediaRouter::new(config);
+        assert!(!router.registry.is_empty());
+        assert!(router.registry.supports(MediaOp::GenerateImage));
+        assert!(router.registry.supports(MediaOp::RemoveBackground));
+        assert!(router.registry.supports(MediaOp::ExecuteWorkflow));
+    }
+
+    /// A DeepInfra key alone registers DeepInfra, which supports only the
+    /// three ops it's preferred for — image generation is NOT available
+    /// (DeepInfra's generate_image method is intentionally not advertised,
+    /// preserving the prior fal.ai-only image dispatch).
+    #[test]
+    fn media_router_with_deepinfra_key_supports_only_three_ops() {
+        let config = InferenceConfig {
+            deepinfra_api_key: "di-key".into(),
+            ..Default::default()
+        };
+        let router = MediaRouter::new(config);
+        assert!(router.registry.supports(MediaOp::RemoveBackground));
+        assert!(router.registry.supports(MediaOp::GenerateSpeech));
+        assert!(router.registry.supports(MediaOp::Transcribe));
+        assert!(
+            !router.registry.supports(MediaOp::GenerateImage),
+            "image generation must require fal.ai — DeepInfra's generate_image is not advertised"
+        );
+    }
+
+    /// `media_generate` with an unknown op string returns a clear error
+    /// (never panics, never silently succeeds).
+    #[tokio::test]
+    async fn media_generate_unknown_op_errors() {
+        let router = MediaRouter::new(InferenceConfig::default());
+        let err = router
+            .media_generate("nonsense_op", &MediaGenerateParams::default())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown media op"), "got: {err}");
+    }
+
+    /// `media_generate` with no provider configured returns a clear
+    /// "no provider configured" error rather than a generic backend error.
+    #[tokio::test]
+    async fn media_generate_no_provider_errors_clearly() {
+        let router = MediaRouter::new(InferenceConfig::default());
+        let err = router
+            .media_generate("generate_image", &MediaGenerateParams::default())
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("no provider configured"),
+            "got: {err}"
+        );
     }
 }

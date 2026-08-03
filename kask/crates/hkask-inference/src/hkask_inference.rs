@@ -44,6 +44,7 @@ pub mod model_constants;
 pub mod ollama_registry;
 pub mod openai_compat;
 pub mod openrouter_backend;
+pub mod provider;
 
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
@@ -52,6 +53,7 @@ pub use media_router::MediaRouter;
 pub use ollama_registry::{
     LocalAdapter, ModelFrom, ModelfileSpec, OllamaRegistry, OllamaRegistryError, RegisteredModel,
 };
+pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
 
 /// Unified model entry from any provider, with provider prefix applied.
 #[derive(Debug, Clone)]

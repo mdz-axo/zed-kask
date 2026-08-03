@@ -285,8 +285,7 @@ Credentials: **optional** `HKASK_KANBAN_DB`, `HKASK_DB_PASSPHRASE`.
 
 ### hkask-mcp-media (38 tools)
 
-Credentials: **optional** `DEEPINFRA_API_KEY`, `FALAI_API_KEY`,
-`TOGETHERAI_API_KEY`.
+Credentials: **optional** `DEEPINFRA_API_KEY`, `FALAI_API_KEY`.
 
 | Tool | LLM I/O | External dep | Category 3 | Category 5 | Category 7 |
 |---|---|---|---|---|---|

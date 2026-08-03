@@ -10,11 +10,15 @@
 use crate::chat_protocol::{stream_chat_completion, vision_infer};
 use crate::config::InferenceConfig;
 use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages};
+use crate::provider::{MediaOp, MediaProvider};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceStreamChunk,
+    MediaGenerateParams,
 };
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 /// DeepInfra backend for chat completions and model listing.
@@ -430,6 +434,59 @@ impl DeepInfraBackend {
 
         serde_json::from_str(&text)
             .map_err(|e| InferenceError::Json(format!("DeepInfra STT parse: {}", e)))
+    }
+}
+
+impl MediaProvider for DeepInfraBackend {
+    fn id(&self) -> &'static str {
+        "deepinfra"
+    }
+
+    /// DeepInfra is the preferred provider for the three ops it is cheapest
+    /// for (background removal, TTS, STT). It also has `generate_image` /
+    /// `image_to_image` methods, but those are intentionally NOT advertised
+    /// here: leaving them out of `supports()` preserves the existing
+    /// DeepInfra-first / fal-fallback dispatch exactly (fal.ai remains the
+    /// sole provider for image/video generation). Register DeepInfra first
+    /// in `ProviderRegistry` so it is preferred for these three ops.
+    fn supports(&self, op: MediaOp) -> bool {
+        matches!(
+            op,
+            MediaOp::RemoveBackground | MediaOp::GenerateSpeech | MediaOp::Transcribe
+        )
+    }
+
+    fn execute<'a>(
+        &'a self,
+        op: MediaOp,
+        params: &'a MediaGenerateParams,
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, InferenceError>> + Send + 'a>> {
+        Box::pin(async move {
+            match op {
+                MediaOp::RemoveBackground => {
+                    let image_url = params.image_url.clone().unwrap_or_default();
+                    self.remove_background(&image_url).await
+                }
+                MediaOp::GenerateSpeech => {
+                    let text = params.text.clone().unwrap_or_default();
+                    let voice = params.voice.clone().unwrap_or_else(|| "Rachel".to_string());
+                    // model_id None → DeepInfra picks its default TTS model.
+                    self.generate_speech(&text, &voice, None).await
+                }
+                MediaOp::Transcribe => {
+                    let audio_url = params.audio_url.clone().unwrap_or_default();
+                    self.transcribe(&audio_url, params.language.as_deref())
+                        .await
+                }
+                // Unreachable: supports() returns false for these. A clear
+                // error guards against a registry misconfiguration that calls
+                // a provider for an op it doesn't support.
+                other => Err(InferenceError::Connection(format!(
+                    "deepinfra does not support media op: {}",
+                    other.as_str()
+                ))),
+            }
+        })
     }
 }
 

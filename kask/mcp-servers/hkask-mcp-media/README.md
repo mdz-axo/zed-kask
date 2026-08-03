@@ -46,7 +46,7 @@ Media generation MCP server — image, video, audio, and 3D generation via fal.a
 
 ## Configuration
 
-Provider API keys configured via standard environment variables (`DEEPINFRA_API_KEY`, `FALAI_API_KEY`, `TOGETHERAI_API_KEY`, `OPENROUTER_API_KEY`, `KILOCODE_API_KEY`).
+This server reads `FALAI_API_KEY` and `DEEPINFRA_API_KEY` for media generation. Vision-LLM calls (describe, analyze, face validation) route through the inference IPC bridge to zed's `LanguageModelRegistry` — the media process does not read `TOGETHERAI_API_KEY`/`OPENROUTER_API_KEY`/`KILOCODE_API_KEY` directly (those are read by the zed process).
 
 | Variable | Default | Description |
 |---|---|---|

@@ -13,12 +13,16 @@ use crate::chat_protocol::{
 use crate::config::InferenceConfig;
 use crate::fal_workflow::{self, WorkflowNode, WorkflowResult};
 use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages};
+use crate::provider::{MediaOp, MediaProvider};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceStreamChunk,
+    MediaGenerateParams,
 };
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 /// fal.ai backend for chat completions and vision inference.
@@ -660,6 +664,90 @@ impl FalBackend {
             output_fields,
             node_results: results,
             elapsed_seconds: elapsed,
+        })
+    }
+}
+
+impl MediaProvider for FalBackend {
+    fn id(&self) -> &'static str {
+        "fal.ai"
+    }
+
+    fn supports(&self, op: MediaOp) -> bool {
+        matches!(
+            op,
+            MediaOp::GenerateImage
+                | MediaOp::ImageToImage
+                | MediaOp::RemoveBackground
+                | MediaOp::Upscale
+                | MediaOp::GenerateVideo
+                | MediaOp::ImageToVideo
+                | MediaOp::SegmentObject
+                | MediaOp::GenerateSpeech
+                | MediaOp::Transcribe
+                | MediaOp::ExecuteWorkflow
+        )
+    }
+
+    fn execute<'a>(
+        &'a self,
+        op: MediaOp,
+        params: &'a MediaGenerateParams,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
+        Box::pin(async move {
+            match op {
+                MediaOp::GenerateImage => {
+                    let prompt = params.prompt.clone().unwrap_or_default();
+                    let image_size = params.size.clone();
+                    self.generate_image(&prompt, image_size.as_deref(), params.count)
+                        .await
+                }
+                MediaOp::ImageToImage => {
+                    let image_url = params.image_url.clone().unwrap_or_default();
+                    let prompt = params.prompt.clone().unwrap_or_default();
+                    self.image_to_image(&image_url, &prompt, params.strength)
+                        .await
+                }
+                MediaOp::RemoveBackground => {
+                    let image_url = params.image_url.clone().unwrap_or_default();
+                    self.remove_background(&image_url).await
+                }
+                MediaOp::Upscale => {
+                    let image_url = params.image_url.clone().unwrap_or_default();
+                    self.upscale(&image_url, params.scale).await
+                }
+                MediaOp::GenerateVideo => {
+                    let prompt = params.prompt.clone().unwrap_or_default();
+                    self.generate_video(&prompt, params.duration).await
+                }
+                MediaOp::ImageToVideo => {
+                    let image_url = params.image_url.clone().unwrap_or_default();
+                    let prompt = params.prompt.clone();
+                    self.image_to_video(&image_url, prompt.as_deref(), params.duration)
+                        .await
+                }
+                MediaOp::SegmentObject => {
+                    let image_url = params.image_url.clone().unwrap_or_default();
+                    let object_description = params.object_description.clone().unwrap_or_default();
+                    self.segment_object(&image_url, &object_description).await
+                }
+                MediaOp::GenerateSpeech => {
+                    let text = params.text.clone().unwrap_or_default();
+                    let voice = params.voice.clone().unwrap_or_else(|| "Rachel".to_string());
+                    self.generate_speech(&text, &voice).await
+                }
+                MediaOp::Transcribe => {
+                    let audio_url = params.audio_url.clone().unwrap_or_default();
+                    self.transcribe(&audio_url).await
+                }
+                MediaOp::ExecuteWorkflow => {
+                    let workflow = params.workflow.clone().unwrap_or(Value::Null);
+                    let result = self.execute_workflow(&workflow).await?;
+                    serde_json::to_value(result).map_err(|e| {
+                        InferenceError::Json(format!("WorkflowResult serialize failed: {e}"))
+                    })
+                }
+            }
         })
     }
 }

@@ -34,7 +34,7 @@ at `kask/scripts/qa-mcp-servers.sh` and the per-tool contracts at
 | 4 | `hkask-mcp-corpus` | `hkask-mcp-corpus` | stdio | `src/hkask_mcp_corpus.rs` | `run()` | **optional**: `HKASK_OCR_MODEL`, `HKASK_EMBEDDING_MODEL`, `HKASK_DEFAULT_MODEL`; inline `FALAI_API_KEY` for docres |
 | 5 | `hkask-mcp-curator` | `hkask-mcp-curator` | stdio | `src/hkask_mcp_curator.rs` | `run()` | **optional**: `HKASK_CURATOR_DB`, `HKASK_DB_PASSPHRASE` |
 | 6 | `hkask-mcp-kata-kanban` | `hkask-mcp-kata-kanban` | stdio | `src/hkask_mcp_kata_kanban.rs` | `run()` | **optional**: `HKASK_KANBAN_DB`, `HKASK_DB_PASSPHRASE` |
-| 7 | `hkask-mcp-media` | `hkask-mcp-media` | stdio | `src/hkask_mcp_media.rs` | `run()` | **optional**: `DEEPINFRA_API_KEY`, `FALAI_API_KEY`, `TOGETHERAI_API_KEY` |
+| 7 | `hkask-mcp-media` | `hkask-mcp-media` | stdio | `src/hkask_mcp_media.rs` | `run()` | **optional**: `DEEPINFRA_API_KEY`, `FALAI_API_KEY` (vision via IPC bridge to zed) |
 | 8 | `hkask-mcp-research` | `hkask-mcp-research` | stdio | `src/hkask_mcp_research.rs` | `run()` | **optional**: `HKASK_BRAVE_API_KEY`, `HKASK_FIRECRAWL_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_SERPAPI_API_KEY`, `HKASK_EXA_API_KEY`, `HKASK_BROWSERBASE_API_KEY` |
 | 9 | `hkask-mcp-scenarios` | `hkask-mcp-scenarios` | stdio | `src/hkask_mcp_scenarios.rs` | `run()` | (none; uses `reqwest::Client` for upstream research/companies calls) |
 | 10 | `hkask-mcp-training` | `hkask-mcp-training` | stdio | `src/hkask_mcp_training.rs` | `run()` | **optional**: `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`, `NEBIUS_PROJECT_ID`, `NEBIUS_SUBNET_ID`, `HKASK_TRAINING_HOST`, `RUNPOD_TEMPLATE_ID`, `RUNPOD_GPU_TYPE_ID`, `RUNPOD_CONTAINER_DISK_GB`, `RUNPOD_DOCKER_IMAGE`, `HKASK_TRAINING_DB`, `HKASK_DB_PASSPHRASE` |

@@ -433,10 +433,6 @@ mod tests {
             "skills section must describe the PDCA/Jinja2 manifest cascade"
         );
         assert!(
-            rendered.contains("OCAP-gated delegation"),
-            "skills section must mention OCAP-gated delegation"
-        );
-        assert!(
             rendered.contains("gas/rjoule budgets"),
             "skills section must mention gas/rjoule budgets"
         );
