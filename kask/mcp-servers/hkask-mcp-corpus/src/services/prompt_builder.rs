@@ -4,11 +4,8 @@
 //! Builds QA generation prompts with source-scoped KNN context, ontology context,
 //! and h_mem knowledge graph sections.
 
-use std::sync::Arc;
-
 use hkask_mcp_server::server::McpToolError;
 use hkask_memory::SemanticMemory;
-use hkask_types::InferencePort;
 use hkask_types::corpus::TaggedChunk;
 use serde_json::json;
 
@@ -34,16 +31,14 @@ pub struct BuildPromptsRequest {
 
 /// KNN context + concept graph + knowledge graph + QA prompt builder.
 ///
-/// Holds the shared inference router (used for embedding queries via the DB,
-/// not for generation). Each call to [`build_prompts`] reads tagged chunks,
-/// loads embeddings, and writes QA prompts JSONL.
-pub struct PromptBuilderService {
-    inference_router: Arc<dyn InferencePort>,
-}
+/// Each call to [`build_prompts`] reads tagged chunks, loads embeddings from
+/// the memory DB, and writes QA prompts JSONL. No inference router is needed —
+/// the method queries the DB for pre-computed embeddings, not the inference API.
+pub struct PromptBuilderService;
 
 impl PromptBuilderService {
-    pub fn new(inference_router: Arc<dyn InferencePort>) -> Self {
-        Self { inference_router }
+    pub fn new() -> Self {
+        Self
     }
 
     /// Build QA generation prompts from tagged chunks.
@@ -478,5 +473,11 @@ impl PromptBuilderService {
             "output": output,
         });
         Ok(result)
+    }
+}
+
+impl Default for PromptBuilderService {
+    fn default() -> Self {
+        Self::new()
     }
 }

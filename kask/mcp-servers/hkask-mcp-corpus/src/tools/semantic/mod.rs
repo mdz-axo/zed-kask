@@ -16,7 +16,7 @@ mod triples;
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::services::triples::{TriplesRequest, TriplesService};
 use crate::*;
-use ontology_io::{read_ontology_namespaces, read_ontology_tags_annotated};
+use ontology_io::read_ontology_tags_annotated;
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
 use schemars::JsonSchema;
 use serde::Deserialize;

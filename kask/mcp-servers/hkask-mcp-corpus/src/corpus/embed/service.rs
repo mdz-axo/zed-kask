@@ -23,6 +23,366 @@ use std::time::{Duration, Instant};
 /// Service for the style corpus embedding pipeline with metadata layer.
 pub struct EmbedService;
 
+/// Resolve the text content for a work from local path, cache, or download.
+async fn resolve_work_text(
+    work: &super::types::Work,
+    cache_path: &Path,
+) -> Result<String, ServiceError> {
+    if let Some(ref local) = work.local_path {
+        let local_path = std::path::Path::new(local);
+        if local_path.is_dir() {
+            tracing::info!(work = %work.title, path = %local, "Reading directory of .txt files");
+            let mut sources: Vec<_> = std::fs::read_dir(local_path)
+                .map_err(|e| {
+                    let msg = format!("Failed to read directory {}: {e}", local_path.display());
+                    ServiceError::Domain {
+                        domain: DomainKind::Wallet,
+                        kind: ErrorKind::ServiceUnavailable,
+                        source: Some(Box::new(e)),
+                        message: msg,
+                    }
+                })?
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "txt"))
+                .collect();
+            sources.sort();
+            let mut combined = String::new();
+            for source in &sources {
+                match std::fs::read_to_string(source) {
+                    Ok(text) => {
+                        combined.push_str(&text);
+                        combined.push_str("\n\n");
+                    }
+                    Err(e) => {
+                        tracing::warn!(path = %source.display(), error = %e, "Skipping unreadable .txt file");
+                    }
+                }
+            }
+            Ok(combined)
+        } else if local_path.exists() {
+            tracing::info!(work = %work.title, path = %local, "Reading local file");
+            std::fs::read_to_string(local_path).map_err(|e| {
+                let msg = format!("Failed to read local file {}: {e}", local_path.display());
+                ServiceError::Domain {
+                    domain: DomainKind::Wallet,
+                    kind: ErrorKind::ServiceUnavailable,
+                    source: Some(Box::new(e)),
+                    message: msg,
+                }
+            })
+        } else {
+            tracing::warn!(work = %work.title, path = %local, "Local file not found, falling back to cache/download");
+            resolve_from_cache_or_download(work, cache_path).await
+        }
+    } else {
+        resolve_from_cache_or_download(work, cache_path).await
+    }
+}
+
+/// Read from cache or download if cache miss.
+async fn resolve_from_cache_or_download(
+    work: &super::types::Work,
+    cache_path: &Path,
+) -> Result<String, ServiceError> {
+    if cache_path.exists() {
+        tracing::info!(work = %work.title, "Using cached");
+        std::fs::read_to_string(cache_path).map_err(|e| {
+            let msg = format!("Failed to read cache {}: {e}", cache_path.display());
+            ServiceError::Domain {
+                domain: DomainKind::Wallet,
+                kind: ErrorKind::ServiceUnavailable,
+                source: Some(Box::new(e)),
+                message: msg,
+            }
+        })
+    } else {
+        tracing::info!(work = %work.title, "Downloading");
+        let text = super::download::download_text(&work.url).await?;
+        if let Err(e) = std::fs::write(cache_path, &text) {
+            tracing::warn!(path = %cache_path.display(), error = %e, "Could not cache download");
+        }
+        Ok(text)
+    }
+}
+
+/// Classify section types and extract semantic h_mems for all passages.
+async fn classify_and_extract(
+    all_passages: &mut [TaggedPassage],
+    config: &CorpusConfig,
+    registry_dir: &Path,
+    inference_port: &Arc<dyn InferencePort>,
+) -> Result<(), ServiceError> {
+    let passage_count = all_passages.len();
+    let texts: Vec<String> = all_passages.iter().map(|p| p.text.clone()).collect();
+
+    // ── Classify section types ──
+    let mut classifier_config = if config.classifier.is_empty() {
+        tracing::info!("No classifier configured — all passages default to Statement");
+        crate::runtime::ClassifierConfig::from_def(&Default::default())
+    } else {
+        let def = crate::runtime::load_classifier_config(&config.classifier, registry_dir)?;
+        crate::runtime::ClassifierConfig::from_def(&def)
+    };
+
+    let settings_model = hkask_services_core::HkaskSettings::load().classifier_model();
+    if !settings_model.is_empty() {
+        classifier_config.model = settings_model;
+    }
+
+    tracing::info!(
+        total_passages = passage_count,
+        model = %classifier_config.model,
+        concurrency = classifier_config.concurrency,
+        "Starting section type classification"
+    );
+
+    let classify_results =
+        crate::runtime::classify_batch(&texts, classifier_config, Arc::clone(inference_port))
+            .await?;
+
+    for (passage, result) in all_passages.iter_mut().zip(classify_results.iter()) {
+        passage.section_type = result.category.clone();
+    }
+
+    let classified_counts: HashMap<String, usize> =
+        classify_results.iter().fold(HashMap::new(), |mut acc, r| {
+            *acc.entry(r.category.clone()).or_insert(0) += 1;
+            acc
+        });
+    tracing::info!(?classified_counts, "Section type classification complete");
+
+    // ── Extract semantic h_mems ──
+    if !config.triple_classifier.is_empty() {
+        let def = crate::runtime::load_classifier_config(&config.triple_classifier, registry_dir)?;
+        let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
+
+        let settings = HkaskSettings::load();
+        let settings_model = settings.classifier_model();
+        let mut model_config = classifier_config.clone();
+        if !settings_model.is_empty() {
+            model_config.model = settings_model;
+        }
+
+        tracing::info!(
+            total_passages = passage_count,
+            model = %model_config.model,
+            "Single-model h_mem extraction"
+        );
+
+        let a_extractions = crate::runtime::extract_triples_batch(
+            &texts,
+            &model_config,
+            Arc::clone(inference_port),
+        )
+        .await?;
+
+        for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
+            passage.semantic_triples = ext.clone();
+        }
+    } else {
+        tracing::info!("HMem classifier disabled — skipping semantic extraction");
+    }
+
+    Ok(())
+}
+
+/// Compute and store centroid(s) — single or multi-dimension path.
+fn compute_centroids(
+    all_passages: &[TaggedPassage],
+    config: &CorpusConfig,
+    semantic: &SemanticMemory,
+    author_prefix: &str,
+    centroid_ref: &str,
+) -> Result<
+    (
+        DimensionCentroidResult,
+        Vec<DimensionCentroidResult>,
+        usize,
+        bool,
+    ),
+    ServiceError,
+> {
+    if config.dimension_centroids.is_empty() {
+        // ── Single-centroid path ──
+        tracing::info!("Computing style centroid (single)");
+        let rule_prefix = format!("style:{}:rule:", &config.author);
+        let centroid_result = semantic
+            .compute_centroid(
+                author_prefix,
+                &rule_prefix,
+                centroid_ref,
+                config.embedding.dim,
+                Some(centroid_ref),
+                Some(&config.embedding.model),
+            )
+            .map_err(|e| ServiceError::Domain {
+                kind: ErrorKind::BadRequest,
+                domain: DomainKind::Memory,
+                source: None,
+                message: e.to_string(),
+            })?;
+
+        return Ok((
+            DimensionCentroidResult {
+                name: String::new(),
+                ref_name: String::new(),
+                passage_count: centroid_result.passage_count,
+            },
+            Vec::new(),
+            centroid_result.passage_count,
+            centroid_result.stored,
+        ));
+    }
+
+    // ── Multi-dimension centroid path ──
+    tracing::info!(
+        dimensions = config.dimension_centroids.len(),
+        "Computing per-dimension centroids"
+    );
+
+    let centroid_store = semantic.embedding_store();
+
+    let mut dim_refs: HashMap<String, Vec<String>> = HashMap::new();
+    for passage in all_passages {
+        if passage.is_rule || passage.dimension.is_empty() {
+            continue;
+        }
+        dim_refs
+            .entry(passage.dimension.clone())
+            .or_default()
+            .push(passage.entity_ref.clone());
+    }
+
+    let mut dim_centroids: Vec<(String, Vec<f32>, usize)> = Vec::new();
+
+    for dc in &config.dimension_centroids {
+        let refs = dim_refs.get(&dc.name);
+        let count = refs.map(|r| r.len()).unwrap_or(0);
+
+        if count == 0 {
+            tracing::warn!(dimension = %dc.name, "No passages for dimension — skipping centroid");
+            continue;
+        }
+
+        let Some(refs) = refs else { continue };
+
+        let mut centroid = vec![0.0f32; config.embedding.dim];
+        let mut fetched = 0usize;
+
+        for entity_ref in refs {
+            if let Ok(emb) = centroid_store.get(entity_ref) {
+                for (i, v) in emb.vector.iter().enumerate() {
+                    if i < config.embedding.dim {
+                        centroid[i] += v;
+                    }
+                }
+                fetched += 1;
+            }
+        }
+
+        if fetched == 0 {
+            tracing::warn!(dimension = %dc.name, "No embeddings fetched for dimension — skipping centroid");
+            continue;
+        }
+
+        let n = fetched as f32;
+        for v in centroid.iter_mut() {
+            *v /= n;
+        }
+
+        centroid_store
+            .store(&dc.ref_name, &centroid, &config.embedding.model)
+            .map_err(|e| {
+                let msg = format!("Failed to store dimension centroid: {e}");
+                ServiceError::Domain {
+                    domain: DomainKind::Wallet,
+                    kind: ErrorKind::ServiceUnavailable,
+                    source: Some(Box::new(e)),
+                    message: msg,
+                }
+            })?;
+
+        tracing::info!(dimension = %dc.name, ref_name = %dc.ref_name, passages = fetched, "Dimension centroid stored");
+
+        dim_centroids.push((dc.name.clone(), centroid, fetched));
+    }
+
+    // ── Compute composite centroid (weighted mean) ──
+    let mut composite_stored = false;
+    if !dim_centroids.is_empty() {
+        let mut composite = vec![0.0f32; config.embedding.dim];
+        let mut total_weight = 0.0f64;
+
+        for dc in &config.dimension_centroids {
+            if let Some((_name, vec, _count)) =
+                dim_centroids.iter().find(|(name, _, _)| name == &dc.name)
+            {
+                for (i, v) in vec.iter().enumerate() {
+                    composite[i] += *v * dc.weight as f32;
+                }
+                total_weight += dc.weight;
+            }
+        }
+
+        if total_weight > 0.0 {
+            for v in composite.iter_mut() {
+                *v /= total_weight as f32;
+            }
+
+            centroid_store
+                .store(centroid_ref, &composite, &config.embedding.model)
+                .map_err(|e| {
+                    let msg = format!("Failed to store composite centroid: {e}");
+                    ServiceError::Domain {
+                        domain: DomainKind::Wallet,
+                        kind: ErrorKind::ServiceUnavailable,
+                        source: Some(Box::new(e)),
+                        message: msg,
+                    }
+                })?;
+
+            tracing::info!(
+                composite_ref = %centroid_ref,
+                composite_weight = total_weight,
+                dimensions = dim_centroids.len(),
+                "Composite centroid stored"
+            );
+            composite_stored = true;
+        }
+    }
+
+    let multi_passage_count: usize = dim_centroids.iter().map(|(_, _, c)| c).sum();
+
+    let dim_results: Vec<DimensionCentroidResult> = dim_centroids
+        .iter()
+        .map(|(name, _vec, count)| {
+            let ref_name = config
+                .dimension_centroids
+                .iter()
+                .find(|dc| &dc.name == name)
+                .map(|dc| dc.ref_name.clone())
+                .unwrap_or_default();
+            DimensionCentroidResult {
+                name: name.clone(),
+                ref_name,
+                passage_count: *count,
+            }
+        })
+        .collect();
+
+    Ok((
+        DimensionCentroidResult {
+            name: String::new(),
+            ref_name: String::new(),
+            passage_count: multi_passage_count,
+        },
+        dim_results,
+        multi_passage_count,
+        composite_stored,
+    ))
+}
+
 impl EmbedService {
     /// Run the full style corpus embedding pipeline with metadata tagging,
     /// salience scoring, and budget-gated h_mem storage.
@@ -158,100 +518,7 @@ impl EmbedService {
             }
 
             let cache_path = cache.join(format!("{}.txt", work.slug));
-            let text = if let Some(ref local) = work.local_path {
-                let local_path = std::path::Path::new(local);
-                if local_path.is_dir() {
-                    tracing::info!(work = %work.title, path = %local, "Reading directory of .txt files");
-                    let mut sources: Vec<_> = std::fs::read_dir(local_path)
-                        .map_err(|e| {
-                            let msg =
-                                format!("Failed to read directory {}: {e}", local_path.display());
-                            ServiceError::Domain {
-                                domain: DomainKind::Wallet,
-                                kind: ErrorKind::ServiceUnavailable,
-                                source: Some(Box::new(e)),
-                                message: msg,
-                            }
-                        })?
-                        .filter_map(Result::ok)
-                        .map(|e| e.path())
-                        .filter(|p| p.is_file() && p.extension().is_some_and(|ext| ext == "txt"))
-                        .collect();
-                    sources.sort();
-                    let mut combined = String::new();
-                    for source in &sources {
-                        match std::fs::read_to_string(source) {
-                            Ok(text) => {
-                                combined.push_str(&text);
-                                combined.push_str("\n\n");
-                            }
-                            Err(e) => {
-                                tracing::warn!(path = %source.display(), error = %e, "Skipping unreadable .txt file");
-                            }
-                        }
-                    }
-                    combined
-                } else if local_path.exists() {
-                    tracing::info!(work = %work.title, path = %local, "Reading local file");
-                    std::fs::read_to_string(local_path).map_err(|e| {
-                        let msg =
-                            format!("Failed to read local file {}: {e}", local_path.display());
-                        ServiceError::Domain {
-                            domain: DomainKind::Wallet,
-                            kind: ErrorKind::ServiceUnavailable,
-                            source: Some(Box::new(e)),
-                            message: msg,
-                        }
-                    })?
-                } else {
-                    tracing::warn!(work = %work.title, path = %local, "Local file not found, falling back to cache/download");
-                    if cache_path.exists() {
-                        tracing::info!(work = %work.title, "Using cached");
-                        std::fs::read_to_string(&cache_path).map_err(|e| {
-                            let msg = format!("Failed to read cache {}: {e}", cache_path.display());
-                            ServiceError::Domain {
-                                domain: DomainKind::Wallet,
-                                kind: ErrorKind::ServiceUnavailable,
-                                source: Some(Box::new(e)),
-                                message: msg,
-                            }
-                        })?
-                    } else {
-                        tracing::info!(work = %work.title, "Downloading");
-                        let text = download_text(&work.url).await?;
-                        if let Err(e) = std::fs::write(&cache_path, &text) {
-                            tracing::warn!(
-                                path = %cache_path.display(),
-                                error = %e,
-                                "Could not cache download"
-                            );
-                        }
-                        text
-                    }
-                }
-            } else if cache_path.exists() {
-                tracing::info!(work = %work.title, "Using cached");
-                std::fs::read_to_string(&cache_path).map_err(|e| {
-                    let msg = format!("Failed to read cache {}: {e}", cache_path.display());
-                    ServiceError::Domain {
-                        domain: DomainKind::Wallet,
-                        kind: ErrorKind::ServiceUnavailable,
-                        source: Some(Box::new(e)),
-                        message: msg,
-                    }
-                })?
-            } else {
-                tracing::info!(work = %work.title, "Downloading");
-                let text = download_text(&work.url).await?;
-                if let Err(e) = std::fs::write(&cache_path, &text) {
-                    tracing::warn!(
-                        path = %cache_path.display(),
-                        error = %e,
-                        "Could not cache download"
-                    );
-                }
-                text
-            };
+            let text = resolve_work_text(work, &cache_path).await?;
 
             let cleaned = crate::text::strip_gutenberg_headers(&text);
             let entity_ref_prefix = format!("style:{}:{}", &config.author, work.slug);
@@ -339,92 +606,20 @@ impl EmbedService {
             });
         }
 
-        // ── Classify section types ──────────────────────────────
+        // ── Classify section types + extract semantic h_mems ──
         {
             let mut p = shared.lock().unwrap_or_else(|e| e.into_inner());
             p.phase = EmbedPhase::Tagging;
             p.current_work = "classifying section types".into();
         }
 
-        let passage_count = all_passages.len();
-
         let registry_dir = config_path
-            .parent() // styles/gentle-lovelace
-            .and_then(|p| p.parent()) // styles
-            .and_then(|p| p.parent()) // registry
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
             .unwrap_or_else(|| Path::new("registry"));
 
-        let mut classifier_config = if config.classifier.is_empty() {
-            tracing::info!("No classifier configured — all passages default to Statement");
-            crate::runtime::ClassifierConfig::from_def(&Default::default())
-        } else {
-            let def = crate::runtime::load_classifier_config(&config.classifier, registry_dir)?;
-            crate::runtime::ClassifierConfig::from_def(&def)
-        };
-
-        let settings_model = hkask_services_core::HkaskSettings::load().classifier_model();
-        if !settings_model.is_empty() {
-            classifier_config.model = settings_model;
-        }
-
-        let texts: Vec<String> = all_passages.iter().map(|p| p.text.clone()).collect();
-
-        tracing::info!(
-            total_passages = passage_count,
-            model = %classifier_config.model,
-            concurrency = classifier_config.concurrency,
-            "Starting section type classification"
-        );
-
-        let classify_results =
-            crate::runtime::classify_batch(&texts, classifier_config, Arc::clone(&inference_port))
-                .await?;
-
-        for (passage, result) in all_passages.iter_mut().zip(classify_results.iter()) {
-            passage.section_type = result.category.clone();
-        }
-
-        let classified_counts: std::collections::HashMap<String, usize> = classify_results
-            .iter()
-            .fold(std::collections::HashMap::new(), |mut acc, r| {
-                *acc.entry(r.category.clone()).or_insert(0) += 1;
-                acc
-            });
-        tracing::info!(?classified_counts, "Section type classification complete");
-
-        // ── Extract semantic h_mems ────────────────────────────────
-        if !config.triple_classifier.is_empty() {
-            let def =
-                crate::runtime::load_classifier_config(&config.triple_classifier, registry_dir)?;
-            let classifier_config = crate::runtime::ClassifierConfig::from_def(&def);
-
-            // ── Single-model semantic h_mem extraction ──
-            let settings = HkaskSettings::load();
-            let settings_model = settings.classifier_model();
-            let mut model_config = classifier_config.clone();
-            if !settings_model.is_empty() {
-                model_config.model = settings_model;
-            }
-
-            tracing::info!(
-                total_passages = passage_count,
-                model = %model_config.model,
-                "Single-model h_mem extraction"
-            );
-
-            let a_extractions = crate::runtime::extract_triples_batch(
-                &texts,
-                &model_config,
-                Arc::clone(&inference_port),
-            )
-            .await?;
-
-            for (passage, ext) in all_passages.iter_mut().zip(a_extractions.iter()) {
-                passage.semantic_triples = ext.clone();
-            }
-        } else {
-            tracing::info!("HMem classifier disabled — skipping semantic extraction");
-        }
+        classify_and_extract(&mut all_passages, &config, registry_dir, &inference_port).await?;
 
         // ── Compute batch salience (graph centrality) ────────────────
         {
@@ -583,199 +778,20 @@ impl EmbedService {
         );
 
         // ── Phase 6: Compute centroid(s) ────────────────────────────
+        // ── Phase 6: Compute centroid(s) ──────────────────────────────────────────
         {
             let mut p = shared.lock().unwrap_or_else(|e| e.into_inner());
             p.phase = EmbedPhase::Centroid;
         }
 
-        if config.dimension_centroids.is_empty() {
-            // ── Single-centroid path ──────────────────────────
-            tracing::info!("Computing style centroid (single)");
-            let rule_prefix = format!("style:{}:rule:", &config.author);
-            let centroid_result = semantic
-                .compute_centroid(
-                    &author_prefix,
-                    &rule_prefix,
-                    &centroid_ref,
-                    config.embedding.dim,
-                    Some(&centroid_ref),
-                    Some(&config.embedding.model),
-                )
-                .map_err(|e| ServiceError::Domain {
-                    kind: ErrorKind::BadRequest,
-                    domain: DomainKind::Memory,
-                    source: None,
-                    message: e.to_string(),
-                })?;
-
-            {
-                let mut p = shared.lock().unwrap_or_else(|e| e.into_inner());
-                p.phase = EmbedPhase::Done;
-                p.completed_passages = total_passages;
-            }
-
-            return Ok(EmbedResult {
-                author,
-                purged,
-                total_passages,
-                centroid_ref,
-                passage_count: centroid_result.passage_count,
-                centroid_stored: centroid_result.stored,
-                validation,
-                budget,
-                tagged_passages: tagged_count,
-                triples_stored,
-                embedding_only,
-                dimension_centroids: Vec::new(),
-            });
-        }
-
-        // ── Multi-dimension centroid path ────────────────────────────
-        tracing::info!(
-            dimensions = config.dimension_centroids.len(),
-            "Computing per-dimension centroids"
-        );
-
-        let centroid_store = semantic.embedding_store();
-
-        let mut dim_refs: HashMap<String, Vec<String>> = HashMap::new();
-        for passage in &all_passages {
-            if passage.is_rule || passage.dimension.is_empty() {
-                continue;
-            }
-            dim_refs
-                .entry(passage.dimension.clone())
-                .or_default()
-                .push(passage.entity_ref.clone());
-        }
-
-        let mut dim_centroids: Vec<(String, Vec<f32>, usize)> = Vec::new();
-
-        for dc in &config.dimension_centroids {
-            let refs = dim_refs.get(&dc.name);
-            let count = refs.map(|r| r.len()).unwrap_or(0);
-
-            if count == 0 {
-                tracing::warn!(
-                    dimension = %dc.name,
-                    "No passages for dimension — skipping centroid"
-                );
-                continue;
-            }
-
-            let Some(refs) = refs else {
-                continue;
-            };
-
-            let mut centroid = vec![0.0f32; config.embedding.dim];
-            let mut fetched = 0usize;
-
-            for entity_ref in refs {
-                if let Ok(emb) = centroid_store.get(entity_ref) {
-                    for (i, v) in emb.vector.iter().enumerate() {
-                        if i < config.embedding.dim {
-                            centroid[i] += v;
-                        }
-                    }
-                    fetched += 1;
-                }
-            }
-
-            if fetched == 0 {
-                tracing::warn!(
-                    dimension = %dc.name,
-                    "No embeddings fetched for dimension — skipping centroid"
-                );
-                continue;
-            }
-
-            let n = fetched as f32;
-            for v in centroid.iter_mut() {
-                *v /= n;
-            }
-
-            centroid_store
-                .store(&dc.ref_name, &centroid, &config.embedding.model)
-                .map_err(|e| {
-                    let msg = format!("Failed to store dimension centroid: {e}");
-                    ServiceError::Domain {
-                        domain: DomainKind::Wallet,
-                        kind: ErrorKind::ServiceUnavailable,
-                        source: Some(Box::new(e)),
-                        message: msg,
-                    }
-                })?;
-
-            tracing::info!(
-                dimension = %dc.name,
-                ref_name = %dc.ref_name,
-                passages = fetched,
-                "Dimension centroid stored"
-            );
-
-            dim_centroids.push((dc.name.clone(), centroid, fetched));
-        }
-
-        // ── Compute composite centroid (weighted mean) ───────────────
-        if !dim_centroids.is_empty() {
-            let mut composite = vec![0.0f32; config.embedding.dim];
-            let mut total_weight = 0.0f64;
-
-            for dc in &config.dimension_centroids {
-                if let Some((_name, vec, _count)) =
-                    dim_centroids.iter().find(|(name, _, _)| name == &dc.name)
-                {
-                    for (i, v) in vec.iter().enumerate() {
-                        composite[i] += *v * dc.weight as f32;
-                    }
-                    total_weight += dc.weight;
-                }
-            }
-
-            if total_weight > 0.0 {
-                for v in composite.iter_mut() {
-                    *v /= total_weight as f32;
-                }
-
-                centroid_store
-                    .store(&centroid_ref, &composite, &config.embedding.model)
-                    .map_err(|e| {
-                        let msg = format!("Failed to store composite centroid: {e}");
-                        ServiceError::Domain {
-                            domain: DomainKind::Wallet,
-                            kind: ErrorKind::ServiceUnavailable,
-                            source: Some(Box::new(e)),
-                            message: msg,
-                        }
-                    })?;
-
-                tracing::info!(
-                    composite_ref = %centroid_ref,
-                    composite_weight = total_weight,
-                    dimensions = dim_centroids.len(),
-                    "Composite centroid stored"
-                );
-            }
-        }
-
-        let multi_passage_count: usize = dim_centroids.iter().map(|(_, _, c)| c).sum();
-
-        let dim_results: Vec<DimensionCentroidResult> = dim_centroids
-            .iter()
-            .map(|(name, _vec, count)| {
-                let ref_name = config
-                    .dimension_centroids
-                    .iter()
-                    .find(|dc| &dc.name == name)
-                    .map(|dc| dc.ref_name.clone())
-                    .unwrap_or_default();
-                DimensionCentroidResult {
-                    name: name.clone(),
-                    ref_name,
-                    passage_count: *count,
-                }
-            })
-            .collect();
+        let (_single_result, dim_results, passage_count_centroid, centroid_stored) =
+            compute_centroids(
+                &all_passages,
+                &config,
+                &semantic,
+                &author_prefix,
+                &centroid_ref,
+            )?;
 
         {
             let mut p = shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -788,8 +804,8 @@ impl EmbedService {
             purged,
             total_passages,
             centroid_ref,
-            passage_count: multi_passage_count,
-            centroid_stored: !dim_centroids.is_empty(),
+            passage_count: passage_count_centroid,
+            centroid_stored,
             validation,
             budget,
             tagged_passages: tagged_count,

@@ -142,4 +142,14 @@ templates, the registry wins.
 - Template manifest: `kask/registry/templates/swarm-intelligence/manifest.yaml`
 - Templates: `kask/registry/templates/swarm-intelligence/swarm-{sense,orient,decide,act,check}.j2`
 - Reference: `kask/registry/templates/swarm-intelligence/swarm-patterns.yaml`
-- Process manifest: `kask/registry/manifests/swarm-intelligence.yaml`
+- Process manifest: `kask/registry/manifests/swarm-intelligence.yaml` (10 steps:
+  SENSE, ORIENT, DECIDE, FILTER, ACT, CHECK, convergence_check,
+  converge_accumulate, second_order_monitor, LOOP)
+- Deterministic compute primitives: `swarm.converge_accumulate`,
+  `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
+  `hkask-templates/src/compute.rs`)
+- MCP tool surface (31 tools, both sets always available): 20 ABW + 11 local
+  (`swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`,
+  `swarm_delegate_local`, `swarm_fanout_local`, `swarm_list_local_agents`,
+  `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
+  `swarm_create_local_agent`, `swarm_reconfigure_local_agent`).

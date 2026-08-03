@@ -15,8 +15,8 @@ use serde_json::json;
 
 use crate::batch::{MAX_RETRIES, retry_with_backoff};
 use crate::tools::semantic::{
-    GUARD, INPUT_GUARD_ENABLED, configured_qa_model, predicate_to_dimension,
-    read_ontology_namespaces, read_ontology_tags, triple_confidence,
+    GUARD, INPUT_GUARD_ENABLED, predicate_to_dimension, read_ontology_namespaces,
+    read_ontology_tags, triple_confidence,
 };
 use crate::{embedding_dim, extract_json_from_response, owner_webid, render_docproc_template};
 

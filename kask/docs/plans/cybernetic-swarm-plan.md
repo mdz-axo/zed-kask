@@ -1397,3 +1397,62 @@ Remaining (deferred, design calls not implementation):
 - hkask-mcp-corpus has a pre-existing unrelated build break (cosine_distance not
   found, in untracked/modified corpus files from separate in-progress work); not
   touched here.
+
+### Deferred-item resolution (2026-08-03, grill-me/essentialist/diagnose/idiomatic-rust/pragmatic-cybernetics)
+
+A skill-grounded review resolved the four deferred items:
+
+- C2 cadence — RESOLVED. pragmatic-cybernetics: the event trigger has high
+  variety for the failures it measures but, by the §5.1 cybernetic bound (Go
+  See cannot be fully automated), cannot detect failures outside its
+  programmed variety. A fixed cadence is the irreducible human check for the
+  unknown-unknowns — complementary, not a substitute. idiomatic-rust: a
+  `cadence_every` parameter (default 0=off; manifest binds 3) inside the
+  existing `swarm.second_order_monitor` — 3 lines, no new step, no threading.
+  The cadence takes precedence over reasoning_loop (human check supersedes
+  automated diversify) but not over sensor_truth_divergence (the specific
+  failure wins). 3 unit tests (forces go_see, zero disables, divergence
+  precedes cadence).
+
+- C3/C7 enforcement — RESOLVED. grill-me: a stuck swarm that only re-proposes
+  known-bad edits SHOULD stall (the monitor's diversify/Go See then fires) — an
+  empty filtered result is the correct cybernetic response, not a bug.
+  essentialist: the LLM-instructed guard is the lower-fidelity artifact; the
+  deterministic filter is the replacement (take away the probabilistic, add the
+  deterministic). idiomatic-rust: a new `swarm.filter_proposed_moves` compute
+  primitive (pure function, tolerant field access, mirrors the existing
+  primitives) inserted as ordinal 4 between DECIDE and ACT. It drops moves
+  matching a prior failed-edit signature (C3) and hires of negatively-influential
+  agent types (C7), emitting the filtered list under `proposed_moves` (the
+  canonical name ACT + the accumulator read) plus a `rejected` audit. The
+  filter computes the current swarm_state_signature itself (it runs before
+  converge_accumulate). 4 unit tests + 1 executor integration test. The
+  manifest was renumbered (ACT 4->5, CHECK 5->6, convergence_check 6->7,
+  accumulate 7->8, monitor 8->9, loop 9->10) and every step_N_result reference
+  updated; the manifest-structure test pins the new ordinals + the filter step +
+  the corrected kata_hypotenuse binding (step_7_result.hypotenuse).
+
+- SKILL.md companion — RESOLVED. essentialist: the registry crate is canonical;
+  SKILL.md is a derived companion (X4 requires it exist). The mechanical parts
+  (PDCA loop diagram, convergence section, component table, registry refs) were
+  updated to reflect the 10-step manifest + the C0-C8 components + the 31-tool
+  surface + the three deterministic compute primitives. The prose (When to Use)
+  was left as-is (still accurate). Full reverse-translate regeneration via
+  skill-maintenance-reverse is the canonical path when an inference port is
+  available; this session updated the structural drift manually.
+
+- hkask-mcp-corpus — NO ACTION (false alarm). diagnose: the "build break" does
+  not reproduce. `cargo check -p hkask-mcp-corpus --message-format=short` shows
+  only a dead_code warning on the WIP `batch.rs::as_str`; `cargo check
+  --workspace` finishes cleanly. The earlier E0425 was a stale incremental-cache
+  phantom (the untracked `batch.rs` was new). The prior summary's claim of a
+  "pre-existing build break" was an over-claim — diagnose's reproduce-first
+  discipline caught it. `cosine_distance` is defined at `helpers.rs:21`.
+
+Validation: cargo test -p hkask-templates (133 lib + integration) / -p
+hkask-mcp-swarm (113) / -p swarm_panel (24) all pass; clippy clean (--deny
+warnings) across all three. C5 remains LLM-instructed (the attribution rule
+feeds DECIDE's reconfigure-vs-fire choice, which is itself LLM-gated, so a
+mis-attribution is caught downstream); its deterministic promotion path
+(a `swarm.attribute_fault` compute step before ORIENT) is documented as future
+work if attribution fidelity becomes a problem.

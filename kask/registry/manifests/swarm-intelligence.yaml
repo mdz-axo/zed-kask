@@ -45,7 +45,7 @@
 #       checklist. The cadence is event-driven (on sensor-truth divergence)
 #       plus iteration-bounded (max_iterations caps the human-check cadence).
 #   C3 failed-edit memory                       — converge_accumulate + DECIDE guard
-#   C5 deterministic fault attribution          — ORIENT + CHECK blame aggregation
+#   C5 deterministic fault attribution          — ORIENT + converge_accumulate fault aggregation
 #   C6 reconfigure_agent DECIDE action         — swarm_reconfigure_local_agent tool
 #   C7 influence-weighted rejection             — converge_accumulate + DECIDE guard
 
@@ -227,6 +227,10 @@ steps:
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
       second_order: "{{ second_order | default({}) }}"
+      # Cybernetic Swarm Plan C5: the deterministic fault-count map (agent_name
+      # -> count of attributed faults across iterations). DECIDE computes
+      # agent_sel = argmax fault_count to pick the reconfigure-or-fire target.
+      fault_count: "{{ fault_count | default({}) }}"
 
   - ordinal: 4
     action: compute
@@ -305,11 +309,6 @@ steps:
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
       task_success: "{{ task_success | default(none) }}"
-      # Cybernetic Swarm Plan C5: blame aggregation. agent_at_fault is the prior
-      # ORIENT's attribution (prev_step_2_result); blame_count is the carried
-      # running map (threaded via the loop). Absent on iteration 1.
-      agent_at_fault: "{{ prev_step_2_result.agent_at_fault | default(none) }}"
-      blame_count: "{{ blame_count | default({}) }}"
 
   - ordinal: 7
     action: compute
@@ -352,6 +351,14 @@ steps:
       deficit_class: "{{ step_2_result.deficit_class | default('') }}"
       decisions: "{{ step_4_result | default({}) }}"
       swarm_state: "{{ step_1_result | default({}) }}"
+      # Cybernetic Swarm Plan C5: fault-count aggregation (promoted from the
+      # CHECK template to the deterministic compute layer — an LLM template
+      # cannot reliably maintain a running counter). agent_at_fault is this
+      # iteration's ORIENT attribution (for the prior iteration's failure);
+      # fault_count is the carried running map (threaded via the loop). The
+      # primitive increments the blamed agent's count.
+      agent_at_fault: "{{ step_2_result.agent_at_fault | default(none) }}"
+      fault_count: "{{ fault_count | default({}) }}"
 
   - ordinal: 9
     action: compute
@@ -398,7 +405,7 @@ steps:
       failed_edits: "{{ step_8_result.failed_edits | default([]) }}"
       influence_scores: "{{ step_8_result.influence_scores | default({}) }}"
       second_order: "{{ step_9_result | default({}) }}"
-      blame_count: "{{ step_6_result.blame_count | default({}) }}"
+      fault_count: "{{ step_8_result.fault_count | default({}) }}"
 
 error_handling:
   on_gas_exceeded: abort
