@@ -208,22 +208,6 @@ error_handling:
   retry_backoff_seconds: 1
   on_validation_failure: abort
 
-ocap:
-  # Capability matching is enforced at the runtime actuator boundary — McpRuntime::invoke
-  # matches the in-process DelegationToken's (resource, resource_id, action)
-  # against the invoked tool, plus a gas gate via CyberneticsLoop. A second
-  # gate is the per-agent mcp_tools allowlist enforced at the ToolDispatchPort
-  # dispatch boundary. Of the fields below, `capability_expiry_seconds` IS
-  # enforced (cascade-minted tokens expire after it; McpRuntime::invoke rejects
-  # expired tokens); the other three are declared but not yet enforced at runtime.
-  # Do NOT add a `required_capabilities` list here — deny_unknown_fields will reject it
-  # deny_unknown_fields and will reject it; declare per-template capabilities only
-  # if you wire them for real (see ADR).
-  delegation_chain_required: true
-  signature_algorithm: ed25519
-  capability_expiry_seconds: 3600
-  template_scoped: true
-
 ledger:
   emit_spans: true
   # MANDATORY: must be reg.skill.<manifest.id> (CI-enforced by

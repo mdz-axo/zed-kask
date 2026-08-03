@@ -9279,7 +9279,6 @@ version = "0.31.1"
 name = "hkask-capability"
 version = "0.31.1"
 dependencies = [
- "chrono",
  "hex",
  "hkask-types",
  "proptest 1.10.0",
@@ -11208,7 +11207,6 @@ dependencies = [
  "settings_content",
  "tokio",
  "tracing",
- "ui",
  "util",
 ]
 

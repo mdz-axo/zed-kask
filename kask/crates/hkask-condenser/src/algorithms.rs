@@ -1310,4 +1310,28 @@ mod tests {
                 "flashrank fallback expanded: compressed {} > original {}", compressed.len(), input.len());
         }
     }
+
+    // compute_budget: budget never exceeds input, respects max_lines cap,
+    // and passthrough flag is consistent. Subsumes the 5 hardcoded compute_budget_* tests.
+    proptest! {
+        #[test]
+        fn compute_budget_invariants(
+            lines in 0usize..10_000usize,
+            profile in select(&[Profile::Heavy, Profile::Normal, Profile::Soft, Profile::Light]),
+        ) {
+            let (budget, passthrough) = compute_budget(lines, profile);
+
+            prop_assert!(budget <= lines,
+                "budget exceeds input: budget={}, lines={}", budget, lines);
+
+            if let Some(max) = profile.max_lines() {
+                prop_assert!(budget <= max,
+                    "budget exceeds max_lines: budget={}, max={}, profile={:?}", budget, max, profile);
+            }
+
+            prop_assert_eq!(passthrough, budget >= lines,
+                "passthrough flag inconsistent: budget={}, lines={}, passthrough={}",
+                budget, lines, passthrough);
+        }
+    }
 }

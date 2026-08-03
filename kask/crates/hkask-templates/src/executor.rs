@@ -2231,6 +2231,100 @@ mod tests {
         }
     }
 
+    /// Sink tool stub — returns `ToolTaint::Sink` so the FIDES policy gate
+    /// (Rule 2) can block untrusted input. Used by the tool-invoke FIDES gate
+    /// regression test.
+    struct SinkToolPort;
+
+    impl hkask_capability::ToolPort for SinkToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: Value,
+            _token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            std::result::Result<Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async { Ok(serde_json::json!("sink tool executed")) })
+        }
+
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async {
+                Some(hkask_capability::ToolInfo {
+                    name: "write".to_string(),
+                    description: "Sink tool stub".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "hkask-mcp-stub".to_string(),
+                    required_capability: None,
+                    taint: ToolTaint::Sink,
+                })
+            })
+        }
+
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { vec!["write".to_string()] })
+        }
+    }
+
+    /// B1 regression: the FIDES Source→Sink gate must block a `tool_invoke`
+    /// step whose `input_mapping` references a Source-tainted context entry via
+    /// `$ref`. Before the fix, `check_untrusted_input` ran on the post-resolution
+    /// input (where `$ref` was already stripped by `bind_parameters`) and always
+    /// returned false — the gate was theater on the `execute_tool_invoke` path.
+    #[tokio::test]
+    async fn execute_tool_invoke_fides_gate_blocks_source_tainted_ref() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(SinkToolPort),
+            LLMParameters::default(),
+        )
+        .with_runtime_policy(Arc::new(hkask_regulation::DefaultPolicy::default()));
+
+        // step_1_result is Source-tainted (e.g. output of a prior Source tool).
+        let mut context = HashMap::new();
+        context.insert(
+            "step_1_result".to_string(),
+            Value::String("untrusted external content".to_string()),
+        );
+        executor
+            .taint_labels
+            .lock()
+            .expect("taint mutex")
+            .insert("step_1_result".to_string(), ToolTaint::Source);
+
+        // A Sink tool (write) receives input that references the tainted entry.
+        let step = BundleManifestStep {
+            ordinal: 2,
+            action: "execute".to_string(),
+            description: "invoke sink with tainted input".to_string(),
+            renderer: None,
+            template_ref: None,
+            mcp: Some("stub/write".to_string()),
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: Some(serde_json::json!({
+                "data": {"$ref": "step_1_result"}
+            })),
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+        };
+
+        let result = executor.execute_tool_invoke(&step, &mut context).await;
+        let err =
+            result.expect_err("FIDES gate must block Source-tainted $ref flowing to a Sink tool");
+        assert!(
+            err.to_string().contains("blocked"),
+            "error must surface the policy block: {err}"
+        );
+    }
+
     /// RR-0028: the refinement-loop snapshot copies `step_N_result` values to
     /// `prev_step_N_result` keys — it must also copy the taint label, otherwise
     /// a Source-tainted artifact referenced as `prev_step_N_result` bypasses
