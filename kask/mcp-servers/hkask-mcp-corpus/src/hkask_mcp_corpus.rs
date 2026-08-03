@@ -43,13 +43,16 @@ pub mod template;
 pub mod text;
 pub mod tools;
 
-// Re-export template renderer for tool modules (accessible via `use crate::*;`)
+// Re-export template renderer for tool modules.
 pub(crate) use template::render_docproc_template;
 // Re-export helpers used by tool modules.
 pub(crate) use helpers::{
-    chunk_structure, chunk_word_bounds, cosine_distance, cosine_similarity, default_ocr_max_tokens,
-    read_jsonl, read_jsonl_lenient, sanitize_links, serialize_passages, tokens_to_words,
+    chunk_structure, chunk_word_bounds, cosine_distance, cosine_similarity, read_jsonl,
+    read_jsonl_lenient, serialize_passages, tokens_to_words,
 };
+// Re-export OCR config and text-cleaning helpers from their semantic homes.
+pub(crate) use convert::sanitize_links;
+pub(crate) use ocr::default_ocr_max_tokens;
 // LLM JSON extraction is shared via `hkask_types::json_extract` (RR-0028).
 pub(crate) use hkask_types::json_extract::extract_json_from_response;
 

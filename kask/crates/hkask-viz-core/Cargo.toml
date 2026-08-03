@@ -1,0 +1,15 @@
+[package]
+name = "hkask-viz-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Block-renderer registry composing kask viz widgets (media, graph) behind the D18 markdown seam"
+
+[lib]
+path = "src/hkask_viz_core.rs"
+
+[dependencies]
+gpui.workspace = true
+hkask_media_widget.workspace = true
+hkask_graph_widget.workspace = true
+log.workspace = true

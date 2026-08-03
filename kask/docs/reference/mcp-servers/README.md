@@ -47,7 +47,7 @@ struct.
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 37 | — |
 | Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 15 | `hkask-mcp-research` |
 | [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 18 | `hkask-forecast` |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World agent swarms + Xaman Ek curator | 19 | — |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World agent swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 31 | — |
 | Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | 8 | — |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
@@ -74,7 +74,7 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 - [Condenser MCP Server Reference](condenser.md) — 6 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
 - [Corpus MCP Server Reference](corpus.md) — corpus gathering, document processing, QA generation, style replicas
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 19 tools, ABW agent swarms, Xaman Ek curator, consent-gated spend, algedonic wallet channel
+- [Swarm MCP Server Reference](swarm.md) — 31 tools (20 ABW + 11 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)

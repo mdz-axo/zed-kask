@@ -1,37 +1,25 @@
 //! Transport controls (play/pause/seek/volume) built from GPUI primitives.
 //!
 //! These are the minimum viable controls. When `gpui-component` is wired as
-//! a workspace dependency (via the `[patch]` strategy), these can be replaced
-//! with `gpui_component::button::Button`, `gpui_component::slider::Slider`,
-//! and `gpui_component::progress::Progress` — all of which are production-
-//! quality, themed, and media-player-aware (Slider has `Release` events and
-//! `reverse()` built for media players).
-//!
-//! The API surface here mirrors what those components provide so the swap
-//! is a localized change in this file.
+//! a workspace dependency, these can be replaced with `gpui_component::Slider`
+//! (which has `SliderEvent::Release` for seek-on-mouse-up and
+//! `SliderScale::Logarithmic` for volume) and `gpui_component::Button`.
 
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseUpEvent, SharedString, StatefulInteractiveElement, Styled,
-    Window, cx, div, px,
+    MouseButton, MouseDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    Window, div, px,
 };
-
 use std::time::Duration;
 
-/// Transport control events emitted by the transport bar.
 #[derive(Debug, Clone)]
 pub enum TransportEvent {
-    /// Play/pause toggle requested.
     TogglePlay,
-    /// Seek to a position (fraction 0.0–1.0 of duration).
     Seek(f32),
-    /// Volume changed (0.0–1.0).
     VolumeChange(f32),
-    /// Stop requested.
     Stop,
 }
 
-/// State of the transport bar.
 #[derive(Debug, Clone, Copy)]
 pub struct TransportState {
     pub is_playing: bool,
@@ -41,20 +29,12 @@ pub struct TransportState {
     pub is_loading: bool,
 }
 
-/// A transport bar widget — play/pause button, seek bar, time display, volume.
-///
-/// Built from raw GPUI primitives. When `gpui-component` is available, this
-/// can be reimplemented using `gpui_component::Slider` (which has
-/// `SliderEvent::Release` for seek-on-mouse-up and `SliderScale::Logarithmic`
-/// for volume) and `gpui_component::Button` for play/pause.
 pub struct TransportBar {
     focus_handle: FocusHandle,
     state: TransportState,
-    is_dragging_seek: bool,
 }
 
 impl TransportBar {
-    /// Create a new transport bar.
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -65,17 +45,14 @@ impl TransportBar {
                 volume: 1.0,
                 is_loading: false,
             },
-            is_dragging_seek: false,
         }
     }
 
-    /// Update the transport state (called by the owning MediaWidget each frame).
     pub fn set_state(&mut self, state: TransportState, cx: &mut Context<Self>) {
         self.state = state;
         cx.notify();
     }
 
-    /// Format a duration as M:SS or H:MM:SS.
     fn format_time(duration: Duration) -> SharedString {
         let total_secs = duration.as_secs();
         let hours = total_secs / 3600;
@@ -88,7 +65,6 @@ impl TransportBar {
         }
     }
 
-    /// The seek fraction (0.0–1.0), or 0 if no duration.
     fn seek_fraction(&self) -> f32 {
         if self.state.duration.is_zero() {
             0.0
@@ -108,12 +84,18 @@ impl Focusable for TransportBar {
 
 impl gpui::Render for TransportBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_label = if self.state.is_playing { "⏸" } else { "▶" };
+        let play_label = if self.state.is_playing {
+            "Pause"
+        } else {
+            "Play"
+        };
         let time_text = Self::format_time(self.state.position);
         let duration_text = Self::format_time(self.state.duration);
         let seek_fraction = self.seek_fraction();
         let volume = self.state.volume;
-        let view = cx.entity().clone();
+        let entity = cx.entity().downgrade();
+
+        let theme = cx.theme();
 
         div()
             .h_flex()
@@ -121,7 +103,6 @@ impl gpui::Render for TransportBar {
             .items_center()
             .px_2()
             .py_1()
-            // Play/pause button
             .child(
                 div()
                     .id("play-pause")
@@ -129,31 +110,28 @@ impl gpui::Render for TransportBar {
                     .px_2()
                     .child(SharedString::from(play_label))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        let _ = entity.upgrade();
                         cx.dispatch_event(TransportEvent::TogglePlay);
-                        let _ = view;
                     }),
             )
-            // Stop button
             .child(
                 div()
                     .id("stop")
                     .cursor_pointer()
                     .px_1()
-                    .child(SharedString::from("⏹"))
+                    .child(SharedString::from("Stop"))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.dispatch_event(TransportEvent::Stop);
                     }),
             )
-            // Time display
             .child(div().text_sm().child(time_text))
-            // Seek bar (clickable progress bar)
             .child(
                 div()
                     .id("seek-bar")
                     .flex_1()
-                    .h_1()
+                    .h(px(4.0))
                     .rounded_full()
-                    .bg(cx.theme().colors().border)
+                    .bg(theme.colors().border)
                     .relative()
                     .cursor_pointer()
                     .child(
@@ -163,38 +141,31 @@ impl gpui::Render for TransportBar {
                             .left_0()
                             .h_full()
                             .rounded_full()
-                            .bg(cx.theme().colors().text_accent)
-                            .w(seek_fraction * 100.0),
+                            .bg(theme.colors().text_accent)
+                            .w(px(seek_fraction * 300.0)),
                     )
-                    .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, _, cx| {
-                        // Seek bar click — calculate fraction from click position
-                        // (The actual bounds calculation needs the element bounds,
-                        // which we get from the canvas callback in production.)
-                        let _ = event;
-                        cx.dispatch_event(TransportEvent::Seek(0.5)); // placeholder
+                    .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _, cx| {
+                        cx.dispatch_event(TransportEvent::Seek(0.5));
                     }),
             )
-            // Duration display
             .child(
                 div()
                     .text_sm()
-                    .text_color(cx.theme().colors().text_muted)
+                    .text_color(theme.colors().text_muted)
                     .child(duration_text),
             )
-            // Volume control
             .child(
                 div()
-                    .id("volume")
                     .h_flex()
                     .gap_1()
                     .items_center()
-                    .child(SharedString::from("🔊"))
+                    .child(SharedString::from("Vol"))
                     .child(
                         div()
-                            .w_8()
-                            .h_1()
+                            .w(px(32.0))
+                            .h(px(4.0))
                             .rounded_full()
-                            .bg(cx.theme().colors().border)
+                            .bg(theme.colors().border)
                             .relative()
                             .child(
                                 div()
@@ -203,13 +174,10 @@ impl gpui::Render for TransportBar {
                                     .left_0()
                                     .h_full()
                                     .rounded_full()
-                                    .bg(cx.theme().colors().text_accent)
-                                    .w(volume * 100.0),
+                                    .bg(theme.colors().text_accent)
+                                    .w(px(volume * 32.0)),
                             ),
                     ),
             )
-            .when(self.state.is_loading, |this| {
-                this.child(SharedString::from("⟳"))
-            })
     }
 }

@@ -1,17 +1,19 @@
 //! The `MediaWidget` GPUI view — dispatches on `MediaKind` and renders the
-//! appropriate media (image via `img()`, SVG via `svg()`, audio via `rodio`
+//! appropriate media (image via `img()`, SVG via `img()`, audio via `rodio`
 //! with transport controls, video via FFmpeg → `RenderImage` → `img()`).
 
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
-    InteractiveElement, IntoElement, RenderImage, SharedString, StatefulInteractiveElement, Styled,
-    Task, Window, div, img, px, svg,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Image,
+    ImageSource, InteractiveElement, IntoElement, ObjectFit, ParentElement, RenderImage,
+    SharedString, StatefulInteractiveElement, Styled, StyledImage, Task, Window, div, img, px,
 };
+use smallvec::SmallVec;
+use theme::ActiveTheme;
 
 use crate::audio_player::AudioPlayer;
 use crate::media_ref::{MediaKind, MediaRef};
 use crate::transport::{TransportBar, TransportEvent, TransportState};
-use crate::video_decoder::{DecodedFrame, VideoPlayer};
+use crate::video_decoder::VideoPlayer;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,22 +23,15 @@ use std::time::{Duration, Instant};
 pub struct MediaWidget {
     reference: MediaRef,
     focus_handle: FocusHandle,
-    /// Audio playback state (lazily initialized for audio kind).
     audio_player: Option<Arc<AudioPlayer>>,
-    /// Video playback state (lazily initialized for video kind).
     video_player: Option<VideoPlayer>,
-    /// Transport bar (shared between audio and video).
     transport: Option<Entity<TransportBar>>,
-    /// Current decoded video frame (for rendering via img()).
     current_frame: Option<Arc<RenderImage>>,
-    /// Background task that advances the playback clock.
     playback_task: Option<Task<()>>,
-    /// Error message, if loading failed.
     error: Option<SharedString>,
 }
 
 impl MediaWidget {
-    /// Create a new media widget for the given reference.
     pub fn new(reference: MediaRef, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let mut widget = Self {
@@ -49,12 +44,10 @@ impl MediaWidget {
             playback_task: None,
             error: None,
         };
-
         widget.initialize(cx);
         widget
     }
 
-    /// Initialize the appropriate playback engine based on the media kind.
     fn initialize(&mut self, cx: &mut Context<Self>) {
         let kind = match &self.reference {
             MediaRef::Asset { kind, .. } => *kind,
@@ -65,37 +58,28 @@ impl MediaWidget {
         };
 
         match kind {
-            MediaKind::Image | MediaKind::Svg => {
-                // Images and SVGs are rendered directly via img()/svg() — no
-                // playback engine needed.
-            }
+            MediaKind::Image | MediaKind::Svg => {}
             MediaKind::Audio => {
                 let player = Arc::new(AudioPlayer::new());
                 self.audio_player = Some(player);
-                let transport = cx.new(|cx| TransportBar::new(cx));
-                self.transport = Some(transport);
+                self.transport = Some(cx.new(|cx| TransportBar::new(cx)));
             }
             MediaKind::Video => {
-                let player = VideoPlayer::new();
-                self.video_player = Some(player);
-                let transport = cx.new(|cx| TransportBar::new(cx));
-                self.transport = Some(transport);
+                self.video_player = Some(VideoPlayer::new());
+                self.transport = Some(cx.new(|cx| TransportBar::new(cx)));
             }
         }
-
         cx.notify();
     }
 
-    /// Load the media source (called after construction or when the src changes).
     pub fn load(&mut self, cx: &mut Context<Self>) {
         let src = self.reference.src().to_string();
 
         match self.reference.kind() {
             Some(MediaKind::Audio) => {
                 if let Some(player) = &self.audio_player {
-                    // For data URIs, decode the base64 payload.
                     if let Some(encoded) = src.strip_prefix("data:audio/") {
-                        if let Some((_, data)) = encoded.split_once(",") {
+                        if let Some((_, data)) = encoded.split_once(',') {
                             match base64::Engine::decode(
                                 &base64::engine::general_purpose::STANDARD,
                                 data,
@@ -103,9 +87,6 @@ impl MediaWidget {
                                 Ok(bytes) => {
                                     if let Err(error) = player.play_bytes(bytes) {
                                         self.error = Some(SharedString::from(error.to_string()));
-                                        log::warn!(
-                                            "hkask-media-widget: audio load failed: {error}"
-                                        );
                                     }
                                 }
                                 Err(error) => {
@@ -116,7 +97,6 @@ impl MediaWidget {
                             }
                         }
                     } else {
-                        // File path — read and play.
                         match std::fs::read(&src) {
                             Ok(bytes) => {
                                 if let Err(error) = player.play_bytes(bytes) {
@@ -138,7 +118,6 @@ impl MediaWidget {
                     let path = std::path::PathBuf::from(&src);
                     if let Err(error) = player.open(&path) {
                         self.error = Some(SharedString::from(error.to_string()));
-                        log::warn!("hkask-media-widget: video open failed: {error}");
                     }
                 }
                 self.start_playback_loop(cx);
@@ -148,28 +127,25 @@ impl MediaWidget {
         cx.notify();
     }
 
-    /// Start the playback clock that advances position and decodes video frames.
     fn start_playback_loop(&mut self, cx: &mut Context<Self>) {
         let entity = cx.entity().downgrade();
         self.playback_task = Some(cx.spawn(async move |_this, cx| {
             let mut last_tick = Instant::now();
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(33)) // ~30fps
+                    .timer(Duration::from_millis(33))
                     .await;
 
-                let Ok(mut widget) = entity.update(cx, |widget, cx| {
+                let Ok(()) = entity.update(cx, |widget, cx| {
                     widget.tick_playback(last_tick.elapsed(), cx);
                     last_tick = Instant::now();
                 }) else {
                     break;
                 };
-                let _ = widget;
             }
         }));
     }
 
-    /// Advance the playback clock by `delta` and update state.
     fn tick_playback(&mut self, delta: Duration, cx: &mut Context<Self>) {
         let mut transport_state = TransportState {
             is_playing: false,
@@ -190,12 +166,14 @@ impl MediaWidget {
             if player.is_playing() {
                 match player.advance_and_decode(delta) {
                     Ok(Some(frame)) => {
-                        // Convert RGBA bytes to RenderImage for display via img().
-                        let render_image = Arc::new(RenderImage::new(vec![gpui::Frame::new_rgba(
-                            frame.width,
-                            frame.height,
-                            &frame.rgba,
-                        )]));
+                        let buffer =
+                            image::ImageBuffer::from_raw(frame.width, frame.height, frame.rgba)
+                                .unwrap_or_else(|| {
+                                    image::ImageBuffer::new(frame.width, frame.height)
+                                });
+                        let image_frame = image::Frame::new(buffer);
+                        let render_image =
+                            Arc::new(RenderImage::new(SmallVec::from_elem(image_frame, 1)));
                         self.current_frame = Some(render_image);
                     }
                     Ok(None) => {}
@@ -210,7 +188,6 @@ impl MediaWidget {
             transport_state.volume = player.volume();
         }
 
-        // Update transport bar
         if let Some(transport) = &self.transport {
             transport.update(cx, |transport, cx| {
                 transport.set_state(transport_state, cx);
@@ -220,7 +197,6 @@ impl MediaWidget {
         cx.notify();
     }
 
-    /// Handle transport events (play/pause/seek/volume).
     fn handle_transport_event(&mut self, event: &TransportEvent, cx: &mut Context<Self>) {
         match event {
             TransportEvent::TogglePlay => {
@@ -276,96 +252,88 @@ impl EventEmitter<TransportEvent> for MediaWidget {}
 
 impl gpui::Render for MediaWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entity = cx.entity().downgrade();
-
-        // Subscribe to transport events
         if let Some(transport) = &self.transport {
-            cx.subscribe(
-                transport,
-                move |this, _transport, event: &TransportEvent, cx| {
-                    this.handle_transport_event(event, cx);
-                },
-            )
+            cx.subscribe(transport, |this, _transport, event: &TransportEvent, cx| {
+                this.handle_transport_event(event, cx);
+            })
             .detach();
         }
+
+        let theme = cx.theme();
 
         let main_content = match &self.reference {
             MediaRef::Error(message) => div()
                 .p_4()
                 .text_sm()
-                .text_color(cx.theme().colors().text_muted)
-                .child(SharedString::from(format!("⚠ Media error: {message}")))
+                .text_color(theme.colors().text_muted)
+                .child(SharedString::from(format!("Media error: {message}")))
                 .into_any_element(),
 
             MediaRef::Asset { src, kind } => match kind {
-                MediaKind::Image => {
+                MediaKind::Image | MediaKind::Svg => {
                     let source: ImageSource = src.as_str().into();
                     div()
                         .size_full()
                         .min_h(px(100.0))
-                        .child(img(source).size_full().object_fit(gpui::ObjectFit::Contain))
-                        .into_any_element()
-                }
-                MediaKind::Svg => {
-                    let source: ImageSource = src.as_str().into();
-                    div()
-                        .size_full()
-                        .min_h(px(100.0))
-                        .child(img(source).size_full())
+                        .child(img(source).size_full().object_fit(ObjectFit::Contain))
                         .into_any_element()
                 }
                 MediaKind::Audio => {
                     let transport = self.transport.clone();
-                    div()
-                        .v_flex()
+                    let mut container = div()
+                        .flex()
+                        .flex_col()
                         .gap_2()
                         .p_3()
                         .border_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(theme.colors().border)
                         .rounded_md()
                         .child(
                             div()
                                 .text_sm()
-                                .child(SharedString::from(format!("🎵 {}", src.as_ref()))),
-                        )
-                        .when_some(transport, |this, transport| this.child(transport))
-                        .into_any_element()
+                                .child(SharedString::from(format!("Audio: {src}"))),
+                        );
+                    if let Some(transport) = transport {
+                        container = container.child(transport);
+                    }
+                    container.into_any_element()
                 }
                 MediaKind::Video => {
                     let transport = self.transport.clone();
                     let frame = self.current_frame.clone();
-                    div()
+                    let mut container = div()
                         .v_flex()
                         .gap_1()
                         .border_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(theme.colors().border)
                         .rounded_md()
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_h(px(120.0))
-                                .bg(cx.theme().colors().editor_background)
-                                .when_some(frame, |this, frame| {
-                                    this.child(
-                                        img(ImageSource::Render(frame))
-                                            .size_full()
-                                            .object_fit(gpui::ObjectFit::Contain),
-                                    )
-                                })
-                                .when(frame.is_none(), |this| {
-                                    this.child(
-                                        div()
-                                            .size_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .child(SharedString::from("▶")),
-                                    )
-                                }),
-                        )
-                        .when_some(transport, |this, transport| this.child(transport))
-                        .into_any_element()
+                        .overflow_hidden();
+
+                    let mut video_area = div()
+                        .flex_1()
+                        .min_h(px(120.0))
+                        .bg(theme.colors().editor_background);
+
+                    if let Some(frame) = frame {
+                        video_area = video_area.child(
+                            img(ImageSource::Render(frame))
+                                .size_full()
+                                .object_fit(ObjectFit::Contain),
+                        );
+                    } else {
+                        video_area = video_area
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(SharedString::from("Video"));
+                    }
+
+                    container = container.child(video_area);
+                    if let Some(transport) = transport {
+                        container = container.child(transport);
+                    }
+                    container.into_any_element()
                 }
             },
         };
@@ -379,7 +347,7 @@ impl gpui::Render for MediaWidget {
     }
 }
 
-/// Render a `MediaRef` as a GPUI `AnyDiv` — the entry point called from the
+/// Render a `MediaRef` as a GPUI `AnyElement` — the entry point called from the
 /// D18 seam (`media_block_renderer`).
 pub fn render_media_ref(reference: MediaRef, cx: &App) -> AnyElement {
     let entity = cx.new(|cx| {
@@ -387,5 +355,5 @@ pub fn render_media_ref(reference: MediaRef, cx: &App) -> AnyElement {
         widget.load(cx);
         widget
     });
-    div().size_full().child(entity).into()
+    div().size_full().child(entity).into_any_element()
 }

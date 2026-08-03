@@ -97,7 +97,7 @@ async fn resolve_from_cache_or_download(
         })
     } else {
         tracing::info!(work = %work.title, "Downloading");
-        let text = super::download::download_text(&work.url).await?;
+        let text = crate::corpus::fetch::fetch_text(&work.url).await?;
         if let Err(e) = std::fs::write(cache_path, &text) {
             tracing::warn!(path = %cache_path.display(), error = %e, "Could not cache download");
         }

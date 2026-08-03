@@ -288,6 +288,8 @@ members = [
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
     "kask/crates/hkask-media-widget",
+    "kask/crates/hkask-viz-core",
+    "kask/crates/hkask-graph-widget",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
@@ -380,6 +382,8 @@ swarm_panel = { path = "crates/swarm_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_media_widget = { path = "kask/crates/hkask-media-widget" }
+hkask_viz_core = { path = "kask/crates/hkask-viz-core", package = "hkask-viz-core" }
+hkask_graph_widget = { path = "kask/crates/hkask-graph-widget", package = "hkask-graph-widget" }
 diagnostics = { path = "crates/diagnostics" }
 dialoguer = { version = "0.12", default-features = false }
 editor = { path = "crates/editor" }

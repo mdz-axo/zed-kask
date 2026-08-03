@@ -1,0 +1,16 @@
+[package]
+name = "hkask-graph-widget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUI graph widget rendering ```graph fenced blocks (event-tree DAG) inline in agent markdown"
+
+[lib]
+path = "src/hkask_graph_widget.rs"
+
+[dependencies]
+gpui.workspace = true
+anyhow.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true

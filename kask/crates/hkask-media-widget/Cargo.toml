@@ -10,7 +10,10 @@ path = "src/hkask_media_widget.rs"
 
 [dependencies]
 gpui.workspace = true
+theme.workspace = true
 rodio.workspace = true
+image.workspace = true
+smallvec.workspace = true
 anyhow.workspace = true
 log.workspace = true
 serde.workspace = true
@@ -19,20 +22,14 @@ parking_lot.workspace = true
 base64.workspace = true
 url.workspace = true
 
-# Video decode — vendored FFmpeg (no system dep when the `vendored` feature is enabled).
-# The `vendored` feature is NOT enabled by default to keep dev builds fast;
-# enable it in release/distribution builds via `--features hkask-media-widget/vendored`.
+# Video decode — gated behind cargo features to keep dev builds fast.
+# - `video`: uses system FFmpeg via pkg-config
+# - `vendored`: compiles FFmpeg from source (no system dep, slow first build)
 ffmpeg-next = { version = "8.1", default-features = false, features = [
-    "codec",
-    "format",
-    "software-resampling",
-    "software-scaling",
+    "codec", "format", "software-resampling", "software-scaling",
 ], optional = true }
 
 [features]
 default = []
-# Enable vendored FFmpeg (compiles from source — slow first build, no system dep).
-# Without this, FFmpeg is loaded from the system at runtime via pkg-config.
 vendored = ["dep:ffmpeg-next", "ffmpeg-next/static", "ffmpeg-next/build"]
-# Enable video decode at all (with system FFmpeg via pkg-config).
 video = ["dep:ffmpeg-next"]
