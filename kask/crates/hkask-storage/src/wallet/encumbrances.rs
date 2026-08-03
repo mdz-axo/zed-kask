@@ -12,8 +12,10 @@ impl WalletStore {
     /// Lock rJoules from a wallet for an API key's use.
     ///
     /// Debits the wallet balance by `amount_rj` and creates an active
-    /// encumbrance row. Returns an error if the key already has an active
-    /// encumbrance or the wallet has insufficient balance.
+    /// encumbrance row, inside a single SQL transaction so the balance
+    /// update and encumbrance insert commit atomically. Returns an error if
+    /// the key already has an active encumbrance or the wallet has
+    /// insufficient balance.
     /// Encumber rJoules for an API key (lock funds for spending).
     ///
     /// expect: "The system provides durable storage for wallet data"
@@ -40,40 +42,43 @@ impl WalletStore {
         {
             return Err(WalletError::EncumbranceAlreadyExists { key_id });
         }
-        // Debit wallet
-        let rows = self.driver.execute(
-            "UPDATE wallet_balances SET balance_rj = balance_rj - ?1, updated_at = ?2 WHERE wallet_id = ?3 AND balance_rj >= ?1",
-            &[
-                DbValue::Integer(amount),
-                DbValue::Text(now.clone()),
-                DbValue::Text(wallet_id.to_string()),
-            ],
-        )?;
-        if rows == 0 {
-            let balance = self.get_balance(wallet_id)?;
-            let have = balance.map(|b| b.rjoules).unwrap_or(0);
-            return Err(WalletError::InsufficientBalance {
-                have: RJoule::new(have),
-                need: amount_rj,
-            });
-        }
-        // Create encumbrance row
-        self.driver.execute(
-            "INSERT INTO encumbrances (key_id, wallet_id, amount_rj, consumed_rj, status, created_at) VALUES (?1, ?2, ?3, 0, 'active', ?4)",
-            &[
-                DbValue::Text(key_id.to_string()),
-                DbValue::Text(wallet_id.to_string()),
-                DbValue::Integer(amount),
-                DbValue::Text(now),
-            ],
-        )?;
-        Ok(())
+        self.txn(|s| {
+            // Debit wallet
+            let rows = s.driver.execute(
+                "UPDATE wallet_balances SET balance_rj = balance_rj - ?1, updated_at = ?2 WHERE wallet_id = ?3 AND balance_rj >= ?1",
+                &[
+                    DbValue::Integer(amount),
+                    DbValue::Text(now.clone()),
+                    DbValue::Text(wallet_id.to_string()),
+                ],
+            )?;
+            if rows == 0 {
+                let balance = s.get_balance(wallet_id)?;
+                let have = balance.map(|b| b.rjoules).unwrap_or(0);
+                return Err(WalletError::InsufficientBalance {
+                    have: RJoule::new(have),
+                    need: amount_rj,
+                });
+            }
+            // Create encumbrance row
+            s.driver.execute(
+                "INSERT INTO encumbrances (key_id, wallet_id, amount_rj, consumed_rj, status, created_at) VALUES (?1, ?2, ?3, 0, 'active', ?4)",
+                &[
+                    DbValue::Text(key_id.to_string()),
+                    DbValue::Text(wallet_id.to_string()),
+                    DbValue::Integer(amount),
+                    DbValue::Text(now.clone()),
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     /// Release an encumbrance, returning unspent rJoules to the wallet.
     ///
     /// Idempotent — releasing an already-released or consumed encumbrance
-    /// is a no-op.
+    /// is a no-op. The encumbrance status update and balance refund commit
+    /// atomically inside a single SQL transaction.
     /// Release an encumbrance (return unspent rJoules to wallet).
     ///
     /// expect: "The system provides durable storage for wallet data"
@@ -99,34 +104,38 @@ impl WalletStore {
             Some(r) => r,
             None => return Ok(()), // already released/consumed or doesn't exist
         };
-        // Mark released
-        self.driver.execute(
-            "UPDATE encumbrances SET status = 'released', released_at = ?1 WHERE key_id = ?2 AND status = 'active'",
-            &[
-                DbValue::Text(now.clone()),
-                DbValue::Text(key_id.to_string()),
-            ],
-        )?;
-        // Return unspent rJoules to wallet
-        let unspent = amount - consumed;
-        if unspent > 0 {
-            self.driver.execute(
-                "UPDATE wallet_balances SET balance_rj = balance_rj + ?1, updated_at = ?2 WHERE wallet_id = ?3",
+        self.txn(|s| {
+            // Mark released
+            s.driver.execute(
+                "UPDATE encumbrances SET status = 'released', released_at = ?1 WHERE key_id = ?2 AND status = 'active'",
                 &[
-                    DbValue::Integer(unspent),
-                    DbValue::Text(now),
-                    DbValue::Text(wallet_id_str),
+                    DbValue::Text(now.clone()),
+                    DbValue::Text(key_id.to_string()),
                 ],
             )?;
-        }
-        Ok(())
+            // Return unspent rJoules to wallet
+            let unspent = amount - consumed;
+            if unspent > 0 {
+                s.driver.execute(
+                    "UPDATE wallet_balances SET balance_rj = balance_rj + ?1, updated_at = ?2 WHERE wallet_id = ?3",
+                    &[
+                        DbValue::Integer(unspent),
+                        DbValue::Text(now.clone()),
+                        DbValue::Text(wallet_id_str.clone()),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 
-    /// Atomically consume rJoules from an active encumbrance.
+    /// Consume rJoules from an active encumbrance.
     ///
-    /// This is a single SQL UPDATE that checks `amount_rj - consumed_rj >= cost`
-    /// and deducts. No separate check+deduct pair — the operation is atomic.
-    /// If the encumbrance is fully consumed, status transitions to 'consumed'.
+    /// The consume update, api_keys sync, and status transition run inside a
+    /// single SQL transaction so all three commit atomically. The consume
+    /// itself is a single SQL UPDATE that checks
+    /// `amount_rj - consumed_rj >= cost` and deducts. If the encumbrance is
+    /// fully consumed, status transitions to 'consumed'.
     /// Consume from an encumbrance (spend locked rJoules).
     ///
     /// expect: "The system provides durable storage for wallet data"
@@ -140,6 +149,7 @@ impl WalletStore {
         cost_rj: RJoule,
     ) -> Result<(), WalletError> {
         let cost = cost_rj.as_u64() as i64;
+        self.driver.execute_batch("BEGIN")?;
         // Atomic consume
         let rows = self.driver.execute(
             "UPDATE encumbrances SET consumed_rj = consumed_rj + ?1 WHERE key_id = ?2 AND status = 'active' AND (amount_rj - consumed_rj) >= ?1",
@@ -149,23 +159,50 @@ impl WalletStore {
             ],
         )?;
         if rows == 0 {
+            // Nothing was changed by the consume UPDATE; roll back the
+            // empty transaction before running the diagnostic read.
+            if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
+                tracing::error!(
+                    target: "hkask.wallet",
+                    error = %rollback_err,
+                    "Failed to rollback wallet transaction"
+                );
+            }
             return Self::diagnose_consume_failure(&*self.driver, key_id, cost_rj);
         }
-        // Sync api_keys.spent_rj
-        self.driver.execute(
-            "UPDATE api_keys SET spent_rj = spent_rj + ?1 WHERE key_id = ?2",
-            &[DbValue::Integer(cost), DbValue::Text(key_id.to_string())],
-        )?;
-        // Transition status if fully consumed
-        let now = now_rfc3339();
-        self.driver.execute(
-            "UPDATE encumbrances SET status = 'consumed', released_at = ?1 WHERE key_id = ?2 AND status = 'active' AND consumed_rj >= amount_rj",
-            &[
-                DbValue::Text(now),
-                DbValue::Text(key_id.to_string()),
-            ],
-        )?;
-        Ok(())
+        let result: Result<(), WalletError> = (|| {
+            // Sync api_keys.spent_rj
+            self.driver.execute(
+                "UPDATE api_keys SET spent_rj = spent_rj + ?1 WHERE key_id = ?2",
+                &[DbValue::Integer(cost), DbValue::Text(key_id.to_string())],
+            )?;
+            // Transition status if fully consumed
+            let now = now_rfc3339();
+            self.driver.execute(
+                "UPDATE encumbrances SET status = 'consumed', released_at = ?1 WHERE key_id = ?2 AND status = 'active' AND consumed_rj >= amount_rj",
+                &[
+                    DbValue::Text(now),
+                    DbValue::Text(key_id.to_string()),
+                ],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.driver.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
+                    tracing::error!(
+                        target: "hkask.wallet",
+                        error = %rollback_err,
+                        "Failed to rollback wallet transaction"
+                    );
+                }
+                Err(e)
+            }
+        }
     }
 
     fn diagnose_consume_failure(

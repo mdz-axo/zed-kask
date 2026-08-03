@@ -51,37 +51,65 @@ impl ConsolidationService {
 
         let mut deleted_count = 0usize;
 
-        if let Some(floor) = request.confidence_floor
-            && let Ok(candidates) = self.semantic.low_confidence_h_mems(floor, usize::MAX)
-            && !candidates.is_empty()
-        {
-            for h_mem in &candidates {
-                match self.semantic.delete_h_mem(&h_mem.id) {
-                    Ok(()) => deleted_count += 1,
-                    Err(e) => tracing::warn!(
+        if let Some(floor) = request.confidence_floor {
+            match self.semantic.low_confidence_h_mems(floor, usize::MAX) {
+                Ok(candidates) if !candidates.is_empty() => {
+                    for h_mem in &candidates {
+                        match self.semantic.delete_h_mem(&h_mem.id) {
+                            Ok(()) => deleted_count += 1,
+                            Err(e) => tracing::warn!(
+                                target: "reg.consolidation",
+                                error = %e,
+                                h_mem_id = ?h_mem.id,
+                                "Failed to delete low-confidence h_mem during consolidation cleanup"
+                            ),
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
                         target: "reg.consolidation",
-                        error = %e,
-                        h_mem_id = ?h_mem.id,
-                        "Failed to delete low-confidence h_mem during consolidation cleanup"
-                    ),
+                        %error,
+                        "low_confidence_h_mems: signal stale, skipping cleanup"
+                    );
                 }
             }
         }
 
-        if let Some(max) = request.max_semantic_triples
-            && let Ok(count) = self.semantic.h_mem_count()
-            && count > max
-            && let Ok(candidates) = self.semantic.lowest_confidence_h_mems(count - max)
-        {
-            for h_mem in &candidates {
-                match self.semantic.delete_h_mem(&h_mem.id) {
-                    Ok(()) => deleted_count += 1,
-                    Err(e) => tracing::warn!(
+        if let Some(max) = request.max_semantic_triples {
+            match self.semantic.h_mem_count() {
+                Ok(count) if count > max => {
+                    match self.semantic.lowest_confidence_h_mems(count - max) {
+                        Ok(candidates) => {
+                            for h_mem in &candidates {
+                                match self.semantic.delete_h_mem(&h_mem.id) {
+                                    Ok(()) => deleted_count += 1,
+                                    Err(e) => tracing::warn!(
+                                        target: "reg.consolidation",
+                                        error = %e,
+                                        h_mem_id = ?h_mem.id,
+                                        "Failed to delete excess h_mem during consolidation cleanup"
+                                    ),
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "reg.consolidation",
+                                %error,
+                                "lowest_confidence_h_mems: signal stale, skipping cleanup"
+                            );
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(
                         target: "reg.consolidation",
-                        error = %e,
-                        h_mem_id = ?h_mem.id,
-                        "Failed to delete excess h_mem during consolidation cleanup"
-                    ),
+                        %error,
+                        "h_mem_count: signal stale, skipping cleanup"
+                    );
                 }
             }
         }

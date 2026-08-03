@@ -68,7 +68,6 @@ activity_indicator.workspace = true
 agent.workspace = true
 agent-client-protocol.workspace = true
 kask_bridge = { path = "../../kask/crates/kask_bridge" }
-hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
 hkask-mcp = { path = "../../kask/crates/hkask-mcp" }
 hkask-guard = { path = "../../kask/crates/hkask-guard" }
 hkask-capability = { path = "../../kask/crates/hkask-capability" }
@@ -76,7 +75,6 @@ hkask-types = { path = "../../kask/crates/hkask-types" }
 hkask-regulation = { path = "../../kask/crates/hkask-regulation" }
 hkask-email = { path = "../../kask/crates/hkask-email" }
 zed_credentials_provider.workspace = true
-ed25519-dalek.workspace = true
 kask_panel.workspace = true
 kask_extensions_ui.workspace = true
 swarm_panel.workspace = true

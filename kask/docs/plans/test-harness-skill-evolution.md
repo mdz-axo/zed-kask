@@ -1,6 +1,6 @@
 # Test Harness Skill Evolution — Implementation Plan
 
-**Status:** In-progress
+**Status:** Implemented (Slices 1–6 complete)
 **Date:** 2026-08-03
 **Design parent:** `kask/docs/plans/evolving-test-harness.md` (§3.3–3.8, §10)
 **Scope:** `hkask-test-harness` crate, `kask/scripts/test`, `proptest` skill, `bug-hunt` skill
@@ -61,15 +61,17 @@ Add `kask/traces/` (trace artifacts are ephemeral, like `target/`).
 
 | Slice (from design doc) | This plan | Status |
 |--------------------------|-----------|--------|
-| Slice 1: trace FS + oracle taxonomy | §2.1, §2.2, §2.5 | Implementing now |
-| proptest oracle-aware Write | §2.3 | Implementing now |
-| proptest generate-only mode | §2.3 | Implementing now |
-| proptest mutation-guided Identify | §2.3 | Implementing now (input field; data from Slice 2) |
-| bug-hunt mutation-guided Charter | §2.4 | Implementing now (input field; data from Slice 2) |
-| bug-hunt trace emission | §2.4 | Implementing now |
-| Slice 2: stability gate | — | Future (requires `cargo-mutants`) |
-| Slice 3: harness-evolve-cycle manifest | — | Future |
-| Slice 4: harness-optimize skill | — | Future |
+| Slice 1: trace FS + oracle taxonomy | §2.1, §2.2, §2.5 | ✅ Done |
+| proptest oracle-aware Write | §2.3 | ✅ Done |
+| proptest generate-only mode | §2.3 | ✅ Done |
+| proptest mutation-guided Identify | §2.3 | ✅ Done |
+| bug-hunt mutation-guided Charter | §2.4 | ✅ Done |
+| bug-hunt trace emission | §2.4 | ✅ Done |
+| Slice 2: stability gate | `kask/scripts/stability-gate.sh` | ✅ Done |
+| Slice 3: harness-evolve-cycle | `kask/scripts/harness-evolve-cycle.sh` + `kask/registry/manifests/harness-evolve-cycle.yaml` | ✅ Done |
+| Slice 4: harness-optimize skill | `.agents/skills/harness-optimize/` + `kask/registry/templates/harness-optimize/` + `kask/registry/manifests/harness-optimize.yaml` | ✅ Done |
+| Slice 5: CyberneticsLoop sensors | `TestCoverageSensor` + `MutationScoreSensor` in `hkask-regulation` | ✅ Done |
+| Slice 6: CI evaluator | `.github/workflows/kask-ci.yml` (mutation testing + trace upload) | ✅ Done |
 
 ## 4. Acceptance criteria
 

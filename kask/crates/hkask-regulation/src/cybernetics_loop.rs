@@ -923,46 +923,51 @@ impl CyberneticsLoop {
             }
         }
 
-        // E02: Persist budgets + Well state after each replenishment cycle
-        if let Some(ref path) = self.budget_persistence_path {
-            let mut wrapper = serde_json::json!({
-                "version": 1,
-            });
-            {
-                let gbm = self.gas_budget_manager.read().await;
-                let budgets = gbm.gas_budgets().await;
-                match serde_json::to_value(&*budgets) {
-                    Ok(v) => wrapper["budgets"] = v,
-                    Err(e) => {
-                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize gas budgets — skipping persistence");
-                        return;
+        // E02: Persist budgets + Well state after each replenishment cycle.
+        // Persistence failures log and fall through — regulation actions
+        // (Well replenishment, algedonic alerts, action dispatch) must NOT
+        // be skipped because a transient I/O error prevented writing budgets.
+        'persist: {
+            if let Some(ref path) = self.budget_persistence_path {
+                let mut wrapper = serde_json::json!({
+                    "version": 1,
+                });
+                {
+                    let gbm = self.gas_budget_manager.read().await;
+                    let budgets = gbm.gas_budgets().await;
+                    match serde_json::to_value(&*budgets) {
+                        Ok(v) => wrapper["budgets"] = v,
+                        Err(e) => {
+                            tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize gas budgets — skipping persistence");
+                            break 'persist;
+                        }
                     }
                 }
-            }
-            {
-                let wells = self.well_manager.read().await;
-                wrapper["well"] = wells.save_state();
-            }
-            {
-                if let Some(ref stats) = self.tool_stats {
-                    wrapper["tool_stats"] = stats.save_state().await;
+                {
+                    let wells = self.well_manager.read().await;
+                    wrapper["well"] = wells.save_state();
                 }
-            }
-            let json = match serde_json::to_string_pretty(&wrapper) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize budget wrapper — skipping persistence");
-                    return;
+                {
+                    if let Some(ref stats) = self.tool_stats {
+                        wrapper["tool_stats"] = stats.save_state().await;
+                    }
                 }
-            };
-            if let Some(parent) = path.parent()
-                && let Err(e) = tokio::fs::create_dir_all(parent).await
-            {
-                tracing::error!(target: "reg.cybernetics", path = %parent.display(), error = %e, "Failed to create budget persistence directory");
-                return;
-            }
-            if let Err(e) = tokio::fs::write(path, &json).await {
-                tracing::error!(target: "reg.cybernetics", path = %path.display(), error = %e, "Failed to persist gas budgets");
+                let json = match serde_json::to_string_pretty(&wrapper) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize budget wrapper — skipping persistence");
+                        break 'persist;
+                    }
+                };
+                if let Some(parent) = path.parent()
+                    && let Err(e) = tokio::fs::create_dir_all(parent).await
+                {
+                    tracing::error!(target: "reg.cybernetics", path = %parent.display(), error = %e, "Failed to create budget persistence directory");
+                    break 'persist;
+                }
+                if let Err(e) = tokio::fs::write(path, &json).await {
+                    tracing::error!(target: "reg.cybernetics", path = %path.display(), error = %e, "Failed to persist gas budgets");
+                }
             }
         }
 

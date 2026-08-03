@@ -134,7 +134,11 @@ impl LanguageModelInferencePort {
                                             }
                                         };
                                         tool_calls.push(StructuredToolCall {
-                                            server: tool_use.name.to_string(),
+                                            // Zed's `LanguageModelToolUse.name` is the
+                                            // tool name only, not a `server/tool` pair.
+                                            // The `server` field is left empty to signal
+                                            // "unknown server from zed bridge path".
+                                            server: String::new(),
                                             tool: tool_use.name.to_string(),
                                             args,
                                             call_id: Some(tool_use.id.to_string()),
@@ -183,7 +187,10 @@ impl LanguageModelInferencePort {
                 }
                 .await;
 
-                let _ = req.reply.send(result);
+                if let Err(result) = req.reply.send(result) {
+                    tracing::trace!(target: "hkask.inference", "inference reply dropped — caller cancelled");
+                    let _ = result;
+                }
             }
         });
 
@@ -499,7 +506,10 @@ impl LanguageModelEmbeddingPort {
                 }
                 .await;
 
-                let _ = req.reply.send(result);
+                if let Err(result) = req.reply.send(result) {
+                    tracing::trace!(target: "hkask.inference", "embedding reply dropped — caller cancelled");
+                    let _ = result;
+                }
             }
         });
 

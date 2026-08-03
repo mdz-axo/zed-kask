@@ -23,6 +23,34 @@ define_driver_store!(WalletStore);
 // ── WalletStore cross-cutting methods ──────────────────────────────────────────
 
 impl WalletStore {
+    /// Execute a closure inside a SQL transaction. Rolls back on error.
+    ///
+    /// The closure receives `&self` so it can call `self.driver.execute(...)`
+    /// and other `WalletStore` methods. `BEGIN` is issued before the closure
+    /// runs; `COMMIT` on `Ok`, `ROLLBACK` on `Err` (rollback errors are logged
+    /// but do not mask the original error).
+    fn txn<T, F>(&self, f: F) -> Result<T, WalletError>
+    where
+        F: FnOnce(&Self) -> Result<T, WalletError>,
+    {
+        self.driver.execute_batch("BEGIN")?;
+        match f(self) {
+            Ok(result) => {
+                self.driver.execute_batch("COMMIT")?;
+                Ok(result)
+            }
+            Err(e) => {
+                if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
+                    tracing::error!(
+                        target: "hkask.wallet",
+                        error = %rollback_err,
+                        "Failed to rollback wallet transaction"
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
     /// Initialize the wallet schema (idempotent).
     ///
     /// Creates all wallet tables if they don't already exist:

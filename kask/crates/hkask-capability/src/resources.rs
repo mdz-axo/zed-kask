@@ -13,7 +13,7 @@ pub struct CapabilitySpec {
 
 impl CapabilitySpec {
     /// Parse `"resource:action"` (2 parts) or `"resource:domain:action"` (3 parts).
-    /// Unknown actions fall back to `Execute`. `"memory"` alias → `Registry`.
+    /// Unknown actions return an error (fail-closed). `"memory"` alias → `Registry`.
     pub fn parse(capability: &str) -> Result<Self, CapabilityParseError> {
         let parts: Vec<&str> = capability.split(':').collect();
         if parts.len() < 2 || parts.len() > 3 {
@@ -27,8 +27,10 @@ impl CapabilitySpec {
             capability.to_string()
         };
         let action =
-            DelegationAction::parse_str(parts.last().expect("splitn always produces >=1 part"))
-                .unwrap_or(DelegationAction::Execute);
+            DelegationAction::parse_str(parts.last().expect("split always produces >=1 part"))
+                .ok_or_else(|| {
+                    CapabilityParseError::UnknownAction(parts.last().unwrap_or(&"").to_string())
+                })?;
         Ok(Self {
             resource,
             resource_id,
@@ -45,6 +47,8 @@ pub enum CapabilityParseError {
     InvalidFormat(String),
     #[error("Unknown resource type: '{0}'. Valid types: tool, template, registry, memory")]
     UnknownResource(String),
+    #[error("Unknown action: '{0}'. Valid actions: read, execute, registry")]
+    UnknownAction(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +131,7 @@ pub fn capability_from_server_id(server_id: &str) -> Option<String> {
 
 /// Check whether a token's capability covers a required capability.
 /// Action hierarchy: Execute ≥ Write ≥ Read. Different domain → no match.
-/// Unknown actions fall back to `Execute`. Falls back to exact string compare on parse failure.
+/// Unknown actions return an error (fail-closed). Falls back to exact string compare on parse failure.
 pub fn capabilities_match(token_capability: &str, required_capability: &str) -> bool {
     let token_spec = match CapabilitySpec::parse(token_capability) {
         Ok(s) => s,

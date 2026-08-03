@@ -123,36 +123,51 @@ impl Ledger {
 
         // Wrap in transaction for atomicity
         self.driver.execute_batch("BEGIN IMMEDIATE")?;
-
-        self.driver.execute(
-            "INSERT INTO transactions (id, timestamp, reference, metadata, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            &[
-                DbValue::Text(tx.id.clone()),
-                DbValue::Text(tx.timestamp.clone()),
-                DbValue::Text(tx.reference.clone()),
-                DbValue::Text(tx.metadata.to_string()),
-                DbValue::Text(now.clone()),
-            ],
-        )?;
-
-        for posting in &tx.postings {
+        let result: Result<(), LedgerError> = (|| {
             self.driver.execute(
-                "INSERT INTO postings (transaction_id, source, destination, asset, amount, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO transactions (id, timestamp, reference, metadata, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
                 &[
                     DbValue::Text(tx.id.clone()),
-                    DbValue::Text(posting.source.clone()),
-                    DbValue::Text(posting.destination.clone()),
-                    DbValue::Text(posting.asset.clone()),
-                    DbValue::Integer(posting.amount),
+                    DbValue::Text(tx.timestamp.clone()),
+                    DbValue::Text(tx.reference.clone()),
+                    DbValue::Text(tx.metadata.to_string()),
                     DbValue::Text(now.clone()),
                 ],
             )?;
-        }
-        self.driver.execute_batch("COMMIT")?;
 
-        Ok(())
+            for posting in &tx.postings {
+                self.driver.execute(
+                    "INSERT INTO postings (transaction_id, source, destination, asset, amount, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    &[
+                        DbValue::Text(tx.id.clone()),
+                        DbValue::Text(posting.source.clone()),
+                        DbValue::Text(posting.destination.clone()),
+                        DbValue::Text(posting.asset.clone()),
+                        DbValue::Integer(posting.amount),
+                        DbValue::Text(now.clone()),
+                    ],
+                )?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.driver.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
+                    tracing::error!(
+                        target: "hkask.ledger",
+                        error = %rollback_err,
+                        "Failed to rollback ledger transaction"
+                    );
+                }
+                Err(e)
+            }
+        }
     }
 
     /// REQ: P9-ledger-balance

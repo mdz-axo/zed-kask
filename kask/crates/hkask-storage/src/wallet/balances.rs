@@ -71,7 +71,8 @@ impl WalletStore {
             .map_err(|e| WalletError::Infra(InfrastructureError::database(e.to_string())))
     }
 
-    /// Credit rJoules to a wallet. Records the transaction atomically.
+    /// Credit rJoules to a wallet. Records the transaction inside a SQL
+    /// transaction so the balance update and ledger row commit atomically.
     /// Creates the wallet row if it doesn't exist.
     ///
     /// expect: "The system provides durable storage for wallet data"
@@ -103,22 +104,24 @@ impl WalletStore {
             WalletError::Infra(InfrastructureError::database("balance overflow on credit"))
         })?;
         let now = now_rfc3339();
-        self.driver.execute(
-            "UPDATE wallet_balances SET balance_rj = ?1, updated_at = ?2 WHERE wallet_id = ?3",
-            &[
-                DbValue::Integer(new_balance),
-                DbValue::Text(now.clone()),
-                DbValue::Text(wallet_id.to_string()),
-            ],
-        )?;
-        // Record the transaction atomically
-        self.record_transaction_inner(&WalletTransaction {
-            id: 0,
-            wallet_id,
-            tx_type,
-            rjoules_delta: amount_i64,
-            balance_after: new_balance as u64,
-            timestamp: chrono::Utc::now(),
+        self.txn(|s| {
+            s.driver.execute(
+                "UPDATE wallet_balances SET balance_rj = ?1, updated_at = ?2 WHERE wallet_id = ?3",
+                &[
+                    DbValue::Integer(new_balance),
+                    DbValue::Text(now.clone()),
+                    DbValue::Text(wallet_id.to_string()),
+                ],
+            )?;
+            s.record_transaction_inner(&WalletTransaction {
+                id: 0,
+                wallet_id,
+                tx_type,
+                rjoules_delta: amount_i64,
+                balance_after: new_balance as u64,
+                timestamp: chrono::Utc::now(),
+            })?;
+            Ok(())
         })?;
         self.get_balance(wallet_id)?
             .ok_or(WalletError::Infra(InfrastructureError::database(
@@ -126,7 +129,8 @@ impl WalletStore {
             )))
     }
 
-    /// Debit rJoules from a wallet. Records the transaction atomically.
+    /// Debit rJoules from a wallet. Records the transaction inside a SQL
+    /// transaction so the balance update and ledger row commit atomically.
     /// Returns error if balance insufficient.
     ///
     /// **Idempotency:** This operation is NOT idempotent.
@@ -163,22 +167,24 @@ impl WalletStore {
         }
         let new_balance = current - amount_i64;
         let now = now_rfc3339();
-        self.driver.execute(
-            "UPDATE wallet_balances SET balance_rj = balance_rj - ?1, updated_at = ?2 WHERE wallet_id = ?3",
-            &[
-                DbValue::Integer(amount_i64),
-                DbValue::Text(now.clone()),
-                DbValue::Text(wallet_id.to_string()),
-            ],
-        )?;
-        // Record the transaction atomically
-        self.record_transaction_inner(&WalletTransaction {
-            id: 0,
-            wallet_id,
-            tx_type,
-            rjoules_delta: -amount_i64,
-            balance_after: new_balance as u64,
-            timestamp: chrono::Utc::now(),
+        self.txn(|s| {
+            s.driver.execute(
+                "UPDATE wallet_balances SET balance_rj = balance_rj - ?1, updated_at = ?2 WHERE wallet_id = ?3",
+                &[
+                    DbValue::Integer(amount_i64),
+                    DbValue::Text(now.clone()),
+                    DbValue::Text(wallet_id.to_string()),
+                ],
+            )?;
+            s.record_transaction_inner(&WalletTransaction {
+                id: 0,
+                wallet_id,
+                tx_type,
+                rjoules_delta: -amount_i64,
+                balance_after: new_balance as u64,
+                timestamp: chrono::Utc::now(),
+            })?;
+            Ok(())
         })?;
         self.get_balance(wallet_id)?
             .ok_or(WalletError::Infra(InfrastructureError::database(

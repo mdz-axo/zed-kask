@@ -229,10 +229,7 @@ impl ManifestExecutor {
                 // Check for $ref pattern: {"$ref": "step_1_result.field"}
                 if let Some(Value::String(ref_path)) = map.get("$ref") {
                     let context_key = ref_path.split('.').next().unwrap_or("");
-                    let labels = self
-                        .taint_labels
-                        .lock()
-                        .expect("taint_labels mutex poisoned");
+                    let labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
                     return labels.get(context_key).copied().unwrap_or(ToolTaint::Pure)
                         == ToolTaint::Source;
                 }
@@ -267,10 +264,7 @@ impl ManifestExecutor {
         if referenced_keys.is_empty() {
             return;
         }
-        let mut labels = self
-            .taint_labels
-            .lock()
-            .expect("taint_labels mutex poisoned");
+        let mut labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
         // Find the strongest taint among referenced keys.
         // Source > Endorser > Pure (Source is the only one that triggers the
         // Sink block rule, but propagating Endorser preserves the audit trail).
@@ -770,13 +764,13 @@ impl ManifestExecutor {
                                 let label = self
                                     .taint_labels
                                     .lock()
-                                    .expect("taint_labels mutex poisoned")
+                                    .unwrap_or_else(|e| e.into_inner())
                                     .get(&key)
                                     .copied();
                                 if let Some(label) = label {
                                     self.taint_labels
                                         .lock()
-                                        .expect("taint_labels mutex poisoned")
+                                        .unwrap_or_else(|e| e.into_inner())
                                         .insert(prev_key.clone(), label);
                                 }
                                 context.insert(prev_key, val.clone());
@@ -1508,13 +1502,13 @@ impl ManifestExecutor {
             let label = self
                 .taint_labels
                 .lock()
-                .expect("taint_labels mutex poisoned")
+                .unwrap_or_else(|e| e.into_inner())
                 .get(final_key)
                 .copied();
             if let Some(label) = label {
                 self.taint_labels
                     .lock()
-                    .expect("taint_labels mutex poisoned")
+                    .unwrap_or_else(|e| e.into_inner())
                     .insert(format!("step_{}_result", step.ordinal), label);
             }
         }
@@ -1596,7 +1590,7 @@ impl ManifestExecutor {
         if tool_taint == ToolTaint::Source {
             self.taint_labels
                 .lock()
-                .expect("taint_labels mutex poisoned")
+                .unwrap_or_else(|e| e.into_inner())
                 .insert(result_key.clone(), ToolTaint::Source);
         }
 
