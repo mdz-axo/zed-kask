@@ -34,13 +34,14 @@ pub enum MediaOp {
     ExecuteWorkflow,
 }
 
-impl MediaOp {
-    /// Parse the string op name used by `InferencePort::media_generate`.
-    ///
-    /// expect: "The system maps string media ops to typed registry ops"
-    /// pre:  op is a known media op string
-    /// post: returns Ok(MediaOp), or Err(Connection) for an unknown op
-    pub fn from_str(op: &str) -> Result<Self, InferenceError> {
+/// Parse the string op name used by `InferencePort::media_generate`.
+///
+/// expect: "The system maps string media ops to typed registry ops"
+/// pre:  op is a known media op string
+/// post: returns Ok(MediaOp), or Err(Connection) for an unknown op
+impl std::str::FromStr for MediaOp {
+    type Err = InferenceError;
+    fn from_str(op: &str) -> Result<Self, Self::Err> {
         match op {
             "generate_image" => Ok(Self::GenerateImage),
             "image_to_image" => Ok(Self::ImageToImage),
@@ -57,7 +58,9 @@ impl MediaOp {
             ))),
         }
     }
+}
 
+impl MediaOp {
     /// The canonical string name (matches `InferencePort::media_generate` op).
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -189,6 +192,7 @@ impl ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// A mock provider that supports a configurable op set and either succeeds

@@ -193,6 +193,10 @@ Each stream is vertically sliced and independently shippable. Strangler-fig: the
 
 ### WS-1 — Provider trait + registry (Guardrail)
 
+**Status: APPLIED and VALIDATED.** `kask/crates/hkask-inference/src/provider.rs` (`MediaOp` + `MediaProvider` trait + `ProviderRegistry` with runtime fallback-on-error) is implemented; `FalBackend` and `DeepInfraBackend` both `impl MediaProvider`; `MediaRouter` now holds a `ProviderRegistry` and dispatches via it (public API preserved). 11 new tests pass (6 `provider::tests`, 5 `media_router::tests`); all 62 `hkask-inference` lib tests pass with no regressions. `./script/clippy -p hkask-inference` and `./script/clippy -p hkask-mcp-media` are clean under `--deny warnings`.
+
+**Architecture rationale (why media terminates at the hKask `MediaRouter`, not zed's `LanguageModelRegistry`):** media already routes through the kask IPC bridge to the zed process (`MediaServer` → `InferenceIpcClient` → `InferenceIpcServer` → `MediaRouter`, `inference_ipc_server.rs:565`), but zed dispatches it to the hKask `MediaRouter` rather than its `LanguageModelRegistry` because zed's `LanguageModel` trait is chat-completions-only (`stream_completion`; no `media` method — grep of `crates/language_models/**` finds none). Media generation uses non-chat APIs (fal.ai `fal.run/{app}` + `queue.fal.run` with app-id routing and queue polling; DeepInfra `/v1/inference/{model}`, `/v1/text-to-speech/{voice}` returning audio bytes, `/v1/audio/transcriptions`) that `LanguageModel` cannot represent. **Decision: do NOT preemptively build a `MediaModel` trait into upstream zed** (would require a `DIVERGENCE.md` D-seam into `crates/language_models/`). If zed later adds media handling to its router, this terminal can delegate to it instead — until then the providers live behind the `MediaProvider` trait here. This keeps the change additive (`kask/` only, no upstream edits).
+
 **Goal:** adding a provider = implement `MediaProvider` + register; no edits to dispatch logic.
 
 **Files touched:**

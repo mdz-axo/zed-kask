@@ -18,6 +18,7 @@ pub mod executor;
 pub mod input_mapping;
 pub mod inputs;
 pub mod manifest_loader;
+pub mod output_schema;
 pub mod ports;
 pub mod prompt_strategy;
 pub mod registry;

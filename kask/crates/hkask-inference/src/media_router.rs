@@ -32,6 +32,7 @@ use hkask_types::{
 };
 use std::future::Future;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Media generation router — a pluggable provider registry.
