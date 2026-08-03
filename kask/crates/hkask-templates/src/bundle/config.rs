@@ -298,15 +298,21 @@ impl Default for RjouleConfig {
     }
 }
 
-/// Error handling configuration. Loaded from manifest YAML, future wiring target.
+/// Error handling configuration. Loaded from manifest YAML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ErrorHandlingConfig {
     pub on_gas_exceeded: String,
     pub on_timeout: String,
     pub max_retries: u32,
     pub retry_backoff_seconds: u32,
     pub on_validation_failure: String,
+    /// Policy when an OCAP capability check denies a tool invocation.
+    /// Parsed from the manifest but not yet wired into the executor — the
+    /// executor currently propagates `TemplateError::CapabilityDenied` via `?`
+    /// without consulting this field. 10 manifests declare `escalate`.
+    #[serde(default)]
+    pub on_capability_denied: String,
 }
 impl Default for ErrorHandlingConfig {
     fn default() -> Self {
@@ -348,9 +354,9 @@ impl Default for BundleLedgerConfig {
     }
 }
 
-/// Audit trail configuration. Loaded from manifest YAML, future wiring target.
+/// Audit trail configuration. Loaded from manifest YAML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BundleAuditConfig {
     pub enabled: bool,
     pub log_level: String,

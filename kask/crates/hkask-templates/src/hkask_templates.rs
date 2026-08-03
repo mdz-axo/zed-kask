@@ -13,7 +13,6 @@ pub mod bundle;
 mod compute;
 pub mod condition;
 pub mod convergence;
-pub mod crate_loader;
 pub mod executor;
 mod input_mapping;
 pub mod inputs;
@@ -28,7 +27,6 @@ pub mod template_renderer;
 
 pub use bundle::BundleManifest;
 pub use bundle::BundleRegistryIndex;
-pub use crate_loader::TemplateCrateLoader;
 pub use executor::ManifestExecutor;
 pub use hkask_types::InferencePort;
 pub use hkask_types::Skill;

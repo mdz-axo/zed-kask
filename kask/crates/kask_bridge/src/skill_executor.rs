@@ -140,6 +140,23 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         let manifest = load_manifest_from_yaml(&manifest_yaml)
             .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
 
+        // Enforce the category labelling system at the execution boundary.
+        // `resolve_manifest` enforces `is_skill()` on the `flowdef` sub-cascade
+        // binding path, but this primary path (`execute_skill` →
+        // `load_manifest_from_yaml` → `execute_manifest`) bypasses it. Without
+        // this check, an infra manifest (pipeline, runtime-config, qa-script,
+        // daemon-process) in the embedded registry could execute via the skill
+        // tool if its name were passed to `execute_skill`. This makes the
+        // `compute_ref` "gated to category: skill manifests only" comment in
+        // create-skill.yaml redundant — all manifests reaching the executor
+        // through this path are guaranteed to be skills.
+        if !manifest.is_skill() {
+            return Err(format!(
+                "Skill '{skill_name}' has category '{:?}' — only `skill` manifests may execute via the skill tool",
+                manifest.category
+            ));
+        }
+
         // Layer A: enforce the manifest's declared `inputs` contract at the
         // boundary. Opt-in via `enforce_inputs: true` in the manifest; skills
         // that don't opt in are unaffected (back-compat). Turns silent wrong-

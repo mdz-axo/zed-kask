@@ -169,7 +169,7 @@ impl GraphWidget {
         if event.pressed_button == Some(MouseButton::Left) {
             if let Some(last) = self.last_mouse {
                 let delta = event.position - last;
-                self.pan = self.pan + delta;
+                self.pan += delta;
                 self.last_mouse = Some(event.position);
                 cx.notify();
             }
@@ -361,88 +361,87 @@ impl Render for GraphWidget {
 
             // Tooltip + evidence controls for the hovered/selected node.
             let focus = self.hovered.or(self.selected);
-            if let Some(idx) = focus {
-                if let Some(node) = self.layout.nodes.get(idx) {
-                    let sx = ox + node.position.x.as_f32() * scale - bx;
-                    let sy = oy + node.position.y.as_f32() * scale - by;
-                    let is_evidence = self.evidence.contains_key(&idx);
-                    let text_color = cx.theme().colors().text;
-                    let muted = cx.theme().colors().text_muted;
-                    let accent = cx.theme().colors().text_accent;
-                    let surface = cx.theme().colors().elevated_surface_background;
-                    let border = cx.theme().colors().border;
+            if let Some((idx, node)) = focus.and_then(|i| self.layout.nodes.get(i).map(|n| (i, n)))
+            {
+                let sx = ox + node.position.x.as_f32() * scale - bx;
+                let sy = oy + node.position.y.as_f32() * scale - by;
+                let is_evidence = self.evidence.contains_key(&idx);
+                let text_color = cx.theme().colors().text;
+                let muted = cx.theme().colors().text_muted;
+                let accent = cx.theme().colors().text_accent;
+                let surface = cx.theme().colors().elevated_surface_background;
+                let border = cx.theme().colors().border;
 
-                    let tip = div()
-                        .absolute()
-                        .left(px(sx + NODE_RADIUS + 10.0))
-                        .top(px(sy - 70.0))
-                        .p_2()
-                        .bg(surface)
-                        .border_1()
-                        .border_color(border)
-                        .max_w(px(320.0))
-                        .child(
+                let tip = div()
+                    .absolute()
+                    .left(px(sx + NODE_RADIUS + 10.0))
+                    .top(px(sy - 70.0))
+                    .p_2()
+                    .bg(surface)
+                    .border_1()
+                    .border_color(border)
+                    .max_w(px(320.0))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(text_color)
+                            .child(node.name.clone()),
+                    )
+                    .when_some(node.question.as_ref(), |t, q| {
+                        t.child(div().text_xs().text_color(muted).child(q.clone()))
+                    })
+                    .child(div().text_xs().text_color(accent).child(format!(
+                        "P = {}%",
+                        (node.marginal_probability.unwrap_or(0.0) * 100.0).round() as u32
+                    )))
+                    .when(is_evidence, |t| {
+                        t.child(
                             div()
                                 .text_xs()
-                                .text_color(text_color)
-                                .child(node.name.clone()),
+                                .text_color(muted)
+                                .child("evidence (overridden)"),
                         )
-                        .when_some(node.question.as_ref(), |t, q| {
-                            t.child(div().text_xs().text_color(muted).child(q.clone()))
-                        })
-                        .child(div().text_xs().text_color(accent).child(format!(
-                            "P = {}%",
-                            (node.marginal_probability.unwrap_or(0.0) * 100.0).round() as u32
-                        )))
-                        .when(is_evidence, |t| {
-                            t.child(
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .mt_1()
+                            .child(
                                 div()
+                                    .id(("ev-90", idx))
                                     .text_xs()
-                                    .text_color(muted)
-                                    .child("evidence (overridden)"),
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.set_evidence(idx, 0.9, cx)
+                                    }))
+                                    .child("Set P≈90%"),
                             )
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_1()
-                                .mt_1()
-                                .child(
+                            .child(
+                                div()
+                                    .id(("ev-10", idx))
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.set_evidence(idx, 0.1, cx)
+                                    }))
+                                    .child("Set P≈10%"),
+                            )
+                            .when(is_evidence, |t| {
+                                t.child(
                                     div()
-                                        .id(("ev-90", idx))
+                                        .id(("ev-reset", idx))
                                         .text_xs()
                                         .cursor_pointer()
                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_evidence(idx, 0.9, cx)
+                                            this.reset_evidence(idx, cx)
                                         }))
-                                        .child("Set P≈90%"),
+                                        .child("Reset"),
                                 )
-                                .child(
-                                    div()
-                                        .id(("ev-10", idx))
-                                        .text_xs()
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_evidence(idx, 0.1, cx)
-                                        }))
-                                        .child("Set P≈10%"),
-                                )
-                                .when(is_evidence, |t| {
-                                    t.child(
-                                        div()
-                                            .id(("ev-reset", idx))
-                                            .text_xs()
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.reset_evidence(idx, cx)
-                                            }))
-                                            .child("Reset"),
-                                    )
-                                }),
-                        );
-                    overlays.push(tip.into_any_element());
-                }
+                            }),
+                    );
+                overlays.push(tip.into_any_element());
             }
         }
 
@@ -510,6 +509,7 @@ fn transform(
 
 /// Draw edges + node circles (and a highlight ring for hovered/selected) in
 /// screen-space, given the transform origin and scale.
+#[allow(clippy::too_many_arguments)]
 fn draw_graph(
     layout: &LayeredLayout,
     ox: f32,

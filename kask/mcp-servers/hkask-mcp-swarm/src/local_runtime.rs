@@ -8,6 +8,7 @@
 
 use std::time::Instant;
 
+use crate::agent_executor::{AgentExecutor, RawDelegateResult};
 use crate::error::SwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
@@ -60,17 +61,21 @@ impl LazyLocalSwarmRuntime {
     }
 }
 
-/// The initialized local swarm runtime — ledger + inference + guard.
+/// The initialized local swarm runtime — ledger + agent executor.
+///
+/// The runtime owns the *spending* policy (ceiling check, balance check,
+/// cost computation, debit) and the final output scan. The *agent-run*
+/// policy (input scanning, skill cascade, tool-loop orchestration) lives in
+/// `AgentExecutor`. The split preserves the debit-before-scan invariant: the
+/// runtime debits the ledger, *then* calls `executor.scan_output` on the raw
+/// result — so a guard-quarantined result still costs credits (the compute was
+/// already spent).
 pub(crate) struct LocalSwarmRuntime {
     ledger: std::sync::Arc<hkask_ledger::Ledger>,
-    inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-    guard: std::sync::Arc<hkask_guard::ContentGuard>,
-    /// Tool dispatch back to the zed process (governed `McpRuntime` via the
-    /// IPC bridge). Resolved once at construction — see `resolve_tool_dispatch_port`.
-    tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
-    /// Skill execution back to the zed process (`ManifestExecutor` via the
-    /// IPC bridge). Resolved once at construction — see `resolve_skill_exec_port`.
-    skill_exec: std::sync::Arc<dyn hkask_types::SkillExecPort>,
+    /// The agent-run policy (inference + tool dispatch + skill exec + guard).
+    /// Constructed once from the resolved IPC-bridge ports; the runtime calls
+    /// `executor.run` then debits then `executor.scan_output`.
+    executor: AgentExecutor,
     /// The operator's account id in the ledger (funded via `swarm_fund_local`).
     operator_account: String,
     /// The asset name for local credits.
@@ -100,18 +105,20 @@ impl LocalSwarmRuntime {
         let ledger = hkask_ledger::Ledger::from_driver(driver)
             .map_err(|e| format!("failed to init ledger: {e}"))?;
 
-        // Resolve the inference port (zed IPC bridge or MediaRouter fallback).
+        // Resolve the agent-run ports once at construction: inference,
+        // tool dispatch, and skill execution all route through the zed IPC
+        // bridge (or fall back to media/stub when the socket is absent). The
+        // guard scans all untrusted text that reaches the model. These four
+        // compose into the `AgentExecutor`, which owns the agent-run policy
+        // (the runtime owns the spending policy). Resolving them here (rather
+        // than inside `AgentExecutor::new`) keeps the env-var reads at the
+        // runtime construction seam, mirroring the other kask MCP servers.
         let inference = hkask_inference::resolve_inference_port().await;
-
-        // Resolve the tool dispatch port (zed IPC bridge or unavailable stub).
         let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
-
-        // Resolve the skill execution port (zed IPC bridge or unavailable stub).
         let skill_exec = hkask_inference::resolve_skill_exec_port().await;
-
-        // Initialize the content guard with mandatory scanners.
         let guard_config = hkask_guard::GuardConfig::from_env();
         let guard = hkask_guard::ContentGuard::mandatory(&guard_config);
+        let executor = AgentExecutor::new(inference, tool_dispatch, skill_exec, guard);
 
         // Ensure the operator account exists.
         let operator_account = "operator".to_string();
@@ -122,10 +129,7 @@ impl LocalSwarmRuntime {
 
         Ok(Self {
             ledger: std::sync::Arc::new(ledger),
-            inference,
-            guard: std::sync::Arc::new(guard),
-            tool_dispatch,
-            skill_exec,
+            executor,
             operator_account,
             asset,
         })
@@ -135,8 +139,9 @@ impl LocalSwarmRuntime {
     /// `StubInferencePort` pattern in `hkask-templates` and `hkask-guard`:
     /// the production `new(db_path)` resolves the inference port from env
     /// (zed IPC bridge or MediaRouter fallback), which is unsuitable for
-    /// unit tests. This constructor accepts a pre-built ledger, inference
-    /// port, guard, and the two zed-side ports so tests can exercise the
+    /// unit tests. This constructor accepts a pre-built ledger + the four
+    /// agent-run ports (inference, tool dispatch, skill exec, guard) which it
+    /// composes into an `AgentExecutor`, so tests can exercise the
     /// `fund`/`debit`/`delegate` logic without a real backend.
     ///
     /// Ensures the operator account exists (same as `new`) so `balance`/
@@ -154,12 +159,10 @@ impl LocalSwarmRuntime {
         ledger
             .ensure_account(&operator_account, "local_swarm")
             .map_err(|e| format!("failed to ensure operator account: {e}"))?;
+        let executor = AgentExecutor::with_deps(inference, tool_dispatch, skill_exec, guard);
         Ok(Self {
             ledger: std::sync::Arc::new(ledger),
-            inference,
-            guard: std::sync::Arc::new(guard),
-            tool_dispatch,
-            skill_exec,
+            executor,
             operator_account,
             asset,
         })
@@ -302,59 +305,19 @@ impl LocalSwarmRuntime {
         })
     }
 
-    /// Scan input text through the content guard. Returns `Err` if the guard
-    /// rejects the input (prompt injection, role override, etc.).
-    pub(crate) fn scan_input(&self, text: &str) -> Result<(), SwarmError> {
-        let result = self.guard.scan_input(text);
-        if !result.passed {
-            let violations: Vec<String> = result
-                .violations
-                .iter()
-                .map(|v| format!("{}: {}", v.scanner, v.description))
-                .collect();
-            return Err(SwarmError::Unavailable(format!(
-                "input guard rejected: {}",
-                violations.join("; ")
-            )));
-        }
-        Ok(())
-    }
-
-    /// Scan output text through the content guard. Returns the (possibly
-    /// sanitized) output text, or `Err` if canary exfiltration is detected.
+    /// Execute a local agent: scan the task → run the agent (skill cascade +
+    /// tool loop, via `AgentExecutor::run`) → compute cost → debit ledger →
+    /// scan output. Returns the response text, model, token usage, cost,
+    /// remaining balance, and a tool-call summary. The debit happens before
+    /// the output guard scan so a guard-quarantined result still costs credits
+    /// (matching ABW's "compute was spent" semantics).
     ///
-    /// Policy: canary exfiltration is a hard failure (the system prompt was
-    /// leaked — OWASP LLM07), but secret leakage is sanitized and returned
-    /// (the output may be legitimately useful despite a false-positive secret
-    /// match). This asymmetry is intentional: canary = exfiltration = reject;
-    /// secret = leakage = sanitize and return. Do not "fix" this by making
-    /// both paths hard-fail — that would reject legitimate outputs that
-    /// happen to match a secret scanner pattern.
-    pub(crate) fn scan_output(&self, text: &str) -> Result<String, SwarmError> {
-        let result = self.guard.scan_output(text);
-        if self.guard.check_canary(text) {
-            return Err(SwarmError::Unavailable(
-                "canary token detected in output — system prompt exfiltration suspected"
-                    .to_string(),
-            ));
-        }
-        if !result.passed {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                violations = ?result.violations,
-                "output guard violations — sanitizing"
-            );
-        }
-        Ok(result.output.content(text).to_string())
-    }
-
-    /// Execute a local agent: scan input → run the tool loop (declare the
-    /// card's `mcp_tools`, dispatch model tool calls through the zed IPC
-    /// bridge) → compute cost → debit ledger → scan output. Returns the
-    /// response text, model, token usage, cost, remaining balance, and a
-    /// tool-call summary. The debit happens before the output guard scan so
-    /// a guard-quarantined result still costs credits (matching ABW's
-    /// "compute was spent" semantics).
+    /// The agent-run policy (input scanning of system prompt + skill/tool
+    /// outputs, skill cascade, tool-loop orchestration) lives in
+    /// `AgentExecutor::run`; the runtime owns the spending policy (ceiling,
+    /// balance, cost, debit) and the final output scan. The task is
+    /// input-scanned here *before* the funds check, preserving the original
+    /// ordering (reject injected input before rejecting insufficient funds).
     ///
     /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
     /// the only tool set shown to the model AND the qualified list travels
@@ -376,8 +339,11 @@ impl LocalSwarmRuntime {
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
 
-        // Scan the input through the guard.
-        self.scan_input(&task_clean)?;
+        // Scan the task through the guard BEFORE the funds check, preserving
+        // the original ordering (reject injected input before rejecting
+        // insufficient funds). The system_prompt + skill/tool outputs are
+        // scanned inside `AgentExecutor::run`.
+        self.executor.scan_input(&task_clean)?;
 
         // Check the per-dispatch ceiling.
         if credits_authorized > max_credits_per_dispatch {
@@ -401,224 +367,28 @@ impl LocalSwarmRuntime {
             )));
         }
 
-        // Build the prompt: system prompt + task.
-        let system_prompt = agent
-            .capabilities
-            .system_prompt
-            .as_deref()
-            .unwrap_or("You are a helpful assistant.");
-
-        // Guard-scan the system_prompt before injecting it into the prompt.
-        // The task was already scanned above, and each skill output is scanned
-        // below — but the system_prompt was not. For locally-authored cards the
-        // operator controls it; for cloned cards (`swarm_clone_to_local`) it is
-        // third-party ABW data that could carry prompt injection. The clone path
-        // strips obvious patterns via `sanitize_abw_text`, but the guard is the
-        // hard gate: a system_prompt that trips the input guard IS fatal.
-        // The `.rules` trap: the input guard is the advertised enforcement point
-        // for the delegate path — it must scan all untrusted text that reaches the
-        // model, not just the task.
-        self.scan_input(system_prompt)?;
-
-        // Run the declared skills (capped) against the task BEFORE the LLM
-        // call. Each cascade runs on the zed side (`ManifestExecutor`, own
-        // gas/OCAP enforcement). Skill output is untrusted context — it flows
-        // into the prompt, so it is guard-scanned before injection; a skill
-        // output that trips the input guard IS fatal (an injection from a
-        // skill is a finding, not a cosmetic issue). A missing skill or
-        // cascade failure is recorded, not fatal — the delegation proceeds
-        // with whatever context the successful skills produced.
-        let mut executed_skills: Vec<serde_json::Value> = Vec::new();
-        let mut skill_context = String::new();
-        for skill in agent
-            .capabilities
-            .skills
-            .iter()
-            .take(MAX_SKILLS_PER_DELEGATION)
-        {
-            match self.skill_exec.execute_skill(skill, &task_clean).await {
-                Ok(output) => {
-                    self.scan_input(&output)?;
-                    executed_skills.push(serde_json::json!({ "skill": skill, "ok": true }));
-                    skill_context.push_str(&format!("\n\n## Skill '{skill}' output\n{output}"));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        skill,
-                        error = %e,
-                        "declared skill failed — delegation proceeds without it"
-                    );
-                    executed_skills.push(serde_json::json!({
-                        "skill": skill,
-                        "ok": false,
-                        "error": e,
-                    }));
-                }
-            }
-        }
-        let prompt = format!("{system_prompt}{skill_context}\n\n---\n\nTask: {task_clean}");
-
-        // Build the declared tool set from the card's `mcp_tools` (qualified
-        // `server/tool` names). This list is the allowlist: a model call for
-        // any tool not declared here is never dispatched.
-        let declared_tools: Vec<(String, String)> = agent
-            .capabilities
-            .mcp_tools
-            .iter()
-            .filter_map(|qualified| {
-                qualified
-                    .split_once('/')
-                    .map(|(s, t)| (s.to_string(), t.to_string()))
-            })
-            .collect();
-        // The qualified allowlist travels with every dispatch so the zed-side
-        // IPC server can enforce it at the dispatch boundary — a tool outside
-        // the card's declared set is never minted a panel token there.
-        let qualified_allowed: Vec<String> = declared_tools
-            .iter()
-            .map(|(s, t)| format!("{s}/{t}"))
-            .collect();
-        let tool_defs: Vec<hkask_types::ChatToolDefinition> = declared_tools
-            .iter()
-            .map(|(server, tool)| hkask_types::ChatToolDefinition {
-                tool_type: "function".to_string(),
-                function: hkask_types::ChatToolFunction {
-                    name: format!("{server}/{tool}"),
-                    description: format!("Invoke `{tool}` on the `{server}` MCP server."),
-                    parameters: serde_json::json!({ "type": "object", "properties": {} }),
-                },
-            })
-            .collect();
-        let tools_slice: Option<&[hkask_types::ChatToolDefinition]> =
-            (!tool_defs.is_empty()).then_some(&tool_defs[..]);
-
-        // Run the tool loop: messages → inference → (tool calls → dispatch →
-        // append results) → inference … The round cap bounds cost
-        // amplification; the per-dispatch ceiling is the credit gate.
-        let params = hkask_types::LLMParameters::default();
-        let model_override = if agent.capabilities.model.is_empty() {
-            None
-        } else {
-            Some(agent.capabilities.model.clone())
-        };
-        let mut messages = vec![hkask_types::ChatMessage {
-            role: "user".to_string(),
-            content: prompt,
-        }];
-        let mut tool_calls_made: Vec<serde_json::Value> = Vec::new();
-        let mut total_tokens: i64 = 0;
-        let mut final_text = String::new();
-        let mut final_model = String::new();
-        for _round in 0..MAX_TOOL_ROUNDS {
-            let result = self
-                .inference
-                .generate_with_messages(&messages, &params, model_override.as_deref(), tools_slice)
-                .await
-                .map_err(|e| SwarmError::UpstreamModelError {
-                    provider: "local".to_string(),
-                    message: format!("inference failed: {e}"),
-                })?;
-            total_tokens += i64::from(result.usage.total_tokens);
-            final_model = result.model.clone();
-            if result.tool_calls.is_empty() {
-                final_text = result.text;
-                break;
-            }
-
-            // Dispatch each model tool call, allowlisted against the card's
-            // declared mcp_tools. Results are appended as a user message so
-            // the next round sees them (provider-safe message shape).
-            let mut round_results = Vec::new();
-            for call in &result.tool_calls {
-                let qualified = &call.tool;
-                let declared = declared_tools
-                    .iter()
-                    .find(|(s, t)| format!("{s}/{t}") == *qualified);
-                let (outcome, summary) = match declared {
-                    Some((server, tool)) => {
-                        match self
-                            .tool_dispatch
-                            .invoke_tool(server, tool, call.args.clone(), &qualified_allowed)
-                            .await
-                        {
-                            Ok(value) => {
-                                let text = serde_json::to_string(&value)
-                                    .unwrap_or_else(|_| value.to_string());
-                                // Redact-and-continue (see fn doc): a tool result
-                                // that trips the input guard is quarantined from the
-                                // model context, but the delegation proceeds — tool
-                                // output is data, and a false positive must not abort
-                                // the run.
-                                let (injected, ok, error) = match self.scan_input(&text) {
-                                    Ok(()) => (text, true, None),
-                                    Err(e) => (
-                                        "[redacted: tool output tripped the input guard — not injected]".to_string(),
-                                        false,
-                                        Some(e.to_string()),
-                                    ),
-                                };
-                                let mut summary =
-                                    serde_json::json!({ "tool": qualified, "ok": ok });
-                                if let Some(err) = error {
-                                    summary["error"] = serde_json::Value::String(err);
-                                }
-                                (
-                                    format!("Tool call '{qualified}' returned:\n{injected}"),
-                                    summary,
-                                )
-                            }
-                            Err(e) => {
-                                let msg = format!("dispatch failed: {e}");
-                                (
-                                    format!("Tool call '{qualified}' {msg}"),
-                                    serde_json::json!({
-                                        "tool": qualified,
-                                        "ok": false,
-                                        "error": e.to_string(),
-                                    }),
-                                )
-                            }
-                        }
-                    }
-                    None => (
-                        format!(
-                            "Tool call '{qualified}' is not in this agent's declared mcp_tools \
-                             allowlist — not dispatched"
-                        ),
-                        serde_json::json!({
-                            "tool": qualified,
-                            "ok": false,
-                            "error": "not in declared mcp_tools allowlist",
-                        }),
-                    ),
-                };
-                tool_calls_made.push(summary);
-                round_results.push(outcome);
-            }
-            messages.push(hkask_types::ChatMessage {
-                role: "assistant".to_string(),
-                content: format!("(requested {} tool call(s))", result.tool_calls.len()),
-            });
-            messages.push(hkask_types::ChatMessage {
-                role: "user".to_string(),
-                content: round_results.join("\n\n"),
-            });
-        }
+        // Run the agent (system_prompt scan + skill cascade + tool loop). The
+        // executor returns the RAW output — it does NOT scan the final output
+        // or debit the ledger. The debit-then-scan invariant is preserved
+        // here: debit below, then `scan_output` on the raw text, so a
+        // guard-quarantined result still costs credits (the compute was
+        // already spent inside `run`).
+        let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
 
         // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
         // `execution_fee`), summed across tool-loop rounds, capped at
         // `credits_authorized`.
-        let tokens = total_tokens;
+        let tokens = raw.tokens_used;
         let base_cost = std::cmp::max(1, tokens / 1000);
         let cost = std::cmp::min(base_cost, i64::from(credits_authorized));
 
-        // Debit the ledger immediately after inference succeeds — before the
-        // output guard scan. This matches ABW's "compute was spent" semantics:
-        // a guard-quarantined result still costs credits because the inference
-        // compute already happened. Moving the debit before `scan_output` (which
-        // uses `?` to return early) ensures the operator is charged even when
-        // the output is rejected for canary exfiltration or secret leakage.
+        // Debit the ledger immediately after the agent run succeeds — before
+        // the output guard scan. This matches ABW's "compute was spent"
+        // semantics: a guard-quarantined result still costs credits because the
+        // inference compute already happened. Moving the debit before
+        // `scan_output` (which uses `?` to return early) ensures the operator
+        // is charged even when the output is rejected for canary
+        // exfiltration or secret leakage.
         let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
         let new_balance = self.debit(cost, &reference)?;
 
@@ -626,26 +396,22 @@ impl LocalSwarmRuntime {
         // exfiltration, secret leakage), the debit has already happened — the
         // compute was spent. The error propagates, but the operator's balance
         // reflects the cost of the rejected call.
-        let output_text = self.scan_output(&final_text)?;
+        let output_text = self.executor.scan_output(&raw.text)?;
 
         Ok(LocalDelegateResult {
             agent_id: agent.agent_id.clone(),
             response: output_text,
-            model: final_model,
+            model: raw.model,
             tokens_used: tokens,
             cost,
             balance: new_balance,
             latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            tool_calls: tool_calls_made,
-            executed_skills,
+            tool_calls: raw.tool_calls,
+            executed_skills: raw.executed_skills,
         })
     }
 }
 
-/// Maximum tool-call rounds per delegation. Each round is a full inference
-/// call; the cap bounds cost amplification (the per-dispatch credit ceiling
-/// is the credit gate, this is the round gate).
-pub(crate) const MAX_TOOL_ROUNDS: usize = 4;
 
 /// Maximum agents dispatched in a single `swarm_fanout_local` call (Cybernetic
 /// Swarm Plan — bounds the cost amplification of one fan-out: N agents ×
@@ -653,11 +419,6 @@ pub(crate) const MAX_TOOL_ROUNDS: usize = 4;
 /// (the local ledger is single-writer; concurrent debits would race the
 /// balance read), so this is also the worst-case serial latency multiplier.
 pub(crate) const MAX_FANOUT: usize = 10;
-
-/// Maximum declared skills executed per delegation. Each skill is a cascade
-/// with its own gas budget on the zed side; the cap bounds context bloat and
-/// cascade amplification from a maliciously-large `skills` list.
-pub(crate) const MAX_SKILLS_PER_DELEGATION: usize = 3;
 
 /// Result of a local delegation.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1261,6 +1022,47 @@ mod tests {
             "debit happens before output guard rejects (compute was spent, matching ABW)"
         );
     }
+
+// ── AgentExecutor seam: run returns raw output; scan_output is separate ──
+//
+// The debit-before-scan invariant (see `delegate`'s doc + the canary test
+// above) depends on `AgentExecutor::run` NOT scanning the final output —
+// it returns the raw text so the runtime can debit, then call
+// `scan_output`. This pins that seam: a canary in the model output passes
+// through `run` unredacted (Ok), and `scan_output` is what rejects it. If
+// a future "simplification" moves `scan_output` into `run`, this test
+// fails (run would reject the canary instead of returning it raw), and the
+// debit-before-scan invariant would silently break.
+#[tokio::test]
+async fn executor_run_returns_raw_output_without_scanning() {
+    let guard = hkask_guard::ContentGuard::mandatory(&hkask_guard::GuardConfig::default());
+    let canary = guard.canary().as_str().to_string();
+    let executor = crate::agent_executor::AgentExecutor::with_deps(
+        std::sync::Arc::new(StubInferencePort::new(&canary, 100)),
+        std::sync::Arc::new(StubToolDispatch::new(serde_json::json!({}))),
+        std::sync::Arc::new(StubSkillExec::ok("stub skill output")),
+        guard,
+    );
+    let agent = test_agent_card("You are a test agent.", "");
+    // run returns the raw canary text — it does NOT scan the final output.
+    let raw = executor
+        .run(&agent, "do something")
+        .await
+        .expect("run must return raw output without scanning it");
+    assert_eq!(
+        raw.text, canary,
+        "run must return the model's raw text, including the canary"
+    );
+    // scan_output is the separate step that rejects the canary. This is
+    // what the runtime calls AFTER debit, preserving "compute was spent".
+    let scan_err = executor
+        .scan_output(&raw.text)
+        .expect_err("scan_output must reject the canary");
+    assert!(
+        matches!(scan_err, SwarmError::Unavailable(ref m) if m.contains("canary token detected")),
+        "scan_output must detect the canary that run let through, got {scan_err:?}"
+    );
+}
 
     // ── Layer 2b: tool loop (declared mcp_tools dispatch) ────────────────────
     //

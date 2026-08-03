@@ -40,15 +40,15 @@ impl MediaServer {
                     McpToolError::unavailable(format!("Image generation failed: {}", e))
                 })?;
             // Attach a display hint so the model can embed the result inline.
-            if let Some(url) = result
+            let display_hint = result
                 .get("output_urls")
                 .and_then(|urls| urls.as_array())
                 .and_then(|urls| urls.first())
                 .and_then(|url| url.as_str())
-            {
+                .map(crate::media_block::image_block);
+            if let Some(hint) = display_hint {
                 let mut enriched = result;
-                enriched["display_hint"] =
-                    serde_json::Value::String(crate::media_block::image_block(url));
+                enriched["display_hint"] = serde_json::Value::String(hint);
                 Ok(enriched)
             } else {
                 Ok(result)
