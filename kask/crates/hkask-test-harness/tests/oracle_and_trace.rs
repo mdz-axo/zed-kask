@@ -80,15 +80,56 @@ fn oracle_is_send_sync() {
     assert_send_sync::<Box<dyn Oracle>>();
 }
 
+#[test]
+fn inconclusive_oracle_returns_inconclusive_when_reference_errors() {
+    let oracle = hkask_test_harness::oracle_inconclusive(|input: &JsonValue| {
+        input
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| "missing integer field 'x'".to_string())
+            .map(|x| serde_json::json!(x * 2))
+    });
+    let valid_input = serde_json::json!({"x": 21});
+    let valid_output = serde_json::json!(42);
+    assert_eq!(
+        oracle.verify(&valid_input, &valid_output),
+        OracleVerdict::Pass
+    );
+
+    // When the reference cannot evaluate the input, the oracle cannot judge.
+    let unhandled_input = serde_json::json!({"y": 1});
+    let any_output = serde_json::json!(99);
+    assert_eq!(
+        oracle.verify(&unhandled_input, &any_output),
+        OracleVerdict::Inconclusive
+    );
+}
+
 // ── Trace filesystem tests ─────────────────────────────────────────────────
+/// Per-test temp trace dir — avoids mutating the process-global `HKASK_TRACE_DIR`
+/// env var, which is unsafe under parallel test execution.
+struct TempTraceDir(std::path::PathBuf);
+impl TempTraceDir {
+    fn new(label: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("hkask-test-harness-{label}-{}", std::process::id()));
+        // Start from a clean slate in case a prior run left artifacts.
+        let _ = std::fs::remove_dir_all(&dir);
+        Self(dir)
+    }
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+impl Drop for TempTraceDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
 
 #[test]
 fn write_trace_produces_json_file() {
-    let temp_dir = std::env::temp_dir().join("hkask-test-harness-trace-test");
-    // SAFETY: set_var is single-threaded in test context; no other thread reads this env var.
-    unsafe {
-        std::env::set_var("HKASK_TRACE_DIR", &temp_dir);
-    }
+    let temp = TempTraceDir::new("trace");
 
     let entry = TraceEntry {
         kind: "proptest".to_string(),
@@ -100,7 +141,7 @@ fn write_trace_produces_json_file() {
         metadata: serde_json::json!({"crate": "hkask-templates", "target": "serialize"}),
     };
 
-    let path = write_trace("test-run-1", &entry).expect("write_trace should succeed");
+    let path = write_trace(temp.path(), "test-run-1", &entry).expect("write_trace should succeed");
     assert!(path.exists(), "trace file should exist at {:?}", path);
     assert!(
         path.to_string_lossy()
@@ -115,21 +156,11 @@ fn write_trace_produces_json_file() {
     assert_eq!(json["result"], "pass");
     assert_eq!(json["duration_ms"], 42);
     assert_eq!(json["oracle_type"], "invariant");
-
-    std::fs::remove_dir_all(&temp_dir).ok();
-    // SAFETY: single-threaded test cleanup.
-    unsafe {
-        std::env::remove_var("HKASK_TRACE_DIR");
-    }
 }
 
 #[test]
 fn write_trace_sanitizes_name_with_path_separators() {
-    let temp_dir = std::env::temp_dir().join("hkask-test-harness-sanitize-test");
-    // SAFETY: set_var is single-threaded in test context.
-    unsafe {
-        std::env::set_var("HKASK_TRACE_DIR", &temp_dir);
-    }
+    let temp = TempTraceDir::new("sanitize");
 
     let entry = TraceEntry {
         kind: "bug-hunt".to_string(),
@@ -141,16 +172,47 @@ fn write_trace_sanitizes_name_with_path_separators() {
         metadata: serde_json::json!({}),
     };
 
-    let path = write_trace("sanitize-run", &entry).expect("write_trace should succeed");
+    let path =
+        write_trace(temp.path(), "sanitize-run", &entry).expect("write_trace should succeed");
     assert!(path.exists());
     assert!(
         !path.to_string_lossy().contains("crate/module"),
         "path separators should be sanitized"
     );
+}
 
-    std::fs::remove_dir_all(&temp_dir).ok();
-    // SAFETY: single-threaded test cleanup.
-    unsafe {
-        std::env::remove_var("HKASK_TRACE_DIR");
-    }
+#[test]
+fn write_trace_does_not_clobber_duplicate_kind_name() {
+    let temp = TempTraceDir::new("collision");
+
+    let entry = TraceEntry {
+        kind: "proptest".to_string(),
+        name: "prop_round_trip".to_string(),
+        result: "pass".to_string(),
+        duration_ms: 1,
+        shrunk_counterexample: String::new(),
+        oracle_type: String::new(),
+        metadata: serde_json::json!({"run": "first"}),
+    };
+    let entry2 = TraceEntry {
+        metadata: serde_json::json!({"run": "second"}),
+        ..entry.clone()
+    };
+
+    let path1 = write_trace(temp.path(), "dup-run", &entry).expect("first write");
+    let path2 = write_trace(temp.path(), "dup-run", &entry2).expect("second write");
+
+    assert!(path1 != path2, "duplicate (kind, name) must not overwrite");
+    assert!(path1.exists(), "first trace must survive the second write");
+    assert!(path2.exists(), "second trace must be written");
+    assert!(
+        path2.to_string_lossy().contains("prop_round_trip-2.json"),
+        "second trace should get a -2 suffix: {:?}",
+        path2
+    );
+
+    // Both contents must be distinct (no silent data loss).
+    let c1 = std::fs::read_to_string(&path1).unwrap();
+    let c2 = std::fs::read_to_string(&path2).unwrap();
+    assert_ne!(c1, c2, "the two traces must retain their own metadata");
 }

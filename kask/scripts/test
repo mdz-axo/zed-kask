@@ -44,7 +44,8 @@ done
 if [[ "$TRACE" -eq 1 ]]; then
     # Generate a run ID and trace directory.
     RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
-    TRACE_DIR="kask/traces/${RUN_ID}"
+    # scripts/test runs from kask/ (cd above), so "traces" resolves to kask/traces/.
+    TRACE_DIR="traces/${RUN_ID}"
     mkdir -p "${TRACE_DIR}"
 
     # Write run manifest.

@@ -1,7 +1,7 @@
 ---
 name: tdd
 visibility: public
-description: "Test-driven development with red-green-refactor loop, MDS spec-anchored functional testing, and gap analysis. Builds features or fixes bugs one vertical slice at a time. Enforces behavior testing through public interfaces, spec traceability via // REQ: tags (anchored to MDS spec/goal/capture outputs), anti-horizontal-slicing, and minimal-implementation discipline. Five MDS categories: domain, composition, trust, lifecycle, curation."
+description: "Test-driven development with red-green-refactor loop, MDS spec-anchored functional testing, and gap analysis. Builds features or fixes bugs one vertical slice at a time. Enforces behavior testing through public interfaces, spec traceability via // REQ: tags (anchored to MDS spec/goal/capture outputs), anti-horizontal-slicing, and minimal-implementation discipline. Five MDS categories: domain, composition, trust, lifecycle, curation. Orchestrates proptest (strengthen — universal test over the input space) and bug-hunt (explore — spec blind spots) as delegates within its red-green-refactor loop, and produces traces for the suite-level harness-optimize loop."
 ---
 
 # Tdd
@@ -15,6 +15,8 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 - Refactoring while all tests are GREEN — extracting duplication, deepening modules, strengthening contracts, and applying SOLID principles while preserving contract metadata and verifying tests pass after each step.
 - Verifying TDD cycle completion — checking all tests pass, clippy is clean, no `todo!()`/`unimplemented!()` stubs remain, contract structure is complete, and spec traceability is intact.
 - Performing functional gap analysis — comparing specification requirements against tested behaviors, scoring expectation quality (0–3), cross-referencing goal-principle alignment against MDS category defaults, and producing deferral recommendations for `OPEN_QUESTIONS.md`.
+- Strengthening a GREEN tracer bullet — dispatching to the `proptest` skill for the universal test that verifies a contract's `post:`/`inv:` across the full input space (a proptest fail is a second source of RED routing back to the tracer or plan).
+- Exploring for spec blind spots — dispatching to the `bug-hunt` skill with a charter scoped to the slice's code, finding bugs the spec never named and routing them back as new functional requirements.
 
 ## Instructions
 
@@ -88,22 +90,110 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 11. Check Magna Carta completeness: list which of P1–P4 are missing from constraining annotations per covered requirement.
 12. Ensure every requirement appears in exactly one of: `covered_requirements`, `gaps`, or `deferrals`.
 13. P0 gaps MUST recommend `tracer-bullet`; P1 gaps SHOULD recommend `tracer-bullet` (deferrals require explicit rationale); P2+ gaps MAY defer to `OPEN_QUESTIONS.md`.
+14. If `bug_hunt_findings` is provided, each Tier-1 BUG not covered by a tested behavior is a spec blind spot — a new gap whose `requirement` is the finding's `summary`.
+15. If `surviving_mutants` is provided, each mutant on a spec-covered function is a gap — the universal test is missing or weak; recommend a proptest universal test (step 3 strengthen).
+
+### tdd-strengthen
+
+1. Receive the contract + `oracle_type` from the tracer bullet (step 2 is GREEN).
+2. Decide whether to dispatch to `proptest`: only for property-shaped contracts (`reference` or `invariant` oracle — `post:`/`inv:` spans an input space). Skip cleanly for `hardcoded` (fixed-value) contracts.
+3. Dispatch to the `proptest` skill in `standalone` mode (TDD can run tests — it is NOT terminal-disabled like `harness-optimize`). Pass the contract's `post:`/`inv:` as the property and the oracle type.
+4. Collect proptest's verdict: `pass`, `fail` (with shrunk counterexample), `inconclusive`, or `skipped`.
+5. Route: `pass` → proceed to refactor; `fail` with a real bug → `retracer` (fix the impl — the contract is correct); `fail` with a wrong contract → `replan` (revise the contract — contract evolution requiring P2 consent); `inconclusive` → `retracer` (fix the test setup, treat as RED).
+6. The universal test uses `oracle_reference` or `oracle_invariant` from `hkask-test-harness` (not hardcoded `prop_assert_eq!` for property contracts) — the HarnessLLM "prefer programmatic generators" constraint.
+7. Do NOT replace the representative test from step 2 — the universal test complements it.
+
+### tdd-explore
+
+1. Receive the crate scope, risk profile (from plan), gaps (from gap-check), and tested behaviors.
+2. Decide whether to dispatch to `bug-hunt`: only when coverage is thin (coverage < 0.70 or unresolved P0/P1 gaps) OR the slice touches Trust (P0) code. Do not run a full expedition on every low-risk slice.
+3. Dispatch to the `bug-hunt` skill with a charter scoped to the slice's code (`charter_focus`: spec blind spots — behaviors the spec did not name).
+4. Collect bug-hunt's findings (each cites file:line with verbatim evidence — bug-hunt's no-fiction rule).
+5. Classify each finding: a Tier-1 BUG not covered by an existing tracer bullet is a new gap (spec blind spot) → route to `replan`; a BUG covered by an existing test means the test is weak → route to `replan` (strengthen via proptest); P2 findings may defer.
+6. Route: any P0/P1 new gaps → `replan` (findings become new functional requirements → new tracer bullets); P2-only or no new gaps → `converge`.
+7. Do NOT fabricate findings — only report what bug-hunt actually discovered. If bug-hunt returns no findings, route to `converge`.
 
 ## Registry Templates
 
 | Template | Type | Purpose |
 |----------|------|---------|
 | `tdd-plan.j2` | KnowAct | Plan a TDD cycle: extract functional requirements from specifications with goal-principle anchoring (each requirement names its P{N} principle), identify public interfaces, classify behaviors by MDS category with default goal-principle mapping, prioritize by risk (P0-P2+), and get user approval before writing any code. |
-| `tdd-tracer.j2` | KnowAct | Execute a tracer bullet: write ONE failing test for ONE behavior anchored to a spec requirement AND goal principle via expect: field with [P{N}] tag (per PRINCIPLES.md §1.6). Contract-first: full v0.28.0 structure with expect:, [P{N}] Constraining: annotations, and pre:/post:. Then minimal code to satisfy the contract. |
+| `tdd-tracer.j2` | KnowAct | Execute a tracer bullet: write ONE failing test for ONE behavior anchored to a spec requirement AND goal principle via expect: field with [P{N}] tag (per PRINCIPLES.md §1.6). Contract-first: full v0.28.0 structure with expect:, [P{N}] Constraining: annotations, and pre:/post:. Then minimal code to satisfy the contract. Selects an oracle type (hardcoded/reference/invariant) driving step 3 (strengthen). |
+| `tdd-strengthen.j2` | KnowAct | Strengthen a GREEN tracer bullet by dispatching to the proptest skill for the universal test (contract post:/inv: across the input space). Uses programmatic oracles (oracle_reference/oracle_invariant). A proptest fail is a second source of RED routing back to the tracer (impl) or plan (contract). Skips cleanly for hardcoded contracts. Standalone execution mode. |
 | `tdd-refactor.j2` | KnowAct | Refactor while GREEN: extract duplication, deepen modules, apply SOLID principles. Preserve full v0.28.0 contract structure (expect:, [P{N}] Constraining:, pre:/post:) during refactoring. Contract metadata must travel with the function (Rule 6bis). Post-refactor grep verification for expect: and [P{N}] annotations (Rule 8bis). Flag contract evolution requiring P2 consent. Verify tests still pass after each refactor step. |
-| `tdd-verify.j2` | KnowAct | Verify TDD cycle completion: all tests pass, clippy clean, no todo!/unimplemented! stubs. Contract completeness audit including expect: user expectation, [P{N}] goal-principle anchoring, and [P{N}] Constraining: annotations per v0.28.0 extended syntax. Emits reg.contract.violated spans for missing/malformed contracts. Tests describe behavior not implementation, spec traceability via // REQ: tags, functional coverage gaps identified. |
-| `tdd-gap-check.j2` | KnowAct | Functional gap analysis: compare specification requirements against tested behaviors including goal-principle alignment cross-reference against MDS category defaults, constraining principle completeness (Magna Carta P1-P4), and expectation quality scoring (0-3 scale). Identify uncovered requirements (gaps) and produce deferral recommendations for OPEN_QUESTIONS.md. P0 gaps MUST have tracer bullets. |
+| `tdd-verify.j2` | KnowAct | Verify TDD cycle completion: all tests pass (via `./scripts/test --trace` so the run is captured for harness-optimize), clippy clean, no todo!/unimplemented! stubs. Contract completeness audit including expect: user expectation, [P{N}] goal-principle anchoring, and [P{N}] Constraining: annotations per v0.28.0 extended syntax. Emits reg.contract.violated spans for missing/malformed contracts. Confirms property contracts have a universal test (proptest verdict). |
+| `tdd-gap-check.j2` | KnowAct | Functional gap analysis: compare specification requirements against tested behaviors including goal-principle alignment cross-reference against MDS category defaults, constraining principle completeness (Magna Carta P1-P4), and expectation quality scoring (0-3 scale). Consumes bug-hunt findings (spec blind spots) and surviving mutants (weak universal tests) as additional gap sources. Identify uncovered requirements (gaps) and produce deferral recommendations for OPEN_QUESTIONS.md. P0 gaps MUST have tracer bullets. |
+| `tdd-explore.j2` | KnowAct | Explore for spec blind spots by dispatching to the bug-hunt skill with a charter scoped to the slice's code. Findings not covered by an existing tracer bullet become new functional requirements routing back to the plan. Dispatches only when coverage is thin OR the slice touches Trust (P0) code. |
 
 ## Constraints
 
 - `tdd-plan.j2`: Public. Planning only — do not write code in this phase.
-- `tdd-tracer.j2`: Public. Contract-first ordering: Contract → Test → Implementation. Test through public interface only. Minimal implementation — no speculative features.
+- `tdd-tracer.j2`: Public. Contract-first ordering: Contract → Test → Implementation. Test through public interface only. Minimal implementation — no speculative features. Selects `oracle_type` (hardcoded/reference/invariant) driving step 3.
+- `tdd-strengthen.j2`: Public. Dispatches to proptest ONLY for property-shaped contracts (reference/invariant oracle). Skips cleanly for hardcoded. Standalone execution mode (TDD can run tests). A proptest fail is RED — routes back to tracer or plan, never silently proceeds.
 - `tdd-refactor.j2`: Public. Never refactor while RED. Never change behavior. Preserve all contract layers during refactoring. Post-refactor grep verification for contract metadata.
-- `tdd-verify.j2`: Public. Emit `reg.contract.violated` spans for missing/malformed contracts. Reject vacuous `expect:` fields.
-- `tdd-gap-check.j2`: Public. Every requirement in exactly one of: covered, gaps, deferrals. P0 gaps MUST recommend tracer-bullet.
+- `tdd-verify.j2`: Public. Uses `./scripts/test --trace` (not bare `cargo test`) so runs are visible to harness-optimize. Emit `reg.contract.violated` spans for missing/malformed contracts. Reject vacuous `expect:` fields. A proptest `fail` verdict forces `all_tests_pass: false`.
+- `tdd-gap-check.j2`: Public. Every requirement in exactly one of: covered, gaps, deferrals. P0 gaps MUST recommend tracer-bullet. Consumes bug-hunt findings + surviving mutants as additional gap sources when provided.
+- `tdd-explore.j2`: Public. Dispatches to bug-hunt ONLY when coverage is thin OR slice touches Trust (P0). Findings must cite file:line (no-fiction). P0/P1 new gaps route to replan; P2 may defer.
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins.
+
+## Relationship to Other Skills
+
+TDD is the **spec-driven conductor** of the testing-skill DAG. It keeps its
+contract-first, one-behavior, fast-green discipline and orchestrates the other
+testing skills as delegates at specific phases of its red-green-refactor loop.
+
+```mermaid
+graph TD
+    TDD["TDD cascade"]
+    PP["proptest — universal test\n(input space)"]
+    BH["bug-hunt — spec blind spots\n(exploratory)"]
+    HO["harness-optimize — suite-level\n(separate time scale)"]
+    TF["trace filesystem\nkask/traces/"]
+
+    TDD -->|"step 3: strengthen\n(standalone mode)"| PP
+    PP -->|"verdict + shrunk\ncounterexample"| TDD
+    TDD -->|"step 7: explore\n(scoped charter)"| BH
+    BH -->|"findings → new gaps"| TDD
+    TDD -->|"step 5: --trace\n(raw nextest JSON)"| TF
+    TF -.->|"reads raw traces"| HO
+    HO -.->|"surviving_mutants\n(optional input)"| TDD
+```
+
+- **proptest**: per-function property test generator. TDD dispatches to proptest
+  in `standalone` mode at step 3 (strengthen) for property-shaped contracts
+  (`reference`/`invariant` oracle). The tracer (step 2) writes the representative
+  test (one case, fast green); proptest writes the universal test (full input
+  space). A proptest fail is a second source of RED feeding back into TDD's loop.
+  This differs from `harness-optimize`, which dispatches to proptest in
+  `generate_only` mode (terminal-disabled proposer).
+- **bug-hunt**: exploratory bug finder. TDD dispatches to bug-hunt at step 7
+  (explore) when coverage is thin or the slice touches Trust (P0) code. bug-hunt
+  finds spec blind spots (bugs the spec never named); findings not covered by an
+  existing tracer bullet become new functional requirements routing back to the
+  plan. bug-hunt writes its expedition report to the trace filesystem via
+  `hkask_test_harness::write_trace`.
+- **harness-optimize**: suite-level test harness proposer. TDD does NOT orchestrate
+  harness-optimize within a slice — that is the `harness-evolve-cycle`'s job
+  (suite-level, between feature work, a different time scale). TDD **feeds**
+  harness-optimize by running `./scripts/test --trace` (step 5) so the raw
+  nextest JSON is visible in the trace filesystem. TDD **optionally consumes**
+  harness-optimize's outputs: `surviving_mutants` (from a prior mutation-testing
+  run) are a gap source in step 6 (gap-check), recommending a proptest universal
+  test for the under-tested function.
+
+## Oracle Mapping (HarnessLLM)
+
+TDD's contract layers map onto the `Oracle` taxonomy in `hkask-test-harness`:
+
+| Contract layer | Oracle type | Where used |
+|----------------|-------------|------------|
+| `expect:` with a single fixed expected output | `oracle_hardcoded` | tracer representative test (step 2) — one case, fast green; TBR decays |
+| `post:` (input→output guarantee, reference impl exists) | `oracle_reference` | strengthen universal test (step 3 proptest) — scales across input space |
+| `inv:` / `post:` as a predicate over (input, output) | `oracle_invariant` | strengthen universal test (step 3 proptest) — scales best |
+| `prob:` (probabilistic, non-deterministic) | `oracle_invariant` with statistical threshold | strengthen universal test (step 3 proptest) |
+
+This is the HarnessLLM constraint applied to TDD: the representative test (step
+2) is a hardcoded oracle (one case); the universal test (step 3) uses
+programmatic oracles (`oracle_reference`/`oracle_invariant`) that scale with
+case count. Programmatic generators scale; hardcoded I/O pairs do not (TBR
+decays exponentially).

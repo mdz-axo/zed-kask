@@ -10,8 +10,8 @@
 //!
 //! Harness evolution items (trace filesystem + oracle taxonomy):
 //! - [`Oracle`] trait + [`OracleVerdict`]: three oracle strategies (HarnessLLM)
-//! - [`oracle_hardcoded`] / [`oracle_reference`] / [`oracle_invariant`]: constructors
-//! - [`write_trace`] + [`TraceEntry`]: structured trace persistence
+//! - [`oracle_hardcoded`] / [`oracle_reference`] / [`oracle_invariant`] / [`oracle_inconclusive`]: constructors
+//! - [`write_trace`] + [`TraceEntry`]: structured trace persistence (explicit trace dir, collision-safe)
 
 use hkask_capability::{
     DelegationAction, DelegationResource, DelegationToken, ToolFuture, ToolInfo, ToolPort,
@@ -119,6 +119,43 @@ where
     Box::new(InvariantOracle(check))
 }
 
+/// Oracle 4: reference implementation that may be unable to handle an input.
+///
+/// Like [`oracle_reference`], but the reference function returns
+/// `Result<JsonValue, String>`. An `Ok` output is compared against the test
+/// output (Pass/Fail); an `Err` means the reference could not evaluate this
+/// input, yielding [`OracleVerdict::Inconclusive`] — the oracle cannot
+/// determine correctness. This is the only constructor that produces
+/// `Inconclusive`, closing the HarnessLLM three-verdict model.
+#[must_use]
+pub fn oracle_inconclusive<F>(reference: F) -> Box<dyn Oracle>
+where
+    F: Fn(&JsonValue) -> Result<JsonValue, String> + Send + Sync + 'static,
+{
+    struct InconclusiveOracle<F>(F);
+    impl<F> Oracle for InconclusiveOracle<F>
+    where
+        F: Fn(&JsonValue) -> Result<JsonValue, String> + Send + Sync,
+    {
+        fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict {
+            match (self.0)(input) {
+                Ok(expected) => {
+                    if output == &expected {
+                        OracleVerdict::Pass
+                    } else {
+                        OracleVerdict::Fail(format!(
+                            "reference produced {:#}, got {:#}",
+                            expected, output
+                        ))
+                    }
+                }
+                Err(_) => OracleVerdict::Inconclusive,
+            }
+        }
+    }
+    Box::new(InconclusiveOracle(reference))
+}
+
 // ── Trace filesystem (Meta-Harness) ────────────────────────────────────────
 
 /// A structured execution trace record, written to the trace filesystem by
@@ -168,26 +205,54 @@ impl TraceEntry {
 
 /// Writes a structured trace entry to the trace filesystem.
 ///
-/// The trace directory is resolved from the `HKASK_TRACE_DIR` env var,
-/// defaulting to `kask/traces`. The entry is written to
-/// `{trace_dir}/{run_id}/{kind}-{name}.json`.
+/// The entry is written to `{trace_dir}/{run_id}/{kind}-{name}.json`. If a
+/// file with the same `(kind, name)` already exists in the run directory, a
+/// `-N` suffix is appended (starting at 2) so concurrent or repeated traces
+/// with the same name do not silently overwrite each other.
+///
+/// `trace_dir` is taken explicitly so callers (and tests) do not have to
+/// mutate the process-global `HKASK_TRACE_DIR` env var — which is unsafe under
+/// parallel test execution. Production callers can resolve the dir from the
+/// env var once at startup and pass it in.
 ///
 /// This is the persistence layer that makes test execution visible to the
-/// `harness-optimize` skill (the proposer) and the stability gate. Raw traces,
+/// `harness-optimize` skill (the proposer) and the stability gate to form
+/// causal hypotheses about test suite quality. Raw traces,
 /// not compressed pass/fail scalars, are the key ingredient for harness
 /// improvement (Meta-Harness paper).
-pub fn write_trace(run_id: &str, entry: &TraceEntry) -> std::io::Result<PathBuf> {
-    let trace_dir = std::env::var("HKASK_TRACE_DIR").unwrap_or_else(|_| "kask/traces".to_string());
-    let run_dir = PathBuf::from(&trace_dir).join(run_id);
+pub fn write_trace(
+    trace_dir: &std::path::Path,
+    run_id: &str,
+    entry: &TraceEntry,
+) -> std::io::Result<PathBuf> {
+    let run_dir = trace_dir.join(run_id);
     fs::create_dir_all(&run_dir)?;
 
     let safe_name = entry.name.replace(['/', '\\', ' ', ':'], "_");
-    let filename = format!("{}-{}.json", entry.kind, safe_name);
-    let path = run_dir.join(&filename);
+    let stem = format!("{}-{}", entry.kind, safe_name);
+    let path = unique_path(&run_dir, &stem, "json");
 
     let json = serde_json::to_string_pretty(&entry.to_json()).map_err(std::io::Error::other)?;
     fs::write(&path, json)?;
     Ok(path)
+}
+
+/// Resolves a non-clobbering path: `{dir}/{stem}.{ext}`, or `{dir}/{stem}-N.{ext}`
+/// if it already exists (N = 2, 3, …). Keeps the first match stable so repeated
+/// writes with the same stem do not overwrite earlier traces.
+fn unique_path(dir: &std::path::Path, stem: &str, ext: &str) -> PathBuf {
+    let base = dir.join(format!("{stem}.{ext}"));
+    if !base.exists() {
+        return base;
+    }
+    for counter in 2..u64::MAX {
+        let candidate = dir.join(format!("{stem}-{counter}.{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // Practically unreachable: u64 counter space. Fall back to the base path.
+    base
 }
 
 // ── Property-test generator ──────────────────────────────────────────────
