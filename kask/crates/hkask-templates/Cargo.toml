@@ -30,6 +30,9 @@ r2d2_sqlite.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-utils = []
+
 [dev-dependencies]
 proptest = { workspace = true }
 walkdir.workspace = true
@@ -58,3 +61,8 @@ path = "tests/executor_properties.rs"
 [[test]]
 name = "compute_properties"
 path = "tests/compute_properties.rs"
+
+[[test]]
+name = "compute_gap_properties"
+path = "tests/compute_gap_properties.rs"
+required-features = ["test-utils"]

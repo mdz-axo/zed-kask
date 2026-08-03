@@ -40,7 +40,7 @@ pub(crate) struct ConsentGrant {
 ///   (and vice versa). Single-use is enforced atomically via the
 ///   DELETE-affected-rows check — two processes racing on the same token
 ///   cannot double-spend it. Grants expire after [`CONSENT_TTL_SECS`].
-pub(crate) struct ConsentStore {
+pub struct ConsentStore {
     inner: ConsentInner,
 }
 
@@ -347,7 +347,7 @@ impl SqliteConsentStore {
 /// scope). Not cryptographic — the token's value is its unguessability
 /// combined with single-use consumption, not secrecy against a motivated
 /// attacker with process access.
-fn mint_token(action: &str, target: &str) -> String {
+pub fn mint_token(action: &str, target: &str) -> String {
     format!(
         "hkask-consent-{:016x}",
         std::time::SystemTime::now()
@@ -362,7 +362,7 @@ fn mint_token(action: &str, target: &str) -> String {
 /// timestamp alone. Not cryptographic — the token's value is its unguessability
 /// combined with single-use consumption, not secrecy against a motivated
 /// attacker with process access.
-fn fnv1a(action: &str, target: &str) -> u64 {
+pub fn fnv1a(action: &str, target: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in action.bytes().chain(target.bytes()) {
         hash ^= u64::from(byte);

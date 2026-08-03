@@ -92,3 +92,17 @@ pub fn spawn_test_email(recipient: String, cx: &gpui::App) {
     })
     .detach();
 }
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils {
+    pub use crate::context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
+
+    /// Expose the pure prompt-length recall gate as a free function for
+    /// proptest. `should_recall` is an associated function on
+    /// `BridgeContextInjector`/`BridgeCuratorContextInjector`; a method cannot
+    /// be re-exported via `pub use`, so this thin wrapper forwards to the
+    /// `pub(crate)` impl.
+    pub fn should_recall(prompt: &str) -> bool {
+        BridgeContextInjector::should_recall(prompt)
+    }
+}

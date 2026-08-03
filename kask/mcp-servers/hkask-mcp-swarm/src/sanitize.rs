@@ -15,7 +15,7 @@
 /// the result is empty or only dots (which would be `.` or `..`, a path
 /// traversal). Used by `swarm_clone_to_local` to prevent path traversal via
 /// a malicious ABW response (`agent_id: "../../etc"`).
-pub(crate) fn sanitize_agent_id(id: &str) -> Option<String> {
+pub fn sanitize_agent_id(id: &str) -> Option<String> {
     let sanitized: String = id
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
@@ -34,7 +34,7 @@ pub(crate) fn sanitize_agent_id(id: &str) -> Option<String> {
 /// authorizes the named agent; this is defense-in-depth against accidental
 /// cross-mention. Strips all leading `@` tokens (and intervening whitespace)
 /// so `@a @b do x` becomes `do x`.
-pub(crate) fn strip_leading_mentions(task: &str) -> String {
+pub fn strip_leading_mentions(task: &str) -> String {
     let mut remaining = task.trim_start();
     while remaining.starts_with('@') {
         // Skip the @ and the following token (up to whitespace).
@@ -60,10 +60,7 @@ pub(crate) fn strip_leading_mentions(task: &str) -> String {
 /// operator's own governed servers. Dropped entries are logged so the
 /// operator sees what was filtered (the `.rules` startup-failure-signal trap:
 /// a silent drop is indistinguishable from "nothing to drop").
-pub(crate) fn filter_mcp_tools(
-    tools: Vec<String>,
-    allowed_servers: Option<&[String]>,
-) -> Vec<String> {
+pub fn filter_mcp_tools(tools: Vec<String>, allowed_servers: Option<&[String]>) -> Vec<String> {
     let mut kept = Vec::new();
     for qualified in tools {
         let Some((server, tool)) = qualified.split_once('/') else {
@@ -109,7 +106,7 @@ pub(crate) fn filter_mcp_tools(
 /// ids are resolved on the zed side, so an unknown id is already non-fatal
 /// (recorded, delegation proceeds) — the shape check just keeps garbage out
 /// of the card.
-pub(crate) fn filter_declared_skills(skills: Vec<String>) -> Vec<String> {
+pub fn filter_declared_skills(skills: Vec<String>) -> Vec<String> {
     skills
         .into_iter()
         .filter(|id| {
@@ -139,7 +136,7 @@ pub(crate) fn filter_declared_skills(skills: Vec<String>) -> Vec<String> {
 ///
 /// This is defense-in-depth, not a complete prompt-injection defense — the
 /// agent's system prompt must also treat tool output as untrusted data.
-pub(crate) fn sanitize_abw_response(value: Option<&serde_json::Value>) -> serde_json::Value {
+pub fn sanitize_abw_response(value: Option<&serde_json::Value>) -> serde_json::Value {
     let Some(text) = value.and_then(|v| v.as_str()) else {
         return value.cloned().unwrap_or(serde_json::Value::Null);
     };
@@ -163,7 +160,7 @@ pub(crate) fn sanitize_abw_response(value: Option<&serde_json::Value>) -> serde_
 /// the panel as `Option<String>`; sending the container there fails
 /// deserialization and blanks the whole list (the KA-01 seam drift). This is
 /// the same prefix-stripping logic, minus the container.
-pub(crate) fn sanitize_abw_response_plain(value: Option<&serde_json::Value>) -> serde_json::Value {
+pub fn sanitize_abw_response_plain(value: Option<&serde_json::Value>) -> serde_json::Value {
     let Some(text) = value.and_then(|v| v.as_str()) else {
         return value.cloned().unwrap_or(serde_json::Value::Null);
     };
@@ -172,7 +169,7 @@ pub(crate) fn sanitize_abw_response_plain(value: Option<&serde_json::Value>) -> 
 
 /// The shared prefix-stripping core of the two sanitizers. Pattern-based, not
 /// semantic — catches the obvious injection prefixes ABW agents might echo.
-pub(crate) fn sanitize_abw_text(text: &str) -> String {
+pub fn sanitize_abw_text(text: &str) -> String {
     text.replace(
         "ignore previous instructions",
         "[redacted: injection attempt]",
@@ -196,7 +193,7 @@ pub(crate) fn sanitize_abw_text(text: &str) -> String {
 /// fields (`content`, `response`, `message`) keep the `{content, source,
 /// trust}` container. Identifier fields (`id`, `agent_id`, …) pass through
 /// untouched — only the named text keys are rewritten.
-pub(crate) fn sanitize_workspace_payload(value: serde_json::Value) -> serde_json::Value {
+pub fn sanitize_workspace_payload(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
             for (key, val) in map.iter_mut() {
@@ -247,7 +244,7 @@ pub(crate) fn sanitize_workspace_payload(value: serde_json::Value) -> serde_json
 /// container, and inserts it as `content`. The original `response` field
 /// is removed — it was read but not sanitized, leaving raw injection text
 /// in the message that a model reading `response` directly would see.
-pub(crate) fn sanitize_run_status_message(msg: &serde_json::Value) -> serde_json::Value {
+pub fn sanitize_run_status_message(msg: &serde_json::Value) -> serde_json::Value {
     let sanitized = sanitize_abw_response(msg.get("content").or_else(|| msg.get("response")));
     let mut msg = msg.clone();
     if let Some(obj) = msg.as_object_mut() {
@@ -616,6 +613,12 @@ mod tests {
         // Clean input (no leading @) passes through trimmed.
         #[test]
         fn strip_mentions_clean_input_passes_through(input in "[^@].*") {
+            // "Clean" means the *trimmed* input does not start with '@'. The
+            // regex `[^@].*` only constrains the first raw byte; an input like
+            // `" @"` has a leading space (passes the regex) but trims to `@`,
+            // which is a leading mention and must be stripped — not passed
+            // through. Reject those so the property tests genuinely clean input.
+            prop_assume!(!input.trim_start().starts_with('@'));
             let result = strip_leading_mentions(&input);
             prop_assert_eq!(result, input.trim_start(),
                 "clean input must pass through trimmed");

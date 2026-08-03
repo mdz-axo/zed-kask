@@ -67,7 +67,7 @@ impl BridgeContextInjector {
     /// Check whether a prompt is long enough to warrant recall.
     /// Short prompts ("fix this", "run tests") are unlikely to benefit from
     /// memory recall and would waste an embedding HTTP call + SQL queries.
-    fn should_recall(prompt: &str) -> bool {
+    pub(crate) fn should_recall(prompt: &str) -> bool {
         if prompt.len() < MIN_RECALL_PROMPT_LEN {
             return false;
         }
@@ -232,7 +232,7 @@ impl BridgeCuratorContextInjector {
 
     /// Reuse the same prompt-length gate as the user injector — short prompts
     /// skip recall to avoid the embedding HTTP call + SQL queries.
-    fn should_recall(prompt: &str) -> bool {
+    pub(crate) fn should_recall(prompt: &str) -> bool {
         if prompt.len() < MIN_RECALL_PROMPT_LEN {
             return false;
         }

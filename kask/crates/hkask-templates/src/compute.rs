@@ -25,7 +25,7 @@ use serde_json::Value;
 /// - `brier_score` — in: `{probability, outcome_occurred}`
 /// - `brier_score_multi` — in: `{probabilities: [f64], outcomes: [bool]}`
 /// - `brier_interpretation` — in: `{score}`
-pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
+pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
     use hkask_forecast as forecast;
     let get_f64 = |key: &str| -> Result<f64> {
         input.get(key).and_then(|v| v.as_f64()).ok_or_else(|| {

@@ -70,11 +70,17 @@ schema_clean_test!(task_add_gas_request_schema, TaskAddGasRequest);
 schema_clean_test!(task_add_rjoules_request_schema, TaskAddRjoulesRequest);
 schema_clean_test!(task_comment_request_schema, TaskCommentRequest);
 schema_clean_test!(task_comments_since_request_schema, TaskCommentsSinceRequest);
-schema_clean_test!(task_add_deliverable_request_schema, TaskAddDeliverableRequest);
+schema_clean_test!(
+    task_add_deliverable_request_schema,
+    TaskAddDeliverableRequest
+);
 schema_clean_test!(task_reopen_request_schema, TaskReopenRequest);
 schema_clean_test!(contract_propose_expect_schema, ContractProposeExpect);
 schema_clean_test!(task_kata_coaching_request_schema, TaskKataCoachingRequest);
-schema_clean_test!(task_kata_improvement_request_schema, TaskKataImprovementRequest);
+schema_clean_test!(
+    task_kata_improvement_request_schema,
+    TaskKataImprovementRequest
+);
 schema_clean_test!(task_kata_practice_request_schema, TaskKataPracticeRequest);
 schema_clean_test!(task_spawn_request_schema, TaskSpawnRequest);
 
@@ -85,8 +91,8 @@ schema_clean_test!(task_spawn_request_schema, TaskSpawnRequest);
 // regression to `serde_json::Value` is caught with a precise message.
 #[test]
 fn contract_propose_expect_proposals_property_is_object_not_boolean() {
-    let schema = serde_json::to_value(&schema_for!(ContractProposeExpect))
-        .expect("schema serializes");
+    let schema =
+        serde_json::to_value(&schema_for!(ContractProposeExpect)).expect("schema serializes");
     let properties = schema
         .get("properties")
         .and_then(|p| p.as_object())
@@ -179,7 +185,7 @@ proptest! {
 
         let input = serde_json::json!({
             "board_id": "b1",
-            "proposals": proposals.clone(),
+            "proposals": proposals,
         });
         let ok = serde_json::from_value::<ContractProposeExpect>(input.clone()).is_ok();
         let output = serde_json::json!({ "ok": ok });

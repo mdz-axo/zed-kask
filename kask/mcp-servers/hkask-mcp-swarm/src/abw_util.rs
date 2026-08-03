@@ -10,7 +10,7 @@ use crate::error::SwarmError;
 
 /// Inspect a 200-response body for ABW's embedded upstream-error pattern.
 /// Returns a typed `SwarmError` when the payload is an error in disguise.
-pub(crate) fn detect_embedded_error(value: &serde_json::Value) -> Option<SwarmError> {
+pub fn detect_embedded_error(value: &serde_json::Value) -> Option<SwarmError> {
     // Xaman Ek puts upstream failures in the `response` string field.
     let text = value
         .get("response")
@@ -39,7 +39,7 @@ pub(crate) fn detect_embedded_error(value: &serde_json::Value) -> Option<SwarmEr
 
 /// Extract the first 'single-quoted' token (ABW uses it for agent names in
 /// error strings like "Agent 'david_dunning' is not funded").
-pub(crate) fn extract_quoted(text: &str) -> Option<String> {
+pub fn extract_quoted(text: &str) -> Option<String> {
     let start = text.find('\'')? + 1;
     let end = text[start..].find('\'')? + start;
     Some(text[start..end].to_string())
@@ -50,7 +50,7 @@ pub(crate) fn extract_quoted(text: &str) -> Option<String> {
 /// containing `?`, `&`, `#`, `/`, or space would corrupt the URL path if
 /// interpolated raw. This is a minimal encoder for the path-unsafe subset
 /// (RFC 3986 unreserved + path-allowed characters are preserved).
-pub(crate) fn url_encode_segment(segment: &str) -> String {
+pub fn url_encode_segment(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         match byte {
@@ -79,7 +79,7 @@ pub(crate) fn url_encode_segment(segment: &str) -> String {
 /// underscore-trim) so base + '_' + suffix fits within 64 chars. Extracted
 /// from `swarm_create_swarm` for testability (KA-03: the prior inline version
 /// panicked on a pre-epoch clock via `&string[..4]` on an empty string).
-pub(crate) fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
+pub fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
     let suffix = now
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().to_string())
@@ -102,7 +102,7 @@ pub(crate) fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> St
 /// rejected with HTTP 400 "slug must contain only lowercase letters, digits,
 /// and underscores"). Rejecting here turns ABW's confusing 400 into a clear
 /// argument error.
-pub(crate) fn validate_agent_name(name: &str) -> Result<(), String> {
+pub fn validate_agent_name(name: &str) -> Result<(), String> {
     let len = name.chars().count();
     if !(3..=64).contains(&len) {
         return Err(format!("invalid agent_name: must be 3–64 chars, got {len}"));
@@ -132,14 +132,14 @@ pub(crate) fn validate_agent_name(name: &str) -> Result<(), String> {
 /// already INCLUDES the base (quote `total=10, required=0, optional=5` =
 /// base 5 + optional 5). So the floor only needs to cover the owned-agent
 /// case; the third-party quote is trustworthy as-is.
-pub(crate) const OWNED_ADD_FLAT_FEE: u64 = 2;
+pub const OWNED_ADD_FLAT_FEE: u64 = 2;
 
 /// The effective hire cost for a re-verified `/agents/{name}/dependencies`
 /// payload. A dependency-less agent quotes `total_hire_cost: 0` but the add
 /// charges `OWNED_ADD_FLAT_FEE` — the gate must never under-quote a spend.
 /// Only call this after the caller has already rejected a MISSING
 /// `total_hire_cost` (missing = unknown, never zero — the `.rules` trap).
-pub(crate) fn effective_hire_cost(deps: &serde_json::Value) -> u64 {
+pub fn effective_hire_cost(deps: &serde_json::Value) -> u64 {
     let total = deps
         .get("total_hire_cost")
         .and_then(|c| c.as_u64())

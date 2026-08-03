@@ -142,7 +142,7 @@ proptest! {
         });
 
         let input = serde_json::json!({
-            "messages": [message.clone()],
+            "messages": [message],
             "current_query": "summarize",
         });
         let ok = serde_json::from_value::<ThreadSummaryRequest>(input.clone()).is_ok();

@@ -27,7 +27,7 @@
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum SwarmMode {
+pub enum SwarmMode {
     /// Route to Agent Bestiary World (v1 behavior).
     #[default]
     Abw,
@@ -130,7 +130,7 @@ impl Default for SwarmConfig {
 /// Extracted from `from_env` as a pure function so the resolution logic is
 /// testable without manipulating process env vars (this crate is
 /// `#![forbid(unsafe_code)]`, so `std::env::set_var` is unavailable in tests).
-pub(crate) fn resolve_local_agents_dir(local_agents_dir: &str) -> String {
+pub fn resolve_local_agents_dir(local_agents_dir: &str) -> String {
     if std::path::Path::new(local_agents_dir).is_absolute() {
         local_agents_dir.to_string()
     } else {

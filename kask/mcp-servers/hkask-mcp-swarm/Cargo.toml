@@ -13,6 +13,11 @@ path = "src/hkask_mcp_swarm.rs"
 name = "hkask-mcp-swarm"
 path = "src/main.rs"
 
+[[test]]
+name = "swarm_gap_properties"
+path = "tests/swarm_gap_properties.rs"
+required-features = ["test-utils"]
+
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
@@ -36,6 +41,9 @@ dirs = { workspace = true }
 
 [lints]
 workspace = true
+
+[features]
+test-utils = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

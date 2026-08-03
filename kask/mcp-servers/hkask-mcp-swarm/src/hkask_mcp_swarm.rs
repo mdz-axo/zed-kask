@@ -70,6 +70,14 @@ mod request_types;
 mod sanitize;
 mod spend_gate;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils {
+    pub use crate::abw_util::*;
+    pub use crate::config::{SwarmMode, resolve_local_agents_dir};
+    pub use crate::consent::{ConsentStore, fnv1a, mint_token};
+    pub use crate::sanitize::*;
+}
+
 // ── Public local-swarm surface (reused by other kask MCP servers) ──────────
 //
 // The local-swarm runtime, agent registry, card types, and error type are

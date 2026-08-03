@@ -154,7 +154,7 @@ proptest! {
         };
         let input = json!({
             "prefixed_name": prefixed_name,
-            "model": entry.model.clone(),
+            "model": &entry.model,
             "supports_vision": false,
         });
 
@@ -269,22 +269,22 @@ proptest! {
         });
 
         let entry = RouterModelEntry {
-            prefixed_name: prefixed_name.clone(),
+            prefixed_name,
             provider,
-            model: model.clone(),
-            family: family.clone(),
-            parameter_size: parameter_size.clone(),
-            quantization_level: quantization_level.clone(),
+            model,
+            family,
+            parameter_size,
+            quantization_level,
             size_bytes,
             supports_vision,
         };
         let input = json!({
-            "prefixed_name": entry.prefixed_name.clone(),
+            "prefixed_name": &entry.prefixed_name,
             "provider": serde_json::to_value(&entry.provider).expect("ProviderId serializes"),
-            "model": entry.model.clone(),
-            "family": entry.family.clone(),
-            "parameter_size": entry.parameter_size.clone(),
-            "quantization_level": entry.quantization_level.clone(),
+            "model": &entry.model,
+            "family": &entry.family,
+            "parameter_size": &entry.parameter_size,
+            "quantization_level": &entry.quantization_level,
             "size_bytes": entry.size_bytes,
             "supports_vision": entry.supports_vision,
         });

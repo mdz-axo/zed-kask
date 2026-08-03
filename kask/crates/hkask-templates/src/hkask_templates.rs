@@ -11,7 +11,7 @@
 
 pub mod budget;
 pub mod bundle;
-mod compute;
+pub mod compute;
 pub mod condition;
 pub mod convergence;
 pub mod executor;
@@ -44,3 +44,12 @@ pub use prompt_strategy::PromptStrategy;
 pub use registry::{Registry, process_manifest_yaml, template_file, template_yaml_file};
 pub use registry_sqlite::SqliteRegistry;
 pub use skill_loader::{SkillFrontMatter, SkillLoadResult, SkillLoader};
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils {
+    /// Re-export the compute dispatch table so external proptest tests under
+    /// the `test-utils` feature can drive the deterministic compute primitives
+    /// (swarm accumulators, second-order monitor, kata convergence, forecast
+    /// primitives) directly without an `InferencePort`.
+    pub use crate::compute::dispatch_compute;
+}
