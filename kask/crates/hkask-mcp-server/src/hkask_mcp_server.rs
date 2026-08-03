@@ -23,6 +23,7 @@ pub use server::{
 };
 
 pub use tool_schema::AnyJsonValue;
+pub use tool_schema::find_boolean_schema_positions;
 
 /// Tool input schema helpers for MCP servers.
 pub mod tool_schema;

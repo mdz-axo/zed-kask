@@ -466,6 +466,212 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                 "calibration_converged": calibration_converged,
             }))
         }
+        // ── Swarm cybernetic primitives (Cybernetic Swarm Plan C1/C3/C7) ──
+        //
+        // Deterministic accumulators + a second-order monitor over the
+        // per-iteration log. S1 §5.4: "statistical functions over the action
+        // log requiring no modifications to the underlying model." These are
+        // the deterministic enforcement points for the swarm-intelligence
+        // CONVERGE side: an LLM template cannot reliably maintain a running
+        // set/sum across LOOP iterations, so the accumulators live here as
+        // pure functions. The manifest threads the accumulator outputs back
+        // through the loop step's input_mapping so the next iteration (and
+        // DECIDE) can read them.
+        "swarm.converge_accumulate" => {
+            let d = get_f64("d")?;
+            let task_success = input.get("task_success").cloned();
+            let deficit_class = input
+                .get("deficit_class")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let iteration_log = input
+                .get("iteration_log")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let failed_edits = input
+                .get("failed_edits")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let influence_scores = input
+                .get("influence_scores")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            // Extract the primary DECIDE move (first proposed move) — the
+            // `decision_action` and the `agent_type` it names. Both are read
+            // from the whole `decisions` object so fragile Jinja indexing stays
+            // out of the manifest.
+            let (decision_action, agent_type) = extract_swarm_decision(input.get("decisions"));
+            // Deterministic swarm-state signature: the deficit class + the
+            // sorted multiset of the roster's agent_types. Two iterations with
+            // the same deficit and the same roster shape share a signature.
+            let roster_types = extract_roster_agent_types(input.get("swarm_state"));
+            let mut sorted_roster = roster_types.clone();
+            sorted_roster.sort();
+            let swarm_state_signature = format!("{}|{}", deficit_class, sorted_roster.join(","));
+            // Extract the deterministic task-success scalar `s`: score if
+            // present, else 1.0/0.0 from `pass`, else null (not measured).
+            let s = extract_task_success_scalar(&task_success);
+            // d_delta vs the prior iteration's d (0 on the first iteration).
+            let prior_d = iteration_log
+                .last()
+                .and_then(|e| e.get("d"))
+                .and_then(|v| v.as_f64());
+            let d_delta = match prior_d {
+                Some(prior) => d - prior,
+                None => 0.0,
+            };
+            let prior_s = iteration_log
+                .last()
+                .and_then(|e| e.get("s"))
+                .and_then(|v| v.as_f64());
+            // Append this iteration to the log.
+            let mut new_log = iteration_log.clone();
+            new_log.push(serde_json::json!({
+                "d": d,
+                "s": s,
+                "deficit_class": deficit_class,
+                "decision_action": decision_action,
+            }));
+            // Failed-edit memory (C3): record when the edit did not improve d
+            // (d_delta <= 0) AND s did not improve. "s did not improve" = s is
+            // null (not measured — d alone is the sensor-truth risk per C3's
+            // Needs-C0 note) OR current s <= prior s. This is the anti-loop set
+            // DECIDE rejects re-proposals against.
+            let mut new_failed = failed_edits.clone();
+            let s_not_improved = match (s, prior_s) {
+                (Some(cur), Some(prev)) => cur <= prev,
+                _ => true, // null or first iteration: cannot confirm improvement
+            };
+            if d_delta <= 0.0 && s_not_improved {
+                new_failed.push(serde_json::json!({
+                    "decision_action": decision_action,
+                    "swarm_state_signature": swarm_state_signature,
+                    "d_delta": d_delta,
+                    "iteration": new_log.len(),
+                }));
+            }
+            // Influence-weighted rejection (C7): per-agent_type running sum of
+            // d_delta after the move. DECIDE rejects re-hire of a type whose
+            // sum is <= 0 over the recent window.
+            let mut new_influence = influence_scores.as_object().cloned().unwrap_or_default();
+            if !agent_type.is_empty() {
+                let cur = new_influence
+                    .get(&agent_type)
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                new_influence.insert(agent_type.clone(), serde_json::json!(cur + d_delta));
+            }
+            Ok(serde_json::json!({
+                "iteration_log": new_log,
+                "failed_edits": new_failed,
+                "influence_scores": serde_json::Value::Object(new_influence),
+            }))
+        }
+        "swarm.second_order_monitor" => {
+            // S1 P5 second-order monitor: two deterministic signals over the
+            // iteration log. No LLM.
+            let iteration_log = input
+                .get("iteration_log")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let loop_window = input
+                .get("loop_window")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as usize;
+            if iteration_log.len() < 2 {
+                return Ok(serde_json::json!({
+                    "reasoning_loop": false,
+                    "sensor_truth_divergence": false,
+                    "detail": "fewer than 2 iterations logged",
+                    "recommendation": "none",
+                }));
+            }
+            // Signal 1 — reasoning loop: the last `loop_window` entries share
+            // the same (deficit_class, decision_action) AND d did not improve
+            // across the window (last d >= window's first d).
+            let win_start = iteration_log.len().saturating_sub(loop_window);
+            let window = &iteration_log[win_start..];
+            let reasoning_loop = if window.len() >= 2 {
+                let first_key = (
+                    window[0]
+                        .get("deficit_class")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    window[0]
+                        .get("decision_action")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                );
+                let same_action = window.iter().all(|e| {
+                    (
+                        e.get("deficit_class")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        e.get("decision_action")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                    ) == first_key
+                });
+                let first_d = window[0]
+                    .get("d")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(f64::INFINITY);
+                let last_d = window[window.len() - 1]
+                    .get("d")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(f64::NEG_INFINITY);
+                same_action && last_d >= first_d
+            } else {
+                false
+            };
+            // Signal 2 — sensor-truth divergence: over the entries with a
+            // non-null s, d is non-increasing (improving) while s is
+            // non-increasing (declining). Needs >= 3 such points to avoid a
+            // two-point coincidence. This is the Go See diagnosis (§5)
+            // automated: the swarm looks healthier but is failing more tasks.
+            let measured: Vec<(f64, f64)> = iteration_log
+                .iter()
+                .filter_map(|e| {
+                    let d = e.get("d").and_then(|v| v.as_f64())?;
+                    let s = e.get("s").and_then(|v| v.as_f64())?;
+                    Some((d, s))
+                })
+                .collect();
+            let sensor_truth_divergence = if measured.len() >= 3 {
+                let d_improving = measured.windows(2).all(|w| w[1].0 <= w[0].0 + f64::EPSILON);
+                let s_declining = measured.windows(2).all(|w| w[1].1 <= w[0].1 + f64::EPSILON);
+                d_improving && s_declining
+            } else {
+                false
+            };
+            let (recommendation, detail) = if sensor_truth_divergence {
+                (
+                    "go_see",
+                    "d improving while s declining — sensor filters truth; escalate Go See"
+                        .to_string(),
+                )
+            } else if reasoning_loop {
+                (
+                    "diversify_action",
+                    format!(
+                        "(deficit_class, decision_action) repeated for {} iterations with no d improvement",
+                        window.len()
+                    ),
+                )
+            } else {
+                ("none", "no second-order anomaly detected".to_string())
+            };
+            Ok(serde_json::json!({
+                "reasoning_loop": reasoning_loop,
+                "sensor_truth_divergence": sensor_truth_divergence,
+                "detail": detail,
+                "recommendation": recommendation,
+            }))
+        }
         // ── Lisp evaluation primitive ──
         //
         // Deterministic evaluation of a Lisp form against a JSON environment.
@@ -500,9 +706,85 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
             Ok(result)
         }
         other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, kata.convergence_check, lisp.eval",
+            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, kata.convergence_check, lisp.eval, swarm.converge_accumulate, swarm.second_order_monitor",
             other
         ))),
+    }
+}
+
+/// Extract the primary DECIDE move's `(decision_action, agent_type)` from
+/// the `decisions` step result (the `swarm-decide.j2` output object).
+/// `decision_action` = the first `proposed_moves[].move_type` ("hire"|
+/// "delegate"|"remove"|"reconfigure_agent"), or "" when no moves were proposed.
+/// `agent_type` = the first move's `agent_id_or_type` (the influence key C7
+/// scores by — for a hire it is the agent type/name; for remove it is the
+/// blamed agent). Returns `("", "")` when the shape is unexpected.
+fn extract_swarm_decision(decisions: Option<&Value>) -> (String, String) {
+    let Some(decisions) = decisions else {
+        return (String::new(), String::new());
+    };
+    let Some(moves) = decisions.get("proposed_moves").and_then(|v| v.as_array()) else {
+        return (String::new(), String::new());
+    };
+    let Some(first) = moves.first() else {
+        return (String::new(), String::new());
+    };
+    let decision_action = first
+        .get("move_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let agent_type = first
+        .get("agent_id_or_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    (decision_action, agent_type)
+}
+
+/// Extract the roster's `agent_type` multiset from the SENSE step result
+/// (`swarm_state`). Handles both ABW and local roster shapes: both nest the
+/// agent list under `workspace_roster.agents[]` (SENSE emits
+/// `workspace_roster`), and each agent carries `agent_type`. Returns an empty
+/// vec when the shape is unexpected.
+fn extract_roster_agent_types(swarm_state: Option<&Value>) -> Vec<String> {
+    let Some(state) = swarm_state else {
+        return Vec::new();
+    };
+    let roster = state.get("workspace_roster").unwrap_or(state);
+    let Some(agents) = roster.get("agents").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    agents
+        .iter()
+        .filter_map(|a| {
+            a.get("agent_type")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+        .collect()
+}
+
+/// Extract the deterministic task-success scalar `s` from the CHECK step's
+/// `task_success` verdict (Cybernetic Swarm Plan C0). `score` wins when
+/// present (a deterministic evaluator's 0.0–1.0 score); else `1.0`/`0.0` from
+/// the boolean `pass`; else `None` (not measured — an open task with no
+/// oracle). Never fabricates a verdict (the `.rules` `unwrap_or(0)` trap on
+/// regulation signals — null means "not measured", not "passed").
+fn extract_task_success_scalar(task_success: &Option<Value>) -> Option<f64> {
+    let Some(ts) = task_success else {
+        return None;
+    };
+    if ts.is_null() {
+        return None;
+    }
+    if let Some(score) = ts.get("score").and_then(|v| v.as_f64()) {
+        return Some(score);
+    }
+    match ts.get("pass").and_then(|v| v.as_bool()) {
+        Some(true) => Some(1.0),
+        Some(false) => Some(0.0),
+        None => None,
     }
 }
 

@@ -105,8 +105,11 @@ hkask_mcp_server::mcp_server!(
         pub gallery_store: Arc<GalleryStore>,
         pub template_env: minijinja::Environment<'static>,
         pub ffmpeg: FfmpegRunner,
-        /// rJoule budget tracker (1 rJoule = $1 USD = 250,000 gas).
-        /// None = no budget enforcement.
+        /// rJoule budget tracker for inference cost (1 rJoule = $1 USD).
+        /// `None` = no budget enforcement (`HKASK_MEDIA_RJOULE_CAP` unset).
+        /// Gas (compute) is enforced upstream at `McpRuntime::invoke` +
+        /// `CyberneticsLoop`, so this tracker is rJoule-only — the gas cap is
+        /// inert and never charged here.
         pub budget: Option<Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
     }
 );
@@ -114,6 +117,16 @@ hkask_mcp_server::mcp_server!(
 mod style;
 pub mod types;
 use types::*;
+
+/// Parse a `f64` from an env var, falling back to `default` on absence or
+/// parse failure. Used for budget unit-cost configuration.
+fn env_f64(key: &str, default: f64) -> f64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|v: &f64| v.is_finite() && *v >= 0.0)
+        .unwrap_or(default)
+}
 
 /// Compute normalized Levenshtein similarity between two strings.
 /// Returns 1.0 for identical strings, 0.0 for completely different.
@@ -191,6 +204,97 @@ mod levenshtein_tests {
 }
 
 impl MediaServer {
+    // ── rJoule budget ───────────────────────────────────────────────────────
+    //
+    // The media server pre-charges rJoule (inference USD cost) before each
+    // billable generation call and rejects the request when the remaining
+    // budget is insufficient. Compute gas is NOT tracked here — it is
+    // enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`, so the
+    // tracker's gas cap is constructed inert (large cap, `hard_limit: false`)
+    // and never charged. We deliberately avoid `BudgetTracker::check_exhausted`
+    // because it returns `Gas` whenever `gas_used >= gas_cap` and would trip
+    // spuriously when the gas cap is 0 — instead the rJoule gate is checked
+    // directly via `remaining_rjoule()`.
+
+    /// Estimate the rJoule (USD) cost of a media generation call.
+    ///
+    /// Unit costs are configurable via env vars so operators can set real
+    /// provider prices. Defaults are conservative placeholders, not real
+    /// pricing — set `HKASK_MEDIA_RJOULE_PER_*` to your provider's actual
+    /// rates. The estimate over-counts conservatively so the hard gate trips
+    /// before the billable API call rather than after.
+    fn estimate_rjoule(&self, tool: &str, params: &hkask_types::MediaGenerateParams) -> f64 {
+        let per_image = env_f64("HKASK_MEDIA_RJOULE_PER_IMAGE", 0.05);
+        let per_transform = env_f64("HKASK_MEDIA_RJOULE_PER_TRANSFORM", 0.04);
+        let per_upscale = env_f64("HKASK_MEDIA_RJOULE_PER_UPSCALE", 0.02);
+        let per_video_second = env_f64("HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND", 1.0);
+        match tool {
+            "generate_image" => per_image * params.count.unwrap_or(1).max(1) as f64,
+            "image_to_image" => {
+                // transform cost scales with strength (0.0..=1.0).
+                per_transform * (1.0 + params.strength.unwrap_or(1.0) as f64)
+            }
+            "upscale" => {
+                // cost ~ pixel-area growth, so scale^2.
+                let scale = params.scale.unwrap_or(2).max(1) as f64;
+                per_upscale * scale * scale
+            }
+            "generate_video" => per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64,
+            // Workflow DAGs are opaque without parsing; charge the image
+            // unit as a floor so the gate is not silently bypassed.
+            "execute_workflow" => per_image,
+            _ => per_image,
+        }
+    }
+
+    /// Pre-charge the rJoule budget for an estimated call and enforce the hard
+    /// limit. Returns `Ok(())` when no budget is configured (enforcement
+    /// disabled) or when the remaining budget covers the estimate; returns an
+    /// `McpToolError` (propagated to the UI) when the budget is exhausted.
+    ///
+    /// The estimate is charged *before* dispatch so a concurrent burst cannot
+    /// all pass the gate and then overspend. A rejected request keeps the
+    /// charge recorded (conservative — may over-count, never under-counts).
+    async fn charge_budget(
+        &self,
+        tool: &str,
+        params: &hkask_types::MediaGenerateParams,
+    ) -> Result<(), McpToolError> {
+        let Some(budget) = self.budget.as_ref() else {
+            return Ok(()); // no budget configured — enforcement disabled
+        };
+        let estimate = self.estimate_rjoule(tool, params);
+        let mut tracker = budget.lock().await;
+        let remaining = tracker.remaining_rjoule();
+        if remaining < estimate {
+            let snap = tracker.snapshot();
+            tracing::warn!(
+                target: "hkask.mcp.media.budget",
+                tool = tool,
+                estimate = estimate,
+                rjoule_used = snap.rjoule_used,
+                rjoule_cap = snap.rjoule_cap,
+                rjoule_remaining = remaining,
+                "rJoule budget exhausted — rejecting media call"
+            );
+            return Err(McpToolError::unavailable(format!(
+                "rJoule budget exhausted: this call needs ~{estimate:.4} rJoule but only \
+                 {remaining:.4} of {cap:.4} remains. Raise HKASK_MEDIA_RJOULE_CAP or wait \
+                 for budget to reset.",
+                cap = snap.rjoule_cap
+            )));
+        }
+        tracker.charge_rjoule(estimate);
+        tracing::debug!(
+            target: "hkask.mcp.media.budget",
+            tool = tool,
+            estimate = estimate,
+            remaining = tracker.remaining_rjoule(),
+            "charged rJoule for media call"
+        );
+        Ok(())
+    }
+
     /// Lock the gallery and extract essential state. Drops the lock before
     /// returning, so the result is safe to hold across .await points.
     fn access_gallery(&self) -> Result<GalleryAccess, MediaError> {
@@ -1378,6 +1482,45 @@ impl MediaServer {
 #[rmcp::tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for MediaServer {}
 
+/// Construct the rJoule budget tracker from env vars.
+///
+/// `HKASK_MEDIA_RJOULE_CAP` sets the total rJoule (USD) ceiling for the
+/// server process. Unset or `0` = enforcement disabled (`None`). The gas
+/// (compute) cap is constructed inert — gas is enforced upstream at
+/// `McpRuntime::invoke` + `CyberneticsLoop`, and the media server never
+/// charges gas itself, so a gas cap here would be dead config (the
+/// "Advertised invariants need enforcement points" trap).
+fn build_media_budget() -> Option<Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>> {
+    use hkask_templates::bundle::config::{BundleGasConfig, RjouleConfig};
+
+    let cap: u32 = std::env::var("HKASK_MEDIA_RJOULE_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|c: &u32| *c > 0)?;
+    let alert = env_f64("HKASK_MEDIA_RJOULE_ALERT_THRESHOLD", 0.8).clamp(0.0, 1.0);
+    tracing::info!(
+        target: "hkask.mcp.media.budget",
+        rjoule_cap = cap,
+        alert_threshold = alert,
+        "rJoule budget enforcement enabled"
+    );
+    // Gas is inert: large cap, zero per-iter cost, never a hard gate.
+    let gas = BundleGasConfig {
+        cap: u32::MAX,
+        cost_per_iteration: 0,
+        alert_threshold: 1.0,
+        hard_limit: false,
+    };
+    let rjoule = RjouleConfig {
+        cap,
+        alert_threshold: alert,
+        hard_limit: true,
+    };
+    Some(Arc::new(tokio::sync::Mutex::new(
+        hkask_templates::budget::BudgetTracker::new(&gas, &rjoule),
+    )))
+}
+
 /// Run the media MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // Do NOT call `dotenvy::dotenv()` here — it mutates the process
@@ -1456,6 +1599,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 gallery_store.clone(),
                 templates::create_env(),
                 FfmpegRunner::detect(),
+                build_media_budget(),
             ))
         },
         vec![

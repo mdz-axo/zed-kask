@@ -19,9 +19,9 @@
 use std::borrow::Cow;
 use std::ops::Deref;
 
+use schemars::JsonSchema;
 use schemars::Schema;
 use schemars::SchemaGenerator;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A `serde_json::Value` whose `JsonSchema` is the empty object `{}` ("accept any
@@ -87,6 +87,101 @@ impl JsonSchema for AnyJsonValue {
     }
 }
 
+/// Scan a tool input schema (as produced by `schemars::schema_for!`) for bare
+/// boolean JSON Schema values in schema-valued positions, returning the
+/// JSON-pointer path of each occurrence.
+///
+/// schemars renders `serde_json::Value` as the bare boolean `true`. A boolean in
+/// a schema position (a property value, `additionalProperties`, `items`, an
+/// `allOf`/`anyOf`/`oneOf` member, etc.) is rejected by strict-schema-decoding
+/// providers — Ollama fails the whole chat-completion with `400 cannot unmarshal
+/// bool into ... of type api.ToolProperty`; Google Gemini's protobuf `Schema` is
+/// the same class of failure. MCP server tool-input tests should call this on
+/// `schema_for!(TheirRequest)` and assert the result is empty, so a future
+/// `serde_json::Value`-typed tool input is caught at CI before it breaks any
+/// strict provider.
+///
+/// Only positions whose JSON-Schema-semantic value is itself a schema are
+/// inspected; non-schema boolean fields (`nullable`, `required` arrays, etc.)
+/// are ignored.
+#[must_use]
+pub fn find_boolean_schema_positions(schema: &serde_json::Value) -> Vec<String> {
+    let mut found = Vec::new();
+    collect_in_schema(schema, "", &mut found);
+    found
+}
+
+/// `value` is assumed to be a JSON Schema at `path`; collect any bare booleans
+/// in schema-valued positions reachable from it.
+fn collect_in_schema(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Bool(_) if !path.is_empty() => {
+            // The value itself is a boolean schema at a named schema position.
+            // (The root parameters schema is always an object for tool inputs,
+            // so a top-level bool has an empty path and is not recorded.)
+            found.push(path.to_string());
+        }
+        serde_json::Value::Object(obj) => {
+            // Map-of-schema positions: each value is itself a schema.
+            for key in ["properties", "patternProperties", "$defs", "definitions"] {
+                if let Some(serde_json::Value::Object(map)) = obj.get(key) {
+                    for (k, child) in map {
+                        collect_in_schema(child, &format!("{path}/{key}/{k}"), found);
+                    }
+                }
+            }
+            // Single-schema positions.
+            for key in [
+                "additionalProperties",
+                "additionalItems",
+                "contains",
+                "propertyNames",
+                "not",
+                "if",
+                "then",
+                "else",
+            ] {
+                if let Some(child) = obj.get(key) {
+                    collect_in_schema(child, &format!("{path}/{key}"), found);
+                }
+            }
+            // `items` is either a single schema or an array of schemas.
+            if let Some(items) = obj.get("items") {
+                match items {
+                    serde_json::Value::Array(arr) => {
+                        for (i, item) in arr.iter().enumerate() {
+                            collect_in_schema(item, &format!("{path}/items/{i}"), found);
+                        }
+                    }
+                    _ => collect_in_schema(items, &format!("{path}/items"), found),
+                }
+            }
+            // Array-of-schema positions.
+            for key in ["allOf", "anyOf", "oneOf", "prefixItems"] {
+                if let Some(serde_json::Value::Array(arr)) = obj.get(key) {
+                    for (i, item) in arr.iter().enumerate() {
+                        collect_in_schema(item, &format!("{path}/{key}/{i}"), found);
+                    }
+                }
+            }
+            // `dependencies` (draft-07): values are either a schema or an array
+            // of property names. Only inspect schema-shaped values.
+            if let Some(serde_json::Value::Object(map)) = obj.get("dependencies") {
+                for (k, child) in map {
+                    if matches!(
+                        child,
+                        serde_json::Value::Bool(_) | serde_json::Value::Object(_)
+                    ) {
+                        collect_in_schema(child, &format!("{path}/dependencies/{k}"), found);
+                    }
+                }
+            }
+        }
+        // A bare array is not a schema; nothing to scan.
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +220,56 @@ mod tests {
     #[test]
     fn any_json_value_default_is_null() {
         assert!(AnyJsonValue::default().is_null());
+    }
+
+    /// The scanner must flag exactly the schema-valued boolean positions a
+    /// `serde_json::Value` tool input would produce, and ignore non-schema
+    /// booleans like `nullable`.
+    #[test]
+    fn find_boolean_schema_positions_flags_only_schema_positions() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "nullable": true,
+            "required": ["any_field"],
+            "properties": {
+                "any_field": true,
+                "typed": { "type": "string" },
+                "map_val": { "type": "object", "additionalProperties": true }
+            },
+            "additionalProperties": false,
+            "items": true,
+            "anyOf": [true, { "type": "number" }],
+            "not": false
+        });
+
+        let mut found = find_boolean_schema_positions(&schema);
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                "/additionalProperties",
+                "/anyOf/0",
+                "/items",
+                "/not",
+                "/properties/any_field",
+                "/properties/map_val/additionalProperties"
+            ],
+            "nullable and the typed property must NOT be flagged; only schema-valued booleans"
+        );
+    }
+
+    /// A clean schema (no booleans in schema positions) returns an empty list
+    /// the invariant every kask MCP tool-input test asserts.
+    #[test]
+    fn find_boolean_schema_positions_empty_for_clean_schema() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "any_field": {},
+                "typed": { "type": "string" }
+            },
+            "additionalProperties": {}
+        });
+        assert!(find_boolean_schema_positions(&schema).is_empty());
     }
 }

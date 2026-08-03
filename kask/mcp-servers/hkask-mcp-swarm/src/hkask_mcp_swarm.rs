@@ -20,7 +20,7 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (28 — both tool sets always available in either mode)
+//! ## Tools (30 — both tool sets always available in either mode)
 //! ABW tools (20): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 //! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
@@ -29,9 +29,10 @@
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
 //! (permanent agent deletion, verified live), `swarm_delete_swarm`
 //! (permanent workspace deletion via the team-scoped route, verified live).
-//! Local tools (8): `swarm_fund_local`, `swarm_balance_local`,
-//! `swarm_local_history`, `swarm_delegate_local`, `swarm_list_local_agents`,
-//! `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`.
+//! Local tools (10): `swarm_fund_local`, `swarm_balance_local`,
+//! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
+//! `swarm_list_local_agents`, `swarm_clone_to_local`, `swarm_push_to_cloud`,
+//! `swarm_remove_local`, `swarm_create_local_agent`.
 //!
 //! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_create_swarm`,
 //! `swarm_xaman`) are consent-gated — see `kask/docs/plans/abw-swarm-intelligence.md`
@@ -71,7 +72,7 @@ use crate::error::SwarmError;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
 };
-use crate::local_runtime::LazyLocalSwarmRuntime;
+use crate::local_runtime::{LazyLocalSwarmRuntime, MAX_FANOUT};
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_response, sanitize_abw_response_plain,
     sanitize_abw_text, sanitize_agent_id, sanitize_run_status_message, sanitize_workspace_payload,
@@ -2294,6 +2295,98 @@ impl SwarmServer {
         .await
     }
 
+    /// Create a new local agent card programmatically. Writes
+    /// `agents/local/curated/<id>/agent_card.json` and reloads the registry. The
+    /// counterpart of `swarm_remove_local`: remove deletes a card, create
+    /// writes one. No ABW round-trip (unlike `swarm_clone_to_local`, which
+    /// copies from ABW). No consent token — local mode has no consent gate;
+    /// card creation is free (the ledger balance gates *execution*, not
+    /// authoring).
+    #[tool(
+        description = "Create a new local agent card programmatically. Writes agents/local/curated/<id>/agent_card.json and reloads the registry. No consent token — local mode has no consent gate."
+    )]
+    pub(crate) async fn swarm_create_local_agent(
+        &self,
+        parameters: Parameters<CreateLocalAgentRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_create_local_agent", Some("pko"), async {
+            let req = parameters.0;
+            if req.agent_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_id must be non-empty".to_string(),
+                ));
+            }
+            if req.agent_type.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_type must be non-empty".to_string(),
+                ));
+            }
+            if req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "system_prompt must be non-empty".to_string(),
+                ));
+            }
+            let safe_id = sanitize_agent_id(&req.agent_id).ok_or_else(|| {
+                McpToolError::invalid_argument(
+                    "agent_id must contain only alphanumerics, dash, underscore, or dot"
+                        .to_string(),
+                )
+            })?;
+            let model = if req.model.trim().is_empty() {
+                self.client.config().default_agent_model.clone()
+            } else {
+                req.model.clone()
+            };
+            let card = LocalAgentCard {
+                agent_id: safe_id.clone(),
+                agent_type: req.agent_type,
+                description: req.description,
+                accepts: req.accepts,
+                produces: req.produces,
+                dependencies: LocalAgentDependencies::default(),
+                capabilities: LocalAgentCapabilities {
+                    model,
+                    min_provider_class: "local".to_string(),
+                    system_prompt: Some(req.system_prompt),
+                    mcp_tools: filter_mcp_tools(
+                        req.mcp_tools,
+                        self.client.config().allowed_tool_servers.as_deref(),
+                    ),
+                    skills: filter_declared_skills(req.skills),
+                },
+                cloud_id: None,
+            };
+            let dir = self.client.config().local_agents_dir.clone();
+            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+                McpToolError::internal(format!("failed to resolve local agents dir {}: {e}", dir))
+            })?;
+            let card_dir = registry_root.join(&safe_id);
+            // Defense-in-depth: refuse to write outside the registry root (the
+            // id is sanitized, but a canonicalized check costs nothing and pins
+            // the invariant — same pattern as swarm_remove_local).
+            if !card_dir.starts_with(&registry_root) {
+                return Err(McpToolError::internal(
+                    "refusing to write a path outside the local agents dir".to_string(),
+                ));
+            }
+            std::fs::create_dir_all(&card_dir)
+                .map_err(|e| McpToolError::internal(format!("failed to create agent dir: {e}")))?;
+            let card_path = card_dir.join("agent_card.json");
+            let json = serde_json::to_string_pretty(&card)
+                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?;
+            std::fs::write(&card_path, &json)
+                .map_err(|e| McpToolError::internal(format!("failed to write card: {e}")))?;
+            self.local_registry
+                .load()
+                .map_err(|e| McpToolError::internal(format!("failed to reload registry: {e}")))?;
+            Ok(serde_json::json!({
+                "created": safe_id,
+                "path": card_path.to_string_lossy(),
+            }))
+        })
+        .await
+    }
+
     /// Fire (un-hire) an agent from a workspace. The ABW counterpart of
     /// firing: removes the agent from the roster — the redundant-duplicate
     /// pruning the skill's DECIDE phase flags (`flag_redundant_duplicate`).
@@ -2608,13 +2701,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 mod tests {
     use super::*;
 
-    // The module doc claims 28 tools (20 ABW + 8 local). Enforce the count
+    // The module doc claims 30 tools (20 ABW + 10 local). Enforce the count
     // against the ACTUAL registered router surface — a tool dropped, renamed,
     // or left unregistered by a future refactor fails here instead of
     // silently drifting from the docs (the "advertised invariants need
     // enforcement points" trap applied to the doc claim itself).
     #[test]
-    fn tool_surface_is_exactly_28_registered_tools() {
+    fn tool_surface_is_exactly_30_registered_tools() {
         let router = SwarmServer::combined_router();
         let mut names: Vec<String> = router
             .list_all()
@@ -2653,6 +2746,8 @@ mod tests {
             "swarm_clone_to_local",
             "swarm_push_to_cloud",
             "swarm_remove_local",
+            "swarm_create_local_agent",
+            "swarm_fanout_local",
         ]
         .into_iter()
         .map(str::to_string)
@@ -2660,7 +2755,7 @@ mod tests {
         expected.sort();
         assert_eq!(
             names, expected,
-            "registered tool surface drifted from the documented 28"
+            "registered tool surface drifted from the documented 30"
         );
     }
 

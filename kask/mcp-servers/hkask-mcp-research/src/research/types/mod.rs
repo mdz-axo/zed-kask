@@ -421,32 +421,25 @@ pub struct PingOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_mcp_server::find_boolean_schema_positions;
     use schemars::schema_for;
 
     /// `json_schema` is typed [`AnyJsonValue`] so its schema is the empty
     /// object `{}`, never the bare boolean `true` that `serde_json::Value`
     /// produces. Ollama's Go API rejects boolean property schemas with
     /// `400 cannot unmarshal bool into ... api.ToolProperty`, failing the whole
-    /// chat-completion request — pin the object-shaped schema so a regression
-    /// (e.g. reverting to `serde_json::Value`) is caught here, not at runtime.
+    /// chat-completion request. The scanner asserts the *entire* generated
+    /// schema is free of bare-boolean property values, so a future field on this
+    /// struct that reverts to `serde_json::Value` is caught here, not at runtime.
     #[test]
-    fn extract_request_json_schema_field_schema_is_object_not_boolean() {
+    fn extract_request_schema_has_no_boolean_property_values() {
         let schema = schema_for!(ExtractRequest);
         let value = serde_json::to_value(&schema).expect("schema serializes");
-        let properties = value
-            .get("properties")
-            .and_then(|p| p.as_object())
-            .expect("ExtractRequest schema has a properties object");
-        let json_schema_prop = properties
-            .get("json_schema")
-            .expect("json_schema property present");
+        let violations = find_boolean_schema_positions(&value);
         assert!(
-            json_schema_prop.is_object(),
-            "json_schema schema must be a JSON object (AnyJsonValue), got: {json_schema_prop}"
-        );
-        assert!(
-            !json_schema_prop.is_boolean(),
-            "json_schema schema must not be the bare boolean true"
+            violations.is_empty(),
+            "ExtractRequest schema has bare-boolean property values \
+             (Ollama/Gemini would reject): {violations:?}"
         );
     }
 }
