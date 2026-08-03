@@ -170,7 +170,8 @@ impl RealMemoryPort {
         };
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver))
             .map_err(|e| format!("Failed to create second HMemStore for semantic memory: {e}"))?;
-        let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
+        let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim)
+            .map_err(|e| format!("Failed to create EmbeddingStore: {e}"))?;
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
         let curator_webid = WebID::from_persona(b"curator");
@@ -862,7 +863,20 @@ fn open_curator_stores(
             );
         }
     };
-    let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim);
+    let embedding_store = match EmbeddingStore::from_driver(driver, embedding_dim) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                error = %e,
+                "Failed to create EmbeddingStore for curator semantic DB"
+            );
+            return (
+                Some(Arc::new(EpisodicMemory::new(h_mem_store_episodic))),
+                None,
+            );
+        }
+    };
     let episodic = Arc::new(EpisodicMemory::new(h_mem_store_episodic));
     let semantic = Arc::new(SemanticMemory::new(h_mem_store_semantic, embedding_store));
     tracing::info!(
@@ -1669,7 +1683,8 @@ mod tests {
         let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
 
         let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
-        let embedding_store = EmbeddingStore::from_driver(driver, 1024);
+        let embedding_store =
+            EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
         let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
 
         // Curator store — a separate in-memory driver so the curator copy
@@ -1682,7 +1697,8 @@ mod tests {
         let curator_episodic = Arc::new(EpisodicMemory::new(curator_h_mem_store_episodic));
         let curator_h_mem_store_semantic =
             HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
-        let curator_embedding_store = EmbeddingStore::from_driver(curator_driver, 1024);
+        let curator_embedding_store =
+            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
         let curator_semantic = Arc::new(SemanticMemory::new(
             curator_h_mem_store_semantic,
             curator_embedding_store,
@@ -2567,7 +2583,7 @@ mod tests {
         ));
         let healed_semantic = Arc::new(SemanticMemory::new(
             HMemStore::from_driver(Arc::clone(&curator_driver)).expect("hmem init"),
-            EmbeddingStore::from_driver(curator_driver, 1024),
+            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init"),
         ));
         port.curator_stores
             .set_for_tests(Some(healed_episodic), Some(healed_semantic));

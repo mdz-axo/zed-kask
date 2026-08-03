@@ -125,7 +125,7 @@ impl EmbeddingStore {
     pub fn from_driver(
         driver: Arc<dyn crate::database::driver::DatabaseDriver>,
         dim: usize,
-    ) -> Self {
+    ) -> Result<Self, EmbeddingError> {
         let dim = if dim == 0 {
             tracing::warn!(
                 target: "reg.storage",
@@ -149,7 +149,11 @@ impl EmbeddingStore {
                 let pool = driver
                     .sqlite_pool()
                     .cloned()
-                    .expect("SqliteDriver must provide sqlite_pool()");
+                    .ok_or_else(|| EmbeddingError::Infrastructure(
+                        hkask_types::InfrastructureError::database(
+                            "SqliteDriver returned None from sqlite_pool() despite provider() == Sqlite"
+                        )
+                    ))?;
                 VectorBackend::SqliteVec { pool, dim }
             }
             crate::database::types::DbProvider::Postgres => {
@@ -158,7 +162,7 @@ impl EmbeddingStore {
                 VectorBackend::PgVector { dim }
             }
         };
-        Self { backend, driver }
+        Ok(Self { backend, driver })
     }
 
     fn dim(&self) -> usize {
@@ -673,7 +677,8 @@ mod tests {
         let pool = db.sqlite_pool().expect("pool");
         let driver = Arc::new(SqliteDriver::new(pool));
         let dim = 1024;
-        let store = EmbeddingStore::from_driver(driver as Arc<_>, dim);
+        let store =
+            EmbeddingStore::from_driver(driver as Arc<_>, dim).expect("embedding store init");
 
         let entity_ref = "test:delete:deadlock:0";
         let vector = vec![0.1; dim];

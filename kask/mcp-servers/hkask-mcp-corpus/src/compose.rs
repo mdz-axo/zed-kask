@@ -199,13 +199,25 @@ impl ComposeService {
             Arc::new(SqliteDriver::new(pool.clone()));
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))?;
         let embedding_store =
-            EmbeddingStore::from_driver(Arc::clone(&driver), request.cognition.embedding.dim);
+            EmbeddingStore::from_driver(Arc::clone(&driver), request.cognition.embedding.dim)
+                .map_err(|e| ServiceError::Domain {
+                    kind: ErrorKind::BadRequest,
+                    domain: DomainKind::Storage,
+                    source: None,
+                    message: e.to_string(),
+                })?;
         let semantic = SemanticMemory::new(h_mem_store, embedding_store);
         let driver2 = SqliteDriver::new(pool);
         let embedding_store_direct = EmbeddingStore::from_driver(
             Arc::new(driver2) as Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
             request.cognition.embedding.dim,
-        );
+        )
+        .map_err(|e| ServiceError::Domain {
+            kind: ErrorKind::BadRequest,
+            domain: DomainKind::Storage,
+            source: None,
+            message: e.to_string(),
+        })?;
 
         // 2. Resolve the inference port and embed prompt. The same port is
         // reused for prose generation below — both embedding and generation

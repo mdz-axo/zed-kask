@@ -39,7 +39,7 @@ fn setup() -> (Arc<EpisodicMemory>, Arc<SemanticMemory>) {
     ));
     let semantic = Arc::new(SemanticMemory::new(
         HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
-        EmbeddingStore::from_driver(Arc::clone(&driver), 1024),
+        EmbeddingStore::from_driver(Arc::clone(&driver), 1024).expect("embedding store init"),
     ));
     (episodic, semantic)
 }
@@ -203,7 +203,7 @@ fn semantic_memory_life_default_is_180_days() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
         HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
-        EmbeddingStore::from_driver(driver, 1024),
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init"),
     );
 
     assert!((semantic.memory_life_days() - 180.0).abs() < 0.01);
@@ -214,7 +214,7 @@ fn semantic_memory_life_configurable() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
         HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
-        EmbeddingStore::from_driver(driver, 1024),
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init"),
     )
     .with_memory_life_days(365.0);
 
@@ -226,7 +226,7 @@ fn semantic_decay_applied_on_recall() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
         HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
-        EmbeddingStore::from_driver(driver, 1024),
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init"),
     );
     let perspective = test_perspective();
 
@@ -260,7 +260,7 @@ fn semantic_recall_touches_recalled_at() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
         HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
-        EmbeddingStore::from_driver(driver, 1024),
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init"),
     );
     let perspective = test_perspective();
 
@@ -396,7 +396,7 @@ fn semantic_zero_memory_life_preserves_fresh_triples() {
     let driver = make_driver();
     let semantic = SemanticMemory::new(
         HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init"),
-        EmbeddingStore::from_driver(driver, 1024),
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init"),
     )
     .with_memory_life_days(0.0);
     let perspective = test_perspective();

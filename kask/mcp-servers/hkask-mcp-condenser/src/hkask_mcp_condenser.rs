@@ -430,7 +430,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                                     .map_err(|e| {
                                         anyhow::anyhow!("hmem store init (semantic): {e}")
                                     })?;
-                            let embedding_store = EmbeddingStore::from_driver(driver, 1024);
+                            let embedding_store = EmbeddingStore::from_driver(driver, 1024)
+                                .map_err(|e| anyhow::anyhow!("embedding store init: {e}"))?;
                             let semantic =
                                 hkask_memory::SemanticMemory::new(h_mem_store2, embedding_store);
 

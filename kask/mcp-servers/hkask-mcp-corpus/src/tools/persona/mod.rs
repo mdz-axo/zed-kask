@@ -485,7 +485,8 @@ impl CorpusServer {
                 .sqlite_pool()
                 .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
             let store =
-                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim());
+                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
+                    .map_err(|e| McpToolError::internal(format!("embedding store init: {e}")))?;
 
             // ── Document comparison path ──────────────────────────────
             if let Some(ref doc_text) = document_content {
@@ -656,7 +657,8 @@ impl CorpusServer {
                 .sqlite_pool()
                 .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
             let store =
-                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim());
+                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
+                    .map_err(|e| McpToolError::internal(format!("embedding store init: {e}")))?;
 
             let emb_a = store.get(&centroid_a_ref).map_err(|_| {
                 McpToolError::invalid_argument(format!(
@@ -747,7 +749,8 @@ impl CorpusServer {
                 .sqlite_pool()
                 .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
             let store =
-                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim());
+                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
+                    .map_err(|e| McpToolError::internal(format!("embedding store init: {e}")))?;
 
             let json_str = match params.action {
                 RegistryAction::List => {

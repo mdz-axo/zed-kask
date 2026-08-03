@@ -108,7 +108,8 @@ impl SemanticMemory {
             Arc::new(SqliteDriver::new_labeled(pool, db_path));
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver))
             .map_err(|e| hkask_storage::DatabaseError::SqlCipher(e.to_string()))?;
-        let embedding_store = EmbeddingStore::from_driver(driver, dim);
+        let embedding_store = EmbeddingStore::from_driver(driver, dim)
+            .map_err(|e| hkask_storage::DatabaseError::SqlCipher(e.to_string()))?;
         Ok(Self::new(h_mem_store, embedding_store))
     }
     pub fn with_ledger(mut self, sink: Arc<dyn RegulationSink>) -> Self {

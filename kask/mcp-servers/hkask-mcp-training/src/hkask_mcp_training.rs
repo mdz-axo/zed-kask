@@ -373,7 +373,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         let embedding_store = hkask_storage::EmbeddingStore::from_driver(
                             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool)),
                             1024,
-                        );
+                        )
+                        .map_err(|e| anyhow::anyhow!("embedding store init: {e}"))?;
                         let semantic = Some(hkask_memory::SemanticMemory::new(
                             h_mem_store,
                             embedding_store,

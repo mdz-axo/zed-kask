@@ -654,8 +654,16 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
     let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
         Arc::new(SqliteDriver::new(pool));
     let embedding_dim = hkask_storage::embedding_dim();
-    let embedding_store =
-        hkask_storage::EmbeddingStore::from_driver(Arc::clone(&driver), embedding_dim);
+    let embedding_store = match hkask_storage::EmbeddingStore::from_driver(
+        Arc::clone(&driver),
+        embedding_dim,
+    ) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create EmbeddingStore — semantic recall degraded");
+            None
+        }
+    };
 
     // Memory stores degrade per-store, matching the escalation/regulation/
     // token stores below — an episodic/semantic failure must not take down
@@ -667,12 +675,16 @@ fn open_curator_stores(db_path: Option<&str>, passphrase: Option<&str>) -> Curat
             None
         }
     };
-    let semantic = match hkask_storage::HMemStore::from_driver(Arc::clone(&driver)) {
-        Ok(s) => Some(Arc::new(hkask_memory::SemanticMemory::new(
-            s,
-            embedding_store,
-        ))),
-        Err(e) => {
+    let semantic = match (
+        hkask_storage::HMemStore::from_driver(Arc::clone(&driver)),
+        embedding_store,
+    ) {
+        (Ok(s), Some(emb)) => Some(Arc::new(hkask_memory::SemanticMemory::new(s, emb))),
+        (Ok(_), None) => {
+            tracing::warn!(target: "hkask.mcp.curator", "Skipping semantic memory — EmbeddingStore unavailable");
+            None
+        }
+        (Err(e), _) => {
             tracing::warn!(target: "hkask.mcp.curator", error = %e, "Failed to create HMemStore (semantic) — semantic recall degraded");
             None
         }
