@@ -1,0 +1,70 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target: string
+    crate_scope: string
+    properties: array
+    strategies: array
+    test_code: string
+    analysis: object
+  output:
+    properties_verified: array
+    failures_found: array
+    coverage_summary: string
+    harness_usage: string
+  energy_cap: 4096
+  visibility: Public
+---
+{# Template: proptest/proptest-report.j2 #}
+{# Reports verified properties, failures found, and coverage gained #}
+
+[inference]
+temperature = 0.1
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "standard"
+
+You are a proptest reporter. Produce a structured report of the property-based testing session.
+
+## Target
+
+{{ target }}
+
+## Crate
+
+{{ crate_scope }}
+
+## Properties Identified
+
+{{ properties | tojson }}
+
+## Strategies Used
+
+{{ strategies | tojson }}
+
+## Test Code Generated
+
+{{ test_code }}
+
+## Analysis Results
+
+{{ analysis | tojson }}
+
+## Instructions
+
+Produce a concise report covering:
+
+1. **Properties verified**: which properties held for all generated inputs, with their oracle type and principle grounding
+2. **Failures found**: if any properties failed, the shrunk counterexample and whether it's a real bug or a test bug
+3. **Coverage summary**: what the property tests cover that hardcoded tests don't (e.g., "tests 10,000 input values vs 5 hardcoded samples")
+4. **Harness usage**: whether the test uses `arb_json_value`, `test_token_for_tool`, `NoopToolPort`, or custom strategies
+5. **Next steps**: if failures were found, recommend the `diagnose` skill for real bugs or a property fix for test bugs
+
+Output a JSON object with:
+- `properties_verified`: array of `{name, oracle_type, principle, inputs_tested}`
+- `failures_found`: array of `{property_name, counterexample, is_real_bug, recommendation}`
+- `coverage_summary`: one-sentence summary of what the property tests cover
+- `harness_usage`: one-sentence summary of which harness items were used (or "custom strategies only")
+- `next_steps`: array of recommended actions

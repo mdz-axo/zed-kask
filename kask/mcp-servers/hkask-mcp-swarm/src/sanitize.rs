@@ -583,4 +583,42 @@ mod tests {
         );
         assert_eq!(sanitized["agent_id"], "good_agent");
     }
+
+    // ── Property-based tests ──────────────────────────────────────────────
+
+    use proptest::prelude::*;
+
+    proptest! {
+        // sanitize_agent_id only keeps alphanumeric + '-' + '_' + '.',
+        // and rejects empty or all-dots results.
+        #[test]
+        fn sanitize_agent_id_never_contains_path_separators(input in ".*") {
+            if let Some(sanitized) = sanitize_agent_id(&input) {
+                prop_assert!(!sanitized.contains('/'), "sanitized id contains '/': {}", sanitized);
+                prop_assert!(!sanitized.contains('\\'), "sanitized id contains '\\': {}", sanitized);
+                prop_assert!(!sanitized.is_empty(), "sanitized id is empty");
+                prop_assert!(!sanitized.chars().all(|c| c == '.'), "sanitized id is all dots: {}", sanitized);
+                for c in sanitized.chars() {
+                    prop_assert!(c.is_alphanumeric() || c == '-' || c == '_' || c == '.',
+                        "sanitized id contains unexpected char '{}': {}", c, sanitized);
+                }
+            }
+        }
+
+        // strip_leading_mentions result never starts with '@'.
+        #[test]
+        fn strip_mentions_result_never_starts_with_at(input in ".*") {
+            let result = strip_leading_mentions(&input);
+            prop_assert!(!result.starts_with('@'),
+                "result starts with @: '{}'", result);
+        }
+
+        // Clean input (no leading @) passes through trimmed.
+        #[test]
+        fn strip_mentions_clean_input_passes_through(input in "[^@].*") {
+            let result = strip_leading_mentions(&input);
+            prop_assert_eq!(result, input.trim_start(),
+                "clean input must pass through trimmed");
+        }
+    }
 }

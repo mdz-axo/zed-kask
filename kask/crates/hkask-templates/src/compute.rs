@@ -1857,4 +1857,129 @@ mod tests {
         let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
         assert!(rejected.is_empty());
     }
+
+    // ── Property-based tests for swarm safety mechanisms ───────────────────
+
+    use proptest::prelude::*;
+
+    /// Build a swarm_state JSON with the given agent types in the given order.
+    fn make_swarm_state(agent_types: &[String]) -> serde_json::Value {
+        serde_json::json!({
+            "agents": agent_types.iter().map(|t| serde_json::json!({"agent_type": t})).collect::<Vec<_>>()
+        })
+    }
+
+    /// Compute the expected swarm_state_signature: deficit_class|sorted(roster).join(",")
+    fn expected_signature(deficit_class: &str, agent_types: &[String]) -> String {
+        let mut sorted = agent_types.to_vec();
+        sorted.sort();
+        format!("{}|{}", deficit_class, sorted.join(","))
+    }
+
+    proptest! {
+        // swarm_state_signature is order-invariant: two rosters with the same
+        // multiset of agent_types produce the same filter result.
+        #[test]
+        fn swarm_state_signature_order_invariant(
+            deficit_class in "[a-z_]+",
+            types in prop::collection::vec("[a-z_]+", 1..6),
+            move_type in prop::sample::select(&["hire", "delegate", "remove", "reconfigure_agent"]),
+        ) {
+            let sig = expected_signature(&deficit_class, &types);
+            // Shuffled roster — same multiset, different order.
+            let mut shuffled = types.clone();
+            shuffled.reverse();
+
+            let input_a = serde_json::json!({
+                "proposed_moves": [{"move_type": move_type, "agent_id_or_type": "x"}],
+                "failed_edits": [{"decision_action": move_type, "swarm_state_signature": sig, "d_delta": 0.0}],
+                "influence_scores": {},
+                "deficit_class": deficit_class,
+                "swarm_state": make_swarm_state(&types),
+            });
+            let input_b = serde_json::json!({
+                "proposed_moves": [{"move_type": move_type, "agent_id_or_type": "x"}],
+                "failed_edits": [{"decision_action": move_type, "swarm_state_signature": sig, "d_delta": 0.0}],
+                "influence_scores": {},
+                "deficit_class": deficit_class,
+                "swarm_state": make_swarm_state(&shuffled),
+            });
+
+            let result_a = dispatch_compute("swarm.filter_proposed_moves", &input_a).unwrap();
+            let result_b = dispatch_compute("swarm.filter_proposed_moves", &input_b).unwrap();
+
+            let rejected_a = result_a.get("rejected").and_then(|v| v.as_array()).unwrap();
+            let rejected_b = result_b.get("rejected").and_then(|v| v.as_array()).unwrap();
+
+            // Both must reject (same signature → same C3 match) or both must
+            // pass (signature mismatch — but we constructed the sig to match).
+            prop_assert_eq!(
+                rejected_a.len(), rejected_b.len(),
+                "order-dependent rejection: a={}, b={} for types={:?} vs {:?}",
+                rejected_a.len(), rejected_b.len(), types, shuffled
+            );
+        }
+
+        // C3: a move matching a prior failed-edit signature is always rejected.
+        #[test]
+        fn c3_failed_edit_filter_always_rejects(
+            deficit_class in "[a-z_]+",
+            agent_types in prop::collection::vec("[a-z_]+", 1..5),
+            move_type in prop::sample::select(&["hire", "delegate", "remove", "reconfigure_agent", "create"]),
+            agent_target in "[a-z_]+",
+        ) {
+            let sig = expected_signature(&deficit_class, &agent_types);
+            let input = serde_json::json!({
+                "proposed_moves": [{"move_type": move_type, "agent_id_or_type": agent_target}],
+                "failed_edits": [{"decision_action": move_type, "swarm_state_signature": sig, "d_delta": -0.1}],
+                "influence_scores": {},
+                "deficit_class": deficit_class,
+                "swarm_state": make_swarm_state(&agent_types),
+            });
+
+            let result = dispatch_compute("swarm.filter_proposed_moves", &input).unwrap();
+            let filtered = result.get("proposed_moves").and_then(|v| v.as_array()).unwrap();
+            let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
+
+            prop_assert!(filtered.is_empty(),
+                "C3 failed: move '{}' passed despite matching failed-edit signature '{}'",
+                move_type, sig);
+            prop_assert_eq!(rejected.len(), 1,
+                "C3 failed: expected 1 rejection, got {}", rejected.len());
+            let reason = rejected[0].get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            prop_assert_eq!(reason, "failed_edit_guard",
+                "C3 rejection reason mismatch: expected 'failed_edit_guard', got '{}'", reason);
+        }
+
+        // C7: a hire move for an agent type with influence score <= 0 is always rejected.
+        #[test]
+        fn c7_influence_guard_rejects_negative_hire(
+            agent_type in "[a-z_]+",
+            score in proptest::num::f64::ANY.prop_filter("must be finite and <= 0", |s| s.is_finite() && *s <= 0.0),
+            other_types in prop::collection::vec("[a-z_]+", 0..3),
+        ) {
+            let mut all_types = other_types.clone();
+            all_types.push(agent_type.clone());
+            let input = serde_json::json!({
+                "proposed_moves": [{"move_type": "hire", "agent_id_or_type": agent_type}],
+                "failed_edits": [],
+                "influence_scores": { agent_type.clone(): score },
+                "deficit_class": "variety_deficit",
+                "swarm_state": make_swarm_state(&all_types),
+            });
+
+            let result = dispatch_compute("swarm.filter_proposed_moves", &input).unwrap();
+            let filtered = result.get("proposed_moves").and_then(|v| v.as_array()).unwrap();
+            let rejected = result.get("rejected").and_then(|v| v.as_array()).unwrap();
+
+            prop_assert!(filtered.is_empty(),
+                "C7 failed: hire of '{}' with influence {} passed",
+                agent_type, score);
+            prop_assert_eq!(rejected.len(), 1,
+                "C7 failed: expected 1 rejection, got {}", rejected.len());
+            let reason = rejected[0].get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            prop_assert_eq!(reason, "influence_guard",
+                "C7 rejection reason mismatch: expected 'influence_guard', got '{}'", reason);
+        }
+    }
 }

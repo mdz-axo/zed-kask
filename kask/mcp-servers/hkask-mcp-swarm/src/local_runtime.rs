@@ -1624,4 +1624,52 @@ mod tests {
             "no debit on guard rejection (inference never ran)"
         );
     }
+
+    // ── Property-based tests ──────────────────────────────────────────────
+
+    use proptest::prelude::*;
+
+    /// The cost formula from delegate(): cost = min(max(1, tokens/1000), credits_authorized).
+    /// Extracted as a pure function for property testing.
+    fn compute_cost(tokens: i64, credits_authorized: u32) -> i64 {
+        let base_cost = std::cmp::max(1, tokens / 1000);
+        std::cmp::min(base_cost, i64::from(credits_authorized))
+    }
+
+    proptest! {
+        // Cost is always >= 0 and <= credits_authorized.
+        #[test]
+        fn cost_never_exceeds_credits_authorized(
+            tokens in 0i64..1_000_000i64,
+            credits in 0u32..1000u32,
+        ) {
+            let cost = compute_cost(tokens, credits);
+            prop_assert!(cost >= 0, "cost is negative: {}", cost);
+            prop_assert!(cost <= i64::from(credits),
+                "cost {} exceeds credits_authorized {}", cost, credits);
+        }
+
+        // When credits > 0, cost is always >= 1 (base_cost floor).
+        #[test]
+        fn cost_minimum_one_when_credits_positive(
+            tokens in 0i64..1_000_000i64,
+            credits in 1u32..1000u32,
+        ) {
+            let cost = compute_cost(tokens, credits);
+            prop_assert!(cost >= 1,
+                "cost is zero despite positive credits: tokens={}, credits={}", tokens, credits);
+        }
+
+        // Cost never exceeds base_cost = max(1, tokens/1000).
+        #[test]
+        fn cost_never_exceeds_base_cost(
+            tokens in 0i64..1_000_000i64,
+            credits in 0u32..1000u32,
+        ) {
+            let base_cost = std::cmp::max(1, tokens / 1000);
+            let cost = compute_cost(tokens, credits);
+            prop_assert!(cost <= base_cost,
+                "cost {} exceeds base_cost {} for tokens={}", cost, base_cost, tokens);
+        }
+    }
 }

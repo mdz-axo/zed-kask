@@ -409,4 +409,74 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // ── Property-based tests ──────────────────────────────────────────────
+
+    use proptest::prelude::*;
+
+    fn arb_agent_card() -> BoxedStrategy<LocalAgentCard> {
+        (
+            "[a-z][a-z0-9_-]*",
+            "[a-z][a-z0-9_-]*",
+            "[a-z ]*",
+            prop::collection::vec("[a-z_]+", 0..5),
+            prop::collection::vec("[a-z_]+", 0..5),
+            prop::collection::vec("[a-z_]+", 0..3),
+            prop::collection::vec("[a-z_]+", 0..3),
+            "[a-z0-9_./:-]*",
+            "[a-z0-9_.-]*",
+            proptest::option::of("[a-z0-9_-]+"),
+        )
+            .prop_map(
+                |(
+                    agent_id,
+                    agent_type,
+                    description,
+                    accepts,
+                    produces,
+                    required,
+                    optional,
+                    model,
+                    min_provider_class,
+                    cloud_id,
+                )| {
+                    LocalAgentCard {
+                        agent_id,
+                        agent_type,
+                        description,
+                        accepts,
+                        produces,
+                        dependencies: LocalAgentDependencies { required, optional },
+                        capabilities: LocalAgentCapabilities {
+                            model,
+                            min_provider_class,
+                            system_prompt: Some("test prompt".to_string()),
+                            mcp_tools: vec![],
+                            skills: vec![],
+                        },
+                        cloud_id,
+                    }
+                },
+            )
+            .boxed()
+    }
+
+    proptest! {
+        // LocalAgentCard survives a serialize → deserialize round-trip.
+        #[test]
+        fn agent_card_round_trips_through_json(card in arb_agent_card()) {
+            let json = serde_json::to_string(&card).expect("serialization must succeed");
+            let deserialized: LocalAgentCard = serde_json::from_str(&json)
+                .expect("deserialization must succeed");
+            prop_assert_eq!(deserialized.agent_id, card.agent_id, "round-trip lost agent_id");
+            prop_assert_eq!(deserialized.agent_type, card.agent_type, "round-trip lost agent_type");
+            prop_assert_eq!(deserialized.description, card.description, "round-trip lost description");
+            prop_assert_eq!(deserialized.accepts, card.accepts, "round-trip lost accepts");
+            prop_assert_eq!(deserialized.produces, card.produces, "round-trip lost produces");
+            prop_assert_eq!(deserialized.dependencies.required, card.dependencies.required, "round-trip lost dependencies.required");
+            prop_assert_eq!(deserialized.dependencies.optional, card.dependencies.optional, "round-trip lost dependencies.optional");
+            prop_assert_eq!(deserialized.capabilities.model, card.capabilities.model, "round-trip lost capabilities.model");
+            prop_assert_eq!(deserialized.cloud_id, card.cloud_id, "round-trip lost cloud_id");
+        }
+    }
 }

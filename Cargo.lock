@@ -9690,6 +9690,7 @@ dependencies = [
  "hkask-mcp-server",
  "hkask-storage",
  "hkask-types",
+ "proptest 1.10.0",
  "r2d2",
  "r2d2_sqlite",
  "rmcp",

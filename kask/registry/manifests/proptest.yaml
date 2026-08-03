@@ -1,0 +1,150 @@
+# Proptest Skill Process Manifest
+# ℏKask v0.31.0 — Property-based testing as convergent PDCA
+
+manifest:
+  id: proptest
+  category: skill
+  name: Proptest
+  description: >
+    Property-based testing skill. Identifies testable properties from a
+    target function's contract, designs input strategies (using the shared
+    hkask-test-harness crate where possible), generates proptest code,
+    executes it, analyzes shrunk counterexamples, and reports verified
+    properties. Complements TDD (which writes the first test per behavior)
+    by writing the universal test that covers the full input space.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
+
+gas:
+  cap: 80000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: target
+    type: string
+    required: true
+  - name: crate_scope
+    type: string
+    required: true
+  - name: code_context
+    type: object
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: Identify testable properties from the target's contract and source.
+    renderer: minijinja
+    template_ref: proptest/proptest-identify
+    gas_cap: 6000
+    timeout_seconds: 90
+    input_mapping:
+      target: "{{ target }}"
+      crate_scope: "{{ crate_scope }}"
+      code_context: "{{ code_context | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: Design input strategies for each property (harness-first, then custom).
+    renderer: minijinja
+    template_ref: proptest/proptest-strategize
+    gas_cap: 5000
+    timeout_seconds: 90
+    input_mapping:
+      target: "{{ target }}"
+      crate_scope: "{{ crate_scope }}"
+      properties: "{{ step_1_result.properties | default([]) }}"
+
+  - ordinal: 3
+    action: select
+    description: Generate complete proptest code with principle grounding and oracle-appropriate assertions.
+    renderer: minijinja
+    template_ref: proptest/proptest-write
+    gas_cap: 8000
+    timeout_seconds: 120
+    input_mapping:
+      target: "{{ target }}"
+      crate_scope: "{{ crate_scope }}"
+      properties: "{{ step_1_result.properties | default([]) }}"
+      strategies: "{{ step_2_result.strategies | default([]) }}"
+
+  - ordinal: 4
+    action: select
+    description: Analyze test execution results and shrunk counterexamples.
+    renderer: minijinja
+    template_ref: proptest/proptest-analyze
+    gas_cap: 5000
+    timeout_seconds: 90
+    input_mapping:
+      target: "{{ target }}"
+      crate_scope: "{{ crate_scope }}"
+      test_code: "{{ step_3_result.test_code | default('') }}"
+      test_file_path: "{{ step_3_result.test_file_path | default('') }}"
+      cargo_test_command: "{{ step_3_result.cargo_test_command | default('') }}"
+      properties: "{{ step_1_result.properties | default([]) }}"
+
+  - ordinal: 5
+    action: select
+    description: Report verified properties, failures found, and coverage gained.
+    renderer: minijinja
+    template_ref: proptest/proptest-report
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      target: "{{ target }}"
+      crate_scope: "{{ crate_scope }}"
+      properties: "{{ step_1_result.properties | default([]) }}"
+      strategies: "{{ step_2_result.strategies | default([]) }}"
+      test_code: "{{ step_3_result.test_code | default('') }}"
+      analysis: "{{ step_4_result | default({}) }}"
+
+  - ordinal: 6
+    action: compute
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 7
+    action: loop
+    description: Re-enter proptest cycle if convergence is not met.
+    input_mapping:
+      loop_target: "{{ 1 }}"
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ledger:
+  span_namespace: reg.skill.proptest
+  emit_spans: true

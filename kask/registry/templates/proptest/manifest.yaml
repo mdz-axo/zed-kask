@@ -1,0 +1,66 @@
+# Template crate manifest for proptest skill
+# hKask v0.31.0
+
+crate:
+  name: proptest
+  version: "0.31.0"
+  description: >
+    Property-based testing skill. Identifies testable properties from a target
+    function's contract, designs input strategies using the shared
+    hkask-test-harness crate, generates proptest code, executes it, analyzes
+    shrunk counterexamples, and reports verified properties. Complements TDD
+    (which writes the first test per behavior) by writing the universal test
+    that covers the full input space.
+
+templates:
+  - id: proptest/proptest-identify
+    name: "Identify testable properties from the target's contract and source"
+    path: proptest-identify.j2
+    type: KnowAct
+    description: >
+      Read the target function's contract (expect:, post:, inv:) and source
+      code. Classify each testable property by oracle type: panic_freedom,
+      invariant, round_trip, reference, or idempotency. Output properties
+      with principle grounding (P1 or P4) and strategy hints.
+
+  - id: proptest/proptest-strategize
+    name: "Design input strategies — harness-first, then custom"
+    path: proptest-strategize.j2
+    type: KnowAct
+    description: >
+      For each property, check hkask-test-harness first (arb_json_value,
+      test_token_for_tool, NoopToolPort). If the harness doesn't provide
+      what's needed, design a custom strategy using select, prop_recursive,
+      any, prop_filter, and tuple composition. Output strategy code with
+      imports and prop_assume requirements.
+
+  - id: proptest/proptest-write
+    name: "Generate complete proptest code with principle grounding"
+    path: proptest-write.j2
+    type: KnowAct
+    description: >
+      Generate the complete proptest! block: file header with principle
+      grounding, all arb_*() strategy functions, all test functions with
+      oracle-appropriate assertions and descriptive failure messages.
+      Handles the re-parse trick for float precision and per-field
+      messages for round-trip tests.
+
+  - id: proptest/proptest-analyze
+    name: "Execute test and analyze shrunk counterexamples"
+    path: proptest-analyze.j2
+    type: KnowAct
+    description: >
+      Execute cargo test, parse results. If the test fails, analyze the
+      shrunk counterexample: classify as real bug (flag for diagnose
+      skill) or test bug (fix the property). Handle common compilation
+      issues (missing imports, select needs &[...], prop_assert_eq!
+      moves values).
+
+  - id: proptest/proptest-report
+    name: "Report verified properties, failures, and coverage"
+    path: proptest-report.j2
+    type: KnowAct
+    description: >
+      Produce a structured report: properties verified with oracle type
+      and principle grounding, failures found with shrunk counterexamples,
+      coverage summary, harness usage, and recommended next steps.

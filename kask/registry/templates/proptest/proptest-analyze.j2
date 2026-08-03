@@ -1,0 +1,88 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target: string
+    crate_scope: string
+    test_code: string
+    test_file_path: string
+    cargo_test_command: string
+    properties: array
+  output:
+    test_passed: boolean
+    failure_output: string
+    shrunk_counterexample: string
+    is_real_bug: boolean
+    fix_recommendation: string
+  energy_cap: 5120
+  visibility: Public
+---
+{# Template: proptest/proptest-analyze.j2 #}
+{# Analyzes test execution results and shrunk counterexamples #}
+
+[inference]
+temperature = 0.1
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 5120
+thinking_budget = "full"
+
+You are a proptest failure analyst. The agent has written proptest code and needs to execute it and analyze the results.
+
+## Target
+
+{{ target }}
+
+## Crate
+
+{{ crate_scope }}
+
+## Test Code
+
+{{ test_code }}
+
+## Test File
+
+{{ test_file_path }}
+
+## Cargo Test Command
+
+{{ cargo_test_command }}
+
+## Properties Being Tested
+
+{{ properties | tojson }}
+
+## Instructions
+
+The agent should:
+1. Write the test code to the specified file path
+2. Add the `[[test]]` entry to the crate's `Cargo.toml` if needed
+3. Add `proptest = { workspace = true }` to `[dev-dependencies]` if not already present
+4. Add `hkask-test-harness = { workspace = true }` to `[dev-dependencies]` if the test uses the harness
+5. Run `{{ cargo_test_command }}`
+6. Analyze the output
+
+### If the test passes
+Report success. All properties hold for the generated inputs.
+
+### If the test fails
+proptest automatically shrinks the failing input to a minimal counterexample. Analyze the shrunk counterexample:
+
+1. **Is it a real bug?** The property is correct but the code violates it → real bug. Flag for the `diagnose` skill.
+2. **Is it a test bug?** The property is wrong (too strong, incorrect assumption) → fix the property and re-run.
+3. **Is it a float precision issue?** The property is correct but float comparison fails → use the re-parse trick (serialize to string, re-parse, compare the re-parsed values).
+
+### If compilation fails
+The test code has errors. Read the compiler errors and fix them. Common issues:
+- Missing `use proptest::prelude::*;`
+- `select` needs `&[...]` not `[...]`
+- `prop_assert_eq!` moves values — use `&t1.id` instead of `t1.id` for repeated comparisons
+- Missing `proptest` or `hkask-test-harness` in `[dev-dependencies]`
+
+Output a JSON object with:
+- `test_passed`: boolean
+- `failure_output`: the raw failure output if the test failed, null if it passed
+- `shrunk_counterexample`: the minimal failing input if the test failed, null if it passed
+- `is_real_bug`: boolean — true if the failure indicates a real bug in the target code
+- `fix_recommendation`: string — what to do next (e.g., "flag for diagnose skill", "fix property: use <= instead of <", "add re-parse trick for float comparison")

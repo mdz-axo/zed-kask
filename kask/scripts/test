@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Run all kask tests via nextest, separated from upstream Zed tests.
+# Usage: ./scripts/test              # run all kask tests
+#        ./scripts/test --cargo-test # use cargo test instead of nextest
+#        ./scripts/test -p hkask-mcp # pass through extra args to nextest
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# All kask workspace packages (crates + mcp-servers + test-harness).
+PACKAGES=(
+    -p hkask-types -p hkask-capability -p hkask-keystore -p hkask-regulation
+    -p hkask-guard -p hkask-forecast -p hkask-lisp -p hkask-templates
+    -p hkask-memory -p hkask-mcp -p hkask-mcp-server -p hkask-ledger
+    -p hkask-storage -p hkask-inference -p hkask-condenser
+    -p hkask-bridge-dublincore -p hkask-services-core -p hkask-email
+    -p hkask-media-widget -p hkask-viz-core -p hkask-graph-widget
+    -p hkask-test-harness
+    -p hkask-mcp-codegraph -p hkask-mcp-companies -p hkask-mcp-condenser
+    -p hkask-mcp-corpus -p hkask-mcp-curator -p hkask-mcp-kata-kanban
+    -p hkask-mcp-media -p hkask-mcp-research
+    -p hkask-mcp-scenarios -p hkask-mcp-swarm -p hkask-mcp-training
+)
+
+USE_CARGO_TEST=0
+if [[ "${1:-}" == "--cargo-test" ]]; then
+    USE_CARGO_TEST=1
+    shift
+fi
+
+if command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
+    exec cargo nextest run --profile kask "${PACKAGES[@]}" --no-fail-fast "$@"
+else
+    exec cargo test "${PACKAGES[@]}" "$@"
+fi

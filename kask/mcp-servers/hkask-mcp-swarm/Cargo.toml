@@ -38,3 +38,4 @@ dirs = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tiny_http = { workspace = true }
 dotenvy = { workspace = true }
+proptest = { workspace = true }
