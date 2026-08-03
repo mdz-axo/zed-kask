@@ -277,9 +277,16 @@ impl ProviderRegistry {
 
 ### WS-3 — Asset lineage + metadata storage (Guardrail)
 
+**Status: STORAGE FOUNDATION APPLIED and VALIDATED; durable DB + tools deferred (next slice).** `kask/crates/hkask-storage/src/gallery.rs` now has the `gallery_generation` + `gallery_workflow` tables (added to `init_schema`) and the `WorkflowRecord` / `GenerationRecord` structs plus `record_workflow` / `get_workflow` / `record_generation` / `get_generation` API. 5 new tests pass (`record_and_get_generation_lineage`, `get_generation_returns_none_when_no_lineage`, `record_and_get_workflow`, `get_workflow_unknown_id_errors`); all 19 `gallery::tests` pass; `./script/clippy -p hkask-storage` and `-p hkask-mcp-media` clean under `--deny warnings`. This is the lineage **storage** capability — additive, no behavior change.
+
+**Deferred to the next WS-3 slice (behavior change / integration):**
+- **Durable gallery DB** (G14): `HKASK_MEDIA_DB` env support in the media server's `GalleryStore` construction. `Database::open(path, passphrase)` requires a passphrase decision (reuse `HKASK_DB_PASSPHRASE`, or add `HKASK_MEDIA_DB_PASSPHRASE`); fall back to `Database::in_memory()` when unset/unwritable. Also persists `gallery_state` across restart (currently `Arc<Mutex<Option<GalleryState>>>` is in-memory).
+- **Lineage recording**: `gallery_record_generation(image_index, op, prompt, model, provider, seed, params, workflow_id?, parent_image_id?)` — a no-download write tool that links an existing gallery image to its generation context (the agent calls it after generating + saving). Avoids changing the generation tools' return shape (the riskier download-on-generate path is a later option).
+- **Read + reproduce tools**: `gallery_lineage(image_index)` (read the stored lineage) and `gallery_reproduce(image_index)` (re-invoke `vision_port.media_generate` with the stored op+params) / `gallery_variants(image_index, n)` (new seeds).
+
 **Goal:** a generated asset is traceable to its full generation context; "reproduce" and "variant" work.
 
-**Files touched:** `kask/crates/hkask-storage/src/gallery.rs` (schema + API), `kask/mcp-servers/hkask-mcp-media/src/tools/generation.rs` (record lineage after generation).
+**Files touched:** `kask/crates/hkask-storage/src/gallery.rs` (schema + API) ✅, `kask/mcp-servers/hkask-mcp-media/src/tools/generation.rs` (record lineage after generation) — deferred.
 
 **New schema (`init_schema`):**
 ```sql
@@ -354,6 +361,163 @@ This pass authors **3 pipeline manifests** (see §5 / the manifest files) using 
 **Acceptance:** a style preset applied to a generation request changes prompt + params + model consistently.
 
 **Tests:** `style_preset_augments_prompt`, `style_preset_overrides_model`, `unknown_style_rejected`.
+
+---
+
+## To-do (deferred / future work)
+
+### WS-8 — AtlasCloud backend (media + inference), analogous to fal.ai
+
+**Status: NOT STARTED — recorded for the next pass.** An `ATLASCLOUD_API_KEY`
+has been added to `kask/.env` (pay-per-use media API, https://www.atlascloud.ai/).
+Do NOT hardcode the key; wire it through the keychain / `InferenceConfig`
+(`resolve_api_key("ATLASCLOUD_API_KEY")`), exactly as fal.ai is wired.
+
+AtlasCloud should function analogously to fal.ai across BOTH surfaces:
+
+1. **Inference provider (chat/vision)** — AtlasCloud is OpenAI-compatible
+   (one API, many models), like fal.ai's `/v1/chat/completions`:
+   - Add an `InferenceProviderDescriptor` to `INFERENCE_PROVIDERS`
+     (`kask_bridge/src/inference_providers.rs`): `id: "AtlasCloud"`,
+     `env_var: "ATLASCLOUD_API_KEY"`, `credential_key: "atlascloud"`,
+     `api_url: "https://www.atlascloud.ai/v1"` (verify base URL),
+     `dashboard_url: "https://www.atlascloud.ai/"`.
+   - Add `InferenceConfig` fields `atlascloud_base_url` / `atlascloud_api_key`
+     + `from_env` reading `ATLASCLOUD_API_KEY` / `ATLASCLOUD_BASE_URL`
+     (`kask/crates/hkask-inference/src/config.rs`), and a
+     `ProviderId::AtlasCloud` variant.
+   - Reuse `openai_compatible_generate` for chat/vision (like `FalBackend::generate`).
+
+2. **Media provider (image/video/3D/audio/ASR)** — analogous to
+   `FalBackend` impl `MediaProvider` (WS-1):
+   - Create `AtlasCloudBackend` (e.g. `kask/crates/hkask-inference/src/atlascloud_backend.rs`)
+     that `impl MediaProvider` for the ops it serves, and register it in
+     `MediaRouter::new` (`kask/crates/hkask-inference/src/media_router.rs`) —
+     **no dispatch edits** (the WS-1 registry makes this a one-liner `providers.push`).
+   - **Task-based (submit + poll), like fal.ai queue mode**: `generate_*` submits a
+     job → returns a prediction/task id; `get_prediction` polls until the result
+     URL (image/video/audio/3D file) is ready. So `AtlasCloudBackend::execute`
+     should submit + poll (mirroring `FalBackend::fal_queue_post`), not a single
+     sync POST. Reference API surface (from https://github.com/AtlasCloudAI/mcp-server):
+     `atlas_generate_image` (images + 3D: GLB/OBJ/USDZ), `atlas_generate_video`,
+     `atlas_generate_audio` (TTS + music), `atlas_transcribe_audio` (ASR),
+     `atlas_get_prediction` (poll), `atlas_upload_media` (upload local file → URL
+     for image-edit / image-to-video), `atlas_list_models` / `atlas_get_model_info`
+     (dynamic per-model parameter schemas, validated before the request so
+     invalid params fail fast without spending credits).
+   - **3D is a new modality** not in the current `MediaOp` enum — extending
+     `MediaProvider` to 3D requires a new `MediaOp::Generate3D` variant (WS-1
+     `MediaOp` is designed to be extensible). Scope 3D as a follow-on if desired;
+     image/video/audio/ASR map directly onto existing `MediaOp`s.
+   - **Model discovery is dynamic** (per-model parameter schemas via
+     `atlas_get_model_info`), richer than fal.ai's static app strings. For WS-8's
+     first cut, hardcode the known-good model ids in the backend (as fal.ai
+     does its app strings) and defer dynamic schema-driven params to a later
+     pass. Do not hardcode model names in any manifest `fusion` block; use
+     comments. The raw HTTP API endpoints (the MCP server wraps them) must be
+     extracted from the reference repo's `src/` or the AtlasCloud docs during
+     implementation — the README documents the MCP tools, not the raw HTTP paths.
+
+3. **Credential allowlist alignment** — add `ATLASCLOUD_API_KEY` to the media
+   MCP server's `credentials` allowlist (`kask_bridge/src/mcp_servers.rs`) ONLY
+   because the fallback path (`resolve_inference_port` → `MediaRouter::from_env`)
+   reads it via `InferenceConfig` (same justification as `FALAI_API_KEY` /
+   `DEEPINFRA_API_KEY`). The media server process does NOT read it in the
+   normal IPC-bridge path (vision/generation route to zed). Pin alignment with
+   a `media_credentials_only_include_used_keys` assertion update (the existing
+   test from Phase 6 must be extended to include `ATLASCLOUD_API_KEY`).
+
+4. **Docs** — add `ATLASCLOUD_API_KEY` to the inference-providers env-var
+   reference (`kask/docs/reference/kask-settings.md`, README, per-tool-contracts)
+   and `KaskInferenceProvidersSettings::from_env` (`settings.rs`).
+
+**Acceptance:** with `ATLASCLOUD_API_KEY` set, an AtlasCloud model is reachable
+for chat/vision (via the IPC bridge → zed registry) and for media ops it
+advertises (via `MediaRouter`'s registry), with no edits to media dispatch
+logic. Without the key, AtlasCloud is simply absent (graceful `Option`).
+
+**Note:** the WS-1 `MediaProvider` trait + registry was designed for exactly
+this — adding AtlasCloud is the first real test that "adding a provider =
+implement the trait + register, no dispatch edits." Do NOT promote the
+`MediaProvider` port to a shared crate for this single new impl (the
+"trait-with-one-impl is speculative generality" rule); it has ≥3 impls after
+this (Fal, DeepInfra, AtlasCloud).
+
+### WS-9 — Fooocus deep-module pattern audit (quality gate)
+
+**Status: NOT STARTED — a final quality / tool check.** Deeply examine (the
+deep-module lens, Ousterhout) the patterns Fooocus uses for media generation
+and management, then compare what `hkask-mcp-media` supports vs Fooocus's
+patterns/capabilities. Reference: https://github.com/lllyasviel/Fooocus (fetched
+for this entry — stay within the README's documented patterns; do not
+fabricate internals).
+
+**Fooocus's core deep module** (the thing to understand): a minimal interface
+(`prompt → beautiful image`, `<3` clicks, no parameter tuning, 4GB VRAM) that
+hides an enormous quality pipeline. Deletion test (Ousterhout): remove the
+hidden pipeline and the complexity reappears in *every* user (manual prompt
+engineering + sampler tuning) → the pipeline deserves to exist, deeply, behind
+the simple interface. This is the opposite of a shallow module, and the
+pattern to extract is *where the depth lives* (behind the interface, not in it).
+
+**Patterns to examine (deep-module lens) and compare to our server:**
+
+1. **Hidden quality-enhancement pipeline** (the core deep module):
+   - GPT-2-based prompt expansion (the "Fooocus V2" dynamic style) rewrites
+     short prompts into rich ones before generation.
+   - Native refiner swap inside one k-sampler (reuses the base model's
+     momentum; vs A1111/ComfyUI's two independent samplers).
+   - Negative ADM guidance + SAG (Self-Attention Guidance, anisotropic
+     kernel) to remove the "plastic / overly-smooth" SDXL artifact.
+   - Tuned sampler params, hard-coded best resolutions, CFG/TSNR correction,
+     A1111 prompt-emphasis normalization, multi-style balancing.
+   - **Our server:** none — generation is a raw pass-through to
+     fal.ai/DeepInfra. **Gap: no hidden quality layer.** Note: much of this is
+     SDXL-specific and lives in the provider; the portable analog for us is a
+     prompt-expansion step + a tuned default-params preset (WS-7).
+
+2. **Presets** (`default`/`anime`/`realistic`; `config.txt` with
+   `default_model`, `default_refiner`, `default_cfg_scale`,
+   `default_sampler`, `default_scheduler`, `default_negative_prompt`,
+   `default_styles`, `default_loras`):
+   - **Our server:** WS-7 (style presets as YAML playbooks) is the planned
+     analog. **Compare WS-7's design to Fooocus's `config.txt` shape** — is our
+     preset surface deep enough (model + params + styles + negative) or too
+     shallow (prompt-suffix only)?
+
+3. **Image management operations** — Upscale/Variation (`Vary Subtle`/
+   `Vary Strong`, `Upscale 1.5x`/`2x`), Inpaint/Outpaint (pan
+   up/down/left/right), Image Prompt (IP-Adapter + InsightFace FaceSwap),
+   Describe (interrogate):
+   - **Our server:** has `upscale_image`, `transform_image`,
+     `image_remove_background`, `image_apply_style`, `describe_image`,
+     `extract_object`, `face_register`/face validation. **Gaps vs Fooocus:** no
+     inpaint/outpaint, no pan, no FaceSwap, no "Vary Subtle/Strong" variation
+     semantics — the variation/upscale ops exist but lack Fooocus's
+     inpaint/variation model semantics.
+
+4. **Inline prompt features** — Wildcards (`__color__` → random from
+   `wildcards/color.txt`), Array Processing (`[[red,green,blue]]` → one image
+   per element), Inline LoRAs (`<lora:name:1.2>`):
+   - **Our server:** none. **Gap: no prompt-expansion DSL** (wildcards /
+   arrays / LoRA refs). Examine whether it's worth porting as a prompt-layer
+   capability (WS-7 presets or a prompt-expansion template).
+
+5. **Asset management** — offline `outputs/` dir, `config.txt` model paths,
+   metadata:
+   - **Our server:** filesystem gallery + WS-3 lineage. **Gap:** no metadata
+   embedding in PNG/WebP (ComfyUI does this — a WS-2/WS-3 follow-on).
+
+**Deliverable:** a gap table (Fooocus pattern → our server: `supported` /
+`partial` / `gap` → recommended action → owning work stream), plus a verdict
+on whether our preset (WS-7) and prompt layers are deep enough vs Fooocus's
+hidden pipeline. This is the "final quality and tool check" before declaring
+the media system feature-complete.
+
+**Acceptance:** the audit lists every Fooocus generation + management pattern
+with a supported/gap verdict and a concrete recommendation mapped to a work
+stream (WS-7 presets, WS-3 lineage, a future inpaint/variation op set, a
+future prompt-expansion DSL).
 
 ---
 

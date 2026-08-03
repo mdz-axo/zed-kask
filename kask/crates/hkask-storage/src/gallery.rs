@@ -121,6 +121,43 @@ pub struct FaceRegistryRecord {
     pub created_at: String,
     pub updated_at: String,
 }
+
+/// A persisted workflow graph (WS-2 `WorkflowGraph` serialized to JSON).
+/// Linked from `GenerationRecord.workflow_id` so a generated asset can trace
+/// back to the exact multi-step pipeline that produced it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowRecord {
+    pub id: String,
+    /// Serialized `WorkflowGraph` JSON (export / import / re-execute).
+    pub graph_json: String,
+    pub created_at: String,
+}
+
+/// Generation lineage for a gallery image — the full context that produced
+/// the asset (WS-3). Enables `gallery_reproduce` (re-run the stored op+params)
+/// and `gallery_variants` (re-run with a new seed). Anti-lock-in: this is the
+/// metadata that makes an asset reproducible even if the provider changes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerationRecord {
+    pub id: String,
+    pub image_id: String,
+    /// `MediaOp` string ("generate_image", "image_to_image", ...).
+    pub op: String,
+    pub prompt: Option<String>,
+    pub model: Option<String>,
+    /// "fal.ai" | "deepinfra" | "atlascloud" | ... (historical label — the
+    /// asset stays viewable if the provider is later removed).
+    pub provider: Option<String>,
+    pub seed: Option<i64>,
+    /// JSON: size, strength, duration, ... (the `MediaGenerateParams` subset
+    /// needed to reproduce).
+    pub params: Option<String>,
+    /// FK to `gallery_workflow` if the asset came from a multi-step workflow.
+    pub workflow_id: Option<String>,
+    /// Lineage: the gallery image this was derived from (img2img / upscale / ...).
+    pub parent_image_id: Option<String>,
+    pub created_at: String,
+}
 define_driver_store!(GalleryStore);
 impl GalleryStore {
     /// Initialize gallery tables in the database.
@@ -187,7 +224,10 @@ impl GalleryStore {
                 UNIQUE(first_name, last_name, image_id)
             );
             CREATE INDEX IF NOT EXISTS idx_face_registry_status
-                ON face_registry(status);",
+                ON face_registry(status);
+                CREATE TABLE IF NOT EXISTS gallery_workflow (id TEXT PRIMARY KEY, graph_json TEXT NOT NULL, created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS gallery_generation (id TEXT PRIMARY KEY, image_id TEXT NOT NULL REFERENCES gallery_images(id) ON DELETE CASCADE, op TEXT NOT NULL, prompt TEXT, model TEXT, provider TEXT, seed INTEGER, params TEXT, workflow_id TEXT REFERENCES gallery_workflow(id) ON DELETE SET NULL, parent_image_id TEXT, created_at TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS idx_gallery_generation_image ON gallery_generation(image_id);",
         )?;
         Ok(())
     }
@@ -732,6 +772,168 @@ impl GalleryStore {
         })
     }
 }
+
+impl GalleryStore {
+    // ── Generation lineage (WS-3) ──────────────────────────────────────────
+
+    /// Persist a workflow graph (serialized `WorkflowGraph` JSON) and return its id.
+    pub fn record_workflow(
+        &self,
+        graph_json: &str,
+    ) -> std::result::Result<WorkflowRecord, GalleryStoreError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        self.driver.execute(
+            "INSERT INTO gallery_workflow (id, graph_json, created_at) VALUES (?1, ?2, ?3)",
+            &[
+                DbValue::Text(id.clone()),
+                DbValue::Text(graph_json.to_string()),
+                DbValue::Text(now.clone()),
+            ],
+        )?;
+        Ok(WorkflowRecord {
+            id,
+            graph_json: graph_json.to_string(),
+            created_at: now,
+        })
+    }
+
+    /// Look up a persisted workflow graph by id.
+    #[must_use = "result must be used"]
+    pub fn get_workflow(
+        &self,
+        workflow_id: &str,
+    ) -> std::result::Result<WorkflowRecord, GalleryStoreError> {
+        query_row(
+            &*self.driver,
+            "SELECT id, graph_json, created_at FROM gallery_workflow WHERE id = ?1",
+            &[DbValue::Text(workflow_id.to_string())],
+            Self::workflow_from_row,
+        )?
+        .ok_or_else(|| {
+            GalleryStoreError::NotFound(NotFound {
+                entity_type: "workflow".to_string(),
+                id: workflow_id.to_string(),
+            })
+        })
+    }
+
+    /// Record the generation lineage for a gallery image. The image must
+    /// already exist in `gallery_images` (the FK is enforced).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_generation(
+        &self,
+        image_id: &str,
+        op: &str,
+        prompt: Option<&str>,
+        model: Option<&str>,
+        provider: Option<&str>,
+        seed: Option<i64>,
+        params: Option<&str>,
+        workflow_id: Option<&str>,
+        parent_image_id: Option<&str>,
+    ) -> std::result::Result<GenerationRecord, GalleryStoreError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        self.driver.execute(
+            "INSERT INTO gallery_generation
+             (id, image_id, op, prompt, model, provider, seed, params, workflow_id, parent_image_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            &[
+                DbValue::Text(id.clone()),
+                DbValue::Text(image_id.to_string()),
+                DbValue::Text(op.to_string()),
+                prompt.map(|s| DbValue::Text(s.to_string())).unwrap_or(DbValue::Null),
+                model.map(|s| DbValue::Text(s.to_string())).unwrap_or(DbValue::Null),
+                provider.map(|s| DbValue::Text(s.to_string())).unwrap_or(DbValue::Null),
+                seed.map(DbValue::Integer).unwrap_or(DbValue::Null),
+                params.map(|s| DbValue::Text(s.to_string())).unwrap_or(DbValue::Null),
+                workflow_id.map(|s| DbValue::Text(s.to_string())).unwrap_or(DbValue::Null),
+                parent_image_id.map(|s| DbValue::Text(s.to_string())).unwrap_or(DbValue::Null),
+                DbValue::Text(now.clone()),
+            ],
+        )?;
+        Ok(GenerationRecord {
+            id,
+            image_id: image_id.to_string(),
+            op: op.to_string(),
+            prompt: prompt.map(String::from),
+            model: model.map(String::from),
+            provider: provider.map(String::from),
+            seed,
+            params: params.map(String::from),
+            workflow_id: workflow_id.map(String::from),
+            parent_image_id: parent_image_id.map(String::from),
+            created_at: now,
+        })
+    }
+
+    /// Look up the most recent generation lineage for an image (None if none
+    /// recorded). Used by `gallery_reproduce` / `gallery_variants`.
+    #[must_use = "result must be used"]
+    pub fn get_generation(
+        &self,
+        image_id: &str,
+    ) -> std::result::Result<Option<GenerationRecord>, GalleryStoreError> {
+        Ok(query_row(
+            &*self.driver,
+            "SELECT id, image_id, op, prompt, model, provider, seed, params, workflow_id, parent_image_id, created_at
+             FROM gallery_generation WHERE image_id = ?1 ORDER BY created_at DESC LIMIT 1",
+            &[DbValue::Text(image_id.to_string())],
+            Self::generation_from_row,
+        )?)
+    }
+
+    fn workflow_from_row(
+        row: &crate::database::value::DbRow,
+    ) -> std::result::Result<WorkflowRecord, crate::database::types::DbError> {
+        Ok(WorkflowRecord {
+            id: row.get_str(0)?.to_string(),
+            graph_json: row.get_str(1)?.to_string(),
+            created_at: row.get_str(2)?.to_string(),
+        })
+    }
+
+    fn generation_from_row(
+        row: &crate::database::value::DbRow,
+    ) -> std::result::Result<GenerationRecord, crate::database::types::DbError> {
+        Ok(GenerationRecord {
+            id: row.get_str(0)?.to_string(),
+            image_id: row.get_str(1)?.to_string(),
+            op: row.get_str(2)?.to_string(),
+            prompt: match row.get(3)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            model: match row.get(4)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            provider: match row.get(5)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            seed: match row.get(6)? {
+                DbValue::Integer(n) => Some(*n),
+                _ => None,
+            },
+            params: match row.get(7)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            workflow_id: match row.get(8)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            parent_image_id: match row.get(9)? {
+                DbValue::Text(s) => Some(s.to_string()),
+                _ => None,
+            },
+            created_at: row.get_str(10)?.to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1055,5 +1257,87 @@ mod tests {
             .unwrap();
         let updated = store.update_face(&face.id, "inactive", "retired").unwrap();
         assert_eq!(updated.status, "inactive");
+    }
+
+    #[test]
+    fn record_and_get_generation_lineage() {
+        let store = setup();
+        let gallery = store.create("/tmp/gen", GalleryMode::ReadOnly).unwrap();
+        let img = store
+            .add_image(
+                &gallery.id,
+                "out.png",
+                "/tmp/gen/out.png",
+                "hash1",
+                512,
+                512,
+                "png",
+                2048,
+            )
+            .unwrap();
+        let wf = store.record_workflow("{\"nodes\":[]}").unwrap();
+        let gen_rec = store
+            .record_generation(
+                &img.id,
+                "generate_image",
+                Some("a cat in space"),
+                Some("fal-ai/flux/dev"),
+                Some("fal.ai"),
+                Some(42),
+                Some("{\"size\":\"square\"}"),
+                Some(&wf.id),
+                None,
+            )
+            .unwrap();
+        assert_eq!(gen_rec.image_id, img.id);
+        assert_eq!(gen_rec.op, "generate_image");
+        assert_eq!(gen_rec.prompt.as_deref(), Some("a cat in space"));
+        assert_eq!(gen_rec.model.as_deref(), Some("fal-ai/flux/dev"));
+        assert_eq!(gen_rec.provider.as_deref(), Some("fal.ai"));
+        assert_eq!(gen_rec.seed, Some(42));
+        assert_eq!(gen_rec.workflow_id.as_deref(), Some(wf.id.as_str()));
+
+        let retrieved = store
+            .get_generation(&img.id)
+            .unwrap()
+            .expect("lineage should exist");
+        assert_eq!(retrieved.op, "generate_image");
+        assert_eq!(retrieved.prompt.as_deref(), Some("a cat in space"));
+        assert_eq!(retrieved.seed, Some(42));
+    }
+
+    #[test]
+    fn get_generation_returns_none_when_no_lineage() {
+        let store = setup();
+        let gallery = store.create("/tmp/gen2", GalleryMode::ReadOnly).unwrap();
+        let img = store
+            .add_image(
+                &gallery.id,
+                "x.png",
+                "/tmp/gen2/x.png",
+                "hash2",
+                100,
+                100,
+                "png",
+                512,
+            )
+            .unwrap();
+        assert!(store.get_generation(&img.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn record_and_get_workflow() {
+        let store = setup();
+        let wf = store
+            .record_workflow("{\"nodes\":[],\"parallel\":false}")
+            .unwrap();
+        let retrieved = store.get_workflow(&wf.id).unwrap();
+        assert_eq!(retrieved.graph_json, "{\"nodes\":[],\"parallel\":false}");
+    }
+
+    #[test]
+    fn get_workflow_unknown_id_errors() {
+        let store = setup();
+        assert!(store.get_workflow("nonexistent").is_err());
     }
 }
