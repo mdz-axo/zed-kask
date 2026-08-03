@@ -329,9 +329,7 @@ agents editing other files (MCP launchers, panel helpers, deferred-task
 additions) miss it. Before merging any kask change that adds a
 `background_spawn`, grep the future body for `reqwest`, `tokio::`, or any
 `await` on a tokio-backed client — if found, route through `Tokio::spawn`.
-Found in the fusion auto-discovery site: the `enter()` guard looked
-correct, the app panicked on every startup when fusion auto-discovery
-was enabled (the default).
+
 
 ## Kask MCP servers have two parallel launch paths by design
 
@@ -512,28 +510,6 @@ compromised child process; under-granting silently drops operator overrides
 (server falls back to default). The existing "scoped per-server" rule governs
 allowlist shape; this rule governs content alignment.
 
-## Manifests must not hardcode model names in the `fusion` block
-
-Model names go stale — `deepseek-v4-pro`, `Kimi2.7`, `Qwen3.7 Max` will all be
-renamed or deprecated within months. The `fusion` block's `panel` field is
-required by serde (`NonEmptyVec` with no `#[serde(default)]`), so you cannot
-specify `judge: algo` without also specifying a panel. The correct pattern:
-**omit the `fusion` block entirely** from the manifest. The executor's
-resolution chain (`step.fusion` → `manifest.fusion` → global default) falls
-through to the operator's global `kask.fusion` settings when `manifest.fusion`
-is `None`. The operator configures the panel via `kask.fusion.panel_models` or
-`HKASK_FUSION_PANEL_MODELS`. For skills that need a specific mode or skill
-anchor (e.g., `mode: "critique"`, `skills: [essentialist, deep-module]`),
-document the recommendation in a comment where the `fusion` block would have
-been — not in the block itself. This applies to all manifest categories
-(`skill`, `pipeline`, `runtime-config`, `daemon-process`, `qa-script`);
-infrastructure manifests are even more sensitive because they run without human
-review and a stale model name fails silently. The `category` field on
-`BundleManifest` already distinguishes agent skills (`is_skill()`) from
-infrastructure — agents authoring manifests must set `category` correctly so
-the runtime can gate `resolve_manifest` (only `skill` manifests may bind as
-agent `process_manifests`).
-
 ## `unwrap_or(0)` on regulation-loop sense inputs is a broken feedback loop
 
 Regulation loops (`CyberneticsLoop`, `MetacognitionLoop`,
@@ -560,17 +536,14 @@ unless the degradation is documented in the doc comment.
 ## `LanguageModelInferencePort` honors `model_override` via registry resolution
 
 `LanguageModelInferencePort::generate_with_model` resolves the named model
-from `LanguageModelRegistry` via `resolve_fusion_models` when
-`model_override` is `Some(name)`. The resolution happens inside the GPUI-side
-receiver task (which has `&mut AsyncApp` → `cx.update(|cx| ...)`). If the
-model can't be resolved, the port falls back to the default model with a
-`tracing::warn!`. MCP servers (condenser, corpus, training) that pass
-`Some(model)` to `generate_with_model` expect the override to be honored —
-silently dropping it (the pre-fix behavior) caused the condenser to use the
-default model instead of the requested one, defeating `bypass_fusion: true`.
-The `MultiModelInferencePort` (fusion) already resolves by name before
-calling the single-model port, so it passes `None` to avoid redundant
-resolution. Tests in `inference.rs` pin the propagation.
+from `LanguageModelRegistry` when `model_override` is `Some(name)`. The
+resolution happens inside the GPUI-side receiver task (which has `&mut
+AsyncApp` → `cx.update(|cx| ...)`). If the model can't be resolved, the port
+falls back to the default model with a `tracing::warn!`. MCP servers
+(condenser, corpus, training) that pass `Some(model)` to `generate_with_model`
+expect the override to be honored — silently dropping it (the pre-fix
+behavior) caused the condenser to use the default model instead of the
+requested one. Tests in `inference.rs` pin the propagation.
 
 ## `LanguageModelProvider` registry subscriptions must filter self-events
 
@@ -579,8 +552,8 @@ must filter out `ProviderStateChanged`/`AddedProvider`/`RemovedProvider`
 events carrying its own provider id. The registry observes every provider's
 `LanguageModelProviderState` entity, so `cx.notify()` on that entity emits a
 `ProviderStateChanged` the provider's own subscription receives — a
-structural self-trigger loop, not a subscription bug. The fusion provider
-hit this as an unbounded warn storm (one warn per unresolvable panel model
+structural self-trigger loop, not a subscription bug. Left unfiltered,
+this produces an unbounded warn storm (one warn per provider-state change
 per loop iteration, hundreds of identical lines in the log).
 
 ## Trait-with-one-impl is speculative generality

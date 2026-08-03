@@ -109,6 +109,7 @@ hkask_mcp_server::mcp_server!(
 );
 
 pub mod types;
+mod style;
 use types::*;
 
 /// Compute normalized Levenshtein similarity between two strings.

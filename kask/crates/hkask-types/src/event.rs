@@ -396,6 +396,21 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.lora.report",
     "reg.lora.convergence",
     "reg.lora.runtime",
+    // ── Bug hunt (exploratory testing audit — bug-hunt skill) ──
+    "reg.bughunt",
+    "reg.bughunt.charter",
+    "reg.bughunt.probe",
+    "reg.bughunt.oracle",
+    "reg.bughunt.taxonomize",
+    "reg.bughunt.report",
+    "reg.bughunt.learn",
+    // ── Code review (convergent review audit — code-review skill) ──
+    "reg.codereview",
+    "reg.codereview.scope",
+    "reg.codereview.perspectives",
+    "reg.codereview.adjudicate",
+    "reg.codereview.report",
+    "reg.codereview.implement",
     // ── Skill (unified cybernetic feedback — one namespace per skill) ──
     // Every skill emits reg.skill.<skill-id>.<phase> for its six PDCA phases.
     // The hierarchical is_canonical function makes reg.skill.<any-id>.* valid

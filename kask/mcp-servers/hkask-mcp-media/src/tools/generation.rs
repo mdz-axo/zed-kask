@@ -12,6 +12,7 @@ impl MediaServer {
             prompt,
             image_size,
             num_images,
+            style,
         }): Parameters<GenerateImageRequest>,
     ) -> String {
         execute_tool(self, "generate_image", async {
@@ -19,12 +20,17 @@ impl MediaServer {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
             let size = image_size.clone();
-            let media_params = hkask_types::MediaGenerateParams {
+            let mut media_params = hkask_types::MediaGenerateParams {
                 prompt: Some(prompt.clone()),
                 size: size.clone(),
                 count: num_images,
                 ..Default::default()
             };
+            if let Some(style_name) = &style {
+                if let Some(preset) = crate::style::get_preset(style_name) {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+            }
             self.vision_port
                 .media_generate("generate_image", &media_params)
                 .await

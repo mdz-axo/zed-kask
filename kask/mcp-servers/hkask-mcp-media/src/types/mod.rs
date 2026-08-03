@@ -14,6 +14,7 @@ pub struct GenerateImageRequest {
     pub prompt: String,
     pub image_size: Option<String>,
     pub num_images: Option<u32>,
+    pub style: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -21,6 +22,7 @@ pub struct TransformImageRequest {
     pub prompt: String,
     pub image_url: String,
     pub strength: Option<f32>,
+    pub style: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -33,6 +35,7 @@ pub struct UpscaleImageRequest {
 pub struct GenerateVideoRequest {
     pub prompt: String,
     pub duration: Option<f32>,
+    pub style: Option<String>,
 }
 
 /// Workflow execution request — accepts a Fal-compatible workflow JSON string.

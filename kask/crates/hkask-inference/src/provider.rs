@@ -128,6 +128,12 @@ impl ProviderRegistry {
         self.providers.iter().any(|p| p.supports(op))
     }
 
+    /// Slice of all registered providers (for scored selection / iteration).
+    #[must_use]
+    pub fn providers(&self) -> &[Arc<dyn MediaProvider>] {
+        &self.providers
+    }
+
     /// Number of registered providers.
     #[must_use]
     pub fn len(&self) -> usize {
