@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run all kask tests via nextest, separated from upstream Zed tests.
 # Usage: ./scripts/test              # run all kask tests
+#        ./scripts/test --trace      # run tests + write traces to kask/traces/
 #        ./scripts/test --cargo-test # use cargo test instead of nextest
 #        ./scripts/test -p hkask-mcp # pass through extra args to nextest
 set -euo pipefail
@@ -23,12 +24,50 @@ PACKAGES=(
 )
 
 USE_CARGO_TEST=0
-if [[ "${1:-}" == "--cargo-test" ]]; then
-    USE_CARGO_TEST=1
-    shift
-fi
+TRACE=0
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --cargo-test)
+            USE_CARGO_TEST=1
+            shift
+            ;;
+        --trace)
+            TRACE=1
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
-if command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
+if [[ "$TRACE" -eq 1 ]]; then
+    # Generate a run ID and trace directory.
+    RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
+    TRACE_DIR="kask/traces/${RUN_ID}"
+    mkdir -p "${TRACE_DIR}"
+
+    # Write run manifest.
+    cat > "${TRACE_DIR}/manifest.json" <<EOF
+{"run_id": "${RUN_ID}", "timestamp": "$(date -u +%FT%TZ)", "packages": [$(printf '"%s",' "${PACKAGES[@]}" | sed 's/,$//')], "harness_revision": "$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"}
+EOF
+
+    if command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
+        cargo nextest run --profile kask "${PACKAGES[@]}" --no-fail-fast \
+            --message-format json "$@" 2>/dev/null > "${TRACE_DIR}/nextest-output.json" || true
+    else
+        cargo test "${PACKAGES[@]}" -- --format json "$@" > "${TRACE_DIR}/nextest-output.json" 2>/dev/null || true
+    fi
+
+    # Compute simple metrics from the nextest JSON output.
+    TOTAL=$(grep -c '"type":"test"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null || echo 0)
+    PASSED=$(grep -c '"event":"finished"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null || echo 0)
+    cat > "${TRACE_DIR}/metrics.json" <<EOF
+{"pass_rate": ${PASSED}, "total_tests": ${TOTAL}, "run_id": "${RUN_ID}"}
+EOF
+
+    echo "Traces written to ${TRACE_DIR}"
+elif command -v cargo-nextest &>/dev/null && [[ "$USE_CARGO_TEST" -eq 0 ]]; then
     exec cargo nextest run --profile kask "${PACKAGES[@]}" --no-fail-fast "$@"
 else
     exec cargo test "${PACKAGES[@]}" "$@"

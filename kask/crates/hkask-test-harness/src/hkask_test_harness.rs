@@ -1,9 +1,16 @@
-//! Shared test fixtures and property-test generators for hKask.
+//! Shared test fixtures, property-test generators, and oracle/trace
+//! infrastructure for the evolving test harness.
 //!
-//! Three public items, each with lightweight dependencies:
+//! Existing items:
 //! - [`arb_json_value`]: recursive JSON value strategy for proptest
 //! - [`NoopToolPort`]: stub `ToolPort` returning NotFound for all invocations
 //! - [`test_token_for_tool`]: deterministic `DelegationToken` fixture for governance tests
+//! - [`test_agent_webid`]: the `delegated_to` WebID for gas-budget seeding
+//!
+//! Harness evolution items (trace filesystem + oracle taxonomy):
+//! - [`Oracle`] trait + [`OracleVerdict`]: three oracle strategies (HarnessLLM)
+//! - [`oracle_hardcoded`] / [`oracle_reference`] / [`oracle_invariant`]: constructors
+//! - [`write_trace`] + [`TraceEntry`]: structured trace persistence
 
 use hkask_capability::{
     DelegationAction, DelegationResource, DelegationToken, ToolFuture, ToolInfo, ToolPort,
@@ -12,6 +19,176 @@ use hkask_capability::{
 use hkask_types::{NotFound, WebID};
 use proptest::prelude::*;
 use serde_json::Value as JsonValue;
+use std::fs;
+use std::path::PathBuf;
+
+// ── Oracle taxonomy (HarnessLLM §3) ───────────────────────────────────────
+
+/// Verdict returned by an [`Oracle`] check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OracleVerdict {
+    /// The output is correct for the given input.
+    Pass,
+    /// The output is wrong; the string explains why.
+    Fail(String),
+    /// The oracle cannot determine correctness for this input/output pair.
+    Inconclusive,
+}
+
+/// An oracle checks whether a test case's outcome is correct.
+///
+/// Three strategies (HarnessLLM): hardcoded expected output, reference
+/// implementation, invariant checking. Prefer programmatic generators
+/// (invariant/reference) over hardcoded pairs — they scale with case count.
+pub trait Oracle: Send + Sync {
+    fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict;
+}
+
+/// Oracle 1: hardcoded expected output.
+///
+/// Scales poorly — TBR decays exponentially with case count (HarnessLLM).
+/// Use only when the expected output is a single fixed value.
+#[must_use]
+pub fn oracle_hardcoded(expected: JsonValue) -> Box<dyn Oracle> {
+    struct HardcodedOracle(JsonValue);
+    impl Oracle for HardcodedOracle {
+        fn verify(&self, _input: &JsonValue, output: &JsonValue) -> OracleVerdict {
+            if output == &self.0 {
+                OracleVerdict::Pass
+            } else {
+                OracleVerdict::Fail(format!("expected {:#}, got {:#}", self.0, output))
+            }
+        }
+    }
+    Box::new(HardcodedOracle(expected))
+}
+
+/// Oracle 2: reference implementation.
+///
+/// Scales — compare the output against a trusted independent implementation.
+/// The reference function receives the same input and produces the expected
+/// output; the oracle compares the two.
+#[must_use]
+pub fn oracle_reference<F>(reference: F) -> Box<dyn Oracle>
+where
+    F: Fn(&JsonValue) -> JsonValue + Send + Sync + 'static,
+{
+    struct ReferenceOracle<F>(F);
+    impl<F> Oracle for ReferenceOracle<F>
+    where
+        F: Fn(&JsonValue) -> JsonValue + Send + Sync,
+    {
+        fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict {
+            let expected = (self.0)(input);
+            if output == &expected {
+                OracleVerdict::Pass
+            } else {
+                OracleVerdict::Fail(format!(
+                    "reference produced {:#}, got {:#}",
+                    expected, output
+                ))
+            }
+        }
+    }
+    Box::new(ReferenceOracle(reference))
+}
+
+/// Oracle 3: invariant checking.
+///
+/// Scales best — check properties of the output, not the output itself.
+/// The check function receives `(input, output)` and returns `Ok(())` if the
+/// invariant holds, or `Err(message)` if it is violated.
+#[must_use]
+pub fn oracle_invariant<F>(check: F) -> Box<dyn Oracle>
+where
+    F: Fn(&JsonValue, &JsonValue) -> Result<(), String> + Send + Sync + 'static,
+{
+    struct InvariantOracle<F>(F);
+    impl<F> Oracle for InvariantOracle<F>
+    where
+        F: Fn(&JsonValue, &JsonValue) -> Result<(), String> + Send + Sync,
+    {
+        fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict {
+            match (self.0)(input, output) {
+                Ok(()) => OracleVerdict::Pass,
+                Err(msg) => OracleVerdict::Fail(msg),
+            }
+        }
+    }
+    Box::new(InvariantOracle(check))
+}
+
+// ── Trace filesystem (Meta-Harness) ────────────────────────────────────────
+
+/// A structured execution trace record, written to the trace filesystem by
+/// [`write_trace`]. Consumed by the `harness-optimize` skill (proposer) and
+/// the stability gate to form causal hypotheses about test suite quality.
+#[derive(Debug, Clone)]
+pub struct TraceEntry {
+    /// What produced this trace: `proptest`, `bug-hunt`, `test-run`.
+    pub kind: String,
+    /// Test or probe name (e.g., `prop_round_trip`, `charter_hkask_mcp`).
+    pub name: String,
+    /// `pass`, `fail`, `flaky`, or a custom status string.
+    pub result: String,
+    /// Execution duration in milliseconds (0 if not measured).
+    pub duration_ms: u64,
+    /// Proptest shrunk counterexample (if applicable, empty otherwise).
+    pub shrunk_counterexample: String,
+    /// Oracle type used: `hardcoded`, `reference`, `invariant`, empty if N/A.
+    pub oracle_type: String,
+    /// Free-form metadata (target function, crate, failure output, etc.).
+    pub metadata: JsonValue,
+}
+
+impl TraceEntry {
+    /// Serializes to a JSON object (no `serde` dependency — manual construction).
+    fn to_json(&self) -> JsonValue {
+        let mut map = serde_json::Map::new();
+        map.insert("kind".to_string(), JsonValue::String(self.kind.clone()));
+        map.insert("name".to_string(), JsonValue::String(self.name.clone()));
+        map.insert("result".to_string(), JsonValue::String(self.result.clone()));
+        map.insert(
+            "duration_ms".to_string(),
+            JsonValue::Number(self.duration_ms.into()),
+        );
+        map.insert(
+            "shrunk_counterexample".to_string(),
+            JsonValue::String(self.shrunk_counterexample.clone()),
+        );
+        map.insert(
+            "oracle_type".to_string(),
+            JsonValue::String(self.oracle_type.clone()),
+        );
+        map.insert("metadata".to_string(), self.metadata.clone());
+        JsonValue::Object(map)
+    }
+}
+
+/// Writes a structured trace entry to the trace filesystem.
+///
+/// The trace directory is resolved from the `HKASK_TRACE_DIR` env var,
+/// defaulting to `kask/traces`. The entry is written to
+/// `{trace_dir}/{run_id}/{kind}-{name}.json`.
+///
+/// This is the persistence layer that makes test execution visible to the
+/// `harness-optimize` skill (the proposer) and the stability gate. Raw traces,
+/// not compressed pass/fail scalars, are the key ingredient for harness
+/// improvement (Meta-Harness paper).
+pub fn write_trace(run_id: &str, entry: &TraceEntry) -> std::io::Result<PathBuf> {
+    let trace_dir = std::env::var("HKASK_TRACE_DIR").unwrap_or_else(|_| "kask/traces".to_string());
+    let run_dir = PathBuf::from(&trace_dir).join(run_id);
+    fs::create_dir_all(&run_dir)?;
+
+    let safe_name = entry.name.replace(['/', '\\', ' ', ':'], "_");
+    let filename = format!("{}-{}.json", entry.kind, safe_name);
+    let path = run_dir.join(&filename);
+
+    let json = serde_json::to_string_pretty(&entry.to_json())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(&path, json)?;
+    Ok(path)
+}
 
 // ── Property-test generator ──────────────────────────────────────────────
 

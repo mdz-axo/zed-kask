@@ -5,6 +5,7 @@ contract:
     target: string
     crate_scope: string
     code_context: object
+    surviving_mutants: array
   output:
     properties: array
     target_summary: string
@@ -35,6 +36,14 @@ You are a property-based testing analyst. Your job is to identify testable prope
 ## Code Context
 
 {{ code_context | tojson }}
+{% endif %}
+
+{% if surviving_mutants %}
+## Surviving Mutants (from harness-optimize mutation report)
+
+The following mutants survived the current test suite — each is a concrete signal about what the test suite is missing. Prioritize properties that would kill these mutants.
+
+{{ surviving_mutants | tojson }}
 {% endif %}
 
 ## Oracle Taxonomy

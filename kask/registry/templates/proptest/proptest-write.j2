@@ -137,6 +137,59 @@ proptest! {
 }
 ```
 
+### reference (with Oracle trait — preferred for harness-optimize integration)
+```rust
+use hkask_test_harness::{oracle_reference, Oracle, OracleVerdict};
+
+proptest! {
+    #[test]
+    fn parse_is_consistent_with_unwrap_oracle(value in arb_json_value()) {
+        let oracle = oracle_reference(|input: &JsonValue| {
+            reference_function(input.clone()).into()
+        });
+        let json_string = serde_json::to_string(&value).expect("...");
+        let output = parse_function(&json_string);
+        let output_json = serde_json::to_value(&output).expect("...");
+        prop_assert_eq!(
+            oracle.verify(&value, &output_json),
+            OracleVerdict::Pass,
+            "reference oracle failed"
+        );
+    }
+}
+```
+
+### invariant (with Oracle trait — preferred for complex multi-step invariants)
+```rust
+use hkask_test_harness::{oracle_invariant, Oracle, OracleVerdict};
+
+proptest! {
+    #[test]
+    fn budget_never_exceeds_cap_oracle(lines in 0usize..10_000usize, profile in arb_profile()) {
+        let oracle = oracle_invariant(|input, output| {
+            let budget = output.get("budget").and_then(|v| v.as_u64()).unwrap_or(0);
+            if budget > input.get("lines").and_then(|v| v.as_u64()).unwrap_or(0) {
+                Err(format!("budget {} exceeds input lines", budget))
+            } else {
+                Ok(())
+            }
+        });
+        let (budget, _) = compute_budget(lines, profile);
+        let input = serde_json::json!({"lines": lines});
+        let output = serde_json::json!({"budget": budget});
+        prop_assert_eq!(
+            oracle.verify(&input, &output),
+            OracleVerdict::Pass,
+            "invariant oracle failed"
+        );
+    }
+}
+```
+
+**When to use the Oracle trait vs inline `prop_assert!`:**
+- Use `oracle_reference` / `oracle_invariant` for `reference` and complex multi-step `invariant` properties — it gives `harness-optimize` a structured way to assess oracle variety across the suite by grepping for `oracle_*` constructor calls.
+- Keep inline `prop_assert!` for `panic_freedom`, simple one-line `invariant`, `round_trip`, and `idempotency` properties — the `Oracle` trait adds unnecessary indirection for single-assertion checks.
+
 ## Instructions
 
 Generate the complete test file content. Include:

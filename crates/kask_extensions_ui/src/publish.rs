@@ -743,7 +743,7 @@ mod tests {
 
         // A tampered expires_at (beyond the signing-time value) must fail
         // verification — the signature commits to the expiration (plan D2).
-        let mut tampered = manifest.clone();
+        let mut tampered = manifest;
         tampered.expires_at = "2099-01-01T00:00:00Z".to_string();
         let tampered_canonical = tampered.canonical_signing_bytes().unwrap();
         assert!(
@@ -784,7 +784,7 @@ mod tests {
         verify_install_manifest(&fresh).expect("valid manifest must pass install verification");
 
         // Tampered: a valid signature over different canonical bytes fails.
-        let mut tampered = fresh.clone();
+        let mut tampered = fresh;
         tampered.description = "tampered".to_string();
         assert!(
             verify_install_manifest(&tampered).is_err(),

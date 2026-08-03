@@ -175,6 +175,7 @@ mod ffmpeg_impl {
     use std::path::Path;
     use std::time::Duration;
 
+    use ffmpeg::Rescale;
     use ffmpeg_next as ffmpeg;
 
     /// FFmpeg-backed video decoder. Decodes any format FFmpeg supports
@@ -189,8 +190,6 @@ mod ffmpeg_impl {
         scaler: ffmpeg::software::scaling::Context,
         time_base: ffmpeg::Rational,
         duration_ms: u64,
-        width: u32,
-        height: u32,
     }
 
     impl VideoDecoderInner {
@@ -231,7 +230,7 @@ mod ffmpeg_impl {
 
             let duration_ms = if input.duration() > 0 {
                 input.duration().rescale(
-                    ffmpeg::Rational::new(1, ffmpeg::ffi::AV_TIME_BASE as i32),
+                    ffmpeg::Rational::new(1, ffmpeg::ffi::AV_TIME_BASE),
                     (1, 1000),
                 ) as u64
             } else {
@@ -245,8 +244,6 @@ mod ffmpeg_impl {
                 scaler,
                 time_base,
                 duration_ms,
-                width,
-                height,
             })
         }
 
@@ -255,11 +252,11 @@ mod ffmpeg_impl {
         }
 
         pub fn seek(&mut self, target: Duration) {
-            let timestamp = target.as_millis() as i64;
-            if let Err(error) = self.input.seek_to_second(
-                ffmpeg::Rational::new(timestamp, 1000),
-                ffmpeg::format::SeekTarget::Any,
-            ) {
+            // ffmpeg-next 8.1.0: `seek` takes `ts: i64` in AV_TIME_BASE units
+            // (microseconds) and a `Range<i64>`. `..` (RangeFull) maps to the
+            // old `SeekTarget::Any` (min_ts = i64::MIN, max_ts = i64::MAX).
+            let timestamp_us = target.as_micros() as i64;
+            if let Err(error) = self.input.seek(timestamp_us, ..) {
                 log::warn!("video seek to {target:?} failed: {error}");
             }
             self.decoder.flush();

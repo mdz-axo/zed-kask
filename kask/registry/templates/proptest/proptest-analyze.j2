@@ -8,6 +8,7 @@ contract:
     test_file_path: string
     cargo_test_command: string
     properties: array
+    execution_mode: string
   output:
     test_passed: boolean
     failure_output: string
@@ -52,6 +53,16 @@ You are a proptest failure analyst. The agent has written proptest code and need
 ## Properties Being Tested
 
 {{ properties | tojson }}
+
+{% if execution_mode == "generate_only" %}
+## Execution Mode: generate_only
+
+The caller (harness-optimize) has the `terminal` tool disabled and cannot run tests. Do NOT attempt to execute `cargo test`. Instead, return the test code and cargo test command for the caller to include in its proposed diff. CI will run the tests and write results to the trace filesystem. Set `test_passed` to `null` and `failure_output` to empty — the actual analysis happens in CI.
+{% else %}
+## Execution Mode: standalone
+
+Run the tests and analyze the results. After analysis, write the test result and any shrunk counterexample to the trace filesystem via `hkask_test_harness::write_trace` so the run is visible to the `harness-optimize` skill.
+{% endif %}
 
 ## Instructions
 

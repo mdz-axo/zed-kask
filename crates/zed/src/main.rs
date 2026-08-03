@@ -1080,7 +1080,7 @@ fn main() {
             let user_store = app_state.user_store.clone();
             let mcp_runtime_for_deferred = mcp_runtime_for_startup;
             let servers_to_start_clone = servers_to_start;
-            let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env.clone();
+            let kask_mcp_restart_env_for_deferred = kask_mcp_restart_env;
             // Captures for the model-dependent wiring block (moved here from
             // the synchronous startup so it runs after the user resolves and
             // the LanguageModelRegistry is populated). See the
