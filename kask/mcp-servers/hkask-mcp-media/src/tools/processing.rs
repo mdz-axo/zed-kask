@@ -310,7 +310,10 @@ impl MediaServer {
                 "output": output.display().to_string(),
             });
             let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -366,7 +369,10 @@ impl MediaServer {
                 "output": output.display().to_string(),
             });
             let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -449,7 +455,10 @@ impl MediaServer {
                 "output": output.display().to_string(),
             });
             let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -519,7 +528,10 @@ impl MediaServer {
                 "output": gif.display().to_string(),
             });
             let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -568,7 +580,10 @@ impl MediaServer {
                 "output": output.display().to_string(),
             });
             let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -603,7 +618,10 @@ impl MediaServer {
                 "output": output.display().to_string(),
             });
             let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }

@@ -112,9 +112,10 @@ impl AudioPlayer {
     pub fn seek(&self, position: Duration) {
         let inner = self.inner.lock();
         if let Some(player) = &inner.player
-            && let Err(error) = player.try_seek(position) {
-                log::warn!("hkask-media-widget: audio seek failed: {error}");
-            }
+            && let Err(error) = player.try_seek(position)
+        {
+            log::warn!("hkask-media-widget: audio seek failed: {error}");
+        }
     }
 
     pub fn set_volume(&self, volume: f32) {

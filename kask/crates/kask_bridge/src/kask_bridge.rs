@@ -22,6 +22,7 @@ mod skill_executor;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
+pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
@@ -54,7 +55,6 @@ pub use settings::{
     KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
     KaskTrainingSettings, SwarmModeConfig,
 };
-pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
 pub use skill_executor::BridgeManifestExecutor;
 
 mod metacognition_bridge;

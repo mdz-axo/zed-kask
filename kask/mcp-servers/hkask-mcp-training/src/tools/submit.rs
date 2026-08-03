@@ -181,7 +181,7 @@ impl TrainingServer {
                 }
             }
 
-            :            let resolver = crate::huggingface::LocalModelResolver;
+            let resolver = crate::huggingface::LocalModelResolver;
             let provenance = resolver.resolve(&base_model);
             if let Ok(ref p) = provenance {
                 tracing::info!(target: "hkask.training.provenance.resolved", model_id = %p.model_id, architecture = %p.architecture, lora_compatible = p.lora_compatible, is_gated = p.is_gated, "Model provenance resolved");

@@ -371,6 +371,7 @@ impl ManifestExecutor {
         tool_name: &str,
         input: Value,
         action_number: u64,
+        has_untrusted_input: bool,
     ) -> Result<(Value, ToolTaint)> {
         let tool_info = self.tools.get_tool_info(tool_name).await.ok_or_else(|| {
             TemplateError::NotFound(NotFound {
@@ -385,7 +386,7 @@ impl ManifestExecutor {
             match policy.check(
                 tool_name,
                 tool_info.taint,
-                self.check_untrusted_input(&input),
+                has_untrusted_input,
                 action_number,
             ) {
                 PolicyVerdict::Block(reason) => {
@@ -1552,10 +1553,27 @@ impl ManifestExecutor {
         // Resolve ${variable} references in the MCP reference against context
         let mcp_ref = TemplateRenderer::render_inline(mcp_ref_raw, context);
 
+        // Check the pre-resolution mapping for Source-tainted $ref references
+        // BEFORE resolve_mapping_value strips them. check_untrusted_input scans
+        // for {"$ref": "…"} patterns; running it on the resolved input (where
+        // $ref is gone) always returns false — the FIDES gate was theater on
+        // this path. Pass the result into invoke_tool so the policy gate sees
+        // the real taint state of the referenced context entries.
+        let has_untrusted_input = step
+            .input_mapping
+            .as_ref()
+            .is_some_and(|mapping| self.check_untrusted_input(mapping));
+
+        // Use resolve_mapping_value (not bind_parameters) so inline `{{ expr }}`
+        // Jinja strings in tool inputs are rendered — matching every other step
+        // type. bind_parameters only handled $ref and literals, passing `{{ }}`
+        // strings through verbatim.
         let input: Value = step
             .input_mapping
             .as_ref()
-            .map(|mapping| bind_parameters(mapping, context))
+            .map(|mapping| {
+                resolve_mapping_value(mapping, context, self.template_renderer.base_path())
+            })
             .unwrap_or_else(|| {
                 Value::Object(
                     context
@@ -1566,7 +1584,7 @@ impl ManifestExecutor {
             });
 
         let (result, tool_taint) = self
-            .invoke_tool(&mcp_ref, input, context.len() as u64)
+            .invoke_tool(&mcp_ref, input, context.len() as u64, has_untrusted_input)
             .await?;
 
         let result_key = format!("step_{}_result", step.ordinal);
@@ -2134,7 +2152,7 @@ mod tests {
             LLMParameters::default(),
         );
         let (result, _taint) = executor
-            .invoke_tool("read", serde_json::json!({}), 1)
+            .invoke_tool("read", serde_json::json!({}), 1, false)
             .await
             .expect("SourceToolPort invoke should succeed");
         let text = result.as_str().expect("spotlighted output is a string");
@@ -2163,7 +2181,9 @@ mod tests {
                 ..Default::default()
             },
         )));
-        let result = executor.invoke_tool("read", serde_json::json!({}), 1).await;
+        let result = executor
+            .invoke_tool("read", serde_json::json!({}), 1, false)
+            .await;
         let err = result.expect_err("RequireHuman verdict must abort the invocation");
         assert!(
             err.to_string().contains("requires human confirmation"),

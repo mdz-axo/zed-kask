@@ -14,7 +14,6 @@ path = "src/kask_bridge.rs"
 hkask-types = { path = "../hkask-types" }
 hkask-capability = { path = "../hkask-capability" }
 hkask-templates = { path = "../hkask-templates" }
-hkask-mcp = { path = "../hkask-mcp" }
 hkask-memory = { path = "../hkask-memory" }
 hkask-storage = { path = "../hkask-storage" }
 hkask-inference = { path = "../hkask-inference" }

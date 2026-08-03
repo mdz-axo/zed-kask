@@ -604,31 +604,29 @@ documentation of behavior.
 
 The real OCAP boundary is `McpRuntime::invoke` (`hkask-mcp/src/runtime.rs`):
 it matches the in-process `DelegationToken`'s `(resource, resource_id, action)`
-against the invoked tool AND rejects expired tokens via `is_valid_for_at`,
-plus a gas gate via `CyberneticsLoop`. A second real gate is the per-agent
-`mcp_tools` allowlist enforced at the `ToolDispatchPort` dispatch boundary
-(`hkask-types`). Tokens are minted and consumed in-process — there is **no
-signature verification and no unforgeability**; do not describe the system as
-providing either.
+against the invoked tool, plus a gas gate via `CyberneticsLoop`. A second real
+gate is the per-agent `mcp_tools` allowlist enforced at the `ToolDispatchPort`
+dispatch boundary (`hkask-types`). Tokens are minted and consumed in-process —
+there is **no signature verification and no unforgeability**; do not describe the
+system as providing either.
 
-`OcapConfig` (`hkask-templates/src/bundle/config.rs`) has
-`#[serde(deny_unknown_fields)]`. Never add a field to a manifest's `ocap:`
-block (e.g. a re-introduced `required_capabilities` list) without (a) adding
-it as a real `OcapConfig` field and (b) wiring it into `McpRuntime::invoke` in
-the same change — silent drops are how the former `required_capabilities`
-theater persisted undetected. That list was authored in every skill manifest
-for zero runtime effect; the `gas_budget` values it carried were also dead,
-since gas is enforced via `step.gas_cap` + `CyberneticsLoop`, not `ocap`.
+**Token expiry is NOT enforced.** The `OcapConfig` struct, `ocap:` manifest
+blocks, `DelegationToken.expires_at`, `new_with_expiry`, `is_valid_for_at`,
+and `is_expired` were removed (see `kask/docs/diagrams/flowchart-mcp-runtime-invoke.md`,
+59 files). `DelegationToken` (`hkask-capability/src/token_types.rs`) carries no
+`expires_at` field; `is_valid_for` checks only `(resource, resource_id, action)`
+equality. All tokens are no-expiry. If token expiry is re-introduced, add an
+`expires_at` field to `DelegationToken`, an `is_valid_for_at` method that rejects
+expired tokens, and wire it into `McpRuntime::invoke` in the same change — then
+update this rule. Do not re-add an `ocap:` manifest block or `OcapConfig` struct
+without wiring it into the runtime gate; silent manifest-only config is how the
+former `required_capabilities` / `capability_expiry_seconds` theater persisted
+undetected (authored in every skill manifest for zero runtime effect). Gas is
+enforced via `step.gas_cap` + `CyberneticsLoop`, not `ocap`.
 
-Of the four `OcapConfig` fields, `capability_expiry_seconds` **is enforced**:
-`ManifestExecutor::invoke_tool` mints cascade tool-invocation tokens with
-`expires_at = now + capability_expiry_seconds`, and the gate rejects expired
-ones (pinned by `is_valid_for_at_rejects_expired_token_even_on_match`). Ad-hoc
-`call_tool` and the panel/IPC paths mint no-expiry tokens via
-`panel_default_token` and never expire. The other three fields
-(`delegation_chain_required`, `signature_algorithm`, `template_scoped`) are
-declared, **not yet enforced** — kept as a future-wiring target, honestly
-labeled in the `OcapConfig` doc.
+The `kask/registry/templates/create-skill/create-skill-scaffold.j2` template
+still writes a commented `capability_expiry_seconds` line in scaffolded
+manifests as a documentation placeholder; it has no runtime effect.
 
 `RegistryEntry.required_capabilities` and the `template_capabilities` SQL table
 were removed as dead — they fed only `CapabilityAwareValidator`, which has zero

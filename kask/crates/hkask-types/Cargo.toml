@@ -18,19 +18,15 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 thiserror.workspace = true
-dirs = { workspace = true }
 zeroize.workspace = true
 hex.workspace = true
 futures-util.workspace = true
-async-trait.workspace = true
 sha2.workspace = true
 tracing.workspace = true
 
 rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
-serde_yaml_neo.workspace = true
-hkask-capability = { path = "../hkask-capability" }
 tokio = { workspace = true, features = ["macros", "rt"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }

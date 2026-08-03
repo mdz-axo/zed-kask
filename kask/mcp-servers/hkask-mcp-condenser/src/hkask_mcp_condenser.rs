@@ -232,6 +232,10 @@ impl CondenserServer {
                 return Err(McpToolError::invalid_argument("messages array is empty"));
             }
 
+            // AnyJsonValue (transparent Value wrapper) → serde_json::Value for
+            // the condenser lib API, which is typed against serde_json::Value.
+            let messages: Vec<serde_json::Value> =
+                messages.into_iter().map(serde_json::Value::from).collect();
             let conversation_text = inference::format_conversation_text(&messages);
             let max_tok = max_tokens.unwrap_or_else(|| {
                 // Fall back to HKASK_CONDENSE_SALIENCY_WINDOW env var as a

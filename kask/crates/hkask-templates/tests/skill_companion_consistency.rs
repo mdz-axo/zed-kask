@@ -184,7 +184,7 @@ fn every_skill_manifest_has_a_skill_md() {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if !path.extension().is_some_and(|e| e == "yaml") {
+        if path.extension().is_none_or(|e| e != "yaml") {
             continue;
         }
         let yaml = std::fs::read_to_string(path).unwrap();
@@ -251,7 +251,7 @@ fn no_aspirational_documentation_blocks() {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if !path.extension().is_some_and(|e| e == "yaml") {
+        if path.extension().is_none_or(|e| e != "yaml") {
             continue;
         }
         let content = std::fs::read_to_string(path).unwrap_or_default();
@@ -286,7 +286,7 @@ fn no_duplicate_skill_ids() {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if !path.extension().is_some_and(|e| e == "yaml") {
+        if path.extension().is_none_or(|e| e != "yaml") {
             continue;
         }
         let yaml = std::fs::read_to_string(path).unwrap();

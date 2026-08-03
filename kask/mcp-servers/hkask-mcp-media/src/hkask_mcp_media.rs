@@ -982,7 +982,7 @@ impl MediaServer {
                 Some(vision_model),
             )
             .await
-            .map_err(|e| McpToolError::internal(format!("Face validation failed: {}", e)))?;
+            .map_err(map_media_error)?;
             let status = if v.valid {
                 FaceStatus::Valid
             } else {
@@ -1047,7 +1047,7 @@ impl MediaServer {
                 status.as_ref(),
                 &notes,
             )
-            .map_err(|e| McpToolError::internal(format!("Failed to register face: {}", e)))?;
+            .map_err(|e| map_media_error(e.into()))?;
         Ok((record, validation))
     }
 

@@ -991,19 +991,13 @@ zstd = "0.11"
 
 # hKask workspace dependencies (kask/ crates inherit these)
 # Only deps not already defined above in the root [workspace.dependencies].
-async-stream = "0.3"
-axum = { version = "0.8", features = ["ws"] }
-crossterm = "0.28"
 imageproc = { version = "0.27", default-features = false, features = ["rayon", "text"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.25"
-ratatui = "0.28"
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob", "backup"] }
 sqlx = { version = "0.8", default-features = false, features = ["postgres", "runtime-tokio-rustls"] }
-subtle = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 utoipa = { version = "5.5", features = ["axum_extras", "uuid", "chrono"] }
-utoipa-axum = "0.2"
 
 [workspace.dependencies.windows]
 version = "0.61"

@@ -77,10 +77,7 @@ impl MediaServer {
                     }
                 }
                 Err(e) => {
-                    return Err(McpToolError::internal(format!(
-                        "Failed to create gallery: {}",
-                        e
-                    )));
+                    return Err(map_media_error(e.into()));
                 }
             };
 

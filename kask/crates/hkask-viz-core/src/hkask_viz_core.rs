@@ -101,10 +101,11 @@ impl VizCache {
     }
 
     fn insert(&mut self, key: u64, widget: CachedWidget) {
-        if !self.widgets.contains_key(&key) && self.widgets.len() >= MAX_CACHE_SIZE {
-            if let Some(oldest) = self.order.pop_front() {
-                self.widgets.remove(&oldest);
-            }
+        if !self.widgets.contains_key(&key)
+            && self.widgets.len() >= MAX_CACHE_SIZE
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.widgets.remove(&oldest);
         }
         if !self.widgets.contains_key(&key) {
             self.order.push_back(key);

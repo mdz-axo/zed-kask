@@ -9546,7 +9546,6 @@ name = "hkask-mcp-curator"
 version = "0.31.1"
 dependencies = [
  "chrono",
- "hkask-capability",
  "hkask-mcp-server",
  "hkask-memory",
  "hkask-services-core",
@@ -9666,7 +9665,6 @@ dependencies = [
 name = "hkask-mcp-server"
 version = "0.31.1"
 dependencies = [
- "hex",
  "hkask-keystore",
  "hkask-storage",
  "hkask-types",
@@ -9757,7 +9755,6 @@ dependencies = [
  "serde_json",
  "smallvec 1.15.2",
  "theme",
- "url",
 ]
 
 [[package]]
@@ -9861,7 +9858,6 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
- "zeroize",
 ]
 
 [[package]]
@@ -9878,17 +9874,13 @@ dependencies = [
 name = "hkask-types"
 version = "0.31.1"
 dependencies = [
- "async-trait",
  "chrono",
- "dirs 6.0.0",
  "futures-util",
  "hex",
- "hkask-capability",
  "proptest 1.10.0",
  "rusqlite",
  "serde",
  "serde_json",
- "serde_yaml_neo",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.19",
@@ -9905,7 +9897,6 @@ dependencies = [
  "gpui",
  "hkask-graph-widget",
  "hkask-media-widget",
- "log",
 ]
 
 [[package]]
@@ -11200,7 +11191,6 @@ dependencies = [
  "hkask-email",
  "hkask-inference",
  "hkask-keystore",
- "hkask-mcp",
  "hkask-memory",
  "hkask-regulation",
  "hkask-services-core",

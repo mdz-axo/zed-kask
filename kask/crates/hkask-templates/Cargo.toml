@@ -26,7 +26,6 @@ rusqlite.workspace = true
 tokio.workspace = true
 r2d2.workspace = true
 r2d2_sqlite.workspace = true
-zeroize.workspace = true
 
 [dev-dependencies]
 proptest = { workspace = true }
