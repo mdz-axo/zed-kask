@@ -141,8 +141,9 @@ runcmd:
                 "json",
             ])
             .await?;
-        let disk_id = extract_json_field(&disk_output, "id")
-            .ok_or_else(|| HostProviderError::Backend("Failed to get disk ID from Nebius".into()))?;
+        let disk_id = extract_json_field(&disk_output, "id").ok_or_else(|| {
+            HostProviderError::Backend("Failed to get disk ID from Nebius".into())
+        })?;
 
         // Step 2: Create VM with GPU, public IP, and cloud-init
         let network_spec = format!(
@@ -204,7 +205,11 @@ runcmd:
         };
         let vm_id = match vm_id {
             Some(id) => id,
-            None => return Err(HostProviderError::JobFailed(format!("No VM for job {job_id}"))),
+            None => {
+                return Err(HostProviderError::JobFailed(format!(
+                    "No VM for job {job_id}"
+                )));
+            }
         };
 
         let output = self

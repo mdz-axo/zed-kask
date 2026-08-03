@@ -27,7 +27,7 @@ pub use nebius::NebiusHost;
 pub use runpod::RunpodHost;
 pub use trl_harness::TrlHarness;
 pub use types::{
-    AdvancedParams, LoraParams, OptimizationParams, PodStatus, HostProviderError,
+    AdvancedParams, HostProviderError, LoraParams, OptimizationParams, PodStatus,
     QuantizationParams, SequenceParams, TrainingHarnessId, TrainingHost, TrainingHostId,
     TrainingJob, TrainingJobStatus, TrainingParams, TrlTrainer,
 };
@@ -38,7 +38,9 @@ pub use types::{
 ///
 /// Supports three providers: Runpod, DeepInfra, and Nebius.
 /// The provider is selected from `config.host`.
-pub fn create_host(config: &TrainingHostConfig) -> Result<Box<dyn TrainingHost>, HostProviderError> {
+pub fn create_host(
+    config: &TrainingHostConfig,
+) -> Result<Box<dyn TrainingHost>, HostProviderError> {
     match config.host {
         TrainingHostId::Runpod => {
             if config.runpod_api_key.is_empty() {

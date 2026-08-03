@@ -88,4 +88,3 @@ impl DelegationToken {
         self.resource == resource && self.resource_id == resource_id && self.action == action
     }
 }
-

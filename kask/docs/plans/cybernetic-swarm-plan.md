@@ -21,8 +21,9 @@ This revision is governed by four constraints that override the earlier draft:
    `fusion|panel_models|MultiModelInferencePort|FusionProvider` in
    `kask/**/*.rs` returns **zero matches**. Any proposal that relied on
    `kask.fusion.panel_models` as a judge asset is withdrawn. (The repo `.rules`
-   still carries 5 stale fusion references — see Appendix B; those `.rules`
-   entries are themselves a finding, not a live spec.)
+   carried 5 stale fusion references; they have been deleted — see Appendix B.1,
+   DONE. The removal is itself a finding: a `.rules` convention prior that named a
+   removed symbol.)
 2. **LLM-as-a-judge is deprecated as a concept.** A probabilistic scorer that
    rates outputs is not an acceptable evaluation path anywhere in this plan.
    This rules out the LLM rank-vector judge from S5 (JudgeFlow) and the LLM
@@ -707,8 +708,8 @@ convergence-check template"):
   sharpen the per-source component extraction.
 - **meta-experiment (revision 2):** applied the four design constraints. The
   fusion references are removed; the judge in C5 is a deterministic rule;
-  §6 is restructured into one scoped component per source; Appendix B flags
-  the 5 stale `.rules` fusion entries.
+  §6 is restructured into one scoped component per source; the 5 stale
+  `.rules` fusion entries were deleted (Appendix B.1, DONE).
 - **Check (qualitative Brier):** revision 1's stale fusion assertion was an
   unmodeled failure mode (the agent treated a `.rules` convention prior as
   ground truth without grepping — exactly the trap the `.rules` warns about).
@@ -786,8 +787,10 @@ convergence-check template"):
 - `.rules` (repo root) — "Advertised invariants need enforcement points";
   "Convention priors drawn from .rules must be verified against the codebase"
   (the trap that fired on revision 1's fusion assertion — see §9.2); the
-  zed-kask integration traps. **Note: 5 fusion entries in `.rules` are stale
-  (Appendix B).**
+  zed-kask integration traps. **Note: 5 stale fusion entries in `.rules` were
+  deleted (Appendix B.1, DONE) — the removal is the worked example for the
+  "verify `.rules`-cited symbols before depending on them" process change in
+  §9.2.**
 
 ### 10.3 Cybernetic lineage (foundational, not directly cited above)
 
@@ -823,8 +826,8 @@ convergence-check template"):
   `fusion|panel_models|MultiModelInferencePort|FusionProvider` in
   `kask/**/*.rs` returns **zero matches**. All revision-1 proposals that
   treated `kask.fusion.panel_models` as a live judge asset are withdrawn in
-  this revision. The repo `.rules` still carries 5 stale fusion references
-  (Appendix B) — those are a finding, not a live spec.
+  this revision. The repo `.rules` carried 5 stale fusion references, now
+  deleted (Appendix B.1, DONE).
 - **Determinism constraint applied:** every evaluation/judging path in this
   plan (C0's `s`, C1's monitor, C5's attribution rule, C6's prompt scoring,
   C7's influence score) is deterministic by construction. The only LLM use
@@ -860,13 +863,18 @@ convergence-check template"):
 Per the `.rules` "After any agentic session" workflow — these are proposed for
 reviewer decision, not edited inline.
 
-### B.1 Suggested `.rules` removals (stale — fusion was removed from the code)
+### B.1 `.rules` fusion removals — DONE (2026-08-02)
 
-The repo `.rules` carries **5 stale fusion references** (verified: `grep
+The repo `.rules` carried **5 stale fusion references** (verified: `grep
 fusion|panel_models|MultiModelInferencePort|FusionProvider` in `kask/**/*.rs`
 → 0 matches). Per the `.rules` "Convention priors drawn from .rules must be
-verified against the codebase" trap, these entries are themselves findings
-and should be removed or rewritten in a dedicated commit:
+verified against the codebase" trap, these entries were findings. They have
+been **deleted** per the user's instruction (no backward-compat). Post-edit
+verification: `grep fusion|panel_models|MultiModel|bypass_fusion|resolve_fusion`
+in `.rules` → 0 matches; `awk` confirms no double-blanks remain. The list
+below is the record of what was removed (item 5's example was genericized, not
+outright deleted, so the rule's severity illustration survives without naming
+the removed fusion provider):
 
 1. The `## Manifests must not hardcode model names in the \`fusion\` block`
    rule (the `fusion` block and `kask.fusion.panel_models` no longer exist;
@@ -880,8 +888,18 @@ and should be removed or rewritten in a dedicated commit:
 5. The "fusion provider hit this as an unbounded warn storm" example in the
    `LanguageModelProvider` registry subscriptions rule.
 
-Reviewers decide whether to delete outright (no backward compat per the
-design constraints) or rewrite to a non-fusion example.
+Note on item 1: the deleted fusion-block rule also carried a non-fusion
+sub-lesson ("agents authoring manifests must set `category` correctly so the
+runtime can gate `resolve_manifest` — only `skill` manifests may bind as agent
+`process_manifests`"). That sub-lesson was removed with the fusion rule; if
+`is_skill()` / `resolve_manifest` / the `category` gate still exist and matter,
+re-add it as its own standalone rule in a dedicated commit. The
+`LanguageModelInferencePort` rule's core lesson (model_override honored via
+registry resolution; don't silently drop it) was retained — only the
+`resolve_fusion_models` / `MultiModelInferencePort` / `bypass_fusion` clauses
+were stripped (the resolver still exists generically in
+`kask_bridge/src/model_resolution.rs`, documented there as outliving the fusion
+system it was introduced for).
 
 ### B.2 Suggested `.rules` additions
 

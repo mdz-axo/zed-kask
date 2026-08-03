@@ -115,9 +115,7 @@ impl JobStore {
                 conn.execute_batch(&format!(
                     "ALTER TABLE training_jobs ADD COLUMN {column} {definition};"
                 ))
-                .map_err(|error| {
-                    JobStoreError::Storage(format!("Migrate {column}: {error}"))
-                })?;
+                .map_err(|error| JobStoreError::Storage(format!("Migrate {column}: {error}")))?;
             }
         }
         Ok(())
@@ -125,8 +123,7 @@ impl JobStore {
 
     fn lock(
         &self,
-    ) -> Result<r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>, JobStoreError>
-    {
+    ) -> Result<r2d2::PooledConnection<r2d2_sqlite::SqliteConnectionManager>, JobStoreError> {
         self.pool
             .get()
             .map_err(|e| JobStoreError::Storage(format!("pool get: {}", e)))

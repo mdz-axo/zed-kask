@@ -48,6 +48,7 @@ impl MediaServer {
             prompt,
             image_url,
             strength,
+            style,
         }): Parameters<TransformImageRequest>,
     ) -> String {
         execute_tool(self, "transform_image", async {
@@ -59,12 +60,17 @@ impl MediaServer {
                     ));
                 }
             }
-            let media_params = hkask_types::MediaGenerateParams {
+            let mut media_params = hkask_types::MediaGenerateParams {
                 image_url: Some(image_url.clone()),
                 prompt: Some(prompt.clone()),
                 strength,
                 ..Default::default()
             };
+            if let Some(style_name) = &style {
+                if let Some(preset) = crate::style::get_preset(style_name) {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+            }
             self.vision_port
                 .media_generate("image_to_image", &media_params)
                 .await
@@ -98,17 +104,26 @@ impl MediaServer {
     )]
     pub async fn generate_video(
         &self,
-        Parameters(GenerateVideoRequest { prompt, duration }): Parameters<GenerateVideoRequest>,
+        Parameters(GenerateVideoRequest {
+            prompt,
+            duration,
+            style,
+        }): Parameters<GenerateVideoRequest>,
     ) -> String {
         execute_tool(self, "generate_video", async {
             if prompt.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("prompt must not be empty"));
             }
-            let media_params = hkask_types::MediaGenerateParams {
+            let mut media_params = hkask_types::MediaGenerateParams {
                 prompt: Some(prompt.clone()),
                 duration,
                 ..Default::default()
             };
+            if let Some(style_name) = &style {
+                if let Some(preset) = crate::style::get_preset(style_name) {
+                    crate::style::apply_preset(&mut media_params, &preset);
+                }
+            }
             self.vision_port
                 .media_generate("generate_video", &media_params)
                 .await

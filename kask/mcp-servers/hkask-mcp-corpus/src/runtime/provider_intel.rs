@@ -94,8 +94,11 @@ pub trait ProviderIntelligence: Send + Sync {
     /// Get the actual per-unit cost for the given model. `model_name` is the
     /// full model identifier (e.g., "meta-llama/Llama-3.3-70B-Instruct").
     /// Providers with per-model pricing use it; flat-rate providers ignore it.
-    async fn actual_cost(&self, api_key: &str, model_name: &str)
-    -> Result<CostRate, ProviderIntelError>;
+    async fn actual_cost(
+        &self,
+        api_key: &str,
+        model_name: &str,
+    ) -> Result<CostRate, ProviderIntelError>;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────

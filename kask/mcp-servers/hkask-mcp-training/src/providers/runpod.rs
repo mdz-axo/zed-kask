@@ -495,7 +495,9 @@ pub fn generate_install_script(
                 let yaml = crate::providers::AxolotlHarness
                     .render_config(job)
                     .map_err(|e| {
-                        HostProviderError::InvalidConfig(format!("Failed to render axolotl YAML: {e}"))
+                        HostProviderError::InvalidConfig(format!(
+                            "Failed to render axolotl YAML: {e}"
+                        ))
                     })?;
                 (
                     "config.yml",
@@ -509,7 +511,9 @@ pub fn generate_install_script(
                 let script = crate::providers::TrlHarness
                     .render_config(job)
                     .map_err(|e| {
-                        HostProviderError::InvalidConfig(format!("Failed to render TRL script: {e}"))
+                        HostProviderError::InvalidConfig(format!(
+                            "Failed to render TRL script: {e}"
+                        ))
                     })?;
                 (
                     "train.py",
@@ -523,7 +527,9 @@ pub fn generate_install_script(
                 let yaml = crate::providers::LudwigHarness
                     .render_config(job)
                     .map_err(|e| {
-                        HostProviderError::InvalidConfig(format!("Failed to render Ludwig YAML: {e}"))
+                        HostProviderError::InvalidConfig(format!(
+                            "Failed to render Ludwig YAML: {e}"
+                        ))
                     })?;
                 (
                     "model.yaml",

@@ -108,8 +108,8 @@ hkask_mcp_server::mcp_server!(
     }
 );
 
-pub mod types;
 mod style;
+pub mod types;
 use types::*;
 
 /// Compute normalized Levenshtein similarity between two strings.
@@ -1397,35 +1397,39 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // the global SQLCipher key to this child process. Schema is initialized
     // by `from_driver()`.
     let gallery_store = {
-        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
-            match std::env::var("HKASK_MEDIA_DB").ok().filter(|s| !s.is_empty()) {
-                Some(path) => match SqliteDriver::file_pool(&path) {
-                    Ok(pool) => {
-                        tracing::info!(
-                            target: "hkask.mcp.media",
-                            path = %path,
-                            "Gallery store using durable file DB"
-                        );
-                        Arc::new(SqliteDriver::new(pool))
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            target: "hkask.mcp.media",
-                            path = %path,
-                            error = %e,
-                            "HKASK_MEDIA_DB open failed — falling back to in-memory gallery DB"
-                        );
-                        SqliteDriver::in_memory_driver()
-                    }
-                },
-                None => {
+        let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> = match std::env::var(
+            "HKASK_MEDIA_DB",
+        )
+        .ok()
+        .filter(|s| !s.is_empty())
+        {
+            Some(path) => match SqliteDriver::file_pool(&path) {
+                Ok(pool) => {
+                    tracing::info!(
+                        target: "hkask.mcp.media",
+                        path = %path,
+                        "Gallery store using durable file DB"
+                    );
+                    Arc::new(SqliteDriver::new(pool))
+                }
+                Err(e) => {
                     tracing::warn!(
                         target: "hkask.mcp.media",
-                        "HKASK_MEDIA_DB not set — gallery DB is in-memory;                          tag/face/lineage metadata will not persist across restarts"
+                        path = %path,
+                        error = %e,
+                        "HKASK_MEDIA_DB open failed — falling back to in-memory gallery DB"
                     );
                     SqliteDriver::in_memory_driver()
                 }
-            };
+            },
+            None => {
+                tracing::warn!(
+                    target: "hkask.mcp.media",
+                    "HKASK_MEDIA_DB not set — gallery DB is in-memory;                          tag/face/lineage metadata will not persist across restarts"
+                );
+                SqliteDriver::in_memory_driver()
+            }
+        };
         match GalleryStore::from_driver(driver) {
             Ok(store) => {
                 tracing::info!(target: "hkask.mcp.media", "Gallery store initialized");
@@ -1859,7 +1863,9 @@ mod integration_tests {
 
         // Record the lineage a generation tool would attach after producing
         // this image (the gallery_record_generation tool wraps this call).
-        let wf = store.record_workflow("{\"nodes\":[],\"parallel\":false}").unwrap();
+        let wf = store
+            .record_workflow("{\"nodes\":[],\"parallel\":false}")
+            .unwrap();
         let params_json = serde_json::json!({ "size": "1024x1024" }).to_string();
         let record = store
             .record_generation(
@@ -1882,7 +1888,10 @@ mod integration_tests {
             .unwrap()
             .expect("lineage should be recorded");
         assert_eq!(lineage.op, "generate_image");
-        assert_eq!(lineage.prompt.as_deref(), Some("a serene mountain landscape"));
+        assert_eq!(
+            lineage.prompt.as_deref(),
+            Some("a serene mountain landscape")
+        );
         assert_eq!(lineage.model.as_deref(), Some("fal-ai/flux/dev"));
         assert_eq!(lineage.provider.as_deref(), Some("fal.ai"));
         assert_eq!(lineage.seed, Some(12345));

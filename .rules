@@ -330,7 +330,6 @@ additions) miss it. Before merging any kask change that adds a
 `background_spawn`, grep the future body for `reqwest`, `tokio::`, or any
 `await` on a tokio-backed client — if found, route through `Tokio::spawn`.
 
-
 ## Kask MCP servers have two parallel launch paths by design
 
 Kask MCP servers (`hkask-mcp-{id}` binaries) are launched by two independent

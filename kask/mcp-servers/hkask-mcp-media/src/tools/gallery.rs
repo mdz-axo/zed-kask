@@ -951,7 +951,9 @@ impl MediaServer {
             if op.trim().is_empty() {
                 return Err(McpToolError::invalid_argument("op must not be empty"));
             }
-            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
+            let image_id = self
+                .resolve_image_id(image_index)
+                .map_err(map_media_error)?;
             let parent_image_id = match parent_image_index {
                 Some(idx) => Some(self.resolve_image_id(idx).map_err(map_media_error)?),
                 None => None,
@@ -984,7 +986,9 @@ impl MediaServer {
         Parameters(GalleryLineageRequest { image_index }): Parameters<GalleryLineageRequest>,
     ) -> String {
         execute_tool(self, "gallery_lineage", async {
-            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
+            let image_id = self
+                .resolve_image_id(image_index)
+                .map_err(map_media_error)?;
             let lineage = self
                 .gallery_store
                 .get_generation(&image_id)

@@ -201,7 +201,9 @@ impl OllamaRegistry {
     /// post: the Modelfile is persisted under `source_dir/modelfiles/` for re-creation
     pub fn create(&self, spec: &ModelfileSpec) -> Result<RegisteredModel, OllamaRegistryError> {
         if spec.name.is_empty() {
-            return Err(OllamaRegistryError::InvalidSpec("name must be non-empty".into()));
+            return Err(OllamaRegistryError::InvalidSpec(
+                "name must be non-empty".into(),
+            ));
         }
         if let ModelFrom::Gguf(p) = &spec.from
             && !p.exists()
@@ -221,7 +223,8 @@ impl OllamaRegistry {
         }
 
         let modelfile_dir = self.source_dir.join("modelfiles");
-        std::fs::create_dir_all(&modelfile_dir).map_err(|e| OllamaRegistryError::Io(e.to_string()))?;
+        std::fs::create_dir_all(&modelfile_dir)
+            .map_err(|e| OllamaRegistryError::Io(e.to_string()))?;
         // Filesystem-safe filename: replace '/' with '_' so "hkask/foo" -> "hkask_foo".
         let safe = spec.name.replace('/', "_");
         let modelfile_path = modelfile_dir.join(format!("{safe}.Modelfile"));
@@ -301,7 +304,9 @@ impl OllamaRegistry {
     /// post: model removed from Ollama; source artifacts retained
     pub fn remove(&self, name: &str) -> Result<(), OllamaRegistryError> {
         if name.is_empty() {
-            return Err(OllamaRegistryError::InvalidSpec("name must be non-empty".into()));
+            return Err(OllamaRegistryError::InvalidSpec(
+                "name must be non-empty".into(),
+            ));
         }
         #[allow(clippy::disallowed_methods)]
         let output = Command::new(&self.ollama_bin)
