@@ -7,9 +7,9 @@
 //! I/O boundaries (the server reads the Regulation ledger and memory
 //! stores; it does not call an LLM).
 //!
-//! Category 3 (ocap-denial) is the primary category for curator: every
+//! Category 3 (dependency-denial) is the primary category for curator: every
 //! store-backed tool returns `permission_denied` when its store is `None`.
-//! This is the OCAP pattern — the tool asserts the store is present before
+//! This is the store-presence guard pattern — the tool asserts the store is present before
 //! proceeding. The tests assert `permission_denied` (not `reg.guard.*` —
 //! Gap B, not wired).
 
@@ -27,7 +27,7 @@ use std::sync::Arc;
 // ── Test harness ────────────────────────────────────────────────────────────
 
 /// Build a CuratorServer with no stores — every store-backed tool returns
-/// permission_denied. This is the OCAP-denial fixture.
+/// permission_denied. This is the dependency-denial fixture.
 fn make_server_no_stores() -> CuratorServer {
     CuratorServer::new(
         WebID::new(),
@@ -313,8 +313,8 @@ mod curator_escalations {
     }
 
     #[tokio::test]
-    async fn ocap_denial_no_queue() {
-        // REQ: ocap-denial — no EscalationQueue → permission_denied
+    async fn denies_without_queue() {
+        // REQ: dependency-denial — no EscalationQueue → permission_denied
         let server = make_server_no_stores();
         let out = server
             .curator_escalations(params::<PingRequest>(serde_json::json!({})))
@@ -364,8 +364,8 @@ mod curator_escalation_resolve {
     use super::*;
 
     #[tokio::test]
-    async fn ocap_denial_no_queue() {
-        // REQ: ocap-denial
+    async fn denies_without_queue() {
+        // REQ: dependency-denial
         let server = make_server_no_stores();
         let req = params::<EscalationResolveRequest>(
             serde_json::json!({"id": "nonexistent", "resolution": "fixed"}),
@@ -426,8 +426,8 @@ mod curator_escalation_dismiss {
     use super::*;
 
     #[tokio::test]
-    async fn ocap_denial_no_queue() {
-        // REQ: ocap-denial
+    async fn denies_without_queue() {
+        // REQ: dependency-denial
         let server = make_server_no_stores();
         let req = params::<EscalationDismissRequest>(
             serde_json::json!({"id": "x", "reason": "not actionable"}),
@@ -463,8 +463,8 @@ mod curator_semantic_search {
     use super::*;
 
     #[tokio::test]
-    async fn ocap_denial_no_semantic() {
-        // REQ: ocap-denial — no SemanticMemory → permission_denied
+    async fn denies_without_semantic() {
+        // REQ: dependency-denial — no SemanticMemory → permission_denied
         let server = make_server_no_stores();
         let req =
             params::<SemanticSearchRequest>(serde_json::json!({"query": "test", "limit": null}));
@@ -536,8 +536,8 @@ mod curator_algedonic_log {
     use super::*;
 
     #[tokio::test]
-    async fn ocap_denial_no_store() {
-        // REQ: ocap-denial — no RegulationArchive → permission_denied
+    async fn denies_without_store() {
+        // REQ: dependency-denial — no RegulationArchive → permission_denied
         let server = make_server_no_stores();
         let req = params::<AlgedonicLogRequest>(serde_json::json!({"hours": 24}));
         let out = server.curator_algedonic_log(req).await;
@@ -572,8 +572,8 @@ mod reg_query {
     use super::*;
 
     #[tokio::test]
-    async fn ocap_denial_no_store() {
-        // REQ: ocap-denial — no RegulationArchive → permission_denied
+    async fn denies_without_store() {
+        // REQ: dependency-denial — no RegulationArchive → permission_denied
         let server = make_server_no_stores();
         let req = params::<RegQueryRequest>(
             serde_json::json!({"namespace": null, "window_seconds": null, "limit": null}),

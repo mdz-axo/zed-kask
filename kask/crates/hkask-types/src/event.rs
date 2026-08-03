@@ -241,11 +241,9 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.platform.metric.space.performance",
     "reg.platform.metric.space.satisfaction",
     // ── QA ──
-    "reg.qa.mutant_survived",
     "reg.qa.repair_attempted",
     "reg.qa.repair_exhausted",
     "reg.qa.repair_verified",
-    "reg.qa.bolero_failure",
     // QA routine pass — emitted by scripts/qa-mcp-servers.sh per (tool, category)
     "reg.qa.run",
     "reg.qa.run.pass",

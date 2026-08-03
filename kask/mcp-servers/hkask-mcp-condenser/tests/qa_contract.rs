@@ -5,7 +5,7 @@
 //!
 //! Category 7 (adversarial) applies to 2 tools (condenser_thread_summary,
 //! condenser_score_saliency) — both are LLM I/O boundaries. The adversarial
-//! cases here are single-shot injection probes. Category 3 (ocap-denial)
+//! cases here are single-shot injection probes. Category 3 (dependency-denial)
 //! applies to condenser_persist (needs episodic memory). The server declares
 //! no credentials — the InferencePort is injected, not credential-gated.
 
@@ -163,8 +163,8 @@ mod condenser_persist {
     use super::*;
 
     #[tokio::test]
-    async fn ocap_denial_no_episodic() {
-        // REQ: ocap-denial — no episodic memory → permission_denied
+    async fn denies_without_episodic() {
+        // REQ: dependency-denial — no episodic memory → permission_denied
         let server = make_server();
         let req = params::<PersistRequest>(serde_json::json!({
             "tool_name": "web_search",
@@ -185,7 +185,7 @@ mod condenser_persist {
             "confidence": null
         }));
         let out = server.condenser_persist(req).await;
-        // The OCAP check (no episodic) fires first, returning permission_denied.
+        // The store-presence check (no episodic) fires first, returning permission_denied.
         // But if episodic were present, the empty check would fire. We assert
         // a structured error is returned (either permission_denied or invalid_argument).
         let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");

@@ -47,7 +47,7 @@ Three sub-calls:
   returns a structured error if the server rejects unknown fields. No
   panic, no silent swallow.
 
-### 3. ocap-denial
+### 3. dependency-denial
 - **Action**: call the tool with the required credential env var unset
   (per the "Credentials" column for the server). For tools whose server
   declares no credentials, this case is **N/A — server declares no
@@ -152,7 +152,7 @@ Credentials: **required** `HKASK_FMP_API_KEY`, `HKASK_EODHD_API_KEY`;
 **optional** `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`,
 `HKASK_BRAVE_API_KEY`.
 
-| Tool | LLM I/O | External dep | Category 3 (ocap) | Category 5 (error-prop) | Category 7 (adversarial) |
+| Tool | LLM I/O | External dep | Category 3 (dep-denial) | Category 5 (error-prop) | Category 7 (adversarial) |
 |---|---|---|---|---|---|
 | `moat_check` | no | FMP | yes (no key) | yes (FMP down) | skip |
 | `management_scorecard` | no | FMP | yes | yes | skip |
@@ -242,7 +242,7 @@ Credentials: **optional** `HKASK_OCR_MODEL`, `HKASK_EMBEDDING_MODEL`,
 | `corpus_purge_qa` | no | sqlite | yes | yes | skip |
 | `corpus_tag_chunks` | **yes** | inference | yes | yes | **yes** |
 
-### hkask-mcp-curator (9 tools)
+### hkask-mcp-curator (8 tools)
 
 Credentials: **optional** `HKASK_CURATOR_DB`, `HKASK_DB_PASSPHRASE`.
 
@@ -256,7 +256,6 @@ Credentials: **optional** `HKASK_CURATOR_DB`, `HKASK_DB_PASSPHRASE`.
 | `curator_memory_recall` | no | sqlite | yes | yes | skip |
 | `curator_algedonic_log` | no | sqlite | yes | yes | skip |
 | `reg_query` | no | sqlite (Regulation ledger) | yes | yes | skip |
-| `list_tokens` | no | sqlite | yes | yes | skip |
 
 ### hkask-mcp-kata-kanban (18 tools)
 

@@ -7,7 +7,7 @@
 //! codegraph_index_embeddings) — both are LLM I/O boundaries. The
 //! adversarial cases here are single-shot injection probes only; the full
 //! 8-layer defense probe is delegated to the adversarial-red-team skill
-//! during a live QA pass. Category 3 (ocap-denial) is N/A — the server
+//! during a live QA pass. Category 3 (dependency-denial) is N/A — the server
 //! declares no credentials (it reads DEEPINFRA_API_KEY/OPENROUTER_API_KEY
 //! inline only for codegraph_index_embeddings, which is tested as
 //! error-propagation with the key unset).

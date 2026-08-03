@@ -4,7 +4,7 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 
 **Version:** v0.31.0 | **Crate:** `hkask-mcp-curator`
 
-## Tools (9)
+## Tools (8)
 
 | Tool | Description |
 |------|-------------|
@@ -16,7 +16,6 @@ MCP server exposing Curator tools: system health, escalation management, Regulat
 | `curator_memory_recall` | Recall the Curator's episodic and semantic memory about an entity |
 | `curator_algedonic_log` | Read algedonic event log for a time window |
 | `reg_query` | Query Regulation records by namespace prefix within a time window |
-| `list_tokens` | List DelegationTokens within a time window (consent audit) |
 
 ## Configuration
 

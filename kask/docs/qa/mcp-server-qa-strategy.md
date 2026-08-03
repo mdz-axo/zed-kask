@@ -117,11 +117,9 @@ credential produces a structured `permission_denied` or
 `CANONICAL_NAMESPACES` (in `kask/crates/hkask-types/src/event.rs`) registers
 the following `reg.qa.*` namespaces:
 
-- `reg.qa.mutant_survived`
 - `reg.qa.repair_attempted`
 - `reg.qa.repair_exhausted`
 - `reg.qa.repair_verified`
-- `reg.qa.bolero_failure`
 - `reg.qa.run` (QA routine pass — emitted by `scripts/qa-mcp-servers.sh`)
 - `reg.qa.run.pass`
 - `reg.qa.run.fail`
@@ -290,7 +288,7 @@ runnable routine (Deliverable 2) and written to
 | server | tool | category | skill | status | evidence |
 ```
 
-- `category` ∈ {happy, schema-violation, ocap-denial, empty-result,
+- `category` ∈ {happy, schema-violation, dependency-denial, empty-result,
   error-propagation, resource-bounds, adversarial}
 - `skill` ∈ {bug-hunt, kali-audit, adversarial-red-team,
   supply-chain-sentinel, runtime-posture-monitor, graph-audit, tdd, n/a}
@@ -420,12 +418,12 @@ messages). No installed skill covers this. **Recommendation**: invoke
 find a candidate skill; if none exists, write a small `cargo test` harness
 in `hkask-mcp-server` that feeds malformed frames to `run_stdio_server`.
 
-#### Gap E — `reg.qa.bolero_failure` is registered but no bolero harness exists in MCP servers
+#### Gap E — `reg.qa.bolero_failure` and `reg.qa.mutant_survived` — retired (2026-08-03)
 
-The namespace exists for property-test failures, but no MCP server
-crate has a `[dev-dependencies] bolero` entry. This is not blocking —
-the QA routine does not require property tests — but `bug-hunt`'s Probe
-phase should note it as a missing-test type.
+These namespaces were registered but never emitted (no bolero or cargo-mutants
+harness exists). They have been removed from `CANONICAL_NAMESPACES` and the
+`.gitignore` entries for `__fuzz__/` and `mutants.out/` have been retired.
+Property-based testing uses proptest, not bolero or cargo-mutants.
 
 ### Deliverable 5 — One complex prompt (the full QA pass)
 
@@ -452,7 +450,7 @@ For the target server, execute every tool's seven categories in this order:
 2. schema-violation — three sub-calls: (a) omit a required field, (b) wrong
                   type, (c) extra unknown field. Assert each returns a
                   structured error, never a panic, never silently swallowed.
-3. ocap-denial  — call with the required credential env var unset. Assert a
+3. dependency-denial  — call with the required credential env var unset. Assert a
                   structured error (permission_denied or failed_precondition)
                   and no panic. DO NOT assert reg.guard.* — it is not wired
                   (see Gap B). Record the missing emission as a proposed RR.

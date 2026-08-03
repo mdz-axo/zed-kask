@@ -137,7 +137,7 @@ Emitted by the QA test harness (`qa_script::run_script()`) and qa-script-builder
 | `QaRepairExhausted` | `reg.qa.repair_exhausted` | Repair attempts exhausted | All repair strategies tried; none succeeded |
 
 Additional QA namespaces in `CANONICAL_NAMESPACES` (emitted as tracing events, not via `QaSpan`):
-`reg.qa.mutant_survived`, `reg.qa.bolero_failure`, `reg.qa.run`, `reg.qa.run.pass`,
+`reg.qa.run`, `reg.qa.run.pass`,
 `reg.qa.run.fail`, `reg.qa.run.skipped`.
 
 ### 3.7 SeamSpan — Architecture Seams (DELETED as typed enum)

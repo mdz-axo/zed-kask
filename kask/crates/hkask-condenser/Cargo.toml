@@ -20,9 +20,7 @@ tracing.workspace = true
 proptest = { workspace = true }
 criterion = { workspace = true }
 
-[[test]]
-name = "condenser_fuzz"
-path = "tests/condenser_fuzz.rs"
+
 
 [[bench]]
 name = "compression_bench"

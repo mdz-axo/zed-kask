@@ -11,7 +11,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 # zed-kask Diataxis Documentation Index
 
 This index lists the per-crate Diataxis documentation set for zed-kask.
-Each major crate has four artifacts: Tutorial (learning path), How-to
+Each major crate has up to four artifacts: Tutorial (learning path), How-to
 (procedural), Reference (informational), and Explanation (understanding).
 Every artifact cites concrete file:line references in the current tree.
 
@@ -24,12 +24,12 @@ Every artifact cites concrete file:line references in the current tree.
 | Reference | Look up a fact | Domain | ERD or class diagram |
 | Explanation | Understand why | Trust + Curation | State or sequence diagram |
 
-## Major crates (10 crates, 40 artifacts)
+## Major crates (10 crates, 39 artifacts)
 
 | Crate | Tutorial | How-to | Reference | Explanation |
 |-------|----------|--------|-----------|-------------|
 | [hkask-types](./hkask-types/) | [Tutorial](./hkask-types/tutorial.md) | [How-to](./hkask-types/how-to.md) | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
-| [hkask-capability](./hkask-capability/) | [Tutorial](./hkask-capability/tutorial.md) | [How-to](./hkask-capability/how-to.md) | [Reference](./hkask-capability/reference.md) | [Explanation](./hkask-capability/explanation.md) |
+| [hkask-capability](./hkask-capability/) | [Tutorial](./hkask-capability/tutorial.md) | — | [Reference](./hkask-capability/reference.md) | [Explanation](./hkask-capability/explanation.md) |
 | [hkask-storage](./hkask-storage/) | [Tutorial](./hkask-storage/tutorial.md) | [How-to](./hkask-storage/how-to.md) | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |
 | [hkask-regulation](./hkask-regulation/) | [Tutorial](./hkask-regulation/tutorial.md) | [How-to](./hkask-regulation/how-to.md) | [Reference](./hkask-regulation/reference.md) | [Explanation](./hkask-regulation/explanation.md) |
 | [hkask-inference](./hkask-inference/) | [Tutorial](./hkask-inference/tutorial.md) | [How-to](./hkask-inference/how-to.md) | [Reference](./hkask-inference/reference.md) | [Explanation](./hkask-inference/explanation.md) |

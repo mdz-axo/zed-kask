@@ -6,7 +6,7 @@
 //!
 //! Category 7 (adversarial) is N/A for all kata-kanban tools — none are
 //! LLM I/O boundaries (the server is a pure state machine over sqlite).
-//! Category 3 (ocap-denial) applies to all tools: the server declares
+//! Category 3 (dependency-denial) applies to all tools: the server declares
 //! optional HKASK_KANBAN_DB / HKASK_DB_PASSPHRASE credentials; calling
 //! without them yields in-memory operation, not denial. The contract
 //! therefore asserts the no-credential path returns structured errors
