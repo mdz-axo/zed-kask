@@ -43,6 +43,31 @@ pub(crate) fn build_ocr_prompt(anchored_text: Option<&str>) -> String {
     }
 }
 
+/// Encode `bytes` as base64 and dispatch a single OCR vision call via `router`,
+/// returning the raw extracted text.
+///
+/// This is the shared primitive used by both [`CorpusServer::do_ocr`] (raw file
+/// bytes) and [`LlmOcrExecutor::execute`] (re-encoded page images). Callers own
+/// their own post-processing (circuit-breaker integration, `OcrResult` assembly).
+pub(crate) async fn vision_ocr_bytes(
+    router: &dyn InferencePort,
+    bytes: &[u8],
+    model: &str,
+    max_tokens: u32,
+) -> Result<String, OcrError> {
+    let b64_data = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let params = LLMParameters {
+        temperature: 0.1, // Low temperature for faithful extraction
+        max_tokens,
+        ..Default::default()
+    };
+    let result = router
+        .generate_vision(&build_ocr_prompt(None), &[b64_data], &params, Some(model))
+        .await
+        .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
+    Ok(result.text)
+}
+
 /// Circuit breaker for rate-limit resilience.
 ///
 /// After `threshold` consecutive failures, pauses all requests until
@@ -193,25 +218,18 @@ impl OcrExecutor for LlmOcrExecutor {
                 message: format!("Failed to encode page image as JPEG: {e}"),
             })?;
 
-        let b64_data = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
+        let result = vision_ocr_bytes(&*self.router, &img_bytes, &model, self.max_tokens).await;
 
-        let params = LLMParameters {
-            temperature: 0.1, // Low temperature for faithful extraction
-            max_tokens: self.max_tokens,
-            ..Default::default()
-        };
-
-        let result = self
-            .router
-            .generate_vision(&build_ocr_prompt(None), &[b64_data], &params, Some(&model))
-            .await
-            .map_err(|e| {
-                let err_str = e.to_string();
-                // GAP-4: Regulation variety — detect rate-limit backpressure
-                if err_str.contains("429")
+        // Circuit-breaker + rate-limit tracking on the vision-call outcome. The
+        // breaker reacts to rate-limit, timeout, and connection errors; the warn
+        // fires only for rate-limit backpressure (GAP-4 Regulation variety).
+        match &result {
+            Ok(_) => self.breaker.record_success(),
+            Err(OcrError::InferenceFailed(err_str)) => {
+                let is_rate_limit = err_str.contains("429")
                     || err_str.contains("rate limit")
-                    || err_str.contains("Rate limit")
-                {
+                    || err_str.contains("Rate limit");
+                if is_rate_limit {
                     tracing::warn!(
                         target: "reg.pipeline.ocr.rate_limit",
                         model = %model,
@@ -219,17 +237,7 @@ impl OcrExecutor for LlmOcrExecutor {
                         "OCR inference rate-limited — circuit breaker tracking"
                     );
                 }
-                OcrError::InferenceFailed(err_str)
-            });
-
-        match &result {
-            Ok(_) => self.breaker.record_success(),
-            Err(OcrError::InferenceFailed(err_str)) => {
-                if err_str.contains("429")
-                    || err_str.contains("rate limit")
-                    || err_str.contains("Rate limit")
-                    || err_str.contains("timed out")
-                    || err_str.contains("connection")
+                if is_rate_limit || err_str.contains("timed out") || err_str.contains("connection")
                 {
                     self.breaker.record_failure();
                 }
@@ -237,20 +245,19 @@ impl OcrExecutor for LlmOcrExecutor {
             Err(_) => {}
         }
 
-        let result = result?;
-
+        let text = result?;
         let duration_ms = start.elapsed().as_millis() as u64;
 
         // Vision OCR models don't expose real per-token confidence via chat
         // completions, so any number here is a placeholder. Use a fixed nominal
         // rather than an invented 3-factor heuristic (hkask P5: simplicity).
         let confidence = 0.8;
-        let word_count = result.text.split_whitespace().count();
+        let word_count = text.split_whitespace().count();
 
         // Direct plausibility check for the Regulation low-confidence alert: non-empty
         // but near-empty output is likely a hallucination or garbage. Replaces
         // the former `ocr_quality_heuristic < 0.3` trigger.
-        if !result.text.trim().is_empty() && word_count < 5 {
+        if !text.trim().is_empty() && word_count < 5 {
             tracing::warn!(
                 target: "reg.pipeline.ocr.low_confidence",
                 page_index = page_index,
@@ -263,7 +270,7 @@ impl OcrExecutor for LlmOcrExecutor {
         Ok(OcrResult {
             page_index,
             backend: backend.clone(),
-            text: result.text,
+            text,
             confidence,
             duration_ms,
             was_fallback: is_fallback,

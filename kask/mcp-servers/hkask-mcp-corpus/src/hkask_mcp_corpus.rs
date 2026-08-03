@@ -31,6 +31,7 @@ pub mod bridge;
 pub mod compose;
 pub mod convert;
 pub mod corpus;
+pub(crate) mod guard;
 mod helpers;
 pub mod inference_svc;
 pub mod model_cache;
@@ -55,7 +56,6 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use crate::ocr::ThresholdConfig;
-use crate::ocr::decimation;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_memory::SemanticMemory;
 use hkask_services_core::settings::HkaskSettings;
@@ -574,24 +574,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .get("HKASK_OCR_MODEL")
                 .cloned();
 
-            let ocr_thresholds = ThresholdConfig {
-                simple_max: std::env::var("HKASK_OCR_SIMPLE_MAX")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0.05),
-                moderate_max: std::env::var("HKASK_OCR_MODERATE_MAX")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0.15),
-                moderate_sample_rate: std::env::var("HKASK_OCR_SAMPLE_RATE")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(0.10),
-                tuneable: std::env::var("HKASK_OCR_TUNEABLE")
-                    .ok()
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(true),
-            };
+            let ocr_thresholds = ThresholdConfig::from_env();
 
                         let llm_ocr = Arc::new(crate::ocr::llm_ocr::LlmOcrExecutor::new(Arc::clone(&inference_port)));
                                     let pipeline_executor = Arc::new(crate::ocr::PipelineExecutor::new(Arc::clone(&llm_ocr)));

@@ -13,8 +13,9 @@ use hkask_types::corpus::{ChunkOntology, ExpertiseLevel, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
+use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
 use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
-use crate::tools::semantic::{GUARD, INPUT_GUARD_ENABLED, configured_qa_model};
+use crate::tools::semantic::configured_qa_model;
 use crate::{embedding_dim, normalize_concept, normalize_in_place, render_docproc_template};
 
 /// Input for [`ConsolidationService::consolidate`].

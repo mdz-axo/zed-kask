@@ -21,14 +21,12 @@ use std::sync::{Arc, Mutex};
 
 use hkask_mcp_server::server::McpToolError;
 use hkask_types::InferencePort;
-use hkask_types::template::LLMParameters;
 use serde_json::{Value, json};
 
 use crate::backend::markdown_pages_to_structure;
 use crate::convert::{decode_html_entities, detect_format, strip_html_comments};
 use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
 use crate::ocr::decimation;
-use crate::ocr::llm_ocr::build_ocr_prompt;
 use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
 use crate::ocr::triage::parse_target_pages;
 use crate::ocr::{
@@ -142,23 +140,13 @@ impl<'a> ConvertService<'a> {
         if file_bytes.is_empty() {
             return Err(OcrError::EmptyFile);
         }
-
-        let b64_data =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, file_bytes);
-
-        let params = LLMParameters {
-            temperature: 0.1,
+        crate::ocr::llm_ocr::vision_ocr_bytes(
+            &*self.inference_router,
+            file_bytes,
+            model,
             max_tokens,
-            ..Default::default()
-        };
-
-        let result = self
-            .inference_router
-            .generate_vision(&build_ocr_prompt(None), &[b64_data], &params, Some(model))
-            .await
-            .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
-
-        Ok(result.text)
+        )
+        .await
     }
 
     /// Persist pipeline outcome for Regulation observability.
@@ -796,6 +784,7 @@ impl<'a> ConvertService<'a> {
     /// optionally index passages, and atomically publish the JSONL via a
     /// `.tmp` rename. Returns a summary JSON (`input_dir`, `output`,
     /// `total_documents`, `total_chunks`, `indexed`).
+    #[allow(clippy::too_many_arguments)]
     #[must_use = "result must be used"]
     pub async fn chunk_directory(
         &self,

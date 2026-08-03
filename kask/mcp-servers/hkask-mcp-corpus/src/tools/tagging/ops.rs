@@ -6,7 +6,7 @@
 //! Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
-use crate::tools::semantic::GUARD;
+use crate::guard::GUARD;
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
     extract_json_from_response, json, normalize_concept, read_jsonl_lenient,

@@ -94,3 +94,15 @@ templates:
       docs/diagrams/sankey-{domain}-{subject}.md.
     generates_spans:
       - reg.sankey-flow.write
+
+  - id: sankey-flow/present-sankey
+    name: "Surface the finalized Sankey markdown as the cascade output"
+    path: present-sankey.j2
+    type: RenderAct
+    description: >
+      RenderAct — surfaces the finalized Sankey markdown (containing the fenced
+      ```mermaid block) as the cascade's final output string. Without this step,
+      extract_final_step_result returns the write step's JSON object
+      {output_path, markdown} and the model must discover and extract the
+      markdown field. This render step flattens it to a raw markdown string so
+      the model sees the mermaid block directly. Deterministic (no LLM call).

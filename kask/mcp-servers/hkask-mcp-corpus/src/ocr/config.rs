@@ -114,6 +114,34 @@ impl ThresholdConfig {
             ComplexityTier::Complex
         }
     }
+
+    /// Build from env vars, falling back to [`ThresholdConfig::default`].
+    ///
+    /// Reads `HKASK_OCR_SIMPLE_MAX`, `HKASK_OCR_MODERATE_MAX`,
+    /// `HKASK_OCR_SAMPLE_RATE`, and `HKASK_OCR_TUNEABLE`. Malformed values fall
+    /// back to the corresponding default field, mirroring the `TriageConfig::from_env`
+    /// pattern.
+    pub fn from_env() -> Self {
+        let default = Self::default();
+        Self {
+            simple_max: std::env::var("HKASK_OCR_SIMPLE_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.simple_max),
+            moderate_max: std::env::var("HKASK_OCR_MODERATE_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.moderate_max),
+            moderate_sample_rate: std::env::var("HKASK_OCR_SAMPLE_RATE")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default.moderate_sample_rate),
+            tuneable: std::env::var("HKASK_OCR_TUNEABLE")
+                .ok()
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(default.tuneable),
+        }
+    }
 }
 
 // ── Page Triage (pre-OCR complexity detection) ────────────────────────────

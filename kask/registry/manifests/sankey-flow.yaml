@@ -237,6 +237,24 @@ steps:
       gather_notes: "{{ step_2_result.gather_notes | default('') }}"
 
   - ordinal: 7
+    action: render
+    description: >
+      SURFACE the finalized Sankey markdown (containing the fenced ```mermaid
+      block) as the cascade's final output. The write step (step 6) produces
+      {output_path, markdown}; without this render step, extract_final_step_result
+      returns that JSON object and the model must discover the markdown field.
+      This render step flattens it to a raw markdown string so the model sees the
+      mermaid block directly and reproduces it in its assistant message, which
+      acp_thread renders. The render action is deterministic (no LLM call).
+    renderer: minijinja
+    template_ref: sankey-flow/present-sankey
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      markdown: "{{ step_6_result.markdown }}"
+      output_path: "{{ step_6_result.output_path }}"
+
+  - ordinal: 8
     action: loop
     description: >
       If convergence not met (metric > 0.15) and refinement directives exist,

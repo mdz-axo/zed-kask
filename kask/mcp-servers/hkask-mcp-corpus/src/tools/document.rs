@@ -3,15 +3,15 @@
 //! The heavy orchestration that previously lived here — `corpus_convert`'s
 //! ~450-line OCR branching and the `chunk_directory` directory scanner — has
 //! moved to `services::convert::ConvertService`. The `#[tool]` methods below
-/// are now thin I/O framing: deserialize params, construct a `ConvertService`
-/// borrowing `self`, delegate, and return. The shared OCR helpers
-/// (`resolve_ocr_model`, `do_ocr`, `has_ocr`, `persist_pipeline_outcome`) and
-/// `index_passages` also live on `ConvertService`, so `corpus_ocr` and the
-/// file-case `corpus_chunk` path delegate to the service for those calls too.
-///
-/// `convert_directory` stays here (on `CorpusServer`) because it recurses
-/// through the `corpus_convert` tool wrapper to preserve per-file Regulation
-/// spans; it does not call the OCR helpers directly.
+//! are now thin I/O framing: deserialize params, construct a `ConvertService`
+//! borrowing `self`, delegate, and return. The shared OCR helpers
+//! (`resolve_ocr_model`, `do_ocr`, `has_ocr`, `persist_pipeline_outcome`) and
+//! `index_passages` also live on `ConvertService`, so `corpus_ocr` and the
+//! file-case `corpus_chunk` path delegate to the service for those calls too.
+//!
+//! `convert_directory` stays here (on `CorpusServer`) because it recurses
+//! through the `corpus_convert` tool wrapper to preserve per-file Regulation
+//! spans; it does not call the OCR helpers directly.
 use crate::services::convert::ConvertService;
 use crate::{
     CorpusServer, ExtractOutcome, McpToolError, Parameters, chunk_structure, chunk_word_bounds,

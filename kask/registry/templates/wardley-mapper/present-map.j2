@@ -1,0 +1,26 @@
+{# RenderAct — surface the Wardley Map quadrant chart + recommendations as markdown.
+   This is a pure Jinja2 template (no frontmatter) executed by the `render` action.
+   The output is stored as step_N_result (Value::String) and becomes the cascade's
+   final output via extract_final_step_result (highest ordinal).
+
+   The fenced ```mermaid block is what acp_thread's mermaid renderer picks up —
+   parse_mermaid_info requires the info string "mermaid" on a fenced code block,
+   and is_supported_diagram_type checks that the first token is quadrantChart.
+   Without this render step, map_diagram stays buried inside step_3_result and
+   extract_final_step_result picks a later step (compute/loop) that has no diagram. #}
+## Wardley Map
+
+```mermaid
+{{ map_diagram }}
+```
+
+## Strategic Recommendations
+
+{% for rec in recommendations %}
+- **{{ rec.category | default("N/A") }}** — {{ rec.component | default("N/A") }}: {{ rec.recommendation | default("") }} (priority: {{ rec.priority | default("N/A") }}, confidence: {{ rec.confidence | default("N/A") }})
+  - {{ rec.rationale | default("") }}
+{% endfor %}
+
+## Assessment
+
+{{ rationale | default("No rationale provided.") }}

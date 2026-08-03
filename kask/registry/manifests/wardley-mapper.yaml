@@ -143,6 +143,23 @@ steps:
       mode: "cauchy"
 
   - ordinal: 7
+    action: render
+    description: >
+      SURFACE the Wardley Map quadrant chart and recommendations as a markdown
+      string containing a fenced ```mermaid block. This is the cascade's final
+      user-facing output — without this step, map_diagram stays buried inside
+      step_3_result and extract_final_step_result picks a later step (compute/loop)
+      that has no diagram. The render action is deterministic (no LLM call).
+    renderer: minijinja
+    template_ref: wardley-mapper/present-map
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      map_diagram: "{{ step_3_result.map_diagram }}"
+      recommendations: "{{ step_5_result.recommendations }}"
+      rationale: "{{ step_5_result.rationale }}"
+
+  - ordinal: 8
     action: loop
     gas_cap: 200
     timeout_seconds: 10

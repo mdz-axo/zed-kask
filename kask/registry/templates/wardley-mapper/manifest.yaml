@@ -58,3 +58,15 @@ templates:
       Synthesize actionable strategic recommendations (commoditize, invest,
       divest, ecosystem, alignment) from the movement analysis and map.
       Prioritized by impact, specific, traceable to components.
+
+  - id: wardley-mapper/present-map
+    name: "Surface the Wardley Map diagram + recommendations as markdown"
+    path: present-map.j2
+    type: RenderAct
+    description: >
+      RenderAct — surfaces the quadrant chart (from map-value-chain) and
+      strategic recommendations (from synthesize-recommendations) as a single
+      markdown string containing a fenced ```mermaid block. This is the cascade's
+      final user-facing output: without it, the diagram stays buried in an
+      intermediate step result and never reaches the chat stream. Deterministic
+      (no LLM call).
