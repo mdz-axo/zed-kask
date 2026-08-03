@@ -60,9 +60,9 @@ impl PromptBuilderService {
             context_k,
             prompts_per_chunk,
             type_distribution,
-            cross_reference: _,
+            cross_reference: _, // accepted but not yet wired — see note below
             max_prompts,
-            owner: _,
+            owner: _, // accepted but not yet wired — see note below
             ontology_bloom_overrides,
         } = request;
 
@@ -164,8 +164,11 @@ impl PromptBuilderService {
             }
         }
 
-        // Owner is passed to the template via vars; WebID not needed here since
-        // build_prompts only queries h_mems (read-only), doesn't store new ones.
+        // `cross_reference` and `owner` are accepted by the request struct but
+        // not yet wired into prompt generation. `cross_reference` is intended to
+        // enable cross-chunk synthesis prompts; `owner` would tag generated
+        // prompts with a WebID. Both are kept in the schema for forward-compat and
+        // ignored here — not yet enforced.
 
         let mut out = String::new();
         let mut ti = 0usize;

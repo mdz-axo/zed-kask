@@ -38,7 +38,7 @@ pub const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 
 // ── Re-exports ──
 
-pub use freshness::{Freshness, freshness_brave, freshness_serpapi, normalize_freshness};
+pub use freshness::{Freshness, freshness_brave, freshness_serpapi};
 pub use ranking::{
     apply_rerank, dedup_results, normalize_date_bucket, parse_age_to_days, rrf_score,
 };

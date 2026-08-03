@@ -8,11 +8,11 @@ pub struct BraveProvider {
 }
 
 impl BraveProvider {
-    pub fn new(api_key: String) -> Self {
-        Self {
-            client: super::provider_http_client(),
+    pub fn new(api_key: String) -> Result<Self, WebError> {
+        Ok(Self {
+            client: super::provider_http_client()?,
             api_key,
-        }
+        })
     }
 }
 #[async_trait]

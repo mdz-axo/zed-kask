@@ -8,17 +8,11 @@ pub struct RawFetchProvider {
     client: reqwest::Client,
 }
 
-impl Default for RawFetchProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RawFetchProvider {
-    pub fn new() -> Self {
-        Self {
-            client: super::provider_http_client(),
-        }
+    pub fn new() -> Result<Self, WebError> {
+        Ok(Self {
+            client: super::provider_http_client()?,
+        })
     }
 }
 #[async_trait]

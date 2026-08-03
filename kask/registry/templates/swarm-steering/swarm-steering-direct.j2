@@ -1,0 +1,141 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    emitted_calls: array
+    task: string
+    swarm_id: string
+    credits_authorized: number
+  output:
+    steering_directive: object
+    pre_flight: object
+    execution_sequence: array
+    collection_shape: object
+    feedback_instruction: object
+    status: string
+    delegate_notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: swarm-steering/swarm-steering-direct.j2 #}
+{# Functional Role: KnowAct — Produce the local-swarm steering directive #}
+{# Produces: steering_directive #}
+{# hKask v0.31.0 — Swarm Steering (local mode, Cybernetic Swarm Plan steering_mode) #}
+{#
+  Codifies the execute-and-feed-back loop for the Kask Curator or a human in
+  the loop. Takes a swarm-intelligence plan (emitted_calls) and produces a
+  structured steering directive: pre-flight checks, the ordered
+  swarm_delegate_local execution sequence, the delegate_results collection
+  shape, and the re-invoke instruction. The executor (Curator or human) runs
+  the directive and feeds delegate_results back to swarm-intelligence.
+
+  Anchored to PKO (the plan is a Procedure; the directive is the
+  StepExecution sequence + result collection) and the Conant-Ashby Good
+  Regulator (the directive must model the swarm it steers: roster, plan,
+  credit budget).
+#}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are a local-swarm steering director. Produce a structured steering
+directive that the Kask Curator (or a human in the loop) executes to run a
+swarm-intelligence plan and feed the results back.
+
+## Task
+{{ task }}
+
+## Swarm ID
+{{ swarm_id }}
+
+## Emitted Calls (the swarm-intelligence plan — from ACT's emitted_calls)
+```json
+{{ emitted_calls | tojson }}
+```
+
+## Per-dispatch credit ceiling
+{{ credits_authorized }}
+
+## Step 1 — Pre-flight checks
+
+Before executing, the directive must instruct the executor to verify the swarm
+is ready:
+- **Ledger funded**: call `swarm_balance_local` and confirm the balance covers
+  the sum of credits across all delegate emitted calls. If the balance is
+  insufficient, the executor must call `swarm_fund_local` first (or report
+  `status: unfunded` and stop).
+- **Agents exist**: call `swarm_list_local_agents` and confirm every
+  `agent_name` in the delegate emitted calls is present in the local registry.
+  If any agent is missing, report `status: missing_agents` (list the missing
+  agents) and stop — do not execute a partial plan.
+
+Record the pre-flight checks in `pre_flight` = { balance, balance_sufficient,
+required_credits, agents_present, missing_agents }.
+
+## Step 2 — Execution sequence
+
+For each emitted call with `move_type: "delegate"`, produce one entry in
+`execution_sequence`:
+```json
+{
+  "tool": "swarm/swarm_delegate_local",
+  "agent_name": "<the emitted call's agent>",
+  "task": "<the task text for this delegation — derived from the plan and the overall task>",
+  "credits_authorized": "<min(the emitted call's credits_authorized, the per-dispatch ceiling)>"
+}
+```
+
+Emitted calls that are NOT delegations (`hire`, `remove`, `reconfigure_agent`,
+`create`) are composition changes, not executions — the executor applies them
+separately (via `swarm_create_local_agent` / `swarm_remove_local` /
+`swarm_reconfigure_local_agent`), but they do NOT produce `LocalDelegateResult`
+telemetry, so they are NOT in the execution_sequence. Record them in
+`delegate_notes` as "composition changes to apply (not executed for telemetry)".
+
+## Step 3 — Collection shape
+
+`collection_shape` describes how the executor collects the results into the
+`delegate_results` array that feeds back to swarm-intelligence:
+```json
+{
+  "collect": "For each entry in execution_sequence, call swarm_delegate_local and collect the returned LocalDelegateResult object (agent_id, response, model, tokens_used, cost, balance, latency_ms, tool_calls[], executed_skills[]).",
+  "array_field": "delegate_results",
+  "shape": "LocalDelegateResult (per swarm_delegate_local)",
+  "order": "same order as execution_sequence"
+}
+```
+
+## Step 4 — Feedback instruction
+
+`feedback_instruction` tells the executor how to close the loop:
+```json
+{
+  "re_invoke": "swarm-intelligence",
+  "context": { "delegate_results": "<the collected array>", "steering_mode": "steering", "swarm_id": "<the swarm id>", "task": "<the task>" },
+  "purpose": "ORIENT attributes fault from delegate_results[].tool_calls[].ok / executed_skills[].ok; fault_count accumulates; C6 reconfigures the most-blamed agent; the next plan closes the loop"
+}
+```
+
+## Step 5 — Status
+
+Set `status` to one of:
+- `ready` — pre-flight passed, execution_sequence is non-empty, the directive
+  is executable.
+- `unfunded` — the ledger balance is insufficient (the executor must fund via
+  `swarm_fund_local` before re-running this skill).
+- `missing_agents` — one or more delegate agents are not in the local registry
+  (the operator must add them via `swarm_create_local_agent` or
+  `swarm_clone_to_local` before re-running).
+- `empty` — the plan has no delegate emitted calls (nothing to execute for
+  telemetry; composition changes only).
+
+## Output
+
+Produce a JSON object with: steering_directive (object containing pre_flight,
+execution_sequence, collection_shape, feedback_instruction, status),
+pre_flight, execution_sequence, collection_shape, feedback_instruction, status,
+delegate_notes.

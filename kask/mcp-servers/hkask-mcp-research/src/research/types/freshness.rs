@@ -44,21 +44,6 @@ impl std::fmt::Display for Freshness {
     }
 }
 
-/// Returns provider-generic key-value pairs for the given freshness value.
-///
-/// Each provider translates normalized freshness into its own parameter format:
-/// - Brave: `freshness=pw` (past week)
-/// - Tavily: `days=7`
-/// - SerpAPI: `tbs=qdr:w`
-pub fn normalize_freshness(freshness: &Freshness) -> Vec<(&'static str, String)> {
-    match freshness {
-        Freshness::Day => vec![("days", "1".to_string())],
-        Freshness::Week => vec![("days", "7".to_string())],
-        Freshness::Month => vec![("days", "30".to_string())],
-        Freshness::Year => vec![("days", "365".to_string())],
-    }
-}
-
 /// Map freshness to Brave's parameter format.
 pub fn freshness_brave(freshness: &Freshness) -> String {
     match freshness {
@@ -109,18 +94,6 @@ mod tests {
         assert!("decade".parse::<Freshness>().is_err());
         assert!("century".parse::<Freshness>().is_err());
         assert!("".parse::<Freshness>().is_err());
-    }
-
-    #[test]
-    fn normalize_freshness_days() {
-        let day = normalize_freshness(&Freshness::Day);
-        assert_eq!(day[0].1, "1");
-        let week = normalize_freshness(&Freshness::Week);
-        assert_eq!(week[0].1, "7");
-        let month = normalize_freshness(&Freshness::Month);
-        assert_eq!(month[0].1, "30");
-        let year = normalize_freshness(&Freshness::Year);
-        assert_eq!(year[0].1, "365");
     }
 
     #[test]

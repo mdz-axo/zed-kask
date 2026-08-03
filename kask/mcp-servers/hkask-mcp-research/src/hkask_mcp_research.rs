@@ -118,7 +118,8 @@ impl ResearchServer {
                 version: SERVER_VERSION.to_string(),
                 providers,
             };
-            Ok(serde_json::to_value(&output).expect("PingOutput serialization is infallible"))
+            Ok(serde_json::to_value(&output)
+                .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"})))
         })
         .await
     }
@@ -233,6 +234,11 @@ impl ResearchServer {
             validate_tool_url(&url)?;
 
             let num = num_results.unwrap_or(5).min(20);
+
+            // Not cached: web_find_similar skips the response cache (unlike
+            // web_search and web_extract). A find-similar result is sensitive
+            // to the source URL's evolving neighbourhood and stale quickly.
+            tracing::debug!(target: "hkask.web", "web_find_similar cache miss (not cached)");
 
             self.pool
                 .find_similar(&url, num)
@@ -377,6 +383,11 @@ impl ResearchServer {
     ) -> String {
         execute_tool(self, "web_browse", async {
             self.rate_limiter.check("web_browse")?;
+
+            // Not cached: web_browse skips the response cache (unlike
+            // web_search and web_extract). Browsed content is interactive and
+            // session-specific; a cached snapshot would mislead on re-browse.
+            tracing::debug!(target: "hkask.web", "web_browse cache miss (not cached)");
 
             if url.len() > MAX_URL_LENGTH {
                 return Err(McpToolError::invalid_argument(format!(

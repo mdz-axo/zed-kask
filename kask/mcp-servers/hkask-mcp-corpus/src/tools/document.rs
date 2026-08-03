@@ -15,8 +15,8 @@
 use crate::services::convert::ConvertService;
 use crate::{
     CorpusServer, ExtractOutcome, McpToolError, Parameters, chunk_structure, chunk_word_bounds,
-    convert, execute_tool, extract_text, filter_outcome_to_pages, json, serialize_passages,
-    tokens_to_words, tool, tool_router,
+    convert, default_ocr_max_tokens, execute_tool, extract_text, filter_outcome_to_pages, json,
+    sanitize_links, serialize_passages, tokens_to_words, tool, tool_router,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -614,10 +614,6 @@ pub struct IsComplexRequest {
     pub target_pages: Option<String>,
 }
 
-pub(crate) fn default_ocr_max_tokens() -> u32 {
-    8192
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ChunkRequest {
     /// Raw text to chunk. Mutually exclusive with `path` and `input_dir`.
@@ -668,39 +664,10 @@ pub(crate) fn default_true() -> bool {
     true
 }
 
-/// Strip URLs, file links, and hyperlinks from text before chunking.
-///
-/// Removes HTML anchor tags (keeps inner text), Markdown URL links (keeps
-/// link text), bare URLs, and protocol URIs (http, https, ftp, file, ssh,
-/// mailto). Collapses leftover double spaces. Preserves newlines and
-/// non-link text.
-pub(crate) fn sanitize_links(text: &str) -> String {
-    use regex::Regex;
-
-    let re_anchor = Regex::new(r#"(?is)<a\s[^>]*>(.*?)</a>"#).expect("anchor regex");
-    let re_md = Regex::new(r"\[([^\]]*)\]\((?:https?://|ftp://|file://|www\.|mailto:)[^)]*\)")
-        .expect("md-link regex");
-    let re_url = Regex::new(
-        r#"(?:https?|ftp|file|ssh)://[^\s<>"'\)\]]+|www\.[^\s<>"'\)\]]+|mailto:[^\s<>"'\)\]]+"#,
-    )
-    .expect("url regex");
-    let re_spaces = Regex::new(r"  +").expect("spaces regex");
-
-    let text = re_anchor.replace_all(text, "$1");
-    let text = re_md.replace_all(&text, "$1");
-    let text = re_url.replace_all(&text, "");
-    let text = re_spaces.replace_all(&text, " ");
-    // Trim trailing spaces on each line (left by URL removal at line ends)
-    text.lines()
-        .map(|l| l.trim_end())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Strip newsletter/blog subscribe boilerplate from text.
 #[cfg(test)]
 mod tests {
-    use super::sanitize_links;
+    use crate::sanitize_links;
 
     #[test]
     fn strips_bare_urls() {

@@ -12,11 +12,11 @@ pub struct FirecrawlProvider {
 }
 
 impl FirecrawlProvider {
-    pub fn new(api_key: Option<String>) -> Self {
-        Self {
-            client: super::provider_http_client(),
+    pub fn new(api_key: Option<String>) -> Result<Self, WebError> {
+        Ok(Self {
+            client: super::provider_http_client()?,
             api_key,
-        }
+        })
     }
 
     fn auth_header(&self) -> Result<String, WebError> {

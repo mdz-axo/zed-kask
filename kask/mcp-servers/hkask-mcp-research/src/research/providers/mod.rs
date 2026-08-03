@@ -30,12 +30,15 @@ pub use tavily::TavilyProvider;
 ///
 /// Applies a consistent user-agent and request timeout, eliminating the repeated
 /// `reqwest::Client::builder()...build().expect(...)` boilerplate across providers.
-pub(super) fn provider_http_client() -> reqwest::Client {
+///
+/// Returns `Err` if the TLS backend fails to initialize rather than panicking,
+/// so callers can propagate the failure through their `Result` return type.
+pub(super) fn provider_http_client() -> Result<reqwest::Client, WebError> {
     reqwest::Client::builder()
         .user_agent(format!("hkask-mcp-web/{SERVER_VERSION}"))
         .timeout(Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS))
         .build()
-        .expect("reqwest client builder is infallible with these settings")
+        .map_err(|e| WebError::ProviderError(format!("failed to build HTTP client: {e}")))
 }
 
 #[derive(Default)]
@@ -486,7 +489,6 @@ fn health_entry(kind: String, result: Result<(), WebError>) -> ProviderHealthEnt
     }
 }
 
-// WebSearchPort implementation - ProviderPool as the adapter
 // WebSearchPort implementation - ProviderPool as the adapter
 
 #[async_trait]

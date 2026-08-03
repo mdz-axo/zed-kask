@@ -12,9 +12,12 @@ fn http_error(
     msg: String,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 ) -> ServiceError {
+    // HTTP content fetching retrieves source material for the corpus pipeline.
+    // `DomainKind` has no `Ingest`/`Corpus` variant, so `Storage` (content
+    // retrieval/persistence) is the closest fit — not `Wallet`.
     ServiceError::Domain {
         kind: ErrorKind::ServiceUnavailable,
-        domain: DomainKind::Wallet,
+        domain: DomainKind::Storage,
         source,
         message: msg,
     }
@@ -88,7 +91,13 @@ pub(crate) async fn fetch_text(url: &str) -> Result<String, ServiceError> {
             )
         })?;
 
-        let _ = std::fs::remove_file(&tmp_path);
+        if let Err(e) = std::fs::remove_file(&tmp_path) {
+            tracing::warn!(
+                path = %tmp_path.display(),
+                error = %e,
+                "temp PDF cleanup failed"
+            );
+        }
 
         let word_count = text.split_whitespace().count();
         if word_count < 10 {

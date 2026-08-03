@@ -69,7 +69,7 @@ impl TrainingServer {
                         gate = "G-P1",
                         severity = "warn",
                         host = ?self.host_id,
-                        "Host does not configure HuggingFace artifact persistence — results may be lost"
+                        "Host does not configure HuggingFace artifact persistence — completion cannot be detected: training_status will report 'Running' indefinitely (Runpod is the only host with completion detection, via HuggingFace artifacts)"
                     );
                     None
                 }
@@ -278,6 +278,18 @@ impl TrainingServer {
                 let training = HuggingFaceTraining::from_env().map_err(|error| McpToolError::failed_precondition(format!("Configure Hugging Face training artifacts: {error}")))?;
                 let dataset = training.publish_dataset(&job.id, bytes, &dataset_sha256).await.map_err(map_training_artifact_error)?;
                 job.artifacts = Some(training.prepare_training_artifacts(&job.id, dataset).await.map_err(map_training_artifact_error)?);
+            } else {
+                // Completion detection is not yet wired for DeepInfra/Nebius:
+                // `check_completion_manifest` short-circuits when `job.artifacts`
+                // is `None`, so `training_status` stays `Running` indefinitely.
+                // Runpod is the only host that publishes HuggingFace artifacts.
+                tracing::warn!(
+                    target: "hkask.training.completion",
+                    host = ?self.host_id,
+                    "Training completion detection is not yet wired for this host. \
+                     training_status will report 'Running' indefinitely. \
+                     Runpod is the only host with completion detection via HuggingFace artifacts."
+                );
             }
 
             if let Some(ref job_store) = self.job_store {

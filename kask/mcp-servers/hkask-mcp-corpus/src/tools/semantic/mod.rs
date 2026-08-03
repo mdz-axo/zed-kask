@@ -26,11 +26,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::io::Write;
 
-// Re-export the shared content guard (now in `crate::guard`) for backward
-// compatibility with callers that historically imported it from
-// `crate::tools::semantic`. This also brings `GUARD` / `INPUT_GUARD_ENABLED`
-// into scope for the tool methods below.
-pub(crate) use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
+// Bring the shared content guard into scope for the tool methods below.
+// Consumers import `GUARD` / `INPUT_GUARD_ENABLED` directly from `crate::guard`,
+// so no re-export is needed here.
+use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
 
 // Re-export helpers used by other tool modules (corpus.rs imports these) and
 // make them available within this module via the module path.

@@ -13,8 +13,15 @@ pub fn sanitize_health_error(error: &str) -> String {
     /// Lazily compiled API key regex pattern for sanitization.
     /// Avoids re-compiling the regex on every call to `sanitize_health_error`.
     static API_KEY_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?:sk-|pk-|fc-|ts-|br-|xai-|ghp_)[a-zA-Z0-9]{8,}")
-            .expect("static API key regex pattern")
+        regex::Regex::new(r"(?:sk-|pk-|fc-|ts-|br-|xai-|ghp_)[a-zA-Z0-9]{8,}").unwrap_or_else(|e| {
+            tracing::error!(
+                error = %e,
+                "API key regex failed to compile; credential redaction degraded"
+            );
+            // Over-redact rather than under-redact: a broken pattern must
+            // not leak credentials silently.
+            regex::Regex::new(r".*").expect("fallback regex .* always compiles")
+        })
     });
 
     let sanitized = API_KEY_REGEX.replace_all(error, "[REDACTED]").to_string();

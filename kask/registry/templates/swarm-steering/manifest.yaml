@@ -1,0 +1,61 @@
+# Template crate manifest for swarm-steering skill
+# hKask v0.31.0
+#
+# Ontological anchors:
+#   - PKO (Procedural Knowledge Ontology, Carriero et al. 2025): the
+#     swarm-intelligence plan is a Procedure (specification); swarm-steering
+#     produces the StepExecution sequence (the swarm_delegate_local
+#     invocations) + the StepExecution result collection (delegate_results).
+#     PKO's specification/execution separation is the core anchor.
+#   - Cybernetic actuator (Conant-Ashby Good Regulator theorem, Conant & Ashby
+#     1970): the steering skill is the actuator that closes the feedback loop
+#     the swarm-intelligence planner opens. The Good Regulator: the steering
+#     directive must model the swarm it steers (the roster + the plan + the
+#     credit budget).
+#
+# PDCA shape (emergent from the anchors, not a generic template):
+#   Receive (the plan + swarm state + credit budget) -> Direct (produce the
+#   execution directive: the ordered swarm_delegate_local calls) -> Collect
+#   (the delegate_results collection shape from LocalDelegateResult) ->
+#   Feedback (the re-invoke-with-delegate_results instruction).
+#
+# This is the focused local-swarm steering skill for the Kask Curator (or a
+# human in the loop). It codifies the execute-and-feed-back loop: take a
+# swarm-intelligence plan (emitted_calls), produce the swarm_delegate_local
+# execution sequence + the delegate_results collection shape + the re-invoke
+# instruction. The Curator/human executes the directive (calls
+# swarm_delegate_local per entry, collects LocalDelegateResults, re-invokes
+# swarm-intelligence with delegate_results). Pairs with swarm-intelligence
+# (the planner) — this skill is the actuator's instructions (Cybernetic Swarm
+# Plan steering_mode).
+
+crate:
+  name: swarm-steering
+  version: "0.31.0"
+  description: >
+    Focused local-swarm steering skill for the Kask Curator or a human in the
+    loop. Codifies the execute-and-feed-back loop: take a swarm-intelligence
+    plan (emitted_calls), produce the swarm_delegate_local execution sequence
+    + the delegate_results collection shape (LocalDelegateResult array) + the
+    re-invoke instruction. The Curator/human executes the directive and feeds
+    delegate_results back to swarm-intelligence, closing the C5/C6 feedback
+    loop. Anchored to PKO (procedure execution) and the Conant-Ashby Good
+    Regulator (the actuator must model the swarm it steers). Pairs with
+    swarm-intelligence (the planner). Emits reg.skill.swarm-steering.* spans.
+
+templates:
+  - id: swarm-steering/swarm-steering-direct
+    name: "Produce the local-swarm steering directive"
+    path: swarm-steering-direct.j2
+    type: KnowAct
+    description: >
+      Take the swarm-intelligence plan (emitted_calls) + the swarm state +
+      the credit budget, produce a structured steering directive: pre-flight
+      checks (ledger funded via swarm_balance_local, agents exist via
+      swarm_list_local_agents), the ordered swarm_delegate_local execution
+      sequence (agent_name, task, credits_authorized per delegate call), the
+      delegate_results collection shape (LocalDelegateResult array), and the
+      re-invoke instruction (re-invoke swarm-intelligence with delegate_results
+      + steering_mode: steering). The Curator/human executes the directive.
+    generates_spans:
+      - reg.skill.swarm-steering.direct

@@ -12,16 +12,10 @@ pub struct ArxivProvider {
 }
 
 impl ArxivProvider {
-    pub fn new() -> Self {
-        Self {
-            client: super::provider_http_client(),
-        }
-    }
-}
-
-impl Default for ArxivProvider {
-    fn default() -> Self {
-        Self::new()
+    pub fn new() -> Result<Self, WebError> {
+        Ok(Self {
+            client: super::provider_http_client()?,
+        })
     }
 }
 

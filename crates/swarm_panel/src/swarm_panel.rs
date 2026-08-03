@@ -3354,6 +3354,14 @@ mod tests {
     // Pins the tool name strings the panel calls. These are hardcoded — a
     // rename in `hkask-mcp-swarm` requires updating this list manually; the
     // test does not auto-detect renames.
+    //
+    // TODO: `hkask-mcp-swarm` does not export a canonical tool-name list
+    // (no `TOOL_NAMES` const or equivalent). When the rmcp `#[tool_router]`
+    // macro exposes a way to enumerate tool names at compile time, wire this
+    // test to that canonical list so a rename in the server is caught here
+    // rather than degrading to "tool not found" at runtime. Until then,
+    // this list must be kept in sync manually with the `#[tool]` fn names in
+    // `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`.
     #[test]
     fn panel_tool_names_match_server() {
         // These strings must match the #[tool] fn names in
@@ -3362,7 +3370,7 @@ mod tests {
         // must be reflected here so the panel's `invoke_tool` call sites
         // don't silently degrade to "tool not found".
         assert_eq!(SWARM_SERVER, "swarm");
-        for tool in [
+        let expected_tools = [
             "swarm_list_agents",
             "swarm_get_swarm",
             "swarm_get_agent",
@@ -3396,9 +3404,35 @@ mod tests {
             "swarm_fire",
             "swarm_delete_agent",
             "swarm_delete_swarm",
-        ] {
-            assert!(tool.starts_with("swarm_"));
+        ];
+
+        // Pin the count so adding or removing a server tool without updating
+        // this list is caught — a count mismatch is the loudest signal short
+        // of importing the server's canonical list.
+        assert_eq!(
+            expected_tools.len(),
+            28,
+            "tool count changed — update this list to match hkask-mcp-swarm #[tool] fns"
+        );
+
+        for tool in expected_tools {
+            assert!(
+                tool.starts_with("swarm_") && tool.len() > "swarm_".len(),
+                "tool name `{tool}` must start with `swarm_` and have a non-empty suffix"
+            );
         }
+
+        // No duplicates — a copy-paste error would silently mask a missing
+        // tool by doubling another.
+        let mut sorted = expected_tools.to_vec();
+        sorted.sort();
+        let before = sorted.len();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            before,
+            "duplicate tool names in expected_tools list"
+        );
     }
 
     // The algedonic wallet signal must survive the content envelope and never

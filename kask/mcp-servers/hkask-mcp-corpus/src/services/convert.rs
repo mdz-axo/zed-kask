@@ -34,10 +34,10 @@ use crate::ocr::{
 };
 use crate::path_safety::{contain_for_read, contain_for_write};
 use crate::text::{chunk_text, strip_gutenberg_headers};
-use crate::tools::document::{default_ocr_max_tokens, sanitize_links};
 use crate::{
     ExtractOutcome, IndexedPassage, OCR_FALLBACK_WORD_THRESHOLD, chunk_word_bounds,
-    default_embedding_model, extract_text, filter_outcome_to_pages, ocr_concurrency,
+    default_embedding_model, default_ocr_max_tokens, extract_text, filter_outcome_to_pages,
+    ocr_concurrency, sanitize_links,
 };
 
 /// Borrowed OCR + index state drawn from a `CorpusServer`.

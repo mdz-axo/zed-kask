@@ -4,6 +4,12 @@
 //! `UserFunctionalExpectation (expect:) → GoalPrinciple [P{N}] → ConstrainingPrinciple [P{N}] → REQ: → Test`
 //!
 //! Tested seam: `strip_html`, `ResponseCache`, and request type deserialization (no external API calls).
+//!
+//! GAP (N-R7): No test fixtures for provider response parsing exist yet. The providers in
+//! `research::providers` parse raw HTTP responses from Brave, Tavily, SerpAPI, Exa, Firecrawl,
+//! and Browserbase into `CompoundSearchResult` / `RankedResult`. Those parse paths are
+//! currently untested here — adding fixture-based parsing tests (recorded response JSON →
+//! expected typed output) is a follow-up effort.
 
 use hkask_mcp_research::ResearchServer;
 use hkask_mcp_research::research::{RateLimiter, ResponseCache, build_provider_pool};

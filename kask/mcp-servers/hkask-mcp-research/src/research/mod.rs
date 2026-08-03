@@ -1,11 +1,8 @@
-//! hkask-services-research — Web search, extraction, browsing, and RSS feed management.
+//! hkask-mcp-research — Web search, extraction, browsing, and RSS feed management.
 //!
-//! Service crate containing the business logic for the research MCP server:
+//! MCP server crate containing the research tool surface and business logic:
 //! provider pool with RRF fusion, content extraction, headless browsing,
 //! RSS feed management, response caching, and rate limiting.
-//!
-//! The MCP server crate (`hkask-mcp-research`) is a thin tool surface that
-//! delegates to this service crate.
 
 pub mod cache;
 pub mod db;
@@ -67,36 +64,37 @@ pub fn build_provider_pool(
     let mut browse_providers: Vec<Box<dyn WebBrowseProvider>> = Vec::new();
 
     // Free providers — no API key required
-    search_providers.push(Box::new(SemanticScholarProvider::new()));
-    search_providers.push(Box::new(ArxivProvider::new()));
+    search_providers.push(Box::new(SemanticScholarProvider::new()?));
+    search_providers.push(Box::new(ArxivProvider::new()?));
 
     let exa_provider = exa_api_key
         .as_ref()
-        .map(|key| ExaProvider::new(key.clone()));
+        .map(|key| ExaProvider::new(key.clone()))
+        .transpose()?;
 
     if let Some(ref key) = brave_api_key {
-        search_providers.push(Box::new(BraveProvider::new(key.clone())));
+        search_providers.push(Box::new(BraveProvider::new(key.clone())?));
     }
     if let Some(ref key) = firecrawl_api_key {
-        let fc = FirecrawlProvider::new(Some(key.clone()));
+        let fc = FirecrawlProvider::new(Some(key.clone()))?;
         search_providers.push(Box::new(fc.clone()));
         extract_providers.push(Box::new(fc.clone()));
         browse_providers.push(Box::new(fc));
     }
     if let Some(ref key) = tavily_api_key {
-        search_providers.push(Box::new(TavilyProvider::new(key.clone())));
+        search_providers.push(Box::new(TavilyProvider::new(key.clone())?));
     }
     if let Some(ref key) = serpapi_api_key {
-        search_providers.push(Box::new(SerapiProvider::new(key.clone())));
+        search_providers.push(Box::new(SerapiProvider::new(key.clone())?));
     }
     if let Some(ref exa) = exa_provider {
         search_providers.push(Box::new(exa.clone()));
     }
     if let Some(ref key) = browserbase_api_key {
-        browse_providers.push(Box::new(BrowserbaseProvider::new(key.clone())));
+        browse_providers.push(Box::new(BrowserbaseProvider::new(key.clone())?));
     }
 
-    extract_providers.push(Box::new(RawFetchProvider::new()));
+    extract_providers.push(Box::new(RawFetchProvider::new()?));
 
     Ok(ProviderPool::new(
         search_providers,

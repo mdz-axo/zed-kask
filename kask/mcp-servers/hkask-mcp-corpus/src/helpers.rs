@@ -73,6 +73,41 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     (dot / (norm_a * norm_b)).clamp(0.0, 1.0)
 }
 
+/// Default max output tokens for OCR inference calls.
+pub(crate) fn default_ocr_max_tokens() -> u32 {
+    8192
+}
+
+/// Strip URLs, file links, and hyperlinks from text before chunking.
+///
+/// Removes HTML anchor tags (keeps inner text), Markdown URL links (keeps
+/// link text), bare URLs, and protocol URIs (http, https, ftp, file, ssh,
+/// mailto). Collapses leftover double spaces. Preserves newlines and
+/// non-link text. Pure string helper, kept here so the `tools` layer does not
+/// have to be imported by the `services` layer.
+pub(crate) fn sanitize_links(text: &str) -> String {
+    use regex::Regex;
+
+    let re_anchor = Regex::new(r#"(?is)<a\s[^>]*>(.*?)</a>"#).expect("anchor regex");
+    let re_md = Regex::new(r"\[([^\]]*)\]\((?:https?://|ftp://|file://|www\.|mailto:)[^)]*\)")
+        .expect("md-link regex");
+    let re_url = Regex::new(
+        r#"(?:https?|ftp|file|ssh)://[^\s<>"'\)\]]+|www\.[^\s<>"'\)\]]+|mailto:[^\s<>"'\)\]]+"#,
+    )
+    .expect("url regex");
+    let re_spaces = Regex::new(r"  +").expect("spaces regex");
+
+    let text = re_anchor.replace_all(text, "$1");
+    let text = re_md.replace_all(&text, "$1");
+    let text = re_url.replace_all(&text, "");
+    let text = re_spaces.replace_all(&text, " ");
+    // Trim trailing spaces on each line (left by URL removal at line ends)
+    text.lines()
+        .map(|l| l.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Cosine distance between two vectors (1 - cosine similarity, f64 precision).
 /// Returns 0.0 for identical, 1.0 for orthogonal, 2.0 for opposite or degenerate.
 #[must_use]
