@@ -101,9 +101,25 @@ check_regressions() {
           echo "::warning::Regression $rr_id (cargo-test): could not extract crate name from include '$rr_include' — skipping"
           continue
         fi
-        if ! cargo test -p "$crate_name" --lib "$rr_pattern" 2>/dev/null; then
+        # Run the named test, capturing output. `cargo test` exits 0 even when
+        # zero tests match a filter — so a deleted/renamed enforcement test
+        # would silently pass the gate (the `.rules` "Advertised invariants need
+        # enforcement points" trap). Harden: fail on nonzero exit OR zero tests
+        # ran, and surface output instead of hiding it with `2>/dev/null`.
+        local test_output test_rc
+        set +e
+        test_output="$(cargo test -p "$crate_name" --lib "$rr_pattern" 2>&1)"
+        test_rc=$?
+        set -e
+        if [ "$test_rc" -ne 0 ]; then
           echo "::error::Regression $rr_id violated: $rr_title"
-          echo "  cargo-test: '$rr_pattern' failed in crate '$crate_name'"
+          echo "  cargo-test: '$rr_pattern' failed in crate '$crate_name' (exit $test_rc)"
+          printf '%s\n' "$test_output" | grep -E 'error\[|^error:|test result:|running [0-9]+ tests' | sed 's/^/    /' || true
+          cargo_test_failures=$((cargo_test_failures + 1))
+        elif ! printf '%s\n' "$test_output" | grep -qE 'running [1-9][0-9]* tests'; then
+          echo "::error::Regression $rr_id orphaned: $rr_title"
+          echo "  cargo-test: '$rr_pattern' matched 0 tests in crate '$crate_name' — enforcement test is missing (status: enforced but no live test)."
+          printf '%s\n' "$test_output" | grep -E 'running [0-9]+ tests' | sed 's/^/    /' || true
           cargo_test_failures=$((cargo_test_failures + 1))
         fi
       elif [ "$rr_status" = "pending" ]; then

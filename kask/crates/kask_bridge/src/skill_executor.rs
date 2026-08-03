@@ -273,20 +273,21 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             match &self.profile_resolver {
                 Some(resolver) => {
                     if resolver.is_tool_enabled("terminal") {
-                        let step = manifest
-                            .steps
-                            .iter()
-                            .find(|s| s.profile.is_some())
-                            .expect("checked above");
-                        let profile_name = step.profile.as_ref().expect("checked above");
-                        return Err(format!(
-                            "Step {} declares profile '{}' but the `terminal` tool is enabled. \
-                             This violates proposer/evaluator separation — a proposer with terminal \
-                             can evaluate its own tests (self-confirming loop anti-pattern). \
-                             Remediation: remove `terminal` from the '{}' profile in settings, \
-                             or bind this step to a profile without `terminal` (e.g. `ask`).",
-                            step.ordinal, profile_name, profile_name
-                        ));
+                        // `needs_profile_check` above guarantees a step with a
+                        // `profile` exists, so these `if let`s always match —
+                        // but the non-panicking form avoids `expect` (`.rules`).
+                        if let Some(step) = manifest.steps.iter().find(|s| s.profile.is_some())
+                            && let Some(profile_name) = step.profile.as_ref()
+                        {
+                            return Err(format!(
+                                "Step {} declares profile '{}' but the `terminal` tool is enabled. \
+                                 This violates proposer/evaluator separation — a proposer with terminal \
+                                 can evaluate its own tests (self-confirming loop anti-pattern). \
+                                 Remediation: remove `terminal` from the '{}' profile in settings, \
+                                 or bind this step to a profile without `terminal` (e.g. `ask`).",
+                                step.ordinal, profile_name, profile_name
+                            ));
+                        }
                     }
                 }
                 None => {

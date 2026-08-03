@@ -1042,6 +1042,26 @@ impl ManifestExecutor {
                         );
                         step_idx = pos;
                         continue;
+                    } else if context.get(&result_key).is_none() {
+                        // The step declared a `branching` map but its action did
+                        // not emit a `step_{ordinal}_result` key (e.g. `populate`
+                        // stores `step_{ordinal}_populated`). The branching map can
+                        // never route — warn so the misconfiguration is not silent
+                        // (the `.rules` "fails open with no diagnostic" trap).
+                        // Actions that re-enter early (`loop`/`abort`) never reach
+                        // this block; result-emitting actions (select/execute/
+                        // compute/render/flowdef) write `_result` and are unaffected.
+                        warn!(
+                            target: "reg.skill.cascade.branching_misconfigured",
+                            step = step.ordinal,
+                            action = %step.action,
+                            "Step {} (action '{}') declares a `branching` map but the action did \
+                             not emit a `step_{{ordinal}}_result` key — the branching map will never \
+                             route. Remediation: remove `branching` from this step, or use an action \
+                             that emits a result (select/execute/compute/render/flowdef).",
+                            step.ordinal,
+                            step.action
+                        );
                     }
                 }
 

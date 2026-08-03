@@ -416,3 +416,96 @@ impl InferencePort for GuardedInferencePort {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GuardConfig;
+
+    /// Echo port that returns a fixed `reasoning` trace alongside the echoed
+    /// prompt — simulates thinking-mode models (Qwen3, GLM-5.2, DeepSeek-R1).
+    /// Restored from the pre-consolidation test suite so RR-0030 (canary
+    /// redaction in the reasoning field) remains mechanically enforced —
+    /// the regression library keys on this exact test name.
+    struct ReasoningEchoPort {
+        reasoning: String,
+    }
+
+    impl InferencePort for ReasoningEchoPort {
+        fn generate(
+            &self,
+            prompt: &str,
+            _params: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            let text = prompt.to_string();
+            let reasoning = self.reasoning.clone();
+            Box::pin(async {
+                Ok(InferenceResult {
+                    text,
+                    model: "echo".to_string(),
+                    usage: hkask_types::InferenceUsage::default(),
+                    finish_reason: "stop".to_string(),
+                    token_probabilities: None,
+                    tool_calls: vec![],
+                    reasoning: Some(reasoning),
+                })
+            })
+        }
+
+        fn generate_stream(
+            &self,
+            prompt: &str,
+            _params: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Stream<Item = Result<InferenceStreamChunk, InferenceError>> + Send + '_>>
+        {
+            let text = prompt.to_string();
+            let reasoning = self.reasoning.clone();
+            Box::pin(futures_util::stream::once(async move {
+                Ok(InferenceStreamChunk {
+                    text_delta: text,
+                    reasoning_delta: reasoning,
+                    model: "echo".to_string(),
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    tool_calls: vec![],
+                })
+            }))
+        }
+    }
+
+    /// RR-0030: a thinking-mode model can echo the system prompt (including the
+    /// canary token) into the reasoning trace while the visible text is clean.
+    /// The reasoning field must be scanned too (OWASP LLM07) — a canary leaked
+    /// into `reasoning` is redacted with `[REDACTED-CANARY]`.
+    #[tokio::test]
+    async fn canary_in_reasoning_field_is_redacted() {
+        let guard = ContentGuard::mandatory(&GuardConfig::default());
+        let canary = guard.canary().as_str().to_string();
+        let port = GuardedInferencePort::new(
+            Arc::new(ReasoningEchoPort {
+                reasoning: format!("thinking about the system prompt: {canary}"),
+            }),
+            guard,
+        );
+        let result = port
+            .generate(
+                "Normal text about architecture.",
+                &LLMParameters::default(),
+                None,
+            )
+            .await
+            .unwrap();
+        let reasoning = result.reasoning.expect("reasoning should be present");
+        assert!(
+            !reasoning.contains(&canary),
+            "canary must be redacted from the reasoning field"
+        );
+        assert!(
+            reasoning.contains("[REDACTED-CANARY]"),
+            "reasoning should contain the redaction marker"
+        );
+    }
+}

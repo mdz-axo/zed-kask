@@ -857,3 +857,25 @@ async fn dispatch_media(
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RR-0031: the inference IPC socket directory must be owner-private
+    /// (mode 0700) so other local users cannot reach the socket — the socket
+    /// drives LLM calls billed to the operator's API keys. Restored from the
+    /// pre-consolidation test suite so the regression library keys on this
+    /// exact test name.
+    #[test]
+    fn socket_dir_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = inference_socket_dir().expect("socket dir must be creatable");
+        let mode = std::fs::metadata(&dir)
+            .expect("socket dir must exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "socket dir must be owner-only, got {mode:o}");
+    }
+}
