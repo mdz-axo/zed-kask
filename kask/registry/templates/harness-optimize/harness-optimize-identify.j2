@@ -37,7 +37,11 @@ against revision N-1 (pairwise refinement).
 Latest revision (N): {{ trace_dir_n }}
 Previous revision (N-1): {{ trace_dir_n_minus_1 }}
 
-## Instructions
+: Instructions
+
+The trace filesystem schema is defined at
+`kask/docs/architecture/test-harness-trace-schema.md` — refer to it for the
+full list of artifact types, their paths, and JSON shapes.
 
 Read the following trace files using the `read_file`, `list_directory`, and
 `grep` tools (you have NO `terminal` tool — you cannot run tests):

@@ -61,7 +61,12 @@ The caller (harness-optimize) has the `terminal` tool disabled and cannot run te
 {% else %}
 ## Execution Mode: standalone
 
-Run the tests and analyze the results. After analysis, write the test result and any shrunk counterexample to the trace filesystem via `hkask_test_harness::write_trace` so the run is visible to the `harness-optimize` skill.
+: Run the tests and analyze the results. After analysis, write the test result
+and any shrunk counterexample to the trace filesystem as a
+`{kind}-{name}.json` file (e.g. `proptest-prop_round_trip.json`) in the current
+run's trace directory. The trace filesystem schema is defined at
+`kask/docs/architecture/test-harness-trace-schema.md` — write JSON matching
+the per-probe trace record shape defined there. Use the `write_file` tool.
 {% endif %}
 
 ## Instructions

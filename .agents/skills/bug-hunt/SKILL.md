@@ -76,7 +76,7 @@ Bug hunting: explores a target crate for threats to user-defined quality. Applie
 4. Emit `lessons_learned` — concrete, actionable lessons the next expedition's charter should consume (e.g., "async lock held across .await at 3 sites; next charter should target all .await points in lock scope"). Not generic platitudes.
 5. Emit `pattern_signatures` — derived from actual findings (signature, beizer_category, derived_from, notes on how to apply in the next probe). Not fabricated.
 6. Note whether this is a first pass or iteration N+1 (consumed `prior_expedition`).
-7. Write the expedition report to the trace filesystem (`kask/traces/<run-id>/bug-hunt-report.json`) via `hkask_test_harness::write_trace` so the findings are visible to the `harness-optimize` skill (the suite-level proposer). This closes the loop: bug-hunt finds bugs → traces → harness-optimize proposes tests → CI evaluates → mutation score improves.
+7. Write the expedition report to the trace filesystem as `bug-hunt-report.json` in the run trace dir per the schema at `kask/docs/architecture/test-harness-trace-schema.md` so the findings are visible to the `harness-optimize` skill (the suite-level proposer). This closes the loop: bug-hunt finds bugs → traces → harness-optimize proposes tests → CI evaluates → mutation score improves.
 8. Respond with the complete expedition report as JSON.
 
 ### bug-hunt-expedition (legacy)

@@ -31,7 +31,9 @@ proposed tests.
 Alternatively, run as a swarm delegate (`hkask-mcp-swarm` `agent_executor.rs`),
 which has no built-in tools at all — only MCP tools from `declared_tools`.
 
-## Instructions
+: Instructions
+
+The trace filesystem schema is defined at `kask/docs/architecture/test-harness-trace-schema.md` — refer to it for the full list of artifact types, paths, and JSON shapes.
 
 1. **Identify** — Read the trace filesystem for revision N and N−1:
    - `kask/traces/<run-id-N>/metrics.json` — mutation_score, coverage_pct, pass_rate
