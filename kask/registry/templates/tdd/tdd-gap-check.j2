@@ -39,16 +39,22 @@ You are a TDD functional gap analysis agent. Compare specification requirements 
 **{{ crate_scope }}**
 {% endif %}
 
-## Specification Requirements (from FUNCTIONAL_SPECIFICATION.md)
+{% if spec_requirements and spec_requirements|length > 0 %}
+## Specification Requirements (from MDS.md)
 
 These are the structured Spec objects from the specification system that this TDD session covers:
 
 ```json
 {{ spec_requirements | tojson }}
 ```
+{% else %}
+## Specification Requirements
+
+No structured specification_requirements were provided (the SpecStore runtime is not yet implemented). Derive the functional requirements manually from `docs/architecture/core/MDS.md` — identify the relevant domain section, list its capabilities/grants, and match tested behaviors to them via their `// REQ:` tags and contract annotations.
+{% endif %}
 
 {% if collection_coherence %}
-## Collection Coherence (from FUNCTIONAL_SPECIFICATION.md)
+## Collection Coherence (from MDS.md)
 
 ```json
 {{ collection_coherence | tojson }}
@@ -91,11 +97,11 @@ These are the behaviors that have tracer bullets (tests) written for them:
 
 ## Analysis Rules
 
-1. **Match by functional requirement**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a functional requirement from FUNCTIONAL_SPECIFICATION.md. If a behavior has no contract annotation, flag it as unanchored.
+1. **Match by functional requirement**: Each tested behavior should carry a contract annotation (`expect:` + `[P{N}]`) linking it to a functional requirement from MDS.md. If a behavior has no contract annotation, flag it as unanchored.
 2. **Gap = no tracer bullet for a requirement**: If a functional requirement has no matching tested behavior (no contract annotation matching it), it is a coverage gap.
 3. **Unanchored = no contract annotation on a behavior**: If a tested behavior has no contract annotation linking it to a functional requirement, it tests something not in the specification — flag it for review.
 4. **Priority is derived from MDS category**: P0 = Trust, P1 = Domain, Composition, P2 = Lifecycle, Curation.
-5. **Incomplete specs**: If `is_complete()` returns false for a spec, its unsatisfied `Criterion` items are additional coverage gaps.
+5. **Incomplete specs**: If `is_complete()` returns false for a spec, its unsatisfied `Criterion` items are additional coverage gaps. Note: `is_complete()` is not yet available (the SpecStore runtime is not yet implemented) — fall back to manual completeness checking against MDS.md §3 (Completeness Predicate), verifying each `criterion.satisfied` flag by inspection.
 6. **Deferrals go to OPEN_QUESTIONS.md**: Every deferred gap must have a documented rationale.
 7. **Probabilistic contracts**: If a spec requirement governs non-deterministic behavior (LLM agent output, inference validation, improv compliance), verify that the tracer bullet includes a `prob:` field in the contract per Testing Discipline §7.6. A contract without `prob:` for a non-deterministic function is a coverage gap — the test framework cannot distinguish random noise from actual contract violations.
 8. **Bug-hunt spec blind spots**: If `bug_hunt_findings` is provided, each finding with `verdict: BUG` (Tier 1) that is NOT covered by a tested behavior is a spec blind spot — a new gap. The spec missed a behavior. The finding's `summary` becomes the gap `requirement`; priority follows the finding's `severity` (CRITICAL→P0, HIGH→P1, MEDIUM→P2). A finding covered by an existing tracer bullet means the test is weak — recommend strengthening via proptest (step 3).
@@ -103,7 +109,7 @@ These are the behaviors that have tracer bullets (tests) written for them:
 
 ### Contract Quality Analysis
 
-Beyond coverage, verify that each contract's layers (per Contract Architecture) are correct. Use the RDF triple graph from `docs/architecture/contracts/contract-traceability.ttl` as the verification model — every gap is expressible as a missing or broken triple in the contract graph.
+Beyond coverage, verify that each contract's layers (per Contract Architecture) are correct. Contract traceability graph (`docs/architecture/contracts/contract-traceability.ttl`) is not yet implemented — verify contract completeness by checking that each `expect:` field has a matching `[P{N}]` goal principle and `pre:`/`post:` specification via grep, not via the RDF graph.
 
 8. **`expect:` quality (scored 0-3)**:
    - **0 (empty/missing)**: No `expect:` field — triple `Contract → hasUserExpectation → EMPTY` is broken.
@@ -223,8 +229,8 @@ Respond with a JSON object:
 - P1 gaps SHOULD recommend `tracer-bullet`; deferrals require explicit rationale.
 - P2+ gaps MAY recommend `defer-to-OPEN_QUESTIONS`.
 - Unanchored behaviors (no contract annotation) must be flagged in the analysis.
-- Specs where `is_complete()` is false have unsatisfied `Criterion` items that should appear as gaps.
-- Check overall collection coherence and missing MDS categories against FUNCTIONAL_SPECIFICATION.md.
+- Specs where `is_complete()` is false have unsatisfied `Criterion` items that should appear as gaps. Note: `is_complete()` is not yet available (SpecStore not implemented) — check completeness manually against MDS.md §3.
+- Check overall collection coherence and missing MDS categories against MDS.md.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.
 - Handle missing variables gracefully (leave as-is or use default if specified).

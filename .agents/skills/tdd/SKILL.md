@@ -22,9 +22,9 @@ Test-driven development with red-green-refactor loop, MDS spec-anchored function
 
 ### tdd-plan
 
-1. Read `docs/architecture/core/FUNCTIONAL_SPECIFICATION.md` for the relevant domain before planning any test.
+1. Read `docs/architecture/core/MDS.md` for the relevant domain before planning any test.
 2. Identify the functional requirement (FR#) that each behavior addresses.
-3. Run the contract-generator to produce the `expect:` + `[P{N}]` contract annotation for each requirement.
+3. Author the `expect:` + `[P{N}]` contract annotation manually for each requirement (the contract-generator is not yet implemented; follow the contract structure in MDS.md §7).
 4. Review each contract — the `expect:` field is the ground truth for what the test verifies.
 5. Only proceed to write tests after the contract passes quality scoring (≥2).
 6. For each requirement in scope, identify the `user_expectation` (verbal, user's voice), the `goal_principle` (exactly one of P1–P12), and `constraining_principles` (zero to many).

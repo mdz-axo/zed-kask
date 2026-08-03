@@ -64,6 +64,35 @@ while true; do
     mkdir -p "$TRACE_DIR"
     printf '%s\n' "${RUN_HISTORY[@]}" > "$HISTORY_FILE"
 
+    # F5: qa-triage failure-splitting step.
+    # Parse the nextest JSON for failed tests and split each failure into
+    # failures/<test-name>/output.txt so the classifier manifest step and the
+    # stability gate's eir_classifier loop can find them. This is the SHELL part
+    # only — the LLM classification (classifier.json) is a manifest step.
+    LATEST_TRACE="${TRACE_DIR}/${LATEST_RUN}"
+    NEXTEST_JSON="${LATEST_TRACE}/nextest-output.json"
+    if [[ -f "$NEXTEST_JSON" ]] && command -v jq &>/dev/null; then
+        while IFS=$'\t' read -r test_name test_output; do
+            [[ -n "$test_name" ]] || continue
+            # Sanitize test name for use as a directory name (replace path separators).
+            safe_name=$(echo "$test_name" | tr '/\\:' '___')
+            fail_dir="${LATEST_TRACE}/failures/${safe_name}"
+            mkdir -p "$fail_dir"
+            printf '%s\n' "$test_output" > "${fail_dir}/output.txt"
+        done < <(jq -r '
+            select(.type == "test" and .event == "finished") |
+            select(.status == "failed" or (.status | type == "object" and has("Failed"))) |
+            .name as $name |
+            (
+                if (.status | type == "object") and (.status | has("Failed"))
+                then (.status.Failed.stdout // "") + "\n" + (.status.Failed.stderr // "")
+                else (.stdout // "") + "\n" + (.stderr // "")
+                end
+            ) as $output |
+            $name + "\t" + $output
+        ' "$NEXTEST_JSON" 2>/dev/null || true)
+    fi
+
     # Step 2: Run stability gate (requires >=2 run-ids; bootstrap on first run)
     echo "[step 2] Running stability gate..."
     GATE_OUTPUT=""

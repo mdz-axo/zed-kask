@@ -136,6 +136,19 @@ fi
 coverage_pct=$(read_metric "$LATEST_TRACE" "coverage_pct")
 prev_coverage_pct=$(read_metric "$PREV_TRACE" "coverage_pct")
 
+# F7: cost axis — wall-clock duration normalized against a configurable ceiling.
+# cost_norm = cost_tokens / max_cost_seconds (guard divide-by-zero → cost_norm=0).
+# Only contributes to the Cauchy norm when present in BOTH runs (metric_present gate).
+HKASK_MAX_COST_SECONDS="${HKASK_MAX_COST_SECONDS:-600}"
+cost_tokens=$(read_metric "$LATEST_TRACE" "cost_tokens")
+prev_cost_tokens=$(read_metric "$PREV_TRACE" "cost_tokens")
+cost_norm=0
+prev_cost_norm=0
+if [[ "$HKASK_MAX_COST_SECONDS" -gt 0 ]] 2>/dev/null; then
+    cost_norm=$(echo "scale=4; $cost_tokens / $HKASK_MAX_COST_SECONDS" | bc 2>/dev/null || echo 0)
+    prev_cost_norm=$(echo "scale=4; $prev_cost_tokens / $HKASK_MAX_COST_SECONDS" | bc 2>/dev/null || echo 0)
+fi
+
 # ── ECR/EIR/Acc computation ────────────────────────────────────────────────
 
 delta_mutation=$(echo "scale=4; $mutation_score - $prev_mutation_score" | bc 2>/dev/null || echo 0)
@@ -155,9 +168,24 @@ fi
 
 eir_classifier=0
 latest_failures_dir="${LATEST_TRACE}/failures"
+prev_failures_dir="${PREV_TRACE}/failures"
 if [[ -d "$latest_failures_dir" ]] && command -v jq &>/dev/null; then
+    # F5: build a set of failure-test-names from the prev run's failures/ dir.
+    # Only NEW non-real-bug failures (present in latest but not prev) are counted.
+    # If the prev run has no failures/ dir, count all (first run).
+    declare -A prev_failure_names=()
+    if [[ -d "$prev_failures_dir" ]]; then
+        for prev_fail_path in "$prev_failures_dir"/*/; do
+            [[ -d "$prev_fail_path" ]] || continue
+            prev_failure_names["$(basename "$prev_fail_path")"]=1
+        done
+    fi
     for classifier_file in "$latest_failures_dir"/*/classifier.json; do
         [[ -f "$classifier_file" ]] || continue
+        fail_name=$(basename "$(dirname "$classifier_file")")
+        if [[ -d "$prev_failures_dir" ]] && [[ "${prev_failure_names[$fail_name]:-}" == "1" ]]; then
+            continue
+        fi
         is_real_bug=$(jq -r '.is_real_bug // false' "$classifier_file" 2>/dev/null || echo false)
         if [[ "$is_real_bug" == "false" ]]; then
             eir_classifier=$((eir_classifier + 1))
@@ -183,13 +211,26 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
             || ! metric_present "$run_b" "mutation_score"; then
             continue
         fi
-        ms_a=$(read_metric "$run_a" "mutation_score")
+        :        ms_a=$(read_metric "$run_a" "mutation_score")
         ms_b=$(read_metric "$run_b" "mutation_score")
         cov_a=$(read_metric "$run_a" "coverage_pct")
         cov_b=$(read_metric "$run_b" "coverage_pct")
         d_ms=$(echo "scale=4; $ms_b - $ms_a" | bc 2>/dev/null || echo 0)
         d_cov=$(echo "scale=4; $cov_b - $cov_a" | bc 2>/dev/null || echo 0)
-        norm=$(echo "scale=4; sqrt(1.0 * $d_cov * $d_cov + 2.0 * $d_ms * $d_ms)" | bc 2>/dev/null || echo 1)
+        # F7: cost term — only added when cost_tokens is present in both runs.
+        # d_cost_norm = latest_cost_norm - prev_cost_norm; w_k=0.5.
+        cost_term="0"
+        if metric_present "$run_a" "cost_tokens" && metric_present "$run_b" "cost_tokens"; then
+            ct_a=$(read_metric "$run_a" "cost_tokens")
+            ct_b=$(read_metric "$run_b" "cost_tokens")
+            if [[ "$HKASK_MAX_COST_SECONDS" -gt 0 ]] 2>/dev/null; then
+                cn_a=$(echo "scale=4; $ct_a / $HKASK_MAX_COST_SECONDS" | bc 2>/dev/null || echo 0)
+                cn_b=$(echo "scale=4; $ct_b / $HKASK_MAX_COST_SECONDS" | bc 2>/dev/null || echo 0)
+                d_cost_norm=$(echo "scale=4; $cn_b - $cn_a" | bc 2>/dev/null || echo 0)
+                cost_term=$(echo "scale=4; 0.5 * $d_cost_norm * $d_cost_norm" | bc 2>/dev/null || echo 0)
+            fi
+        fi
+        norm=$(echo "scale=4; sqrt(1.0 * $d_cov * $d_cov + 2.0 * $d_ms * $d_ms + $cost_term)" | bc 2>/dev/null || echo 1)
         if [[ $(echo "$norm < $cauchy_epsilon" | bc 2>/dev/null || echo 0) -eq 1 ]]; then
             cauchy_count=$((cauchy_count + 1))
         fi
@@ -251,3 +292,5 @@ echo "mutation_score: $mutation_score"
 echo "coverage_pct: $coverage_pct"
 echo "delta_coverage: $delta_coverage"
 echo "delta_mutation: $delta_mutation"
+echo "cost_tokens: $cost_tokens"
+echo "cost_norm: $cost_norm"
