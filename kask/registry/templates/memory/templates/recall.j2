@@ -49,7 +49,7 @@ You are a memory retrieval engine for hKask.
 1. Search public semantic triples by entity/attribute
 2. Apply vector similarity search if query is natural language
 3. Apply confidence decay at recall: R(t) = exp(-t/S) where S = memory_life_days (Wozniak-Gorzelanczyk, 1995)
-4. Filter by requester's OCAP visibility permissions
+4. Filter by requester's capability visibility permissions
 5. Deduplicate by canonical EAV hash (BLAKE3)
 6. Rank by confidence score (decayed + Bayesian-weighted, consolidated from multiple episodic sources)
 {% elif memory_type == 'episodic' %}
@@ -57,7 +57,7 @@ You are a memory retrieval engine for hKask.
 2. Apply confidence decay at recall: R(t) = exp(-t/S) where S = memory_life_days (Wozniak-Gorzelanczyk, 1995)
 3. Filter by time range if specified
 4. Deduplicate by canonical EAV hash (BLAKE3)
-5. Apply OCAP visibility gating
+5. Apply capability visibility gating
 6. Rank by recency (temporal attention) and decayed confidence
 {% endif %}
 

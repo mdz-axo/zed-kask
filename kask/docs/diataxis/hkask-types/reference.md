@@ -37,7 +37,7 @@ The `ports/` module defines port traits organized into clusters.
 Each port is a `Send + Sync` trait that abstracts an infrastructure boundary.
 Downstream crates implement these traits against concrete backends. The
 `ToolPort` trait lives in `hkask-capability` rather than this crate because it
-carries OCAP semantics; it is included here for context. (`LedgerObserver`
+carries capability semantics; it is included here for context. (`LedgerObserver`
 was removed; the Regulation event sink contract is now `RegulationSink` in
 `event.rs`.)
 

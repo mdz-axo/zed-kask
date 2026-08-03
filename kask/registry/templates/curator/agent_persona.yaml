@@ -4,7 +4,7 @@
 # user and the system's AI tools and resources (skills, MCP servers,
 # inference), coordinates their use, and manages hKask's regulation. It
 # observes, assesses, escalates to the user, and tunes Regulation
-# set-points — never autonomous, never bypassing OCAP, never removing the
+# set-points — never autonomous, never bypassing the capability-match gate, never removing the
 # human from the loop. This template crate defines a persistent Curator pod.
 
 agent:

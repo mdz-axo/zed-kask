@@ -6,7 +6,7 @@
 #
 # Open questions addressed:
 #   P1/P11 — privacy boundary verification
-#   FUT-004 — OCAP membrane: does memory server gate through GovernedTool?
+#   FUT-004 — capability-match membrane: does memory server gate through GovernedTool?
 #
 # Cybernetic feedback loop:
 #   Sensor → cargo test output for memory_contract

@@ -1,10 +1,10 @@
-# QA OCAP Membrane Penetration Test — v0.31.0
+# QA Capability-Match Membrane Penetration Test — v0.31.0
 #
-# Verifies the OCAP (Object Capability) security membrane by running
+# Verifies the capability-match (Object Capability) security membrane by running
 # the hkask-capability test suite (8 tests) and classifying results.
 #
 # The capability system is the enforcement substrate for P4 (Clear Boundaries).
-# If the OCAP membrane is compromised, unauthorized tool access becomes possible,
+# If the capability-match membrane is compromised, unauthorized tool access becomes possible,
 # violating the Magna Carta contract.
 #
 # Capability invariants (8 tests across 1 test file + 4 #[cfg(test)] modules):
@@ -13,23 +13,23 @@
 #   - Delegation token chain validation
 #   - Capability membrane rejection of unauthorized calls
 #
-# Constraint force: PROHIBITION — OCAP is P4 enforcement substrate.
+# Constraint force: PROHIBITION — capability-match is P4 enforcement substrate.
 # A failing gate here is a security incident.
 #
 # Runner readiness: EXECUTABLE — run_command steps work today;
 #   classify step gracefully degrades without DEEPINFRA_API_KEY.
 
 manifest:
-  id: qa-ocap-membrane-penetration
+  id: qa-capability-membrane-penetration
   category: qa-script
-  name: QA OCAP Membrane Penetration
+  name: QA Capability-Match Membrane Penetration
   version: 0.31.0
   visibility: Private
   description: >
-    Verifies OCAP security membrane integrity through the hkask-capability
+    Verifies capability-match security membrane integrity through the hkask-capability
     test suite (8 tests). Ensures capability tokens gate tool access,
     delegation chains validate correctly, and unauthorized calls are
-    rejected. PROHIBITION-level — OCAP is P4 enforcement substrate.
+    rejected. PROHIBITION-level — capability-match is P4 enforcement substrate.
 
 gas:
   cap: 15000
@@ -54,7 +54,7 @@ steps:
   - ordinal: 2
     action: select
     classifier: qa-triage
-    description: "Security audit: hkask-capability test suite (8 tests, PROHIBITION-level). Verify OCAP membrane: capability token construction and verification, tool authorization gating (allowed vs denied tools), delegation token chain validation, and unauthorized call rejection. The capability system is the P4 enforcement substrate — any failure is a security incident requiring immediate investigation."
+    description: "Security audit: hkask-capability test suite (8 tests, PROHIBITION-level). Verify capability-match membrane: capability token construction and verification, tool authorization gating (allowed vs denied tools), delegation token chain validation, and unauthorized call rejection. The capability system is the P4 enforcement substrate — any failure is a security incident requiring immediate investigation."
     branching:
       high_confidence: 3
       medium_confidence: 3
@@ -63,18 +63,18 @@ steps:
       unparseable: 5
       classifier_unavailable: 5
 
-  # Step 3: PASS — OCAP membrane intact
+  # Step 3: PASS — capability-match membrane intact
   - ordinal: 3
     action: execute
-    command: "echo '[QA:ocap] PASS — OCAP membrane intact (8/8 capability tests). P4 boundaries enforced.'"
-    description: "Report PASS — OCAP membrane intact (8/8 capability tests). P4 boundaries enforced."
+    command: "echo '[QA:ocap] PASS — capability-match membrane intact (8/8 capability tests). P4 boundaries enforced.'"
+    description: "Report PASS — capability-match membrane intact (8/8 capability tests). P4 boundaries enforced."
     terminal: true
 
-  # Step 4: FAIL — OCAP membrane breached
+  # Step 4: FAIL — capability-match membrane breached
   - ordinal: 4
     action: execute
-    command: "echo '[QA:ocap] FAIL — OCAP membrane test failed. P4 security boundary may be compromised. Immediate investigation required.'"
-    description: "Report FAIL — OCAP membrane test failed. P4 security boundary may be compromised."
+    command: "echo '[QA:ocap] FAIL — capability-match membrane test failed. P4 security boundary may be compromised. Immediate investigation required.'"
+    description: "Report FAIL — capability-match membrane test failed. P4 security boundary may be compromised."
     terminal: true
 
   # Step 5: WARN — classifier uncertain
@@ -85,6 +85,6 @@ steps:
     terminal: true
 
 ledger:
-  span_namespace: reg.skill.qa-ocap-membrane-penetration
+  span_namespace: reg.skill.qa-capability-membrane-penetration
 
   emit_spans: true

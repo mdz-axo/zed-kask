@@ -138,7 +138,7 @@ The pipeline emits Regulation spans for monitoring:
 
 **Algedonic Alert:** Triggered if variety deficit >100 (escalates to Curator)
 
-## OCAP Requirements
+## Capability Requirements
 
 The pipeline requires the following capabilities:
 - Template render permissions for all 8 stages

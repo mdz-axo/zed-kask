@@ -87,10 +87,11 @@ impl GraphNode {
 }
 
 /// What to do when a `Compute` node fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FailurePolicy {
     /// Abort the whole workflow on failure. Default (pre-refactor behavior).
+    #[default]
     Abort,
     /// Skip the failed node (no result inserted); the workflow continues.
     /// Dependents that reference the skipped node fail at `$reference`
@@ -100,12 +101,6 @@ pub enum FailurePolicy {
     /// does not compose with Skip in this version — retry-then-skip would
     /// need a richer policy type; deferred).
     Retry { n: u32 },
-}
-
-impl Default for FailurePolicy {
-    fn default() -> Self {
-        Self::Abort
-    }
 }
 
 /// Executes a `Compute` node's provider call. The fal.ai adapter implements
@@ -321,9 +316,7 @@ async fn execute_level(
         }
     }
 
-    let futures: Vec<
-        Pin<Box<dyn Future<Output = Result<(String, Option<Value>), InferenceError>> + Send>>,
-    > = compute_jobs
+    let futures: Vec<_> = compute_jobs
         .into_iter()
         .map(|(id, app, input, mode, policy)| {
             Box::pin(async move {
@@ -760,7 +753,7 @@ mod tests {
             },
         ]);
         g.parallel = true;
-        g.execute(&exec).await.unwrap();
+        let _ = g.execute(&exec).await.unwrap();
         assert_eq!(
             exec.max_inflight.load(Ordering::SeqCst),
             2,
@@ -799,7 +792,7 @@ mod tests {
                 fields: serde_json::json!({"a": "$a.app", "b": "$b.app"}),
             },
         ]);
-        g.execute(&exec).await.unwrap();
+        let _ = g.execute(&exec).await.unwrap();
         assert_eq!(
             exec.max_inflight.load(Ordering::SeqCst),
             1,

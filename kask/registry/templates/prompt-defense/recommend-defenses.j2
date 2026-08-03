@@ -55,7 +55,7 @@ Recommend specific defenses from each applicable layer:
 | **1. Sanitize** | Input sanitization | Strip/neutralize injection patterns | `[PLANNED]` InferenceFilter (model selector) |
 | **2. Isolate** | Instruction isolation | Separate system instructions from user data | `[PLANNED]` InstructionSeparator |
 | **3. Canary** | Canary tokens | Embed detectable markers in system prompts | `[PLANNED]` CanaryManager |
-| **4. Restrict** | Capability restriction | Limit available tools/actions per context | `kask sovereignty verify` (OCAP consent) |
+| **4. Restrict** | Capability restriction | Limit available tools/actions per context | `kask sovereignty verify` (capability consent) |
 | **5. Monitor** | Output monitoring | Detect leakage in model outputs | `reg.emit` (Regulation span observability) |
 | **6. Audit** | Audit logging | Record all inputs/outputs for forensic analysis | `reg.tool.audit` (Regulation span) |
 

@@ -251,6 +251,8 @@ impl ProviderRegistry {
 
 **Goal:** a typed node graph that subsumes fal.ai's 3-type DAG and can represent ComfyUI-style graphs.
 
+**Status: APPLIED and VALIDATED.** `kask/crates/hkask-inference/src/workflow/mod.rs` implements `WorkflowGraph` / `GraphNode` (`Source`/`Compute`/`Sink`) / `FailurePolicy` (`Abort` default, `Skip`, `Retry{n}`) / `NodeExecutor` trait, with deterministic topological sort, per-node failure policy, opt-in `parallel` (same-level computes run concurrently via `join_all`), and JSON persistence. `workflow/fal_adapter.rs` parses fal.ai `Input/Run/Display` JSON into the graph. `FalBackend` now `impl NodeExecutor` (sync/queue → `fal_sync_post`/`fal_queue_post`) and `execute_workflow` delegates to `graph.execute(self)` — byte-identical to the pre-refactor results (same `resolve_references`/`extract_urls` reused, same execution order). 14 new tests pass (`workflow::tests` + `workflow::fal_adapter::tests`); all 75 `hkask-inference` lib tests pass; `./script/clippy -p hkask-inference` and `-p hkask-mcp-media` clean under `--deny warnings`. `fal_workflow.rs` is kept (parsing/validation/reference-resolution reused by the adapter/engine); its inline execution loop in `fal_backend.rs` is replaced.
+
 **Files touched:** `kask/crates/hkask-inference/src/fal_workflow.rs` (generalize).
 
 **New files:**

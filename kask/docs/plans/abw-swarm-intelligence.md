@@ -76,7 +76,7 @@ paths by design".
 cards with cloud/local/synced source badges), Author (new agent), Compose
 (swarm + Xaman Ek consultant), Steer (curator `ConversationView` scoped to the
 swarm server that invokes the `swarm-intelligence` skill). All ABW calls flow
-through the global `ToolInvoker` hook → `McpRuntime` (governed, OCAP + gas),
+through the global `ToolInvoker` hook → `McpRuntime` (governed, capability-match + gas),
 never ad-hoc HTTP from the UI.
 
 ### 3.3 Tool surface (25 tools)

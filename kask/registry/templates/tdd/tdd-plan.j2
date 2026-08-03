@@ -110,7 +110,7 @@ Per Testing Discipline §5, each MDS category has a distinct primary seam, key i
 | Capability | P4 | `CapabilitySpec`, `DelegationToken` | Integration: attenuation chains | Fail-closed: no checker = denied | Testing HMAC internals |
 | Interface | P3 | CLI ↔ API ↔ MCP equivalence | Integration: cross-surface parity | `MCP ≡ CLI ≡ API` for every op | Testing only one surface |
 | Composition | P7 | `SqliteRegistry`, `TemplateResolver` | Integration: register→resolve→render | Cascade terminates within depth | Testing Jinja2 string manipulation |
-| Trust | P4 + P2 | `GovernedTool`, OCAP verification | Unit + integration: deterministic derivation | Boundaries never relaxed by default | Only testing happy path |
+| Trust | P4 + P2 | `GovernedTool`, capability verification | Unit + integration: deterministic derivation | Boundaries never relaxed by default | Only testing happy path |
 | Observability | P9 | `RegulationRuntime`, `AlgedonicManager` | Unit: span emission; Integration: feedback loop | Alerts fire at threshold; homeostasis restores | Testing `tracing::info!` format |
 | Persistence | P8 | Repository traits | Integration: round-trip via `TestDb` | Bitemporal queries correct; encryption requires key | Testing SQL query strings |
 | Lifecycle | P5 | `main()`, migration functions, bootstrap | Integration: bootstrap, schema migration | Forward-only evolution — no rollbacks | Testing CLI arg parsing |
@@ -154,7 +154,7 @@ Respond with a JSON object:
         {
           "principle": "P4",
           "name": "Clear Boundaries",
-          "constraint": "OCAP boundary constraint"
+          "constraint": "capability boundary constraint"
         }
       ]
     }

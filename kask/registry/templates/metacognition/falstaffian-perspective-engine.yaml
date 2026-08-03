@@ -423,7 +423,7 @@ integration:
 
   curator_practice:
     shared: "quiet_work"
-    curator: "OCAP_boundary"
+    curator: "capability_boundary"
     falstaffian: "tension_within_boundary"
     combined: "space_for_tension_without_announcement"
 

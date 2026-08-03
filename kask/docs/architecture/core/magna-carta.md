@@ -176,7 +176,7 @@ User preferences are inherently idiosyncratic and diverge from LLM aggregate def
 
 ---
 
-## Principle 4: Clear Boundaries (OCAP)
+## Principle 4: Clear Boundaries
 
 Principles 1–3 are enforced through explicit capability boundaries. Every agent, pod, and template invocation operates within in-process capability tokens.
 
@@ -195,7 +195,7 @@ There is no bypass. No code path can access resources without going through both
 - **Capability-matched** — `McpRuntime::invoke` checks `token.is_valid_for(resource, resource_id, action)` — a triple match of the token's declared capability against the invoked tool.
 - **No admin override** — There is no "god token" or admin bypass. All access goes through the same `is_valid_for` gate.
 
-### OCAP and Generative Access
+### Capability and Generative Access
 
 The capability tokens for generative settings (P3) are obtained through the affirmative consent process (P2). The capability-match gate gates everything, but P3 ensures the gates for generative settings are equally and transparently accessible through the consent hierarchy. No special role or elevated capability is required beyond what P2's affirmative consent provides.
 
@@ -231,7 +231,7 @@ The Curator is not just a quality gate. The Curator is the Magna Carta enforcer,
 
 ### Curator Responsibilities
 
-1. **OCAP Verification** — Verify capability tokens before any action
+1. **Capability Verification** — Verify capability tokens before any action
 2. **Sovereignty Checking** — Ensure user sovereignty is not compromised
 3. **Consent Verification** — Verify that affirmative consent is granted and current
 4. **Variety Tracking** — Monitor Regulation variety counter
@@ -285,7 +285,7 @@ The Magna Carta Verifier is a skill that verifies each principle using YAML mani
     p1-user-sovereignty.yaml             # Assertions for User Sovereignty
     p2-affirmative-consent.yaml          # Assertions for Affirmative Consent
     p3-generative-space.yaml             # Assertions for Generative Space
-    p4-clear-boundaries.yaml             # Assertions for OCAP boundary verification
+    p4-clear-boundaries.yaml             # Assertions for capability boundary verification
   templates/
     verification-procedure.md.j2         # How to verify each assertion
     verification-report.md.j2            # Findings, gaps, status
@@ -394,7 +394,7 @@ impl DefaultSpecCurator {
 // OUGHT — intended design; not yet implemented in hkask-types::visibility
 impl SovereigntyChecker {
     /// Enforce the Magna Carta's data-sovereignty policy on access.
-    /// Complements `require_capability` (OCAP) with the data-class policy.
+    /// Complements `require_capability` with the data-class policy.
     pub fn require_sovereignty(
         &self,
         category: &DataCategory,

@@ -17,7 +17,7 @@
 //! Validation (`must contain at least one input, run, and display node`) is
 //! preserved from [`crate::fal_workflow::validate_workflow_structure`].
 
-use crate::fal_workflow::{self, ExecutionMode, WorkflowNode};
+use crate::fal_workflow::{self, WorkflowNode};
 use crate::workflow::{FailurePolicy, GraphNode, WorkflowGraph};
 use hkask_types::InferenceError;
 use serde_json::Value;
@@ -74,6 +74,7 @@ fn workflow_node_to_graph(node: WorkflowNode) -> GraphNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fal_workflow::ExecutionMode;
     use crate::workflow::NodeExecutor;
     use std::future::Future;
     use std::pin::Pin;
@@ -105,7 +106,7 @@ mod tests {
             "output": {
                 "type": "display",
                 "id": "output",
-                "depends": ["upscale", "gen"]
+                "depends": ["upscale", "gen"],
                 "fields": {"final_url": "$upscale.output.url", "original": "$gen.images.0.url"}
             }
         })
@@ -119,7 +120,7 @@ mod tests {
             &'a self,
             app: &'a str,
             _input: Value,
-            _mode: ExecutionMode,
+            _mode: fal_workflow::ExecutionMode,
         ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
             Box::pin(async move {
                 match app {

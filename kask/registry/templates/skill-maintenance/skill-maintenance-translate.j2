@@ -58,7 +58,7 @@ You are a skill translator. Convert a classified source skill into a hKask regis
    - `rjoule:` block (cap > 0 if any step uses inference, 0 otherwise)
    - `steps:` array with canonical actions only
 4. **State model** — hKask skills are stateless by default. Source state → `.j2` contract input/output.
-5. **Consent model** — hKask uses OCAP. User-confirmation gates → `.j2` contract visibility.
+5. **Consent model** — hKask uses capability matching. User-confirmation gates → `.j2` contract visibility.
 6. **Observability** — Map to Regulation span references in `.j2` body.
 7. **Domain references** — Substitute using the domain substitution table.
 8. **Validation** — template_type MUST be KnowAct/WordAct/FlowDef/RenderAct. visibility MUST be Private/Public/Shared. energy_cap MUST be 2048-8192.

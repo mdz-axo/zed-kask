@@ -50,7 +50,7 @@ shapes:
     fractal_recurrence:
       - "spatial scale: disease-rate boundary"
       - "subsystem scale: MCP two-launch-path topology"
-      - "governance scale: OCAP token verification boundary"
+      - "governance scale: capability token verification boundary"
 
   - id: regression_discontinuity
     name: "Regression discontinuity"

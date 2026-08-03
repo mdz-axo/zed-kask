@@ -438,7 +438,7 @@ compile/cache framing.
 
 ## 9. Skill manifest (`knowledge-wiki.yaml`)
 
-A FlowDef cascade like `graph-audit.yaml`: gas/rjoule/convergence blocks, OCAP
+A FlowDef cascade like `graph-audit.yaml`: gas/rjoule/convergence blocks
 `required_capabilities` listing every `resource mcp / action call / tool wiki_*`
 plus the composed skill manifests (`pragmatic-semantics`, `falsifiability`),
 `ledger` emitting `reg.skill.knowledge-wiki` spans, `audit` block.

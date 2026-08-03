@@ -15,7 +15,7 @@ crate:
     generates_spans), process manifest with canonical actions
     (select/populate/compute/execute/feedback/validate/retrieve/render/
     flowdef/loop/choice/abort/escalate), gas/rjoule budgets, convergence
-    block, OCAP capabilities, and the SKILL.md companion derived from the
+    block, capability declarations, and the SKILL.md companion derived from the
     registry crate. Delegates to skill-maintenance-build for the
     mechanical scaffolding and skill-maintenance-validate for post-creation
     validation. Decomposed into phased templates: Describe → Scaffold →
@@ -52,7 +52,7 @@ templates:
       [inference] frontmatter (template_type, contract
       energy_cap, visibility, generates_spans); (3) process manifest
       (kask/registry/manifests/<name>.yaml) with canonical actions
-      gas/rjoule/convergence blocks, OCAP capabilities; (4) SKILL.md
+      gas/rjoule/convergence blocks, capability declarations; (4) SKILL.md
       companion (.agents/skills/<name>/SKILL.md) derived from the registry
       crate.
     generates_spans:

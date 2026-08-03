@@ -225,7 +225,7 @@ MDS is capability-driven, not constraint-driven:
 | Growth | Add constraints | Compose capabilities |
 | Lifecycle | Governed (gates) | Curated (invitations) |
 | Failure mode | Over-constrained | Under-governed |
-| hKask alignment | — | OCAP, capability tokens, attenuation |
+| hKask alignment | — | capability tokens, capability-match gate |
 
 [^ocap]: Miller, M. (2006). *Robust Composition: Towards a National Research Agenda for Object Capability Security.* HP Labs. — Object capability model: access is granted by possession of a capability token.
 
@@ -427,7 +427,7 @@ coherence_metric:
 |----------|--------------|
 | Domain | Entity definition + term validation |
 | Composition | Capability composition + interface equivalence verification |
-| Trust | OCAP boundary enforcement + threat model audit |
+| Trust | capability-match boundary enforcement + threat model audit |
 | Lifecycle | Bootstrap + evolution + deprecation + Regulation span emission |
 | Curation | Coherence scoring + decision rationale documentation |
 
@@ -506,12 +506,12 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
-| `hkask-capability` | Trust | OCAP — sovereignty enforcement, capability tokens |
-| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: OCAP signing, DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
+| `hkask-capability` | Trust | capability-match gate, capability tokens |
+| `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `WalletManager` uses it for gas/rJoule conversion; wallet types live in `hkask-types` |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
-| `hkask-mcp-server` (framework) | Composition | `reg.tool.*` + OCAP gating for the 11 MCP servers |
+| `hkask-mcp-server` (framework) | Composition | `reg.tool.* + capability-match gating for the 11 MCP servers |
 | `hkask-forecast` | Domain | Forecast domain logic |
 | `hkask-condenser` | Curation | Context condensation |
 | ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |

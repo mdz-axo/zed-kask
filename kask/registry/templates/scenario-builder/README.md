@@ -66,7 +66,7 @@ The pipeline emits Regulation spans for monitoring:
 - `hkask.template.render` — Template execution at each step
 - `hkask.template.outcome` — Scenario set finalized
 
-## OCAP Requirements
+## Capability Requirements
 
 The pipeline requires template render permissions for all 7 templates plus manifest execution permission. All capabilities are template-scoped and expire after 3600 seconds.
 
