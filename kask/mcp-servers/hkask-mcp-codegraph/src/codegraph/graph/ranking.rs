@@ -367,9 +367,13 @@ mod tests {
         let mapping = store.insert_symbols(&syms, fid).unwrap();
         let id_of: std::collections::HashMap<&str, i64> =
             mapping.iter().map(|(n, id)| (n.as_str(), *id)).collect();
-        let index_of: std::collections::HashMap<i64, usize> =
-            id_of.values().enumerate().map(|(i, id)| (*id, i)).collect();
-        // edges as (from_index, to_index) using insertion order A,B,C,D = 0,1,2,3
+        // Stable name -> reference-vector index (A=0,B=1,C=2,D=3). The reference
+        // implementation indexes nodes positionally, so this map must align with
+        // the `names` array order used by the assertion loop — NOT with the
+        // randomized HashMap iteration order of `id_of.values()`.
+        let name_index: std::collections::HashMap<&str, usize> =
+            names.iter().enumerate().map(|(i, n)| (*n, i)).collect();
+        // edges as (from_name, to_name)
         let edge_list: [(&str, &str); 4] = [("A", "B"), ("A", "C"), ("D", "B"), ("B", "C")];
         for (from, to) in edge_list {
             store
@@ -381,7 +385,7 @@ mod tests {
 
         let ref_edges: Vec<(usize, usize)> = edge_list
             .iter()
-            .map(|(f, t)| (index_of[&id_of[*f]], index_of[&id_of[*t]]))
+            .map(|(f, t)| (name_index[*f], name_index[*t]))
             .collect();
         let reference = reference_pagerank(&ref_edges, names.len(), DAMPING, MAX_ITERATIONS);
 

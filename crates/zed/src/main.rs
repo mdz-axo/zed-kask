@@ -1826,6 +1826,29 @@ fn main() {
 
                         let tool_port_as_dyn: std::sync::Arc<dyn hkask_capability::ToolPort> =
                             tool_port_for_deferred.clone();
+
+                        // Snapshot the default agent profile's `terminal` tool state
+                        // to wire a `ProfileResolver` for proposer/evaluator
+                        // separation. `AgentProfileSettings` lives behind `&App`
+                        // (not `Send`), so the process-global bridge — which runs
+                        // the cascade on a tokio worker — cannot read profile state
+                        // live from within the sync callback. The snapshot is read
+                        // here, at deferred-task time, and is stale if the user
+                        // switches profiles later. Today no `category: skill`
+                        // manifest declares `profile:`, so the gate has no
+                        // production trigger and the staleness is moot; per-session
+                        // profile enforcement is a future enhancement.
+                        let terminal_enabled = cx.update(|cx| {
+                            let settings = agent_settings::AgentSettings::get_global(cx);
+                            settings
+                                .profiles
+                                .get(&settings.default_profile)
+                                .is_some_and(|p| p.is_tool_enabled("terminal"))
+                        });
+                        let profile_resolver = std::sync::Arc::new(
+                            kask_bridge::SnapshotProfileResolver::new(terminal_enabled),
+                        )
+                            as std::sync::Arc<dyn kask_bridge::ProfileResolver>;
                         let executor = std::sync::Arc::new(
                             kask_bridge::BridgeManifestExecutor::new(
                                 guarded_inference,
@@ -1833,7 +1856,8 @@ fn main() {
                                 registry_manifests_dir,
                                 registry_templates_dir,
                                 gpui_tokio::Tokio::handle(cx),
-                            ),
+                            )
+                            .with_profile_resolver(profile_resolver),
                         );
                         agent::set_manifest_executor(Some(executor));
                         log::info!("hKask manifest executor wired with GuardedInferencePort — skills will run the guarded cascade");

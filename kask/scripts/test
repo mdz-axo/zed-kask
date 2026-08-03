@@ -80,8 +80,8 @@ EOF
     COST_TOKENS=$((END - START))
 
     # Compute simple metrics from the nextest JSON output.
-    TOTAL=$(grep -c '"type":"test"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null || echo 0)
-    PASSED=$(grep -c '"event":"finished"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null || echo 0)
+    TOTAL=$(grep -c '"type":"test"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null); TOTAL=${TOTAL:-0}
+    PASSED=$(grep -c '"event":"finished"' "${TRACE_DIR}/nextest-output.json" 2>/dev/null); PASSED=${PASSED:-0}
 
     # F2: Coverage percentage and per-crate split from the lcov report.
     COVERAGE_PCT=""

@@ -62,6 +62,35 @@ pub trait ProfileResolver: Send + Sync {
     fn is_tool_enabled(&self, tool_name: &str) -> bool;
 }
 
+/// A `ProfileResolver` backed by a snapshot of a profile's `terminal` tool state,
+/// read once at wiring time (in `main.rs`'s deferred post-login task).
+///
+/// This is the only feasible `Send + Sync` resolver over GPUI-held settings:
+/// `AgentProfileSettings` lives behind `&App` (not `Send`), so the bridge — which
+/// is process-global and runs the cascade on a tokio worker — cannot read profile
+/// state live from within the sync `is_tool_enabled` callback.
+///
+/// Limitation: the snapshot is stale if the user changes profiles after wiring.
+/// Today no `category: skill` manifest declares `profile:`, so the gate has no
+/// production trigger and the staleness is moot. Per-session profile enforcement
+/// (re-snapshot on profile change, or thread the invoking agent's
+/// `terminal`-enabled state through the `SkillTool`) is a future enhancement.
+pub struct SnapshotProfileResolver {
+    terminal_enabled: bool,
+}
+
+impl SnapshotProfileResolver {
+    pub fn new(terminal_enabled: bool) -> Self {
+        Self { terminal_enabled }
+    }
+}
+
+impl ProfileResolver for SnapshotProfileResolver {
+    fn is_tool_enabled(&self, tool_name: &str) -> bool {
+        tool_name == "terminal" && self.terminal_enabled
+    }
+}
+
 /// Bridge between zed's `SkillManifestExecutor` trait and hKask's `ManifestExecutor`.
 ///
 /// Holds an `InferencePort` (the bridge's `LanguageModelInferencePort` over zed's
@@ -244,7 +273,9 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             match &self.profile_resolver {
                 Some(resolver) => {
                     if resolver.is_tool_enabled("terminal") {
-                        let step = manifest.steps.iter()
+                        let step = manifest
+                            .steps
+                            .iter()
                             .find(|s| s.profile.is_some())
                             .expect("checked above");
                         let profile_name = step.profile.as_ref().expect("checked above");
@@ -362,6 +393,24 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         )
         .with_template_base_path(self.registry_templates_dir.clone())
         .with_provenance(provenance);
+
+        // Wire the executor's per-step profile gate to the same resolver used by
+        // the bridge-level pre-check above. When a resolver is wired, each
+        // profile-declaring step re-checks `terminal` availability in-cascade
+        // (defense-in-depth) instead of falling back to `ToolPort::discover_tools()`,
+        // which only sees MCP tools and can never find the built-in `terminal`.
+        // Without this, the executor's `terminal_check` stays `None` and the gate
+        // silently never fires — the `.rules` "Advertised invariants need
+        // enforcement points" trap. The closure clones the `Arc` so it stays alive
+        // for the cascade's lifetime on the tokio worker.
+        let executor = if let Some(ref resolver) = self.profile_resolver {
+            let resolver = resolver.clone();
+            executor.with_terminal_check(std::sync::Arc::new(move || {
+                resolver.is_tool_enabled("terminal")
+            }))
+        } else {
+            executor
+        };
 
         // Spawn manifest execution on the tokio runtime. ManifestExecutor
         // uses tokio::time::timeout internally, which requires a tokio reactor.

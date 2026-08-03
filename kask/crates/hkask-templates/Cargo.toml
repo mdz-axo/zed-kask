@@ -50,3 +50,7 @@ path = "tests/template_rendering.rs"
 [[test]]
 name = "bootstrap_test"
 path = "tests/bootstrap_test.rs"
+
+[[test]]
+name = "executor_properties"
+path = "tests/executor_properties.rs"

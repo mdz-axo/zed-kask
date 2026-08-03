@@ -1891,3 +1891,137 @@ fn spotlight_tool_output(spotlighter: &Spotlighter, result: &Value) -> Value {
     };
     Value::String(spotlighter.spotlight(&text))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hkask_capability::{DelegationToken, ToolFuture, ToolInfo};
+    use hkask_types::InferenceError;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::result::Result;
+
+    /// Stub `InferencePort` — never reached by the `abort`-action tests below
+    /// (the profile gate fires before the action, or the action converges
+    /// without inference). Returns an error if ever called.
+    struct StubInference;
+    impl InferencePort for StubInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            Box::pin(async { Err(InferenceError::Generation("stub".into())) })
+        }
+    }
+
+    /// Stub `ToolPort` whose `discover_tools` returns a configurable list.
+    /// `discover_tools` is the fallback path the executor uses when no
+    /// `terminal_check` callback is wired — pinning that fallback is the
+    /// point of the third test.
+    struct StubToolPort {
+        discover: Vec<String>,
+    }
+    impl ToolPort for StubToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: Value,
+            _token: &'a DelegationToken,
+        ) -> ToolFuture<'a, Result<Value, ToolPortError>> {
+            Box::pin(async { Err(ToolPortError::InvocationFailed("stub".into())) })
+        }
+        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
+            let discover = self.discover.clone();
+            Box::pin(async move { discover })
+        }
+        fn get_tool_info<'a>(&'a self, _tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+            Box::pin(async { None })
+        }
+    }
+
+    /// Minimal skill manifest with one `profile: ask` step that converges via
+    /// `abort` (no inference or tool call required). Used to exercise the
+    /// profile gate in isolation.
+    const GATE_MANIFEST: &str = "\
+manifest:
+  id: profile-gate-test
+  category: skill
+steps:
+  - ordinal: 1
+    action: abort
+    description: converge
+    profile: ask
+";
+
+    fn make_executor(discover: Vec<String>) -> ManifestExecutor {
+        ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover }),
+            LLMParameters::default(),
+        )
+    }
+
+    /// Wiring `with_terminal_check` to report `terminal` enabled must make the
+    /// per-step gate refuse the cascade — the proposer/evaluator separation
+    /// invariant. This pins the wired path (SF1): before the fix the callback
+    /// was never installed and the gate silently never fired.
+    #[tokio::test]
+    async fn profile_gate_fires_when_terminal_check_says_enabled() {
+        let manifest = load_manifest_from_yaml(GATE_MANIFEST).expect("parse");
+        let executor = make_executor(vec![]).with_terminal_check(Arc::new(|| true));
+        let err = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect_err("gate must fire when terminal is enabled");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("terminal") && msg.contains("proposer/evaluator separation"),
+            "unexpected gate error: {msg}"
+        );
+    }
+
+    /// When the wired callback reports `terminal` disabled, the gate passes and
+    /// the `abort` step converges normally — the gate does not false-positive.
+    #[tokio::test]
+    async fn profile_gate_passes_when_terminal_check_says_disabled() {
+        let manifest = load_manifest_from_yaml(GATE_MANIFEST).expect("parse");
+        let executor = make_executor(vec![]).with_terminal_check(Arc::new(|| false));
+        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        assert!(
+            result.is_ok(),
+            "gate must pass when terminal is disabled; got: {:?}",
+            result.err()
+        );
+    }
+
+    /// When no callback is wired, the gate falls back to `discover_tools()`. This
+    /// pins the fallback contract: it can only see MCP tools, never the built-in
+    /// `terminal` — so in production (where `terminal` is built-in) the
+    /// unwired gate is a no-op that never blocks. The bridge wires the callback
+    /// (see `skill_executor.rs`) to avoid relying on this fallback.
+    #[tokio::test]
+    async fn profile_gate_fallback_uses_discover_tools_when_unwired() {
+        let manifest = load_manifest_from_yaml(GATE_MANIFEST).expect("parse");
+
+        // Fallback sees "terminal" advertised -> gate fires.
+        let executor = make_executor(vec!["terminal".to_string()]);
+        let err = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect_err("fallback must fire when discover_tools lists terminal");
+        assert!(err.to_string().contains("terminal"));
+
+        // Fallback does not see "terminal" -> gate passes, abort converges.
+        let executor = make_executor(vec![]);
+        let result = executor.execute_manifest(&manifest, HashMap::new()).await;
+        assert!(
+            result.is_ok(),
+            "fallback must pass when discover_tools omits terminal; got: {:?}",
+            result.err()
+        );
+    }
+}
