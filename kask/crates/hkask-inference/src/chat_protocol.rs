@@ -356,7 +356,7 @@ pub fn map_tool_calls(calls: &[RawToolCall]) -> Vec<StructuredToolCall> {
                 server,
                 tool,
                 args: tc.function.arguments.clone(),
-                call_id: Some(tc.id.clone().unwrap_or_default()),
+                call_id: tc.id.clone(),
             }
         })
         .collect()

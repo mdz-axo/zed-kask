@@ -73,7 +73,7 @@ pub fn approx_token_count(text: &str) -> usize {
     // ~4 characters per token for English text. Floor at 1 to avoid zero
     // for very short inputs (empty string returns 1, which is harmless
     // for threshold comparisons).
-    (text.len() / 4).max(1)
+    (text.chars().count() / 4).max(1)
 }
 
 #[cfg(test)]

@@ -3,6 +3,7 @@
 //! Pure domain types with no MCP dependencies. Error types use `String`
 //! for `FromStr` impls; MCP servers wrap these at the boundary.
 
+use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -354,7 +355,12 @@ pub struct CondenserHealthSignal {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ThreadSummaryRequest {
     /// Conversation messages to summarize, as an array of {role, content} objects.
-    pub messages: Vec<serde_json::Value>,
+    ///
+    /// Typed as [`AnyJsonValue`] (not `serde_json::Value`) so the generated tool
+    /// input schema is the empty object `{}` rather than the bare boolean `true`
+    /// that schemars emits for `Value` — strict-schema providers (Ollama, Gemini)
+    /// reject boolean property schemas.
+    pub messages: Vec<AnyJsonValue>,
     /// The current user query for relevance-weighted summarization.
     pub current_query: String,
     /// Maximum tokens for the summary output (default 500).
@@ -380,6 +386,27 @@ pub struct ThreadSummaryOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_mcp_server::find_boolean_schema_positions;
+    use schemars::schema_for;
+
+    /// `messages` is typed `Vec<AnyJsonValue>` so its schema is the empty
+    /// object `{}`, never the bare boolean `true` that `serde_json::Value`
+    /// produces. Ollama's Go API rejects boolean property schemas with
+    /// `400 cannot unmarshal bool into ... api.ToolProperty`, failing the whole
+    /// chat-completion request. The scanner asserts the *entire* generated
+    /// schema is free of bare-boolean property values, so a future field on this
+    /// struct that reintroduces `serde_json::Value` would be caught here too.
+    #[test]
+    fn thread_summary_request_schema_has_no_boolean_property_values() {
+        let schema = schema_for!(ThreadSummaryRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let violations = find_boolean_schema_positions(&value);
+        assert!(
+            violations.is_empty(),
+            "ThreadSummaryRequest schema has bare-boolean property values \
+             (Ollama/Gemini would reject): {violations:?}"
+        );
+    }
 
     #[test]
     fn profile_parsing_known_values() {

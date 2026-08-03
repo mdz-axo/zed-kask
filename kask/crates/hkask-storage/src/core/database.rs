@@ -21,14 +21,21 @@ use crate::database::driver::DatabaseDriver;
 /// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
 pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
 pub fn embedding_dim() -> usize {
-    std::env::var("HKASK_EMBEDDING_DIM")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        // Filter 0: HKASK_EMBEDDING_DIM=0 would otherwise create a schema
-        // with zero-dimensional vector columns, causing DimensionMismatch on
-        // every store call. Mirrors codegraph's resolve_embedding_dim guard.
-        .filter(|&d| d > 0)
-        .unwrap_or(DEFAULT_EMBEDDING_DIM)
+    match std::env::var("HKASK_EMBEDDING_DIM") {
+        Ok(raw) => match raw.parse::<usize>() {
+            Ok(dim) if dim > 0 => dim,
+            _ => {
+                tracing::warn!(
+                    target: "reg.storage",
+                    value = %raw,
+                    fallback = DEFAULT_EMBEDDING_DIM,
+                    "HKASK_EMBEDDING_DIM malformed or non-positive; using default",
+                );
+                DEFAULT_EMBEDDING_DIM
+            }
+        },
+        Err(_) => DEFAULT_EMBEDDING_DIM,
+    }
 }
 
 /// Load the sqlite-vec extension into a single connection.
@@ -350,10 +357,21 @@ impl Database {
             )
         });
 
-        let pool_size = std::env::var("HKASK_DB_POOL_SIZE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(8);
+        let pool_size = match std::env::var("HKASK_DB_POOL_SIZE") {
+            Ok(raw) => match raw.parse::<u32>() {
+                Ok(size) if size > 0 => size,
+                _ => {
+                    tracing::warn!(
+                        target: "reg.storage",
+                        value = %raw,
+                        fallback = 8,
+                        "HKASK_DB_POOL_SIZE malformed or non-positive; using default",
+                    );
+                    8
+                }
+            },
+            Err(_) => 8,
+        };
         let pool = r2d2::Pool::builder()
             .max_size(pool_size)
             .build(manager)

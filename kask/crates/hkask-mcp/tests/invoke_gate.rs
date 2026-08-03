@@ -14,13 +14,10 @@
 //! - Invariant: a valid-token + seeded-budget invoke MUST NOT return a
 //!   governance error (the gate allowed it through; any failure is downstream)
 
-use hkask_capability::{
-    DelegationAction, DelegationResource, DelegationToken, ToolPort, ToolPortError,
-};
+use hkask_capability::{ToolPort, ToolPortError};
 use hkask_mcp::{FlatEnergyEstimator, McpRuntime, McpServer, McpTool};
 use hkask_regulation::{CyberneticsLoop, GasBudget, GasCost, NoopEventSink, RegulationLedger};
 use hkask_test_harness::{test_agent_webid, test_token_for_tool};
-use hkask_types::WebID;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -52,23 +49,12 @@ async fn register_test_tool(runtime: &McpRuntime, server_id: &str, tool_name: &s
     runtime.register_server(server).await;
 }
 
-/// Mint a token for a *different* tool than the one being invoked.
-fn wrong_tool_token() -> DelegationToken {
-    DelegationToken::new(
-        DelegationResource::Tool,
-        "wrong_tool".to_string(),
-        DelegationAction::Execute,
-        WebID::from_persona(b"test-from"),
-        test_agent_webid(),
-    )
-}
-
 #[tokio::test]
 async fn governance_denies_wrong_tool_token() {
     let runtime = governed_runtime();
     register_test_tool(&runtime, "test-server", "test_tool").await;
 
-    let token = wrong_tool_token();
+    let token = test_token_for_tool("wrong_tool");
     let result = runtime
         .invoke("test-server", "test_tool", json!({}), &token)
         .await;

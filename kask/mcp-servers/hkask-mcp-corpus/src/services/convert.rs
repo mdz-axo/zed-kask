@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 
 use crate::backend::markdown_pages_to_structure;
 use crate::convert::{decode_html_entities, detect_format, strip_html_comments};
+use crate::helpers::map_corpus_io_error;
 use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
 use crate::ocr::decimation;
 use crate::ocr::pipeline::{self, OcrError, OcrExecutor};
@@ -300,10 +301,10 @@ impl<'a> ConvertService<'a> {
         let file_bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => {
-                return Err(McpToolError::internal(format!(
-                    "Failed to read file '{}': {}",
-                    path, e
-                )));
+                return Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to read file '{}'", path),
+                ));
             }
         };
 
@@ -681,7 +682,7 @@ impl<'a> ConvertService<'a> {
             } => {
                 // Fall back to OCR — re-read file bytes for do_ocr
                 let file_bytes = std::fs::read(&path).map_err(|e| {
-                    McpToolError::internal(format!("Failed to read file '{}' for OCR: {}", path, e))
+                    map_corpus_io_error(e, &format!("Failed to read file '{}' for OCR", path))
                 })?;
                 match self.resolve_ocr_model(None).await {
                     Ok(model) => {

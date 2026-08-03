@@ -252,11 +252,22 @@ impl HMemStore {
             .driver
             .query(sql, params)
             .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        Ok(rows
-            .first()
-            .and_then(|r| r.get(0).ok())
-            .and_then(|v| v.as_int().ok())
-            .unwrap_or(0) as usize)
+        // No rows → the legitimate "count is zero" case. A decode or column
+        // error on a present row is a real DB failure and must propagate so the
+        // consolidation regulation loop sees a stale signal instead of a
+        // fabricated Ok(0) that reads as "no deviation from set-point".
+        match rows.first() {
+            None => Ok(0),
+            Some(row) => {
+                let value = row
+                    .get(0)
+                    .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+                let count = value
+                    .as_int()
+                    .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+                Ok(count as usize)
+            }
+        }
     }
 }
 

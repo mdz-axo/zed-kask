@@ -22,7 +22,6 @@ use serde_json::Value as JsonValue;
 /// Branches: Array (0..8 elements), Object (0..8 string-keyed entries).
 /// Max depth: 4. This exercises deserializers with structurally valid input
 /// that may or may not match the target type's schema.
-#[must_use]
 pub fn arb_json_value() -> BoxedStrategy<JsonValue> {
     let leaf = prop_oneof![
         Just(JsonValue::Null),

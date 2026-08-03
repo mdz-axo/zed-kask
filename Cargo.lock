@@ -9282,6 +9282,7 @@ dependencies = [
  "chrono",
  "hex",
  "hkask-types",
+ "proptest 1.10.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -9294,6 +9295,7 @@ version = "0.31.1"
 dependencies = [
  "criterion",
  "hkask-bridge-dublincore",
+ "hkask-mcp-server",
  "proptest 1.10.0",
  "schemars 1.2.2",
  "serde",

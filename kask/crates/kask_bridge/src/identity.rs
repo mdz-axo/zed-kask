@@ -173,8 +173,8 @@ fn random_passphrase_word() -> String {
     let mut rng = rand::rng();
     PASSPHRASE_WORDS
         .choose(&mut rng)
-        .expect("PASSPHRASE_WORDS is non-empty")
-        .to_string()
+        .map(|word| word.to_string())
+        .unwrap_or_else(|| "kask".to_string())
 }
 
 /// The result of provisioning an agent — everything needed to construct

@@ -13,7 +13,6 @@ use hkask_test_harness::arb_json_value;
 use hkask_types::RegistryEntry;
 use hkask_types::template_type::TemplateType;
 use proptest::prelude::*;
-use serde_json::Value as JsonValue;
 
 /// Strategy for valid `TemplateType` variants.
 fn arb_template_type() -> BoxedStrategy<TemplateType> {

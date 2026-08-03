@@ -4,6 +4,7 @@
 
 use hkask_capability::{DelegationAction, DelegationResource, DelegationToken, capabilities_match};
 use hkask_types::WebID;
+use proptest::prelude::*;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -20,9 +21,115 @@ fn make_token() -> DelegationToken {
         DelegationResource::Tool,
         "test_tool".into(),
         DelegationAction::Execute,
-        alice(),
-        bob(),
+        WebID::from_persona(b"alice"),
+        WebID::from_persona(b"bob"),
     )
+}
+
+// ── Property-based tests ─────────────────────────────────────────────────
+
+fn arb_resource() -> BoxedStrategy<DelegationResource> {
+    prop::sample::select(&[
+        DelegationResource::Tool,
+        DelegationResource::Template,
+        DelegationResource::Registry,
+        DelegationResource::Key,
+    ])
+    .boxed()
+}
+
+fn arb_action() -> BoxedStrategy<DelegationAction> {
+    prop::sample::select(&[
+        DelegationAction::Read,
+        DelegationAction::Write,
+        DelegationAction::Execute,
+    ])
+    .boxed()
+}
+
+proptest! {
+    // is_valid_for returns true iff the triple matches exactly.
+    #[test]
+    fn is_valid_for_exact_match_property(
+        resource in arb_resource(),
+        resource_id in proptest::arbitrary::any::<String>(),
+        action in arb_action(),
+        alt_resource_id in proptest::arbitrary::any::<String>(),
+    ) {
+        let token = DelegationToken::new(
+            resource,
+            resource_id.clone(),
+            action,
+            WebID::from_persona(b"alice"),
+            WebID::from_persona(b"bob"),
+        );
+        // Exact match
+        prop_assert!(
+            token.is_valid_for(resource, &resource_id, action),
+            "exact triple match must be valid"
+        );
+        // Different resource_id → invalid
+        prop_assume!(resource_id != alt_resource_id);
+        prop_assert!(
+            !token.is_valid_for(resource, &alt_resource_id, action),
+            "different resource_id must be invalid"
+        );
+    }
+
+    // Same params produce same id; different resource_id produces different id.
+    #[test]
+    fn token_id_deterministic_property(
+        resource_id in proptest::arbitrary::any::<String>(),
+        alt_resource_id in proptest::arbitrary::any::<String>(),
+    ) {
+        let t1 = DelegationToken::new(
+            DelegationResource::Tool,
+            resource_id.clone(),
+            DelegationAction::Execute,
+            WebID::from_persona(b"alice"),
+            WebID::from_persona(b"bob"),
+        );
+        let t2 = DelegationToken::new(
+            DelegationResource::Tool,
+            resource_id.clone(),
+            DelegationAction::Execute,
+            WebID::from_persona(b"alice"),
+            WebID::from_persona(b"bob"),
+        );
+        prop_assert_eq!(&t1.id, &t2.id, "same params must produce same id");
+
+        prop_assume!(resource_id != alt_resource_id);
+        let t3 = DelegationToken::new(
+            DelegationResource::Tool,
+            alt_resource_id,
+            DelegationAction::Execute,
+            WebID::from_persona(b"alice"),
+            WebID::from_persona(b"bob"),
+        );
+        prop_assert_ne!(&t1.id, &t3.id, "different resource_id must produce different id");
+    }
+
+    // Action hierarchy: execute ≥ write ≥ read. Domain mismatch always fails.
+    #[test]
+    fn capabilities_match_action_hierarchy(
+        tool_name in "[a-z][a-z0-9_]*",
+        other_tool in "[a-z][a-z0-9_]*",
+    ) {
+        let exec = format!("tool:{}:execute", tool_name);
+        let write = format!("tool:{}:write", tool_name);
+        let read = format!("tool:{}:read", tool_name);
+
+        prop_assert!(capabilities_match(&exec, &write), "execute permits write");
+        prop_assert!(capabilities_match(&exec, &read), "execute permits read");
+        prop_assert!(capabilities_match(&write, &read), "write permits read");
+        prop_assert!(!capabilities_match(&read, &write), "read does not permit write");
+        prop_assert!(!capabilities_match(&read, &exec), "read does not permit execute");
+        prop_assert!(!capabilities_match(&write, &exec), "write does not permit execute");
+
+        prop_assume!(tool_name != other_tool);
+        let other_exec = format!("tool:{}:execute", other_tool);
+        prop_assert!(!capabilities_match(&exec, &other_exec), "domain mismatch must fail");
+    }
 }
 
 // ── DelegationToken::is_valid_for — the capability-match gate ───────────

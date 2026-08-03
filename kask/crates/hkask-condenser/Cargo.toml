@@ -11,6 +11,7 @@ path = "src/hkask_condenser.rs"
 
 [dependencies]
 hkask-bridge-dublincore = { path = "../hkask-bridge-dublincore" }
+hkask-mcp-server = { path = "../hkask-mcp-server" }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

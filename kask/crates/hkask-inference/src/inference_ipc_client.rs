@@ -142,23 +142,34 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        // Read the response line.
-        let line = read_response_line(stream)
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+        // Read the response line. Null the cached stream on every error branch
+        // (read failure, clean EOF, parse failure, ID mismatch) so the next call
+        // reconnects instead of retrying on a dead/half-consumed stream.
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+            }
+        };
 
         let Some(line) = line else {
-            // Connection closed by the server.
             *guard = None;
             return Err(InferenceError::Connection(
                 "IPC socket closed by server".into(),
             ));
         };
 
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
+            }
+        };
 
         if response.id != id {
+            *guard = None;
             return Err(InferenceError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id

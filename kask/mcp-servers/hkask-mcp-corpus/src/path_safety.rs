@@ -19,6 +19,8 @@
 use hkask_mcp_server::server::McpToolError;
 use std::path::{Path, PathBuf};
 
+use crate::helpers::map_corpus_io_error;
+
 /// Default read size cap for `extract_text` (32 MiB).
 pub(crate) const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -107,7 +109,7 @@ pub(crate) fn contain_for_read(path: &str) -> Result<PathBuf, McpToolError> {
 pub(crate) fn read_capped(path: &str, max_bytes: u64) -> Result<Vec<u8>, McpToolError> {
     let resolved = contain_for_read(path)?;
     let metadata = std::fs::metadata(&resolved).map_err(|e| {
-        McpToolError::internal(format!("Cannot stat file '{}': {e}", resolved.display()))
+        map_corpus_io_error(e, &format!("Cannot stat file '{}'", resolved.display()))
     })?;
     if metadata.len() > max_bytes {
         tracing::warn!(
@@ -125,7 +127,7 @@ pub(crate) fn read_capped(path: &str, max_bytes: u64) -> Result<Vec<u8>, McpTool
         )));
     }
     std::fs::read(&resolved)
-        .map_err(|e| McpToolError::internal(format!("Failed to read file '{}': {e}", path)))
+        .map_err(|e| map_corpus_io_error(e, &format!("Failed to read file '{}'", path)))
 }
 
 #[cfg(test)]

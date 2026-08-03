@@ -533,7 +533,11 @@ fn parse_with_backend(
         "docx" => DocxBackend.parse(path),
         "pptx" => PptxBackend.parse(path),
         "xlsx" => XlsxBackend.parse(path),
-        _ => unreachable!("parse_with_backend called with unsupported format: {format}"),
+        other => {
+            return Err(McpToolError::invalid_argument(format!(
+                "unsupported document format: {other}"
+            )));
+        }
     }
     .map_err(|e| McpToolError::internal(format!("Backend error: {e}")))?;
     Ok(structure)

@@ -285,7 +285,7 @@ impl MediaServer {
                 let tags = self
                     .gallery_store
                     .get_tags(&image_id)
-                    .map_err(|e| McpToolError::internal(format!("Failed to query tags: {}", e)))?;
+                    .map_err(|e| map_media_error(e.into()))?;
                 let captions: Vec<&str> = tags
                     .iter()
                     .filter(|t| t.tag_type == "caption")
@@ -308,7 +308,7 @@ impl MediaServer {
             let all_tags = self
                 .gallery_store
                 .get_all_tags(&ga.gallery_id)
-                .map_err(|e| McpToolError::internal(format!("Failed to query tags: {}", e)))?;
+                .map_err(|e| map_media_error(e.into()))?;
 
             // Group captions by image path and embed them
             let mut candidates: Vec<(String, String)> = Vec::new();
@@ -646,7 +646,7 @@ impl MediaServer {
             let all_tags = self
                 .gallery_store
                 .get_all_tags(&ga.gallery_id)
-                .map_err(|e| McpToolError::internal(format!("Failed to query tags: {}", e)))?;
+                .map_err(|e| map_media_error(e.into()))?;
 
             let mut renamed = 0u32;
             for (tag, _path) in &all_tags {
@@ -788,7 +788,7 @@ impl MediaServer {
             let faces = self
                 .gallery_store
                 .list_faces(status.as_deref())
-                .map_err(|e| McpToolError::internal(format!("Failed to list faces: {}", e)))?;
+                .map_err(|e| map_media_error(e.into()))?;
 
             Ok(serde_json::json!({
                 "count": faces.len(),

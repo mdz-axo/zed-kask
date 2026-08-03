@@ -256,10 +256,12 @@ mod ffmpeg_impl {
 
         pub fn seek(&mut self, target: Duration) {
             let timestamp = target.as_millis() as i64;
-            let _ = self.input.seek_to_second(
+            if let Err(error) = self.input.seek_to_second(
                 ffmpeg::Rational::new(timestamp, 1000),
                 ffmpeg::format::SeekTarget::Any,
-            );
+            ) {
+                log::warn!("video seek to {target:?} failed: {error}");
+            }
             self.decoder.flush();
         }
 

@@ -20,6 +20,7 @@ mod types;
 pub use types::{AccountBalance, DateRange, LedgerError, LedgerTransaction, Posting, QueryFilter};
 
 use hkask_storage::database::driver::DatabaseDriver;
+use hkask_storage::database::types::DbError;
 use hkask_storage::database::value::DbValue;
 use std::sync::Arc;
 
@@ -182,7 +183,13 @@ impl Ledger {
             )
         };
         let row = self.driver.query_optional(sql, &params)?;
-        let balance = row.map(|r| r.get_int(0).unwrap_or(0)).unwrap_or(0);
+        // No row → account has no postings → balance is legitimately 0.
+        // A get_int error on a present row is a real DB failure and must
+        // propagate rather than read as a zero balance.
+        let balance = match row {
+            Some(r) => r.get_int(0)?,
+            None => 0,
+        };
         Ok(balance)
     }
 
@@ -211,7 +218,7 @@ impl Ledger {
             balances.push(AccountBalance {
                 account: row.get_str(0)?.to_string(),
                 asset: row.get_str(1)?.to_string(),
-                balance: row.get(2)?.as_int().unwrap_or(0),
+                balance: row.get(2)?.as_int()?,
             });
         }
         Ok(balances)
@@ -228,7 +235,13 @@ impl Ledger {
             "SELECT COUNT(DISTINCT transaction_id) FROM postings WHERE destination = ?1",
             &[DbValue::Text(destination.to_string())],
         )?;
-        let count = row.map(|r| r.get_int(0).unwrap_or(0)).unwrap_or(0);
+        // No row → no transactions for this account → count is legitimately 0.
+        // A get_int error on a present row must propagate rather than read as
+        // a zero count.
+        let count = match row {
+            Some(r) => r.get_int(0)?,
+            None => 0,
+        };
         Ok(u64::try_from(count).unwrap_or_else(|_| {
             tracing::warn!(target: "ledger", count, "Negative transaction count from database — clamping to 0");
             0
@@ -291,13 +304,15 @@ impl Ledger {
 
             let postings: Vec<Posting> = postings
                 .iter()
-                .map(|p| Posting {
-                    source: p.get_str(0).unwrap_or("").to_string(),
-                    destination: p.get_str(1).unwrap_or("").to_string(),
-                    asset: p.get_str(2).unwrap_or("").to_string(),
-                    amount: p.get_int(3).unwrap_or(0),
+                .map(|p| {
+                    Ok(Posting {
+                        source: p.get_str(0)?.to_string(),
+                        destination: p.get_str(1)?.to_string(),
+                        asset: p.get_str(2)?.to_string(),
+                        amount: p.get_int(3)?,
+                    })
                 })
-                .collect();
+                .collect::<Result<Vec<_>, DbError>>()?;
 
             let tx_id = id.clone();
             result.push(LedgerTransaction {

@@ -89,7 +89,7 @@ pub struct KaskSettings {
 /// system deserializes `SettingsContent` and converts via `From`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct KaskMcpSettings {
-    /// Whether to load the default MCP server set (10 servers).
+    /// Whether to load the default MCP server set (11 servers).
     /// Set to `false` to disable all kask MCP servers.
     pub load_default: bool,
 
@@ -1368,7 +1368,7 @@ mod tests {
     // deserialization, NOT for Default::default(). When the user had a `kask`
     // section but no `kask.mcp` subsection, From<KaskSettingsContent> fell back
     // to KaskMcpSettings::default() → load_default: false, and sync_kask_mcp_servers
-    // treated all 10 servers as disabled, registering nothing. The manual Default
+    // treated all 11 servers as disabled, registering nothing. The manual Default
     // impl above returns true, matching the serde default.
     #[test]
     fn mcp_settings_default_load_default_is_true() {
@@ -1706,6 +1706,7 @@ mod tests {
                     | "KILOCODE_API_KEY"
                     | "CLINE_API_KEY"
                     | "ZAI_API_KEY"
+                    | "ATLASCLOUD_API_KEY"
             )
         });
         assert!(

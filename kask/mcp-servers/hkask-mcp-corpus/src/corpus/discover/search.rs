@@ -146,8 +146,19 @@ pub(crate) async fn search_youtube_transcripts(
             }
         })?;
 
-    let body = resp.text().await.unwrap_or_default();
-    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let body = resp.text().await.map_err(|e| ServiceError::Domain {
+        domain: DomainKind::Wallet,
+        kind: ErrorKind::ServiceUnavailable,
+        source: Some(Box::new(e)),
+        message: format!("SerpAPI YouTube search body read failed: {e}"),
+    })?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| ServiceError::Domain {
+            domain: DomainKind::Wallet,
+            kind: ErrorKind::ServiceUnavailable,
+            source: Some(Box::new(e)),
+            message: format!("SerpAPI YouTube search returned malformed JSON: {e}"),
+        })?;
 
     let video_results = parsed["video_results"]
         .as_array()
@@ -251,7 +262,12 @@ async fn fetch_youtube_transcript(
         })?;
 
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    let body = resp.text().await.map_err(|e| ServiceError::Domain {
+        domain: DomainKind::Wallet,
+        kind: ErrorKind::ServiceUnavailable,
+        source: Some(Box::new(e)),
+        message: format!("SerpAPI transcript body read failed for video '{video_id}': {e}"),
+    })?;
     if !status.is_success() {
         return Err(ServiceError::Domain {
             domain: DomainKind::Wallet,
@@ -261,7 +277,15 @@ async fn fetch_youtube_transcript(
         });
     }
 
-    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| ServiceError::Domain {
+            domain: DomainKind::Wallet,
+            kind: ErrorKind::ServiceUnavailable,
+            source: Some(Box::new(e)),
+            message: format!(
+                "SerpAPI transcript returned malformed JSON for video '{video_id}': {e}"
+            ),
+        })?;
 
     let transcript_text = parsed["transcript"]
         .as_array()

@@ -97,19 +97,12 @@ pub struct ModelProvenance {
 }
 
 /// ModelResolver — resolves model identity and provenance before training.
-pub trait ModelResolver: Send + Sync {
-    fn resolve(&self, model_id: &str) -> Result<ModelProvenance, HuggingFaceError>;
-    fn validate(&self, model_id: &str) -> bool {
-        self.resolve(model_id).is_ok()
-    }
-}
-
 /// Static model resolver using built-in known-model registry.
 #[derive(Default)]
 pub struct LocalModelResolver;
 
-impl ModelResolver for LocalModelResolver {
-    fn resolve(&self, model_id: &str) -> Result<ModelProvenance, HuggingFaceError> {
+impl LocalModelResolver {
+    pub fn resolve(&self, model_id: &str) -> Result<ModelProvenance, HuggingFaceError> {
         if !model_id.contains('/') {
             return Err(HuggingFaceError::ModelNotFound(model_id.to_string()));
         }
@@ -141,6 +134,10 @@ impl ModelResolver for LocalModelResolver {
             lora_compatible: lora_ok,
             is_gated: gated,
         })
+    }
+
+    pub fn validate(&self, model_id: &str) -> bool {
+        self.resolve(model_id).is_ok()
     }
 }
 

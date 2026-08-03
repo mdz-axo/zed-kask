@@ -13,7 +13,7 @@
 use hkask_test_harness::arb_json_value;
 use hkask_types::tool_response::{parse_tool_response, unwrap_tool_envelope};
 use proptest::prelude::*;
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 
 proptest! {
     // unwrap_tool_envelope never panics and correctly unwraps the "content" key
@@ -70,6 +70,19 @@ proptest! {
         prop_assert_eq!(
             parsed, Some(expected),
             "parse_tool_response must return Some(unwrap_tool_envelope(value)) for valid JSON"
+        );
+    }
+
+    // Wrapping any value in a {"content": v} envelope and unwrapping returns v.
+    #[test]
+    fn unwrap_envelope_lifts_content_key(
+        value in arb_json_value(),
+    ) {
+        let enveloped = json!({"content": value.clone()});
+        let unwrapped = unwrap_tool_envelope(enveloped);
+        prop_assert_eq!(
+            unwrapped, value,
+            "unwrap_tool_envelope must extract the content key's value"
         );
     }
 

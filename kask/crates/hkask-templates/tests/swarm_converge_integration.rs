@@ -21,8 +21,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-/// Inference is never called — this manifest is compute-only (no `select`
-/// steps). If inference is invoked, fail loudly so the test doesn't silently
+/// If inference is invoked, fail loudly so the test doesn't silently
 /// pass by skipping the compute path.
 struct NoopInference;
 

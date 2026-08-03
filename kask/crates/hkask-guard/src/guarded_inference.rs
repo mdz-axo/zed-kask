@@ -12,10 +12,11 @@
 //! output is redacted in-place (not rejected).
 //!
 //! **Streaming** (`generate_stream*`): scans input before delegation. Output
-//! scanning for streams requires collecting the stream (defeating streaming
-//! latency) and is a known limitation — the non-streaming defaults on the
-//! trait already route through the guarded `generate` path when the inner
-//! backend doesn't override streaming.
+//! is scanned post-hoc via `GuardedStream` on stream end — the accumulated
+//! text is checked for secrets and a redaction chunk is emitted if needed.
+//! The known limitation is that displayed text is not blocked in real time
+//! (the stored version is redacted, not the chunks already forwarded to the
+//! consumer).
 
 use crate::ContentGuard;
 use futures_util::{Future, Stream};

@@ -449,7 +449,9 @@ impl EmbeddingStore {
                     let model = row
                         .get_str_named("model")
                         .map_err(|_| EmbeddingError::Decode("missing model".into()))?;
-                    let distance = row.get_real_named("distance").unwrap_or(0.0);
+                    let distance = row
+                        .get_real_named("distance")
+                        .map_err(|_| EmbeddingError::Decode("missing distance".into()))?;
                     let vector = Self::pgvector_decode(vector_text, dim)?;
                     results.push(SimilarityResult {
                         embedding: StoredEmbedding {
