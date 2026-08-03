@@ -8,35 +8,15 @@
 
 use hkask_templates::executor::ManifestExecutor;
 use hkask_templates::load_manifest_from_yaml;
-use hkask_test_harness::NoopToolPort;
+use hkask_test_harness::{NoopToolPort, PanicInferencePort};
 use hkask_types::template::LLMParameters;
-use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-
-struct NoopInference;
-
-impl InferencePort for NoopInference {
-    fn generate(
-        &self,
-        _prompt: &str,
-        _parameters: &LLMParameters,
-        _tools: Option<&[ChatToolDefinition]>,
-    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
-        Box::pin(async {
-            Err(InferenceError::Generation(
-                "inference should not be called for compute steps".into(),
-            ))
-        })
-    }
-}
 
 fn make_executor() -> ManifestExecutor {
     ManifestExecutor::new(
-        Arc::new(NoopInference),
+        Arc::new(PanicInferencePort),
         Arc::new(NoopToolPort),
         LLMParameters::default(),
     )

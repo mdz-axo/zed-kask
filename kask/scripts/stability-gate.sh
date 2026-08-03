@@ -166,6 +166,14 @@ else
     eir_deterministic=0
 fi
 
+# ── EIR classifier component (F5: placeholder) ───────────────────────────
+# The classifier EIR counts new flaky tests (is_real_bug: false) from
+# qa-triage's classifier.json. This is a NO-OP until qa-triage is wired into
+# the harness-evolve-cycle (the failures/ dir is never populated in the
+# current loop). The deterministic EIR (mutant regressions, above) is the
+# primary signal and works today. When qa-triage is wired in, this section
+# will count NEW flaky tests vs N-1 (not all flaky tests — see §9.5 #6).
+
 eir_classifier=0
 latest_failures_dir="${LATEST_TRACE}/failures"
 prev_failures_dir="${PREV_TRACE}/failures"

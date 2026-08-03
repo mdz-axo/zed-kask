@@ -19,6 +19,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest = { workspace = true }
+hkask-test-harness = { workspace = true }
 
 [lints]
 workspace = true

@@ -3,10 +3,11 @@
 //! Covers: DelegationToken (is_valid_for, deterministic id) and capabilities_match.
 
 use hkask_capability::{DelegationAction, DelegationResource, DelegationToken, capabilities_match};
+use hkask_test_harness::{arb_action, arb_resource};
 use hkask_types::WebID;
 use proptest::prelude::*;
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────
 
 fn alice() -> WebID {
     WebID::from_persona(b"alice")
@@ -27,25 +28,6 @@ fn make_token() -> DelegationToken {
 }
 
 // ── Property-based tests ─────────────────────────────────────────────────
-
-fn arb_resource() -> BoxedStrategy<DelegationResource> {
-    prop::sample::select(&[
-        DelegationResource::Tool,
-        DelegationResource::Template,
-        DelegationResource::Registry,
-        DelegationResource::Key,
-    ])
-    .boxed()
-}
-
-fn arb_action() -> BoxedStrategy<DelegationAction> {
-    prop::sample::select(&[
-        DelegationAction::Read,
-        DelegationAction::Write,
-        DelegationAction::Execute,
-    ])
-    .boxed()
-}
 
 proptest! {
     // is_valid_for returns true iff the triple matches exactly.

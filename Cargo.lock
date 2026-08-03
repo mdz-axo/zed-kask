@@ -9127,6 +9127,7 @@ name = "hkask-capability"
 version = "0.31.1"
 dependencies = [
  "hex",
+ "hkask-test-harness",
  "hkask-types",
  "proptest",
  "serde",

@@ -18,11 +18,16 @@ use hkask_capability::{
     DelegationAction, DelegationResource, DelegationToken, ToolFuture, ToolInfo, ToolPort,
     ToolPortError,
 };
-use hkask_types::{NotFound, WebID};
+use hkask_types::template::LLMParameters;
+use hkask_types::{
+    ChatToolDefinition, InferenceError, InferencePort, InferenceResult, NotFound, WebID,
+};
 use proptest::prelude::*;
 use serde_json::Value as JsonValue;
 use std::fs;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 
 // ── Oracle taxonomy (HarnessLLM §3) ───────────────────────────────────────
 
@@ -353,4 +358,101 @@ pub fn test_token_for_tool(tool_name: &str) -> DelegationToken {
 #[must_use]
 pub fn test_agent_webid() -> WebID {
     WebID::from_persona(b"test-agent")
+}
+
+// ── PanicInferencePort ───────────────────────────────────────────────────
+
+/// `InferencePort` that fails loudly if inference is invoked. Use in tests
+/// that exercise compute-only or tool-only paths and should never call the
+/// LLM. Unlike a silent noop, this returns an error so the test fails instead
+/// of silently passing by skipping the inference path.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PanicInferencePort;
+
+impl InferencePort for PanicInferencePort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &LLMParameters,
+        _tools: Option<&[ChatToolDefinition]>,
+    ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>> {
+        Box::pin(async {
+            Err(InferenceError::Generation(
+                "PanicInferencePort: inference was called in a test that should not invoke LLM inference".into(),
+            ))
+        })
+    }
+}
+
+// ── Proptest generators ─────────────────────────────────────────────────
+
+/// Generates arbitrary `DelegationResource` variants.
+pub fn arb_resource() -> BoxedStrategy<DelegationResource> {
+    prop::sample::select(&[
+        DelegationResource::Tool,
+        DelegationResource::Template,
+        DelegationResource::Registry,
+        DelegationResource::Key,
+    ])
+    .boxed()
+}
+
+/// Generates arbitrary `DelegationAction` variants.
+pub fn arb_action() -> BoxedStrategy<DelegationAction> {
+    prop::sample::select(&[
+        DelegationAction::Read,
+        DelegationAction::Write,
+        DelegationAction::Execute,
+    ])
+    .boxed()
+}
+
+/// Generates arbitrary `WebID` personas from short lowercase strings.
+pub fn arb_webid() -> BoxedStrategy<WebID> {
+    prop::string::string_regex("[a-z]{1,12}")
+        .expect("valid regex")
+        .prop_map(|s| WebID::from_persona(s.as_bytes()))
+        .boxed()
+}
+
+/// Generates arbitrary `DelegationToken` values across all resource/action
+/// combinations with arbitrary resource IDs and WebID personas.
+pub fn arb_delegation_token() -> BoxedStrategy<DelegationToken> {
+    (
+        arb_resource(),
+        prop::string::string_regex("[a-z_][a-z0-9_/]{0,20}").expect("valid regex"),
+        arb_action(),
+        arb_webid(),
+        arb_webid(),
+    )
+        .prop_map(|(resource, resource_id, action, from, to)| {
+            DelegationToken::new(resource, resource_id, action, from, to)
+        })
+        .boxed()
+}
+
+/// Generates arbitrary `TraceEntry` values for trace-filesystem property tests.
+pub fn arb_trace_entry() -> BoxedStrategy<TraceEntry> {
+    (
+        prop::sample::select(&["proptest", "bug-hunt", "test-run"]),
+        prop::string::string_regex("[a-z_][a-z0-9_/]{0,30}").expect("valid regex"),
+        prop::sample::select(&["pass", "fail", "flaky"]),
+        any::<u64>(),
+        prop::option::of(prop::string::string_regex("[a-z0-9_=]{0,40}").expect("valid regex"))
+            .prop_map(Option::unwrap_or_default),
+        prop::sample::select(&["hardcoded", "reference", "invariant", ""]),
+        arb_json_value(),
+    )
+        .prop_map(
+            |(kind, name, result, duration_ms, shrunk, oracle_type, metadata)| TraceEntry {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                result: result.to_string(),
+                duration_ms,
+                shrunk_counterexample: shrunk,
+                oracle_type: oracle_type.to_string(),
+                metadata,
+            },
+        )
+        .boxed()
 }
