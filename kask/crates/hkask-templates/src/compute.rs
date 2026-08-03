@@ -499,6 +499,16 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                 .get("influence_scores")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
+            // Cybernetic Swarm Plan C5 — fault-count aggregation (promoted
+            // from the CHECK template to the deterministic compute layer). The
+            // carried fault_count map (agent_name to integer) and this
+            // iteration's ORIENT attribution. The primitive increments the
+            // blamed agent's count, making agent_sel = argmax deterministic.
+            let fault_count = input
+                .get("fault_count")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}));
+            let agent_at_fault = input.get("agent_at_fault").cloned();
             // Extract the primary DECIDE move (first proposed move) — the
             // `decision_action` and the `agent_type` it names. Both are read
             // from the whole `decisions` object so fragile Jinja indexing stays
@@ -564,10 +574,26 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                     .unwrap_or(0.0);
                 new_influence.insert(agent_type.clone(), serde_json::json!(cur + d_delta));
             }
+            // C5 fault-count aggregation: if ORIENT attributed fault to a named
+            // agent this iteration, increment that agent's count in the
+            // carried map. agent_at_fault = { agent_name, reason, ... }. A null
+            // or missing attribution leaves the map unchanged (no fault this
+            // iteration). agent_sel = argmax fault_count is the
+            // most-consistently-blamed agent DECIDE acts on (C6).
+            let mut new_fault = fault_count.as_object().cloned().unwrap_or_default();
+            if let Some(aaf) = agent_at_fault.as_ref()
+                && !aaf.is_null()
+                && let Some(name) = aaf.get("agent_name").and_then(|v| v.as_str())
+                && !name.is_empty()
+            {
+                let cur = new_fault.get(name).and_then(|v| v.as_i64()).unwrap_or(0);
+                new_fault.insert(name.to_string(), serde_json::json!(cur + 1));
+            }
             Ok(serde_json::json!({
                 "iteration_log": new_log,
                 "failed_edits": new_failed,
                 "influence_scores": serde_json::Value::Object(new_influence),
+                "fault_count": serde_json::Value::Object(new_fault),
             }))
         }
         "swarm.second_order_monitor" => {
@@ -1483,6 +1509,81 @@ mod tests {
             .and_then(|v| v.as_object())
             .unwrap();
         assert_eq!(influence["dev"], -0.3);
+    }
+
+    // ── swarm.converge_accumulate fault_count (C5 promotion) ──
+
+    #[test]
+    fn swarm_converge_accumulate_increments_fault_count() {
+        // ORIENT attributed fault to "writer" this iteration → fault_count[writer]
+        // increments from the carried 1 to 2. The aggregation is now
+        // deterministic (promoted from the CHECK LLM template).
+        let input = serde_json::json!({
+            "iteration_log": [],
+            "failed_edits": [],
+            "influence_scores": {},
+            "fault_count": {"writer": 1, "researcher": 0},
+            "agent_at_fault": {"agent_name": "writer", "reason": "terminal_output", "rule_matched": 1},
+            "d": 0.4,
+            "task_success": null,
+            "deficit_class": "variety_deficit",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "researcher"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "writer"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let fc = result
+            .get("fault_count")
+            .and_then(|v| v.as_object())
+            .expect("fault_count present");
+        assert_eq!(fc["writer"], 2, "the blamed agent's count increments");
+        assert_eq!(fc["researcher"], 0, "the unblamed agent is unchanged");
+    }
+
+    #[test]
+    fn swarm_converge_accumulate_null_at_fault_leaves_count_unchanged() {
+        // No attribution this iteration → fault_count passes through unchanged.
+        let input = serde_json::json!({
+            "iteration_log": [],
+            "failed_edits": [],
+            "influence_scores": {},
+            "fault_count": {"writer": 3},
+            "agent_at_fault": null,
+            "d": 0.4,
+            "task_success": null,
+            "deficit_class": "x",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "r"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "r"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let fc = result
+            .get("fault_count")
+            .and_then(|v| v.as_object())
+            .expect("fault_count present");
+        assert_eq!(fc["writer"], 3, "null attribution → count unchanged");
+    }
+
+    #[test]
+    fn swarm_converge_accumulate_emits_empty_fault_count_when_absent() {
+        // No carried fault_count, no attribution → empty map (iteration 1).
+        let input = serde_json::json!({
+            "iteration_log": [],
+            "failed_edits": [],
+            "influence_scores": {},
+            "d": 0.4,
+            "task_success": null,
+            "deficit_class": "x",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "r"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "r"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let fc = result
+            .get("fault_count")
+            .and_then(|v| v.as_object())
+            .expect("fault_count present");
+        assert!(
+            fc.is_empty(),
+            "no carried map, no attribution → empty fault_count"
+        );
     }
 
     #[test]

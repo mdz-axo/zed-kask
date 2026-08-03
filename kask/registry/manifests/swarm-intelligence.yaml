@@ -183,10 +183,16 @@ steps:
       swarm_state: "{{ step_1_result }}"
       task: "{{ task }}"
       target_condition: "{{ target_condition | default({}) }}"
-      # Cybernetic Swarm Plan C5: the prior iteration's ACT trace (the executor
-      # snapshots prev_step_N_result at the loop step) carries the delegate
-      # results ORIENT attributes fault from. Absent on iteration 1 (no prior).
+      # Cybernetic Swarm Plan C5: prior_act is the prior iteration's ACT trace
+      # (the executor snapshots prev_step_N_result at the loop step). It carries
+      # the dispatch PLAN (emitted_calls), not executed delegate results — the
+      # cascade has no `action: execute` step. delegate_results is the
+      # operator-supplied execution telemetry (per-agent tool_calls[].ok /
+      # executed_skills[].ok) ORIENT attributes fault from; absent in the pure
+      # planning cascade, so agent_at_fault is null until the operator wires a
+      # delegate-result feed (C5/C6 are wired-but-inert without it).
       prior_act: "{{ prev_step_5_result | default(none) }}"
+      delegate_results: "{{ delegate_results | default(none) }}"
 
   - ordinal: 3
     action: select

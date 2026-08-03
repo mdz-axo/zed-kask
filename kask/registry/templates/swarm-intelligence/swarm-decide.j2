@@ -158,10 +158,12 @@ Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
 ### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
-ORIENT attributed fault to a specific agent (the `agent_sel` candidate — the
-most-consistently-blamed agent across iterations via CHECK's `blame_count`).
-Before firing the blamed agent, consider **reconfiguring** it in place — the
-Modify-Block action (S5 §3.2.2) and the MASS prompt axis (S7 Stages 1+3):
+ORIENT attributed fault to a specific agent. The `fault_count` map (threaded
+from the deterministic `swarm.converge_accumulate` compute step) carries the
+running tally of attributed faults per agent; `agent_sel` = argmax fault_count
+is the most-consistently-blamed agent across iterations. Before firing the
+blamed agent, consider **reconfiguring** it in place — the Modify-Block action
+(S5 §3.2.2) and the MASS prompt axis (S7 Stages 1+3):
 
 Propose a `reconfigure_agent` move (local mode) that:
 1. Calls `swarm_generate_prompt` seeded with the blamed agent's current

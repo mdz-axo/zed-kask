@@ -1,10 +1,11 @@
-//! OCR server methods — CorpusServer impl block for OCR pipeline operations.
+//! OCR pipeline executor — `PipelineExecutor` (Tesseract + LLM backends).
 //!
-//! Extracted from lib.rs to co-locate OCR-specific code with the ocr/ module.
-//! These methods are on `CorpusServer` but are only called by `corpus_convert`
-//! and `corpus_ocr` (in tools/document.rs).
+//! The `CorpusServer` OCR helper methods that previously lived here
+//! (`resolve_ocr_model`, `do_ocr`, `persist_pipeline_outcome`,
+//! `accumulate_and_check_drift`) moved to `services::convert::ConvertService`,
+//! which now owns the OCR + index domain. `corpus_convert` and `corpus_ocr` in
+//! `tools/document.rs` construct a `ConvertService` and delegate to it.
 
-use crate::ocr::calibration::{analyze_threshold_drift, emit_drift_alert};
 use crate::ocr::llm_ocr::LlmOcrExecutor;
 use crate::ocr::pipeline::{OcrError, OcrExecutor};
 use crate::ocr::tesseract::TesseractExecutor;
@@ -57,126 +58,5 @@ impl OcrExecutor for PipelineExecutor {
                     .await
             }
         }
-    }
-}
-
-impl CorpusServer {
-    /// Persist pipeline outcome for Regulation observability.
-    pub async fn persist_pipeline_outcome(&self, outcome: &crate::ocr::PipelineOutcome) {
-        let data = serde_json::json!({
-            "total_pages": outcome.results.len(),
-            "error_count": outcome.errors.len(),
-            "verification_passed": outcome.report.passed,
-            "page_count_match": outcome.report.page_count_match,
-            "empty_pages": outcome.report.empty_pages,
-            "cross_validations": outcome.cross_validations.len(),
-            "backend_distribution": outcome.results.iter()
-                .fold(std::collections::HashMap::new(), |mut acc, r| {
-                    *acc.entry(r.backend.label().to_string()).or_insert(0) += 1;
-                    acc
-                }),
-        });
-        tracing::debug!(
-            target: "hkask.mcp.docproc.reg",
-            detail = ?data,
-            "Pipeline outcome recorded (no daemon — in-process only)",
-        );
-
-        self.accumulate_and_check_drift(outcome);
-    }
-
-    /// Accumulate cross-validations and check for threshold drift.
-    fn accumulate_and_check_drift(&self, outcome: &crate::ocr::PipelineOutcome) {
-        let mut acc = match self.cv_accumulator.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.mcp.corpus.ocr",
-                    error = %e,
-                    "Failed to lock CV accumulator for drift check — skipping."
-                );
-                return;
-            }
-        };
-        acc.extend(outcome.cross_validations.clone());
-
-        let synthetic_outcome = crate::ocr::PipelineOutcome {
-            results: vec![],
-            report: crate::ocr::VerificationReport::new(true, vec![], 0),
-            cross_validations: acc.clone(),
-            errors: vec![],
-        };
-
-        if let Some(alert) = analyze_threshold_drift(&[synthetic_outcome], &self.ocr_thresholds) {
-            emit_drift_alert(&alert);
-            acc.clear();
-        }
-    }
-
-    /// Resolve OCR model: explicit override > HKASK_OCR_MODEL env.
-    pub async fn resolve_ocr_model(
-        &self,
-        override_model: Option<&str>,
-    ) -> Result<String, OcrError> {
-        let model = if let Some(m) = override_model
-            && !m.is_empty()
-        {
-            m.to_string()
-        } else {
-            self.ocr_model.clone().ok_or(OcrError::NoModel)?
-        };
-
-        let vision_models = self.inference_router.list_vision_models().await;
-        let is_vision = vision_models
-            .iter()
-            .any(|m| m.model == model || m.prefixed_name == model);
-
-        if !is_vision {
-            let all_models = self.inference_router.list_models().await;
-            let exists = all_models
-                .iter()
-                .any(|m| m.model == model || m.prefixed_name == model);
-            if exists {
-                return Err(OcrError::NotVisionModel {
-                    model: model.clone(),
-                });
-            }
-        }
-
-        Ok(model)
-    }
-
-    /// Perform OCR by sending base64-encoded bytes to a vision model.
-    pub async fn do_ocr(
-        &self,
-        file_bytes: &[u8],
-        model: &str,
-        max_tokens: u32,
-    ) -> Result<String, OcrError> {
-        if file_bytes.is_empty() {
-            return Err(OcrError::EmptyFile);
-        }
-
-        let b64_data =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, file_bytes);
-
-        let params = LLMParameters {
-            temperature: 0.1,
-            max_tokens,
-            ..Default::default()
-        };
-
-        let result = self
-            .inference_router
-            .generate_vision(
-                &crate::ocr::llm_ocr::build_ocr_prompt(None),
-                &[b64_data],
-                &params,
-                Some(model),
-            )
-            .await
-            .map_err(|e| OcrError::InferenceFailed(e.to_string()))?;
-
-        Ok(result.text)
     }
 }

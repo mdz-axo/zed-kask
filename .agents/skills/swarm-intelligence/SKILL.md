@@ -65,7 +65,7 @@ Plan:  Phase 2  — ORIENT           → Classify the gap + deterministic fault 
 Plan:  Phase 3  — DECIDE           → Propose composition adjustments isomorphic to PSO/ACO/Reynolds tuning
 Det:   Phase 4  — FILTER           → Deterministically enforce C3 failed-edit + C7 influence guards (no LLM)
 Do:    Phase 5  — ACT              → Emit gated swarm_hire / swarm_delegate / swarm_delegate_local
-Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic + blame_count (C5)
+Check: Phase 6  — CHECK             → Re-measure, compute swarm-state distance d, emit next_focus + algedonic
 Check: Phase 7  — CONVERGE (check)  → Cauchy criterion on d (deterministic, no LLM judgment)
 Check: Phase 8  — CONVERGE (accum) → Deterministic accumulator: iteration_log, failed_edits, influence_scores (C1/C3/C7)
 Check: Phase 9  — CONVERGE (monitor)→ Second-order monitor: reasoning-loop + sensor-truth-divergence + Go See cadence (C1/C2)
@@ -121,7 +121,7 @@ iterations, so the enforcement points live in the deterministic math layer.
 | **C2** Go See cadence | Scheduled human check every N convergences + event trigger | `cadence_every` param in the monitor; SENSE surfaces `go_see` |
 | **C3** failed-edit memory | Anti-loop set; the FILTER drops moves matching prior failed signatures | `swarm.filter_proposed_moves` compute step (4) |
 | **C4** latency `T_q` | End-to-end delegation latency measurement | `LocalDelegateResult.latency_ms` |
-| **C5** fault attribution | Deterministic priority rule over the delegate trace; blame aggregation | ORIENT template + CHECK `blame_count` |
+| **C5** fault attribution | Deterministic priority rule over the delegate trace; fault-count aggregation | ORIENT template (rule) + `swarm.converge_accumulate` `fault_count` (count). Wired-but-inert: the planning cascade's ACT emits dispatch *intents*, not executed delegate *results* (`tool_calls[].ok`/`executed_skills[].ok`); attribution fires only when the operator supplies `delegate_results` telemetry via context. |
 | **C6** reconfigure_agent | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis) | `swarm_reconfigure_local_agent` tool + DECIDE move type |
 | **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm | `swarm.filter_proposed_moves` compute step (4) |
 | **C8** task-gated alignment | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port) | SENSE template `alignment` definition |

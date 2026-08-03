@@ -16,19 +16,9 @@ use crate::*;
 pub(crate) fn read_ontology_tags(
     path: &str,
 ) -> Result<std::collections::HashMap<String, String>, McpToolError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        McpToolError::invalid_argument(format!("Cannot read tagged_jsonl '{path}': {e}"))
-    })?;
+    let (values, _dropped) = read_jsonl_lenient::<serde_json::Value>(path, "tagged_jsonl")?;
     let mut map = std::collections::HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let v: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+    for v in values {
         let entity_ref = v.get("entity_ref").and_then(|v| v.as_str()).unwrap_or("");
         if entity_ref.is_empty() {
             continue;
@@ -84,20 +74,10 @@ pub(crate) fn read_ontology_tags_annotated(
 pub(crate) fn read_ontology_namespaces(
     path: &str,
 ) -> Result<std::collections::HashMap<String, std::collections::HashSet<String>>, McpToolError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        McpToolError::invalid_argument(format!("Cannot read tagged_jsonl '{path}': {e}"))
-    })?;
+    let (values, _dropped) = read_jsonl_lenient::<serde_json::Value>(path, "tagged_jsonl")?;
     let mut map: std::collections::HashMap<String, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let v: serde_json::Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
+    for v in values {
         let entity_ref = v.get("entity_ref").and_then(|v| v.as_str()).unwrap_or("");
         if entity_ref.is_empty() {
             continue;

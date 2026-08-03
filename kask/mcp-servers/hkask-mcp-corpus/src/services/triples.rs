@@ -14,6 +14,7 @@ use hkask_types::template::LLMParameters;
 use serde_json::json;
 
 use crate::batch::{MAX_RETRIES, retry_with_backoff};
+use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
     GUARD, INPUT_GUARD_ENABLED, predicate_to_dimension, read_ontology_namespaces,
     read_ontology_tags, triple_confidence,
@@ -69,26 +70,11 @@ impl TriplesService {
             concurrency,
         } = request;
 
-        let content = std::fs::read_to_string(&chunks_path).map_err(|e| {
-            McpToolError::invalid_argument(format!(
-                "Cannot read chunks_jsonl '{}': {e}",
-                chunks_path
-            ))
-        })?;
+        let chunks_values = read_jsonl::<serde_json::Value>(&chunks_path, "chunks_jsonl")?;
 
         // Parse chunks: each line has entity_ref and text
         let mut chunks: Vec<(String, String)> = Vec::new();
-        for (i, line) in content.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-                McpToolError::invalid_argument(format!(
-                    "chunks_jsonl line {} is not valid JSON: {e}",
-                    i + 1
-                ))
-            })?;
+        for (i, v) in chunks_values.iter().enumerate() {
             let entity_ref = v
                 .get("entity_ref")
                 .and_then(|v| v.as_str())

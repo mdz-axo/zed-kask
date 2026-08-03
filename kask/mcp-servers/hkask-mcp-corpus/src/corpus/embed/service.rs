@@ -1,6 +1,5 @@
 //! EmbedService — Style corpus embedding pipeline with metadata layer.
 
-use super::download::download_text;
 use super::hmems::store_passage_h_mems;
 use super::passage::TaggedPassage;
 use super::strategies::ChunkingStrategy;

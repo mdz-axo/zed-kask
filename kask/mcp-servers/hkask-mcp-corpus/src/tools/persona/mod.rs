@@ -10,7 +10,9 @@
 //! and `hkask_storage::EmbeddingStore` for centroid retrieval.
 
 use crate::corpus::EmbedService;
-use crate::*;
+use crate::{
+    CorpusServer, McpToolError, Parameters, cosine_distance, execute_tool, json, tool, tool_router,
+};
 use hkask_services_core::HkaskSettings;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};

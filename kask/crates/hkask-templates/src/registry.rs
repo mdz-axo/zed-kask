@@ -685,6 +685,8 @@ mod tests {
             "influence_scores",
             "d",
             "decisions",
+            "agent_at_fault",
+            "fault_count",
         ] {
             assert!(
                 acc_mapping.contains_key(key),
@@ -723,13 +725,24 @@ mod tests {
             "failed_edits",
             "influence_scores",
             "second_order",
-            "blame_count",
+            "fault_count",
         ] {
             assert!(
                 loop_mapping.contains_key(key),
                 "loop step input_mapping must thread `{key}` back (C1/C3/C5/C7)"
             );
         }
+        // fault_count is now aggregated by the deterministic compute step
+        // (swarm.converge_accumulate, ordinal 8), not the CHECK LLM template —
+        // pin that the loop threads it from step_8_result, not step_6_result.
+        let fc_binding = loop_mapping
+            .get("fault_count")
+            .and_then(|v| v.as_str())
+            .expect("loop step binds fault_count");
+        assert!(
+            fc_binding.contains("step_8_result.fault_count"),
+            "fault_count must thread from the compute step (step_8_result), not CHECK — got {fc_binding}"
+        );
 
         // DECIDE (ordinal 3) binds the guards it consumes.
         let decide = manifest
@@ -742,10 +755,15 @@ mod tests {
             .as_ref()
             .and_then(|v| v.as_object())
             .expect("DECIDE step has an input_mapping");
-        for key in ["failed_edits", "influence_scores", "second_order"] {
+        for key in [
+            "failed_edits",
+            "influence_scores",
+            "second_order",
+            "fault_count",
+        ] {
             assert!(
                 decide_mapping.contains_key(key),
-                "DECIDE input_mapping must bind `{key}` (C3/C7/C1 guards)"
+                "DECIDE input_mapping must bind `{key}` (C3/C7/C1/C5 guards)"
             );
         }
 

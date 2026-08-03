@@ -15,15 +15,20 @@ use crate::services::consolidation::{ConsolidationRequest, ConsolidationService}
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
-use crate::*;
+use crate::{
+    Arc, CorpusServer, McpToolError, Parameters, SemanticMemory, default_owner, embedding_dim,
+    execute_tool, json, normalize_in_place, owner_webid, tool, tool_router,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 mod clustering;
+mod lora_config;
 mod qa_parsing;
 mod qa_types;
 
 pub(crate) use clustering::{cluster_within_source, read_tagged_chunks};
+use lora_config::build_lora_config;
 use qa_parsing::{ParsedQa, parse_qa_record};
 pub(crate) use qa_types::{QaType, parse_type_distribution, qa_type_instruction, qa_type_str};
 
@@ -504,6 +509,11 @@ impl CorpusServer {
         Parameters(req): Parameters<PrepareTrainingDatasetRequest>,
     ) -> String {
         execute_tool(self, "corpus_prepare_training_dataset", async {
+            // Note: this site intentionally does NOT use `read_jsonl`/`read_jsonl_lenient`.
+            // It collects per-line parse errors (with line numbers) into the tool
+            // response (`parse_errors`), which is part of the external API. The
+            // shared helpers either propagate the first error (strict) or drop
+            // silently (lenient) — neither preserves the multi-error report.
             let content = std::fs::read_to_string(&req.input_jsonl).map_err(|e| {
                 McpToolError::invalid_argument(format!(
                     "Cannot read input JSONL '{}': {e}",
@@ -589,76 +599,19 @@ impl CorpusServer {
             }
 
             // Generate lora-training config recommendations
-            // based on the 5-gate decision (G1-G5)
-            let lower = req.base_model.to_lowercase();
-            let model_size_b: u32 = if ["1b", "3b"].iter().any(|p| lower.contains(p)) {
-                1
-            } else if ["7b", "8b", "9b"].iter().any(|p| lower.contains(p)) {
-                8
-            } else if ["13b", "14b"].iter().any(|p| lower.contains(p)) {
-                14
-            } else if ["30b", "34b", "35b"].iter().any(|p| lower.contains(p)) {
-                35
-            } else if ["70b", "72b"].iter().any(|p| lower.contains(p)) {
-                70
-            } else {
-                8 // default
-            };
-
-            // G2: Memory budget — model_size × 2 (bf16) > 24GB → QLoRA
-            let use_qlora = (model_size_b * 2) > 24;
-
-            // G3: Task distance — QA pairs from corpus are "moderate" (new domain knowledge)
-            let recommended_r = if n_samples < 1000 { 16 } else { 32 };
-            let recommended_alpha = recommended_r * 2;
-
-            // G4: Quality/cost — default LoRA (not DoRA/PiSSA)
-            let recommended_init = "true"; // PEFT default
-
-            // G5: Knowledge preservation — not required for new domain adaptation
-            let recommended_use_rslora = recommended_r > 64;
-
-            let config_recommendation = json!({
-                "base_model": req.base_model,
-                "model_size_b": model_size_b,
-                "use_qlora": use_qlora,
-                "lora": {
-                    "r": recommended_r,
-                    "alpha": recommended_alpha,
-                    "dropout": 0.0,
-                    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-                    "use_rslora": recommended_use_rslora,
-                    "use_dora": false,
-                    "init_lora_weights": recommended_init,
-                    "bias": "none"
-                },
-                "quantization": if use_qlora {
-                    json!({
-                        "load_in_4bit": true,
-                        "bnb_4bit_quant_type": "nf4",
-                        "bnb_4bit_compute_dtype": "bf16",
-                        "bnb_4bit_use_double_quant": true
-                    })
-                } else {
-                    json!({"load_in_4bit": false})
-                },
-                "optimization": {
-                    "optimizer": if use_qlora { "paged_adamw_8bit" } else { "adamw_torch" },
-                    "lr_scheduler": "cosine",
-                    "gradient_accumulation_steps": 1
-                },
-                "advanced": {
-                    "bf16": true,
-                    "gradient_checkpointing": "true"
-                },
-                "gate_decisions": {
-                    "G1_inference": "must-merge (LoRA-family)",
-                    "G2_memory": if use_qlora { "QLoRA (NF4)" } else { "LoRA (bf16)" },
-                    "G3_task_distance": "moderate (new domain knowledge)",
-                    "G4_quality_cost": "default (LoRA with PEFT default init)",
-                    "G5_knowledge_preservation": "not required"
-                }
-            });
+            // based on the 5-gate decision (G1-G5). The heuristic lives in
+            // `lora_config::build_lora_config`, which DUPLICATES the
+            // lora-training skill's gates — keep them in sync.
+            let config_recommendation = build_lora_config(&req.base_model, n_samples);
+            let use_qlora = config_recommendation
+                .get("use_qlora")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let recommended_r = config_recommendation
+                .get("lora")
+                .and_then(|l| l.get("r"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
 
             // Write output if not dry run
             if !req.dry_run && !chatml_lines.is_empty() {

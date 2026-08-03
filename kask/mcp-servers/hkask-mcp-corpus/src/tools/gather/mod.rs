@@ -8,7 +8,7 @@
 //! and generates a corpus.yaml. `corpus_cache_work` caches extracted text
 //! content to disk for reuse by the embedding pipeline.
 
-use crate::*;
+use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

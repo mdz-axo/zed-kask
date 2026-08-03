@@ -1,5 +1,63 @@
 //! Shared math and text helpers used across docproc tool modules.
 
+use hkask_mcp_server::server::McpToolError;
+use serde::de::DeserializeOwned;
+
+/// Read a JSONL file and parse each non-empty line into `T`.
+///
+/// Lines are split on newlines, trimmed, and empty lines are skipped. Parse errors
+/// are propagated with the 1-based file line number (counting all lines,
+/// including empty ones, to match the original per-site error messages).
+/// `label` is the parameter-name context used in error messages (e.g.
+/// `"chunks_jsonl"`, `"prompts_jsonl"`, `"tagged_jsonl"`).
+pub(crate) fn read_jsonl<T: DeserializeOwned>(
+    path: &str,
+    label: &str,
+) -> Result<Vec<T>, McpToolError> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        McpToolError::invalid_argument(format!("Cannot read {label} '{path}': {e}"))
+    })?;
+    let mut out = Vec::new();
+    for (i, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: T = serde_json::from_str(line).map_err(|e| {
+            McpToolError::invalid_argument(format!("{label} line {} is not valid JSON: {e}", i + 1))
+        })?;
+        out.push(v);
+    }
+    Ok(out)
+}
+
+/// Read a JSONL file, dropping malformed lines and returning the count dropped.
+///
+/// Like [`read_jsonl`] but lenient: lines that fail to parse are silently
+/// dropped (no error propagated), and the number of dropped lines is returned
+/// so callers can warn or report. Empty lines are not counted as dropped.
+pub(crate) fn read_jsonl_lenient<T: DeserializeOwned>(
+    path: &str,
+    label: &str,
+) -> Result<(Vec<T>, usize), McpToolError> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        McpToolError::invalid_argument(format!("Cannot read {label} '{path}': {e}"))
+    })?;
+    let mut out = Vec::new();
+    let mut dropped = 0usize;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<T>(line) {
+            Ok(v) => out.push(v),
+            Err(_) => dropped += 1,
+        }
+    }
+    Ok((out, dropped))
+}
+
 /// Cosine similarity between two vectors. Consolidated from ocr/semantic.rs (C4).
 /// Returns 0.0 if either vector is empty or dimensions mismatch.
 pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

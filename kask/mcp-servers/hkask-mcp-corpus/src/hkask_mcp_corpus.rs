@@ -46,8 +46,8 @@ pub mod tools;
 pub(crate) use template::render_docproc_template;
 // Re-export helpers used by tool modules.
 pub(crate) use helpers::{
-    chunk_structure, chunk_word_bounds, cosine_distance, cosine_similarity, serialize_passages,
-    tokens_to_words,
+    chunk_structure, chunk_word_bounds, cosine_distance, cosine_similarity, read_jsonl,
+    read_jsonl_lenient, serialize_passages, tokens_to_words,
 };
 // LLM JSON extraction is shared via `hkask_types::json_extract` (RR-0028).
 pub(crate) use hkask_types::json_extract::extract_json_from_response;
@@ -174,60 +174,11 @@ pub struct IndexedPassage {
 }
 
 // ── Server constructor + core methods ──────────────────────────────────────
-
-impl CorpusServer {
-    /// Check whether OCR capability is available.
-    pub fn has_ocr(&self) -> bool {
-        self.ocr_model.is_some()
-    }
-
-    /// Index passages into the in-memory vector store for later query.
-    /// Embeds each passage text and stores it with metadata.
-    /// Returns the number of passages indexed (0 if embedding fails).
-    pub async fn index_passages(&self, passages: &[(String, String)], source_label: &str) -> usize {
-        let texts: Vec<String> = passages.iter().map(|(_, t)| t.clone()).collect();
-        if texts.is_empty() {
-            return 0;
-        }
-
-        let model_name = std::env::var("HKASK_EMBEDDING_MODEL")
-            .unwrap_or_else(|_| default_embedding_model().to_string());
-
-        let vectors = match self.inference_router.embed(&model_name, &texts).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(target: "hkask.mcp.docproc.index", error = %e, "Failed to embed passages for indexing");
-                return 0;
-            }
-        };
-
-        let mut index = match self.index.lock() {
-            Ok(guard) => guard,
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.mcp.corpus",
-                    error = %e,
-                    "Failed to lock index for passage indexing — skipping. \
-                     The index mutex may be poisoned from a prior panic."
-                );
-                return 0;
-            }
-        };
-        for (i, ((entity_ref, passage_text), embedding)) in passages.iter().zip(vectors).enumerate()
-        {
-            index.push(IndexedPassage {
-                text: passage_text.clone(),
-                metadata: serde_json::json!({
-                    "entity_ref": entity_ref,
-                    "source": source_label,
-                    "position": i,
-                }),
-                embedding,
-            });
-        }
-        passages.len()
-    }
-}
+//
+// `has_ocr` and `index_passages` previously lived here; they moved to
+// `services::convert::ConvertService` (which now owns the OCR + index domain).
+// The `#[tool]` methods in `tools/document.rs` construct a `ConvertService` and
+// delegate.
 
 // ── Tool helpers ───────────────────────────────────────────────────────────
 

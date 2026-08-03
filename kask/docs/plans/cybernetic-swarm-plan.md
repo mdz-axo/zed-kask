@@ -1272,10 +1272,10 @@ changed and the validation that passed.
   automated). 8 unit tests pin the primitives.
 - kask/registry/manifests/swarm-intelligence.yaml — two new CONVERGE compute
   steps (ordinals 7-8) after kata.convergence_check; the loop step (ordinal 9)
-  threads iteration_log/failed_edits/influence_scores/second_order/blame_count
+  threads iteration_log/failed_edits/influence_scores/second_order/fault_count
   back into context. ORIENT (step 2) and DECIDE (step 3) input_mapping bind
   the carried accumulators; CHECK (step 5) binds agent_at_fault (from
-  prev_step_2_result) and blame_count.
+  prev_step_2_result) and fault_count.
 - Validation: cargo test -p hkask-templates --lib swarm → 8 passed;
   manifest_load_validation + template_rendering pass; clippy clean.
 
@@ -1285,10 +1285,10 @@ changed and the validation that passed.
   output; a Step 4 applies the deterministic priority rule (terminal-output
   failure -> earliest broken tool call -> failed skill -> guard redaction ->
   tie-break by delegation order). swarm-check.j2 — contract gains
-  blame_count/agent_at_fault inputs + blame_count output; Step 7 aggregates
-  blame_count[agent] += 1 across iterations (argmax is agent_sel, the C6
+  fault_count/agent_at_fault inputs + fault_count output; Step 7 aggregates
+  fault_count[agent] += 1 across iterations (argmax is agent_sel, the C6
   candidate). The manifest threads agent_at_fault from prev_step_2_result and
-  blame_count through the loop.
+  fault_count through the loop.
 - Behavior: fault attribution is a deterministic rule over the delegate trace
   (JudgeFlow with the LLM Judge replaced by a rule — the divergence IS the
   point per Constraint 3). ORIENT runs before ACT, so it attributes fault from
@@ -1451,8 +1451,32 @@ A skill-grounded review resolved the four deferred items:
 
 Validation: cargo test -p hkask-templates (133 lib + integration) / -p
 hkask-mcp-swarm (113) / -p swarm_panel (24) all pass; clippy clean (--deny
-warnings) across all three. C5 remains LLM-instructed (the attribution rule
-feeds DECIDE's reconfigure-vs-fire choice, which is itself LLM-gated, so a
-mis-attribution is caught downstream); its deterministic promotion path
-(a `swarm.attribute_fault` compute step before ORIENT) is documented as future
-work if attribution fidelity becomes a problem.
+warnings) across all three. C5's fault_count accumulator was subsequently
+promoted to the deterministic compute layer (swarm.converge_accumulate now
+increments fault_count from agent_at_fault, threaded via the loop from
+step_8_result; CHECK no longer aggregates it) — closing the last
+LLM-maintained-accumulator gap and renaming blame_count -> fault_count for
+transparency (a "fault" is an attributed responsibility, distinct from a
+"fail" which is the task outcome). The attribution *rule* itself remains
+LLM-instructed in ORIENT — and on closer analysis this is the correct design,
+not a deferred gap. The C5 rule reads `tool_calls[].ok` / `executed_skills[].ok`
+from the prior iteration's delegate results, but the planning cascade's ACT
+step is `action: select` (the LLM emits dispatch *intents* — `emitted_calls` —
+not executed *results*); the cascade has no `action: execute` step, so no MCP
+tool is actually invoked and no delegate-result telemetry is captured.
+Promoting the rule to a `swarm.attribute_fault` compute primitive would
+operate on the same absent data (deterministic-null instead of LLM-fabricated
+— not better, and a compute primitive over absent data is the
+advertised-invariant-without-enforcement-point trap). The real gap is the
+missing delegate-result telemetry path, an architectural change (an `execute`
+step or an operator-supplied `delegate_results` context feed), not a compute
+promotion. The ORIENT C5 instructions were corrected to be honest about this
+boundary: attribute ONLY when the operator supplies `delegate_results`
+execution telemetry via context; absent → agent_at_fault = null (never
+fabricate outcomes from the plan's emitted_calls — the .rules never-fabricate
+trap). C5/C6 (reconfigure the blamed agent) are therefore wired-but-inert in
+the pure planning cascade: fault_count stays empty, agent_sel is never
+computed, and C6 does not fire until a delegate-result feed is wired. This is
+the honest end state — C5's accumulator is deterministic; the rule waits on
+telemetry, not on a compute promotion. Final: cargo test -p hkask-templates
+(136 lib + integration) passes.

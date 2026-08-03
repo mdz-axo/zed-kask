@@ -15,7 +15,11 @@ mod triples;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::services::triples::{TriplesRequest, TriplesService};
-use crate::*;
+use crate::{
+    Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_owner,
+    embedding_dim, execute_tool, extract_json_from_response, json, read_jsonl,
+    render_docproc_template, tool, tool_router,
+};
 use ontology_io::read_ontology_tags_annotated;
 use qa::{BatchQaPrompt, parse_qa_response, write_qa_result};
 use schemars::JsonSchema;
@@ -204,24 +208,10 @@ impl CorpusServer {
     ) -> String {
         execute_tool(self, "corpus_generate_qa_batch", async {
             // Read prompts from JSONL file (file-only mode)
-            let content = std::fs::read_to_string(&prompts_jsonl).map_err(|e| {
-                McpToolError::invalid_argument(format!(
-                    "Cannot read prompts_jsonl '{}': {e}",
-                    prompts_jsonl
-                ))
-            })?;
+            let prompts_values =
+                read_jsonl::<serde_json::Value>(&prompts_jsonl, "prompts_jsonl")?;
             let mut prompts_vec: Vec<BatchQaPrompt> = Vec::new();
-            for (i, line) in content.lines().enumerate() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                let v: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-                    McpToolError::invalid_argument(format!(
-                        "prompts_jsonl line {} is not valid JSON: {e}",
-                        i + 1
-                    ))
-                })?;
+            for v in prompts_values {
                 // Map build_prompts output fields to BatchQaPrompt:
                 // chunk_ref -> chunk_id, system+user -> text, qa_type -> bloom_levels
                 let chunk_id = v
@@ -493,26 +483,10 @@ impl CorpusServer {
         passphrase: &str,
         batch_size: usize,
     ) -> Result<serde_json::Value, McpToolError> {
-        let content = std::fs::read_to_string(chunks_path).map_err(|e| {
-            McpToolError::invalid_argument(format!(
-                "Cannot read chunks_jsonl '{}': {e}",
-                chunks_path
-            ))
-        })?;
-
         // Parse chunks: each line has entity_ref, source, text, word_count
+        let chunks_values = read_jsonl::<serde_json::Value>(chunks_path, "chunks_jsonl")?;
         let mut chunks: Vec<(String, String)> = Vec::new(); // (entity_ref, text)
-        for (i, line) in content.lines().enumerate() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let v: serde_json::Value = serde_json::from_str(line).map_err(|e| {
-                McpToolError::invalid_argument(format!(
-                    "chunks_jsonl line {} is not valid JSON: {e}",
-                    i + 1
-                ))
-            })?;
+        for (i, v) in chunks_values.iter().enumerate() {
             let entity_ref = v
                 .get("entity_ref")
                 .and_then(|v| v.as_str())

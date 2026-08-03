@@ -7,7 +7,11 @@
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::tools::semantic::GUARD;
-use crate::*;
+use crate::{
+    Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
+    extract_json_from_response, json, normalize_concept, read_jsonl_lenient,
+    render_docproc_template, tool, tool_router,
+};
 use hkask_inference::model_constants::classifier_model;
 use hkask_types::corpus::TaggedChunk;
 use schemars::JsonSchema;
@@ -55,16 +59,7 @@ struct OntologyTags {
 }
 
 fn read_input_chunks(path: &str) -> Result<Vec<InputChunk>, McpToolError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        McpToolError::invalid_argument(format!("Cannot read chunks_jsonl '{path}': {e}"))
-    })?;
-    let total_lines = content.lines().filter(|l| !l.trim().is_empty()).count();
-    let chunks: Vec<InputChunk> = content
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
-    let dropped = total_lines - chunks.len();
+    let (chunks, dropped) = read_jsonl_lenient::<InputChunk>(path, "chunks_jsonl")?;
     if dropped > 0 {
         tracing::warn!("  Warning: dropped {dropped} malformed lines from input");
     }

@@ -7,6 +7,7 @@ contract:
     mode: string
     target_condition: object|null
     prior_act: object|null
+    delegate_results: array|null
   output:
     deficit_class: string
     deficit_details: object
@@ -49,9 +50,19 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 ```json
 {{ prior_act | tojson }}
 ```
-The prior iteration's ACT emitted delegations. The delegate results carry
-`tool_calls[]` (each with `ok`/`error`) and `executed_skills[]` (each with
-`ok`/`error`). These are the deterministic inputs to fault attribution.
+The prior iteration's ACT emitted dispatch intents (`emitted_calls`) — a plan,
+not executed results. The deterministic fault-attribution inputs
+(`tool_calls[].ok`, `executed_skills[].ok`, the delegate response text) are
+**execution telemetry**, which the planning cascade does not capture: the ACT
+step is `action: select` (the LLM emits what it would call), not
+`action: execute` (no MCP tool is actually invoked by the cascade). Delegate
+results arrive only when the operator supplies them via the skill's context
+(an explicit `delegate_results` field, e.g. from a prior real
+`swarm_delegate_local` run). Do NOT fabricate `tool_calls[].ok` /
+`executed_skills[].ok` from the plan's `emitted_calls` — those are intents, not
+outcomes (the `.rules` "never fabricate" trap). If no `delegate_results`
+telemetry is present, set `agent_at_fault = null` (honest: no execution data to
+attribute from).
 {% else %}
 ## Prior Iteration ACT Trace
 No prior ACT — this is iteration 1. Fault attribution is not applicable yet.
@@ -138,15 +149,21 @@ set cybernetic_assessment = null.
 
 ## Step 4 — Deterministic fault attribution (Cybernetic Swarm Plan C5)
 
-If `prior_act` is present AND a deterministic `task_success` verdict was
-supplied for the prior iteration (it is inside the prior ACT trace's delegate
-results or the carried prior_iteration), attribute fault to exactly one agent
-by this deterministic priority rule (JudgeFlow with the LLM Judge replaced by
-a rule — the divergence IS the point: a deterministic judge is what hKask
-builds):
+Attribute fault ONLY when the operator supplied delegate-result **execution
+telemetry** for the prior iteration (a `delegate_results` field in the context,
+carrying per-agent `tool_calls[].ok` / `executed_skills[].ok` / response). The
+planning cascade's `prior_act.emitted_calls` are dispatch INTENTS, not
+outcomes — they do NOT carry `tool_calls[].ok` / `executed_skills[].ok`, so they
+are not attribution inputs. Do not fabricate outcomes from intents.
+
+When the telemetry IS present, attribute fault to exactly one agent by this
+deterministic priority rule (JudgeFlow with the LLM Judge replaced by a rule —
+the divergence IS the point: a deterministic judge is what hKask builds):
 
 1. If `s < epsilon` (the terminal-output task metric failed), attribute to the
-   **terminal agent** — the agent whose `produces[]` the task metric scored.
+   **terminal agent** — the last agent in delegation order (the delegation
+   order is the deterministic ground the plan's tie-break relies on; the last
+   delegate produced the terminal output the metric scored).
 2. Else if any delegate result has `tool_calls[].ok = false` (a dispatch
    failed or was not in the declared mcp_tools allowlist), attribute to the
    **earliest such agent** in delegation order.
@@ -156,9 +173,11 @@ builds):
    tripped the input guard), attribute to that agent.
 5. Tie-break by delegation order (deterministic).
 
-If no prior ACT, or no task-success signal, or no failure is present, set
+If no delegate-result telemetry is present (the default in the planning
+cascade), OR no task-success signal, OR no failure is present, set
 agent_at_fault = null. When non-null, agent_at_fault = { agent_name, reason,
-rule_matched (1-5), failure_detail }.
+rule_matched (1-5), failure_detail }. Never fabricate a verdict from the plan's
+emitted_calls.
 
 ## Output
 
