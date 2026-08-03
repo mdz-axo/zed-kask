@@ -1,0 +1,163 @@
+# Idiomatic Lisp Process Manifest
+# hKask v0.31.0 — Convergent Lisp design inquiry as PDCA
+#
+# Anchors a Lisp design problem against McCarthy/Sussman/Graham principles,
+# proposes idiomatic solutions, adversarially challenges the proposal with
+# REPL-grounded critique, and iterates until the critique score stabilizes.
+# The loop re-enters at step 2 (Design), preserving the initial assessment
+# from step 1 (Inquiry) across all iterations — the design problem and its
+# principle-level assessment are frozen; only the proposed solution evolves.
+
+manifest:
+  id: idiomatic-lisp
+  category: skill
+  name: Idiomatic Lisp
+  description: >
+    Idiomatic Lisp design through the lens of McCarthy, Sussman, and Graham.
+    Convergent inquiry loop: anchor design problems against Lisp's founding
+    principles (homoiconicity, metacircularity, data-as-program), propose
+    macro- and data-driven solutions with code examples, challenge and refine
+    through adversarial review with REPL evaluation as the extrinsic oracle,
+    and converge toward deeper, more idiomatic designs. Sibling to
+    lean-prover — where lean-prover constructs machine-checked proofs,
+    idiomatic-lisp constructs idiomatic designs verified by the REPL.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  target_artifacts_field: "step_3_result"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: design_problem
+    type: string
+    required: true
+  - name: design_constraints
+    type: object
+    required: false
+  - name: code_context
+    type: object
+    required: false
+  - name: lisp_dialect
+    type: string
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Assess the design problem against McCarthy/Sussman/Graham principles.
+      Identify invariants, invalid states, evaluation models, and macro vs.
+      function decisions. Produce a scored design assessment with specific
+      improvement targets.
+    renderer: minijinja
+    template_ref: idiomatic-lisp/idiomatic-lisp-inquiry
+    gas_cap: 8000
+    timeout_seconds: 90
+    input_mapping:
+      design_problem: "{{ design_problem }}"
+      design_constraints: "{{ design_constraints | default({}) }}"
+      code_context: "{{ code_context | default({}) }}"
+      lisp_dialect: "{{ lisp_dialect | default('common-lisp') }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Propose idiomatic Lisp solutions with code examples. Apply homoiconicity,
+      metacircular evaluation, data-as-program patterns, hygienic macros, and
+      proper use of special forms. Reference CLHS, SRFI, and ecosystem best
+      practices. Consumes the assessment from step 1.
+    renderer: minijinja
+    template_ref: idiomatic-lisp/idiomatic-lisp-design
+    gas_cap: 8000
+    timeout_seconds: 90
+    input_mapping:
+      design_problem: "{{ design_problem }}"
+      assessment: "{{ step_1_result }}"
+      design_constraints: "{{ design_constraints | default({}) }}"
+      lisp_dialect: "{{ lisp_dialect | default('common-lisp') }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Adversarial review of the Lisp design proposal. Find gaps, test edge
+      cases (tail-call depth, multiple-values, restarts, macro hygiene),
+      challenge assumptions, identify deeper connections. Produce a scored
+      critique with specific refinement directives. If the critique score is
+      below threshold, the loop returns to step 2 (Design) with concrete
+      targets.
+    renderer: minijinja
+    template_ref: idiomatic-lisp/idiomatic-lisp-challenge
+    gas_cap: 8192
+    timeout_seconds: 90
+    input_mapping:
+      design_problem: "{{ design_problem }}"
+      design_proposal: "{{ step_2_result }}"
+      assessment: "{{ step_1_result }}"
+      design_constraints: "{{ design_constraints | default({}) }}"
+
+  - ordinal: 4
+    action: compute
+    compute_ref: kata.convergence_check
+    description: >
+      CHECK CONVERGENCE: Cauchy criterion on the critique score. The design
+      has converged when the critique score stops moving across iterations —
+      the proposal is as idiomatic as the current method can make it.
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 5
+    action: loop
+    description: Re-enter design cycle if the critique score has not stabilized.
+    input_mapping:
+      loop_target: "{{ 2 }}"
+      kata_hypotenuse: "{{ step_3_result.critique_score | default(0.0) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.skill.idiomatic-lisp
+  telemetry_namespace: hkask.template.idiomatic-lisp
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

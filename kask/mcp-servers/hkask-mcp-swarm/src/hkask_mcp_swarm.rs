@@ -63,12 +63,13 @@ mod error;
 mod local_registry;
 mod local_runtime;
 mod sanitize;
+mod spend_gate;
 use crate::abw_client::SwarmClient;
 use crate::abw_util::{
     effective_hire_cost, make_swarm_slug, url_encode_segment, validate_agent_name,
 };
 use crate::config::SwarmConfig;
-use crate::consent::{ConsentGrant, ConsentStore};
+use crate::consent::ConsentStore;
 use crate::error::SwarmError;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
@@ -77,7 +78,6 @@ use crate::local_runtime::{LazyLocalSwarmRuntime, MAX_FANOUT};
 use crate::sanitize::{
     filter_declared_skills, filter_mcp_tools, sanitize_abw_response, sanitize_abw_response_plain,
     sanitize_abw_text, sanitize_agent_id, sanitize_run_status_message, sanitize_workspace_payload,
-    strip_leading_mentions,
 };
 
 // ── Request types ──────────────────────────────────────────────────────────
@@ -854,165 +854,31 @@ impl SwarmServer {
                 ));
             }
 
-            // The consent gate is the enforcement point: consume the token
-            // (single-use) and verify it authorizes this exact hire. Capture
-            // the grant so we can refund it if the spend fails transiently
-            // (network drop, ABW 5xx) — the operator should not lose consent
-            // to a failure they didn't cause.
-            let grant = self
-                .consent
-                .consume(
-                    &req.consent_token,
-                    "hire",
-                    &req.agent_name,
-                    req.credits_authorized,
-                )
-                .map_err(SwarmError::into_tool_error)?;
-            // Reconstruct the grant for refund — `consume` returns only the
-            // ceiling, so we re-mint the same scope. The token string is the
-            // key; refund re-inserts it.
-            let refund_grant = ConsentGrant {
-                action: "hire".to_string(),
-                target: req.agent_name.clone(),
-                credits_authorized: grant,
-                token: req.consent_token.clone(),
-            };
-
-            // Re-verify the hire cost against ABW immediately before spending.
-            // The consent token's `credits_authorized` is whatever the caller
-            // passed to `swarm_request_consent`; without re-verification, a
-            // malicious client could mint a consent for 1 credit while the
-            // actual hire charges 20. The gate must validate the *spend*,
-            // not just the *token*.
-            let deps = self
-                .client
-                .get(&format!(
-                    "/agents/{}/dependencies",
-                    url_encode_segment(&req.agent_name)
-                ))
-                .await
-                .map_err(|e| {
-                    // Refund before propagating: the spend never happened.
-                    self.consent.refund(refund_grant.clone());
-                    SwarmError::into_tool_error(e)
-                })?;
-            // Do not fabricate cost = 0 on a missing field — a missing
-            // `total_hire_cost` means ABW changed its response shape or the
-            // agent doesn't exist. The `.rules` trap: a failed measurement
-            // must be distinguishable from a measured zero. Mirrors the
-            // `swarm_hire_cost` fix (§12.4).
-            if deps
-                .get("total_hire_cost")
-                .and_then(|c| c.as_u64())
-                .is_none()
-            {
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    agent = %req.agent_name,
-                    "swarm_hire: ABW re-verify response missing total_hire_cost — cost unknown"
-                );
-                self.consent.refund(refund_grant.clone());
-                return Err(McpToolError::internal(
-                    "hire cost unknown — ABW re-verify response missing total_hire_cost field"
-                        .to_string(),
-                ));
-            }
-            // Conservative cost re-verification: the effective cost is the
-            // dependency quote, floored at `OWNED_ADD_FLAT_FEE` for
-            // dependency-less agents (owned agents quote `total_hire_cost: 0`
-            // but the /add charges 2 — verified live), and when the caller
-            // requests optional dependencies, use `max(total, required +
-            // optional)` so the gate never under-estimates the ABW charge.
-            let base_cost = effective_hire_cost(&deps);
-            let actual_cost = if req.include_optional.unwrap_or(false) {
-                let required = deps
-                    .get("required_cost")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(base_cost);
-                let optional = deps
-                    .get("optional_cost")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(0);
-                std::cmp::max(base_cost, required.saturating_add(optional))
-            } else {
-                base_cost
-            };
-            if actual_cost > u64::from(req.credits_authorized) {
-                self.consent.refund(refund_grant.clone());
-                return Err(SwarmError::PaymentRequired(format!(
-                    "actual hire cost {actual_cost} exceeds authorized {} — \
-                     re-request consent with the updated cost",
-                    req.credits_authorized
-                ))
-                .into_tool_error());
-            }
-            // The operator-configured per-dispatch ceiling
-            // (`max_credits_per_dispatch`, env `HKASK_ABW_MAX_CREDITS`,
-            // default 50) is a hard gate, not advisory. `swarm_hire_cost`
-            // surfaces it as `within_budget` for the banner; this is the
-            // enforcement point. Without it, the panel's "confirm to override"
-            // wording was a no-op — any hire passed because the consent token's
-            // `credits_authorized` was always set to `total_hire_cost`. The
-            // `.rules` trap: an advertised invariant needs an enforcement point.
-            // To raise the ceiling, the operator sets `HKASK_ABW_MAX_CREDITS`;
-            // there is no per-call override path by design (a per-call override
-            // would let a prompt-injected agent talk the operator into raising
-            // it mid-session).
-            let ceiling = self.client.config().max_credits_per_dispatch;
-            if actual_cost > u64::from(ceiling) {
-                self.consent.refund(refund_grant.clone());
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    agent = %req.agent_name,
-                    cost = actual_cost,
-                    ceiling,
-                    "swarm_hire: hire cost exceeds per-dispatch ceiling — refused"
-                );
-                return Err(SwarmError::PaymentRequired(format!(
-                    "hire cost {actual_cost} exceeds per-dispatch ceiling {ceiling} \
-                     (raise HKASK_ABW_MAX_CREDITS to authorize)"
-                ))
-                .into_tool_error());
-            }
-
-            // POST the hire. Other authors' catalogue agents use `/hire`;
-            // the operator's OWN agents return 400 "Use /add for your own
-            // agents" and must use `/add` (verified live 2026-08-02). Retry
-            // on /add with the same payload — the consent + ceiling gate has
-            // already run, and the /add flat fee is covered by the
-            // `effective_hire_cost` floor above.
-            let data = match self
-                .client
-                .post(
-                    &format!("/workspaces/{}/hire", url_encode_segment(&req.workspace_id)),
-                    &serde_json::json!({
-                        "agent_id": req.agent_name,
-                        "include_optional": req.include_optional.unwrap_or(false),
-                    }),
-                )
-                .await
-            {
-                Ok(d) => Ok(d),
-                Err(SwarmError::Unavailable(m)) if m.contains("Use /add for your own agents") => {
-                    tracing::info!(
-                        target: "hkask.mcp.swarm",
-                        agent = %req.agent_name,
-                        "own agent — falling back to /workspaces/{{id}}/add"
-                    );
-                    self.client
-                        .post(
-                            &format!("/workspaces/{}/add", url_encode_segment(&req.workspace_id)),
-                            &serde_json::json!({ "agent_id": req.agent_name }),
-                        )
-                        .await
-                }
-                Err(e) => Err(e),
-            }
-            .map_err(|e| {
-                // Refund before propagating: the spend never happened.
-                self.consent.refund(refund_grant.clone());
-                SwarmError::into_tool_error(e)
-            })?;
+            // The consent gate is the enforcement point. The two-phase shape
+            // (authorize → complete) makes the refund invariant structural:
+            // `complete_hire` owns the authorization and refunds on every Err
+            // path. The re-verify + ceiling + `/hire`→`/add` fallback all live
+            // in `spend_gate` now — `swarm_create_swarm`'s per-hire loop routes
+            // through the same functions, so the two cannot desync.
+            let auth = spend_gate::authorize_hire(
+                &self.client,
+                &self.consent,
+                &req.consent_token,
+                &req.agent_name,
+                req.credits_authorized,
+                Some(req.credits_authorized),
+                req.include_optional.unwrap_or(false),
+            )
+            .await?;
+            let data = spend_gate::complete_hire(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                req.include_optional.unwrap_or(false),
+            )
+            .await?;
 
             Ok(self
                 .client
@@ -1046,57 +912,7 @@ impl SwarmServer {
                 ));
             }
 
-            let grant = self
-                .consent
-                .consume(
-                    &req.consent_token,
-                    "delegate",
-                    &req.workspace_id,
-                    req.credits_authorized,
-                )
-                .map_err(SwarmError::into_tool_error)?;
-            // Per-dispatch ceiling enforcement (mirrors `swarm_hire`).
-            // Delegation cost is `1 cr + tokens` and not pre-quoted by ABW,
-            // so the consent token's `credits_authorized` is the only cost
-            // signal — the ceiling must gate it directly. Without this, an
-            // operator (or a prompt-injected agent in Steer mode) could mint
-            // a delegate consent for 1000 credits and bypass the dispatch
-            // limit entirely.
-            let ceiling = self.client.config().max_credits_per_dispatch;
-            if u64::from(grant) > u64::from(ceiling) {
-                self.consent.refund(ConsentGrant {
-                    action: "delegate".to_string(),
-                    target: req.workspace_id.clone(),
-                    credits_authorized: grant,
-                    token: req.consent_token.clone(),
-                });
-                tracing::warn!(
-                    target: "hkask.mcp.swarm",
-                    workspace = %req.workspace_id,
-                    authorized = grant,
-                    ceiling,
-                    "swarm_delegate: authorized ceiling exceeds per-dispatch limit — refused"
-                );
-                return Err(SwarmError::PaymentRequired(format!(
-                    "authorized credits {grant} exceed per-dispatch ceiling {ceiling} \
-                     (raise HKASK_ABW_MAX_CREDITS to authorize)"
-                ))
-                .into_tool_error());
-            }
-            let refund_grant = ConsentGrant {
-                action: "delegate".to_string(),
-                target: req.workspace_id.clone(),
-                credits_authorized: grant,
-                token: req.consent_token.clone(),
-            };
-
-            // ABW delegation is an @mention message in the workspace chat.
-            // Strip leading @mentions from the task (KA-06): a task starting
-            // with `@other_agent` would mention a different agent in the
-            // workspace chat, a semantic injection at the ABW chat layer.
-            // The consent gate already authorizes the named agent; this is
-            // defense-in-depth against accidental cross-mention.
-            //
+            // The consent gate + per-dispatch ceiling live in `spend_gate`.
             // Design tradeoff (R8): the consent ceiling gates the operator's
             // *authorization*, not ABW's *actual charge*. ABW is a third-party
             // service that charges its own credits based on execution — the
@@ -1105,22 +921,22 @@ impl SwarmServer {
             // architecture: zed-kask posts a message; ABW executes and charges.
             // The local mode (`swarm_delegate_local`) does not have this
             // limitation — the local ledger debit is a hard gate.
-            let task_clean = strip_leading_mentions(&req.task);
-            let data = self
-                .client
-                .post(
-                    &format!(
-                        "/workspaces/{}/messages",
-                        url_encode_segment(&req.workspace_id)
-                    ),
-                    &serde_json::json!({ "content": format!("@{} {}", req.agent_name, task_clean) }),
-                )
-                .await
-                .map_err(|e| {
-                    // Refund before propagating: the spend never happened.
-                    self.consent.refund(refund_grant.clone());
-                    SwarmError::into_tool_error(e)
-                })?;
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                &req.consent_token,
+                &req.workspace_id,
+                req.credits_authorized,
+            )?;
+            let data = spend_gate::complete_delegate(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                &req.task,
+            )
+            .await?;
 
             Ok(self
                 .client
@@ -1389,6 +1205,19 @@ impl SwarmServer {
                 })?;
 
             // Hire the requested agents, each gated by its own consent token.
+            // Each hire routes through `spend_gate::authorize_hire` +
+            // `complete_hire` — the same path `swarm_hire` uses — so the two
+            // cannot desync (the prior version copy-pasted `swarm_hire`'s
+            // re-verify + `/hire`→`/add` fallback body into this loop).
+            //
+            // `consume_cost = 0` (the two-phase consume pattern): the actual
+            // spend is not known until the ABW re-verify inside `authorize_hire`,
+            // so the consent store's over-spend guard cannot fire meaningfully;
+            // the store's single-use + scope checks still fire, and the real
+            // over-spend guard is `actual_cost > grant` inside `authorize_hire`,
+            // which refunds on failure. `budget = None` uses the token's own
+            // embedded ceiling (`swarm_create_swarm` has no per-agent caller
+            // budget — `CreateSwarmRequest` carries only tokens, not amounts).
             let agents = req.agents.unwrap_or_default();
             let tokens = req.consent_tokens.unwrap_or_default();
             let mut hired = Vec::new();
@@ -1401,136 +1230,42 @@ impl SwarmServer {
                     }));
                     continue;
                 };
-                // Consume the consent token for this specific hire. The token's
-                // `credits_authorized` ceiling was set by the panel from the real
-                // `swarm_hire_cost` estimate; we re-verify the actual cost against
-                // ABW below before spending (mirroring `swarm_hire`).
-                //
-                // The `cost: 0` passed to `consume` is intentional: the actual
-                // spend is not known until the ABW re-verify below, so the consent
-                // store's over-spend guard (`cost > credits_authorized`) cannot
-                // fire meaningfully here. The store's single-use + scope checks
-                // (action + target) still fire. The real over-spend guard is the
-                // `actual_cost > grant` check at L1619, which refunds on failure.
-                // This is the two-phase consume pattern: consume with cost=0 to
-                // validate scope + single-use, then re-verify against ABW, then
-                // refund if the real cost exceeds the authorized ceiling.
-                let grant = match self.consent.consume(token, "hire", agent, 0) {
-                    Ok(ceiling) => ceiling,
-                    Err(e) => {
-                        hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": e.to_string(),
-                        }));
-                        continue;
-                    }
-                };
-                let refund_grant = ConsentGrant {
-                    action: "hire".to_string(),
-                    target: agent.clone(),
-                    credits_authorized: grant,
-                    token: token.clone(),
-                };
-                // Re-verify the actual hire cost against ABW before spending.
-                // A missing `total_hire_cost` is unknown, not zero (the
-                // `.rules` trap). Refund and record the error on failure.
-                let deps = match self
-                    .client
-                    .get(&format!(
-                        "/agents/{}/dependencies",
-                        url_encode_segment(agent)
-                    ))
-                    .await
+                match spend_gate::authorize_hire(
+                    &self.client,
+                    &self.consent,
+                    token,
+                    agent,
+                    0,
+                    None,
+                    false,
+                )
+                .await
                 {
-                    Ok(d) => d,
-                    Err(e) => {
-                        self.consent.refund(refund_grant);
-                        hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": format!("re-verify failed: {e}"),
-                        }));
-                        continue;
+                    Ok(auth) => {
+                        match spend_gate::complete_hire(
+                            &self.client,
+                            &self.consent,
+                            auth,
+                            &workspace_id,
+                            agent,
+                            false,
+                        )
+                        .await
+                        {
+                            Ok(_) => hired.push(agent.clone()),
+                            Err(e) => {
+                                // `complete_hire` already refunded the auth
+                                // on its Err path; record the error.
+                                hire_errors.push(serde_json::json!({
+                                    "agent": agent,
+                                    "error": e.to_string(),
+                                }));
+                            }
+                        }
                     }
-                };
-                let actual_cost = if deps.get("total_hire_cost").and_then(|c| c.as_u64()).is_none() {
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        agent = %agent,
-                        "swarm_create_swarm: ABW re-verify missing total_hire_cost — cost unknown"
-                    );
-                    self.consent.refund(refund_grant);
-                    hire_errors.push(serde_json::json!({
-                        "agent": agent,
-                        "error": "hire cost unknown — ABW re-verify response missing total_hire_cost",
-                    }));
-                    continue;
-                } else {
-                    // Floor at the flat add fee for dependency-less agents (the
-                    // /dependencies quote is 0 for owned agents but /add charges
-                    // OWNED_ADD_FLAT_FEE — verified live).
-                    effective_hire_cost(&deps)
-                };
-                if actual_cost > u64::from(grant) {
-                    self.consent.refund(refund_grant);
-                    hire_errors.push(serde_json::json!({
-                        "agent": agent,
-                        "error": format!(
-                            "actual hire cost {actual_cost} exceeds authorized {grant} — re-request consent"
-                        ),
-                    }));
-                    continue;
-                }
-                // Per-dispatch ceiling enforcement (mirrors `swarm_hire`).
-                // The ceiling is per-hire, not per-swarm: each hire in this
-                // loop is a separate dispatch and must independently satisfy
-                // `max_credits_per_dispatch`. An aggregate swarm ceiling is a
-                // separate invariant not yet wired — do not add one here
-                // without also adding a consent banner to `create_swarm`.
-                let ceiling = self.client.config().max_credits_per_dispatch;
-                if actual_cost > u64::from(ceiling) {
-                    self.consent.refund(refund_grant);
-                    tracing::warn!(
-                        target: "hkask.mcp.swarm",
-                        agent = %agent,
-                        cost = actual_cost,
-                        ceiling,
-                        "swarm_create_swarm: hire cost exceeds per-dispatch ceiling — refused"
-                    );
-                    hire_errors.push(serde_json::json!({
-                        "agent": agent,
-                        "error": format!(
-                            "hire cost {actual_cost} exceeds per-dispatch ceiling {ceiling} \
-                             (raise HKASK_ABW_MAX_CREDITS to authorize)"
-                        ),
-                    }));
-                    continue;
-                }
-                // Own agents use /add (400 "Use /add for your own agents" on
-                // /hire — verified live); fall back with the same gate applied.
-                let hire_outcome = match self
-                    .client
-                    .post(
-                        &format!("/workspaces/{}/hire", url_encode_segment(&workspace_id)),
-                        &serde_json::json!({ "agent_id": agent, "include_optional": false }),
-                    )
-                    .await
-                {
-                    Ok(d) => Ok(d),
-                    Err(SwarmError::Unavailable(m)) if m.contains("Use /add for your own agents") => {
-                        self.client
-                            .post(
-                                &format!("/workspaces/{}/add", url_encode_segment(&workspace_id)),
-                                &serde_json::json!({ "agent_id": agent }),
-                            )
-                            .await
-                    }
-                    Err(e) => Err(e),
-                };
-                match hire_outcome {
-                    Ok(_) => hired.push(agent.clone()),
                     Err(e) => {
-                        // Refund: the spend never happened.
-                        self.consent.refund(refund_grant);
+                        // `authorize_hire` already refunded on its Err path
+                        // (where a token was consumed); record the error.
                         hire_errors.push(serde_json::json!({
                             "agent": agent,
                             "error": e.to_string(),
@@ -1575,35 +1310,24 @@ impl SwarmServer {
 
             // Consent gate: Xaman Ek is a third-party curator that reads user
             // task content. Per the plan's §3.7, sending content to it requires
-            // explicit opt-in. When `curator_consent_default` is `false` (the
-            // default), the caller must present a consent token minted by
-            // `swarm_request_consent` (action "curate"). When `true`, the
-            // operator has globally opted in and the token is optional.
-            // The refund grant is Some only when a consent token was consumed.
-            // Transient failures (session creation, message send) refund it so
-            // the operator can retry without re-minting. Mirrors the
-            // swarm_hire/swarm_delegate refund-on-transient-failure pattern.
-            let mut refund_grant: Option<ConsentGrant> = None;
-            if !self.client.config().curator_consent_default {
-                let Some(token) = req.consent_token.as_deref() else {
-                    return Err(SwarmError::ConsentDenied(
-                        "Xaman Ek curator call requires a consent token (action 'curate') — \
-                         set kask.swarm.curator_consent_default true to opt in globally"
-                            .to_string(),
-                    )
-                    .into_tool_error());
-                };
-                let grant = self
-                    .consent
-                    .consume(token, "curate", "xaman", 0)
-                    .map_err(SwarmError::into_tool_error)?;
-                refund_grant = Some(ConsentGrant {
-                    action: "curate".to_string(),
-                    target: "xaman".to_string(),
-                    credits_authorized: grant,
-                    token: token.to_string(),
-                });
-            }
+            // explicit opt-in. The gate lives in `spend_gate::authorize_curate`;
+            // it returns `Some(auth)` when a token was consumed (refundable) or
+            // `None` when the operator has globally opted in
+            // (`curator_consent_default`).
+            //
+            // The refund invariant is structural: `auth` is held as an
+            // `Option<DelegateAuthorization>` and refunded via `.take()` on every
+            // failure path of the two-step session lifecycle (session create +
+            // message send). Xaman's session lifecycle has custom error mapping
+            // (Auth/PaymentRequired/RateLimited → specific kinds) and cannot be
+            // wrapped in a single `complete_*`, so the refunds are inline here.
+            // `.take()` ensures only the first failure refunds (subsequent
+            // paths are no-op); `ConsentStore::refund` is idempotent anyway.
+            let mut auth: Option<spend_gate::DelegateAuthorization> = spend_gate::authorize_curate(
+                &self.client,
+                &self.consent,
+                req.consent_token.as_deref(),
+            )?;
 
             // Resolve or create the session (typed when starting fresh).
             let session_id = match req.session_id {
@@ -1618,8 +1342,8 @@ impl SwarmServer {
                         )
                         .await
                         .map_err(|e| {
-                            if let Some(g) = &refund_grant {
-                                self.consent.refund(g.clone());
+                            if let Some(a) = auth.take() {
+                                a.refund(&self.consent);
                             }
                             match e {
                                 SwarmError::Auth(m) => McpToolError::permission_denied(m),
@@ -1636,8 +1360,8 @@ impl SwarmServer {
                         .and_then(|s| s.as_str())
                         .map(str::to_string)
                         .ok_or_else(|| {
-                            if let Some(g) = &refund_grant {
-                                self.consent.refund(g.clone());
+                            if let Some(a) = auth.take() {
+                                a.refund(&self.consent);
                             }
                             SwarmError::ApiVersionMismatch(
                                 "xaman session create returned no session_id".to_string(),
@@ -1658,11 +1382,13 @@ impl SwarmServer {
                 )
                 .await
                 .map_err(|e| {
-                    if let Some(g) = &refund_grant {
-                        self.consent.refund(g.clone());
+                    if let Some(a) = auth.take() {
+                        a.refund(&self.consent);
                     }
                     SwarmError::into_tool_error(e)
                 })?;
+            // Success: drop the auth (token stays consumed).
+            drop(auth);
 
             Ok(self
                 .client
@@ -1938,7 +1664,16 @@ impl SwarmServer {
                     }
                 }
             }
-            let balance = runtime.balance().unwrap_or(0);
+            // The aggregate balance is best-effort: each delegation already
+            // returned its own post-debit `balance` in `LocalDelegateResult`,
+            // so this field is a convenience read after the loop. A failed
+            // ledger query is surfaced as `null` — NOT fabricated as `0`
+            // (the `.rules` trap: a failed measurement must be distinguishable
+            // from a measured zero; `swarm_balance_local` already returns an
+            // error on `None`, and the fan-out cannot error without discarding
+            // the per-delegation results that succeeded). `Option<i64>`
+            // serializes to `null` on `None`.
+            let balance: Option<i64> = runtime.balance();
             Ok(serde_json::json!({
                 "results": results,
                 "total_cost": total_cost,

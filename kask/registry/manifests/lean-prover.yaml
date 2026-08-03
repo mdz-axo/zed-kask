@@ -1,0 +1,181 @@
+# Lean Prover Process Manifest
+# hKask v0.31.0 — Machine-checked proof construction as convergent PDCA
+#
+# Anchors a proof obligation against the Curry-Howard Prop/Type discipline,
+# constructs a proof via tactics and term mode, refutes via counterexample
+# search, reasons about proof erasure, and iterates until no new
+# counterexamples are found. The loop re-enters at step 2 (Construct),
+# preserving the initial anchor from step 1 — the proposition classification
+# and proof method are frozen; only the proof attempt evolves.
+#
+# Sibling to falsifiability — where falsifiability designs discriminating
+# tests, lean-prover constructs machine-checked proofs that discriminate.
+
+manifest:
+  id: lean-prover
+  category: skill
+  name: Lean Prover
+  description: >
+    Machine-checked proof construction through the lens of Curry-Howard,
+    de Bruijn, and Carneiro. Convergent inquiry loop: anchor proof obligations
+    against the Prop/Type discipline, construct proofs via tactics and term
+    mode, challenge through counterexample search and proof irrelevance
+    analysis, and converge toward proofs that compile and erase. Sibling to
+    falsifiability — where falsifiability designs discriminating tests,
+    lean-prover constructs machine-checked proofs that discriminate.
+  functional_role: flowdef
+  version: 0.31.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  target_artifacts_field: "step_3_result"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+
+gas:
+  cap: 100000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: proposition
+    type: string
+    required: true
+  - name: proof_context
+    type: object
+    required: false
+  - name: code_context
+    type: object
+    required: false
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Anchor the proof obligation against the Curry-Howard correspondence and
+      the Prop/Type discipline. Classify the proposition (Prop vs Type),
+      identify the proof obligation's structure (universal, existential,
+      implication, conjunction), determine the appropriate proof method
+      (term mode, tactic mode, decide, native_decide), and assess
+      decidability and termination strategy.
+    renderer: minijinja
+    template_ref: lean-prover/lean-prover-anchor
+    gas_cap: 7000
+    timeout_seconds: 90
+    input_mapping:
+      proposition: "{{ proposition }}"
+      proof_context: "{{ proof_context | default({}) }}"
+      code_context: "{{ code_context | default({}) }}"
+
+  - ordinal: 2
+    action: select
+    description: >
+      Construct a Lean proof for the anchored obligation. Choose between term
+      mode and tactic mode based on the anchor. Apply the appropriate tactics
+      (intro, apply, exact, induction, simp, rw, decide). Handle termination
+      via structural or well-founded recursion. Produce a proof that compiles.
+    renderer: minijinja
+    template_ref: lean-prover/lean-prover-construct
+    gas_cap: 8000
+    timeout_seconds: 90
+    input_mapping:
+      proposition: "{{ proposition }}"
+      anchor: "{{ step_1_result }}"
+      proof_context: "{{ proof_context | default({}) }}"
+
+  - ordinal: 3
+    action: select
+    description: >
+      Adversarial review of the proof attempt. Search for counterexamples
+      that invalidate the proposition. Identify failed proof paths (tactics
+      that don't apply, induction that doesn't terminate, simp lemmas that
+      loop). Challenge proof irrelevance assumptions. Test edge cases (empty
+      types, uninhabited Props, proof terms that don't erase). Produce
+      refinement directives for each failure.
+    renderer: minijinja
+    template_ref: lean-prover/lean-prover-refute
+    gas_cap: 8000
+    timeout_seconds: 90
+    input_mapping:
+      proposition: "{{ proposition }}"
+      proof_attempt: "{{ step_2_result }}"
+      anchor: "{{ step_1_result }}"
+
+  - ordinal: 4
+    action: select
+    description: >
+      Reason about proof erasure and irrelevance. Determine which proof terms
+      are computationally relevant (in Type) vs irrelevant (in Prop). Assess
+      whether the proof erases to a no-op or carries computational content.
+      Identify small vs large elimination. Verify the proof doesn't leak
+      computational content across the Prop/Type boundary.
+    renderer: minijinja
+    template_ref: lean-prover/lean-prover-erase
+    gas_cap: 7000
+    timeout_seconds: 90
+    input_mapping:
+      proposition: "{{ proposition }}"
+      proof_attempt: "{{ step_2_result }}"
+      refutation: "{{ step_3_result }}"
+
+  - ordinal: 5
+    action: compute
+    compute_ref: kata.convergence_check
+    description: >
+      CHECK CONVERGENCE: Cauchy criterion on the counterexample count. The
+      proof has converged when no new counterexamples are found across
+      iterations — the proof attempt is stable against adversarial review.
+    input_mapping:
+      hypotenuse: 0.0
+      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
+      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
+      brier_history: "{{ _convergence.brier_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
+      brier_window: "{{ _convergence.brier_window | default(3) }}"
+      mode: "cauchy"
+
+  - ordinal: 6
+    action: loop
+    description: >
+      Re-enter proof construction if counterexamples are still being found.
+      The loop returns to step 2 (Construct) with the refinement directives
+      from the refutation.
+    input_mapping:
+      loop_target: "{{ 2 }}"
+      kata_hypotenuse: "{{ step_3_result.counterexamples | default([]) | length }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.skill.lean-prover
+  telemetry_namespace: hkask.template.lean-prover
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

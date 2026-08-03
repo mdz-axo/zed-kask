@@ -2218,6 +2218,10 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        // zed-kask: D18 — tracks whether the media_block_renderer intercepted
+        // the current code block, so we skip its End event (which expects a
+        // div on the stack that push_sourced_element doesn't push).
+        let mut rendered_media_block = false;
         let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
@@ -2238,6 +2242,14 @@ impl Element for MarkdownElement {
             if rendered_mermaid_block {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
                     rendered_mermaid_block = false;
+                }
+                continue;
+            }
+
+            // zed-kask: D18 — skip the End event for media-rendered blocks.
+            if rendered_media_block {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
+                    rendered_media_block = false;
                 }
                 continue;
             }
@@ -2368,10 +2380,23 @@ impl Element for MarkdownElement {
                             // instead of the default code block. Returns None
                             // for non-media blocks (falls through to default).
                             if let Some(renderer) = &self.media_block_renderer {
-                                let block_body = &parsed_markdown.source[range.clone()];
-                                if let Some(media_element) = renderer(block_body, window, cx) {
-                                    builder.push_sourced_element(range.clone(), media_element);
-                                    continue;
+                                // Only intercept fenced blocks (not indented).
+                                if !matches!(kind, CodeBlockKind::Indented) {
+                                    let block_source = &parsed_markdown.source[range.clone()];
+                                    // Strip the fence language line (first line) and
+                                    // the closing fence to pass just the body content.
+                                    let body_start =
+                                        block_source.find('\n').map(|index| index + 1).unwrap_or(0);
+                                    let body_end = block_source[body_start..]
+                                        .rfind("```")
+                                        .map(|index| body_start + index)
+                                        .unwrap_or(block_source.len());
+                                    let block_body = block_source[body_start..body_end].trim();
+                                    if let Some(media_element) = renderer(block_body, window, cx) {
+                                        builder.push_sourced_element(range.clone(), media_element);
+                                        rendered_media_block = true;
+                                        continue;
+                                    }
                                 }
                             }
 
@@ -5969,5 +5994,152 @@ mod tests {
                 px(24.0)
             );
         });
+    }
+
+    // zed-kask: D18 — pinning tests for the media_block_renderer seam.
+    // These tests assert that ```media blocks are intercepted by the
+    // registered renderer and that non-media code blocks fall through to
+    // the default code block renderer.
+
+    #[gpui::test]
+    fn test_media_block_renderer_intercepts_media_blocks(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "```media\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') && body.contains("\"kind\"") {
+                            Some(div().child("MEDIA_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text().to_string())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("MEDIA_WAS_HERE"),
+            "media block should be intercepted by the renderer; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("/tmp/test.png"),
+            "media block JSON body should not appear as code text; got: {all_text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_media_block_renderer_falls_through_for_non_media_blocks(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown =
+            cx.new(|cx| Markdown::new("```rust\nlet value = 1;\n```".into(), None, None, cx));
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') && body.contains("\"kind\"") {
+                            Some(div().child("MEDIA_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text().to_string())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("let value = 1;"),
+            "non-media code block should render normally; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("MEDIA_WAS_HERE"),
+            "non-media code block should not trigger the media renderer; got: {all_text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_media_block_renderer_none_when_not_registered(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                "```media\n{\"kind\":\"image\",\"src\":\"/tmp/test.png\"}\n```".into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // No media_block_renderer registered — should fall through to default
+        // code block rendering.
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text().to_string())
+            .collect::<Vec<_>>()
+            .join("");
+
+        assert!(
+            all_text.contains("kind"),
+            "without a renderer, media block should render as a normal code block; got: {all_text:?}"
+        );
     }
 }

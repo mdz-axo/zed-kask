@@ -26,6 +26,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — 4 sovereignty principles (P1–P4). |
 | [`core/scenarios-companies-bridge.md`](architecture/core/scenarios-companies-bridge.md) | Bridge tool between scenarios and companies MCP servers. |
 | [`hkask-types-core-domain-split.md`](architecture/hkask-types-core-domain-split.md) | **ADR (Proposed)** — split `hkask-types` into core primitives vs domain types; options, trade-offs, audit gate. |
+| [`adr-embedded-yaml-registry.md`](architecture/adr-embedded-yaml-registry.md) | **ADR (Active)** — build-time `include_str!` embedding of all YAML/Jinja2 artifacts; dev-scoped evolution vs user-scoped freeze; trust model interaction. |
 
 ## Reference
 

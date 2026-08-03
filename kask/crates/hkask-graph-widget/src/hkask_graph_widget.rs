@@ -21,6 +21,7 @@
 
 pub mod block;
 pub mod layout;
+pub mod propagate;
 pub mod view;
 
 use gpui::{AnyElement, App, Window};

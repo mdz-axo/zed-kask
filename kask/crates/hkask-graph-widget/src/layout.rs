@@ -37,6 +37,9 @@ pub struct LayoutNode {
 pub struct LayeredLayout {
     pub nodes: Vec<LayoutNode>,
     pub edges: Vec<(usize, usize)>,
+    /// Node indices in topological (Kahn) order — the order marginal
+    /// probabilities must be recomputed in (parents before children).
+    pub topo_order: Vec<usize>,
     pub width: Pixels,
     pub height: Pixels,
 }
@@ -48,6 +51,7 @@ impl LayeredLayout {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
+            topo_order: Vec::new(),
             width: px(0.0),
             height: px(0.0),
         }
@@ -99,7 +103,9 @@ pub fn compute_layout(body: &GraphBlockBody) -> Result<LayeredLayout> {
     let mut layer = vec![0usize; n];
     let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
     let mut visited = 0usize;
+    let mut topo_order: Vec<usize> = Vec::with_capacity(n);
     while let Some(node) = queue.pop_front() {
+        topo_order.push(node);
         visited += 1;
         for &child in &children[node] {
             layer[child] = layer[child].max(layer[node] + 1);
@@ -150,6 +156,7 @@ pub fn compute_layout(body: &GraphBlockBody) -> Result<LayeredLayout> {
     Ok(LayeredLayout {
         nodes,
         edges,
+        topo_order,
         width: px(graph_w),
         height: px(graph_h),
     })
