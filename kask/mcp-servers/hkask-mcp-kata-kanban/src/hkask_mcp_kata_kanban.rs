@@ -92,7 +92,7 @@ impl KanbanServer {
                             .collect(),
                         pko: kanban_type_to_pko("Board").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -122,7 +122,7 @@ impl KanbanServer {
                             })
                             .collect(),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -178,7 +178,7 @@ impl KanbanServer {
                         status: task.status.to_string(),
                         pko: kanban_type_to_pko("Task").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -232,7 +232,7 @@ impl KanbanServer {
                             })
                             .collect(),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -287,7 +287,7 @@ impl KanbanServer {
                         new_status: task.status.to_string(),
                         pko: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -319,7 +319,7 @@ impl KanbanServer {
                         assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
                         pko: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -327,7 +327,9 @@ impl KanbanServer {
         .await
     }
 
-    #[tool(description = "Verify a task against its acceptance criteria")]
+    #[tool(
+        description = "Record verification evidence for a task in Review. The evidence text is the pass signal; acceptance criteria are guidance, not a gate."
+    )]
     pub async fn kanban_task_verify(
         &self,
         Parameters(TaskVerifyRequest { task_id, evidence }): Parameters<TaskVerifyRequest>,
@@ -356,7 +358,7 @@ impl KanbanServer {
                         new_status: task.status.to_string(),
                         pko: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -393,7 +395,7 @@ impl KanbanServer {
                         new_gas_remaining: task.gas_remaining.unwrap_or(0),
                         pko: kanban_type_to_pko("kanban_task_add_gas").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -428,7 +430,7 @@ impl KanbanServer {
                         new_rjoule_remaining: task.rjoule_remaining.unwrap_or(0),
                         pko: kanban_type_to_pko("kanban_task_add_rjoules").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -470,7 +472,7 @@ impl KanbanServer {
                         created_at: comment.created_at.to_rfc3339(),
                         pko: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -520,7 +522,7 @@ impl KanbanServer {
                             comments: mapped,
                             total_count: total,
                         })
-                        .unwrap())
+                        .map_err(|e| McpToolError::internal(e.to_string()))?)
                     }
                     Err(e) => Err(map_kanban_error(e)),
                 }
@@ -559,7 +561,7 @@ impl KanbanServer {
                         pko: kanban_type_to_pko("kanban_task_add_deliverable")
                             .map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -611,14 +613,14 @@ impl KanbanServer {
                     .task_get(tid)
                     .map_err(map_kanban_error)?
                     .ok_or_else(|| McpToolError::not_found(format!("task {task_id}")))?;
-                Ok(serde_json::to_value(TaskReopenResponse {
+                serde_json::to_value(TaskReopenResponse {
                     task_id: task.id.to_string(),
                     new_status: task.status.to_string(),
                     gas_remaining: task.gas_remaining,
                     rjoule_remaining: task.rjoule_remaining,
                     pko: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
                 })
-                .unwrap())
+                .map_err(|e| McpToolError::internal(e.to_string()))
             },
         )
         .await
@@ -650,7 +652,7 @@ impl KanbanServer {
                         prompt,
                         pko: kanban_type_to_pko("kanban_task_kata_coaching").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -683,7 +685,7 @@ impl KanbanServer {
                         pko: kanban_type_to_pko("kanban_task_kata_improvement")
                             .map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -718,7 +720,7 @@ impl KanbanServer {
                         prompt,
                         pko: kanban_type_to_pko("kanban_task_kata_practice").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -753,6 +755,24 @@ impl KanbanServer {
                         )));
                     }
                 };
+                match delegation_level.as_str() {
+                    "minimal" | "standard" | "maximal" => {}
+                    other => {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "invalid delegation_level: {other} (expected minimal|standard|maximal)"
+                        )));
+                    }
+                }
+                if let Some(ref ms) = memory_scope {
+                    match ms.as_str() {
+                        "none" | "episodic" | "full" => {}
+                        other => {
+                            return Err(McpToolError::invalid_argument(format!(
+                                "invalid memory_scope: {other} (expected none|episodic|full)"
+                            )));
+                        }
+                    }
+                }
                 // Apply budgets before spawn if specified
                 if let Some(g) = gas_budget {
                     self.service
@@ -778,7 +798,7 @@ impl KanbanServer {
                         message,
                         pko: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
                     })
-                    .unwrap()),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?),
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -806,7 +826,7 @@ impl KanbanServer {
         &self,
         Parameters(ContractProposeExpect {
             board_id,
-            proposals_json,
+            proposals,
         }): Parameters<ContractProposeExpect>,
     ) -> String {
         execute_tool_semantic(self, "contract_propose_expect", kanban_type_to_pko("contract_propose_expect"), async {
@@ -816,9 +836,9 @@ impl KanbanServer {
             };
 
             let proposals: Vec<hkask_types::ExpectProposal> =
-                match serde_json::from_str(&proposals_json) {
+                match serde_json::from_value(proposals.into_inner()) {
                     Ok(p) => p,
-                    Err(e) => return Err(McpToolError::invalid_argument(format!("invalid proposals JSON: {e}"))),
+                    Err(e) => return Err(McpToolError::invalid_argument(format!("invalid proposals: {e}"))),
                 };
 
             if proposals.is_empty() {
@@ -855,6 +875,7 @@ impl KanbanServer {
                 "created": created.len(),
                 "task_ids": created,
                 "crate": proposals[0].crate_name,
+                "pko": kanban_type_to_pko("contract_propose_expect").map(|s| s.to_string()),
             }))
         })
         .await
@@ -902,16 +923,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         let relative_path = hkask_types::agent_paths::agent_kanban_db("curator");
                         let default_path =
                             hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
-                        if let Some(parent) = default_path.parent() {
-                            if let Err(error) = std::fs::create_dir_all(parent) {
-                                tracing::warn!(
-                                    target: "hkask.mcp.kata_kanban",
-                                    path = %default_path.display(),
-                                    %error,
-                                    "Failed to create default kanban DB directory \
-                                     — the subsequent DB open will surface the failure"
-                                );
-                            }
+                        if let Some(Err(error)) = default_path.parent().map(std::fs::create_dir_all)
+                        {
+                            tracing::warn!(
+                                target: "hkask.mcp.kata_kanban",
+                                path = %default_path.display(),
+                                %error,
+                                "Failed to create default kanban DB directory \
+                                 — the subsequent DB open will surface the failure"
+                            );
                         }
                         tracing::info!(
                             target: "hkask.mcp.kata_kanban",
@@ -946,17 +966,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     ));
                 let store = HMemStore::from_driver(driver)
                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
-                store
-                    .driver()
-                    .execute_batch(
-                        "CREATE TABLE IF NOT EXISTS h_mems (
-                        id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
-                        value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-                        confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
-                        owner_webid TEXT NOT NULL
-                    )",
-                    )
-                    .map_err(|e| anyhow::anyhow!("DDL batch failed: {e}"))?;
                 let service = KanbanService::new(store);
                 Ok(KanbanServer::new(ctx.webid, service))
             })()

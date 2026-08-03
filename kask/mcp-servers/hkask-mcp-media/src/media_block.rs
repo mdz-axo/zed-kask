@@ -59,7 +59,8 @@ pub fn video_hint_from_result(result: &serde_json::Value) -> Option<String> {
 }
 
 /// Extract the first URL from a `media_generate` result's `output_urls`
-/// array and format it as an audio display hint.
+/// array and format it as an audio display hint. Falls back to the `"audio"`
+/// field used by speech generation (DeepInfra TTS returns a single data URI).
 pub fn audio_hint_from_result(result: &serde_json::Value) -> Option<String> {
     result
         .get("output_urls")
@@ -67,6 +68,12 @@ pub fn audio_hint_from_result(result: &serde_json::Value) -> Option<String> {
         .and_then(|urls| urls.first())
         .and_then(|url| url.as_str())
         .map(audio_block)
+        .or_else(|| {
+            result
+                .get("audio")
+                .and_then(|audio| audio.as_str())
+                .map(audio_block)
+        })
 }
 
 /// Attach a `display_hint` field to a media tool result if a hint is available.
@@ -96,4 +103,121 @@ pub fn audio_hint_from_path(result: &serde_json::Value) -> Option<String> {
         .get("audio_path")
         .and_then(|path| path.as_str())
         .map(audio_block)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_media_block_format() {
+        let block = media_block("image", "/path/to/img.png");
+        assert_eq!(
+            block,
+            "```media\n{\"kind\":\"image\",\"src\":\"/path/to/img.png\"}\n```"
+        );
+    }
+
+    #[test]
+    fn test_image_hint_from_result() {
+        let result = serde_json::json!({
+            "output_urls": ["https://example.com/img.png"]
+        });
+        let hint = image_hint_from_result(&result).unwrap();
+        assert!(hint.contains("\"kind\":\"image\""));
+        assert!(hint.contains("https://example.com/img.png"));
+    }
+
+    #[test]
+    fn test_image_hint_from_result_empty_urls() {
+        let result = serde_json::json!({"output_urls": []});
+        assert!(image_hint_from_result(&result).is_none());
+    }
+
+    #[test]
+    fn test_image_hint_from_result_no_urls_field() {
+        let result = serde_json::json!({"status": "ok"});
+        assert!(image_hint_from_result(&result).is_none());
+    }
+
+    #[test]
+    fn test_video_hint_from_result() {
+        let result = serde_json::json!({
+            "output_urls": ["https://example.com/clip.mp4"]
+        });
+        let hint = video_hint_from_result(&result).unwrap();
+        assert!(hint.contains("\"kind\":\"video\""));
+    }
+
+    #[test]
+    fn test_audio_hint_from_result_output_urls() {
+        let result = serde_json::json!({
+            "output_urls": ["https://example.com/audio.mp3"]
+        });
+        let hint = audio_hint_from_result(&result).unwrap();
+        assert!(hint.contains("\"kind\":\"audio\""));
+    }
+
+    #[test]
+    fn test_audio_hint_from_result_audio_field() {
+        // DeepInfra TTS returns {"audio": "data:audio/mp3;base64,..."}
+        let result = serde_json::json!({
+            "audio": "data:audio/mp3;base64,SUQzBAAAAAA",
+            "format": "mp3"
+        });
+        let hint = audio_hint_from_result(&result).unwrap();
+        assert!(hint.contains("\"kind\":\"audio\""));
+        assert!(hint.contains("data:audio/mp3;base64,SUQzBAAAAAA"));
+    }
+
+    #[test]
+    fn test_audio_hint_from_result_no_match() {
+        let result = serde_json::json!({"status": "ok"});
+        assert!(audio_hint_from_result(&result).is_none());
+    }
+
+    #[test]
+    fn test_enrich_with_display_hint_some() {
+        let result = serde_json::json!({"output": "/tmp/clip.mp4"});
+        let hint = hint_from_output_path(&result, "video");
+        let enriched = enrich_with_display_hint(result, hint);
+        assert!(enriched.get("display_hint").is_some());
+        let hint_str = enriched["display_hint"].as_str().unwrap();
+        assert!(hint_str.contains("\"kind\":\"video\""));
+    }
+
+    #[test]
+    fn test_enrich_with_display_hint_none() {
+        let result = serde_json::json!({"status": "ok"});
+        let enriched = enrich_with_display_hint(result, None);
+        assert!(enriched.get("display_hint").is_none());
+    }
+
+    #[test]
+    fn test_hint_from_output_path() {
+        let result = serde_json::json!({"output": "/tmp/collage.png"});
+        let hint = hint_from_output_path(&result, "image").unwrap();
+        assert!(hint.contains("\"kind\":\"image\""));
+        assert!(hint.contains("/tmp/collage.png"));
+    }
+
+    #[test]
+    fn test_hint_from_output_path_missing() {
+        let result = serde_json::json!({"status": "done"});
+        assert!(hint_from_output_path(&result, "video").is_none());
+    }
+
+    #[test]
+    fn test_audio_hint_from_path() {
+        let result = serde_json::json!({"audio_path": "/tmp/recording.wav"});
+        let hint = audio_hint_from_path(&result).unwrap();
+        assert!(hint.contains("\"kind\":\"audio\""));
+        assert!(hint.contains("/tmp/recording.wav"));
+    }
+
+    #[test]
+    fn test_audio_hint_from_path_missing() {
+        let result = serde_json::json!({"text": "hello"});
+        assert!(audio_hint_from_path(&result).is_none());
+    }
 }

@@ -483,15 +483,19 @@ impl Render for GraphWidget {
     }
 }
 
-/// Process-foreground cache of live `GraphWidget` entities keyed by the block
-/// body, so pan/zoom/evidence survive `ConversationView` re-renders (which would
-/// otherwise `cx.new` a fresh entity each time and wipe interaction state). The
-/// markdown renderer invokes `render_event_tree` on every re-layout; without this
-/// cache the widget is recreated per token during streaming.
+/// Process-foreground cache of live `GraphWidget` entities keyed by
+/// `(window_id, body_hash)`, so pan/zoom/evidence survive `ConversationView`
+/// re-renders (which would otherwise `cx.new` a fresh entity each time and wipe
+/// interaction state). The markdown renderer invokes `render_event_tree` on every
+/// re-layout; without this cache the widget is recreated per token during
+/// streaming.
 ///
-/// Foreground-thread-only (markdown layout runs on the GPUI foreground thread),
-/// so a `thread_local` is correct and avoids any `Send`/`Sync` question about
-/// `Entity`. Bounded by `GRAPH_CACHE_CAP` with FIFO eviction.
+/// Keying by window as well as body means each window showing the same graph
+/// block gets its OWN entity — independent pan/zoom/evidence, and its own
+/// `last_bounds` (no cross-window bounds race). Foreground-thread-only (markdown
+/// layout runs on the GPUI foreground thread), so a `thread_local` is correct and
+/// avoids any `Send`/`Sync` question about `Entity`. Bounded by `GRAPH_CACHE_CAP`
+/// with FIFO eviction.
 const GRAPH_CACHE_CAP: usize = 64;
 
 thread_local! {
@@ -500,18 +504,18 @@ thread_local! {
 
 #[derive(Default)]
 struct GraphEntityCache {
-    by_hash: HashMap<u64, Entity<GraphWidget>>,
-    order: VecDeque<u64>,
+    by_hash: HashMap<(u64, u64), Entity<GraphWidget>>,
+    order: VecDeque<(u64, u64)>,
 }
 
 impl GraphEntityCache {
     fn get_or_insert(
         &mut self,
         cx: &mut App,
-        hash: u64,
+        key: (u64, u64),
         build: impl FnOnce(&mut Context<GraphWidget>) -> GraphWidget,
     ) -> Entity<GraphWidget> {
-        if let Some(entity) = self.by_hash.get(&hash) {
+        if let Some(entity) = self.by_hash.get(&key) {
             return entity.clone();
         }
         while self.by_hash.len() >= GRAPH_CACHE_CAP {
@@ -523,8 +527,8 @@ impl GraphEntityCache {
             }
         }
         let entity = cx.new(build);
-        self.by_hash.insert(hash, entity.clone());
-        self.order.push_back(hash);
+        self.by_hash.insert(key, entity.clone());
+        self.order.push_back(key);
         entity
     }
 }
@@ -536,20 +540,22 @@ fn body_hash(body: &str) -> u64 {
 }
 
 /// Build the inline element for the D18 seam: a full-size div wrapping the
-/// `GraphWidget` view. The entity is cached by `body_text` so interaction state
-/// (pan/zoom/evidence) persists across `ConversationView` re-renders instead of
-/// being wiped by a fresh `cx.new` each re-layout.
+/// `GraphWidget` view. The entity is cached by `(window_id, body_hash)` so
+/// interaction state (pan/zoom/evidence) persists across `ConversationView`
+/// re-renders instead of being wiped by a fresh `cx.new` each re-layout, and so
+/// each window showing the same block gets an independent widget.
 pub fn render_event_tree(
     body: GraphBlockBody,
     body_text: &str,
-    _window: &mut Window,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let hash = body_hash(body_text);
+    let window_id = window.window_handle().window_id().as_u64();
+    let key = (window_id, body_hash(body_text));
     let entity = GRAPH_CACHE.with(|cache| {
         cache
             .borrow_mut()
-            .get_or_insert(cx, hash, |cx| GraphWidget::new(body, cx))
+            .get_or_insert(cx, key, |cx| GraphWidget::new(body, cx))
     });
     div().size_full().child(entity).into_any_element()
 }

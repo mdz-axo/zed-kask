@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use theme::ActiveTheme;
 
 use crate::audio_player::AudioPlayer;
-use crate::media_ref::{MediaKind, MediaRef};
+use crate::media_ref::{MediaKind, MediaRef, MediaStorage, PathMediaStorage, ResolvedMedia};
 use crate::transport::{TransportBar, TransportEvent, TransportState};
 use crate::video_decoder::VideoPlayer;
 
@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 /// or as a standalone panel item.
 pub struct MediaWidget {
     reference: MediaRef,
+    storage: Arc<dyn MediaStorage>,
     focus_handle: FocusHandle,
     audio_player: Option<Arc<AudioPlayer>>,
     video_player: Option<VideoPlayer>,
@@ -34,9 +35,18 @@ pub struct MediaWidget {
 
 impl MediaWidget {
     pub fn new(reference: MediaRef, cx: &mut Context<Self>) -> Self {
+        Self::with_storage(reference, Arc::new(PathMediaStorage), cx)
+    }
+
+    pub fn with_storage(
+        reference: MediaRef,
+        storage: Arc<dyn MediaStorage>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut widget = Self {
             reference,
+            storage,
             focus_handle,
             audio_player: None,
             video_player: None,
@@ -51,6 +61,14 @@ impl MediaWidget {
     }
 
     fn initialize(&mut self, cx: &mut Context<Self>) {
+        // Sync gpui-component theme colors whenever the Zed GlobalTheme changes,
+        // so the transport bar (Slider, Button) stays in sync even when no
+        // media block is visible.
+        self._subscriptions
+            .push(cx.observe_global::<theme::GlobalTheme>(|_this, cx| {
+                crate::sync_theme_colors(cx);
+            }));
+
         let kind = match &self.reference {
             MediaRef::Asset { kind, .. } => *kind,
             MediaRef::Error(message) => {
@@ -89,6 +107,106 @@ impl MediaWidget {
     }
 
     pub fn load(&mut self, cx: &mut Context<Self>) {
+        match self.storage.resolve(&self.reference) {
+            Ok(resolved) => self.load_resolved(resolved, cx),
+            Err(error) => {
+                log::warn!(
+                    "hkask-media-widget: media resolution failed: {error}, falling back to direct src"
+                );
+                self.load_direct(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn load_resolved(&mut self, resolved: ResolvedMedia, cx: &mut Context<Self>) {
+        match resolved.kind {
+            MediaKind::Audio => {
+                if let Some(player) = &self.audio_player {
+                    if let Some(bytes) = resolved.bytes {
+                        if let Err(error) = player.play_bytes(bytes) {
+                            self.error = Some(SharedString::from(error.to_string()));
+                        }
+                    } else if let Some(path) = resolved.path {
+                        let player = player.clone();
+                        self.load_audio_file(&player, &path);
+                    } else if let Some(url) = &resolved.url {
+                        let player = player.clone();
+                        self.load_audio_data_uri(&player, url.as_str());
+                    }
+                }
+                self.start_playback_loop(cx);
+            }
+            MediaKind::Video => {
+                if let Some(player) = &mut self.video_player {
+                    if let Some(path) = &resolved.path {
+                        if let Err(error) = player.open(path) {
+                            self.error = Some(SharedString::from(error.to_string()));
+                        }
+                    } else if let Some(url) = &resolved.url
+                        && let Some(path) = url.as_str().strip_prefix("file://")
+                        && let Err(error) = player.open(std::path::Path::new(path))
+                    {
+                        self.error = Some(SharedString::from(error.to_string()));
+                    }
+                }
+                self.start_playback_loop(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn load_audio_file(&mut self, player: &Arc<AudioPlayer>, path: &std::path::Path) {
+        match std::fs::metadata(path) {
+            Ok(metadata) => {
+                const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
+                if metadata.len() > MAX_AUDIO_FILE_SIZE {
+                    self.error = Some(SharedString::from(format!(
+                        "audio file too large ({} bytes, max {}); refusing to read",
+                        metadata.len(),
+                        MAX_AUDIO_FILE_SIZE
+                    )));
+                } else {
+                    match std::fs::read(path) {
+                        Ok(bytes) => {
+                            if let Err(error) = player.play_bytes(bytes) {
+                                self.error = Some(SharedString::from(error.to_string()));
+                            }
+                        }
+                        Err(error) => {
+                            self.error = Some(SharedString::from(format!(
+                                "failed to read audio file: {error}"
+                            )));
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                self.error = Some(SharedString::from(format!(
+                    "failed to stat audio file: {error}"
+                )));
+            }
+        }
+    }
+
+    fn load_audio_data_uri(&mut self, player: &Arc<AudioPlayer>, url: &str) {
+        if let Some(encoded) = url.strip_prefix("data:audio/")
+            && let Some((_, data)) = encoded.split_once(',')
+        {
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data) {
+                Ok(bytes) => {
+                    if let Err(error) = player.play_bytes(bytes) {
+                        self.error = Some(SharedString::from(error.to_string()));
+                    }
+                }
+                Err(error) => {
+                    self.error = Some(SharedString::from(format!("base64 decode failed: {error}")));
+                }
+            }
+        }
+    }
+
+    fn load_direct(&mut self, cx: &mut Context<Self>) {
         let src = self.reference.src().to_string();
 
         match self.reference.kind() {
@@ -115,9 +233,6 @@ impl MediaWidget {
                     } else {
                         match std::fs::metadata(&src) {
                             Ok(metadata) => {
-                                // Guard against reading unbounded files into memory —
-                                // a malicious ```media block could point at /dev/zero
-                                // or a multi-GB file, causing memory exhaustion.
                                 const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
                                 if metadata.len() > MAX_AUDIO_FILE_SIZE {
                                     self.error = Some(SharedString::from(format!(
@@ -162,7 +277,6 @@ impl MediaWidget {
             }
             _ => {}
         }
-        cx.notify();
     }
 
     fn start_playback_loop(&mut self, cx: &mut Context<Self>) {
@@ -380,10 +494,20 @@ impl gpui::Render for MediaWidget {
 }
 
 /// Render a `MediaRef` as a GPUI `AnyElement` — the entry point called from the
-/// D18 seam (`media_block_renderer`).
+/// D18 seam (`media_block_renderer`). Uses `PathMediaStorage` for resolution.
 pub fn render_media_ref(reference: MediaRef, cx: &mut App) -> AnyElement {
+    render_media_ref_with_storage(reference, Arc::new(PathMediaStorage), cx)
+}
+
+/// Render a `MediaRef` with a custom `MediaStorage` — allows gallery-backed
+/// resolution (`GalleryMediaStorage`) when a gallery store is available.
+pub fn render_media_ref_with_storage(
+    reference: MediaRef,
+    storage: Arc<dyn MediaStorage>,
+    cx: &mut App,
+) -> AnyElement {
     let entity = cx.new(|cx| {
-        let mut widget = MediaWidget::new(reference, cx);
+        let mut widget = MediaWidget::with_storage(reference, storage, cx);
         widget.load(cx);
         widget
     });

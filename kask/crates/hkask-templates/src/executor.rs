@@ -1550,12 +1550,12 @@ impl ManifestExecutor {
         })?;
 
         // Resolve ${variable} references in the MCP reference against context
-        let mcp_ref = TemplateRenderer::render_inline(mcp_ref_raw, &context);
+        let mcp_ref = TemplateRenderer::render_inline(mcp_ref_raw, context);
 
         let input: Value = step
             .input_mapping
             .as_ref()
-            .map(|mapping| bind_parameters(mapping, &context))
+            .map(|mapping| bind_parameters(mapping, context))
             .unwrap_or_else(|| {
                 Value::Object(
                     context

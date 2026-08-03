@@ -12,7 +12,7 @@ impl KanbanService {
                 && let Some(hours) = task.estimated_hours
             {
                 let elapsed = (now - task.updated_at).num_hours();
-                if elapsed > (hours as i64) * 2 {
+                if (elapsed as f64) > hours * 2.0 {
                     items.push(UnjamItem {
                         task_id: task.id,
                         task_title: task.title.clone(),
@@ -146,7 +146,12 @@ impl KanbanService {
                 }
             }
 
-            // rJoule exhaustion: same logic, separate budget
+            // rJoule exhaustion: same logic, separate budget.
+            // Known limitation: routes through `task_gas_exhaust`, which marks the
+            // task Done with a "Gas exhausted" verification reason. A dedicated
+            // `task_rjoule_exhaust` with an rJoule-specific reason is not yet
+            // implemented; the completion semantics (auto-complete on budget
+            // exhaustion) are identical, so the shared path is reused intentionally.
             if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
                 && let Some(remaining) = task.rjoule_remaining
                 && remaining == 0
@@ -177,6 +182,10 @@ impl KanbanService {
     /// Gas exhaustion is a completion path: subagents burn gas/rJoules from a
     /// budget explicitly set on the task. When gas hits zero mid-work, the
     /// task auto-completes. The delegator can reopen with more gas to continue.
+    ///
+    /// Internal authority: called only by the regulation/unjam loop, not
+    /// exposed as an MCP tool. Must not be exposed as a tool without an
+    /// actor/authority check.
     pub fn task_gas_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
         let mut task = self.task_get(task_id)?.ok_or_else(|| {
             KanbanError::NotFound(NotFound {
@@ -214,6 +223,10 @@ impl KanbanService {
     ///
     /// `reason` describes the cost: "inference: deepseek-v4 (500 tokens)",
     /// "template: bug-hunt", "tool: kanban_task_list", etc.
+    ///
+    /// Internal authority: called only by the gas-accountant closure wired via
+    /// `gas_accountant_for`, not exposed as an MCP tool. Must not be exposed as
+    /// a tool without an actor/authority check.
     pub fn task_consume_gas(
         &self,
         task_id: TaskId,
@@ -243,6 +256,10 @@ impl KanbanService {
     /// Same pattern as `task_consume_gas` but for the rJoule budget
     /// (250k rJoules ≈ $1 inference spend). Logs a GasEntry with kind
     /// "rjoule_spend".
+    ///
+    /// Internal authority: called only by the inference accounting path, not
+    /// exposed as an MCP tool. Must not be exposed as a tool without an
+    /// actor/authority check.
     pub fn task_consume_rjoules(
         &self,
         task_id: TaskId,

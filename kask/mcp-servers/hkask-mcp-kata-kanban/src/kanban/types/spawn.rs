@@ -34,7 +34,7 @@ pub struct SpawnSpec {
     /// File paths or artifact roots the agent can access.
     pub(crate) artifacts: Vec<String>,
     /// OCAP capability token specs (e.g. "tool:kanban:execute").
-    /// These are validated against the parent agent's tokens at spawn time.
+    /// Not yet enforced — validation against the parent agent's tokens is not wired.
     /// Each entry is a CapabilitySpec string: "resource:domain:action".
     pub(crate) capability_tokens: Vec<String>,
 }

@@ -67,7 +67,7 @@ fn ensure_theme_initialized(window: &mut Window, cx: &mut App) {
 /// This is a one-way adapter: Zed → gpui-component. It runs on every
 /// `media_block_renderer` invocation, which fires during markdown rendering
 /// — theme changes trigger re-renders, so colors stay in sync.
-fn sync_theme_colors(cx: &mut App) {
+pub(crate) fn sync_theme_colors(cx: &mut App) {
     let zed_colors = cx.theme().colors().clone();
     let zed_status = cx.theme().status().clone();
     let gpui_theme = cx.global_mut::<Theme>();

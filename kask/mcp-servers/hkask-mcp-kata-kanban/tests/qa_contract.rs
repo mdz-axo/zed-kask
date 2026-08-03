@@ -26,40 +26,22 @@ use hkask_types::WebID;
 
 // ── Test harness ────────────────────────────────────────────────────────────
 
-/// Build an in-memory KanbanServer with the hmems table initialized.
+/// Build an in-memory KanbanServer. HMemStore::from_driver creates the
+/// `hmems` table with the canonical schema, so no manual DDL is needed here.
 fn make_server() -> KanbanServer {
     let driver = SqliteDriver::in_memory_driver();
     let store = HMemStore::from_driver(driver).expect("hmem store init");
-    store
-        .driver()
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS hmems (
-                id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
-                value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-                recalled_at TEXT NOT NULL DEFAULT (datetime('now')),
-                confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
-                owner_webid TEXT NOT NULL,
-                dimension TEXT
-            )",
-        )
-        .expect("DDL batch must succeed");
     let service = KanbanService::new(store);
     KanbanServer::new(WebID::new(), service)
 }
 
 /// Parse a tool's JSON string response into a serde_json::Value.
 ///
-/// Successful tool calls wrap the value in `{"content": <value>}` (the rmcp
-/// McpToolOutput envelope). Errors use `{"error": "...", "kind": "..."}`
-/// at the top level. This helper unwraps `content` when present so callers
-/// can assert on the inner value directly.
+/// Delegates to the canonical `hkask_types::tool_response::parse_tool_response`
+/// helper so the `content` envelope is unwrapped the same way every consumer
+/// does (`.rules`: do not re-implement the envelope unwrap locally).
 fn parse(out: &str) -> serde_json::Value {
-    let v: serde_json::Value = serde_json::from_str(out).expect("tool output must be valid JSON");
-    if let Some(content) = v.get("content") {
-        content.clone()
-    } else {
-        v
-    }
+    hkask_types::tool_response::parse_tool_response(out).expect("tool output must be valid JSON")
 }
 
 /// Assert the response is a structured McpToolError with the given kind.
@@ -970,7 +952,7 @@ mod contract_propose_expect {
         let bid = make_board(&server, "B").await;
         let req = ContractProposeExpect {
             board_id: bid,
-            proposals_json: "[]".to_string(),
+            proposals: serde_json::json!([]).into(),
         };
         let out = server
             .contract_propose_expect(rmcp::handler::server::wrapper::Parameters(req))
@@ -990,7 +972,7 @@ mod contract_propose_expect {
         let server = make_server();
         let req = ContractProposeExpect {
             board_id: "not-a-uuid".to_string(),
-            proposals_json: "[]".to_string(),
+            proposals: serde_json::json!([]).into(),
         };
         let out = server
             .contract_propose_expect(rmcp::handler::server::wrapper::Parameters(req))
@@ -1000,21 +982,21 @@ mod contract_propose_expect {
 
     #[tokio::test]
     async fn schema_violation_malformed_proposals_json() {
-        // REQ: schema-violation — proposals_json is not valid JSON
+        // REQ: schema-violation — proposals is not a valid ExpectProposal array
         let server = make_server();
         let bid = make_board(&server, "B").await;
         let req = ContractProposeExpect {
             board_id: bid,
-            proposals_json: "not json {{{".to_string(),
+            proposals: serde_json::json!("not an ExpectProposal array").into(),
         };
         let out = server
             .contract_propose_expect(rmcp::handler::server::wrapper::Parameters(req))
             .await;
-        // Malformed JSON should produce a structured error, not a panic.
+        // A non-array proposals value should produce a structured error, not a panic.
         let v = parse(&out);
         assert!(
             v.get("error").is_some(),
-            "malformed proposals_json must produce a structured error, got: {out}"
+            "malformed proposals must produce a structured error, got: {out}"
         );
     }
 }

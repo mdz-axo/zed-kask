@@ -3,6 +3,7 @@
 //! Each tool has a request struct and response struct serializable
 //! for MCP JSON-RPC transport.
 
+use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -279,11 +280,16 @@ pub struct TaskReopenResponse {
 
 // ── Contract proposals ──────────────────────────────────────────────────────
 
+/// A proposal template for a contract missing its user-facing `expect:` annotation.
+/// Agents use this to compose and submit contract grounding proposals.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContractProposeExpect {
     pub board_id: String,
-    /// JSON array of ExpectProposal structs from hkask-test-harness
-    pub proposals_json: String,
+    /// Proposals for missing `expect:` annotations (arbitrary JSON array of
+    /// `ExpectProposal`-shaped objects). Accepted as `AnyJsonValue` because
+    /// `hkask_types::ExpectProposal` is not `JsonSchema`-derivable from this
+    /// crate; the tool body deserializes into the typed struct.
+    pub proposals: AnyJsonValue,
 }
 
 // ── Kata prompts ───────────────────────────────────────────────────────────

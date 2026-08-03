@@ -1913,8 +1913,9 @@ deposit,2024-01-01,,,,,10000.0
         std::fs::create_dir(&disk_path).unwrap();
 
         let error = pm.delete_file(&id).unwrap_err();
-        assert!(error.to_string().contains("metadata preserved"));
-        assert_eq!(pm.list_files("test", "MSFT").unwrap().len(), 1);
+        assert!(error.to_string().contains("metadata removed"));
+        // DB row is deleted first; the orphaned file is storage waste, not a dangling pointer.
+        assert_eq!(pm.list_files("test", "MSFT").unwrap().len(), 0);
     }
 
     #[test]

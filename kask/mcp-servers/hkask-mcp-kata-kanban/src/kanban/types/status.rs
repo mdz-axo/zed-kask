@@ -7,6 +7,10 @@ use super::*;
 /// Column ordering is strict: transitions may only advance forward
 /// or regress one step backward. Skipping columns is prohibited.
 ///
+/// Exception: `KanbanService::task_reopen` moves Done→InProgress directly
+/// (skipping Review) as an explicit rework escape hatch. This is the only
+/// sanctioned multi-step transition.
+///
 /// ```text
 /// Backlog → Ready → InProgress → Review → Done
 /// ```
