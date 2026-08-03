@@ -191,7 +191,7 @@ fn steer_system_prompt(
          oracle, OMIT `task_success` — the skill falls back to the three\n\
          swarm-health axes and the human Go See loop covers the gap. Do NOT\n\
          use an LLM to score the output as `task_success`; the judge must be\n\
-         deterministic (the cybernetic plan's determinism constraint).\n"
+         deterministic (the cybernetic plan's determinism constraint).
     )
     .into()
 }

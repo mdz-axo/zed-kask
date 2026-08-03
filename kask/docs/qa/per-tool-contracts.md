@@ -1,7 +1,7 @@
 ---
 title: "Per-Tool QA Contracts"
 audience: [QA engineers, agents]
-last_updated: 2026-08-01
+last_updated: 2026-08-02
 version: "0.3.0"
 status: "Active"
 domain: "trust"
@@ -286,6 +286,8 @@ Credentials: **optional** `HKASK_KANBAN_DB`, `HKASK_DB_PASSPHRASE`.
 ### hkask-mcp-media (38 tools)
 
 Credentials: **optional** `DEEPINFRA_API_KEY`, `FALAI_API_KEY`.
+
+**rJoule budget gate:** `generate_image`, `transform_image`, `upscale_image`, and `generate_video` pre-charge an estimated rJoule (USD) cost (`estimate_rjoule`, env-var-configurable unit costs) and reject with a Category-5-style `unavailable` error when `remaining_rjoule() < estimate`. Enforcement is enabled only when `HKASK_MEDIA_RJOULE_CAP` is set (unset/0 ⇒ disabled). Compute gas is enforced upstream at `McpRuntime::invoke`, not here. The resource-bounds contract (Category 6) for these four tools should additionally assert the budget-exhausted rejection path when the cap is set.
 
 | Tool | LLM I/O | External dep | Category 3 | Category 5 | Category 7 |
 |---|---|---|---|---|---|

@@ -20,7 +20,7 @@
 //! HTTP 500 for domain failures like unfunded agents. `SwarmError` mapping
 //! therefore inspects response bodies, not just status codes.
 //!
-//! ## Tools (30 — both tool sets always available in either mode)
+//! ## Tools (31 — both tool sets always available in either mode)
 //! ABW tools (20): `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
 //! `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
 //! `swarm_hire_cost`, `swarm_request_consent`, `swarm_hire`, `swarm_delegate`,
@@ -29,10 +29,11 @@
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
 //! (permanent agent deletion, verified live), `swarm_delete_swarm`
 //! (permanent workspace deletion via the team-scoped route, verified live).
-//! Local tools (10): `swarm_fund_local`, `swarm_balance_local`,
+//! Local tools (11): `swarm_fund_local`, `swarm_balance_local`,
 //! `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
 //! `swarm_list_local_agents`, `swarm_clone_to_local`, `swarm_push_to_cloud`,
-//! `swarm_remove_local`, `swarm_create_local_agent`.
+//! `swarm_remove_local`, `swarm_create_local_agent`,
+//! `swarm_reconfigure_local_agent` (Cybernetic Swarm Plan C6).
 //!
 //! Spend-mutating tools (`swarm_hire`, `swarm_delegate`, `swarm_create_swarm`,
 //! `swarm_xaman`) are consent-gated — see `kask/docs/plans/abw-swarm-intelligence.md`
@@ -374,6 +375,27 @@ pub(crate) struct FanoutEntry {
     pub agent_name: String,
     pub task: String,
     pub credits_authorized: u32,
+}
+
+/// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm Plan
+/// C6 — the Modify-Block / MASS prompt axis). Updates ONLY the `system_prompt`
+/// (and optionally `model`/`mcp_tools`/`skills`); preserves `agent_id`,
+/// `agent_type`, `description`, `accepts`, `produces`, `dependencies`, and the
+/// `cloud_id` sync link. The DECIDE `reconfigure_agent` action seeds
+/// `swarm_generate_prompt` with the blamed agent's failure log to produce the
+/// new prompt, then this tool writes it and reloads the registry. No consent
+/// token — local mode; re-prompting is generation (an LLM producing a new
+/// prompt), not judging, so it is admissible under the determinism constraint.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ReconfigureLocalAgentRequest {
+    pub agent_name: String,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub mcp_tools: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
 
 /// Fire (un-hire) an agent from an ABW workspace.
@@ -2387,6 +2409,71 @@ impl SwarmServer {
         .await
     }
 
+    /// Reconfigure an existing local agent's prompt in place (Cybernetic Swarm
+    /// Plan C6). Updates ONLY the `system_prompt` (and optionally
+    /// `model`/`mcp_tools`/`skills` when supplied non-empty); preserves
+    /// `agent_id`, `agent_type`, `description`, `accepts`, `produces`,
+    /// `dependencies`, and the `cloud_id` sync link. The DECIDE
+    /// `reconfigure_agent` action seeds `swarm_generate_prompt` with the
+    /// blamed agent's failure log to produce the new prompt, then this tool
+    /// writes it via `LocalAgentRegistry::write_card` and reloads. No consent
+    /// token — local mode.
+    #[tool(
+        description = "Reconfigure an existing local agent's system_prompt in place (Cybernetic Swarm Plan C6 reconfigure_agent). Preserves agent_id, agent_type, description, accepts, produces, dependencies, and cloud_id. No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_reconfigure_local_agent(
+        &self,
+        parameters: Parameters<ReconfigureLocalAgentRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_reconfigure_local_agent", Some("pko"), async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name must be non-empty".to_string(),
+                ));
+            }
+            if req.system_prompt.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "system_prompt must be non-empty".to_string(),
+                ));
+            }
+            // Look up the existing card — reconfigure updates in place, it
+            // does not create. A missing agent is not_found, not created.
+            let mut card = self.local_registry.get(&req.agent_name).ok_or_else(|| {
+                McpToolError::not_found(format!(
+                    "agent '{}' not found in local registry — reconfigure updates an existing card; use swarm_create_local_agent to create",
+                    req.agent_name
+                ))
+            })?;
+            card.capabilities.system_prompt = Some(req.system_prompt);
+            if !req.model.trim().is_empty() {
+                card.capabilities.model = req.model;
+            }
+            if !req.mcp_tools.is_empty() {
+                card.capabilities.mcp_tools = filter_mcp_tools(
+                    req.mcp_tools,
+                    self.client.config().allowed_tool_servers.as_deref(),
+                );
+            }
+            if !req.skills.is_empty() {
+                card.capabilities.skills = filter_declared_skills(req.skills);
+            }
+            // write_card sanitizes the id, path-contains against the registry
+            // root, writes, and reloads — the single enforcement point for C6.
+            let path = self
+                .local_registry
+                .write_card(&card)
+                .map_err(|e| McpToolError::internal(format!("failed to write card: {e}")))?;
+            Ok(serde_json::json!({
+                "reconfigured": card.agent_id,
+                "cloud_id": card.cloud_id,
+                "synced": card.cloud_id.is_some(),
+                "path": path,
+            }))
+        })
+        .await
+    }
+
     /// Fire (un-hire) an agent from a workspace. The ABW counterpart of
     /// firing: removes the agent from the roster — the redundant-duplicate
     /// pruning the skill's DECIDE phase flags (`flag_redundant_duplicate`).
@@ -2701,13 +2788,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 mod tests {
     use super::*;
 
-    // The module doc claims 30 tools (20 ABW + 10 local). Enforce the count
+    // The module doc claims 31 tools (20 ABW + 11 local). Enforce the count
     // against the ACTUAL registered router surface — a tool dropped, renamed,
     // or left unregistered by a future refactor fails here instead of
     // silently drifting from the docs (the "advertised invariants need
     // enforcement points" trap applied to the doc claim itself).
     #[test]
-    fn tool_surface_is_exactly_30_registered_tools() {
+    fn tool_surface_is_exactly_31_registered_tools() {
         let router = SwarmServer::combined_router();
         let mut names: Vec<String> = router
             .list_all()
@@ -2747,6 +2834,7 @@ mod tests {
             "swarm_push_to_cloud",
             "swarm_remove_local",
             "swarm_create_local_agent",
+            "swarm_reconfigure_local_agent",
             "swarm_fanout_local",
         ]
         .into_iter()
@@ -2755,7 +2843,7 @@ mod tests {
         expected.sort();
         assert_eq!(
             names, expected,
-            "registered tool surface drifted from the documented 30"
+            "registered tool surface drifted from the documented 31"
         );
     }
 

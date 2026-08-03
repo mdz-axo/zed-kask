@@ -8,6 +8,8 @@ contract:
     mode: string
     target_condition: object|null
     task_success: object|null
+    blame_count: object
+    agent_at_fault: object|null
   output:
     post_act_state: object
     variety_coverage: number
@@ -19,6 +21,7 @@ contract:
     lessons_learned: array
     delegate_notes: string
     task_success: object|null
+    blame_count: object
 energy_cap: 4096
 visibility: Public
 ---
@@ -211,9 +214,23 @@ Distill 1-3 concrete lessons for the next iteration's SENSE pass. These close
 the autopoietic loop (the next iteration's composition recommendation is a
 function of these findings).
 
+## Step 7 — Blame aggregation (Cybernetic Swarm Plan C5)
+
+The ORIENT step emits `agent_at_fault` (deterministic, per the priority rule)
+for the prior iteration's failed tasks. CONVERGE aggregates blame across
+iterations: `blame_count[agent] += 1` whenever ORIENT attributes fault to that
+agent. The agent with the highest count is `agent_sel` (argmax) — the
+reconfigure-or-fire candidate DECIDE acts on (component C6).
+
+Carry the prior iteration's blame_count forward (threaded via prior_iteration);
+if ORIENT's agent_at_fault is non-null, increment that agent's count in the
+carried map. If no prior blame_count (iteration 1) or no agent_at_fault, emit
+the carried (possibly empty) map unchanged. The map keys are agent names; the
+values are integer counts.
+
 ## Output
 
 Produce a JSON object with: post_act_state, variety_coverage, diversity,
 loop_closure, convergence_metric, next_focus, algedonic_signal (object or
 null), lessons_learned (array), delegate_notes, task_success (echo the input
-verdict, or null).
+verdict, or null), blame_count (object: agent_name → integer count).

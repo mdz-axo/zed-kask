@@ -678,3 +678,25 @@ test's next call — not a test failure. Run the live swarm suite with
 `--test-threads=1`, keep probes self-contained (create + delete their own
 artifacts), and never have one probe assert global absence while another
 mutates the same namespace.
+
+## kask MCP tool inputs that accept arbitrary JSON use `AnyJsonValue`
+
+`schemars` renders `serde_json::Value` as the bare boolean `true` (verified in
+`schemars-1.2.2/src/json_schema_impls/serdejson.rs`). A boolean in a schema
+position (a `properties.<field>` value, `items`, an `anyOf` member, etc.) is
+valid JSON Schema but is rejected by strict-schema-decoding providers — Ollama
+fails the whole chat-completion with `400 cannot unmarshal bool into ... of type
+api.ToolProperty`; Google Gemini's protobuf `Schema` is the same class of
+failure. So kask MCP tool input structs (`#[derive(JsonSchema)]` request types
+used as `Parameters<T>` in `#[tool]` functions) that accept arbitrary JSON must
+use `hkask_mcp_server::AnyJsonValue` (whose `JsonSchema` emits `{}`), not
+`serde_json::Value` — not even `Option<serde_json::Value>` or
+`HashMap<String, serde_json::Value>` (the map's `additionalProperties: true` is
+a nested boolean of the same risk class). Enforced by
+`hkask_mcp_server::find_boolean_schema_positions`, which each server's tool-input
+test calls on `schema_for!(TheirRequest)` to assert no schema-valued position is
+a bare boolean. Built-in Zed tools and third-party/external MCP servers are NOT
+guarded here — they are an accepted, scoped risk (a blanket adapter-level
+normalize in `language_model_core::adapt_schema_to_format` was considered and
+reverted to avoid an upstream D-seam; revisit only if a non-kask tool
+reintroduces the break).

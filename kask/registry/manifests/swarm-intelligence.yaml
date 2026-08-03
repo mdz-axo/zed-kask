@@ -31,10 +31,23 @@
 #
 # Convergence: Cauchy criterion on the swarm-state distance d. d is a
 # composite of (1 - variety_coverage), (diversity_floor - diversity), and
-# (1 - loop_closure). d = 0 means the target condition is met on all three
+# (1 - loop_closure); plus (1 - s)^2 when a deterministic task_success
+# verdict is supplied (C0). d = 0 means the target condition is met on all
 # axes. Algedonic override: a 402 or un-acknowledged curator dispatch
 # escalates regardless of d (the .rules "unwrap_or(0) on regulation-loop
 # sense inputs" trap enforced as a convergence invariant).
+#
+# Cybernetic Swarm Plan components integrated (Appendix C records the
+# foundation slice C0/C4/C8):
+#   C1 second-order monitor + converge_accumulate  — steps 7-8 (compute)
+#   C2 Go See scheduled loop                    — SENSE surfaces the go_see
+#       directive from the monitor; the operator descends Steer with the §5
+#       checklist. The cadence is event-driven (on sensor-truth divergence)
+#       plus iteration-bounded (max_iterations caps the human-check cadence).
+#   C3 failed-edit memory                       — converge_accumulate + DECIDE guard
+#   C5 deterministic fault attribution          — ORIENT + CHECK blame aggregation
+#   C6 reconfigure_agent DECIDE action         — swarm_reconfigure_local_agent tool
+#   C7 influence-weighted rejection             — converge_accumulate + DECIDE guard
 
 manifest:
   id: swarm-intelligence
@@ -170,6 +183,10 @@ steps:
       swarm_state: "{{ step_1_result }}"
       task: "{{ task }}"
       target_condition: "{{ target_condition | default({}) }}"
+      # Cybernetic Swarm Plan C5: the prior iteration's ACT trace (the executor
+      # snapshots prev_step_N_result at the loop step) carries the delegate
+      # results ORIENT attributes fault from. Absent on iteration 1 (no prior).
+      prior_act: "{{ prev_step_4_result | default(none) }}"
 
   - ordinal: 3
     action: select
@@ -201,6 +218,15 @@ steps:
       swarm_state: "{{ step_1_result }}"
       orientation: "{{ step_2_result }}"
       task: "{{ task }}"
+      # Cybernetic Swarm Plan C3/C7: deterministic guards threaded from the
+      # CONVERGE accumulator (via the loop step). failed_edits = the anti-loop
+      # set DECIDE rejects re-proposals against; influence_scores = the
+      # per-agent_type running sum DECIDE rejects re-hire of negatively-
+      # influential types against. second_order = the C1 monitor recommendation
+      # (go_see | diversify_action | none). Absent on iteration 1.
+      failed_edits: "{{ failed_edits | default([]) }}"
+      influence_scores: "{{ influence_scores | default({}) }}"
+      second_order: "{{ second_order | default({}) }}"
 
   - ordinal: 4
     action: select
@@ -256,6 +282,11 @@ steps:
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
       task_success: "{{ task_success | default(none) }}"
+      # Cybernetic Swarm Plan C5: blame aggregation. agent_at_fault is the prior
+      # ORIENT's attribution (prev_step_2_result); blame_count is the carried
+      # running map (threaded via the loop). Absent on iteration 1.
+      agent_at_fault: "{{ prev_step_2_result.agent_at_fault | default(none) }}"
+      blame_count: "{{ blame_count | default({}) }}"
 
   - ordinal: 6
     action: compute
@@ -273,17 +304,70 @@ steps:
       mode: "cauchy"
 
   - ordinal: 7
+    action: compute
+    compute_ref: swarm.converge_accumulate
+    description: >
+      CONVERGE ACCUMULATE (Cybernetic Swarm Plan C1/C3/C7): deterministic
+      per-iteration accumulator. An LLM template cannot reliably maintain a
+      running set/sum across LOOP iterations, so this pure-function compute
+      step maintains three accumulators: (1) iteration_log — the
+      (d, s, deficit_class, decision_action) record per iteration, fed to the
+      second-order monitor; (2) failed_edits — the C3 anti-loop set of
+      (decision_action, swarm_state_signature, d_delta) entries recorded when
+      an edit did not improve d (d_delta <= 0) and s did not improve, which
+      DECIDE rejects re-proposals against; (3) influence_scores — the C7
+      per-agent_type running sum of d_delta, which DECIDE rejects re-hire of
+      negatively-influential types against. The accumulators are threaded back
+      through the loop step's input_mapping so the next iteration's DECIDE can
+      read them. No LLM; no sensor-truth fabrication (null s means not measured).
+    input_mapping:
+      iteration_log: "{{ iteration_log | default([]) }}"
+      failed_edits: "{{ failed_edits | default([]) }}"
+      influence_scores: "{{ influence_scores | default({}) }}"
+      d: "{{ step_5_result.convergence_metric | default(0.0) }}"
+      task_success: "{{ step_5_result.task_success | default(none) }}"
+      deficit_class: "{{ step_2_result.deficit_class | default('') }}"
+      decisions: "{{ step_3_result | default({}) }}"
+      swarm_state: "{{ step_1_result | default({}) }}"
+
+  - ordinal: 8
+    action: compute
+    compute_ref: swarm.second_order_monitor
+    description: >
+      CONVERGE SECOND-ORDER MONITOR (Cybernetic Swarm Plan C1 — S1 §5.4): two
+      deterministic statistical signals over the iteration_log, no LLM.
+      (1) reasoning_loop — (deficit_class, decision_action) repeated for
+      loop_window iterations with no d improvement; (2) sensor_truth_divergence
+      — d improving while the deterministic task-success s declines (the Go See
+      diagnosis automated as a cheap statistic). The recommendation
+      (go_see | diversify_action | none) is threaded to the next iteration so
+      DECIDE can diversify a stuck action and the Go See cadence (C2) can fire
+      on the divergence trigger.
+    input_mapping:
+      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
+      loop_window: 3
+
+  - ordinal: 9
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
-      step_6_result.next_focus back to step 1 as prior_iteration.next_focus,
-      along with the prior CHECK's lessons_learned, closing the feedback loop.
+      the prior CHECK's lessons_learned and next_focus back to step 1 as
+      prior_iteration, AND threads the deterministic accumulators (C1/C3/C7)
+      and the second-order monitor's recommendation back so the next
+      iteration's DECIDE can apply the failed-edit and influence guards and
+      diversify a stuck action. Closes the feedback loop.
     input_mapping:
       loop_target: "{{ 1 }}"
       prior_iteration:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         next_focus: "{{ step_6_result.next_focus | default('') }}"
+        second_order: "{{ step_8_result | default({}) }}"
       kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
+      failed_edits: "{{ step_7_result.failed_edits | default([]) }}"
+      influence_scores: "{{ step_7_result.influence_scores | default({}) }}"
+      second_order: "{{ step_8_result | default({}) }}"
+      blame_count: "{{ step_5_result.blame_count | default({}) }}"
 
 error_handling:
   on_gas_exceeded: abort

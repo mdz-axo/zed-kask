@@ -321,6 +321,8 @@ CREATE INDEX IF NOT EXISTS idx_gallery_generation_image ON gallery_generation(im
 
 ### WS-4 — Pipeline manifests (Guideline)
 
+**Status: APPLIED and VALIDATED.** The three pipeline manifests — `product-shot.yaml` (generate → remove background → upscale), `stylize-upscale.yaml` (generate → style transfer → upscale), `reaction-gif.yaml` (generate → image-to-video → video-to-gif) — are authored as FlowDef templates in `kask/registry/templates/media/` and registered in `manifest.yaml`. They chain tool outputs implicitly via the FlowDef executor (no `$references`, no provider-response-shape coupling) and reuse the current tools.
+
 **Goal:** pre-defined, self-contained YAML pipelines for common media workflows, executable by the skill cascade.
 
 This pass authors **3 pipeline manifests** (see §5 / the manifest files) using the *current* fal.ai workflow engine (no new engine dependency), demonstrating the OpenMontage pattern: a fixed, known-good pipeline topology parameterized by user intent, rather than an LLM-composed DAG each time.
@@ -328,6 +330,8 @@ This pass authors **3 pipeline manifests** (see §5 / the manifest files) using 
 **Acceptance:** each manifest is self-contained and executes end-to-end via `media.execute_workflow` with a known-good DAG.
 
 ### WS-5 — Scored provider selection (Guardrail)
+
+**Status: APPLIED and VALIDATED.** `kask/crates/hkask-inference/src/scoring.rs` implements `ProviderScore` + `select_scored` per the design below; `hkask-inference` lib tests pass.
 
 **Goal:** provider choice is logged with alternatives + scores + reasoning (OpenMontage 7-dimension).
 
@@ -341,6 +345,8 @@ This pass authors **3 pipeline manifests** (see §5 / the manifest files) using 
 
 ### WS-6 — Budget governance (Guardrail)
 
+**Status: APPLIED and VALIDATED (as-built diverges from the original design — simpler).** Instead of a new `BudgetLedger` in `hkask-inference/src/budget.rs`, the media server reuses the existing `hkask_templates::budget::BudgetTracker` (1 rJoule = $1 USD), used rJoule-only here: compute gas is enforced upstream at `McpRuntime::invoke` + `CyberneticsLoop`, so the tracker's gas cap is constructed inert (`hard_limit: false`, never charged) and the media server never charges gas. `MediaServer` holds `budget: Option<Arc<tokio::sync::Mutex<BudgetTracker>>>`; `estimate_rjoule(tool, params)` (free function, env-var-configurable unit costs `HKASK_MEDIA_RJOULE_PER_IMAGE` / `_PER_TRANSFORM` / `_PER_UPSCALE` / `_PER_VIDEO_SECOND`) computes a conservative pre-charge estimate; `charge_budget()` pre-charges and rejects with an `McpToolError` (propagated to the UI) when `remaining_rjoule() < estimate`. The gate is wired into the four generation tools (`generate_image`, `transform_image`, `upscale_image`, `generate_video`) before `media_generate`. `build_media_budget()` constructs the tracker from `HKASK_MEDIA_RJOULE_CAP` (unset/0 ⇒ `None` ⇒ enforcement disabled). The duplicate `hkask-inference/src/budget.rs` (tracked USD, wrong unit) was removed. 7 new `estimate_rjoule_tests` pass; all 35 `hkask-mcp-media` lib tests pass; `./script/clippy -p hkask-mcp-media` clean under `--deny warnings`. **Deferred from the original design:** per-action approval thresholds, estimate/actual reconciliation, and the queryable ledger API — the as-built is a hard pre-charge gate, not a reserve/reconcile ledger.
+
 **Goal:** cost estimated before execution, reserved, reconciled after; over-threshold pauses for approval.
 
 **New files:** `kask/crates/hkask-inference/src/budget.rs` — `CostEstimate`, `BudgetLedger { estimate, reserve, reconcile, spent }`, per-action approval threshold + total cap (operator-configurable via `kask.media.budget`).
@@ -352,6 +358,8 @@ This pass authors **3 pipeline manifests** (see §5 / the manifest files) using 
 **Tests:** `estimate_before_execute`, `reconcile_updates_cost_model`, `over_threshold_pauses_for_approval`, `total_cap_blocks_when_exhausted`.
 
 ### WS-7 — Style system (Guideline)
+
+**Status: APPLIED and VALIDATED.** `kask/mcp-servers/hkask-mcp-media/src/style.rs` defines 5 built-in presets (`default`, `anime`, `realistic`, `cinematic`, `minimal`) and `apply_preset` augments `MediaGenerateParams` (prompt suffix + negative prompt). The `style` parameter is wired into `generate_image`, `transform_image`, `generate_video`, and `expand_prompt` before dispatch. 5 `style::tests` pass (`style_preset_augments_prompt`, `default_preset_adds_negative_only`, `available_styles_lists_all_five`, `unknown_style_rejected`, `apply_preset_with_empty_prompt`); all 35 `hkask-mcp-media` lib tests pass; `./script/clippy -p hkask-mcp-media` clean under `--deny warnings`. **Deferred from the original design:** presets are in-code (`style.rs`), not YAML playbooks at `registry/templates/media/styles/*.yaml` — YAML externalization is deferred.
 
 **Goal:** style presets (YAML playbooks) control prompt augmentation, sampler params, and model selection; applying a preset changes output consistently (Fooocus).
 

@@ -83,6 +83,15 @@ This is iteration N+1. The previous iteration produced:
 - **next_focus**: if present, this is the convergence check's directed focus
   for the next iteration. Prioritize sensing the axis it names.
 - **lessons_learned**: distill into 1-3 concrete adjustments to what you measure.
+- **second_order**: if present, the deterministic second-order monitor's
+  verdict (Cybernetic Swarm Plan C1). If `recommendation = "go_see"`, the
+  sensor `s` is filtering truth (`d` improving while `s` declines) — surface a
+  Go See directive in next_focus_hint (component C2: the operator should descend
+  the Steer ConversationView with the §5 checklist: is `s` filtering
+  task-failure truth? are `.rules` priors still verified? are the Steer guides
+  having the intended effect?). If `recommendation = "diversify_action"`, the
+  swarm is stuck on one `(deficit_class, decision_action)` — note it so DECIDE
+  diversifies.
 {% else %}
 ## Prior Iteration Feedback
 No prior iteration — this is a first pass. Measure all axes uniformly.

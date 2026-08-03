@@ -6,6 +6,9 @@ contract:
     orientation: object
     task: string
     mode: string
+    failed_edits: array
+    influence_scores: object
+    second_order: object
   output:
     proposed_moves: array
     tuning_rationale: object
@@ -53,6 +56,46 @@ You are a swarm-composition strategist. Propose composition adjustments for the 
 
 ## Task
 {{ task }}
+
+{% if failed_edits and failed_edits | length > 0 %}
+## Failed-Edit Memory (Cybernetic Swarm Plan C3)
+```json
+{{ failed_edits | tojson }}
+```
+Each entry records a prior `(decision_action, swarm_state_signature, d_delta)`
+where the edit did NOT improve `d` (d_delta <= 0) and `s` did not improve.
+**Guard**: do NOT re-propose a move whose `(decision_action, swarm_state_signature)`
+matches a prior entry with `d_delta <= 0` — the deterministic anti-loop set.
+The `swarm_state_signature` is `deficit_class|sorted(roster agent_types)`; a move
+under the same deficit and the same roster shape that already failed to improve
+`d` is a known-bad edit. Skip it and try a different action.
+{% endif %}
+
+{% if influence_scores and influence_scores | length > 0 %}
+## Influence Scores (Cybernetic Swarm Plan C7)
+```json
+{{ influence_scores | tojson }}
+```
+Per-agent_type running sum of `d_delta` after hiring/firing that type. A sum
+<= 0 means the agent type has been measured to DEGRADE the swarm over the
+recent window (S7 §2.2: some agent types fail to improve or even degrade).
+**Guard**: reject a `hire` move of an agent_type whose influence score is
+<= 0 — prune before searching (S7's deterministic "prune before search").
+Record the rejection in the move's rationale (`rejected_by: influence_guard`).
+{% endif %}
+
+{% if second_order and second_order | length > 0 %}
+## Second-Order Monitor (Cybernetic Swarm Plan C1)
+```json
+{{ second_order | tojson }}
+```
+If `recommendation = "diversify_action"`, the same `(deficit_class,
+decision_action)` has repeated with no `d` improvement — do NOT re-propose the
+same action class; diversify to a different tuning term. If
+`recommendation = "go_see"`, `d` is improving while `s` declines (sensor filters
+truth) — this iteration should NOT change composition; instead surface a Go See
+directive in delegate_notes for the operator.
+{% endif %}
 
 ## Step 1 — Select the tuning palette by deficit class
 
@@ -114,6 +157,28 @@ agents cannot fix it.
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
+### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
+ORIENT attributed fault to a specific agent (the `agent_sel` candidate — the
+most-consistently-blamed agent across iterations via CHECK's `blame_count`).
+Before firing the blamed agent, consider **reconfiguring** it in place — the
+Modify-Block action (S5 §3.2.2) and the MASS prompt axis (S7 Stages 1+3):
+
+Propose a `reconfigure_agent` move (local mode) that:
+1. Calls `swarm_generate_prompt` seeded with the blamed agent's current
+   `system_prompt` + the per-fault log (the deterministic trace of WHY it
+   failed — the `failure_detail` from `agent_at_fault`) to produce a new
+   prompt.
+2. Writes the new prompt via `swarm_reconfigure_local_agent` (which preserves
+   `agent_id`/`agent_type`/`description`/`accepts`/`produces`/`dependencies`/
+   `cloud_id` and reloads the registry).
+
+The *scoring* of candidate prompts must be deterministic (C0's `s`), not an LLM
+judge. Reconfigure is preferred over fire when the blamed agent's type covers
+a required transform (firing would re-open the variety deficit); fire when the
+agent is structurally redundant or its type is negatively influential (C7). In
+abw mode there is no in-place reconfigure tool — propose a `remove`/fire move
+and a fresh `hire` with the improved prompt instead.
+
 ## Step 2 — Respect invariants
 
 For every proposed move:
@@ -146,9 +211,12 @@ reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
 ## Output
 
 Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
-"delegate"|"remove", agent_id_or_type, estimated_credits, covers_transforms?,
-redundant_candidates?, rationale }), tuning_rationale (object mapping move →
-swarm-algorithm term), respects_no_delegation_chains (boolean), delegate_notes.
-`remove` moves are local-mode only via `swarm_remove_local`; in abw mode a
-`remove`/fire move is actionable via `swarm_fire` (roster removal; the agent
-itself is not deleted — `swarm_delete_agent` is the permanent-delete tool).
+"delegate"|"remove"|"reconfigure_agent", agent_id_or_type, estimated_credits,
+covers_transforms?, redundant_candidates?, rationale }), tuning_rationale
+(object mapping move → swarm-algorithm term), respects_no_delegation_chains
+(boolean), delegate_notes. `remove` moves are local-mode only via
+`swarm_remove_local`; in abw mode a `remove`/fire move is actionable via
+`swarm_fire` (roster removal; the agent itself is not deleted —
+`swarm_delete_agent` is the permanent-delete tool). `reconfigure_agent` moves
+are local-mode only via `swarm_reconfigure_local_agent` (C6); in abw mode,
+propose a fire+hire-with-improved-prompt pair instead.

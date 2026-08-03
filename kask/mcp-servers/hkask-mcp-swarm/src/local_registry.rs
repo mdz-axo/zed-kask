@@ -163,6 +163,42 @@ impl LocalAgentRegistry {
     pub(crate) fn is_loaded(&self) -> bool {
         self.cards.lock().unwrap().is_some()
     }
+
+    /// Write (or overwrite) a local agent card to
+    /// `<dir>/<agent_id>/agent_card.json`, then reload the registry so the new
+    /// card is visible to subsequent `list`/`get` calls. Cybernetic Swarm Plan
+    /// C6 — the `reconfigure_agent` DECIDE action rewrites a blamed agent's
+    /// `system_prompt` in place via this method (seed `swarm_generate_prompt`
+    /// with the failure log, write the new card, reload). The `agent_id` is
+    /// re-sanitized before joining the registry root (path-traversal defense);
+    /// the card is written under a canonicalized, path-contained directory —
+    /// the same invariant `swarm_create_local_agent`/`swarm_remove_local` pin.
+    /// Returns the written card path on success.
+    pub(crate) fn write_card(&self, card: &LocalAgentCard) -> Result<String, String> {
+        let safe_id = crate::sanitize::sanitize_agent_id(&card.agent_id).ok_or_else(|| {
+            format!(
+                "agent_id '{}' contains no safe characters (alphanumeric, dash, underscore, dot)",
+                card.agent_id
+            )
+        })?;
+        let registry_root = std::path::Path::new(&self.dir)
+            .canonicalize()
+            .map_err(|e| format!("failed to resolve local agents dir '{}': {e}", self.dir))?;
+        let card_dir = registry_root.join(&safe_id);
+        // Defense-in-depth: refuse to write outside the registry root.
+        if !card_dir.starts_with(&registry_root) {
+            return Err("refusing to write a path outside the local agents dir".to_string());
+        }
+        std::fs::create_dir_all(&card_dir)
+            .map_err(|e| format!("failed to create agent dir {}: {e}", card_dir.display()))?;
+        let card_path = card_dir.join("agent_card.json");
+        let json = serde_json::to_string_pretty(card)
+            .map_err(|e| format!("failed to serialize card: {e}"))?;
+        std::fs::write(&card_path, json)
+            .map_err(|e| format!("failed to write {}: {e}", card_path.display()))?;
+        self.load()?;
+        Ok(card_path.to_string_lossy().to_string())
+    }
 }
 
 #[cfg(test)]
@@ -235,6 +271,92 @@ mod tests {
         assert!(beta.produces.is_empty());
         assert!(beta.dependencies.required.is_empty());
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_registry_write_card_updates_prompt_and_preserves_fields() {
+        // Cybernetic Swarm Plan C6 enforcement point: write_card rewrites an
+        // existing card in place (preserving agent_id/type/description/accepts/
+        // produces/cloud_id) and reloads the registry so the new prompt is
+        // visible to the next delegation. A reconfigure that clobbered cloud_id
+        // would silently break the sync link — this pins it.
+        let dir = std::env::temp_dir().join("hkask_swarm_test_write_card");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("synced_agent")).unwrap();
+        std::fs::write(
+            dir.join("synced_agent").join("agent_card.json"),
+            serde_json::json!({
+                "agent_id": "synced_agent",
+                "agent_type": "research",
+                "description": "Original",
+                "accepts": ["query"],
+                "produces": ["analysis"],
+                "dependencies": { "required": ["dep_a"], "optional": [] },
+                "capabilities": {
+                    "model": "ollama/qwen3:8b",
+                    "min_provider_class": "local",
+                    "system_prompt": "You are the original prompt."
+                },
+                "cloud_id": "abw-uuid-123"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        registry.load().expect("initial load");
+        let mut card = registry.get("synced_agent").expect("card present");
+        assert_eq!(
+            card.capabilities.system_prompt.as_deref(),
+            Some("You are the original prompt.")
+        );
+        assert_eq!(card.cloud_id.as_deref(), Some("abw-uuid-123"));
+
+        // Reconfigure: change only the system_prompt.
+        card.capabilities.system_prompt = Some("You are the improved prompt.".to_string());
+        let path = registry.write_card(&card).expect("write succeeds");
+        assert!(path.contains("synced_agent"));
+
+        // Reload picked up the new prompt; cloud_id and other fields preserved.
+        let reloaded = registry.get("synced_agent").expect("reloaded");
+        assert_eq!(
+            reloaded.capabilities.system_prompt.as_deref(),
+            Some("You are the improved prompt.")
+        );
+        assert_eq!(
+            reloaded.cloud_id.as_deref(),
+            Some("abw-uuid-123"),
+            "cloud_id preserved"
+        );
+        assert_eq!(reloaded.agent_type, "research");
+        assert_eq!(reloaded.dependencies.required, vec!["dep_a".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_registry_write_card_rejects_unsafe_agent_id() {
+        // Path-traversal defense: a card with an agent_id that sanitizes to
+        // nothing (only dots/slashes) must not write outside the registry root.
+        let dir = std::env::temp_dir().join("hkask_swarm_test_write_unsafe");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let registry = LocalAgentRegistry::new(dir.to_string_lossy().to_string());
+        let card = LocalAgentCard {
+            agent_id: "..".to_string(),
+            agent_type: "x".to_string(),
+            description: String::new(),
+            accepts: vec![],
+            produces: vec![],
+            dependencies: LocalAgentDependencies::default(),
+            capabilities: LocalAgentCapabilities::default(),
+            cloud_id: None,
+        };
+        assert!(
+            registry.write_card(&card).is_err(),
+            "unsafe id must be rejected"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -128,6 +128,87 @@ fn env_f64(key: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+/// Estimate the rJoule (USD) cost of a media generation call.
+///
+/// Unit costs are configurable via env vars so operators can set real
+/// provider prices. Defaults are conservative placeholders, not real
+/// pricing — set `HKASK_MEDIA_RJOULE_PER_*` to your provider's actual
+/// rates. The estimate over-counts conservatively so the hard gate trips
+/// before the billable API call rather than after.
+fn estimate_rjoule(tool: &str, params: &hkask_types::MediaGenerateParams) -> f64 {
+    let per_image = env_f64("HKASK_MEDIA_RJOULE_PER_IMAGE", 0.05);
+    let per_transform = env_f64("HKASK_MEDIA_RJOULE_PER_TRANSFORM", 0.04);
+    let per_upscale = env_f64("HKASK_MEDIA_RJOULE_PER_UPSCALE", 0.02);
+    let per_video_second = env_f64("HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND", 1.0);
+    match tool {
+        "generate_image" => per_image * params.count.unwrap_or(1).max(1) as f64,
+        "image_to_image" => {
+            // transform cost scales with strength (0.0..=1.0).
+            per_transform * (1.0 + params.strength.unwrap_or(1.0) as f64)
+        }
+        "upscale" => {
+            // cost ~ pixel-area growth, so scale^2.
+            let scale = params.scale.unwrap_or(2).max(1) as f64;
+            per_upscale * scale * scale
+        }
+        "generate_video" => per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64,
+        // Workflow DAGs are opaque without parsing; charge the image
+        // unit as a floor so the gate is not silently bypassed.
+        "execute_workflow" => per_image,
+        _ => per_image,
+    }
+}
+
+/// Pre-charge the rJoule budget for an estimated call and enforce the hard
+/// limit. Returns `Ok(())` when no budget is configured (enforcement disabled)
+/// or when the remaining budget covers the estimate; returns an `McpToolError`
+/// when the budget is exhausted.
+///
+/// The estimate is charged *before* dispatch so a concurrent burst cannot
+/// all pass the gate and then overspend. A rejected request keeps the charge
+/// recorded (conservative — may over-count, never under-counts). This is the
+/// enforcement point for the rJoule gate; `MediaServer::charge_budget` is a
+/// thin delegate so the gate can be tested without constructing a full server.
+async fn charge_budget_gate(
+    budget: Option<&Arc<tokio::sync::Mutex<hkask_templates::budget::BudgetTracker>>>,
+    tool: &str,
+    params: &hkask_types::MediaGenerateParams,
+) -> Result<(), McpToolError> {
+    let Some(budget) = budget else {
+        return Ok(()); // no budget configured — enforcement disabled
+    };
+    let estimate = estimate_rjoule(tool, params);
+    let mut tracker = budget.lock().await;
+    let remaining = tracker.remaining_rjoule();
+    if remaining < estimate {
+        let snap = tracker.snapshot();
+        tracing::warn!(
+            target: "hkask.mcp.media.budget",
+            tool = tool,
+            estimate = estimate,
+            rjoule_used = snap.rjoule_used,
+            rjoule_cap = snap.rjoule_cap,
+            rjoule_remaining = remaining,
+            "rJoule budget exhausted — rejecting media call"
+        );
+        return Err(McpToolError::unavailable(format!(
+            "rJoule budget exhausted: this call needs ~{estimate:.4} rJoule but only \
+             {remaining:.4} of {cap:.4} remains. Raise HKASK_MEDIA_RJOULE_CAP or wait \
+             for budget to reset.",
+            cap = snap.rjoule_cap
+        )));
+    }
+    tracker.charge_rjoule(estimate);
+    tracing::debug!(
+        target: "hkask.mcp.media.budget",
+        tool = tool,
+        estimate = estimate,
+        remaining = tracker.remaining_rjoule(),
+        "charged rJoule for media call"
+    );
+    Ok(())
+}
+
 /// Compute normalized Levenshtein similarity between two strings.
 /// Returns 1.0 for identical strings, 0.0 for completely different.
 fn levenshtein_similarity(a: &str, b: &str) -> f64 {
@@ -203,6 +284,229 @@ mod levenshtein_tests {
     }
 }
 
+#[cfg(test)]
+mod estimate_rjoule_tests {
+    use super::estimate_rjoule;
+    use hkask_types::MediaGenerateParams;
+
+    // Tests run with default unit costs (no env vars set) unless overridden.
+    // Defaults: image=0.05, transform=0.04, upscale=0.02, video_sec=1.0.
+
+    #[test]
+    fn generate_image_scales_with_count() {
+        let one = estimate_rjoule(
+            "generate_image",
+            &MediaGenerateParams {
+                count: Some(1),
+                ..Default::default()
+            },
+        );
+        let four = estimate_rjoule(
+            "generate_image",
+            &MediaGenerateParams {
+                count: Some(4),
+                ..Default::default()
+            },
+        );
+        assert!((one - 0.05).abs() < 1e-9);
+        assert!((four - 0.20).abs() < 1e-9);
+    }
+
+    #[test]
+    fn generate_image_count_defaults_to_one_when_unset() {
+        let est = estimate_rjoule("generate_image", &MediaGenerateParams::default());
+        assert!(
+            (est - 0.05).abs() < 1e-9,
+            "unset count should charge one image"
+        );
+    }
+
+    #[test]
+    fn transform_scales_with_strength() {
+        let none = estimate_rjoule("image_to_image", &MediaGenerateParams::default());
+        let full = estimate_rjoule(
+            "image_to_image",
+            &MediaGenerateParams {
+                strength: Some(1.0),
+                ..Default::default()
+            },
+        );
+        // no strength => 1.0 default => 0.04 * 2.0 = 0.08
+        assert!((none - 0.08).abs() < 1e-9);
+        assert!((full - 0.08).abs() < 1e-9);
+        let half = estimate_rjoule(
+            "image_to_image",
+            &MediaGenerateParams {
+                strength: Some(0.5),
+                ..Default::default()
+            },
+        );
+        assert!((half - 0.06).abs() < 1e-9); // 0.04 * 1.5
+    }
+
+    #[test]
+    fn upscale_grows_quadratically_with_scale() {
+        let x2 = estimate_rjoule(
+            "upscale",
+            &MediaGenerateParams {
+                scale: Some(2),
+                ..Default::default()
+            },
+        );
+        let x4 = estimate_rjoule(
+            "upscale",
+            &MediaGenerateParams {
+                scale: Some(4),
+                ..Default::default()
+            },
+        );
+        assert!((x2 - 0.08).abs() < 1e-9); // 0.02 * 2^2
+        assert!((x4 - 0.32).abs() < 1e-9); // 0.02 * 4^2
+    }
+
+    #[test]
+    fn generate_video_scales_with_duration() {
+        let five = estimate_rjoule(
+            "generate_video",
+            &MediaGenerateParams {
+                duration: Some(5.0),
+                ..Default::default()
+            },
+        );
+        let ten = estimate_rjoule(
+            "generate_video",
+            &MediaGenerateParams {
+                duration: Some(10.0),
+                ..Default::default()
+            },
+        );
+        assert!((five - 5.0).abs() < 1e-9);
+        assert!((ten - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn unknown_tool_charges_image_floor() {
+        let est = estimate_rjoule("mystery_op", &MediaGenerateParams::default());
+        assert!((est - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn video_duration_clamped_to_minimum_one_second() {
+        let est = estimate_rjoule(
+            "generate_video",
+            &MediaGenerateParams {
+                duration: Some(0.0),
+                ..Default::default()
+            },
+        );
+        assert!(
+            (est - 1.0).abs() < 1e-9,
+            "zero-duration should charge 1 second"
+        );
+    }
+}
+
+#[cfg(test)]
+mod charge_budget_gate_tests {
+    use super::charge_budget_gate;
+    use hkask_templates::budget::BudgetTracker;
+    use hkask_templates::bundle::config::{BundleGasConfig, RjouleConfig};
+    use hkask_types::MediaGenerateParams;
+    use std::sync::Arc;
+
+    // Inert gas config (mirrors `build_media_budget`): the media server never
+    // charges gas, so the gas cap is large with hard_limit=false.
+    fn inert_gas() -> BundleGasConfig {
+        BundleGasConfig {
+            cap: u32::MAX,
+            cost_per_iteration: 0,
+            alert_threshold: 1.0,
+            hard_limit: false,
+        }
+    }
+
+    fn rjoule(cap: u32) -> RjouleConfig {
+        RjouleConfig {
+            cap,
+            alert_threshold: 0.8,
+            hard_limit: true,
+        }
+    }
+
+    fn tracker(cap: u32) -> Arc<tokio::sync::Mutex<BudgetTracker>> {
+        Arc::new(tokio::sync::Mutex::new(BudgetTracker::new(
+            &inert_gas(),
+            &rjoule(cap),
+        )))
+    }
+
+    #[tokio::test]
+    async fn no_budget_is_open_gate() {
+        // None = enforcement disabled — every call passes.
+        let res = charge_budget_gate(None, "generate_image", &MediaGenerateParams::default()).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn under_budget_charges_and_passes() {
+        // cap 1.0 rJoule; one image costs 0.05 → passes, leaves 0.95.
+        let budget = tracker(1.0 as u32);
+        let res = charge_budget_gate(
+            Some(&budget),
+            "generate_image",
+            &MediaGenerateParams::default(),
+        )
+        .await;
+        assert!(res.is_ok());
+        assert!((budget.lock().await.remaining_rjoule() - 0.95).abs() < 1e-9);
+    }
+
+    #[tokio::test]
+    async fn exhausted_budget_rejects() {
+        // cap 1 rJoule; generate a 10-second video (cost 10.0) → rejected.
+        let budget = tracker(1);
+        let res = charge_budget_gate(
+            Some(&budget),
+            "generate_video",
+            &MediaGenerateParams {
+                duration: Some(10.0),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert!(res.is_err(), "over-budget call must be rejected");
+        // The rejection keeps the charge recorded (conservative over-count).
+        assert!(budget.lock().await.rjoule_used() > 0.0);
+    }
+
+    #[tokio::test]
+    async fn successive_calls_drain_then_reject() {
+        // cap 5 rJoule; four 1-second videos (4.0) pass, fifth is rejected.
+        let budget = tracker(5);
+        let params = MediaGenerateParams {
+            duration: Some(1.0),
+            ..Default::default()
+        };
+        for _ in 0..4 {
+            charge_budget_gate(Some(&budget), "generate_video", &params)
+                .await
+                .unwrap();
+        }
+        assert!((budget.lock().await.remaining_rjoule() - 1.0).abs() < 1e-9);
+        // Fifth 1-second video needs 1.0, remaining is 1.0 — boundary: 1.0 < 1.0
+        // is false, so it just fits. Use a 2-second call to force rejection.
+        let over = MediaGenerateParams {
+            duration: Some(2.0),
+            ..Default::default()
+        };
+        assert!(
+            charge_budget_gate(Some(&budget), "generate_video", &over)
+                .await
+                .is_err()
+        );
+    }
+}
+
 impl MediaServer {
     // ── rJoule budget ───────────────────────────────────────────────────────
     //
@@ -216,83 +520,19 @@ impl MediaServer {
     // spuriously when the gas cap is 0 — instead the rJoule gate is checked
     // directly via `remaining_rjoule()`.
 
-    /// Estimate the rJoule (USD) cost of a media generation call.
-    ///
-    /// Unit costs are configurable via env vars so operators can set real
-    /// provider prices. Defaults are conservative placeholders, not real
-    /// pricing — set `HKASK_MEDIA_RJOULE_PER_*` to your provider's actual
-    /// rates. The estimate over-counts conservatively so the hard gate trips
-    /// before the billable API call rather than after.
-    fn estimate_rjoule(&self, tool: &str, params: &hkask_types::MediaGenerateParams) -> f64 {
-        let per_image = env_f64("HKASK_MEDIA_RJOULE_PER_IMAGE", 0.05);
-        let per_transform = env_f64("HKASK_MEDIA_RJOULE_PER_TRANSFORM", 0.04);
-        let per_upscale = env_f64("HKASK_MEDIA_RJOULE_PER_UPSCALE", 0.02);
-        let per_video_second = env_f64("HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND", 1.0);
-        match tool {
-            "generate_image" => per_image * params.count.unwrap_or(1).max(1) as f64,
-            "image_to_image" => {
-                // transform cost scales with strength (0.0..=1.0).
-                per_transform * (1.0 + params.strength.unwrap_or(1.0) as f64)
-            }
-            "upscale" => {
-                // cost ~ pixel-area growth, so scale^2.
-                let scale = params.scale.unwrap_or(2).max(1) as f64;
-                per_upscale * scale * scale
-            }
-            "generate_video" => per_video_second * params.duration.unwrap_or(5.0).max(1.0) as f64,
-            // Workflow DAGs are opaque without parsing; charge the image
-            // unit as a floor so the gate is not silently bypassed.
-            "execute_workflow" => per_image,
-            _ => per_image,
-        }
-    }
-
     /// Pre-charge the rJoule budget for an estimated call and enforce the hard
     /// limit. Returns `Ok(())` when no budget is configured (enforcement
     /// disabled) or when the remaining budget covers the estimate; returns an
     /// `McpToolError` (propagated to the UI) when the budget is exhausted.
     ///
-    /// The estimate is charged *before* dispatch so a concurrent burst cannot
-    /// all pass the gate and then overspend. A rejected request keeps the
-    /// charge recorded (conservative — may over-count, never under-counts).
+    /// Thin delegate to [`charge_budget_gate`] — the gate logic is a free
+    /// function so it can be tested without constructing a full `MediaServer`.
     async fn charge_budget(
         &self,
         tool: &str,
         params: &hkask_types::MediaGenerateParams,
     ) -> Result<(), McpToolError> {
-        let Some(budget) = self.budget.as_ref() else {
-            return Ok(()); // no budget configured — enforcement disabled
-        };
-        let estimate = self.estimate_rjoule(tool, params);
-        let mut tracker = budget.lock().await;
-        let remaining = tracker.remaining_rjoule();
-        if remaining < estimate {
-            let snap = tracker.snapshot();
-            tracing::warn!(
-                target: "hkask.mcp.media.budget",
-                tool = tool,
-                estimate = estimate,
-                rjoule_used = snap.rjoule_used,
-                rjoule_cap = snap.rjoule_cap,
-                rjoule_remaining = remaining,
-                "rJoule budget exhausted — rejecting media call"
-            );
-            return Err(McpToolError::unavailable(format!(
-                "rJoule budget exhausted: this call needs ~{estimate:.4} rJoule but only \
-                 {remaining:.4} of {cap:.4} remains. Raise HKASK_MEDIA_RJOULE_CAP or wait \
-                 for budget to reset.",
-                cap = snap.rjoule_cap
-            )));
-        }
-        tracker.charge_rjoule(estimate);
-        tracing::debug!(
-            target: "hkask.mcp.media.budget",
-            tool = tool,
-            estimate = estimate,
-            remaining = tracker.remaining_rjoule(),
-            "charged rJoule for media call"
-        );
-        Ok(())
+        charge_budget_gate(self.budget.as_ref(), tool, params).await
     }
 
     /// Lock the gallery and extract essential state. Drops the lock before

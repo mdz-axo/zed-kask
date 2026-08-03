@@ -6,11 +6,13 @@ contract:
     task: string
     mode: string
     target_condition: object|null
+    prior_act: object|null
   output:
     deficit_class: string
     deficit_details: object
     coordination_problem: string
     cybernetic_assessment: object|null
+    agent_at_fault: object|null
     on_target: boolean
     delegate_notes: string
 energy_cap: 4096
@@ -41,6 +43,19 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 ```json
 {{ swarm_state | tojson }}
 ```
+
+{% if prior_act and prior_act | length > 0 %}
+## Prior Iteration ACT Trace (Cybernetic Swarm Plan C5)
+```json
+{{ prior_act | tojson }}
+```
+The prior iteration's ACT emitted delegations. The delegate results carry
+`tool_calls[]` (each with `ok`/`error`) and `executed_skills[]` (each with
+`ok`/`error`). These are the deterministic inputs to fault attribution.
+{% else %}
+## Prior Iteration ACT Trace
+No prior ACT — this is iteration 1. Fault attribution is not applicable yet.
+{% endif %}
 
 ## Task
 {{ task }}
@@ -121,9 +136,34 @@ If the deficit is (c) loop-break, delegate to `pragmatic-cybernetics` for the
 Record the assessment in cybernetic_assessment. For other deficit classes,
 set cybernetic_assessment = null.
 
+## Step 4 — Deterministic fault attribution (Cybernetic Swarm Plan C5)
+
+If `prior_act` is present AND a deterministic `task_success` verdict was
+supplied for the prior iteration (it is inside the prior ACT trace's delegate
+results or the carried prior_iteration), attribute fault to exactly one agent
+by this deterministic priority rule (JudgeFlow with the LLM Judge replaced by
+a rule — the divergence IS the point: a deterministic judge is what hKask
+builds):
+
+1. If `s < epsilon` (the terminal-output task metric failed), attribute to the
+   **terminal agent** — the agent whose `produces[]` the task metric scored.
+2. Else if any delegate result has `tool_calls[].ok = false` (a dispatch
+   failed or was not in the declared mcp_tools allowlist), attribute to the
+   **earliest such agent** in delegation order.
+3. Else if any delegate result has `executed_skills[].ok = false` (a declared
+   skill cascade failed), attribute to the **earliest such agent**.
+4. Else if a guard redaction occurred (a tool output was redacted because it
+   tripped the input guard), attribute to that agent.
+5. Tie-break by delegation order (deterministic).
+
+If no prior ACT, or no task-success signal, or no failure is present, set
+agent_at_fault = null. When non-null, agent_at_fault = { agent_name, reason,
+rule_matched (1-5), failure_detail }.
+
 ## Output
 
 Produce a JSON object with: deficit_class (one of "variety_deficit",
 "coherence_deficit", "loop_break", "on_target"), deficit_details,
 coordination_problem (one of "cooperation", "division_of_labor", "n/a"),
-cybernetic_assessment (object or null), on_target (boolean), delegate_notes.
+cybernetic_assessment (object or null), agent_at_fault (object or null),
+on_target (boolean), delegate_notes.

@@ -1235,4 +1235,204 @@ mod tests {
             "missing prior errors"
         );
     }
+
+    // ── Swarm cybernetic primitives (C1/C3/C7) ──
+
+    #[test]
+    fn swarm_converge_accumulate_appends_iteration_and_records_failed_edit() {
+        // First iteration: d=0.5, no prior → d_delta=0, s null. No failed edit
+        // (d_delta <= 0 but this is the first iteration; s_not_improved defaults
+        // true so it WOULD record — but d_delta=0 satisfies <= 0). Pin the
+        // first-iteration recording: d_delta=0, s null → recorded as failed.
+        let input = serde_json::json!({
+            "iteration_log": [],
+            "failed_edits": [],
+            "influence_scores": {},
+            "d": 0.5,
+            "task_success": null,
+            "deficit_class": "variety_deficit",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "researcher"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "writer"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let log = result
+            .get("iteration_log")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0]["deficit_class"], "variety_deficit");
+        assert_eq!(log[0]["decision_action"], "hire");
+        // d_delta=0 (first iteration) → recorded as failed edit.
+        let failed = result
+            .get("failed_edits")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(failed.len(), 1);
+        // Influence: researcher += 0.0.
+        let influence = result
+            .get("influence_scores")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(influence["researcher"], 0.0);
+    }
+
+    #[test]
+    fn swarm_converge_accumulate_negative_delta_updates_influence() {
+        // Prior d=0.4, current d=0.3 → d_delta=-0.1, s declines (1.0→0.8).
+        let input = serde_json::json!({
+            "iteration_log": [{"d": 0.4, "s": 1.0, "deficit_class": "variety_deficit", "decision_action": "hire"}],
+            "failed_edits": [],
+            "influence_scores": {"researcher": 0.0},
+            "d": 0.3,
+            "task_success": {"pass": true, "score": 0.8},
+            "deficit_class": "variety_deficit",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "researcher"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "writer"}, {"agent_type": "researcher"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let influence = result
+            .get("influence_scores")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        let inf = influence["researcher"].as_f64().unwrap();
+        assert!((inf - (-0.1)).abs() < 1e-9, "researcher influence = {inf}");
+        let failed = result
+            .get("failed_edits")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert_eq!(failed.len(), 1, "d_delta<0 and s declined → recorded");
+        // swarm_state_signature = deficit + sorted roster types.
+        assert_eq!(
+            failed[0]["swarm_state_signature"],
+            "variety_deficit|researcher,writer"
+        );
+    }
+
+    #[test]
+    fn swarm_converge_accumulate_positive_delta_no_failed_edit() {
+        // d improves (0.5→0.2), s improves (0.5→0.9) → not a failed edit.
+        let input = serde_json::json!({
+            "iteration_log": [{"d": 0.5, "s": 0.5, "deficit_class": "x", "decision_action": "hire"}],
+            "failed_edits": [],
+            "influence_scores": {},
+            "d": 0.2,
+            "task_success": {"score": 0.9},
+            "deficit_class": "x",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "dev"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "dev"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let failed = result
+            .get("failed_edits")
+            .and_then(|v| v.as_array())
+            .unwrap();
+        assert!(
+            failed.is_empty(),
+            "d and s both improved → not a failed edit"
+        );
+        let influence = result
+            .get("influence_scores")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(influence["dev"], -0.3);
+    }
+
+    #[test]
+    fn swarm_second_order_monitor_detects_reasoning_loop() {
+        // 3 iterations, same (deficit, action), d non-decreasing (0.4,0.4,0.4).
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.4, "s": null, "deficit_class": "variety_deficit", "decision_action": "hire"},
+                {"d": 0.4, "s": null, "deficit_class": "variety_deficit", "decision_action": "hire"},
+                {"d": 0.4, "s": null, "deficit_class": "variety_deficit", "decision_action": "hire"}
+            ],
+            "loop_window": 3
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert!(
+            result
+                .get("reasoning_loop")
+                .and_then(|v| v.as_bool())
+                .unwrap()
+        );
+        assert!(
+            !result
+                .get("sensor_truth_divergence")
+                .and_then(|v| v.as_bool())
+                .unwrap()
+        );
+        assert_eq!(
+            result
+                .get("recommendation")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+            "diversify_action"
+        );
+    }
+
+    #[test]
+    fn swarm_second_order_monitor_detects_sensor_truth_divergence() {
+        // d decreasing (improving): 0.5, 0.4, 0.3 ; s decreasing (declining): 0.9, 0.5, 0.1.
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.5, "s": 0.9, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.4, "s": 0.5, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": 0.1, "deficit_class": "a", "decision_action": "hire"}
+            ],
+            "loop_window": 3
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert!(
+            result
+                .get("sensor_truth_divergence")
+                .and_then(|v| v.as_bool())
+                .unwrap()
+        );
+        assert_eq!(
+            result
+                .get("recommendation")
+                .and_then(|v| v.as_str())
+                .unwrap(),
+            "go_see"
+        );
+    }
+
+    #[test]
+    fn swarm_second_order_monitor_short_log_is_clean() {
+        let input = serde_json::json!({"iteration_log": [{"d": 0.5, "s": 0.5, "deficit_class": "a", "decision_action": "hire"}]});
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert!(
+            !result
+                .get("reasoning_loop")
+                .and_then(|v| v.as_bool())
+                .unwrap()
+        );
+        assert!(
+            !result
+                .get("sensor_truth_divergence")
+                .and_then(|v| v.as_bool())
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn swarm_second_order_monitor_no_loop_when_d_improves() {
+        // Same action but d strictly improves across window → not a loop.
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.5, "s": null, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": null, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.1, "s": null, "deficit_class": "a", "decision_action": "hire"}
+            ],
+            "loop_window": 3
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert!(
+            !result
+                .get("reasoning_loop")
+                .and_then(|v| v.as_bool())
+                .unwrap(),
+            "d improving → not a loop"
+        );
+    }
 }

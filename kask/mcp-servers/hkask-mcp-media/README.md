@@ -54,8 +54,18 @@ This server reads `FALAI_API_KEY` and `DEEPINFRA_API_KEY` for media generation. 
 | `HKASK_MEDIA_STT_MODEL` | `FA/wizper` | Speech-to-text (Whisper v3 Large, MIT) |
 | `HKASK_MEDIA_VISION_MODEL` | `KC/qwen/qwen3-vl-235b-a22b-instruct` | Vision model (Qwen3-VL, Apache 2.0) |
 | `HKASK_MEDIA_IMAGE_GEN_MODEL` | `FA/flux-2` | Image generation (FLUX.2 [dev], open-source) |
+| `HKASK_MEDIA_RJOULE_CAP` | _(unset)_ | Total rJoule (USD) budget ceiling for the server process. Unset or `0` = no budget enforcement. 1 rJoule = $1 USD. |
+| `HKASK_MEDIA_RJOULE_ALERT_THRESHOLD` | `0.8` | Fraction of `HKASK_MEDIA_RJOULE_CAP` at which budget warnings fire (0.0–1.0) |
+| `HKASK_MEDIA_RJOULE_PER_IMAGE` | `0.05` | Estimated rJoule cost per generated image (used by the pre-charge gate) |
+| `HKASK_MEDIA_RJOULE_PER_TRANSFORM` | `0.04` | Estimated rJoule cost per image transform (scales with `strength`) |
+| `HKASK_MEDIA_RJOULE_PER_UPSCALE` | `0.02` | Estimated rJoule cost per upscale unit (scales with `scale^2`) |
+| `HKASK_MEDIA_RJOULE_PER_VIDEO_SECOND` | `1.0` | Estimated rJoule cost per second of generated video |
 
 All models are open-weight. Provider prefixes (`FA/`, `KC/`, etc.) route to the appropriate inference backend.
+
+## Budget governance
+
+When `HKASK_MEDIA_RJOULE_CAP` is set, the four generation tools (`generate_image`, `transform_image`, `upscale_image`, `generate_video`) pre-charge an estimated rJoule (USD) cost before dispatching to the provider and reject the request with a clear error when the remaining budget is insufficient. Compute gas is **not** tracked here — it is enforced upstream at `McpRuntime::invoke` via `CyberneticsLoop`; the media tracker is rJoule-only. The unit-cost env vars above are conservative placeholders — set them to your provider's actual rates for accurate gating. Unset `HKASK_MEDIA_RJOULE_CAP` disables enforcement entirely (the default).
 
 ## Quick Start
 
