@@ -134,6 +134,30 @@ inputs:
       Go See loop (component C2) covers the task-success gap. Do NOT
       fabricate a verdict; a missing task_success means "not measured", not
       "passed" (the .rules `unwrap_or(0)` trap on regulation signals).
+  - name: delegate_results
+    type: array
+    required: false
+    description: >
+      Operator- or Kask-Curator-supplied execution telemetry (Cybernetic Swarm
+      Plan C5): an array of `swarm_delegate_local` results (LocalDelegateResult-
+      shaped: agent_id, response, model, tokens_used, cost, balance, latency_ms,
+      tool_calls[] (each {tool, ok, error?}), executed_skills[] (each {skill, ok,
+      error?})). The planning cascade's ACT emits dispatch intents, not executed
+      outcomes; delegate_results is what ORIENT attributes fault from. Absent in
+      the pure planning cascade (C5/C6 inert); present when the operator or the
+      Kask Curator executes the plan via swarm_delegate_local and feeds the
+      results back (Option A manual feed / Option B Curator-steered execution).
+  - name: steering_mode
+    type: string
+    required: false
+    description: >
+      How the swarm-intelligence output should be handled: "advisory" (default)
+      — the plan is the final output; the operator executes manually. "steering"
+      — the Kask Curator (local swarms) or Xaman Ek (cloud swarms) executes the
+      plan and feeds delegate_results back, closing the feedback loop
+      autonomously (Option B). In steering mode, ACT emits a steering_directive
+      the Curator acts on. The skill's planning logic is mode-agnostic; the mode
+      governs the output framing and the execution boundary.
 
 steps:
   - ordinal: 1
@@ -183,15 +207,14 @@ steps:
       swarm_state: "{{ step_1_result }}"
       task: "{{ task }}"
       target_condition: "{{ target_condition | default({}) }}"
-      # Cybernetic Swarm Plan C5: prior_act is the prior iteration's ACT trace
-      # (the executor snapshots prev_step_N_result at the loop step). It carries
-      # the dispatch PLAN (emitted_calls), not executed delegate results — the
-      # cascade has no `action: execute` step. delegate_results is the
-      # operator-supplied execution telemetry (per-agent tool_calls[].ok /
-      # executed_skills[].ok) ORIENT attributes fault from; absent in the pure
-      # planning cascade, so agent_at_fault is null until the operator wires a
-      # delegate-result feed (C5/C6 are wired-but-inert without it).
-      prior_act: "{{ prev_step_5_result | default(none) }}"
+      # Cybernetic Swarm Plan C5: delegate_results is the operator- or
+      # Kask-Curator-supplied execution telemetry — an array of
+      # LocalDelegateResult-shaped objects (agent_id, tool_calls[].ok,
+      # executed_skills[].ok, response) from a real swarm_delegate_local run.
+      # The planning cascade's ACT emits intents (emitted_calls), not outcomes;
+      # delegate_results is what ORIENT attributes fault from. Absent in the
+      # pure planning cascade (C5/C6 inert); present when the operator or the
+      # Kask Curator executes the plan and feeds results back (Option A / B).
       delegate_results: "{{ delegate_results | default(none) }}"
 
   - ordinal: 3
@@ -285,6 +308,7 @@ steps:
       swarm_id: "{{ swarm_id }}"
       task: "{{ task }}"
       mode: "{{ mode | default('abw') }}"
+      steering_mode: "{{ steering_mode | default('advisory') }}"
 
   - ordinal: 6
     action: select

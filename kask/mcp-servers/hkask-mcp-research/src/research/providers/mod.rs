@@ -640,10 +640,7 @@ impl WebSearchPort for ProviderPool {
         url: &str,
         num_results: u32,
     ) -> Result<ProviderSearchOutput, WebError> {
-        match self.exa {
-            Some(ref exa) => exa.find_similar(url, num_results).await,
-            None => Err(WebError::NoProvider),
-        }
+        self.find_similar(url, num_results).await
     }
 
     async fn extract(

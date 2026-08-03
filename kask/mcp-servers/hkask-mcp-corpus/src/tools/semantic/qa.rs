@@ -2,7 +2,7 @@
 //!
 //! Used by `corpus_generate_qa` and `corpus_generate_qa_batch` in `mod.rs`.
 
-use crate::*;
+use crate::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 

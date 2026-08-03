@@ -121,8 +121,8 @@ iterations, so the enforcement points live in the deterministic math layer.
 | **C2** Go See cadence | Scheduled human check every N convergences + event trigger | `cadence_every` param in the monitor; SENSE surfaces `go_see` |
 | **C3** failed-edit memory | Anti-loop set; the FILTER drops moves matching prior failed signatures | `swarm.filter_proposed_moves` compute step (4) |
 | **C4** latency `T_q` | End-to-end delegation latency measurement | `LocalDelegateResult.latency_ms` |
-| **C5** fault attribution | Deterministic priority rule over the delegate trace; fault-count aggregation | ORIENT template (rule) + `swarm.converge_accumulate` `fault_count` (count). Wired-but-inert: the planning cascade's ACT emits dispatch *intents*, not executed delegate *results* (`tool_calls[].ok`/`executed_skills[].ok`); attribution fires only when the operator supplies `delegate_results` telemetry via context. |
-| **C6** reconfigure_agent | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis) | `swarm_reconfigure_local_agent` tool + DECIDE move type |
+| **C5** fault attribution | Deterministic priority rule over the delegate trace; fault-count aggregation | ORIENT template (rule) + `swarm.converge_accumulate` `fault_count` (count). Fires only when `delegate_results` execution telemetry is supplied (the planning cascade emits intents, not executed results). See Steering modes below. |
+| **C6** reconfigure_agent | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis) | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode). |
 | **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm | `swarm.filter_proposed_moves` compute step (4) |
 | **C8** task-gated alignment | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port) | SENSE template `alignment` definition |
 
@@ -133,6 +133,58 @@ iterations, so the enforcement points live in the deterministic math layer.
 | `pragmatic-cybernetics` | 5-property loop assessment + Ashby variety + VSM | ORIENT, when deficit is a loop-break |
 | `kata-improvement` | Cauchy convergence pattern (`kata.convergence_check`) | CONVERGE (compute step) |
 | `essentialist` | Deletion-test proposed phases | Design-time (applied to the skill itself) |
+
+## Steering modes (the execution boundary)
+
+The swarm-intelligence cascade is a **planning loop** — it composes/steers the
+swarm and emits a plan (`emitted_calls`), but it does not execute delegations
+itself (no `action: execute` step). The `steering_mode` context input governs
+how the output is handled and closes the feedback loop:
+
+- **advisory** (default): the plan IS the final output. The operator executes
+  the emitted_calls manually and feeds `delegate_results` back on the next
+  invocation (Option A — operator-in-the-loop).
+- **steering**: the **Kask Curator** (local swarms) or **Xaman Ek** (cloud
+  swarms) executes the plan and feeds results back autonomously (Option B).
+  ACT emits a `steering_directive` the Curator acts on.
+
+### Local swarms — the Kask Curator
+
+The Kask Curator (`Agent::Curator`, `CURATOR_AGENT_ID`) is the in-process agent
+that runs zed-kask — it has governed tool access (the MCP servers via
+`McpRuntime`), its own sovereign memory, and the regulation/metacognition
+loops. In steering mode, the Curator executes the plan by calling
+`swarm_delegate_local` for each emitted call, collects the `LocalDelegateResult`
+objects, and re-invokes swarm-intelligence with `delegate_results` set to that
+array — closing the feedback loop without a new FlowDef execution surface (the
+Curator's normal tool-call turn IS the execution).
+
+### Cloud swarms — Xaman Ek
+
+Xaman Ek has steering **built in** (cloud-side). Delegate to it via
+`swarm_xaman` with the plan as the message; Xaman Ek executes the plan and
+steers the ABW swarm. The zed-kask side calls `swarm_xaman` with a steering-
+style message (session_type `composition_design`); the execution + result
+capture is Xaman Ek's built-in capability, then `delegate_results` flow back.
+
+### Local swarms — the Kask Curator (continued)
+
+Locally, the Kask Curator steers using the `swarm-intelligence` skill itself
+(the cascade plans, the Curator executes), OR a more focused **swarm steering
+skill** (a narrower skill that codifies just the execute-and-feed-back loop:
+run `swarm_delegate_local` per emitted call, collect `LocalDelegateResult`s,
+re-invoke with `delegate_results`). The focused skill is a future artifact;
+today the Curator can steer with swarm-intelligence in steering mode directly.
+
+### The `delegate_results` contract (C5/C6 activation)
+
+`delegate_results` is an array of `swarm_delegate_local` results
+(`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
+`cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
+`executed_skills[]` (each `{skill, ok, error?}`). ORIENT attributes fault from
+`delegate_results[].tool_calls[].ok` / `executed_skills[].ok`; `fault_count`
+accumulates; C6 reconfigures the most-blamed agent. Absent `delegate_results`,
+C5/C6 are inert (the planning cascade has no execution telemetry).
 
 ## Registry
 

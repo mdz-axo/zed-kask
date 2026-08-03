@@ -137,7 +137,7 @@ impl TrainingServer {
                             None => {
                                 if let Some(ref manifest) = manifest {
                                     let base_model = manifest.base_model.clone().unwrap_or_default();
-                                    let adapter_name = format!("adapter-{}", &job_id[..8]);
+                                    let adapter_name = format!("adapter-{}", &job_id[..8.min(job_id.len())]);
                                     let weight_path = manifest.adapter.repository.clone();
                                     let adapter = Self::build_trained_adapter(
                                         job_id.clone(),

@@ -713,3 +713,14 @@ guarded here — they are an accepted, scoped risk (a blanket adapter-level
 normalize in `language_model_core::adapt_schema_to_format` was considered and
 reverted to avoid an upstream D-seam; revisit only if a non-kask tool
 reintroduces the break).
+
+# Visual artifact surfacing in skill cascades
+
+`extract_final_step_result` picks the highest-ordinal `step_N_result`; the
+`loop` action produces none. A Mermaid diagram generated in an intermediate
+`select` step is silently dropped unless a later `render` step (highest ordinal,
+before the loop) surfaces it — the compute/loop steps that follow have no
+diagram. Hit independently in wardley-mapper, sankey-flow, and diataxis-diagram.
+The full pattern (detection criteria, render step structure, pure-Jinja2
+template) is in create-skill's "Visual artifact surfacing" section and
+skill-maintenance's E12 check — do not duplicate it here.

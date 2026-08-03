@@ -3351,9 +3351,9 @@ impl SerializableItem for SwarmPanel {
 mod tests {
     use super::*;
 
-    // Pin the tool names the panel calls against the server's tool surface —
-    // a rename in `hkask-mcp-swarm` must fail here, not silently degrade the
-    // panel to an empty state.
+    // Pins the tool name strings the panel calls. These are hardcoded — a
+    // rename in `hkask-mcp-swarm` requires updating this list manually; the
+    // test does not auto-detect renames.
     #[test]
     fn panel_tool_names_match_server() {
         // These strings must match the #[tool] fn names in

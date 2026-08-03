@@ -25,9 +25,10 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 1. Validate the specified skill or all skills in the registry directory against R1-R12 registry checks, Z1-Z8 companion checks, X1-X4 cross-artifact checks, and E1-E11 executor compliance checks.
 2. Evaluate every check for every targeted skill without omissions, including invariant X4: every `.agents/skills/<name>/` must have a matching `registry/manifests/<name>.yaml`, and vice versa. Report exact mismatches by name.
 3. For executor compliance (E1-E11), verify that every process manifest uses only canonical actions, has gas/rjoule blocks with adequate caps, has a convergence block (for skill category), has valid category, has resolvable template_refs, and has a `ledger.span_namespace` equal to `reg.skill.<manifest.id>` with no abolished `spans:` list (E11).
-4. Include specific evidence for any fail results.
-5. Provide actionable fix suggestions for any failures, including mapping non-canonical actions to their canonical equivalents.
-6. Respond with a JSON object containing validation results, pass/fail counts (including executor_compliance), and fix suggestions.
+4. **Visual artifact surfacing check (E12):** For any skill whose template contracts or SKILL.md description mention a visual artifact (Mermaid diagram, chart, map, sankey, quadrant chart, or any renderable output), verify the process manifest has a `render` step (action: render) whose ordinal is the highest among steps that produce a `step_N_result` (the `loop` action does not produce one). The render step must surface the artifact as a fenced ```mermaid block in its output. Flag skills where the artifact is generated in an intermediate `select` step but not surfaced by a final `render` step — the diagram will be buried in an intermediate `step_N_result` and never reach the chat stream. See the "Visual artifact surfacing" section in create-skill for the full pattern.
+5. Include specific evidence for any fail results.
+6. Provide actionable fix suggestions for any failures, including mapping non-canonical actions to their canonical equivalents.
+7. Respond with a JSON object containing validation results, pass/fail counts (including executor_compliance), and fix suggestions.
 
 ### skill-maintenance-build
 
@@ -35,8 +36,9 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 2. Ensure the skill name is lowercase, hyphenated, 2-40 characters, verb-noun or noun-noun, and lacks reserved prefixes.
 3. Create at least one .j2 template with valid [inference] frontmatter and a Jinja2 body containing a system prompt and JSON output schema.
 4. Generate a process manifest (registry/manifests/<name>.yaml) with: `category: skill`, `convergence:` block (convergence_mode, cauchy_epsilon, cauchy_window, max_iterations, min_iterations, on_not_reached), `gas:` block (cap proportional to step count), `rjoule:` block (cap > 0 if inference is used), `steps:` array using only canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<name>` (CI-enforced; no `spans:` list).
-5. Derive a SKILL.md companion from the completed registry crate.
-6. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, gas_block_present, rjoule_block_present, convergence_block_present).
+5. **Visual artifact surfacing:** if any template produces a Mermaid diagram, chart, or visual artifact (detectable from the template's contract output fields or the skill description mentioning "diagram", "chart", "visual", or "renders natively in Zed"), add a final `render` step (action: render, renderer: minijinja) with a pure Jinja2 template (no frontmatter) that wraps the artifact in a fenced ```mermaid block. The render step's ordinal must be the highest among steps that produce a `step_N_result` (place it before the `loop` step). See the "Visual artifact surfacing" section in create-skill for the full pattern.
+6. Derive a SKILL.md companion from the completed registry crate.
+7. Respond with a JSON object containing the manifest, process manifest, template bodies, SKILL.md outline, and validation status (including actions_canonical, gas_block_present, rjoule_block_present, convergence_block_present).
 
 ### skill-maintenance-translate
 
@@ -72,7 +74,8 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 2. Apply the staleness signal table (Critical/High/Medium/Low severity) and compute health scores from 0.0 to 1.0 using weighted penalties.
 3. Recommend deprecation or retirement based on health score thresholds (0.00-0.19 retirement, 0.20-0.49 critical, 0.50-0.79 stale warning, 0.80-1.00 active).
 4. Cite every finding from a FlowDef manifest field, .j2 contract/metadata, or grep-verifiable Rust code path — never from SKILL.md alone.
-5. Respond with a JSON object containing staleness report, health scores, coverage gaps, and deprecation recommendations.
+5. **Visual artifact surfacing audit:** for any skill whose templates produce a Mermaid diagram, chart, or visual artifact, check that the process manifest includes a `render` step that surfaces the artifact as the cascade's final output. A skill that generates a diagram in an intermediate `select` step but lacks a surfacing `render` step has a Medium-severity staleness signal: the diagram is silently dropped and the user never sees it. This is the E12 validate check applied as an audit finding.
+6. Respond with a JSON object containing staleness report, health scores, coverage gaps, and deprecation recommendations.
 
 ### skill-maintenance-coverage
 
@@ -103,7 +106,7 @@ Skill lifecycle management and maintenance. Registry crate (manifest.yaml + *.j2
 
 ## Constraints
 
-- `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E11 executor compliance mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9/E11 failures are critical; Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
+- `skill-maintenance-validate.j2`: Public. R1-R12 mandatory; Z1-Z8 secondary; X1-X4 cross-artifact; E1-E11 executor compliance mandatory; E12 visual artifact surfacing mandatory. R1-R5 failures are critical; E1/E2/E4/E5/E6/E7/E9/E11 failures are critical; E12 failures are high (diagram silently dropped — user never sees visualization); Z5/Z6/Z7 failures are high; missing SKILL.md (Z1) is info, not failure.
 - `skill-maintenance-build.j2`: Public. Name must be lowercase, hyphenated, 2-40 chars, verb-noun or noun-noun, no reserved prefixes. Process manifest must have gas/rjoule/convergence blocks, canonical actions, and a `ledger:` block with `span_namespace: reg.skill.<manifest.id>` (no abolished `spans:` list).
 - `skill-maintenance-translate.j2`: Public. template_type must be KnowAct/WordAct/FlowDef/RenderAct; visibility must be Private/Public/Shared; energy_cap must be 2048-8192. Source actions must be mapped to canonical actions. Process manifest must have gas/rjoule/convergence blocks.
 - `skill-maintenance-reverse.j2`: Public. Every instruction must trace to a manifest field or .j2 body — do not invent content.

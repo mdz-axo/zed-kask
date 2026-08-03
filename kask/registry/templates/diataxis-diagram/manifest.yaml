@@ -85,3 +85,16 @@ templates:
       and outputs to docs/diagrams/{type}-{target}.md.
     generates_spans:
       - reg.diataxis-diagram.write
+
+  - id: diataxis-diagram/present-diagram
+    name: "Surface the finalized diagram markdown as the cascade output"
+    path: present-diagram.j2
+    type: RenderAct
+    description: >
+      RenderAct — surfaces the finalized diagram markdown (containing the fenced
+      ```mermaid block) as the cascade's final output string. Without this step,
+      extract_final_step_result returns the write step's JSON object
+      {file_path, file_content, description_paragraph} and the model must discover
+      and extract the file_content field. This render step flattens it to a raw
+      markdown string so the model sees the mermaid block directly. Deterministic
+      (no LLM call).

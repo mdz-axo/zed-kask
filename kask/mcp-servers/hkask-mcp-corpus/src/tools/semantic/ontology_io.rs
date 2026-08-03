@@ -5,7 +5,7 @@
 //! - `read_ontology_tags_annotated` → bracketed prefix (for embedding annotation)
 //! - `read_ontology_namespaces` → namespace set (for M4 predicate cross-check)
 
-use crate::*;
+use crate::{McpToolError, normalize_concept, read_jsonl_lenient};
 
 /// Read ontology tags from a tagged chunks JSONL file.
 ///

@@ -1,4 +1,4 @@
-//! Shared math and text helpers used across docproc tool modules.
+//! Shared math and text helpers used across corpus tool modules.
 
 use hkask_mcp_server::server::McpToolError;
 use serde::de::DeserializeOwned;
@@ -206,7 +206,7 @@ pub(crate) fn chunk_structure(
     passages
 }
 
-use crate::*;
+use crate::{HkaskSettings, json};
 
 #[cfg(test)]
 mod tests {

@@ -31,6 +31,8 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 
 6. **Write the final diagram.** Wrap the Mermaid source in a markdown file with a title and a plain-English description paragraph keyed to the target Diataxis quadrant's voice: austere and factual for reference, discursive and contextual for explanation, direct and actionable for how-to, encouraging and concrete for tutorial. Include cross-links to at least one related document using relative links from the `docs/diagrams/` directory. Output to `docs/diagrams/{diagram_type}-{target_slug}.md` where the target slug is lowercased with hyphens, ≤ 40 characters.
 
+7. **Surface the diagram.** The write step produces `{file_path, file_content, description_paragraph}` as JSON. A final `render` step (`present-diagram.j2`, RenderAct — deterministic, no LLM call) flattens the `file_content` field into a raw string, which becomes the cascade's final output. This ensures the fenced ```mermaid block reaches the chat stream — without it, the diagram stays buried inside a JSON object field that the model must discover and extract.
+
 ## Registry Templates
 
 | Template | Type | Purpose |
@@ -41,6 +43,7 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 | `diataxis-diagram-evaluate.j2` | `KnowAct` | Score a generated diagram against Diataxis quality criteria. Six weighted dimensions: entity completeness (0.30), relationship accuracy (0.25), label readability (0.15), type appropriateness (0.15), Diataxis voice (0.10), cross-linking (0.05). Produces a scored evaluation with specific refinement directives when quality gaps are found. |
 | `kata.convergence_check` | `compute` | Deterministic Cauchy convergence — detects when the iterates have stopped moving. No LLM, no timeout. |
 | `diataxis-diagram-write.j2` | `KnowAct` | Finalize the diagram into a markdown file. Wraps the Mermaid source in a code block, adds a plain-English description paragraph keyed to the target Diataxis quadrant's voice, includes cross-links to related documentation, and outputs to docs/diagrams/{type}-{target}.md. |
+| `present-diagram.j2` | `RenderAct` | Surface the finalized diagram markdown (containing the fenced ```mermaid block) as the cascade's final output. Without it, the diagram stays buried in the write step's JSON `{file_path, file_content}` object. Deterministic (no LLM call). |
 
 ## Constraints
 
@@ -55,3 +58,4 @@ Generate Mermaid diagrams from code using Diataxis methodology. The skill runs a
 - Convergence threshold: 0.15 weighted total across six Diataxis criteria
 - All diagrams must include at least one cross-link to related documentation
 - Registry is authoritative — when this SKILL.md disagrees with registry templates, the registry wins
+- **Visual artifact surfacing** — the `present-diagram.j2` render step (RenderAct) must be the cascade's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the write step's JSON `{file_path, file_content}` object.

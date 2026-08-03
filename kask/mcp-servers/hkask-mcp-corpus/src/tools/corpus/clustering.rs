@@ -4,7 +4,7 @@
 //! file, sorted by salience descending. Used by `corpus_dedup_chunks` and
 //! `corpus_consolidate_chunks` in `mod.rs`.
 
-use crate::*;
+use crate::{McpToolError, read_jsonl_lenient};
 use hkask_types::corpus::TaggedChunk;
 
 /// Read tagged chunks from a JSONL file. Malformed lines are silently dropped.

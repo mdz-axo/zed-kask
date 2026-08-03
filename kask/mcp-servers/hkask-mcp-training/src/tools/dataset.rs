@@ -113,7 +113,10 @@ impl TrainingServer {
             let write_jsonl = |path: &str, items: &[serde_json::Value]| -> Result<usize, std::io::Error> {
                 let mut output = String::new();
                 for item in items {
-                    output.push_str(&serde_json::to_string(item).expect("Value serialization cannot fail"));
+                    output.push_str(
+                        &serde_json::to_string(item)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+                    );
                     output.push('\n');
                 }
                 std::fs::write(path, output)?;

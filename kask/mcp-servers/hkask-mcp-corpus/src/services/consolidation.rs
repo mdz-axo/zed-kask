@@ -209,7 +209,7 @@ impl ConsolidationService {
                 if *INPUT_GUARD_ENABLED {
                     let input_scan = GUARD.scan_input(&combined);
                     if !input_scan.passed {
-                        let mut results = results.lock().unwrap();
+                        let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some("__FALLBACK__".to_string());
                         return;
                     }
@@ -236,11 +236,11 @@ impl ConsolidationService {
                         let output_scan = GUARD.scan_output(&response.text);
                         let content = output_scan.output.content(&response.text);
                         let text = content.trim().to_string();
-                        let mut results = results.lock().unwrap();
+                        let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some(text);
                     }
                     Err(_) => {
-                        let mut results = results.lock().unwrap();
+                        let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some("__FALLBACK__".to_string());
                     }
                 }
@@ -253,7 +253,8 @@ impl ConsolidationService {
         }
 
         // Phase 3: Build consolidated TaggedChunks (collect data, then drop guard)
-        let consolidated_texts: Vec<Option<String>> = results.lock().unwrap().clone();
+        let consolidated_texts: Vec<Option<String>> =
+            results.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let mut consolidated: Vec<TaggedChunk> = Vec::with_capacity(all_clusters.len());
         let mut reembed_texts: Vec<(String, String)> = Vec::new();
 
@@ -261,14 +262,14 @@ impl ConsolidationService {
             if cluster.len() == 1 {
                 consolidated.push(chunks[cluster[0]].clone());
             } else {
-                let llm_text = consolidated_texts[ci].as_ref().unwrap();
+                let llm_text = consolidated_texts[ci].as_deref().unwrap_or("__FALLBACK__");
                 let source = &chunks[cluster[0]].source;
                 let entity_ref = format!("corpus:researcher:consolidated:{source}:{ci}");
 
                 let text = if llm_text == "__FALLBACK__" {
                     chunks[cluster[0]].text.clone()
                 } else {
-                    llm_text.clone()
+                    llm_text.to_string()
                 };
 
                 let concepts: Vec<String> = cluster
@@ -407,14 +408,28 @@ impl ConsolidationService {
 
             for batch in reembed_texts.chunks(50) {
                 let texts: Vec<String> = batch.iter().map(|(_, t)| t.clone()).collect();
-                if let Ok(vectors) = self.inference_router.embed(&emb_model, &texts).await {
-                    for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
-                        if semantic
-                            .store_embedding(entity_ref, vector, &emb_model)
-                            .is_ok()
-                        {
-                            embedded_count += 1;
+                match self.inference_router.embed(&emb_model, &texts).await {
+                    Ok(vectors) => {
+                        for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
+                            if let Err(e) = semantic.store_embedding(entity_ref, vector, &emb_model)
+                            {
+                                tracing::warn!(
+                                    entity_ref = %entity_ref,
+                                    error = %e,
+                                    "Failed to store consolidated embedding"
+                                );
+                            } else {
+                                embedded_count += 1;
+                            }
                         }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            model = %emb_model,
+                            batch_len = batch.len(),
+                            error = %e,
+                            "Embedding call failed for consolidated chunk batch"
+                        );
                     }
                 }
             }

@@ -21,6 +21,32 @@ use super::types::DiscoveredWork;
 /// pre:  author_slug must be non-empty; works must be non-empty; output_dir must exist
 /// post: corpus.yaml is written to output_dir; returns PathBuf to the written file; Err on serialization or I/O failure
 #[must_use = "result must be used"]
+/// Convert a discovered work to a corpus config work entry.
+/// Shared between `generate_corpus_yaml` and `augment_corpus_yaml` to prevent
+/// mapping drift if a new `work_type` is added.
+fn discovered_work_to_corpus_work(w: &DiscoveredWork) -> Work {
+    let format = match w.work_type.as_str() {
+        "journal_article" | "preprint" => "pdf",
+        "video_transcript" => "text",
+        _ => "web",
+    };
+    let document_type = match w.work_type.as_str() {
+        "journal_article" | "preprint" => Some("research-paper".to_string()),
+        _ => None,
+    };
+    Work {
+        title: w.title.clone(),
+        slug: w.slug.clone(),
+        url: w.url.clone(),
+        local_path: None,
+        format: format.to_string(),
+        document_type,
+        dimensions: vec![],
+        section_types: vec![],
+        mds_categories: vec![],
+    }
+}
+
 pub fn generate_corpus_yaml(
     author_slug: &str,
     works: &[DiscoveredWork],
@@ -31,31 +57,7 @@ pub fn generate_corpus_yaml(
     // P9: Regulation span
     tracing::info!(target: "hkask.discover", operation = "generate_corpus_yaml", author = %author_slug, work_count = works.len(), method_count = methods.len(), "REG");
 
-    let corpus_works: Vec<Work> = works
-        .iter()
-        .map(|w| {
-            let format = match w.work_type.as_str() {
-                "journal_article" | "preprint" => "pdf",
-                "video_transcript" => "text",
-                _ => "web",
-            };
-            let document_type = match w.work_type.as_str() {
-                "journal_article" | "preprint" => Some("research-paper".to_string()),
-                _ => None,
-            };
-            Work {
-                title: w.title.clone(),
-                slug: w.slug.clone(),
-                url: w.url.clone(),
-                local_path: None,
-                format: format.to_string(),
-                document_type,
-                dimensions: vec![],
-                section_types: vec![],
-                mds_categories: vec![],
-            }
-        })
-        .collect();
+    let corpus_works: Vec<Work> = works.iter().map(discovered_work_to_corpus_work).collect();
 
     let mut config = default_corpus_config(author_slug);
     config.works = corpus_works;
@@ -177,28 +179,7 @@ pub(crate) fn augment_corpus_yaml(
     let added: Vec<Work> = new_works
         .iter()
         .filter(|w| !existing_urls.contains(w.url.as_str()))
-        .map(|w| {
-            let format = match w.work_type.as_str() {
-                "journal_article" | "preprint" => "pdf",
-                "video_transcript" => "text",
-                _ => "web",
-            };
-            let document_type = match w.work_type.as_str() {
-                "journal_article" | "preprint" => Some("research-paper".to_string()),
-                _ => None,
-            };
-            Work {
-                title: w.title.clone(),
-                slug: w.slug.clone(),
-                url: w.url.clone(),
-                local_path: None,
-                format: format.to_string(),
-                document_type,
-                dimensions: vec![],
-                section_types: vec![],
-                mds_categories: vec![],
-            }
-        })
+        .map(discovered_work_to_corpus_work)
         .collect();
 
     let added_count = added.len();

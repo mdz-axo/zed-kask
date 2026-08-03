@@ -1,0 +1,16 @@
+{# RenderAct — surface the finalized diataxis-diagram markdown as the cascade's final output.
+   This is a pure Jinja2 template (no frontmatter) executed by the `render` action.
+   The output is stored as step_N_result (Value::String) and becomes the cascade's
+   final output via extract_final_step_result (highest ordinal).
+
+   The write step (step 6) produces {file_path, file_content, description_paragraph}
+   where file_content contains the fenced ```mermaid block. Without this render step,
+   extract_final_step_result returns that JSON object and the model must discover and
+   extract the file_content field. This render step flattens it to a raw markdown
+   string so the model sees the mermaid block directly and reproduces it in its
+   assistant message, which acp_thread renders. #}
+{{ file_content }}
+
+---
+
+File path: {{ file_path | default("(not specified)") }}

@@ -11,7 +11,8 @@
 
 use crate::corpus::EmbedService;
 use crate::{
-    CorpusServer, McpToolError, Parameters, cosine_distance, execute_tool, json, tool, tool_router,
+    CorpusServer, McpToolError, Parameters, cosine_distance, default_embedding_model,
+    embedding_dim, execute_tool, json, tool, tool_router,
 };
 use hkask_services_core::HkaskSettings;
 use hkask_storage::database::sqlite::SqliteDriver;
@@ -340,7 +341,7 @@ impl CorpusServer {
                 jinja2_template: None,
                 embedding: crate::compose::EmbeddingSection {
                     model: model.clone(),
-                    dim: 1024,
+                    dim: embedding_dim(),
                     centroid_entity_ref: format!("style:{}:centroid", params.author),
                     retrieval: Default::default(),
                 },
@@ -428,7 +429,7 @@ impl CorpusServer {
                 jinja2_template: None,
                 embedding: crate::compose::EmbeddingSection {
                     model: model.clone(),
-                    dim: 1024,
+                    dim: embedding_dim(),
                     centroid_entity_ref: centroid_ref,
                     retrieval: Default::default(),
                 },
@@ -483,7 +484,8 @@ impl CorpusServer {
             let pool = db
                 .sqlite_pool()
                 .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
-            let store = EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), 1024);
+            let store =
+                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim());
 
             // ── Document comparison path ──────────────────────────────
             if let Some(ref doc_text) = document_content {
@@ -653,7 +655,8 @@ impl CorpusServer {
             let pool = db
                 .sqlite_pool()
                 .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
-            let store = EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), 1024);
+            let store =
+                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim());
 
             let emb_a = store.get(&centroid_a_ref).map_err(|_| {
                 McpToolError::invalid_argument(format!(
@@ -690,7 +693,7 @@ impl CorpusServer {
                 jinja2_template: None,
                 embedding: crate::compose::EmbeddingSection {
                     model: model.clone(),
-                    dim: 1024,
+                    dim: embedding_dim(),
                     centroid_entity_ref: blended_ref.clone(),
                     retrieval: Default::default(),
                 },
@@ -743,7 +746,8 @@ impl CorpusServer {
             let pool = db
                 .sqlite_pool()
                 .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
-            let store = EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), 1024);
+            let store =
+                EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim());
 
             let json_str = match params.action {
                 RegistryAction::List => {
@@ -821,7 +825,7 @@ impl CorpusServer {
     pub async fn corpus_explain(&self) -> String {
         execute_tool(self, "corpus_explain", async {
             Ok(json!({
-            "what_is_a_centroid": "A style centroid is the average of all embedded passage vectors for an author. Each passage (50-200 words) is converted to a 1024-dimensional vector via DeepInfra's Qwen3-Embedding-0.6B. The centroid is the 'average passage' — prose that matches the author's style will have a low cosine distance to it.",
+            "what_is_a_centroid": format!("A style centroid is the average of all embedded passage vectors for an author. Each passage (50-200 words) is converted to a {}-dimensional vector via {}. The centroid is the 'average passage' — prose that matches the author's style will have a low cosine distance to it.", embedding_dim(), default_embedding_model()),
             "metadata_layer": {
                 "description": "Each embedded passage is enriched with metadata h_mems (entity-attribute-value) stored alongside embeddings. This enables parametric retrieval beyond pure vector similarity.",
                 "structural": ["author", "work_title", "work_slug", "position", "word_count", "avg_sentence_length"],

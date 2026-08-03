@@ -1,5 +1,24 @@
 use serde::{Deserialize, Serialize};
 
+/// The form-feed character `pdftotext` uses to separate pages.
+const FORM_FEED: char = '\u{000c}';
+
+/// Split `pdftotext` output on form-feed into per-page text.
+///
+/// `pdftotext` separates pages with form-feed. An N-page PDF yields N
+/// form-feed-separated sections plus a trailing empty string (the text after
+/// the final form-feed). Drop exactly one trailing empty element so a
+/// genuinely-empty final page is preserved while the spurious tail is not.
+/// Interior zero-word pages are KEPT — they are the scanned/blank pages triage
+/// exists to catch.
+pub(crate) fn split_pdftotext_pages(raw: &str) -> Vec<String> {
+    let mut pages: Vec<String> = raw.split(FORM_FEED).map(String::from).collect();
+    if pages.last().is_some_and(|p| p.trim().is_empty()) {
+        pages.pop();
+    }
+    pages
+}
+
 // ── OCR Result ────────────────────────────────────────────────────────────
 
 /// The output of a single OCR backend invocation on one page.

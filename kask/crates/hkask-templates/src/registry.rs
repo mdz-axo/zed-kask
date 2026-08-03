@@ -767,7 +767,8 @@ mod tests {
             );
         }
 
-        // ORIENT (ordinal 2) binds the prior ACT trace for C5 fault attribution.
+        // ORIENT (ordinal 2) binds delegate_results for C5 fault attribution
+        // (the execution telemetry feed, not the prior ACT plan).
         let orient = manifest
             .steps
             .iter()
@@ -779,8 +780,8 @@ mod tests {
             .and_then(|v| v.as_object())
             .expect("ORIENT step has an input_mapping");
         assert!(
-            orient_mapping.contains_key("prior_act"),
-            "ORIENT input_mapping must bind `prior_act` for C5 fault attribution"
+            orient_mapping.contains_key("delegate_results"),
+            "ORIENT input_mapping must bind `delegate_results` for C5 fault attribution"
         );
 
         // The loop step must bind kata_hypotenuse from the field

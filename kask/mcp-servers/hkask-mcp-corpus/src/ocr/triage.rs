@@ -223,17 +223,9 @@ async fn extract_per_page_text(path: &Path) -> Result<Vec<String>, TriageError> 
         ));
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    // pdftotext separates pages with form-feed (`\x0c`). An N-page PDF yields
-    // N form-feed-separated sections plus a trailing empty string (the text
-    // after the final form-feed). Drop exactly one trailing empty element so a
-    // genuinely-empty final page is preserved while the spurious tail is not.
-    // Interior zero-word pages are KEPT — they are the scanned/blank pages
-    // triage exists to catch.
-    let mut pages: Vec<String> = text.split('\x0c').map(String::from).collect();
-    if pages.last().is_some_and(|p| p.trim().is_empty()) {
-        pages.pop();
-    }
-    Ok(pages)
+    // pdftotext separates pages with form-feed. Drop the spurious trailing
+    // empty element via the shared helper (interior zero-word pages are kept).
+    Ok(crate::ocr::split_pdftotext_pages(&text))
 }
 
 /// Run `pdfimages -list` and aggregate per-page image signals.

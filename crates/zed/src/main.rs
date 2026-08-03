@@ -1795,7 +1795,12 @@ fn main() {
                         ) {
                             Ok(ipc_server) => {
                                 let socket_path = ipc_server.socket_path().to_string_lossy().to_string();
-                                let _ = INFERENCE_SOCKET_PATH.set(socket_path.clone());
+                                if let Err(prev) = INFERENCE_SOCKET_PATH.set(socket_path.clone()) {
+                                    log::warn!(
+                                        "INFERENCE_SOCKET_PATH already set to {prev} — second wiring attempt dropped. \
+                                         The first socket path remains active; this is expected on re-login or multi-window."
+                                    );
+                                }
                                 log::info!(
                                     "hKask inference IPC server started at {socket_path} — \
                                      MCP servers will route inference through zed"
@@ -1906,7 +1911,12 @@ fn main() {
                             Ok(ipc_server) => {
                                 let socket_path =
                                     ipc_server.socket_path().to_string_lossy().to_string();
-                                let _ = INFERENCE_SOCKET_PATH.set(socket_path.clone());
+                                if let Err(prev) = INFERENCE_SOCKET_PATH.set(socket_path.clone()) {
+                                    log::warn!(
+                                        "INFERENCE_SOCKET_PATH already set to {prev} — second wiring attempt dropped. \
+                                         The first socket path remains active; this is expected on re-login or multi-window."
+                                    );
+                                }
                                 log::info!(
                                     "hKask inference IPC server started (no-op port) at {socket_path} — \
                                      MCP servers will route through the bridge and receive a \

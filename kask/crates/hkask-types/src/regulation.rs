@@ -142,6 +142,9 @@ pub enum ToolSubsystem {
     Companies,
     Filesystem,
     Curator,
+    Codegraph,
+    Scenarios,
+    Swarm,
     /// Catch-all for unknown or future MCP servers.
     Other,
 }
@@ -167,6 +170,9 @@ impl ToolSubsystem {
             "training" => ToolSubsystem::Training,
             "kanban" => ToolSubsystem::Kanban,
             "curator" => ToolSubsystem::Curator,
+            "codegraph" => ToolSubsystem::Codegraph,
+            "scenarios" => ToolSubsystem::Scenarios,
+            "swarm" => ToolSubsystem::Swarm,
             _ => ToolSubsystem::Other,
         }
     }
@@ -188,6 +194,9 @@ impl ToolSubsystem {
             ToolSubsystem::Companies => "companies",
             ToolSubsystem::Filesystem => "filesystem",
             ToolSubsystem::Curator => "curator",
+            ToolSubsystem::Codegraph => "codegraph",
+            ToolSubsystem::Scenarios => "scenarios",
+            ToolSubsystem::Swarm => "swarm",
             ToolSubsystem::Other => "other",
         }
     }
@@ -245,6 +254,9 @@ impl RegulationSpan {
                 ToolSubsystem::Companies => "reg.tool.companies",
                 ToolSubsystem::Filesystem => "reg.tool.filesystem",
                 ToolSubsystem::Curator => "reg.tool.curator",
+                ToolSubsystem::Codegraph => "reg.tool.codegraph",
+                ToolSubsystem::Scenarios => "reg.tool.scenarios",
+                ToolSubsystem::Swarm => "reg.tool.swarm",
                 ToolSubsystem::Other => "reg.tool",
             },
             RegulationSpan::Inference => "reg.inference",
@@ -329,6 +341,15 @@ impl std::str::FromStr for RegulationSpan {
             "reg.tool.curator" => Ok(RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Curator,
             }),
+            "reg.tool.codegraph" => Ok(RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Codegraph,
+            }),
+            "reg.tool.scenarios" => Ok(RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Scenarios,
+            }),
+            "reg.tool.swarm" => Ok(RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Swarm,
+            }),
             "reg.inference" => Ok(RegulationSpan::Inference),
             "reg.pod" => Ok(RegulationSpan::AgentPod),
             "reg.gas" => Ok(RegulationSpan::Gas),
@@ -391,6 +412,9 @@ mod reg_span_tests {
             "reg.tool.companies",
             "reg.tool.filesystem",
             "reg.tool.curator",
+            "reg.tool.codegraph",
+            "reg.tool.scenarios",
+            "reg.tool.swarm",
             "reg.inference",
             "reg.pod",
             "reg.gas",
@@ -469,6 +493,15 @@ mod reg_span_tests {
             },
             RegulationSpan::Tool {
                 subsystem: ToolSubsystem::Curator,
+            },
+            RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Codegraph,
+            },
+            RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Scenarios,
+            },
+            RegulationSpan::Tool {
+                subsystem: ToolSubsystem::Swarm,
             },
             RegulationSpan::Inference,
             RegulationSpan::AgentPod,

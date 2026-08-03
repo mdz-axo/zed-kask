@@ -172,6 +172,8 @@ If the prompt does not match any domain, default to **process** with conservatio
    - A "References" section citing canonical Sankey resources when relevant (Schmidt 2008 for energy/material, FIBO for financial, etc.).
    - Output to `docs/diagrams/sankey-{domain}-{subject_slug}.md` where the subject slug is lowercased with hyphens, ≤ 40 characters.
 
+7. **Surface the diagram.** The write step produces `{output_path, markdown}` as JSON. A final `render` step (`present-sankey.j2`, RenderAct — deterministic, no LLM call) flattens the `markdown` field into a raw string, which becomes the cascade's final output. This ensures the fenced ```mermaid block reaches the chat stream — without it, the diagram stays buried inside a JSON object field that the model must discover and extract.
+
 ## Research Delegation — Detailed Protocol
 
 When the gather step takes Path B (research delegation), follow this protocol:
@@ -217,6 +219,7 @@ When the gather step takes Path B (research delegation), follow this protocol:
 - **Delegate, don't transcribe.** When the prompt references an external source, delegate extraction to a specialized skill. Do not ask the user to transcribe data that exists in a source.
 - **Cite canonical references** in the output when relevant (Schmidt 2008, FIBO, PROV-O, PKO).
 - **Registry is authoritative** — when this SKILL.md disagrees with registry templates (if any are added), the registry wins.
+- **Visual artifact surfacing** — the `present-sankey.j2` render step (RenderAct) must be the cascade's final output step. It surfaces the fenced ```mermaid block as a raw markdown string so acp_thread's mermaid renderer picks it up. Removing it causes the diagram to stay buried in the write step's JSON `{output_path, markdown}` object — the model must then discover and extract the `markdown` field, which is fragile.
 
 ## Examples
 

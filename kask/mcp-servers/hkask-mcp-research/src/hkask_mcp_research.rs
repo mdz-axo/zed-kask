@@ -157,7 +157,12 @@ impl ResearchServer {
             let ckey = cache_key(
                 &strat.to_string(),
                 &req.query,
-                &serde_json::json!({ "num_results": num_results, "freshness": freshness }),
+                &serde_json::json!({
+                    "num_results": num_results,
+                    "freshness": freshness,
+                    "include_domains": req.include_domains,
+                    "exclude_domains": req.exclude_domains,
+                }),
                 &fingerprint,
             );
 
@@ -306,18 +311,31 @@ impl ResearchServer {
             validate_tool_url(&url)?;
 
             let fmt = format.unwrap_or_else(|| "markdown".to_string());
-            let opts = ExtractOptions {
-                format: fmt.clone(),
-                json_prompt,
-                json_schema: json_schema.map(hkask_mcp_server::AnyJsonValue::into_inner),
-                main_content_only: main_content_only.unwrap_or(true),
-                wait_for_ms: wait_for_ms.unwrap_or(0),
-            };
+            let main_content_only = main_content_only.unwrap_or(true);
+            let wait_for_ms_val = wait_for_ms.unwrap_or(0);
+            // Compute the cache key before moving json_schema into opts.
+            let json_schema_str = json_schema
+                .as_ref()
+                .and_then(|v| serde_json::to_string(v).ok());
+            let json_schema_inner = json_schema.map(hkask_mcp_server::AnyJsonValue::into_inner);
 
             let fingerprint = self.pool.provider_fingerprint();
-            let cache_params =
-                serde_json::json!({ "format": fmt, "main_content_only": opts.main_content_only });
+            let cache_params = serde_json::json!({
+                "format": fmt,
+                "main_content_only": main_content_only,
+                "json_prompt": json_prompt,
+                "json_schema": json_schema_str,
+                "wait_for_ms": wait_for_ms_val,
+            });
             let ckey = cache_key("extract", &url, &cache_params, &fingerprint);
+
+            let opts = ExtractOptions {
+                format: fmt,
+                json_prompt,
+                json_schema: json_schema_inner,
+                main_content_only,
+                wait_for_ms: wait_for_ms_val,
+            };
 
             if let Some(cached) = self.cache.get(&ckey).await {
                 return Ok(cached);
@@ -407,6 +425,7 @@ impl ResearchServer {
         Parameters(SubscribeRequest { url, label, folder }): Parameters<SubscribeRequest>,
     ) -> String {
         execute_tool(self, "rss_subscribe", async {
+            self.rate_limiter.check("rss_subscribe")?;
             let db = require_rss_db!(self);
 
             // Use permissive SSRF config: RSS feeds may be self-hosted on
@@ -492,6 +511,7 @@ impl ResearchServer {
         Parameters(FetchRequest { stream_id }): Parameters<FetchRequest>,
     ) -> String {
         execute_tool(self, "rss_fetch", async {
+            self.rate_limiter.check("rss_fetch")?;
             let db = require_rss_db!(self);
             let sid = stream_id.clone();
             let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
@@ -698,6 +718,7 @@ impl ResearchServer {
         Parameters(DiscoverRequest { url }): Parameters<DiscoverRequest>,
     ) -> String {
         execute_tool(self, "rss_discover_feeds", async {
+            self.rate_limiter.check("rss_discover_feeds")?;
             validate_tool_url(&url)?;
             match discover_feeds(&self.rss_client, &url).await {
                 Ok(feeds) => {

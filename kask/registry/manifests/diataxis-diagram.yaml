@@ -187,6 +187,25 @@ steps:
       related_docs: "{{ related_docs | default([]) }}"
 
   - ordinal: 7
+    action: render
+    description: >
+      SURFACE the finalized diataxis-diagram markdown (containing the fenced
+      ```mermaid block) as the cascade's final output. The write step (step 6)
+      produces {file_path, file_content, description_paragraph}; without this
+      render step, extract_final_step_result returns that JSON object and the
+      model must discover the file_content field. This render step flattens it
+      to a raw markdown string so the model sees the mermaid block directly
+      and reproduces it in its assistant message, which acp_thread renders.
+      The render action is deterministic (no LLM call).
+    renderer: minijinja
+    template_ref: diataxis-diagram/present-diagram
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      file_content: "{{ step_6_result.file_content }}"
+      file_path: "{{ step_6_result.file_path }}"
+
+  - ordinal: 8
     action: loop
     description: >
       If convergence not met (metric > 0.15) and refinement directives

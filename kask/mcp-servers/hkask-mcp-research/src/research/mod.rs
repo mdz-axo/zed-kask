@@ -49,9 +49,9 @@ pub use types::{
 
 /// Build a `ProviderPool` from a credential map.
 ///
-/// Free providers (SemanticScholar, arXiv, RawFetch) are always included.
+/// Free providers (SemanticScholar, arXiv, RawFetch) are always included, so
+/// at least one search provider is always present even with no API keys.
 /// API-key providers are included when their credential is present.
-/// Returns `WebError::ProviderUnavailable` if no search providers are configured.
 pub fn build_provider_pool(
     credentials: &HashMap<String, String>,
 ) -> Result<ProviderPool, WebError> {
@@ -97,15 +97,6 @@ pub fn build_provider_pool(
     }
 
     extract_providers.push(Box::new(RawFetchProvider::new()));
-
-    if search_providers.is_empty() {
-        return Err(WebError::ProviderUnavailable(
-            "No search providers configured. Set at least one of: HKASK_BRAVE_API_KEY, \
-             HKASK_FIRECRAWL_API_KEY, HKASK_TAVILY_API_KEY, HKASK_SERPAPI_API_KEY, \
-             HKASK_EXA_API_KEY"
-                .into(),
-        ));
-    }
 
     Ok(ProviderPool::new(
         search_providers,

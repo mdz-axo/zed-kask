@@ -75,10 +75,19 @@ use std::sync::{Arc, Mutex};
 
 /// Resolve the embedding dimension from env or default to 1024 (Qwen3-Embedding-0.6B).
 pub(crate) fn embedding_dim() -> usize {
-    std::env::var("HKASK_EMBEDDING_DIM")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1024)
+    match std::env::var("HKASK_EMBEDDING_DIM") {
+        Ok(v) => match v.parse() {
+            Ok(dim) => dim,
+            Err(_) => {
+                tracing::warn!(
+                    value = %v,
+                    "Malformed HKASK_EMBEDDING_DIM — falling back to 1024"
+                );
+                1024
+            }
+        },
+        Err(_) => 1024,
+    }
 }
 
 /// Pre-normalize a vector in place so cosine similarity becomes a dot product.
@@ -128,11 +137,26 @@ const DEFAULT_OWNER: &str = "john-brooks";
 /// Controls how many pages are sent to the vision model in parallel.
 /// Set to 1 for sequential mode (interactive use), higher for batch processing.
 pub(crate) fn ocr_concurrency() -> usize {
-    std::env::var("HKASK_OCR_CONCURRENCY")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(4)
+    match std::env::var("HKASK_OCR_CONCURRENCY") {
+        Ok(v) => match v.parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            Ok(_) => {
+                tracing::warn!(
+                    value = %v,
+                    "HKASK_OCR_CONCURRENCY must be > 0 — falling back to 4"
+                );
+                4
+            }
+            Err(_) => {
+                tracing::warn!(
+                    value = %v,
+                    "Malformed HKASK_OCR_CONCURRENCY — falling back to 4"
+                );
+                4
+            }
+        },
+        Err(_) => 4,
+    }
 }
 
 /// Default embedding model — env var first, then HkaskSettings from disk.
@@ -152,6 +176,14 @@ fn default_embedding_model() -> &'static str {
 }
 
 // ── Server struct ──────────────────────────────────────────────────────────
+//
+// The `mcp_server!` macro generates the constructor, so the field set is
+// structurally fixed — there is no way to construct a partial server for a
+// single tool group. A test for `corpus_query` (needs only `index` +
+// `inference_router`) must construct `llm_ocr` and `pipeline_executor`.
+// Similarly, a test for `corpus_convert` (needs only OCR fields) gets a
+// useless `index` mutex. Changing this requires modifying the macro, which
+// is a high-risk structural change deferred to a future refactor.
 
 hkask_mcp_server::mcp_server!(
     pub struct CorpusServer {
@@ -230,11 +262,7 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
                     // ≥100 whole-doc words returned Success and dropped any
                     // per-page scanned/image-only regions. On any triage error,
                     // fall back to the legacy whole-doc word-count check.
-                    let per_page: Vec<String> = raw.split('\x0c').map(String::from).collect();
-                    let mut per_page = per_page;
-                    if per_page.last().is_some_and(|p| p.trim().is_empty()) {
-                        per_page.pop();
-                    }
+                    let per_page = crate::ocr::split_pdftotext_pages(&raw);
                     let triage_cfg = crate::ocr::TriageConfig::from_env();
                     match crate::ocr::triage::triage_pages(
                         std::path::Path::new(path),
@@ -424,13 +452,13 @@ pub(crate) fn filter_outcome_to_pages(
         ExtractOutcome::Success {
             text, structure, ..
         } => {
-            let kept: Vec<String> = text
-                .split('\x0c')
+            let kept: Vec<String> = crate::ocr::split_pdftotext_pages(&text)
+                .into_iter()
                 .enumerate()
                 .filter(|(i, _)| target.contains(&(i + 1)))
-                .map(|(_, p)| p.to_string())
+                .map(|(_, p)| p)
                 .collect();
-            let joined = kept.join("\n\x0c");
+            let joined = kept.join("\n\u{000c}");
             ExtractOutcome::Success {
                 word_count: joined.split_whitespace().count(),
                 text: joined,

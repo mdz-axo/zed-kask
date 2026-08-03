@@ -6,11 +6,11 @@
 //! which now owns the OCR + index domain. `corpus_convert` and `corpus_ocr` in
 //! `tools/document.rs` construct a `ConvertService` and delegate to it.
 
+use crate::Arc;
 use crate::ocr::llm_ocr::LlmOcrExecutor;
 use crate::ocr::pipeline::{OcrError, OcrExecutor};
 use crate::ocr::tesseract::TesseractExecutor;
 use crate::ocr::{OcrBackend, OcrResult};
-use crate::*;
 use async_trait::async_trait;
 
 /// Shareable OCR executor that bundles Tesseract + LLM backends.

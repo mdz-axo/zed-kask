@@ -82,7 +82,17 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "corpus",
         binary: "hkask-mcp-corpus",
         description: "Corpus — document corpus and QA generation",
-        credentials: Some(&["FALAI_API_KEY"]),
+        credentials: Some(&[
+            "FALAI_API_KEY",
+            // DB encryption passphrase — read by default_docproc_passphrase() in
+            // semantic/mod.rs. Without this, the DB is silently encrypted with
+            // the hardcoded dev passphrase under governed launch.
+            "HKASK_DB_PASSPHRASE",
+            // RunPod OCR fallback credentials — read by runpod_credentials() in
+            // corpus/embed/ocr.rs. Without these, the RunPod OCR fallback is
+            // unconditionally unusable under governed launch.
+            "RUNPOD_API_KEY",
+        ]),
         config_env: Some(&[
             "HKASK_EMBEDDING_DIM",
             "HKASK_EMBEDDING_MODEL",
@@ -108,6 +118,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_OCR_TRIAGE_FULL_PAGE_PT",
             "HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT",
             "HKASK_OCR_TRIAGE_TUNEABLE",
+            // OCR vision model override — read by ctx.credentials.get() in
+            // hkask_mcp_corpus.rs and std::env::var in corpus/embed/ocr.rs.
+            // Without this, operator OCR model overrides are silently dropped.
+            "HKASK_OCR_MODEL",
+            // RunPod OCR fallback endpoint — read by runpod_credentials() in
+            // corpus/embed/ocr.rs. Non-secret endpoint URL.
+            "RUNPOD_OCR_ENDPOINT",
         ]),
     },
     BuiltinMcpServer {
@@ -178,12 +195,17 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_SERPAPI_API_KEY",
             "HKASK_FIRECRAWL_API_KEY",
             "HKASK_BROWSERBASE_API_KEY",
+            // DB encryption passphrase — read by resolve_db_credential() for
+            // the RSS SQLite DB. Without this, RSS tools are silently
+            // unavailable under governed launch.
+            "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
-            // Web cache tunables — read by hkask_mcp_research.rs via ctx.credentials,
-            // fall back to DEFAULT_CACHE_TTL_SECS / DEFAULT_CACHE_MAX_ENTRIES.
             "HKASK_WEB_CACHE_TTL_SECS",
             "HKASK_WEB_CACHE_MAX_ENTRIES",
+            // RSS DB path — read by open_database_with_extensions(). Without
+            // this, RSS tools return "not configured" despite the env being set.
+            "HKASK_RSS_DB",
         ]),
     },
     BuiltinMcpServer {
@@ -231,14 +253,38 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "NEBIUS_PROJECT_ID",
             "NEBIUS_SUBNET_ID",
             "HF_TOKEN",
+            // DB encryption passphrase — read by the training server for its
+            // job/adapter SQLite DB. Without this, the DB falls back to a
+            // default or in-memory store under governed launch.
+            "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
             "HKASK_TRAINING_HOST",
             "HKASK_TRAINING_CACHE_DIR",
             "HKASK_TEMPLATE_ROOT",
-            // training resolves its DB path via `resolve_under_data_dir`,
-            // so it needs the data dir to match the parent process.
             "HKASK_DATA_DIR",
+            // HuggingFace persistence — required by HuggingFaceTraining::from_env()
+            // for the Runpod artifact publish path. Without these, training_submit
+            // fails at G-P1 under governed launch (B-1).
+            "HKASK_HF_ARTIFACT_OWNER",
+            "HKASK_HF_DATASET_REPO",
+            "HKASK_HF_MODEL_REPO",
+            // Training DB path — read by the server, falls back to default.
+            "HKASK_TRAINING_DB",
+            // RunPod operator overrides — read by runpod.rs, fall back to defaults.
+            "RUNPOD_GPU_TYPE_ID",
+            "RUNPOD_CONTAINER_DISK_GB",
+            "RUNPOD_DOCKER_IMAGE",
+            "RUNPOD_DOCKER_ARGS",
+            "HKASK_PODS_FILE",
+            // DeepInfra operator overrides — read by providers/mod.rs.
+            "DEEPINFRA_GPU_CONFIG",
+            "DEEPINFRA_CONTAINER_IMAGE",
+            // Nebius operator overrides — read by providers/mod.rs and nebius.rs.
+            "NEBIUS_GPU_PLATFORM",
+            "NEBIUS_GPU_PRESET",
+            "NEBIUS_IMAGE_FAMILY",
+            "NEBIUS_CLI_PATH",
         ]),
     },
 ];

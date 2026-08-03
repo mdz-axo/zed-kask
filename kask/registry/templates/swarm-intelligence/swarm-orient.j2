@@ -6,7 +6,6 @@ contract:
     task: string
     mode: string
     target_condition: object|null
-    prior_act: object|null
     delegate_results: array|null
   output:
     deficit_class: string
@@ -45,27 +44,28 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 {{ swarm_state | tojson }}
 ```
 
-{% if prior_act and prior_act | length > 0 %}
-## Prior Iteration ACT Trace (Cybernetic Swarm Plan C5)
+{% if delegate_results and delegate_results | length > 0 %}
+## Delegate Results — Execution Telemetry (Cybernetic Swarm Plan C5)
 ```json
-{{ prior_act | tojson }}
+{{ delegate_results | tojson }}
 ```
-The prior iteration's ACT emitted dispatch intents (`emitted_calls`) — a plan,
-not executed results. The deterministic fault-attribution inputs
-(`tool_calls[].ok`, `executed_skills[].ok`, the delegate response text) are
-**execution telemetry**, which the planning cascade does not capture: the ACT
-step is `action: select` (the LLM emits what it would call), not
-`action: execute` (no MCP tool is actually invoked by the cascade). Delegate
-results arrive only when the operator supplies them via the skill's context
-(an explicit `delegate_results` field, e.g. from a prior real
-`swarm_delegate_local` run). Do NOT fabricate `tool_calls[].ok` /
-`executed_skills[].ok` from the plan's `emitted_calls` — those are intents, not
-outcomes (the `.rules` "never fabricate" trap). If no `delegate_results`
-telemetry is present, set `agent_at_fault = null` (honest: no execution data to
-attribute from).
+`delegate_results` is an array of `swarm_delegate_local` results
+(`LocalDelegateResult`-shaped: `agent_id`, `response`, `model`, `tokens_used`,
+`cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
+`executed_skills[]` (each `{skill, ok, error?}`)). These are EXECUTED outcomes —
+the operator or the Kask Curator ran the prior plan via `swarm_delegate_local`
+and fed the real results back. The deterministic fault-attribution inputs are
+`delegate_results[].tool_calls[].ok` and `delegate_results[].executed_skills[].ok`.
+The terminal agent (rule 1) is the `agent_id` of the LAST entry (the last
+delegation produced the terminal output the task metric scored).
 {% else %}
-## Prior Iteration ACT Trace
-No prior ACT — this is iteration 1. Fault attribution is not applicable yet.
+## Delegate Results — Execution Telemetry
+No `delegate_results` supplied. The planning cascade's ACT emits dispatch
+intents (`emitted_calls`), not executed outcomes — do NOT fabricate
+`tool_calls[].ok` / `executed_skills[].ok` from intents (the `.rules`
+never-fabricate trap). Set `agent_at_fault = null` (honest: no execution data
+to attribute from). C5/C6 are inert until the operator or the Kask Curator
+feeds `delegate_results` from a real `swarm_delegate_local` run.
 {% endif %}
 
 ## Task
@@ -149,31 +149,32 @@ set cybernetic_assessment = null.
 
 ## Step 4 — Deterministic fault attribution (Cybernetic Swarm Plan C5)
 
-Attribute fault ONLY when the operator supplied delegate-result **execution
-telemetry** for the prior iteration (a `delegate_results` field in the context,
-carrying per-agent `tool_calls[].ok` / `executed_skills[].ok` / response). The
-planning cascade's `prior_act.emitted_calls` are dispatch INTENTS, not
-outcomes — they do NOT carry `tool_calls[].ok` / `executed_skills[].ok`, so they
-are not attribution inputs. Do not fabricate outcomes from intents.
+Attribute fault ONLY when `delegate_results` execution telemetry is present
+(an array of `LocalDelegateResult`-shaped objects, each with `agent_id`,
+`tool_calls[].ok`, `executed_skills[].ok`). The planning cascade's
+`emitted_calls` are dispatch INTENTS, not outcomes — they do NOT carry
+`tool_calls[].ok` / `executed_skills[].ok`, so they are not attribution inputs.
+Do not fabricate outcomes from intents.
 
-When the telemetry IS present, attribute fault to exactly one agent by this
-deterministic priority rule (JudgeFlow with the LLM Judge replaced by a rule —
-the divergence IS the point: a deterministic judge is what hKask builds):
+When `delegate_results` IS present, attribute fault to exactly one agent by
+this deterministic priority rule (JudgeFlow with the LLM Judge replaced by a
+rule — the divergence IS the point: a deterministic judge is what hKask
+builds):
 
 1. If `s < epsilon` (the terminal-output task metric failed), attribute to the
-   **terminal agent** — the last agent in delegation order (the delegation
-   order is the deterministic ground the plan's tie-break relies on; the last
-   delegate produced the terminal output the metric scored).
-2. Else if any delegate result has `tool_calls[].ok = false` (a dispatch
-   failed or was not in the declared mcp_tools allowlist), attribute to the
-   **earliest such agent** in delegation order.
-3. Else if any delegate result has `executed_skills[].ok = false` (a declared
-   skill cascade failed), attribute to the **earliest such agent**.
+   **terminal agent** — the `agent_id` of the LAST entry in `delegate_results`
+   (the last delegation produced the terminal output the metric scored; the
+   delegation order is the deterministic ground the plan's tie-break relies on).
+2. Else if any `delegate_results[]` entry has `tool_calls[].ok = false` (a
+   dispatch failed or was not in the declared mcp_tools allowlist), attribute to
+   the **earliest such agent** (by `delegate_results` array order).
+3. Else if any `delegate_results[]` entry has `executed_skills[].ok = false` (a
+   declared skill cascade failed), attribute to the **earliest such agent**.
 4. Else if a guard redaction occurred (a tool output was redacted because it
    tripped the input guard), attribute to that agent.
-5. Tie-break by delegation order (deterministic).
+5. Tie-break by `delegate_results` array order (deterministic).
 
-If no delegate-result telemetry is present (the default in the planning
+If no `delegate_results` telemetry is present (the default in the planning
 cascade), OR no task-success signal, OR no failure is present, set
 agent_at_fault = null. When non-null, agent_at_fault = { agent_name, reason,
 rule_matched (1-5), failure_detail }. Never fabricate a verdict from the plan's

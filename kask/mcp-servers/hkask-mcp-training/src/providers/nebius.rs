@@ -292,20 +292,36 @@ runcmd:
         // Delete the VM and its managed disks (stops all billing — compute + storage).
         // We use delete instead of stop because stop leaves the disk running
         // (storage charges continue). Delete cleans up everything.
-        let _ = self
+        //
+        // On failure we keep the job→VM mapping intact so a retry can re-attempt
+        // the delete; silently dropping the error would leave a billing VM
+        // running with no record that it still needs cleanup.
+        match self
             .run_cli(&["compute", "instance", "delete", "--id", &vm_id])
-            .await;
-
-        if let Ok(mut map) = self.vms.lock() {
-            map.remove(job_id);
+            .await
+        {
+            Ok(_) => {
+                if let Ok(mut map) = self.vms.lock() {
+                    map.remove(job_id);
+                }
+                tracing::info!(
+                    target: "hkask.training.nebius.cancel",
+                    job_id = %job_id, vm_id = %vm_id,
+                    "Nebius VM deleted (all billing stopped)"
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.training.nebius.cancel",
+                    error = %e, vm_id = %vm_id,
+                    "Nebius VM delete failed — VM may still be billing. Keeping mapping for retry."
+                );
+                Err(HostProviderError::Backend(format!(
+                    "Failed to delete Nebius VM: {e}"
+                )))
+            }
         }
-
-        tracing::info!(
-            target: "hkask.training.nebius.cancel",
-            job_id = %job_id, vm_id = %vm_id,
-            "Nebius VM deleted (all billing stopped)"
-        );
-        Ok(())
     }
 }
 

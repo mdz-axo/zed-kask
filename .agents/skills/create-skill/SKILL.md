@@ -194,6 +194,40 @@ Delegate to `skill-maintenance-build` to generate the full registry crate:
 4. **SKILL.md companion** with ontology references in the description
    and constraints
 
+### Visual artifact surfacing (Phase 3 gate)
+
+If the skill produces a visual artifact (Mermaid diagram, chart, map, or any
+renderable output) in an intermediate `select` step, the process manifest **must
+include a final `render` step** that surfaces the artifact as the cascade's
+final output. Without it, the artifact stays buried in an intermediate
+`step_N_result` and `extract_final_step_result` picks a later step (compute/loop)
+that has no diagram — the user never sees the visualization.
+
+The pattern:
+
+1. An intermediate `select` step generates the visual artifact source (e.g.,
+   `map_diagram` containing `quadrantChart ...`, or `mermaid_source` containing
+   `sankey-beta ...`).
+2. A final `render` step (RenderAct, `action: render`) takes the artifact source
+   via `input_mapping` and wraps it in a fenced ```mermaid block as a markdown
+   string. This step is deterministic (no LLM call, `gas_cap: 100`).
+3. The `loop` step comes **after** the render step. The render step's ordinal
+   must be the highest among steps that produce a `step_N_result` (the `loop`
+   action does not produce one), so `extract_final_step_result` picks it.
+4. The render template is a pure Jinja2 file (no `[inference]` frontmatter) — the
+   `render` action calls `render_minijinja` on the full file content, so
+   frontmatter would appear in the output.
+
+Detection criteria — add a render step if **any** of these are true:
+- A template's `contract.output` includes a field whose description says "mermaid",
+  "diagram", "chart", "graph", "visual", or "plot".
+- A template instructs the model to "generate a Mermaid ... chart/diagram".
+- The skill's SKILL.md description mentions "renders natively in Zed", "visual",
+  "diagram", or "chart".
+
+Skills that do NOT produce visual artifacts (pure reasoning, extraction, audit,
+code review, etc.) do not need a render step.
+
 ### Phase 4 — Validate (delegate to skill-maintenance-validate)
 
 Delegate to `skill-maintenance-validate` to check the scaffolded crate

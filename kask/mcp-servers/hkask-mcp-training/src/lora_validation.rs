@@ -128,8 +128,8 @@ pub fn validate_training_params(params: &TrainingParams) -> Vec<ValidationFindin
 /// - n_samples < 1000: warn (require explicit justification)
 /// - n_samples > 100000: warn (require quality audit — dedup, contamination)
 ///
-/// This gate is called from `training_submit` after dataset normalization,
-/// not from `validate_training_params` (which doesn't have the dataset path).
+/// This gate is called from `training_validate_config`. The `training_submit`
+/// tool does not run G-D1 — run `training_validate_config` first to check dataset size.
 pub fn validate_dataset_size(dataset_path: &std::path::Path) -> Vec<ValidationFinding> {
     let mut findings = Vec::new();
 

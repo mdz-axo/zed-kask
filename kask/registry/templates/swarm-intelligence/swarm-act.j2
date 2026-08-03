@@ -6,11 +6,13 @@ contract:
     swarm_id: string
     task: string
     mode: string
+    steering_mode: string
   output:
     dispatch_intents: array
     gate_decisions: array
     emitted_calls: array
     aborted_reasons: array
+    steering_directive: object|null
     delegate_notes: string
 energy_cap: 4096
 visibility: Public
@@ -152,8 +154,37 @@ emitted_calls lists the actual MCP calls made (move_type, agent, tool_name,
 credits_authorized). This is the ground truth the CHECK phase reconciles
 against /api/wallet/transactions.
 
+## Step 5 — Steering directive (Cybernetic Swarm Plan C5/C6 execution boundary)
+
+{% if steering_mode == "steering" %}
+In steering mode, the swarm-intelligence output is not the final product — the
+**Kask Curator** (local swarms) or **Xaman Ek** (cloud swarms) executes the
+emitted_calls and feeds the results back. Emit a `steering_directive` object:
+
+```json
+{
+  "execute": "<the emitted_calls array — the plan to run>",
+  "via": "swarm_delegate_local" (local) | "swarm_xaman" (cloud),
+  "collect": "LocalDelegateResult per emitted call — feed back as delegate_results on the next swarm-intelligence invocation",
+  "feedback": "re-invoke swarm-intelligence with delegate_results set to the collected results so ORIENT attributes fault and C6 reconfigures"
+}
+```
+
+The Curator (local) calls `swarm_delegate_local` for each emitted call,
+collects the `LocalDelegateResult` objects, and re-invokes swarm-intelligence
+with `delegate_results` set to that array — closing the feedback loop
+autonomously (Option B). For cloud swarms, delegate to Xaman Ek via
+`swarm_xaman` with the plan as the message; Xaman Ek's execution capability is
+ABW-side (the steering skill in its profile, or built-in).
+{% else %}
+In advisory mode (the default), the plan IS the final output. Set
+steering_directive = null — the operator executes the emitted_calls manually
+and feeds `delegate_results` back on the next invocation (Option A).
+{% endif %}
+
 ## Output
 
 Produce a JSON object with: dispatch_intents (array), gate_decisions (array
 of { decision: "Proceed"|"Abort", credits_authorized?, reason? }), emitted_calls
-(array), aborted_reasons (array), delegate_notes.
+(array), aborted_reasons (array), steering_directive (object or null — present
+in steering mode, null in advisory mode), delegate_notes.
