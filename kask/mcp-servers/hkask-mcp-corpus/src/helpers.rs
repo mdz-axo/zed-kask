@@ -18,7 +18,7 @@ pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// Cosine distance between two vectors (1 - cosine similarity, f64 precision).
 /// Returns 0.0 for identical, 1.0 for orthogonal, 2.0 for opposite or degenerate.
 #[must_use]
-pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
+pub fn cosine_distance(a: &[f32], b: &[f32]) -> f64 {
     if a.len() != b.len() || a.is_empty() {
         return 2.0;
     }

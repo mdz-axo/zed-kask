@@ -301,6 +301,13 @@ misses that 4 other hooks are also unwired. The warn is the effector that
 drives operator remediation; if it only names 1 of 5 hooks, the operator
 cannot remediate correctly.
 
+This also covers startup config reads, not just `set_*` hooks: a numeric env
+var (budget cap, threshold, limit) read at startup that fails to parse must
+`log::warn!` naming the malformed value, not silently fall back to
+disabled/default via a `.filter(|c| *c > 0)?` / `.and_then(parse)?` chain —
+otherwise the operator cannot distinguish "not configured" from "configured
+but broken" (the same trap as a missing `else` branch).
+
 ## Cross-thread GPUI communication uses channels, not `AsyncApp` handles
 
 `AsyncApp` is not `Send` (GPUI is single-threaded; it holds `Rc`/`Weak<AppCell>`).
@@ -586,6 +593,12 @@ landed — grep the symbol, and if absent, delete the comment or land the
 migration. The `.rules` trap "Process-global hooks set at runtime need a
 startup-failure signal" generalizes: every advertised invariant needs an
 enforcement point, or the doc must say "not yet enforced."
+
+This includes documented config behavior, not just code doc comments: an
+env-var description or README row that promises runtime behavior ("warnings
+fire at 80%") must point to the line that evaluates it, or say "not yet
+enforced" — the rule broadens from `///` comments to any user-facing
+documentation of behavior.
 
 ## Manifest `ocap:` is declared config, not a security gate
 

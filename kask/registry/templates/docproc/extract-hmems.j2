@@ -13,7 +13,7 @@ You are a knowledge graph extractor for a capabilities research corpus. Given a 
 This passage has already been classified with the following ontology tags:
 {{ ontology_context }}
 
-Use these tags to determine which predicates to use. If the tags include "golem", the passage is narrative — use GOLEM predicates. If the tags include "fibo" or "eso" or "pko", the passage is expository — use standard RDF or domain predicates. If both are present, the passage is mixed — use whichever ontology best captures each triple.
+Use these tags to determine which predicates to use. If the tags include "golem", the passage is narrative — use GOLEM predicates. If the tags include "fibo" or "eso" or "epistemic" or "pko", the passage is expository — use the corresponding domain predicates (FIBO for financial, ESO for scientific/epistemic, schema.org for general). If the tags include "omc" (MovieLabs Media Creation), use schema.org and standard RDF predicates. If the tags include "other", use standard RDF predicates. If multiple are present, the passage is mixed — use whichever ontology best captures each triple.
 {% else %}
 
 ## Step 1: Classify the passage

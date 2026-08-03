@@ -286,17 +286,14 @@ impl CorpusServer {
                         ..Default::default()
                     };
 
-                    let response: Option<_> = match retry_with_backoff(
+                    let response: Option<_> = retry_with_backoff(
                         MAX_RETRIES,
                         "hkask.mcp.docproc.tag_chunks",
                         &chunk_id,
                         || router.generate_with_model(&prompt, &params, Some(&model_override), None),
                     )
                     .await
-                    {
-                        Ok(resp) => Some(resp),
-                        Err(_) => None,
-                    };
+                    .ok();
 
                     let parse_result = response
                         .as_ref()

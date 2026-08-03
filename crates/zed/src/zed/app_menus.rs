@@ -342,7 +342,7 @@ mod tests {
     // merge cannot silently revert it to "Zed".
     #[test]
     fn test_leftmost_menu_name_is_zk() {
-        let cx = TestAppContext::default();
+        let cx = TestAppContext::single();
         let menus = cx.update(|cx| app_menus(cx));
         let leftmost = menus
             .first()
@@ -354,7 +354,7 @@ mod tests {
     // leftmost menu so an upstream merge cannot silently remove it.
     #[test]
     fn test_leftmost_menu_has_update_zed_kask_item() {
-        let cx = TestAppContext::default();
+        let cx = TestAppContext::single();
         let menus = cx.update(|cx| app_menus(cx));
         let leftmost = menus
             .first()
