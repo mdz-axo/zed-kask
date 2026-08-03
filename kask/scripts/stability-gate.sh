@@ -211,7 +211,7 @@ if [[ ${#RUN_IDS[@]} -ge 4 ]]; then
             || ! metric_present "$run_b" "mutation_score"; then
             continue
         fi
-        :        ms_a=$(read_metric "$run_a" "mutation_score")
+        ms_a=$(read_metric "$run_a" "mutation_score")
         ms_b=$(read_metric "$run_b" "mutation_score")
         cov_a=$(read_metric "$run_a" "coverage_pct")
         cov_b=$(read_metric "$run_b" "coverage_pct")

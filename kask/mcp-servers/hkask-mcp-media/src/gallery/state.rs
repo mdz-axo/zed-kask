@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn scan_finds_images() {
         let (_dir, gallery_path) = setup_test_gallery();
-        let mut state = GalleryState::new(gallery_path.clone(), GalleryMode::ReadOnly);
+        let mut state = GalleryState::new(gallery_path, GalleryMode::ReadOnly);
         let result = state.scan(true, None);
         assert_eq!(result.added, 1);
         assert_eq!(state.image_count, 1);
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn scan_respects_extension_filter() {
         let (_dir, gallery_path) = setup_test_gallery();
-        let mut state = GalleryState::new(gallery_path.clone(), GalleryMode::ReadOnly);
+        let mut state = GalleryState::new(gallery_path, GalleryMode::ReadOnly);
         let result = state.scan(true, Some(&["gif".to_string(), "bmp".to_string()]));
         assert_eq!(
             result.added, 0,

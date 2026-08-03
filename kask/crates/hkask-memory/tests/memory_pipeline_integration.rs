@@ -302,7 +302,7 @@ fn consolidation_combines_both_sides_decayed() {
     )
     .with_visibility(hkask_types::Visibility::Shared)
     .with_confidence(Confidence::new(0.8));
-    semantic.store(sem_triple.clone()).expect("store semantic");
+    semantic.store(sem_triple).expect("store semantic");
 
     // Store an episodic h_mem with same EAV and confidence 0.8
     let epi_triple = HMem::new(
@@ -313,7 +313,7 @@ fn consolidation_combines_both_sides_decayed() {
     )
     .with_perspective(perspective)
     .with_confidence(Confidence::new(0.8));
-    episodic.store(epi_triple.clone()).expect("store episodic");
+    episodic.store(epi_triple).expect("store episodic");
 
     // Consolidate — should Bayesian-combine both sides after decay
     let outcome = bridge

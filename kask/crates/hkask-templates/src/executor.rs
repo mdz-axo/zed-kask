@@ -542,6 +542,26 @@ impl ManifestExecutor {
                     }
                 }
 
+                // Profile enforcement (proposer/evaluator separation): if the step
+                // declares a `profile`, verify `terminal` is NOT available. This is
+                // the mechanical gate — a SKILL.md instruction is not a gate. The
+                // check is effect-based (queries discover_tools), not name-based, so
+                // it catches a user who customizes a built-in profile to re-enable
+                // `terminal`. See .rules "Advertised invariants need enforcement points".
+                if let Some(ref profile_name) = step.profile {
+                    let available = self.tools.discover_tools().await;
+                    if available.iter().any(|t| t == "terminal") {
+                        return Err(TemplateError::Manifest(format!(
+                            "Step {} declares profile '{}' but the `terminal` tool is available. \
+                             This violates proposer/evaluator separation — a proposer with terminal \
+                             can evaluate its own tests (self-confirming loop anti-pattern). \
+                             Remediation: remove `terminal` from the '{}' profile in settings, \
+                             or bind this step to a profile without `terminal` (e.g. `ask`).",
+                            step.ordinal, profile_name, profile_name
+                        )));
+                    }
+                }
+
                 match step.action.as_str() {
                     // ── Abort: converged — exit with success ──
                     "abort" => {
@@ -2127,6 +2147,7 @@ mod tests {
             condition: None,
             branching: None,
             branching_field: None,
+            profile: None,
         };
 
         let mut context = HashMap::new();
@@ -2343,6 +2364,7 @@ mod tests {
             condition: None,
             branching: None,
             branching_field: None,
+            profile: None,
         };
 
         let result = executor.execute_tool_invoke(&step, &mut context).await;
@@ -2470,6 +2492,7 @@ convergence:
             condition: None,
             branching: None,
             branching_field: None,
+            profile: None,
         };
 
         let (parent_context, _gas, _rjoule) = executor

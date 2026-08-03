@@ -81,6 +81,15 @@ pub struct BundleManifestStep {
     /// match a key in `branching`.
     #[serde(default)]
     pub branching_field: Option<String>,
+    /// Agent profile required for this step. When present, the executor verifies
+    /// that the `terminal` tool is NOT available before executing the step —
+    /// enforcing proposer/evaluator separation (a proposer with `terminal` can
+    /// evaluate its own tests, a self-confirming loop anti-pattern). The check
+    /// is effect-based (queries `discover_tools`), not name-based, so it catches
+    /// a user who customizes a built-in profile to re-enable `terminal`.
+    /// Example: `profile: ask` (the built-in `ask` profile omits `terminal`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 impl BundleManifestStep {

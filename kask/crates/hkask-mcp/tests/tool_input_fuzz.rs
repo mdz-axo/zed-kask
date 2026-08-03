@@ -78,6 +78,7 @@ proptest! {
     fn unwrap_envelope_lifts_content_key(
         value in arb_json_value(),
     ) {
+        #[allow(clippy::redundant_clone)] // proptest: value is compared after cloning into json!
         let enveloped = json!({"content": value.clone()});
         let unwrapped = unwrap_tool_envelope(enveloped);
         prop_assert_eq!(

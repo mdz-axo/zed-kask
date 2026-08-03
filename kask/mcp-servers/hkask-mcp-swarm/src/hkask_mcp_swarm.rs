@@ -4534,7 +4534,7 @@ mod tests {
             MockAbw::new(|_method, _path, _body| (404, r#"{"error": "unmocked"}"#.to_string()));
         let consent = StdArc::new(ConsentStore::default());
         let config = SwarmConfig {
-            api_base_url: mock.base_url.clone(),
+            api_base_url: mock.base_url,
             api_key: Some("test-key".to_string()),
             curator_consent_default: true,
             ..Default::default()
