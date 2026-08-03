@@ -6,6 +6,8 @@
 //! → cost → debit → scan output. The ledger is operator-funded; the
 //! inference/guard/skill/tool ports are resolved once at construction.
 
+use std::time::Instant;
+
 use crate::error::SwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
@@ -370,6 +372,7 @@ impl LocalSwarmRuntime {
         credits_authorized: u32,
         max_credits_per_dispatch: u32,
     ) -> Result<LocalDelegateResult, SwarmError> {
+        let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
 
@@ -632,6 +635,7 @@ impl LocalSwarmRuntime {
             tokens_used: tokens,
             cost,
             balance: new_balance,
+            latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             tool_calls: tool_calls_made,
             executed_skills,
         })
@@ -657,6 +661,12 @@ pub(crate) struct LocalDelegateResult {
     pub(crate) tokens_used: i64,
     pub(crate) cost: i64,
     pub(crate) balance: i64,
+    /// End-to-end delegation latency in milliseconds (Cybernetic Swarm Plan
+    /// component C4 — HyEvo `T_q` measurement). Captured from the start of
+    /// `delegate` to just before the result is returned. Pure measurement — no
+    /// gate; enables future cost-aware decisions without committing to
+    /// evolutionary search.
+    pub(crate) latency_ms: u64,
     /// Summary of tool calls made during the delegation (qualified
     /// `server/tool` name + ok/error). Empty when the agent declares no
     /// `mcp_tools` or the model made no calls.
@@ -1013,6 +1023,14 @@ mod tests {
         assert_eq!(result.tokens_used, 5000);
         assert_eq!(result.cost, 5);
         assert_eq!(result.balance, 95);
+        // C4: latency_ms is recorded on every successful delegation. A stub
+        // call is sub-millisecond; the bound just confirms the field is wired
+        // and finite (not a sentinel, not unbounded).
+        assert!(
+            result.latency_ms < 60_000,
+            "latency_ms must be a sane finite value, got {}",
+            result.latency_ms
+        );
     }
 
     #[tokio::test]

@@ -66,6 +66,10 @@ pub fn apply_preset(params: &mut MediaGenerateParams, preset: &StylePreset) {
 }
 
 /// List all available style preset names.
+///
+/// Not yet wired to a tool surface; retained as the public listing API so a
+/// future tool can expose it without re-adding the function.
+#[allow(dead_code)]
 pub fn available_styles() -> &'static [&'static str] {
     &["default", "anime", "realistic", "cinematic", "minimal"]
 }

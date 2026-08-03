@@ -107,6 +107,20 @@ inputs:
     description: >
       Output of a previous swarm-intelligence iteration on the same swarm.
       Closes the feedback loop: SENSE consumes prior_iteration.next_focus.
+  - name: task_success
+    type: object
+    required: false
+    description: >
+      Optional deterministic task-success verdict (Cybernetic Swarm Plan
+      component C0). A deterministic evaluator's verdict on whether the
+      swarm's last output solved the task: { "pass": bool, "score":
+      0.0..1.0|null, "detail": string|null, "evaluator": string }. The
+      judge MUST be deterministic (test pass/fail, schema validation, exit
+      code, regex/reference match) — NOT an LLM score. When null (open tasks
+      with no oracle), d uses the three swarm-health axes only and the human
+      Go See loop (component C2) covers the task-success gap. Do NOT
+      fabricate a verdict; a missing task_success means "not measured", not
+      "passed" (the .rules `unwrap_or(0)` trap on regulation signals).
 
 steps:
   - ordinal: 1
@@ -225,7 +239,12 @@ steps:
       diversification; if loop_closure, on reconciliation. Also emit the
       algedonic signal: any 402 / un-acknowledged curator dispatch is
       surfaced as a loop-break regardless of d. Vacuous-truth default: zero
-      dispatches → loop_closure 1.0.
+      dispatches → loop_closure 1.0. When the caller supplies a deterministic
+      `task_success` verdict (Cybernetic Swarm Plan component C0), d gains a
+      fourth axis `(1 - s)^2` (s = task_success.score, or pass→1.0 / fail→0.0);
+      when `task_success` is null (open tasks with no oracle), d uses the three
+      swarm-health axes only — the human Go See loop (C2) covers the task-success
+      gap, never an LLM judge.
     renderer: minijinja
     template_ref: swarm-intelligence/swarm-check
     gas_cap: 4096
@@ -236,6 +255,7 @@ steps:
       swarm_id: "{{ swarm_id }}"
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
+      task_success: "{{ task_success | default(none) }}"
 
   - ordinal: 6
     action: compute

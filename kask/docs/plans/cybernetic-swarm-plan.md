@@ -185,6 +185,15 @@ flowchart TD
 
 ## 4. The human-on-the-loop mechanisms × hKask (S2)
 
+**Naming (grounded in the code):** "the curator" is the actor — the
+`CuratorAgentServer`-backed `ConversationView` built in `ensure_steer_conversation`
+(`swarm_panel.rs` L1647) with the `steer_system_prompt` as static context.
+"Steer" is a `PanelMode` (L246 — Browse/Author/Compose/Steer), the capability
+the curator exercises (compose/steer a swarm; its `SkillTool` invokes the
+`swarm-intelligence` cascade). **"Steer curator" is not a thing** — there is one
+curator, and steering is one of its capabilities. Xaman Ek (`swarm_xaman`) is a
+*separate, remote, third-party ABW consultant*, not the curator.
+
 | S2 mechanism | Cybernetic law it instantiates | hKask surface | Status |
 |---|---|---|---|
 | **Attenuation** (aggregate/filter so the human isn't overwhelmed) | Ashby: human variety < system variety → filter | `with_wallet` (balance rides every tool response, `abw-swarm-intelligence.md` §4.1) — a single scalar, not 200 logs. `render_consent_banner` + `within_budget: false` disables Confirm (§3.6) — the spend signal is reduced to one boolean. The algedonic channel *only* escalates on 402/un-ack, not on every dispatch. | **Has** — hKask already attenuates. The banner is textbook variety attenuation: the human sees one boolean, not the cost breakdown. |
@@ -357,9 +366,9 @@ S3/S4/S5/S7 and is presented first because it gates three of the components.
   re-propose the same hire/fire cycle indefinitely. This is the cheapest
   anti-loop mechanism in the plan and it is purely deterministic.
 - **Dropped from S3:** the population search `N=5` + pbest/gbest (expensive
-  under the consent gate — each candidate hire needs a token; better suited to
-  the Steer curator reasoning over candidates without spending, not the
-  automated cascade); the `LLM_flaw` system-wide diagnosis (probabilistic,
+  under the consent gate — each candidate hire needs a token; better suited
+  to the curator in Steer mode (it reasons over candidates without spending),
+  not the automated cascade); the `LLM_flaw` system-wide diagnosis (probabilistic,
   deprecated); the executable-code search space (hKask's `delegate` pipeline is
   fixed by design — a safety feature, not a limitation to remove).
 - **Needs C0:** yes (to know an edit "failed" = `d_delta ≤ 0` *and* `s` did
@@ -538,8 +547,8 @@ out of scope per §3).
 - **S3 population search (N=5) + pbest/gbest:** each candidate hire needs its
   own consent token; the 3-layer gate makes multi-candidate search expensive at
   the skill layer. If population reasoning is wanted, route it through the
-  Steer curator (reasons over candidates without spending), not the automated
-  cascade. The LLM `LLM_flaw` is deprecated (Constraint 2).
+  curator in Steer mode (it reasons over candidates without spending), not the
+  automated cascade. The LLM `LLM_flaw` is deprecated (Constraint 2).
 - **S4 multi-island + MAP-Elites evolution:** zero evolutionary substrate in
   hKask (`grep island|elite_archive|MAP-Elites|population` → 0 hits). Net-new
   infrastructure; the ring-migration + behavior-grid do not compose with the
@@ -819,6 +828,216 @@ convergence-check template"):
   double-loop learning — S2's Lean grounding.)
 
 ---
+
+## 11. Agent and swarm sharing via the registry-crate model (open question)
+
+This is a proposed direction, not a final design — added per the operator's
+question: can the same model hKask uses for **skill sharing** enable **agent and
+swarm sharing** from the local agent and swarm system?
+
+### 11.1 The skill-sharing model (verified)
+
+Skills are shared as **self-describing registry crates** (`manifest.yaml` +
+`.j2` templates) in a catalog. The `skill-discovery` skill runs the lifecycle:
+- **detect-gap** — classify capability gaps (coverage/feature/automation/
+  knowledge/governance/quality/epistemic), prioritize by impact.
+- **search** — score each catalog skill 0.0–1.0 on capability match (0.50) +
+  lexicon overlap (0.25) + trigger relevance (0.25); rank; return fit ≥ 0.20.
+- **evaluate** — 11 checks scored 0–2 (format, quality, safety, Magna Carta
+  compliance); max 22, min installable 16, safety 0 → reject.
+- **install** — the catalog grows; future `skill-router` calls have better
+  coverage.
+
+The model's properties: an artifact is a **self-describing crate** with a **typed
+contract**, shared via a **catalog**, gated by an **evaluation** (format/quality/
+safety), and the catalog grows as artifacts are installed. `skill-router`
+consumes the catalog; `skill-discovery` grows it.
+
+### 11.2 What the local agent system has today (verified)
+
+- `LocalAgentRegistry` reads `agents/local/curated/<id>/agent_card.json`
+  (`local_registry.rs`).
+- `LocalAgentCard` already carries the typed expertise contract: `agent_type`,
+  `accepts[]`/`produces[]` (typed I/O ports), `dependencies{required,optional}`,
+  `capabilities{model, system_prompt, mcp_tools[], skills[]}`, `cloud_id`.
+- Sync is **1:1 with ABW** via `swarm_clone_to_local` (ABW → local, sets
+  `cloud_id`) and `swarm_push_to_cloud` (local → ABW). There is **no peer-to-
+  peer or registry-based sharing** of agent cards or swarm definitions
+  independent of ABW. ABW is itself a (cloud) instance of a shared agent
+  catalog; the local system is a leaf that syncs with it.
+
+### 11.3 The proposed analog: agent crates and swarm crates
+
+Applying the skill-sharing model to agents and swarms:
+
+- **Agent crate** = `agent_card.json` + a small manifest (provenance: author,
+  version, license; the expertise contract is the card itself). Shared via an
+  **agent catalog** (a registry dir or a git remote, mirroring the skill
+  catalog). Evaluate against:
+  - **typed-port validity** — `accepts`/`produces` non-empty, well-formed
+    transform names (the variety_coverage check depends on this).
+  - **tool/skill allowlist safety** — `mcp_tools`/`skills` provenance-filtered
+    against the operator's governed server set (the existing clone-time filter
+    in `swarm_clone_to_local`, `abw-swarm-intelligence.md` §15.3, applies).
+  - **guard-scan the `system_prompt`** — a shared agent's `system_prompt` is
+    untrusted text; the existing `scan_input` guard (`local_runtime.rs` L418)
+    is the enforcement point. A crate whose `system_prompt` trips the guard is
+    rejected (safety 0 → reject, mirroring skill-discovery).
+  - **Magna Carta / Regulation span** — user sovereignty, affirmative consent,
+    clear boundaries (the same checks skill-discovery runs).
+  - Install → `agents/local/curated/<id>/` (or a new `agents/shared/` dir to
+    distinguish shared from authored).
+- **Swarm crate** = a swarm definition: `mission` + a roster of `agent_id`s +
+  the dependency graph + a `target_condition`. Self-describing, evaluable:
+  - **variety coverage** — does the roster's combined `produces[]` cover the
+    mission's `required_transforms`? (The SENSE variety_coverage check, applied
+    at install time as a gate.)
+  - **no-delegation-chains invariant** (`swarm-intelligence.yaml` L8–10).
+  - **cost feasibility** — the roster's hire cost vs the per-dispatch ceiling.
+  - Install → `swarm_create_swarm` (ABW) or a local workspace equivalent,
+    consent-gated per hire.
+
+### 11.4 The composition: swarm-intelligence as a consumer of the agent catalog
+
+The deepest fit: the `swarm-intelligence` DECIDE step (variety deficit → hire
+agents whose `accepts`/`produces` cover the missing transforms) becomes **"search
+the shared agent catalog for an expert whose `produces[]` covers the missing
+transform"** — exactly as `skill-router` consumes the skill catalog. The loop:
+
+```
+SENSE (variety deficit)
+  → DECIDE (search agent catalog for a covering expert)
+  → evaluate candidate (deterministic: typed-port + guard-scan + safety)
+  → ACT (consent-gated hire)
+  → CHECK (d + s)
+  → CONVERGE
+```
+
+This turns `swarm-intelligence` from "hire from the ABW catalogue only" into
+"hire from any shared agent catalog (ABW + peer + registry)," and turns agent
+authoring into a **catalog contribution** — the operator's locally-authored
+experts become shareable, evaluated, installable artifacts, not just ABW
+cloud entries.
+
+### 11.5 Open questions (not yet decided)
+
+- **Catalog transport**: a local registry dir, a git remote, or both? Skills
+  live in `kask/registry/`; agents in `agents/local/curated/`. A shared agent
+  catalog needs a transport and a provenance/author identity model (skills
+  carry `editor` + `visibility`; agent cards carry `cloud_id` but no
+  author/version).
+- **Trust boundary**: a shared agent crate's `system_prompt` is untrusted. The
+  guard-scan is the hard gate (already enforced at delegate time,
+  `local_runtime.rs` L418); the crate evaluation is the soft gate (reject at
+  install). Both are needed — the `.rules` "Advertised invariants need
+  enforcement points" trap: the evaluation must actually reject, not just warn.
+- **ABW's role**: ABW is already a shared agent catalog (cloud). The local
+  sharing layer is a peer/registry alongside ABW, not a replacement. The
+  `cloud_id` sync link stays; a shared-local crate may or may not have a
+  `cloud_id`.
+- **Swarm crate vs workspace**: a swarm crate is a *template* (a reusable
+  team-of-experts for a class of missions); an ABW workspace is a *live
+  instance*. The crate is to the workspace what a skill manifest is to a skill
+  execution.
+
+This section is a **direction for a future plan**, not an implementation
+spec. It is consistent with the determinism constraint (the evaluation gates are
+deterministic: typed-port check, guard-scan, safety checklist) and the
+no-backward-compat constraint (new `agents/shared/` dir, new crate manifest
+fields).
+
+## 12. Team-of-experts framing in the UI and help prompts (open question)
+
+Added per the operator's question: should we **enforce, in the UI and help
+prompts, that agents in a swarm are experts** — so a swarm is explicitly a
+**team of experts / mixture-of-experts** agentic system?
+
+### 12.1 The framing is already implicit in the substrate (verified)
+
+- `LocalAgentCard` encodes expertise: `agent_type` (the role) +
+  `accepts[]`/`produces[]` (the typed expertise contract — what transforms
+  this agent consumes and produces) + `dependencies{required,optional}` (the
+  wiring to other experts) (`local_registry.rs` L17–67).
+- The `swarm-intelligence` SENSE measures **variety_coverage** (does the team's
+  combined `produces[]` cover the task's `required_transforms`?) and
+  **separation** (distinct `(agent_type, model, temperature)` tuples / agent
+  count) — i.e. it already evaluates the swarm as a team of distinct experts,
+  not a pool of generalists (`swarm-intelligence.yaml` L114–124).
+- OFA-MAS (S6) uses a literal Mixture-of-Experts (MoE) at the **model** level;
+  hKask's swarm is a **MoE at the agent level** — DECIDE routes a sub-task to
+  the agent whose `produces[]` matches the sub-task's transform, the agent-level
+  analogue of MoE routing to a specialist sub-network. hKask's is coarser
+  (agent-level) but **typed** (`accepts`/`produces`) and **governed**
+  (consent/gas/OCAP) — distinct from OFA-MAS's learned model-level MoE.
+- So the operator's framing is accurate: a hKask swarm **is** a team-of-experts
+  / mixture-of-experts system. Making it explicit in the UI aligns the
+  operator's mental model with the substrate and with the skill's
+  variety_coverage enforcement.
+
+### 12.2 Why enforce it (the argument for)
+
+- **Authoring quality**: an operator who authors a "generalist" agent (broad
+  description, no `accepts`/`produces`, broad `system_prompt`) produces a card
+  that contributes low variety (it overlaps everything, covers nothing
+  distinctly). The skill's variety_coverage penalizes this, but the operator
+  doesn't see why. Explicit "author an expert" framing + an `accepts`/`produces`
+  editor in the Author form makes the contract the operator's primary authoring
+  surface, not an afterthought.
+- **Composition quality**: an operator who composes a swarm of overlapping
+  generalists gets high redundancy, low separation, low variety_coverage — the
+  skill loops trying to fix it. "A swarm is a team of experts; compose for
+  distinct coverage" framing in the Compose form sets the right prior.
+- **Mixture-of-experts routing clarity**: framing the curator's job in the
+  Steer prompt as "route each sub-task to the expert whose `produces[]` matches"
+  makes the MoE routing explicit, which improves the curator's hire/delegate
+  decisions.
+
+### 12.3 Where to enforce (verified UI surfaces)
+
+| Surface | File / symbol | Current | Proposed framing |
+|---|---|---|---|
+| Author form | `render_author` (`swarm_panel.rs` L2495–2577) | Name / Description / System prompt | Add an **expertise contract editor**: `agent_type` + `accepts[]` + `produces[]` + `dependencies`, with help text: *"Author an expert — a narrow, typed expertise (accepts → produces) that composes with other experts in a swarm. Generalists degrade variety_coverage."* The fields exist on `LocalAgentCard` but are not exposed in the UI today. |
+| Compose form | `render_compose` (L2580–2748) | Name / mission / agents / Xaman Ek query | Help text: *"A swarm is a team of experts. Compose for variety: each agent covers distinct transforms; overlap is redundancy, not capability. The `swarm-intelligence` skill's variety_coverage check enforces this."* |
+| Steer system prompt | `steer_system_prompt` (L95–185) | Names tool sets, mode, consent gate, ceiling, skill | Add: *"Agents are experts with a typed accepts→produces contract; a swarm is a team-of-experts (mixture-of-experts) system. When composing, route each sub-task to the agent whose `produces[]` matches the sub-task's transform. Variety_coverage is the enforcement: a team of overlapping generalists fails it."* |
+| Agent card display | `render_card` (L2257–2488) | `agent_type` + description | Show the expertise contract: `agent_type` + `accepts → produces` + source badge (Cloud/Local/Synced). |
+| Skill enforcement | `swarm-intelligence.yaml` SENSE | variety_coverage + separation (already present) | No change — the skill already enforces it; the UI framing makes the operator author to satisfy it. |
+
+### 12.4 Tests to update (the `.rules` trap)
+
+The Steer prompt content is **pinned by tests**: `steer_system_prompt_names_skill_and_server`
+(L3592), `steer_prompt_describes_local_tools` (L3664),
+`steer_prompt_carries_mode_and_context_instruction` (L3705),
+`steer_prompt_references_only_existing_tools` (L3624). Adding the team-of-experts
+framing to `steer_system_prompt` means **updating these pinned assertions in
+the same change** (the `.rules` "Tests must pin deliberate zed-kask deviations"
+/ "When you change a production path... grep the test files for the old
+assertions and update them in the same commit"). This is not optional — the tests
+will fail otherwise, and CI normalizes the failure as "pre-existing," masking
+the drift.
+
+### 12.5 Open questions (not yet decided)
+
+- **Enforce vs guide**: "enforce" could mean (a) the UI *rejects* an agent card
+  with empty `accepts`/`produces` (hard), or (b) the UI *warns* and the skill's
+  variety_coverage penalizes it (soft). The soft path matches the existing
+  substrate (the skill already penalizes; the UI adds the prior). The hard path
+  adds a new gate — name which cybernetic mechanism (attenuation: reject
+  low-variety cards at author time) per the Appendix B.3 proposed rule.
+- **Mixture-of-experts naming**: "team of experts" is unambiguous;
+  "mixture of experts" risks confusion with the model-level MoE (OFA-MAS). The
+  UI/help should use "team of experts" for the agent-level framing and reserve
+  "mixture of experts" for the routing analogy, with a one-line clarification.
+- **Author-form scope**: adding `accepts`/`produces` to the Author form is a UI
+  change that also affects `swarm_create_agent` (the ABW card carries
+  `capabilities` but `CreateAgentRequest` does not expose `accepts`/`produces` —
+  `hkask_mcp_swarm.rs` L197–225). Exposing the expertise contract end-to-end
+  (UI → request → ABW card) is cross-cutting; the local card path is the
+  lower-friction entry point (no ABW round-trip).
+
+This section is a **proposed direction**. It is consistent with the
+determinism constraint (the enforcement is the existing variety_coverage check,
+deterministic) and the no-backward-compat constraint (new UI fields, updated
+pinned tests).
 
 ## Appendix A — How this plan was validated
 

@@ -584,3 +584,52 @@ impl BundleRegistryIndex for Registry {
         Registry::find_bundle_by_skills(self, skill_ids).cloned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::process_manifest_yaml;
+    use crate::manifest_loader::load_manifest_from_yaml;
+
+    // Cybernetic Swarm Plan C0: the `swarm-intelligence` manifest must declare
+    // the optional deterministic `task_success` input and thread it to the
+    // CHECK step's input_mapping, so a deterministic evaluator's verdict can
+    // become a fourth axis of the convergence metric `d`. Pins the manifest
+    // side of C0 (the template side is pinned by rendering, not here).
+    #[test]
+    fn swarm_intelligence_manifest_declares_task_success() {
+        let yaml = process_manifest_yaml("swarm-intelligence")
+            .expect("swarm-intelligence manifest must be embedded");
+        let manifest =
+            load_manifest_from_yaml(yaml).expect("swarm-intelligence manifest must parse");
+
+        // The `task_success` input is declared (required: false).
+        let inputs = manifest
+            .inputs
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .expect("swarm-intelligence declares inputs");
+        let has_task_success = inputs
+            .iter()
+            .any(|i| i.get("name").and_then(|v| v.as_str()) == Some("task_success"));
+        assert!(
+            has_task_success,
+            "swarm-intelligence inputs must include `task_success` (C0)"
+        );
+
+        // CHECK (ordinal 5) threads `task_success` into its input_mapping.
+        let check = manifest
+            .steps
+            .iter()
+            .find(|s| s.ordinal == 5)
+            .expect("swarm-intelligence has a CHECK step (ordinal 5)");
+        let mapping = check
+            .input_mapping
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .expect("CHECK step has an input_mapping");
+        assert!(
+            mapping.contains_key("task_success"),
+            "CHECK step input_mapping must bind `task_success` (C0)"
+        );
+    }
+}

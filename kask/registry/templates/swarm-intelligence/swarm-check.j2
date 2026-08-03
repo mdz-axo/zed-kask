@@ -7,6 +7,7 @@ contract:
     swarm_id: string
     mode: string
     target_condition: object|null
+    task_success: object|null
   output:
     post_act_state: object
     variety_coverage: number
@@ -17,6 +18,7 @@ contract:
     algedonic_signal: object|null
     lessons_learned: array
     delegate_notes: string
+    task_success: object|null
 energy_cap: 4096
 visibility: Public
 ---
@@ -125,15 +127,40 @@ as a loop-break.
 
 ## Step 3 — Compute the convergence metric (swarm-state distance)
 
+{% if task_success and task_success | length > 0 %}
+The caller supplied a deterministic task-success signal `task_success`:
+```json
+{{ task_success | tojson }}
+```
+Let `s = task_success.score` if present, else `1.0` if `task_success.pass` is
+true else `0.0`. `s` is a deterministic evaluator's verdict (test pass/fail,
+schema validation, exit code, regex/reference match) — NOT an LLM judgement
+(the determinism constraint). When `s` is present, `d` includes the
+task-success axis: the Go See gap from the cybernetic plan §5 — a healthy
+swarm that fails the task must NOT converge.
+
+```
+d = sqrt( (1 - variety_coverage)^2
+        + max(0, diversity_floor - diversity)^2
+        + (1 - loop_closure)^2
+        + (1 - s)^2 )
+```
+{% else %}
+No deterministic task-success signal was supplied (`task_success` is null).
+This is an open task with no oracle — `d` uses the three swarm-health axes
+only; the irreducible task-success check is the human Go See loop
+(cybernetic plan §5, component C2), NOT an LLM judge. Do NOT fabricate `s`.
+
 ```
 d = sqrt( (1 - variety_coverage)^2
         + max(0, diversity_floor - diversity)^2
         + (1 - loop_closure)^2 )
 ```
+{% endif %}
 
 with `diversity_floor = 0.25` (or the operator-specified override).
 
-`d = 0` means the target condition is met on all three axes. Record
+`d = 0` means the target condition is met on all (three or four) axes. Record
 convergence_metric = d.
 
 ## Step 4 — Algedonic override
@@ -171,6 +198,9 @@ Determine which axis contributes the largest term to d:
 - `(1 - variety_coverage)` largest → next_focus = "hiring" (cover transforms)
 - `max(0, diversity_floor - diversity)` largest → next_focus = "diversification"
 - `(1 - loop_closure)` largest → next_focus = "reconciliation"
+- `(1 - s)` largest (only when `task_success` is present) → next_focus =
+  "task_success" — the swarm is not solving the task; the curator should
+  `reconfigure_agent` (component C6) the blamed agent or escalate Go See (C2).
 
 If algedonic_signal is non-null, next_focus = "algedonic_repair" regardless
 of d's decomposition.
@@ -185,4 +215,5 @@ function of these findings).
 
 Produce a JSON object with: post_act_state, variety_coverage, diversity,
 loop_closure, convergence_metric, next_focus, algedonic_signal (object or
-null), lessons_learned (array), delegate_notes.
+null), lessons_learned (array), delegate_notes, task_success (echo the input
+verdict, or null).

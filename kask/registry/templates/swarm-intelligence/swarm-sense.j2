@@ -134,9 +134,20 @@ trivial_task = true.
 Map the ABW roster onto Onto4MAT (Kiesel et al. 2022) team properties:
 
 - **alignment** (Reynolds alignment rule; Onto4MAT hasAlignmentWithTeam):
-  the delegation-graph density — fraction of agents whose `produces[]`
-  overlaps another hired agent's `accepts[]`. High alignment = the swarm can
-  hand work off internally.
+  the **task-gated** delegation-graph density (Cybernetic Swarm Plan
+  component C8 — OFA-MAS TAGSE, structural port). For each agent pair
+  (v_j → v_i) where `v_j.produces[]` overlaps `v_i.accepts[]`, the edge
+  contributes proportional to how task-relevant the overlap is to
+  `required_transforms` — an edge whose overlap covers a required
+  transform scores 1; an edge whose overlap covers no required transform
+  scores ~0. `alignment` = (sum of edge relevance) / (number of agents),
+  regularized toward sparsity: most edges should contribute ~0 for a given
+  task; only task-relevant edges carry the alignment signal. High alignment =
+  the swarm can hand the task-relevant work off internally. Vacuous-truth
+  fallback: when `required_transforms` is empty (`trivial_task`), alignment =
+  the uniform delegation-graph density (fraction of agents whose `produces[]`
+  overlaps another hired agent's `accepts[]`) — task-gating needs a task to
+  gate on.
 - **cohesion** (Reynolds cohesion rule; Onto4MAT hasCohesionWithTeam):
   fraction of the workspace's declared `dependencies { required[] }` that are
   satisfied by hired agents. High cohesion = the swarm is self-sufficient.

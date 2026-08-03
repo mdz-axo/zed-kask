@@ -621,6 +621,7 @@ mod tests {
         let all_credentials: Vec<(String, String)> = [
             "DEEPINFRA_API_KEY",
             "FALAI_API_KEY",
+            "ATLASCLOUD_API_KEY",
             "TOGETHERAI_API_KEY",
             "OPENROUTER_API_KEY",
             "KILOCODE_API_KEY",
