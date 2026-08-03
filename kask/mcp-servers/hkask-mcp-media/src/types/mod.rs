@@ -439,3 +439,45 @@ pub struct RecordAndTranscribeRequest {
     /// Optional ISO 639-1 language code for transcription.
     pub language: Option<String>,
 }
+
+// ── Generation lineage request types (WS-3) ─────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryRecordGenerationRequest {
+    /// Index of the gallery image to attach lineage to (the generated asset
+    /// must already be in the gallery — call gallery_organize / gallery_refresh
+    /// after saving the generated file).
+    pub image_index: usize,
+    /// The media op that produced the image ("generate_image",
+    /// "image_to_image", "upscale", "image_to_video", ...).
+    pub op: String,
+    /// The prompt used.
+    pub prompt: Option<String>,
+    /// The provider-specific model id used.
+    pub model: Option<String>,
+    /// The provider that produced the image ("fal.ai", "deepinfra",
+    /// "atlascloud", ...).
+    pub provider: Option<String>,
+    /// The generation seed, if known.
+    pub seed: Option<i64>,
+    /// JSON string of the generation params (serialize the `MediaGenerateParams`
+    /// used, so `gallery_reproduce` can replay them).
+    pub params: Option<String>,
+    /// Workflow id if the image came from a multi-step workflow.
+    pub workflow_id: Option<String>,
+    /// Index of the parent gallery image this was derived from (img2img /
+    /// upscale / image_to_video), if any. Resolved to an image id internally.
+    pub parent_image_index: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryLineageRequest {
+    /// Index of the gallery image whose lineage to read.
+    pub image_index: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GalleryReproduceRequest {
+    /// Index of the gallery image to reproduce (re-runs its stored op + params).
+    pub image_index: usize,
+}

@@ -927,4 +927,113 @@ impl MediaServer {
         })
         .await
     }
+
+    // ── Generation lineage (WS-3) ────────────────────────────────────────────
+
+    #[tool(
+        description = "Record the generation lineage for a gallery image — the prompt, model, provider, seed, and params that produced it. Call this after generating an image and saving it to the gallery so it can be reproduced (gallery_reproduce) or varied later. The image must already be indexed in the gallery (run gallery_organize / gallery_refresh after saving)."
+    )]
+    pub async fn gallery_record_generation(
+        &self,
+        Parameters(GalleryRecordGenerationRequest {
+            image_index,
+            op,
+            prompt,
+            model,
+            provider,
+            seed,
+            params,
+            workflow_id,
+            parent_image_index,
+        }): Parameters<GalleryRecordGenerationRequest>,
+    ) -> String {
+        execute_tool(self, "gallery_record_generation", async {
+            if op.trim().is_empty() {
+                return Err(McpToolError::invalid_argument("op must not be empty"));
+            }
+            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
+            let parent_image_id = match parent_image_index {
+                Some(idx) => Some(self.resolve_image_id(idx).map_err(map_media_error)?),
+                None => None,
+            };
+            let record = self
+                .gallery_store
+                .record_generation(
+                    &image_id,
+                    &op,
+                    prompt.as_deref(),
+                    model.as_deref(),
+                    provider.as_deref(),
+                    seed,
+                    params.as_deref(),
+                    workflow_id.as_deref(),
+                    parent_image_id.as_deref(),
+                )
+                .map_err(|e| map_media_error(e.into()))?;
+            serde_json::to_value(&record)
+                .map_err(|e| McpToolError::internal(format!("encode lineage: {e}")))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Show the recorded generation lineage for a gallery image (op, prompt, model, provider, seed, params, workflow, parent, timestamp). Returns lineage: null if none is recorded."
+    )]
+    pub async fn gallery_lineage(
+        &self,
+        Parameters(GalleryLineageRequest { image_index }): Parameters<GalleryLineageRequest>,
+    ) -> String {
+        execute_tool(self, "gallery_lineage", async {
+            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
+            let lineage = self
+                .gallery_store
+                .get_generation(&image_id)
+                .map_err(|e| map_media_error(e.into()))?;
+            Ok(serde_json::json!({ "image_index": image_index, "lineage": lineage }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Re-run the generation that produced a gallery image, using its stored lineage (op + prompt + params). For image-ops (image_to_image, upscale, image_to_video, segment_object) the current gallery image is used as the source. Returns the new generation result. Call gallery_record_generation first to record lineage."
+    )]
+    pub async fn gallery_reproduce(
+        &self,
+        Parameters(GalleryReproduceRequest { image_index }): Parameters<GalleryReproduceRequest>,
+    ) -> String {
+        execute_tool(self, "gallery_reproduce", async {
+            let image_id = self.resolve_image_id(image_index).map_err(map_media_error)?;
+            let lineage = self
+                .gallery_store
+                .get_generation(&image_id)
+                .map_err(|e| map_media_error(e.into()))?
+                .ok_or_else(|| {
+                    McpToolError::not_found(format!(
+                        "No lineage recorded for image {image_index} — call gallery_record_generation first"
+                    ))
+                })?;
+            // Replay the stored params JSON (a serialized MediaGenerateParams),
+            // then apply the stored prompt and — for image-ops — the current
+            // image URL as the source (the stored image_url may be stale).
+            let mut media_params: hkask_types::MediaGenerateParams = lineage
+                .params
+                .as_deref()
+                .map(|p| serde_json::from_str(p).unwrap_or_default())
+                .unwrap_or_default();
+            if let Some(prompt) = lineage.prompt {
+                media_params.prompt = Some(prompt);
+            }
+            const IMAGE_OPS: &[&str] =
+                &["image_to_image", "upscale", "image_to_video", "segment_object"];
+            if IMAGE_OPS.contains(&lineage.op.as_str()) {
+                media_params.image_url =
+                    Some(self.resolve_image_url(image_index).map_err(map_media_error)?);
+            }
+            self.vision_port
+                .media_generate(&lineage.op, &media_params)
+                .await
+                .map_err(|e| McpToolError::unavailable(format!("Reproduce failed: {e}")))
+        })
+        .await
+    }
 }

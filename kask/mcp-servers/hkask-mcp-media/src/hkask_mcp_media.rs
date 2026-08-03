@@ -1812,4 +1812,77 @@ mod integration_tests {
         let pending = store.list_faces(Some("pending")).unwrap();
         assert_eq!(pending.len(), 0);
     }
+
+    #[test]
+    fn gallery_lineage_record_and_replay_round_trip() {
+        let (store, temp) = setup_store();
+        let gallery = store
+            .create(&temp.path().to_string_lossy(), GalleryMode::ReadOnly)
+            .unwrap();
+        create_test_image(temp.path(), "gen.png", 10, 20, 30);
+        let img = store
+            .add_image(
+                &gallery.id,
+                "gen.png",
+                temp.path().join("gen.png").to_str().unwrap(),
+                "hash-gen",
+                64,
+                64,
+                "png",
+                1024,
+            )
+            .unwrap();
+
+        // Record the lineage a generation tool would attach after producing
+        // this image (the gallery_record_generation tool wraps this call).
+        let wf = store.record_workflow("{\"nodes\":[],\"parallel\":false}").unwrap();
+        let params_json = serde_json::json!({ "size": "1024x1024" }).to_string();
+        let record = store
+            .record_generation(
+                &img.id,
+                "generate_image",
+                Some("a serene mountain landscape"),
+                Some("fal-ai/flux/dev"),
+                Some("fal.ai"),
+                Some(12345),
+                Some(&params_json),
+                Some(&wf.id),
+                None,
+            )
+            .unwrap();
+        assert_eq!(record.op, "generate_image");
+
+        // Re-read the lineage (what gallery_lineage returns).
+        let lineage = store
+            .get_generation(&img.id)
+            .unwrap()
+            .expect("lineage should be recorded");
+        assert_eq!(lineage.op, "generate_image");
+        assert_eq!(lineage.prompt.as_deref(), Some("a serene mountain landscape"));
+        assert_eq!(lineage.model.as_deref(), Some("fal-ai/flux/dev"));
+        assert_eq!(lineage.provider.as_deref(), Some("fal.ai"));
+        assert_eq!(lineage.seed, Some(12345));
+        assert_eq!(lineage.workflow_id.as_deref(), Some(wf.id.as_str()));
+        // The stored params JSON round-trips — this is what gallery_reproduce
+        // deserializes to replay the generation.
+        let replay: serde_json::Value =
+            serde_json::from_str(lineage.params.as_deref().unwrap()).unwrap();
+        assert_eq!(replay["size"], "1024x1024");
+
+        // No lineage for an unrelated image.
+        create_test_image(temp.path(), "other.png", 1, 2, 3);
+        let other = store
+            .add_image(
+                &gallery.id,
+                "other.png",
+                temp.path().join("other.png").to_str().unwrap(),
+                "hash-other",
+                64,
+                64,
+                "png",
+                1024,
+            )
+            .unwrap();
+        assert!(store.get_generation(&other.id).unwrap().is_none());
+    }
 }
