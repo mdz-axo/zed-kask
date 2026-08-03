@@ -91,6 +91,37 @@ pub fn compute_layout(body: &GraphBlockBody) -> Result<LayeredLayout> {
         }
     }
 
+    // Validate conditional tables. The scenarios server requires
+    // `conditionals.len() == 2^parent_event_ids.len()`; a missing/short table
+    // silently yields P≈0 in `propagate::recompute_marginals` (each missing entry
+    // contributes 0). Warn so a malformed block is visible rather than rendering a
+    // misleading 0% node.
+    for node in &body.nodes {
+        for dep in &node.depends_on {
+            let n_parents = dep.parent_event_ids.len();
+            if n_parents > 20 {
+                log::warn!(
+                    "hkask-graph-widget: node '{}' dependency has {} parents (>20); \
+                     conditional table too large to validate",
+                    node.id,
+                    n_parents
+                );
+                continue;
+            }
+            let expected = 1usize << n_parents;
+            if dep.conditionals.len() != expected {
+                log::warn!(
+                    "hkask-graph-widget: node '{}' dependency has {} conditionals, \
+                     expected {} (2^{} parents) — marginals for this branch are incomplete",
+                    node.id,
+                    dep.conditionals.len(),
+                    expected,
+                    n_parents
+                );
+            }
+        }
+    }
+
     // Kahn's topological sort: layer[n] = 0 for roots, else max(layer[parent]) + 1.
     // If the queue drains before visiting every node, a cycle exists.
     let n = body.nodes.len();

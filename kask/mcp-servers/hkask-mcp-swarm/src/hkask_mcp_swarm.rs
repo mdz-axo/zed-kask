@@ -52,8 +52,6 @@
 
 use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
-use schemars::JsonSchema;
-use serde::Deserialize;
 
 mod abw_client;
 mod abw_util;

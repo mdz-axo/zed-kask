@@ -63,7 +63,7 @@ The embedding decision interacts with the trust model:
 - **Marketplace manifests** (installed via `kask_extensions_ui`): Ed25519-signed, verified at download (`verify_manifest_signature` in `collab/src/api/kask_skills.rs`). Installed to `data_dir()/agents/skills/` and resolved via the filesystem fallback path.
 - **Local manifests** (user-authored, `data_dir()/agents/skills/`): unsigned, resolved via the filesystem fallback path. Run with the same executor privileges as embedded and marketplace manifests.
 
-The executor does not currently distinguish trust provenance (see candidate D in the refactor-architecture ra-candidates analysis). The embedding decision means built-in skills are implicitly trusted (compiled in), while user/marketplace skills rely on the filesystem path — which is correct but undocumented.
+The executor does not currently distinguish trust provenance at the execution boundary, but it does emit a provenance signal: `BridgeManifestExecutor::execute_skill` logs `reg.skill.provenance` with `provenance=embedded` (info) or `provenance=filesystem` (warn) so an operator reading logs can distinguish "built-in skill executed" from "filesystem skill executed." Gating high-risk actions on provenance is a future-wiring target. See candidate D in the refactor-architecture ra-candidates analysis. The `is_skill()` category check is enforced at `execute_skill` (the execution boundary) and at `resolve_manifest` (the `flowdef` sub-cascade binding path), preventing infra manifests from executing via the skill tool.
 
 ## Alternatives considered
 

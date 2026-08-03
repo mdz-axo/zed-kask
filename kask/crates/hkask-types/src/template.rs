@@ -108,28 +108,3 @@ impl Default for LLMParameters {
         Self::edge_work()
     }
 }
-
-/// Template file within a crate
-/// Loop: Inference
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TemplateFile {
-    pub path: String,
-    pub content: String,
-    pub template_type: String, // WordAct, KnowAct, FlowDef
-}
-
-/// Template crate structure (loaded from Git CAS)
-/// Loop: Inference
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TemplateCrate {
-    /// Crate name
-    pub name: String,
-    /// Git SHA (pinned version)
-    pub git_sha: String,
-    /// Agent persona YAML content
-    pub persona_yaml: String,
-    /// Dispatch manifest YAML content
-    pub dispatch_manifest_yaml: String,
-    /// Template files (path -> content)
-    pub templates: Vec<TemplateFile>,
-}

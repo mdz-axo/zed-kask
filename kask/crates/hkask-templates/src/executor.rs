@@ -801,7 +801,67 @@ impl ManifestExecutor {
                         context = self.execute_compute(step, context).await?;
                     }
                     "execute" | "feedback" | "validate" | "retrieve" => {
-                        context = self.execute_tool_invoke(step, context).await?;
+                        match self.execute_tool_invoke(step, &mut context).await {
+                            Ok(()) => {}
+                            Err(TemplateError::CapabilityDenied(msg)) => {
+                                // Consult the manifest's declared capability-denied
+                                // policy instead of blindly propagating the error.
+                                // 10 manifests declare `on_capability_denied: escalate`.
+                                let policy = manifest.error_handling.on_capability_denied.as_str();
+                                match policy {
+                                    "escalate" => {
+                                        info!(
+                                            target: "reg.skill.cascade.escalated",
+                                            iteration = iteration,
+                                            step = step.ordinal,
+                                            reason = "capability denied — escalating per manifest policy",
+                                            "REG"
+                                        );
+                                        let snap = budget.snapshot();
+                                        convergence.finalize_report(
+                                            &mut context,
+                                            ConvergenceStatus::Escalated,
+                                            "capability_denied",
+                                            iteration,
+                                            snap.gas_used,
+                                            snap.gas_cap,
+                                            snap.rjoule_used,
+                                            snap.rjoule_cap,
+                                        );
+                                        return Err(TemplateError::Manifest(format!(
+                                            "Cascade escalated at step {}: capability denied: {}",
+                                            step.ordinal, msg
+                                        )));
+                                    }
+                                    "abort" => {
+                                        info!(
+                                            target: "reg.skill.convergence.converged",
+                                            iteration = iteration,
+                                            step = step.ordinal,
+                                            reason = "capability denied — aborting per manifest policy",
+                                            "REG"
+                                        );
+                                        let snap = budget.snapshot();
+                                        convergence.finalize_report(
+                                            &mut context,
+                                            ConvergenceStatus::Converged,
+                                            "capability_denied_abort",
+                                            iteration,
+                                            snap.gas_used,
+                                            snap.gas_cap,
+                                            snap.rjoule_used,
+                                            snap.rjoule_cap,
+                                        );
+                                        break 'cascade;
+                                    }
+                                    _ => {
+                                        // Default (including empty): propagate the error.
+                                        return Err(TemplateError::CapabilityDenied(msg));
+                                    }
+                                }
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                     // RenderAct: render a template (`.j2` or `.yaml`) without
                     // inference. The action is the rendering — the output is
@@ -1445,8 +1505,8 @@ impl ManifestExecutor {
     async fn execute_tool_invoke(
         &self,
         step: &BundleManifestStep,
-        mut context: HashMap<String, Value>,
-    ) -> Result<HashMap<String, Value>> {
+        context: &mut HashMap<String, Value>,
+    ) -> Result<()> {
         let mcp_ref_raw = step.mcp.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
                 "Execute step {} has no mcp reference",
@@ -1489,7 +1549,7 @@ impl ManifestExecutor {
 
         context.insert(result_key, result);
 
-        Ok(context)
+        Ok(())
     }
 
     /// Execute a `compute` step — invoke a canonical `hkask_forecast` primitive
