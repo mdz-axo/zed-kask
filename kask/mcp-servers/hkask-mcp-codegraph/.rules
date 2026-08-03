@@ -1,0 +1,18 @@
+# hkask-mcp-codegraph
+
+## Single-graph unit tests give false confidence for cross-file features
+
+Cross-file edge resolution and grouped-import parsing both regressed
+silently because every unit test indexed a single in-memory graph and
+asserted only within-file behavior. The unit suite stayed green while
+`codegraph_traverse`/`codegraph_impact` were dropping all cross-file
+edges and `extract_import` emitted malformed targets like `"Arc}"`.
+
+Guard: a `tests/` integration test that indexes ≥2 on-disk fixture
+files and asserts call/import edge **topology** (caller → callee, which
+file the callee lives in). Do not rely on single in-memory-graph unit
+tests for resolution or extraction correctness — they cannot exercise
+cross-file name resolution or tree-sitter parsing of real `use` trees.
+When changing edge resolution (`resolve_target`/`resolve_and_insert_edges`)
+or `extract_import`/`collect_use_targets`, extend this integration test
+rather than adding another single-graph unit test.

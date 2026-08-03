@@ -1838,13 +1838,13 @@ fn main() {
                         // manifest declares `profile:`, so the gate has no
                         // production trigger and the staleness is moot; per-session
                         // profile enforcement is a future enhancement.
-                        let terminal_enabled = cx.update(|cx| {
+                        let terminal_enabled = {
                             let settings = agent_settings::AgentSettings::get_global(cx);
                             settings
                                 .profiles
                                 .get(&settings.default_profile)
                                 .is_some_and(|p| p.is_tool_enabled("terminal"))
-                        });
+                        };
                         let profile_resolver = std::sync::Arc::new(
                             kask_bridge::SnapshotProfileResolver::new(terminal_enabled),
                         )
