@@ -1059,6 +1059,12 @@ pub fn monte_carlo_dcf(
 }
 
 fn sample_uniform(rng: &mut impl rand::Rng, center: f64, range: f64) -> f64 {
+    // A zero perturbation width is valid input (McRange::validate accepts
+    // 0.0..=1.0) and means "no perturbation." random_range on an empty
+    // lo..hi panics, so return the center directly.
+    if range == 0.0 {
+        return center;
+    }
     let lo = center - range;
     let hi = center + range;
     rng.random_range(lo..hi)

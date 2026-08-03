@@ -84,6 +84,10 @@ impl MediaServer {
                 .media_generate("generate_speech", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Speech generation failed: {}", e)))
+                .map(|result| {
+                    let display_hint = crate::media_block::audio_hint_from_result(&result);
+                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                })
         })
         .await
     }
@@ -236,6 +240,10 @@ impl MediaServer {
                 "sample_rate": 16000,
                 "channels": 1,
             }))
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "audio");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
+            })
         })
         .await
     }
@@ -346,6 +354,9 @@ impl MediaServer {
 
                     Ok(serde_json::to_value(&bundle).unwrap_or_else(|_| {
                         serde_json::json!({"error": "Failed to serialize bundle"})
+                    }).map(|result| {
+                        let display_hint = crate::media_block::audio_hint_from_path(&result);
+                        crate::media_block::enrich_with_display_hint(result, display_hint)
                     }))
                 }
                 Err(e) => Ok(serde_json::json!({
@@ -357,6 +368,9 @@ impl MediaServer {
                     "channels": 1,
                     "transcript_error": e.to_json_string(),
                     "message": "Audio captured successfully but transcription failed. The audio file is saved and can be transcribed later."
+                }).map(|result| {
+                    let display_hint = crate::media_block::audio_hint_from_path(&result);
+                    crate::media_block::enrich_with_display_hint(result, display_hint)
                 })),
             }
         })

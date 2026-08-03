@@ -28,6 +28,10 @@ impl MediaServer {
                 .media_generate("remove_background", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Background removal failed: {}", e)))
+                .map(|result| {
+                    let display_hint = crate::media_block::image_hint_from_result(&result);
+                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                })
         })
         .await
     }
@@ -63,6 +67,10 @@ impl MediaServer {
                 .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Style transfer failed: {}", e)))
+                .map(|result| {
+                    let display_hint = crate::media_block::image_hint_from_result(&result);
+                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                })
         })
         .await
     }
@@ -252,6 +260,9 @@ impl MediaServer {
                 "canvas_height": canvas_h,
                 "spacing": spacing,
                 "output": output_path.display().to_string(),
+            }).map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "image");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -298,6 +309,10 @@ impl MediaServer {
                 "end_sec": end_sec,
                 "duration": end_sec - start_sec,
                 "output": output.display().to_string(),
+            })
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -352,6 +367,10 @@ impl MediaServer {
                 "width": w,
                 "fps": f,
                 "output": output.display().to_string(),
+            })
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "image");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -389,6 +408,10 @@ impl MediaServer {
                 .media_generate("image_to_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
+                .map(|result| {
+                    let display_hint = crate::media_block::video_hint_from_result(&result);
+                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                })
         })
         .await
     }
@@ -429,6 +452,10 @@ impl MediaServer {
                 "position": pos,
                 "font_size": size,
                 "output": output.display().to_string(),
+            })
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -497,6 +524,10 @@ impl MediaServer {
                 "end_sec": end_sec,
                 "caption": caption_text,
                 "output": gif.display().to_string(),
+            })
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "image");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -544,6 +575,10 @@ impl MediaServer {
                 "fps": fps,
                 "format": fmt,
                 "output": output.display().to_string(),
+            })
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -577,6 +612,10 @@ impl MediaServer {
                 "status": "concatenated",
                 "clip_count": video_urls.len(),
                 "output": output.display().to_string(),
+            })
+            .map(|result| {
+                let display_hint = crate::media_block::hint_from_output_path(&result, "video");
+                crate::media_block::enrich_with_display_hint(result, display_hint)
             }))
         })
         .await
@@ -735,6 +774,10 @@ impl MediaServer {
                 .media_generate("image_to_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
+                .map(|result| {
+                    let display_hint = crate::media_block::video_hint_from_result(&result);
+                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                })
         })
         .await
     }

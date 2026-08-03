@@ -90,10 +90,16 @@ impl MediaServer {
                 }
             }
             self.charge_budget("image_to_image", &media_params).await?;
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("image_to_image", &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Image transform failed: {}", e)))
+                .map_err(|e| McpToolError::unavailable(format!("Image transform failed: {}", e)))?;
+            let display_hint = crate::media_block::image_hint_from_result(&result);
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -111,10 +117,16 @@ impl MediaServer {
                 ..Default::default()
             };
             self.charge_budget("upscale", &media_params).await?;
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("upscale", &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))
+                .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))?;
+            let display_hint = crate::media_block::image_hint_from_result(&result);
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -145,10 +157,18 @@ impl MediaServer {
                 }
             }
             self.charge_budget("generate_video", &media_params).await?;
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("generate_video", &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Video generation failed: {}", e)))
+                .map_err(|e| {
+                    McpToolError::unavailable(format!("Video generation failed: {}", e))
+                })?;
+            let display_hint = crate::media_block::video_hint_from_result(&result);
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -172,7 +192,8 @@ impl MediaServer {
                 ..Default::default()
             };
             self.charge_budget("execute_workflow", &media_params).await?;
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("execute_workflow", &media_params)
                 .await
                 .map(|wr| {
@@ -185,7 +206,9 @@ impl MediaServer {
                         "elapsed_seconds": wr.get("elapsed_seconds").cloned().unwrap_or(serde_json::Value::from(0.0)),
                     })
                 })
-                .map_err(|e| McpToolError::unavailable(format!("Workflow execution failed: {e}")))
+                .map_err(|e| McpToolError::unavailable(format!("Workflow execution failed: {e}")))?;
+            let display_hint = crate::media_block::image_hint_from_result(&result);
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }

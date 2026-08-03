@@ -54,17 +54,18 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-companies",
         description: "Companies — company research and filings",
         credentials: Some(&[
+            // Each entry must have a read site in the crate (allowlist
+            // alignment). HKASK_SERPAPI_API_KEY was removed: no read site.
             "HKASK_EODHD_API_KEY",
             "HKASK_FMP_API_KEY",
             "HKASK_EXA_API_KEY",
             "HKASK_TAVILY_API_KEY",
             "HKASK_BRAVE_API_KEY",
-            "HKASK_SERPAPI_API_KEY",
         ]),
         config_env: Some(&[
+            // HKASK_TRANSACTIONS_DIR was removed: no read site in the crate.
             "HKASK_CHRONIC_STALENESS_DAYS",
             "HKASK_FERMI_DEFAULTS",
-            "HKASK_TRANSACTIONS_DIR",
         ]),
     },
     BuiltinMcpServer {
@@ -162,7 +163,14 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "kata-kanban",
         binary: "hkask-mcp-kata-kanban",
         description: "Kata Kanban — improvement kata board",
-        credentials: Some(&[]),
+        credentials: Some(&[
+            // Resolved via `ctx.credentials.get` in `run()`. Without these in
+            // the allowlist, operator overrides are silently dropped and the
+            // server falls back to in-memory mode (no persistence, no
+            // encryption at rest).
+            "HKASK_KANBAN_DB",
+            "HKASK_DB_PASSPHRASE",
+        ]),
         config_env: Some(&[
             // kata-kanban resolves its DB path via `resolve_under_data_dir`,
             // so it needs the data dir to match the parent process.
@@ -497,6 +505,67 @@ mod tests {
                 s.id
             );
         }
+    }
+
+    // Allowlist *content* alignment: every entry in a server's
+    // `credentials`/`config_env` allowlist must have a read site in the crate,
+    // and every env var the server reads must be in the allowlist. The shape
+    // test above only checks `Some(...)`; these pin the known-good baseline
+    // for servers whose allowlists were found mis-aligned (over-grant in
+    // companies, under-grant in kata-kanban). When a server legitimately
+    // starts reading a new env var, update both the descriptor and the
+    // baseline here in the same change.
+    fn server_by_id(id: &str) -> &'static BuiltinMcpServer {
+        BUILT_IN_MCP_SERVERS
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("server '{id}' not in BUILT_IN_MCP_SERVERS"))
+    }
+
+    #[test]
+    fn companies_allowlist_matches_actual_reads() {
+        let s = server_by_id("companies");
+        // Read sites: ctx.credentials.get in `run()` for the 5 providers;
+        // std::env::var("HKASK_CHRONIC_STALENESS_DAYS") and
+        // FermiDefaults::from_env() reading HKASK_FERMI_DEFAULTS.
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            vec![
+                "HKASK_EODHD_API_KEY",
+                "HKASK_FMP_API_KEY",
+                "HKASK_EXA_API_KEY",
+                "HKASK_TAVILY_API_KEY",
+                "HKASK_BRAVE_API_KEY",
+            ],
+            "companies credentials allowlist drifted — every entry must have a \
+             read site in hkask-mcp-companies (over-grant leaks a secret to the \
+             child process)"
+        );
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec!["HKASK_CHRONIC_STALENESS_DAYS", "HKASK_FERMI_DEFAULTS"],
+            "companies config_env allowlist drifted — every entry must have a \
+             read site in hkask-mcp-companies"
+        );
+    }
+
+    #[test]
+    fn kata_kanban_allowlist_matches_actual_reads() {
+        let s = server_by_id("kata-kanban");
+        // Read sites: ctx.credentials.get("HKASK_KANBAN_DB") and
+        // ctx.credentials.get("HKASK_DB_PASSPHRASE") in `run()`;
+        // resolve_under_data_dir reads HKASK_DATA_DIR.
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            vec!["HKASK_KANBAN_DB", "HKASK_DB_PASSPHRASE"],
+            "kata-kanban credentials allowlist drifted — under-granting silently \
+             drops operator overrides (server falls back to in-memory mode)"
+        );
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec!["HKASK_DATA_DIR"],
+            "kata-kanban config_env allowlist drifted"
+        );
     }
 
     // The curator server should only receive the SMTP password, not data

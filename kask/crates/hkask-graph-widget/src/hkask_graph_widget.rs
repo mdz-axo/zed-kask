@@ -24,11 +24,13 @@ pub mod layout;
 pub mod propagate;
 pub mod view;
 
-use gpui::{AnyElement, App, Window};
+use gpui::{AnyElement, App, AppContext, Entity, Window};
 
 /// The graph block renderer callback type (mirrors
 /// `markdown::MediaBlockRendererFn` — same erased `dyn Fn` type).
 pub type GraphBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
+
+pub use view::GraphWidget;
 
 /// Create the graph block renderer for the D18 seam.
 ///
@@ -54,6 +56,27 @@ pub fn graph_block_renderer() -> GraphBlockRenderer {
             }
         }
     })
+}
+
+/// Create a `GraphWidget` entity from a block body, without wrapping it in an
+/// element. Used by `hkask_viz_core::block_renderer` to cache the entity across
+/// renders (so pan/zoom/evidence state survives re-renders).
+///
+/// Returns `None` if the body is not a valid `event_tree` graph block.
+pub fn create_graph_widget(body: &str, cx: &mut App) -> Option<Entity<view::GraphWidget>> {
+    if !body.trim_start().starts_with('{') {
+        return None;
+    }
+    match block::parse_graph_body(body) {
+        Ok(parsed) if parsed.viz.as_deref() == Some("event_tree") => {
+            Some(cx.new(|cx| view::GraphWidget::new(parsed, cx)))
+        }
+        Ok(_) => None,
+        Err(error) => {
+            log::warn!("hkask-graph-widget: malformed graph block: {error}");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

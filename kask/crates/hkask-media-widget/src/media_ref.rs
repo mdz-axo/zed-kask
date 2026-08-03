@@ -2,6 +2,7 @@
 
 use gpui::SharedString;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// The type of media asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,63 @@ impl MediaStorage for PathMediaStorage {
                 url: None,
             })
         }
+    }
+}
+
+/// `MediaStorage` backed by the hkask gallery SQLite store.
+///
+/// Resolves `gallery://<gallery_id>/<index>` URIs to the filesystem
+/// `absolute_path` stored in the gallery database. Falls back to direct
+/// path/data-URI/URL resolution for non-gallery sources.
+pub struct GalleryMediaStorage {
+    gallery_store: Arc<hkask_storage::GalleryStore>,
+}
+
+impl GalleryMediaStorage {
+    pub fn new(gallery_store: Arc<hkask_storage::GalleryStore>) -> Self {
+        Self { gallery_store }
+    }
+
+    /// Parse a `gallery://<gallery_id>/<index>` URI and look up the
+    /// image record to get its filesystem `absolute_path`.
+    fn resolve_gallery_uri(&self, gallery_id: &str, index: usize) -> anyhow::Result<ResolvedMedia> {
+        let image = self
+            .gallery_store
+            .get_image(gallery_id, Some(index), None)
+            .map_err(|error| anyhow::anyhow!("gallery lookup failed: {error}"))?;
+        let path = PathBuf::from(&image.absolute_path);
+        if !path.exists() {
+            return Err(anyhow::anyhow!(
+                "gallery image file not found: {}",
+                path.display()
+            ));
+        }
+        let kind = detect_kind(&image.format);
+        Ok(ResolvedMedia {
+            kind,
+            path: Some(path),
+            bytes: None,
+            url: None,
+        })
+    }
+}
+
+impl MediaStorage for GalleryMediaStorage {
+    fn resolve(&self, reference: &MediaRef) -> anyhow::Result<ResolvedMedia> {
+        let source = reference.src();
+
+        if let Some(rest) = source.strip_prefix("gallery://") {
+            let (gallery_id, index_str) = rest.rsplit_once('/').ok_or_else(|| {
+                anyhow::anyhow!("invalid gallery URI: expected gallery://<id>/<index>")
+            })?;
+            let index = index_str
+                .parse::<usize>()
+                .map_err(|_| anyhow::anyhow!("invalid gallery index: {index_str}"))?;
+            return self.resolve_gallery_uri(gallery_id, index);
+        }
+
+        // Non-gallery sources resolve the same as PathMediaStorage.
+        PathMediaStorage.resolve(reference)
     }
 }
 

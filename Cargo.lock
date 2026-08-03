@@ -9745,6 +9745,7 @@ dependencies = [
  "ffmpeg-next",
  "gpui",
  "gpui-component",
+ "hkask-storage",
  "image",
  "log",
  "parking_lot",

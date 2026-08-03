@@ -35,3 +35,65 @@ pub fn audio_block(src: &str) -> String {
 pub fn svg_block(src: &str) -> String {
     media_block("svg", src)
 }
+
+/// Extract the first URL from a `media_generate` result's `output_urls`
+/// array and format it as an image display hint.
+pub fn image_hint_from_result(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("output_urls")
+        .and_then(|urls| urls.as_array())
+        .and_then(|urls| urls.first())
+        .and_then(|url| url.as_str())
+        .map(image_block)
+}
+
+/// Extract the first URL from a `media_generate` result's `output_urls`
+/// array and format it as a video display hint.
+pub fn video_hint_from_result(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("output_urls")
+        .and_then(|urls| urls.as_array())
+        .and_then(|urls| urls.first())
+        .and_then(|url| url.as_str())
+        .map(video_block)
+}
+
+/// Extract the first URL from a `media_generate` result's `output_urls`
+/// array and format it as an audio display hint.
+pub fn audio_hint_from_result(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("output_urls")
+        .and_then(|urls| urls.as_array())
+        .and_then(|urls| urls.first())
+        .and_then(|url| url.as_str())
+        .map(audio_block)
+}
+
+/// Attach a `display_hint` field to a media tool result if a hint is available.
+pub fn enrich_with_display_hint(
+    mut result: serde_json::Value,
+    hint: Option<String>,
+) -> serde_json::Value {
+    if let Some(hint) = hint {
+        result["display_hint"] = serde_json::Value::String(hint);
+    }
+    result
+}
+
+/// Extract a file path from a JSON object's `"output"` field and format it
+/// as a display hint of the given `kind` ("image", "video", "audio").
+pub fn hint_from_output_path(result: &serde_json::Value, kind: &str) -> Option<String> {
+    result
+        .get("output")
+        .and_then(|output| output.as_str())
+        .map(|path| media_block(kind, path))
+}
+
+/// Extract a file path from a JSON object's `"audio_path"` field and format
+/// it as an audio display hint.
+pub fn audio_hint_from_path(result: &serde_json::Value) -> Option<String> {
+    result
+        .get("audio_path")
+        .and_then(|path| path.as_str())
+        .map(audio_block)
+}

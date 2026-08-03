@@ -9,6 +9,25 @@ use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// ── Snippet truncation ──────────────────────────────────────────────────
+
+/// Truncate `s` to at most `max` bytes on a UTF-8 char boundary, appending
+/// an ellipsis when truncation occurs.
+///
+/// `&s[..max]` panics when `max` is a valid byte index but lands inside a
+/// multi-byte codepoint (non-ASCII content from search providers); this
+/// walks back to the nearest char boundary instead.
+fn snippet_truncated(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
+}
+
 // ── Research result types ──────────────────────────────────────────────
 
 /// A single research claim from search results.
@@ -185,11 +204,7 @@ fn parse_exa_results(parsed: &Value) -> Result<Vec<ResearchClaim>, anyhow::Error
         }
 
         // Truncate very long texts to a reasonable snippet length
-        let snippet = if text.len() > 2000 {
-            format!("{}…", &text[..2000])
-        } else {
-            text
-        };
+        let snippet = snippet_truncated(&text, 2000);
 
         claims.push(ResearchClaim {
             text: snippet,
@@ -254,11 +269,7 @@ fn parse_tavily_results(parsed: &Value) -> Result<Vec<ResearchClaim>, anyhow::Er
             continue;
         }
 
-        let snippet = if content.len() > 2000 {
-            format!("{}…", &content[..2000])
-        } else {
-            content
-        };
+        let snippet = snippet_truncated(&content, 2000);
 
         claims.push(ResearchClaim {
             text: snippet,
@@ -346,11 +357,7 @@ fn parse_brave_results(parsed: &Value) -> Result<Vec<ResearchClaim>, anyhow::Err
             continue;
         }
 
-        let snippet = if text.len() > 2000 {
-            format!("{}…", &text[..2000])
-        } else {
-            text
-        };
+        let snippet = snippet_truncated(&text, 2000);
 
         claims.push(ResearchClaim {
             text: snippet,
