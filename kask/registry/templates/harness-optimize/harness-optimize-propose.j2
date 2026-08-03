@@ -1,0 +1,78 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    trace_dir_n: string
+    trace_dir_n_minus_1: string
+    task: string
+    gap_analysis: array
+    surviving_mutants: array
+    target_functions: array
+  output:
+    proposed_diff: array
+    proptest_dispatches: array
+    evidence_cited: array
+    rationale: string
+  energy_cap: 12288
+  visibility: Public
+---
+{# Template: harness-optimize/harness-optimize-propose.j2 #}
+{# Proposes test improvements based on gap analysis #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 12288
+thinking_budget = "full"
+
+You are a test harness proposer. Based on the gap analysis from the previous
+step, propose concrete test improvements. You have NO `terminal` tool — you
+cannot run tests. You propose test code; CI will evaluate it.
+
+## Task
+
+{{ task }}
+
+## Gap Analysis
+
+{{ gap_analysis | tojson }}
+
+## Surviving Mutants
+
+{{ surviving_mutants | tojson }}
+
+## Target Functions (for proptest dispatch)
+
+{{ target_functions | tojson }}
+
+## Instructions
+
+For each gap in the analysis:
+
+1. **For under-tested functions with surviving mutants**: Invoke the `proptest`
+   skill in `generate_only` mode, passing:
+   - `target`: the function name
+   - `crate_scope`: the crate
+   - `surviving_mutants`: the mutants that survive for this function
+   - `execution_mode`: "generate_only"
+   Collect the generated test code from proptest's output.
+
+2. **For bugs found by bug-hunt**: Write a test that would catch the bug. Use
+   the `Oracle` trait from `hkask-test-harness` (`oracle_invariant` for
+   property checks, `oracle_reference` for comparison against a correct impl)
+   where appropriate.
+
+3. **For flaky tests**: Propose a fix — stronger `prop_assume!`, deterministic
+   setup, or a better oracle. Cite the classifier output that identified the
+   flakiness.
+
+4. **For each proposed test**: Cite the specific trace file that motivated it
+   (e.g., `kask/traces/<run-id>/failures/<test>/output.txt`). The proposer
+   reads raw traces, not compressed summaries (Meta-Harness paper).
+
+Output a JSON object with:
+- `proposed_diff`: array of {file_path, action ("new"|"modify"), content, reason}
+- `proptest_dispatches`: array of {function, crate, surviving_mutants, generated_test_code}
+- `evidence_cited`: array of trace file paths cited (at least 3)
+- `rationale`: summary of why these improvements will raise the mutation score

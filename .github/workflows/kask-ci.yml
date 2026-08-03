@@ -59,6 +59,10 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: nextest
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
       - name: Run tests
         # Exclude tests that cannot pass on a standard GPU-less ubuntu-24.04 runner:
         #  - wgpu_atlas tests require a real wgpu adapter (no Vulkan ICD on the runner)
@@ -73,6 +77,41 @@ jobs:
         run: >-
           cargo nextest run --workspace --no-fail-fast --no-tests=warn
           -E 'not (test(before_frame_skips_uploads_for_removed_texture) | test(remove_deallocates_tile_space_for_reuse) | test(test_extension_store_with_test_extension) | test(test_random_worktree_changes) | test(test_random_multibuffer))'
+      - name: Run kask tests with trace collection
+        # Collect kask-specific test traces for the evolving test harness.
+        # Writes to kask/traces/<run-id>/ — see kask/docs/plans/evolving-test-harness.md
+        run: cd kask && ./scripts/test --trace || true
+        continue-on-error: true
+      - name: Run mutation testing (scoped)
+        # Mutation testing on core kask crates — the non-degenerate oracle for
+        # bug-finding ability. Scoped to keep CI runtime reasonable.
+        # Writes mutation_score to kask/traces/<run-id>/metrics.json
+        run: >-
+          cd kask &&
+          RUN_ID="$(ls -t kask/traces 2>/dev/null | head -1 || echo '')" &&
+          if [ -n "$RUN_ID" ] && command -v cargo-mutants >/dev/null 2>&1; then
+            cargo mutants --output-format json --in-place -p hkask-types -p hkask-capability -p hkask-templates --timeout-seconds 60 > /tmp/mutants-out.json 2>&1 || true;
+            if [ -f /tmp/mutants-out.json ] && command -v jq >/dev/null 2>&1; then
+              TOTAL=$(jq 'length' /tmp/mutants-out.json 2>/dev/null || echo 0);
+              KILLED=$(jq '[.[] | select(.status == "killed")] | length' /tmp/mutants-out.json 2>/dev/null || echo 0);
+              if [ "$TOTAL" -gt 0 ]; then
+                SCORE=$(echo "scale=4; $KILLED / $TOTAL" | bc 2>/dev/null || echo 0);
+                METRICS="kask/traces/$RUN_ID/metrics.json";
+                if [ -f "$METRICS" ]; then
+                  jq --argjson ms "$SCORE" '.mutation_score = $ms' "$METRICS" > tmp.json && mv tmp.json "$METRICS";
+                fi;
+              fi;
+            fi;
+          fi
+        continue-on-error: true
+      - name: Upload trace artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kask-traces
+          path: kask/kask/traces/
+          retention-days: 14
+          if-no-files-found: ignore
 
   build:
     runs-on: ubuntu-24.04

@@ -1,0 +1,101 @@
+manifest:
+  id: harness-evolve-cycle
+  category: qa-script
+  name: Harness Evolve Cycle
+  version: 0.31.0
+  description: >
+    Orchestrates the test harness self-improvement loop. Runs tests with
+    trace collection, evaluates the stability gate (ECR/EIR + mutation score
+    + regression-prevention guard), branches on the verdict, invokes the
+    harness-optimize skill (proposer) when proceeding, and escalates to the
+    human operator via the algedonic channel when halted or stalled. Max 5
+    iterations with Cauchy convergence on (coverage, mutation-score, cost).
+  editor: system
+  visibility: Public
+
+gas:
+  cap: 120000
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+steps:
+  - ordinal: 1
+    action: execute
+    command: "./scripts/test --trace"
+    description: "Run all kask tests with trace collection to kask/traces/<run-id>/"
+    branching:
+      success: 2
+      failure: 2
+
+  - ordinal: 2
+    action: execute
+    command: "./scripts/stability-gate.sh <run-id-N> <run-id-N-1> [<run-id-N-2>] [<run-id-N-3>]"
+    description: >
+      Compute ECR/EIR/Acc from mutation testing (non-degenerate oracle) +
+      regression-prevention guard (RR-*.yaml) + classifier (EIR secondary).
+      Emits verdict: proceed, halt_escalate, stalled_escalate,
+      regression_violated, or converged.
+    branching:
+      proceed: 3
+      halt_escalate: 4
+      stalled_escalate: 4
+      regression_violated: 4
+      converged: 5
+
+  - ordinal: 3
+    action: execute
+    command: "Invoke harness-optimize skill with trace_dir_n and trace_dir_n_minus_1 as context. The skill runs with terminal disabled (proposer/evaluator separation)."
+    description: >
+      Suite-level proposer reads raw traces, identifies under-tested areas,
+      and proposes test improvements. Dispatches to proptest in generate_only
+      mode for specific functions. Returns a proposed test diff.
+    branching:
+      success: 6
+      failure: 4
+
+  - ordinal: 4
+    action: execute
+    command: "Emit RuntimeAlert{severity: Critical, escalated: true, domain: test-harness} via algedonic channel"
+    description: >
+      Algedonic escalation to the human operator via the MetacognitionLoop
+      (toast + email). The alert distinguishes halt_escalate (EIR > 0),
+      stalled_escalate (coverage climbing, mutation score flat), and
+      regression_violated (an RR-*.yaml entry broke).
+    terminal: true
+
+  - ordinal: 5
+    action: execute
+    command: "echo '[harness] Converged — Cauchy criterion met on (coverage, mutation-score, cost)'"
+    description: >
+      The test harness has stabilized — the weighted norm of
+      (coverage, mutation-score, cost) has been below epsilon for W=3
+      consecutive iterations. Emit reg.harness.converged span.
+    terminal: true
+
+  - ordinal: 6
+    action: loop
+    command: "Increment iteration counter; if iteration < 5, re-enter at step 1"
+    description: >
+      Loop back to step 1 for the next improvement iteration. Max 5
+      iterations — if the cap is reached without convergence, go to step 7.
+    max_iterations: 5
+    branching:
+      success: 1
+      loop_exhausted: 7
+
+  - ordinal: 7
+    action: execute
+    command: "echo '[harness] Iteration cap (5) reached without Cauchy convergence'"
+    description: >
+      Unbounded improvement without convergence is an algedonic event, not a
+      success. Emit reg.harness.iteration_cap_reached span + Critical
+      RuntimeAlert. The operator must review the improvement trajectory.
+    terminal: true
+
+ledger:
+  span_namespace: reg.skill.harness-evolve-cycle
+  emit_spans: true

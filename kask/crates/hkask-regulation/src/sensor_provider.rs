@@ -504,6 +504,8 @@ impl Sensor for MutationScoreSensor {
         Some(LoopId::Cybernetics)
     }
 }
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
