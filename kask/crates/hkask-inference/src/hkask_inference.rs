@@ -200,7 +200,7 @@ pub async fn resolve_inference_port() -> std::sync::Arc<dyn hkask_types::Inferen
                 target: "hkask.inference",
                 "MCP inference routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
             );
-            std::sync::Arc::new(client)
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::InferencePort>
         }
         Some(Err(e)) => {
             tracing::warn!(
@@ -238,7 +238,7 @@ pub async fn resolve_tool_dispatch_port() -> std::sync::Arc<dyn hkask_types::Too
                 target: "hkask.inference",
                 "MCP tool dispatch routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
             );
-            std::sync::Arc::new(client)
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::ToolDispatchPort>
         }
         Some(Err(e)) => {
             tracing::warn!(
@@ -299,7 +299,7 @@ pub async fn resolve_skill_exec_port() -> std::sync::Arc<dyn hkask_types::SkillE
                 target: "hkask.inference",
                 "MCP skill execution routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
             );
-            std::sync::Arc::new(client)
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::SkillExecPort>
         }
         Some(Err(e)) => {
             tracing::warn!(

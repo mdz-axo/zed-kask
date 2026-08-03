@@ -3,7 +3,8 @@
 //! Merged from `hkask-services-discover` and `hkask-services-embed`.
 
 mod discover;
-mod embed;
+pub(crate) mod embed;
+pub(crate) mod fetch;
 
 pub use discover::{
     DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService, default_corpus_config,

@@ -6509,16 +6509,6 @@ mod internal_tests {
         });
     }
 
-    fn collect_model_ids(list: &acp_thread::AgentModelList) -> Vec<String> {
-        let acp_thread::AgentModelList::Grouped(groups) = list else {
-            return Vec::new();
-        };
-        groups
-            .values()
-            .flat_map(|models| models.iter().map(|m| m.id.as_ref().to_string()))
-            .collect()
-    }
-
     #[gpui::test]
     async fn test_summarization_model_survives_transient_registry_clearing(
         cx: &mut TestAppContext,

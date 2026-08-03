@@ -582,6 +582,20 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                 .get("loop_window")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3) as usize;
+            // Cybernetic Swarm Plan C2 — scheduled Go See cadence. The event
+            // trigger (sensor_truth_divergence below) has high variety for the
+            // specific failure it measures, but by the cybernetic bound (§5.1:
+            // Go See cannot be fully automated) it cannot detect failures outside
+            // its programmed variety. The fixed cadence is the irreducible human
+            // check for the unknown-unknowns — it fires every `cadence_every`
+            // convergences regardless of the monitor's signals. 0 = no cadence.
+            let cadence_every = input
+                .get("cadence_every")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cadence_due = cadence_every > 0
+                && iteration_log.len() >= cadence_every as usize
+                && iteration_log.len() % cadence_every as usize == 0;
             if iteration_log.len() < 2 {
                 return Ok(serde_json::json!({
                     "reasoning_loop": false,
@@ -653,6 +667,18 @@ pub(crate) fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value
                     "go_see",
                     "d improving while s declining — sensor filters truth; escalate Go See"
                         .to_string(),
+                )
+            } else if cadence_due {
+                // The scheduled cadence takes precedence over reasoning_loop —
+                // the human check supersedes the automated diversify, per S2's
+                // "Go See is a fixed feedback loop" (the human audits what the
+                // automated sensor cannot).
+                (
+                    "go_see",
+                    format!(
+                        "scheduled Go See cadence — every {cadence_every} convergences (iteration {})",
+                        iteration_log.len()
+                    ),
                 )
             } else if reasoning_loop {
                 (
@@ -1433,6 +1459,82 @@ mod tests {
                 .and_then(|v| v.as_bool())
                 .unwrap(),
             "d improving → not a loop"
+        );
+    }
+
+    // Cybernetic Swarm Plan C2 — scheduled Go See cadence.
+    #[test]
+    fn swarm_second_order_monitor_cadence_forces_go_see() {
+        // 3 iterations, d improving (no reasoning loop, no divergence) — but
+        // cadence_every=3 fires at iteration 3, forcing a go_see recommendation.
+        // The cadence is the irreducible human check for failures outside the
+        // monitor's variety (§5.1: Go See cannot be fully automated).
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.5, "s": 0.9, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": 0.95, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.1, "s": 1.0, "deficit_class": "a", "decision_action": "hire"}
+            ],
+            "loop_window": 3,
+            "cadence_every": 3
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert_eq!(
+            result.get("recommendation").and_then(|v| v.as_str()),
+            Some("go_see"),
+            "cadence_every=3 at iteration 3 forces go_see even with no anomaly"
+        );
+        let detail = result.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            detail.contains("cadence"),
+            "detail must name the cadence trigger; got {detail}"
+        );
+    }
+
+    #[test]
+    fn swarm_second_order_monitor_cadence_zero_disables() {
+        // cadence_every=0 (default) → no cadence; a clean improving sequence
+        // with no anomaly recommends none.
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.5, "s": 0.9, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": 0.95, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.1, "s": 1.0, "deficit_class": "a", "decision_action": "hire"}
+            ],
+            "loop_window": 3,
+            "cadence_every": 0
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert_eq!(
+            result.get("recommendation").and_then(|v| v.as_str()),
+            Some("none"),
+            "cadence_every=0 disables the cadence; clean sequence → none"
+        );
+    }
+
+    #[test]
+    fn swarm_second_order_monitor_divergence_precedes_cadence() {
+        // Both divergence and cadence could fire; divergence wins (it names the
+        // specific failure, the cadence is the generic check).
+        let input = serde_json::json!({
+            "iteration_log": [
+                {"d": 0.5, "s": 0.9, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.4, "s": 0.5, "deficit_class": "a", "decision_action": "hire"},
+                {"d": 0.3, "s": 0.1, "deficit_class": "a", "decision_action": "hire"}
+            ],
+            "loop_window": 3,
+            "cadence_every": 3
+        });
+        let result = dispatch_compute("swarm.second_order_monitor", &input).unwrap();
+        assert_eq!(
+            result.get("recommendation").and_then(|v| v.as_str()),
+            Some("go_see"),
+            "divergence present → go_see"
+        );
+        let detail = result.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            detail.contains("sensor filters truth"),
+            "divergence detail wins over cadence detail; got {detail}"
         );
     }
 }

@@ -346,6 +346,14 @@ steps:
     input_mapping:
       iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
       loop_window: 3
+      # Cybernetic Swarm Plan C2 — scheduled Go See cadence: force a human
+      # Go See check every 3 convergences regardless of the monitor's signals.
+      # The event triggers (sensor_truth_divergence, reasoning_loop) have high
+      # variety for the failures they measure but cannot detect failures
+      # outside their programmed variety (§5.1: Go See cannot be fully
+      # automated). The cadence is the irreducible human check for the
+      # unknown-unknowns.
+      cadence_every: 3
 
   - ordinal: 9
     action: loop
