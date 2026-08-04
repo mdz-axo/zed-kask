@@ -403,18 +403,31 @@ fn redact_spans(text: &str, matches: &[llm_guard::Match<'_>]) -> String {
         matches.iter().filter(|m| m.scanner == "secrets").collect();
     secret_matches.sort_by_key(|m| m.span.start);
 
-    for m in secret_matches {
+    // Overlapping spans are MERGED, not skipped: skipping a span whose start
+    // falls before `cursor` emits the uncovered tail bytes verbatim, leaking
+    // the secret's suffix (e.g. a prefix pattern redacting [10,18) while a
+    // full-key pattern covering [10,28) is skipped leaks bytes 18-28).
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(secret_matches.len());
+    for m in &secret_matches {
         let start = m.span.start.min(text.len());
         let end = m.span.end.min(text.len());
-        if start < cursor || end < start {
-            // Overlapping span — skip to avoid corruption.
+        if end < start {
             tracing::warn!(
-                target: "hkask.guard.redact",
-                start, end, cursor,
-                "skipping overlapping span during redaction"
+                target: "reg.guard.redact",
+                start, end,
+                "dropping inverted span during redaction"
             );
             continue;
         }
+        match merged.last_mut() {
+            Some((_, last_end)) if start <= *last_end => {
+                *last_end = (*last_end).max(end);
+            }
+            _ => merged.push((start, end)),
+        }
+    }
+
+    for (start, end) in merged {
         out.push_str(&text[cursor..start]);
         out.push_str("[REDACTED]");
         cursor = end;
@@ -644,5 +657,77 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    /// Deterministic pin for the redact_spans ordering fix: hand-constructed
+    /// out-of-order matches must ALL be redacted (the integration test above
+    /// depends on llm-guard's emission order, which is an unverified
+    /// assumption).
+    #[test]
+    fn redact_spans_out_of_order_matches_all_redacted() {
+        let text = "AAAA middle BBBB end";
+        let matches = vec![
+            llm_guard::Match::new(
+                "secrets",
+                "pattern_later_position",
+                12..16,
+                &text[12..16],
+                llm_guard::Confidence::High,
+                llm_guard::Severity::Block,
+            ),
+            llm_guard::Match::new(
+                "secrets",
+                "pattern_earlier_position",
+                0..4,
+                &text[0..4],
+                llm_guard::Confidence::High,
+                llm_guard::Severity::Block,
+            ),
+        ];
+        let sanitized = redact_spans(text, &matches);
+        assert!(
+            !sanitized.contains("AAAA"),
+            "earlier-position secret leaked: {sanitized}"
+        );
+        assert!(
+            !sanitized.contains("BBBB"),
+            "later-position secret leaked: {sanitized}"
+        );
+        assert!(sanitized.contains(" middle "));
+        assert!(sanitized.ends_with(" end"));
+    }
+
+    /// Overlapping secret spans must be MERGED, not skipped — skipping a
+    /// span whose start precedes the cursor emits its uncovered tail bytes
+    /// verbatim, leaking the secret's suffix.
+    #[test]
+    fn redact_spans_overlapping_matches_merged_no_suffix_leak() {
+        let text = "sk-abc123def456ghi789 trailing";
+        let matches = vec![
+            // Prefix pattern matches only the head of the secret.
+            llm_guard::Match::new(
+                "secrets",
+                "generic_prefix",
+                0..10,
+                &text[0..10],
+                llm_guard::Confidence::High,
+                llm_guard::Severity::Block,
+            ),
+            // Full-key pattern covers the whole secret, overlapping the first.
+            llm_guard::Match::new(
+                "secrets",
+                "full_key",
+                0..21,
+                &text[0..21],
+                llm_guard::Confidence::High,
+                llm_guard::Severity::Block,
+            ),
+        ];
+        let sanitized = redact_spans(text, &matches);
+        assert!(
+            !sanitized.contains("def456ghi7"),
+            "secret suffix leaked past redaction: {sanitized}"
+        );
+        assert_eq!(sanitized, "[REDACTED] trailing");
     }
 }
