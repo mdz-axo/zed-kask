@@ -43,7 +43,7 @@ inputs:
 
 steps:
   - ordinal: 1
-    action: populate
+    action: select
     description: >
       Reformulate the user query for better retrieval. Decompose compound
       queries into sub-queries, expand with synonyms, and identify intent.
@@ -121,7 +121,7 @@ steps:
               relevance: { type: number }
 
   - ordinal: 4
-    action: populate
+    action: select
     description: >
       Synthesize a grounded answer from retrieved memory and web context.
       Use ONLY provided context — do not generate from parametric memory.
@@ -132,9 +132,9 @@ steps:
     timeout_seconds: 90
     input_mapping:
       query: "{{ query }}"
-      memory_context: "{{ ordinal_2.memory_context | default([]) }}"
-      web_context: "{{ ordinal_3.web_context | default([]) }}"
-      query_intent: "{{ ordinal_1.query_intent }}"
+      memory_context: "{{ step_2_result.memory_context | default([]) }}"
+      web_context: "{{ step_3_result.web_context | default([]) }}"
+      query_intent: "{{ step_1_result.query_intent }}"
     output_schema:
       type: object
       properties:
@@ -156,7 +156,7 @@ steps:
           type: number
 
   - ordinal: 5
-    action: populate
+    action: select
     description: >
       Verify each citation in the synthesized answer. Check that claims
       are actually supported by cited sources. Flag hallucinations and
@@ -166,10 +166,10 @@ steps:
     gas_cap: 2000
     timeout_seconds: 30
     input_mapping:
-      answer: "{{ ordinal_4.answer }}"
-      citations: "{{ ordinal_4.citations }}"
-      memory_context: "{{ ordinal_2.memory_context | default([]) }}"
-      web_context: "{{ ordinal_3.web_context | default([]) }}"
+      answer: "{{ step_4_result.answer }}"
+      citations: "{{ step_4_result.citations }}"
+      memory_context: "{{ step_2_result.memory_context | default([]) }}"
+      web_context: "{{ step_3_result.web_context | default([]) }}"
     output_schema:
       type: object
       properties:
@@ -207,6 +207,11 @@ steps:
       properties:
         variety_counter: { type: integer }
         reg_event_id: { type: string }
+
+
+  - ordinal: 7
+    action: abort
+    description: Pipeline complete — single-pass; converge and exit.
 
 # Error Handling
 error_handling:

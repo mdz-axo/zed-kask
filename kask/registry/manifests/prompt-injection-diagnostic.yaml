@@ -47,7 +47,7 @@ inputs:
 # Process Steps
 steps:
   - ordinal: 1
-    action: populate
+    action: select
     description: >
       Classify the input text across 6 attack categories: direct_injection,
       indirect_injection, jailbreak, data_exfiltration, tool_misuse,
@@ -80,7 +80,7 @@ steps:
           type: string
 
   - ordinal: 2
-    action: populate
+    action: select
     description: >
       Given the threat classification and agent context, analyze the specific
       attack surface. Map what tools could be misused, what data could be
@@ -93,7 +93,7 @@ steps:
     input_mapping:
       input_text: "{{ input_text }}"
       agent_context: "{{ agent_context | default({}) }}"
-      threat_classification: "{{ ordinal_1.threat_classification }}"
+      threat_classification: "{{ step_1_result.threat_classification }}"
     output_schema:
       type: object
       properties:
@@ -121,7 +121,7 @@ steps:
             escalation_possible: { type: boolean }
 
   - ordinal: 3
-    action: populate
+    action: select
     description: >
       Recommend specific defenses from the 6-layer pipeline: sanitize,
       isolate, canary, restrict, monitor, audit. For each critical threat,
@@ -134,8 +134,8 @@ steps:
     timeout_seconds: 60
     input_mapping:
       input_text: "{{ input_text }}"
-      threat_classification: "{{ ordinal_1.threat_classification }}"
-      exploitation_paths: "{{ ordinal_2.exploitation_paths }}"
+      threat_classification: "{{ step_1_result.threat_classification }}"
+      exploitation_paths: "{{ step_2_result.exploitation_paths }}"
     output_schema:
       type: object
       properties:
@@ -214,6 +214,11 @@ steps:
           type: integer
         reg_event_id:
           type: string
+
+
+  - ordinal: 6
+    action: abort
+    description: Pipeline complete — single-pass; converge and exit.
 
 # Error Handling
 error_handling:
