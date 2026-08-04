@@ -3,8 +3,8 @@ name: runtime-posture-monitor
 visibility: public
 description: >
   Runtime security posture monitoring skill for hKask (v0.31.0). Observes
-  runtime telemetry (hkask.* performative spans, reg.guard.* violations,
-  reg.regulation events) to detect runtime threats: API endpoint abuse,
+  runtime telemetry (reg.* canonical spans, reg.guard.* violations,
+  reg.outcome events) to detect runtime threats: API endpoint abuse,
   bot traffic, LLM usage anomalies, and runtime dependency behavior
   anomalies. Distinct from supply-chain-sentinel (static manifest audit,
   P4 manifest boundary) — this skill observes runtime behavior (P4
@@ -21,10 +21,10 @@ description: >
 
 # Runtime Posture Monitor
 
-{# goal: Observe runtime telemetry (hkask.* performative spans, reg.guard.* violations, reg.regulation events) within deployed userpod host (P4 runtime boundary). Classify runtime threats (endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly). Map to MITRE CWE-1357/CWE-829/CWE-200, OWASP LLM06/LLM07, ATLAS AML.TA0010. Emit reg.regulation and reg.guard.violation for downstream action. Propose concrete RR-NNNN.yaml entries (surface: runtime, status: pending, concrete grep pattern against span target). Emit reg.runtime.* spans (P9). Compute convergence metric from real runtime evidence only. No synthetic signals; no external endpoint scanning; userpod_host mandatory (P12). #}
+{# goal: Observe runtime telemetry (reg.* canonical spans, reg.guard.* violations, reg.outcome events) within deployed userpod host (P4 runtime boundary). Classify runtime threats (endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly). Map to MITRE CWE-1357/CWE-829/CWE-200, OWASP LLM06/LLM07, ATLAS AML.TA0010. Emit reg.outcome and reg.guard.violation for downstream action. Propose concrete RR-NNNN.yaml entries (surface: runtime, status: pending, concrete grep pattern against span target). Emit reg.runtime.* spans (P9). Compute convergence metric from real runtime evidence only. No synthetic signals; no external endpoint scanning; userpod_host mandatory (P12). #}
 
 Runtime security posture monitoring. Observes hKask's own Regulation telemetry
-(`hkask.*` performative spans, `reg.guard.*` violations, `reg.regulation`
+(`reg.*` canonical spans, `reg.guard.*` violations, `reg.outcome`
 events) as concrete evidence. Maps runtime threats to MITRE CWE / OWASP
 LLM / MITRE ATLAS taxonomy. Proposes CI-enforced regressions
 (`surface: runtime`). Tracks defense-layer firing coverage (6 runtime
@@ -70,7 +70,7 @@ posture convergence metric.
 - **P9 Regulation regulation:** Emits `reg.runtime.select`, `reg.runtime.classify`,
   `reg.runtime.regulate`, `reg.runtime.convergence` spans. All four are
   registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`)
-  and emitted unconditionally. Also emits `reg.regulation` and
+  and emitted unconditionally. Also emits `reg.outcome` and
   `reg.guard.violation` for downstream consumption (both registered).
 - **P10 Bot/userpod taxonomy:** `visibility: public` — transparent
   runtime monitoring.
@@ -85,22 +85,25 @@ posture convergence metric.
 
 ## Instructions
 
-> **Tool dependency:** this skill reads runtime telemetry via the
-> `hkask-mcp-regulation` MCP server. Use the `regulation_query_spans` tool to query Regulation
-> span history by namespace prefix (e.g. `namespace="reg.guard"`,
-> `namespace="reg.regulation"`, `namespace="hkask"`) within a time window,
-> and `reg_span_stats` to aggregate counts by span_category. Both tools
-> accept `since_hours` (default 1.0) and return JSON. When the store is
-> unavailable (no `HKASK_DB_PASSPHRASE`), the tools return
-> `permission_denied` — treat this as a degraded posture finding, not a
-> hard failure.
+> **Telemetry source:** this skill observes Regulation telemetry emitted
+> by `hkask-guard` (`reg.guard.*` spans), `hkask-regulation`
+> (`reg.outcome.*` and `reg.cybernetics.*` spans), and `hkask-templates`
+> (`reg.tool.*` and `reg.inference` spans). Span history is persisted by
+> `hkask-ledger` in its SQLCipher database. **No MCP server currently
+> exposes a span-query tool** (the former `hkask-mcp-regulation` server
+> was deleted — see `DIVERGENCE.md` hKask workspace members list). To
+> query spans, either (a) read `hkask-ledger` database tables directly,
+> (b) parse tracing log output filtered by `target="reg.*"`, or
+> (c) provide telemetry data as input to the skill cascade. When no
+> telemetry is available, return empty `signal_sources` and recommend
+> deploying a regulation-aware component — do NOT fabricate signals.
 
 ### runtime-posture-monitor/select-signal
 
 1. Discover runtime signal sources in the deployed userpod host:
-   `hkask.*` performative spans, `reg.guard.*` violation spans
+   `reg.*` canonical spans, `reg.guard.*` violation spans
    (`reg.guard.input`, `reg.guard.output`, `reg.guard.canary`,
-   `reg.guard.runtime_policy`), `reg.regulation` events
+   `reg.guard.runtime_policy`), `reg.outcome` events
    (`reg.outcome.action_blocked`, `reg.outcome.action_substituted`,
    `reg.outcome.plateau_detected`), `reg.tool.*` invocations,
    `reg.inference` calls.
@@ -114,7 +117,7 @@ posture convergence metric.
    `input_filtering` (`reg.guard.input` firing), `output_filtering`
    (`reg.guard.output` firing), `canary_detection` (`reg.guard.canary`
    firing), `runtime_policy` (`reg.guard.runtime_policy` firing),
-   `regulation_loop` (`reg.regulation` events observed),
+   `regulation_loop` (`reg.outcome` events observed),
    `action_distribution_monitoring` (`reg.outcome.loop_quality`
    observed).
 5. Return JSON: `{signal, signal_sources: [...], signal_types: [...],
@@ -202,7 +205,7 @@ CONSTRAINT — Evidence integrity (P8):
    `defense_layers_silent`, `remediation_recommendation`,
    `regulation_action_emitted`, `guard_violation_emitted`, `userpod_host`.
 3. For each critical/high threat:
-   a. Emit `reg.regulation` event (feeds CyberneticsLoop for regulation
+   a. Emit `reg.outcome` event (feeds CyberneticsLoop for regulation
       action selection).
    b. If blocking warranted (critical severity, defense-layer bypass),
       emit `reg.guard.violation` (triggers defensive blocking).
@@ -230,7 +233,7 @@ CONSTRAINT — Evidence integrity (P8):
 |----------|------|---------|
 | `select-signal.j2` | KnowAct | Discover runtime signal sources; read regression library; emit `reg.runtime.select` span. |
 | `classify-threat.j2` | KnowAct | Observe runtime signals; classify threats; apply pragmatic-cybernetics; emit `reg.runtime.classify` spans. |
-| `emit-regulation.j2` | KnowAct | Synthesize threats with CWE/OWASP/ATLAS taxonomy; emit `reg.regulation` and `reg.guard.violation`; propose `RR-NNNN.yaml` entries (`surface: runtime`); emit `reg.runtime.regulate` span. |
+| `emit-regulation.j2` | KnowAct | Synthesize threats with CWE/OWASP/ATLAS taxonomy; emit `reg.outcome` and `reg.guard.violation`; propose `RR-NNNN.yaml` entries (`surface: runtime`); emit `reg.runtime.regulate` span. |
 
 ## Defense-Layer Catalog (Runtime Specific)
 
@@ -240,7 +243,7 @@ CONSTRAINT — Evidence integrity (P8):
 | 2 | Output filtering (runtime firing) | `reg.guard.output` span emission count | `hkask-guard` pipeline |
 | 3 | Canary token detection (runtime firing) | `reg.guard.canary` span emission count | `hkask-guard` pipeline |
 | 4 | Runtime policy enforcement | `reg.guard.runtime_policy` span emission count | `hkask-templates` executor |
-| 5 | Regulation loop active | `reg.regulation` span emission count | `hkask-regulation` cybernetics loop |
+| 5 | Regulation loop active | `reg.outcome` span emission count | `hkask-regulation` cybernetics loop |
 | 6 | Action distribution monitoring | `reg.outcome.loop_quality` span | `hkask-regulation` regulation policy |
 
 New layers can be added as real runtime patterns justify them (P7) — not
@@ -345,7 +348,7 @@ This skill is anchored to concrete, verifiable taxonomy sources (P8):
   detection). Source: `atlas.mitre.org`.
 - **`hkask-guard` pipeline:** `reg.guard.*` span sources (runtime evidence).
   Source: `crates/hkask-guard/src/pipeline.rs`.
-- **`hkask-regulation` cybernetics loop:** `reg.regulation` span sink (downstream
+- **`hkask-regulation` cybernetics loop:** `reg.outcome` span sink (downstream
   regulation action). Source: `crates/hkask-regulation/src/cybernetics_loop.rs`.
 - **`security/regressions/README.md`:** Regression YAML format and ratchet
   lifecycle. Source: local project standard — authoritative.

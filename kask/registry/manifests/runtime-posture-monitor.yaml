@@ -1,6 +1,6 @@
 # Runtime Posture Monitor Process Manifest
 # ℏKask v0.31.0 — Runtime security posture observation
-# Observes Regulation telemetry (hkask.* spans, reg.guard.*, reg.regulation events).
+# Observes Regulation telemetry (reg.* canonical spans, reg.guard.*, reg.outcome events).
 
 manifest:
   id: runtime-posture-monitor
@@ -39,6 +39,29 @@ inputs:
     type: array
     required: false
   - name: workspace_context
+    type: string
+    required: false
+  - name: target_signal
+    type: string
+    required: false
+  - name: discovered_signals
+    type: array
+    required: false
+  - name: existing_regressions
+    type: array
+    required: false
+  - name: userpod_host
+    type: string
+    required: true
+  - name: threats
+    type: array
+    required: false
+  - name: defense_layers_firing
+    type: array
+    required: false
+  - name: defense_layers_silent
+    type: array
+    required: false
 
 ledger:
   span_namespace: reg.skill.runtime-posture-monitor

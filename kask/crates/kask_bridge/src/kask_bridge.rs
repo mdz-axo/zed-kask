@@ -6,6 +6,7 @@
 //!
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask
 //! depends on hKask. This bridge is the only crate that depends on both sides.
+#![cfg_attr(not(test), forbid(unsafe_code))]
 #![warn(clippy::let_underscore_future)]
 
 mod condenser_bridge;

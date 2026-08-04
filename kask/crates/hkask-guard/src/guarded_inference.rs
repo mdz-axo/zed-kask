@@ -416,3 +416,68 @@ impl InferencePort for GuardedInferencePort {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::guard_output;
+    use crate::{ContentGuard, GuardConfig};
+    use hkask_types::{InferenceResult, InferenceUsage};
+
+    fn make_result(text: String, reasoning: Option<String>) -> InferenceResult {
+        InferenceResult {
+            text,
+            model: "test-model".to_string(),
+            usage: InferenceUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            },
+            finish_reason: "stop".to_string(),
+            token_probabilities: None,
+            tool_calls: vec![],
+            reasoning,
+            cost_usd: None,
+        }
+    }
+
+    /// RR-0030 enforcement: the canary token must be redacted from the
+    /// `reasoning` field of `InferenceResult`, not just from `text`.
+    /// Thinking-mode models (Qwen3, GLM-5.2, DeepSeek-R1) routinely echo
+    /// system-prompt content — including the canary — into the reasoning
+    /// trace; an unscanned reasoning channel silently defeats canary/secret
+    /// detection and leaks secrets past Layer 7 output filtering.
+    #[test]
+    fn canary_in_reasoning_field_is_redacted() {
+        let guard = ContentGuard::mandatory(&GuardConfig::default());
+        let canary = guard.canary().as_str().to_string();
+
+        // Embed the canary in the reasoning trace, keep the visible text clean.
+        let result = make_result(
+            "clean output".to_string(),
+            Some(format!("thinking about the prompt... {canary} ...done")),
+        );
+        let guarded = guard_output(result, &guard);
+
+        let guarded_reasoning = guarded.reasoning.expect("reasoning should still be Some");
+        assert!(
+            !guarded_reasoning.contains(&canary),
+            "canary token not redacted from reasoning. output: {guarded_reasoning}"
+        );
+    }
+
+    /// RR-0030 complement: clean reasoning (no canary) must be preserved
+    /// unchanged — no false positives from the reasoning scanner.
+    #[test]
+    fn clean_reasoning_is_preserved() {
+        let guard = ContentGuard::mandatory(&GuardConfig::default());
+        let reasoning = "thinking about the problem step by step";
+        let result = make_result("answer".to_string(), Some(reasoning.to_string()));
+        let guarded = guard_output(result, &guard);
+
+        assert_eq!(
+            guarded.reasoning.as_deref(),
+            Some(reasoning),
+            "clean reasoning was modified by guard_output — false positive"
+        );
+    }
+}

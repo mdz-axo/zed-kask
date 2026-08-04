@@ -1,10 +1,10 @@
-{# goal: Discover runtime signal sources (hkask.* performative spans, reg.guard.* violations, reg.regulation events) within the deployed userpod host (P4 runtime boundary — distinct from supply-chain-sentinel's manifest boundary). Read security/regressions/ for existing surface: runtime checks. Return concrete signal_sources (verifiable span targets only — no synthetic signals). Emit reg.runtime.select span (P9 — namespace registered in CANONICAL_NAMESPACES). Authenticated host mandatory (P12). Signal parameter: guard | regulation | tool | inference | all. #}
+{# goal: Discover runtime signal sources (reg.* canonical spans, reg.guard.* violations, reg.outcome events) within the deployed userpod host (P4 runtime boundary — distinct from supply-chain-sentinel's manifest boundary). Read security/regressions/ for existing surface: runtime checks. Return concrete signal_sources (verifiable span targets only — no synthetic signals). Emit reg.runtime.select span (P9 — namespace registered in CANONICAL_NAMESPACES). Authenticated host mandatory (P12). Signal parameter: guard | regulation | tool | inference | all. #}
 {% set signal_types = [
   {id: 'guard', targets: ['reg.guard.input', 'reg.guard.output', 'reg.guard.canary', 'reg.guard.runtime_policy'], source: 'hkask-guard pipeline + hkask-templates executor'},
-  {id: 'regulation', targets: ['reg.regulation', 'reg.outcome.impact_verified', 'reg.outcome.action_blocked', 'reg.outcome.action_substituted', 'reg.outcome.plateau_detected'], source: 'hkask-regulation cybernetics loop'},
+  {id: 'regulation', targets: ['reg.outcome', 'reg.outcome.impact_verified', 'reg.outcome.action_blocked', 'reg.outcome.action_substituted', 'reg.outcome.plateau_detected'], source: 'hkask-regulation cybernetics loop'},
   {id: 'tool', targets: ['reg.tool.invoked', 'reg.tool.completed', 'reg.tool.error'], source: 'MCP tool invocations across all mcp-servers'},
   {id: 'inference', targets: ['reg.inference'], source: 'LLM inference calls'},
-  {id: 'all', targets: [], discover: true, source: 'auto-discover all hkask.* and reg.* performative spans actually emitted by the running system'}
+  {id: 'all', targets: [], discover: true, source: 'auto-discover all reg.* canonical spans actually emitted by the running system'}
 ] %}
 
 {# Discover runtime signal sources in the deployed userpod host #}
@@ -37,7 +37,7 @@ CONSTRAINT: This skill is complementary to `kali-audit` (static defense-layer pr
 CONSTRAINT: This skill is complementary to `adversarial-red-team` (synthetic LLM I/O attacks) — this skill observes real runtime traffic. Zero overlap.
 CONSTRAINT: Reference concrete taxonomy: MITRE CWE-1357 (Reliance on Component Not Updateable — runtime dependency behavior), CWE-829 (Inclusion from Untrusted Control Sphere — runtime untrusted input), CWE-200 (Information Exposure — runtime endpoint exposure); OWASP LLM06 (Excessive Agency — runtime tool misuse), LLM07 (System Prompt Leakage — runtime canary detection); MITRE ATLAS AML.TA0010 (Exfiltration — runtime data exfiltration).
 CONSTRAINT: Every runtime threat finding must cite span target, timestamp, signal value, and evidence snippet — not summary description alone.
-CONSTRAINT: If target_signal is 'auto', discover all `hkask.*` performative spans and `reg.*` canonical spans emitted by the running system. Prioritize `reg.guard.*` and `reg.outcome.*` since they carry security-relevant runtime signals.
+CONSTRAINT: If target_signal is 'auto', discover all `reg.*` canonical spans emitted by the running system. Prioritize `reg.guard.*` and `reg.outcome.*` since they carry security-relevant runtime signals.
 CONSTRAINT: Read actual runtime telemetry (not synthetic) before proposing any regression entry.
 CONSTRAINT: Every finding must include `userpod_host` identity (P12) — no anonymous runtime scanning.
 CONSTRAINT: Apply pragmatic-cybernetics (like `bug-hunt` probe phase): trace signal polarity (does the signal indicate increasing or decreasing risk?), check variety (are there alternative signal sources for the same threat?), perform Good Regulator check (is the defense layer actually regulating the threat?).

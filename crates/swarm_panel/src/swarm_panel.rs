@@ -3253,6 +3253,8 @@ impl SwarmPanel {
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
+        let mode = Self::current_swarm_mode(cx);
+        let is_local = mode == kask_bridge::SwarmModeConfig::Local;
 
         let message: SharedString = if self.is_fetching() {
             "Loading agents and swarms…".into()
@@ -3263,6 +3265,8 @@ impl SwarmPanel {
                 SwarmFilter::All => {
                     if has_search {
                         "No agents or swarms that match your search."
+                    } else if is_local {
+                        "No local agents or swarms. Create a local agent (Author) or clone a cloud agent to Local."
                     } else {
                         "No agents or swarms. Set HKASK_ABW_API_KEY to see your swarms."
                     }
@@ -3270,6 +3274,8 @@ impl SwarmPanel {
                 SwarmFilter::Swarms => {
                     if has_search {
                         "No swarms that match your search."
+                    } else if is_local {
+                        "No local swarms. Compose one (Compose) to group local agents."
                     } else {
                         "No swarms. Set HKASK_ABW_API_KEY to see your workspaces."
                     }
@@ -3277,6 +3283,8 @@ impl SwarmPanel {
                 SwarmFilter::Agents => {
                     if has_search {
                         "No agents that match your search."
+                    } else if is_local {
+                        "No local agents. Create one (Author) or clone a cloud agent to Local."
                     } else {
                         "No agents."
                     }

@@ -1,4 +1,4 @@
-{# goal: Read runtime signal evidence (hkask.* performative spans, reg.guard.* violations, reg.regulation events) within deployed userpod host (P4 runtime boundary). Classify signals into threat patterns: endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly. Apply pragmatic-cybernetics (IS/OUGHT, provenance, grill-me). Emit reg.runtime.classify spans (P9 — namespace registered). No synthetic signals; userpod_host mandatory (P12). Evidence-backed only (P8). #}
+{# goal: Read runtime signal evidence (reg.* canonical spans, reg.guard.* violations, reg.outcome events) within deployed userpod host (P4 runtime boundary). Classify signals into threat patterns: endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly. Apply pragmatic-cybernetics (IS/OUGHT, provenance, grill-me). Emit reg.runtime.classify spans (P9 — namespace registered). No synthetic signals; userpod_host mandatory (P12). Evidence-backed only (P8). #}
 {# Reads runtime signals discovered in select-signal phase #}
 {# For each signal, checks: frequency vs baseline, pattern signatures,
   defense-layer firing, regulation action triggered, action distribution shift #}
@@ -82,7 +82,7 @@ CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span his
    - Output filtering firing (`reg.guard.output` violations observed)
    - Canary detection firing (`reg.guard.canary` violations observed)
    - Runtime policy enforcing (`reg.guard.runtime_policy` Log/Block observed)
-   - Regulation loop active (`reg.regulation` events observed)
+   - Regulation loop active (`reg.outcome` events observed)
    - Action distribution monitoring (`reg.outcome.loop_quality` observed)
 10. For each classified threat, emit structured finding:
     `threat_type`, `signal_target`, `timestamp`, `signal_value`, `baseline_value`,

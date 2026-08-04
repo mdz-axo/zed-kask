@@ -5,8 +5,8 @@ crate:
   visibility: public
   description: >
     Runtime security posture monitoring skill for hKask. Observes runtime
-    telemetry (hkask.* performative spans, reg.guard.* violations,
-    reg.regulation events) to detect runtime threats: API endpoint abuse,
+    telemetry (reg.* canonical spans, reg.guard.* violations,
+    reg.outcome events) to detect runtime threats: API endpoint abuse,
     bot traffic, LLM usage anomalies, and runtime dependency behavior
     anomalies. Distinct from supply-chain-sentinel (static manifest audit,
     P4 manifest boundary) — this skill observes runtime behavior (P4
@@ -27,10 +27,10 @@ templates:
     type: KnowAct
     description: >
       Discover runtime signal sources within the deployed userpod host:
-      hkask.* performative spans (tool invocations, inference calls,
+      reg.* canonical spans (tool invocations, inference calls,
       communication events), reg.guard.* violation spans (input/output
       filter firings, canary detections, runtime policy enforcements),
-      reg.regulation events (action blocks, substitutions, plateaus).
+      reg.outcome events (action blocks, substitutions, plateaus).
       Reads regression library for existing surface: runtime checks.
       Signal parameter: guard | regulation | tool | inference | all.
 
@@ -53,7 +53,7 @@ templates:
     type: KnowAct
     description: >
       Synthesize classified threats with MITRE CWE / OWASP LLM / ATLAS
-      taxonomy. For each threat: emit reg.regulation event and trigger
+      taxonomy. For each threat: emit reg.outcome event and trigger
       reg.guard.violation if blocking warranted. Propose RR-NNNN.yaml
       entries with surface: runtime for enforced CI gates. Produce
       verdict (Pass / Conditional / Fail) based on threat severity and

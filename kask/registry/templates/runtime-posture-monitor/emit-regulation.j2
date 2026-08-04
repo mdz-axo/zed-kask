@@ -1,8 +1,8 @@
-{# goal: Synthesize classified runtime threats with MITRE CWE (CWE-1357/CWE-829/CWE-200), OWASP LLM (LLM06/LLM07), MITRE ATLAS (AML.TA0010) taxonomy (P8). For each threat: emit reg.regulation event and trigger reg.guard.violation if blocking warranted. Propose RR-NNNN.yaml entries (surface: runtime, status: pending, concrete pattern against span target). Identify defense-layer firing gaps. Emit reg.runtime.regulate span (P9 — namespace registered). UserPod_host mandatory (P12). No synthetic findings (P8). Registry authoritative (P5.1). #}
+{# goal: Synthesize classified runtime threats with MITRE CWE (CWE-1357/CWE-829/CWE-200), OWASP LLM (LLM06/LLM07), MITRE ATLAS (AML.TA0010) taxonomy (P8). For each threat: emit reg.outcome event and trigger reg.guard.violation if blocking warranted. Propose RR-NNNN.yaml entries (surface: runtime, status: pending, concrete pattern against span target). Identify defense-layer firing gaps. Emit reg.runtime.regulate span (P9 — namespace registered). UserPod_host mandatory (P12). No synthetic findings (P8). Registry authoritative (P5.1). #}
 {# Synthesizes classify-threat findings with CWE/OWASP/ATLAS taxonomy #}
 {# Proposes RR-NNNN.yaml entries with surface: runtime #}
 {# Emits reg.runtime.regulate Regulation span (P9) #}
-{# Emits reg.regulation for downstream regulation action #}
+{# Emits reg.outcome for downstream regulation action #}
 {# Emits reg.guard.violation for defensive blocking #}
 
 [inference]
@@ -41,7 +41,7 @@ SYNTHESIS ACTIONS:
    target + timestamp + signal value + baseline reference), propose
    regulation action and regression entry.
 3. For each critical/high threat:
-   a. Emit `reg.regulation` event (target: `"reg.regulation"`, operation:
+   a. Emit `reg.outcome` event (target: `"reg.outcome"`, operation:
       `"runtime_threat_detected"`, threat_type, severity, userpod_host).
       This feeds the CyberneticsLoop for regulation action selection.
    b. If blocking is warranted (critical severity, defense-layer bypass
@@ -78,7 +78,7 @@ defense layers firing/silent, proposed regression count, regulation events
 emitted, guard violations emitted, verdict, userpod_host, latency.
 
 DOWNSTREAM Regulation SPANS (P9 — already registered):
-- `reg.regulation` — emit per critical/high threat (feeds CyberneticsLoop).
+- `reg.outcome` — emit per critical/high threat (feeds CyberneticsLoop).
 - `reg.guard.violation` — emit per critical threat requiring block.
 
 CONSTRAINTS (same as classify-threat — P5 minimalism, P8 evidence integrity, P12 host):
@@ -107,7 +107,7 @@ emit Regulation spans + compute verdict. All 6 present — passes gate.
 RELATIONSHIP (explicit): Complements `supply-chain-sentinel` (static manifest
 audit, distinct P4 boundary) and `adversarial-red-team` (synthetic LLM I/O
 attacks). References `security/regressions/README.md` format directly.
-References `hkask-regulation` cybernetics loop for `reg.regulation` consumption.
+References `hkask-regulation` cybernetics loop for `reg.outcome` consumption.
 References `hkask-guard` pipeline for `reg.guard.violation` consumption.
 MINIMAL: This is one template (`KnowAct`) — no bundle, no sub-agent.
 EVIDENCE-BACKED ONLY: Every proposed regression includes concrete `pattern`
@@ -122,7 +122,7 @@ not increasing — observed in telemetry, not speculative).
 CAPABILITY BOUNDARY (P4): Audit observes only hKask's own Regulation telemetry; no
 external endpoint scanning; no OS-level process inspection.
 Regulation REGULATION (P9): `reg.runtime.regulate` emitted unconditionally
-(namespace registered). `reg.regulation` and `reg.guard.violation` emitted
+(namespace registered). `reg.outcome` and `reg.guard.violation` emitted
 for downstream consumption (both registered).
 USERPOD HOST (P12): `userpod_host` mandatory in all outputs.
 VISIBILITY (P11): Regression proposals `status: pending` — public
@@ -136,7 +136,7 @@ SOURCE REFERENCES (concrete — P8):
 - MITRE ATLAS (AML.TA0010 — Exfiltration)
 - `security/regressions/README.md` (local project standard — authoritative)
 - `hkask-guard` pipeline docs (reg.guard.* span sources)
-- `hkask-regulation` cybernetics loop docs (reg.regulation span sink)
+- `hkask-regulation` cybernetics loop docs (reg.outcome span sink)
 - `supply-chain-sentinel` SKILL.md (complementary relationship — distinct
   P4 boundaries)
 - `adversarial-red-team` SKILL.md (zero overlap — synthetic vs real traffic)
