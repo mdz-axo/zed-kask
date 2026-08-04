@@ -28,8 +28,7 @@
 //! in `SetPoints` + regulation actions via `InferenceRegulation`.
 
 use crate::dampener::{Dampener, StagnationDetector};
-use crate::energy::{AgentGasStatus, GasBudget, GasCost, GasError};
-use crate::energy_budget_management::GasBudgetManager;
+use crate::energy::{AgentCallCapStatus, CallCap, CallCapError, CallCapManager};
 
 use crate::runtime::{RegulationCycleEntry, RegulationLedger};
 use crate::sensor_provider::{EnergyBudgetSensor, SensorBus, ToolReliabilitySensor, VarietySensor};
@@ -37,8 +36,6 @@ use crate::set_points::{InferenceThrottleMode, SetPoints};
 use crate::strategy_evaluator::StrategyEvaluator;
 use crate::system_simulator::MovingAverageExtrapolator;
 use crate::tool_stats::ToolStats;
-use crate::wallet_manager::WalletManager;
-use crate::well::WellManager;
 
 use crate::algedonic::{AlertSeverity, RuntimeAlert};
 use crate::regulation_policy::{
@@ -74,9 +71,7 @@ struct CalibratedThresholds {
 /// alerts. It may NOT regulate the Curation Loop.
 pub struct CyberneticsLoop {
     ledger: Arc<RwLock<RegulationLedger>>,
-    gas_budget_manager: Arc<RwLock<GasBudgetManager>>,
-    well_manager: Arc<RwLock<WellManager>>,
-    wallet_manager: Option<Arc<WalletManager>>,
+    call_cap_manager: Arc<RwLock<CallCapManager>>,
     set_points: SetPoints,
     /// Cascade detection — prevents unbounded sense→act cycles
     max_iterations: u32,
@@ -91,7 +86,7 @@ pub struct CyberneticsLoop {
     curator_directive_rx: Option<Arc<RwLock<mpsc::UnboundedReceiver<CuratorDirective>>>>,
     /// Loop-quality telemetry from the most recent tick cycle.
     loop_quality: RwLock<LoopMetrics>,
-    /// Path for persisting gas budgets across restarts.
+    /// Path for persisting call caps across restarts.
     budget_persistence_path: Option<std::path::PathBuf>,
     /// Detects regulatory plateaus — repeated ineffective (metric, action) pairs.
     /// Fermi-inspired early-stopping pattern for cybernetic regulation.
@@ -135,7 +130,7 @@ impl CyberneticsLoop {
             StagnationDetector::new(crate::set_points::DEFAULT_STAGNATION_THRESHOLD)
                 .with_per_metric_thresholds(set_points.stagnation_thresholds.clone()),
         );
-        let gas_budget_manager = Arc::new(RwLock::new(GasBudgetManager::new()));
+        let call_cap_manager = Arc::new(RwLock::new(CallCapManager::new()));
         let calibrated_thresholds = Arc::new(RwLock::new(CalibratedThresholds {
             stagnation_thresholds: set_points.stagnation_thresholds.clone(),
             block_worsening_ratio: set_points.block_worsening_ratio,
@@ -144,7 +139,7 @@ impl CyberneticsLoop {
         let sensor_registry = {
             let registry = SensorBus::new();
             registry.register(Arc::new(EnergyBudgetSensor::new(
-                Arc::clone(&gas_budget_manager),
+                Arc::clone(&call_cap_manager),
                 set_points.gas_min_remaining,
             )));
             registry.register(Arc::new(VarietySensor::new(
@@ -167,9 +162,7 @@ impl CyberneticsLoop {
 
         Self {
             ledger,
-            gas_budget_manager,
-            well_manager: Arc::new(RwLock::new(WellManager::new())),
-            wallet_manager: None,
+            call_cap_manager,
             set_points,
             max_iterations,
             dampener,
@@ -442,56 +435,40 @@ impl CyberneticsLoop {
         }
     }
 
-    /// Attach a WalletManager for agent wallet operations.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    /// post: returns Self for chaining
-    #[must_use = "builder methods must be chained or assigned"]
-    pub fn with_wallet_manager(mut self, mgr: Arc<WalletManager>) -> Self {
-        self.wallet_manager = Some(mgr);
-        self
-    }
-
-    /// Attempt to load persisted budgets from the configured path.
+    /// Attempt to load persisted call caps from the configured path.
     /// Called automatically during `build()` if a persistence path is set.
     /// Returns count loaded (0 if first run or no path configured).
     ///
     /// expect: "The system provides observability into Regulation regulation state"
-    pub async fn load_budgets(&self) -> Result<usize, GasError> {
+    pub async fn load_budgets(&self) -> Result<usize, CallCapError> {
         if let Some(ref path) = self.budget_persistence_path {
             let contents = match tokio::fs::read_to_string(path).await {
                 Ok(c) => c,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
                 Err(e) => {
-                    return Err(GasError::Persistence(format!(
+                    return Err(CallCapError::Persistence(format!(
                         "read {}: {e}",
                         path.display()
                     )));
                 }
             };
             let wrapper: serde_json::Value = serde_json::from_str(&contents)
-                .map_err(|e| GasError::Persistence(format!("parse {}: {e}", path.display())))?;
+                .map_err(|e| CallCapError::Persistence(format!("parse {}: {e}", path.display())))?;
 
-            // Load gas budgets
-            let count = if let Some(budgets_val) = wrapper.get("budgets") {
-                let loaded: HashMap<WebID, GasBudget> = serde_json::from_value(budgets_val.clone())
-                    .map_err(|e| GasError::Persistence(format!("parse budgets: {e}")))?;
+            // Load persisted call caps.
+            let count = if let Some(caps_val) = wrapper.get("budgets") {
+                let loaded: HashMap<WebID, CallCap> = serde_json::from_value(caps_val.clone())
+                    .map_err(|e| CallCapError::Persistence(format!("parse caps: {e}")))?;
                 let n = loaded.len();
-                let gbm = self.gas_budget_manager.read().await;
-                let mut budgets = gbm.gas_budgets_mut().await;
-                for (id, budget) in loaded {
-                    budgets.insert(id, budget);
+                let mgr = self.call_cap_manager.read().await;
+                let mut caps = mgr.caps_mut().await;
+                for (id, cap) in loaded {
+                    caps.insert(id, cap);
                 }
                 n
             } else {
                 0
             };
-
-            // Restore Well state
-            if let Some(well_val) = wrapper.get("well") {
-                let mut wells = self.well_manager.write().await;
-                wells.load_state(well_val);
-            }
 
             // Restore ToolStats state
             if let Some(ts_val) = wrapper.get("tool_stats")
@@ -501,38 +478,12 @@ impl CyberneticsLoop {
             }
 
             if count > 0 || wrapper.get("tool_stats").is_some() {
-                tracing::info!(target: "reg.cybernetics", count = count, "Loaded persisted budgets + Well + ToolStats state");
+                tracing::info!(target: "reg.cybernetics", count = count, "Loaded persisted caps + ToolStats state");
             }
             Ok(count)
         } else {
             Ok(0)
         }
-    }
-
-    /// Access the WalletManager for wallet creation and balance queries.
-    /// Returns None if no wallet manager was attached via with_wallet_manager().
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub fn wallet_manager(&self) -> Option<&Arc<WalletManager>> {
-        self.wallet_manager.as_ref()
-    }
-
-    /// Attach a WalletManager after construction.
-    ///
-    /// expect: "The system provides configurable cybernetic self-regulation"
-    pub async fn set_wallet_manager(&mut self, mgr: Arc<WalletManager>) {
-        self.gas_budget_manager
-            .write()
-            .await
-            .set_wallet_manager(Arc::clone(&mgr));
-        self.wallet_manager = Some(mgr);
-    }
-
-    /// Access the WellManager for Well creation and configuration.
-    ///
-    /// expect: "The system provides observability into Regulation regulation state"
-    pub fn well_manager(&self) -> &Arc<RwLock<WellManager>> {
-        &self.well_manager
     }
 
     /// Record a tool outcome in the Regulation runtime for outcome quality tracking.
@@ -549,96 +500,55 @@ impl CyberneticsLoop {
             .await;
     }
 
-    /// Register a gas budget for an agent in the gas budget manager.
+    /// Register a per-agent call cap (the hard ceiling on governed tool calls per
+    /// regulation tick). The composition root must seed a cap for every agent
+    /// that makes governed tool calls — agents without one are denied (fail-closed).
     ///
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn register_gas_budget(&self, agent: WebID, budget: GasBudget) {
-        self.gas_budget_manager
+    pub async fn register_call_cap(&self, agent: WebID, ceiling: u32) {
+        self.call_cap_manager
             .read()
             .await
-            .register_gas_budget(agent, budget)
+            .register_call_cap(agent, ceiling)
             .await;
     }
 
-    /// Check whether an agent has sufficient budget to proceed with a gas cost.
+    /// Check whether an agent still has calls available this tick.
     ///
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn can_proceed(&self, agent: &WebID, gas: GasCost) -> bool {
-        self.gas_budget_manager
-            .read()
-            .await
-            .can_proceed(agent, gas)
-            .await
+    pub async fn can_proceed(&self, agent: &WebID) -> bool {
+        self.call_cap_manager.read().await.can_proceed(agent).await
     }
 
-    /// Returns `None` if agent has no registered budget.
+    /// Consume one call. Returns `Err` if the agent has no cap or it is exhausted.
     ///
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn agent_gas_status(&self, agent: &WebID) -> Option<AgentGasStatus> {
-        self.gas_budget_manager
-            .read()
-            .await
-            .agent_gas_status(agent)
-            .await
+    pub async fn charge_call(&self, agent: &WebID) -> Result<(), CallCapError> {
+        self.call_cap_manager.read().await.charge(agent).await
     }
 
-    /// Hold-settle pattern: gas reserved but not consumed. Call settle_gas() after.
+    /// Returns `None` if the agent has no registered cap.
     ///
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn reserve_gas(&self, agent: &WebID, gas: GasCost) -> Result<GasCost, GasError> {
-        self.gas_budget_manager
-            .read()
-            .await
-            .reserve_gas(agent, gas)
-            .await
+    pub async fn agent_call_cap_status(&self, agent: &WebID) -> Option<AgentCallCapStatus> {
+        self.call_cap_manager.read().await.agent_status(agent).await
     }
 
-    /// If actual < reserved, the difference is refunded.
+    /// Reset every registered cap to its ceiling (one regulation tick).
     ///
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn settle_gas(
-        &self,
-        agent: &WebID,
-        reserved_gas: GasCost,
-        actual_gas: GasCost,
-    ) -> Result<GasCost, GasError> {
-        self.gas_budget_manager
-            .read()
-            .await
-            .settle_gas(agent, reserved_gas, actual_gas)
-            .await
+    pub async fn reset_all_caps(&self) {
+        self.call_cap_manager.read().await.reset_all().await;
     }
 
-    /// For estimated cost, prefer `reserve_gas` + `settle_gas`.
+    /// Credit `amount` calls to an agent (used by `CuratorDirective::ReplenishBudget`).
     ///
     /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn acquire_budget(&self, agent: &WebID, gas: GasCost) -> Result<GasCost, GasError> {
-        self.gas_budget_manager
+    pub async fn credit_calls(&self, agent: &WebID, amount: u32) {
+        self.call_cap_manager
             .read()
             .await
-            .acquire_budget(agent, gas)
-            .await
-    }
-
-    /// Replenish all registered agent gas budgets on the current cycle.
-    ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn replenish_all_budgets(&self) {
-        self.gas_budget_manager
-            .read()
-            .await
-            .replenish_all_budgets()
-            .await;
-    }
-
-    /// Used by CuratorDirective::ReplenishBudget.
-    ///
-    /// expect: "The system enforces energy homeostasis through gas budget membrane regulation"
-    pub async fn replenish_agent_budget(&self, agent: &WebID, amount: GasCost) {
-        self.gas_budget_manager
-            .read()
-            .await
-            .replenish_agent_budget(agent, amount)
+            .credit(agent, amount)
             .await;
     }
 
@@ -659,12 +569,8 @@ impl CyberneticsLoop {
                 tracing::info!(target: "reg.cybernetics", processed = cd_processed, "Processed direct curator directives");
             }
         }
-
-        self.gas_budget_manager
-            .read()
-            .await
-            .expire_overrides()
-            .await;
+        // Curation overrides persist until explicitly cleared via
+        // `CuratorDirective::ClearOverride` — there is no TTL auto-expiry.
     }
 
     async fn handle_curation_directive(&self, directive: CuratorDirective) {
@@ -695,14 +601,14 @@ impl CyberneticsLoop {
                 new_threshold,
             } => self.apply_calibrate_threshold(&domain, new_threshold).await,
             CuratorDirective::OverrideEnergyBudget { agent, new_budget } => {
-                self.apply_override_gas_budget(agent, new_budget).await
+                self.apply_override_cap(agent, new_budget).await
             }
             CuratorDirective::ClearOverride { agent } => self.apply_clear_override(agent).await,
             CuratorDirective::ReplenishBudget {
                 agent,
                 amount,
-                priority,
-            } => self.apply_replenish_budget(agent, amount, priority).await,
+                priority: _,
+            } => self.apply_credit_calls(agent, amount).await,
             CuratorDirective::UpdateCapabilities {
                 agent,
                 additions,
@@ -733,30 +639,32 @@ impl CyberneticsLoop {
         );
     }
 
-    /// Metacognitive override — recorded in active_overrides so replenish skips it.
-    async fn apply_override_gas_budget(&self, agent: WebID, new_budget: u64) {
-        self.gas_budget_manager
+    /// Curation override: install a new call ceiling for an agent. Survives
+    /// per-tick resets until `apply_clear_override` is called.
+    async fn apply_override_cap(&self, agent: WebID, new_ceiling: u64) {
+        self.call_cap_manager
             .read()
             .await
-            .apply_override_gas_budget(agent, GasCost(new_budget))
+            .apply_override(agent, new_ceiling as u32)
             .await;
     }
 
-    /// Removes agent from active_overrides, resuming normal replenishment.
+    /// Removes a curation override, restoring the agent's original ceiling on the
+    /// next `reset_all_caps`.
     async fn apply_clear_override(&self, agent: WebID) {
-        self.gas_budget_manager
+        self.call_cap_manager
             .read()
             .await
-            .apply_clear_override(agent)
+            .clear_override(agent)
             .await;
     }
 
-    /// Priority-scaled: when priority is provided, replenishment is weighted.
-    async fn apply_replenish_budget(&self, agent: WebID, amount: u64, priority: Option<f64>) {
-        self.gas_budget_manager
+    /// Credit `amount` calls to an agent (curation `ReplenishBudget` directive).
+    async fn apply_credit_calls(&self, agent: WebID, amount: u64) {
+        self.call_cap_manager
             .read()
             .await
-            .apply_replenish_budget(agent, GasCost(amount), priority)
+            .credit(&agent, amount as u32)
             .await;
     }
 
@@ -857,29 +765,30 @@ impl CyberneticsLoop {
     }
 
     async fn act(&self, actions: &[RegulatoryAction]) {
-        self.replenish_all_budgets().await;
+        self.reset_all_caps().await;
 
-        // E04: Detect and escalate budget exhaustion via algedonic pathway
+        // E04: Detect and escalate call-cap exhaustion via the algedonic pathway.
+        // A cap is exhausted when its remaining count hit zero this tick.
         {
             let statuses = self
-                .gas_budget_manager
+                .call_cap_manager
                 .read()
                 .await
                 .all_agent_statuses()
                 .await;
-            let gas_exhausted: Vec<_> = statuses
+            let exhausted: Vec<_> = statuses
                 .into_iter()
-                .filter(|(_, s)| s.remaining.0 == 0 && s.hard_limit)
+                .filter(|(_, s)| s.remaining == 0)
                 .collect();
 
-            let alert_entries: Vec<(String, String)> = gas_exhausted
+            let alert_entries: Vec<(String, String)> = exhausted
                 .iter()
                 .map(|(agent, status)| {
                     (
-                        format!("gas_budget:{agent}"),
+                        format!("call_cap:{agent}"),
                         format!(
-                            "Agent {agent} gas budget exhausted (cap: {}, remaining: 0)",
-                            status.cap.0
+                            "Agent {agent} call cap exhausted (ceiling: {}, remaining: 0)",
+                            status.ceiling
                         ),
                     )
                 })
@@ -901,7 +810,7 @@ impl CyberneticsLoop {
                     false
                 };
                 if !sent {
-                    tracing::warn!(target: "reg.alert", domain = %alert.domain, "Well exhaustion alert send failed or channel not connected");
+                    tracing::warn!(target: "reg.alert", domain = %alert.domain, "call-cap exhaustion alert send failed or channel not connected");
                 }
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
@@ -917,35 +826,31 @@ impl CyberneticsLoop {
                         0,
                     );
                     if let Err(e) = sink.persist(&event) {
-                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to persist budget exhaustion alert");
+                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to persist call-cap exhaustion alert");
                     }
                 }
             }
         }
 
-        // E02: Persist budgets + Well state after each replenishment cycle.
+        // E02: Persist call caps after each reset cycle.
         // Persistence failures log and fall through — regulation actions
-        // (Well replenishment, algedonic alerts, action dispatch) must NOT
-        // be skipped because a transient I/O error prevented writing budgets.
+        // (algedonic alerts, action dispatch) must NOT be skipped because a
+        // transient I/O error prevented writing caps.
         'persist: {
             if let Some(ref path) = self.budget_persistence_path {
                 let mut wrapper = serde_json::json!({
-                    "version": 1,
+                    "version": 2,
                 });
                 {
-                    let gbm = self.gas_budget_manager.read().await;
-                    let budgets = gbm.gas_budgets().await;
-                    match serde_json::to_value(&*budgets) {
+                    let mgr = self.call_cap_manager.read().await;
+                    let caps = mgr.caps().await;
+                    match serde_json::to_value(&*caps) {
                         Ok(v) => wrapper["budgets"] = v,
                         Err(e) => {
-                            tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize gas budgets — skipping persistence");
+                            tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize call caps — skipping persistence");
                             break 'persist;
                         }
                     }
-                }
-                {
-                    let wells = self.well_manager.read().await;
-                    wrapper["well"] = wells.save_state();
                 }
                 {
                     if let Some(ref stats) = self.tool_stats {
@@ -955,54 +860,21 @@ impl CyberneticsLoop {
                 let json = match serde_json::to_string_pretty(&wrapper) {
                     Ok(s) => s,
                     Err(e) => {
-                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize budget wrapper — skipping persistence");
+                        tracing::error!(target: "reg.cybernetics", error = %e, "Failed to serialize cap wrapper — skipping persistence");
                         break 'persist;
                     }
                 };
                 if let Some(parent) = path.parent()
                     && let Err(e) = tokio::fs::create_dir_all(parent).await
                 {
-                    tracing::error!(target: "reg.cybernetics", path = %parent.display(), error = %e, "Failed to create budget persistence directory");
+                    tracing::error!(target: "reg.cybernetics", path = %parent.display(), error = %e, "Failed to create cap persistence directory");
                     break 'persist;
                 }
                 if let Err(e) = tokio::fs::write(path, &json).await {
-                    tracing::error!(target: "reg.cybernetics", path = %path.display(), error = %e, "Failed to persist gas budgets");
+                    tracing::error!(target: "reg.cybernetics", path = %path.display(), error = %e, "Failed to persist call caps");
                 }
             }
         }
-
-        // Replenish Wells on each regulation cycle
-        {
-            let mut wells = self.well_manager.write().await;
-            wells.replenish_all();
-        }
-
-        // 1.8: Well exhaustion → algedonic alert (with dampening)
-        {
-            let mut wells = self.well_manager.write().await;
-            if wells.default_well_exhausted() {
-                if !wells.was_already_exhausted {
-                    wells.was_already_exhausted = true;
-                    let alert = RuntimeAlert {
-                        domain: "well".into(),
-                        deficit: 1,
-                        threshold: 1,
-                        severity: AlertSeverity::Critical,
-                        escalated: true,
-                        timestamp: chrono::Utc::now(),
-                        message: "Default Well exhausted — agents will be blocked".into(),
-                    };
-                    if let Some(ref tx) = self.alerts_tx
-                        && tx.send(CurationInput::Alert(alert)).is_err()
-                    {
-                        tracing::warn!(target: "reg.alert", "Well exhaustion alert send failed — channel closed");
-                    }
-                }
-            } else {
-                wells.was_already_exhausted = false;
-            }
-        }
-        // Note: Auto-draw from Well is now synchronous — handled in WalletManager::spend().
         if actions.len() > self.max_iterations as usize {
             tracing::warn!(target: "reg.cybernetics", action_count = actions.len(), max_iterations = self.max_iterations, "Cascade detected: action count exceeds max_iterations");
         }
@@ -1106,7 +978,7 @@ impl CyberneticsLoop {
 
         // Re-sense current state for comparison.
         let budget_statuses = self
-            .gas_budget_manager
+            .call_cap_manager
             .read()
             .await
             .all_agent_statuses()
@@ -1137,7 +1009,7 @@ impl CyberneticsLoop {
             let after_val = match metric {
                 SignalMetric::EnergyRemaining => budget_statuses
                     .iter()
-                    .map(|(_, s)| s.remaining.0 as f64 / s.cap.0.max(1) as f64)
+                    .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
                     .fold(1.0, f64::min),
                 SignalMetric::VarietyDeficit => current_deficit,
                 _ => continue,

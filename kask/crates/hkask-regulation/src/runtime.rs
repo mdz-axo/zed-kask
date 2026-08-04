@@ -20,7 +20,6 @@
 use crate::algedonic::{
     AlgedonicManager, DEFAULT_EXPECTED_VARIETY, RuntimeAlert, reg_health_check,
 };
-use crate::energy::{AgentGasStatus, GasBudget, GasCost};
 use crate::set_points::DEFAULT_VARIETY_MAX_DEFICIT;
 use crate::tool_stats::ToolStats;
 
@@ -381,7 +380,6 @@ struct RegState {
     algedonic: Arc<ParkingRwLock<AlgedonicManager>>,
     tracker: VarietyMonitor,
     outcome: HashMap<String, OutcomeTracker>,
-    gas_budgets: Arc<tokio::sync::RwLock<HashMap<WebID, GasBudget>>>,
     regulation_health: RegulationHealth,
     regulation_history: VecDeque<RegulationCycleEntry>,
     tool_stats: Arc<ToolStats>,
@@ -396,7 +394,6 @@ impl RegState {
         )));
         let tracker = VarietyMonitor::new();
         let outcome = HashMap::new();
-        let gas_budgets = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
         let regulation_health = RegulationHealth::default();
         let regulation_history = VecDeque::with_capacity(MAX_REGULATION_HISTORY);
         let tool_stats = Arc::new(ToolStats::new());
@@ -405,7 +402,6 @@ impl RegState {
             algedonic,
             tracker,
             outcome,
-            gas_budgets,
             regulation_health,
             regulation_history,
             tool_stats,
@@ -839,69 +835,6 @@ impl RegulationLedger {
             .algedonic
             .write()
             .set_expected_variety(domain, new_threshold);
-    }
-
-    /// Register a energy budget for an agent.
-    ///
-    /// Called during agent pod creation so the Regulation can track and replenish budgets.
-    /// Register an energy budget for an agent.
-    ///
-    /// expect: "I can register an energy budget for an agent to enable tracking"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — budget registration enables energy tracking
-    /// \[P4\] Constraining: Clear Boundaries — budget cap enforces resource boundary
-    /// pre:  agent is valid, budget is valid
-    /// post: budget registered for agent
-    pub async fn register_gas_budget(&self, agent: WebID, budget: GasBudget) {
-        let state = self.state.read().await;
-        let mut budgets = state.gas_budgets.write().await;
-        budgets.insert(agent, budget);
-    }
-
-    /// Replenish a specific agent's energy budget by a specific amount.
-    ///
-    /// Returns the new remaining gas after replenishment, or 0 if the agent
-    /// has no registered budget.
-    /// Replenish an agent's energy budget.
-    ///
-    /// expect: "The system replenishes agent budgets on the regulation cycle"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — budget replenishment drives energy loop
-    /// \[P4\] Constraining: Clear Boundaries — cap enforcement prevents over-replenishment
-    /// pre:  agent is registered, amount > 0
-    /// post: budget replenished, returns actual amount added
-    pub async fn replenish_agent_budget(&self, agent: &WebID, amount: GasCost) -> GasCost {
-        let state = self.state.read().await;
-        let mut budgets = state.gas_budgets.write().await;
-        if let Some(budget) = budgets.get_mut(agent) {
-            budget.replenish_by(amount);
-            let remaining = budget.remaining();
-            tracing::info!(
-                target: "hkask.runtime",
-                agent = %agent,
-                amount = amount.0,
-                remaining = remaining.0,
-                "Replenished agent energy budget via Regulation runtime"
-            );
-            remaining
-        } else {
-            GasCost::ZERO
-        }
-    }
-
-    /// Get a read-only snapshot of an agent's energy budget status.
-    ///
-    /// Returns `None` if the agent has no registered budget.
-    /// Used by the Regulation service.
-    /// Get agent energy status.
-    ///
-    /// expect: "I can query an agent's gas status for energy loop feedback"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — gas status query drives energy loop decisions
-    /// \[P8\] Constraining: Semantic Grounding — pure observation, no transformation
-    /// pre:  agent is valid
-    /// post: returns Some(status) if budget exists, None otherwise
-    pub async fn agent_gas_status(&self, agent: &WebID) -> Option<AgentGasStatus> {
-        let state = self.state.read().await;
-        let budgets = state.gas_budgets.read().await;
-        budgets.get(agent).map(AgentGasStatus::from)
     }
 }
 

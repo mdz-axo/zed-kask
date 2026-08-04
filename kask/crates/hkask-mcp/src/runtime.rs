@@ -22,39 +22,6 @@ use tracing::info;
 /// A simple flat-cost energy estimator.
 ///
 /// All tool invocations cost the same flat amount. This is the default
-/// when no calibrated estimator is available. The cost is conservative
-/// (10 gas per call) — enough to prevent runaway loops without
-/// requiring per-tool calibration data.
-#[derive(Debug, Clone, Copy)]
-pub struct FlatEnergyEstimator {
-    cost: u64,
-}
-
-impl FlatEnergyEstimator {
-    #[must_use]
-    pub fn new() -> Self {
-        Self { cost: 10 }
-    }
-}
-
-impl Default for FlatEnergyEstimator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl FlatEnergyEstimator {
-    /// Estimate the energy cost of a tool invocation.
-    ///
-    /// Returns the flat cost (default 10 gas). The `server`, `tool`, and `args`
-    /// parameters are accepted for parity with the call site's needs but do not
-    /// affect the estimate — this is a flat-cost estimator, not a calibrated one.
-    #[must_use]
-    pub fn estimate_cost(&self, _server: &str, _tool: &str, _args: &Value) -> u64 {
-        self.cost
-    }
-}
-
 /// MCP tool definition
 #[derive(Debug, Clone)]
 pub struct McpTool {
@@ -178,7 +145,6 @@ fn resolve_mcp_binary(server_id: &str, command: &str) -> String {
 struct ToolGovernance {
     cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
     event_sink: Arc<std::sync::RwLock<Arc<dyn hkask_types::RegulationSink>>>,
-    estimator: FlatEnergyEstimator,
 }
 
 #[derive(Clone)]
@@ -209,20 +175,19 @@ impl McpRuntime {
         }
     }
 
-    /// Wire the cybernetic governance membrane (OCAP + gas + Regulation spans).
-    /// All subsequent `invoke` calls will verify the token, reserve/settle
-    /// gas, and emit spans. Must be called before the first invocation.
+    /// Wire the cybernetic governance membrane (OCAP + call-cap + Regulation spans).
+    /// All subsequent `invoke` calls will verify the token, charge one call against
+    /// the agent's per-tick cap, and emit spans. Must be called before the first
+    /// invocation.
     #[must_use]
     pub fn with_governance(
         mut self,
         cybernetics: Arc<RwLock<hkask_regulation::CyberneticsLoop>>,
         event_sink: Arc<dyn hkask_types::RegulationSink>,
-        estimator: FlatEnergyEstimator,
     ) -> Self {
         self.governance = Some(ToolGovernance {
             cybernetics,
             event_sink: Arc::new(std::sync::RwLock::new(event_sink)),
-            estimator,
         });
         self
     }
@@ -548,7 +513,7 @@ impl hkask_capability::ToolPort for McpRuntime {
         token: &'a hkask_capability::DelegationToken,
     ) -> hkask_capability::ToolFuture<'a, Result<Value, hkask_capability::ToolPortError>> {
         Box::pin(async move {
-            // Governance gate: OCAP verify + gas reserve + span emit.
+            // Governance gate: OCAP verify + call-cap charge + span emit.
             // Skipped when governance is not configured (tests, lightweight embedders).
             if let Some(governance) = &self.governance {
                 let cyber = &governance.cybernetics;
@@ -559,7 +524,6 @@ impl hkask_capability::ToolPort for McpRuntime {
                     .read()
                     .map(|guard| guard.clone())
                     .unwrap_or_else(|_| std::sync::Arc::new(hkask_regulation::NoopEventSink));
-                let est = &governance.estimator;
                 let agent = token.delegated_to;
                 // Capability match: the token must declare authority for this tool.
                 // (No signature verification — tokens are minted and consumed
@@ -575,36 +539,34 @@ impl hkask_capability::ToolPort for McpRuntime {
                     )));
                 }
 
-                // Gas: reserve estimated cost (hold-settle pattern).
-                let estimated = hkask_regulation::GasCost(est.estimate_cost(server, tool, &args));
+                // Call cap: charge one call against the agent's per-tick ceiling.
+                // `can_proceed` + `charge_call` are a single decision — if the
+                // agent has no cap or it is exhausted, the call is denied
+                // fail-closed (the same gate the prior gas hold-settle enforced,
+                // minus the reservation ceremony).
                 let cyber_lock = cyber.read().await;
-                if !cyber_lock.can_proceed(&agent, estimated).await {
+                if !cyber_lock.can_proceed(&agent).await {
                     return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
-                        format!(
-                            "gas budget exceeded for {:?}, tool {}, cost {}",
-                            agent, tool, estimated.0
-                        ),
+                        format!("call cap exhausted for {:?}, tool {tool}", agent),
                     ));
                 }
-                if let Err(e) = cyber_lock.reserve_gas(&agent, estimated).await {
-                    // Fail closed: the gas hold is the accounting primitive. If it
-                    // cannot be recorded, the call would be uncounted - a
-                    // persistently-failing gas store (e.g. SQLite locked) would
-                    // otherwise let every tool through with zero accounting,
-                    // defeating the budget gate (the broken-feedback-loop class
-                    // the .rules "unwrap_or(0) on regulation sense inputs" trap
-                    // generalizes).
+                if let Err(e) = cyber_lock.charge_call(&agent).await {
+                    // Fail closed: if the charge could not be recorded the call
+                    // would be uncounted — a persistently-failing cap store
+                    // would otherwise let every tool through with zero
+                    // accounting, defeating the gate (the broken-feedback-loop
+                    // class the .rules "unwrap_or(0) on regulation sense inputs"
+                    // trap generalizes).
                     tracing::warn!(
-                        target: "hkask.mcp.gas",
+                        target: "hkask.mcp.cap",
                         error = %e,
                         agent = ?agent,
                         tool = %tool,
-                        estimated_gas = estimated.0,
-                        "reserve_gas failed - denying the call (fail-closed) to preserve the gas gate"
+                        "charge_call failed - denying the call (fail-closed) to preserve the cap gate"
                     );
                     return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
                         format!(
-                            "gas could not be reserved for {:?}, tool {tool}: {e}",
+                            "call could not be charged for {:?}, tool {tool}: {e}",
                             agent
                         ),
                     ));
@@ -614,48 +576,25 @@ impl hkask_capability::ToolPort for McpRuntime {
                 // Call the tool.
                 let result = self.call_tool_inner(server, tool, args).await;
 
-                // Gas: settle actual cost (full on success, half on failure).
-                let actual = if result.is_ok() {
-                    estimated.0
-                } else {
-                    estimated.0 / 2
-                };
-                if let Err(e) = cyber
-                    .read()
-                    .await
-                    .settle_gas(&agent, estimated, hkask_regulation::GasCost(actual))
-                    .await
-                {
-                    tracing::warn!(
-                        target: "hkask.mcp.gas",
-                        error = %e,
-                        agent = ?agent,
-                        tool = %tool,
-                        actual_gas = actual,
-                        "settle_gas failed — the agent's gas balance was not debited. \
-                         If this persists, the agent can make unbounded tool calls."
-                    );
-                }
-
-                // Regulation: emit invoked + completed spans (best-effort, non-blocking).
+                // Regulation: emit the call-settled span (best-effort, non-blocking).
                 let status = if result.is_ok() { "success" } else { "failure" };
                 use hkask_types::event::{CyclePhase, RegulationRecord, Span, SpanKind};
                 let record = RegulationRecord::new(
                     agent,
                     Span::from_kind(SpanKind::GasSettled),
                     CyclePhase::Act,
-                    serde_json::json!({ "server": server, "tool": tool, "cost": actual, "status": status }),
+                    serde_json::json!({ "server": server, "tool": tool, "calls": 1, "status": status }),
                     0,
                 );
                 if let Err(e) = sink.persist(&record) {
-                    tracing::warn!(target: "hkask.mcp", error = %e, "Failed to persist reg.mcp gas-settled span");
+                    tracing::warn!(target: "hkask.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
                 }
 
                 result
             } else {
-                // No governance configured - fail closed. The OCAP + gas
+                // No governance configured - fail closed. The OCAP + call-cap
                 // membrane is the security gate; invoking a tool without it
-                // would bypass capability verification and gas accounting
+                // would bypass capability verification and cap accounting
                 // entirely. Production must wire `with_governance` (the zed
                 // composition root does; see main.rs). `McpRuntime::new()`
                 // remains usable for registration/discovery testing that does

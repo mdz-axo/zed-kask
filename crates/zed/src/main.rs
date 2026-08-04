@@ -207,20 +207,19 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 /// env var.
 static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 
-/// Gas budget cap for the `kask-panel` persona — the authority behind the
+/// Per-tick call cap for the `swarm-panel` persona — the authority behind the
 /// kask panel's `ToolInvoker`, the FlowDef skill cascade's tool calls, and
 /// the inference-IPC `tool_invoke` dispatch (swarm delegated agents).
 ///
-/// `GasBudgetManager::can_proceed` DENIES agents without a registered budget
-/// (fail-closed), and no other production path registers budgets (the curator
-/// directive channel is not wired, there is no wallet manager, and budget
-/// persistence is not configured). Without this seed, every governed tool call
-/// — including the swarm server's delegated-tool dispatch — fails with
-/// `EnergyBudgetExceeded`. 10 gas per tool call (FlatEnergyEstimator) → 100k
-/// gas = 10k calls before exhaustion; the regulation tick (10s) replenishes
-/// 10% (10k gas = 1k calls) per tick, so normal panel/curator activity never
-/// drains it while a runaway delegated loop is still bounded.
-const SWARM_PANEL_GAS_BUDGET_CAP: u64 = 100_000;
+/// `CallCapManager::can_proceed` DENIES agents without a registered cap
+/// (fail-closed), and no other production path registers caps (the curator
+/// directive channel is not wired and cap persistence is not configured).
+/// Without this seed, every governed tool call — including the swarm server's
+/// delegated-tool dispatch — fails with `EnergyBudgetExceeded`. One call is
+/// charged per governed tool invocation; the cap resets to the ceiling each
+/// regulation tick (10s), so normal panel/curator activity never exhausts it
+/// while a runaway delegated loop is still bounded to `ceiling` calls per tick.
+const SWARM_PANEL_CALL_CAP: u32 = 10_000;
 
 /// Install a panic hook that logs the panic (location + payload + backtrace)
 /// via `log::error!` so it appears in `Zed.log`, then chains to the default
@@ -649,18 +648,18 @@ fn main() {
         // `kask_bridge::BUILT_IN_MCP_SERVERS` (single source of truth).
 
         // D3: Construct the McpRuntime (manages MCP server child processes).
-        // The McpRuntime implements ToolPort — OCAP-gated tool invocation
-        // with gas/rjoule tracking and reg.tool.* span emission.
-        // MCP servers are started as child processes (stdio transport).
+        // The McpRuntime implements ToolPort — OCAP-gated tool invocation with a
+        // per-agent call cap (one call charged per invocation) and reg.tool.*
+        // span emission. MCP servers are started as child processes (stdio).
         //
         // Server auto-launch happens after settings::init() (below) so we
         // can read KaskSettings to determine which servers to load.
         //
-        // The regulation system (CyberneticsLoop, RegulationLedger, gas budgets)
+        // The regulation system (CyberneticsLoop, RegulationLedger, call caps)
         // is wired here so all tool invocations are governed. The CyberneticsLoop
         // runs sense→compare→compute→act cycles on background tasks; the
-        // RegulationLedger tracks variety and algedonic alerts; the
-        // FlatEnergyEstimator provides conservative per-call gas costs.
+        // RegulationLedger tracks variety and algedonic alerts; the per-agent
+        // `CallCap` bounds governed tool calls per regulation tick.
         //
         // The event sink starts as `NoopEventSink` — the durable
         // `RegulationArchive` (on the curator's pod.db, the same DB the
@@ -707,20 +706,18 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
-        // Seed a gas budget for the `swarm-panel` persona (see
-        // `SWARM_PANEL_GAS_BUDGET_CAP` for the rationale — fail-closed gate,
-        // no other production budget-creation path). The McpRuntime's
-        // governance gate would otherwise refuse every governed tool call
-        // with `EnergyBudgetExceeded`, which includes the swarm IPC
-        // `tool_invoke` dispatch the local delegate loop depends on.
+        // Seed a call cap for the `swarm-panel` persona (see
+        // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
+        // production cap-creation path). The McpRuntime's governance gate would
+        // otherwise refuse every governed tool call with `EnergyBudgetExceeded`,
+        // which includes the swarm IPC `tool_invoke` dispatch the local delegate
+        // loop depends on.
         {
-            use hkask_regulation::{GasBudget, GasCost};
             let panel_webid = hkask_types::WebID::from_persona(b"swarm-panel");
-            let budget = GasBudget::new(GasCost(SWARM_PANEL_GAS_BUDGET_CAP));
             cx.foreground_executor()
-                .block_on(cybernetics_loop_inner.register_gas_budget(panel_webid, budget));
+                .block_on(cybernetics_loop_inner.register_call_cap(panel_webid, SWARM_PANEL_CALL_CAP));
             log::info!(
-                "seeded swarm-panel gas budget (cap {SWARM_PANEL_GAS_BUDGET_CAP} gas)"
+                "seeded swarm-panel call cap (ceiling {SWARM_PANEL_CALL_CAP} calls/tick)"
             );
         }
         let cybernetics_loop = std::sync::Arc::new(tokio::sync::RwLock::new(
@@ -728,10 +725,9 @@ fn main() {
         ));
         let cybernetics_loop_for_tick = cybernetics_loop.clone();
         let cybernetics_loop_for_panel = cybernetics_loop.clone();
-        let energy_estimator = hkask_mcp::FlatEnergyEstimator::new();
         let mcp_runtime = std::sync::Arc::new(
             hkask_mcp::McpRuntime::new()
-                .with_governance(cybernetics_loop, event_sink, energy_estimator),
+                .with_governance(cybernetics_loop, event_sink),
         );
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 

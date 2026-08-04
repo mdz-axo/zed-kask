@@ -9,6 +9,6 @@
 
 pub mod runtime;
 
-pub use runtime::{FlatEnergyEstimator, McpRuntime, McpServer, McpTool, ServerStartError};
+pub use runtime::{McpRuntime, McpServer, McpTool, ServerStartError};
 
 // ── Canonical MCP server registry ─────────────────────────────────────────

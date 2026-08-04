@@ -242,20 +242,20 @@ impl Clone for SensorBus {
 
 /// Senses energy budget remaining ratios across all agents.
 ///
-/// Data source: `GasBudgetManager`. Produces a signal per agent.
+/// Data source: `CallCapManager`. Produces a signal per agent.
 pub struct EnergyBudgetSensor {
-    budget_manager: Arc<tokio::sync::RwLock<super::energy_budget_management::GasBudgetManager>>,
+    cap_manager: Arc<tokio::sync::RwLock<super::energy::CallCapManager>>,
     set_point: f64,
 }
 
 impl EnergyBudgetSensor {
     /// expect: "The system provides pluggable metric sensing for the cybernetic regulation loop"
     pub fn new(
-        budget_manager: Arc<tokio::sync::RwLock<super::energy_budget_management::GasBudgetManager>>,
+        cap_manager: Arc<tokio::sync::RwLock<super::energy::CallCapManager>>,
         set_point: f64,
     ) -> Self {
         Self {
-            budget_manager,
+            cap_manager,
             set_point,
         }
     }
@@ -264,11 +264,11 @@ impl EnergyBudgetSensor {
 #[async_trait::async_trait]
 impl Sensor for EnergyBudgetSensor {
     async fn sense(&self) -> Option<Signal> {
-        let statuses = self.budget_manager.read().await.all_agent_statuses().await;
+        let statuses = self.cap_manager.read().await.all_agent_statuses().await;
         // Use the worst remaining ratio as the aggregate signal.
         let worst = statuses
             .iter()
-            .map(|(_, s)| s.remaining.0 as f64 / s.cap.0.max(1) as f64)
+            .map(|(_, s)| s.remaining as f64 / s.ceiling.max(1) as f64)
             .fold(1.0, f64::min);
         Some(Signal::new(
             LoopId::Cybernetics, // placeholder — registry backfills
