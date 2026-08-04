@@ -573,6 +573,7 @@ pub fn map_to_language_model_completion_events(
                                     output_tokens: usage.completion_tokens,
                                     cache_creation_input_tokens: 0,
                                     cache_read_input_tokens: 0,
+                                    cost: None,
                                 },
                             )));
                         }
@@ -785,7 +786,8 @@ impl CopilotResponsesEventMapper {
                         output_tokens: usage.output_tokens.unwrap_or(0),
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 0,
-                    })));
+                        cost: None,
+                    })))
                 }
                 if self.pending_stop_reason.take() != Some(StopReason::ToolUse) {
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
@@ -816,7 +818,8 @@ impl CopilotResponsesEventMapper {
                         output_tokens: usage.output_tokens.unwrap_or(0),
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 0,
-                    })));
+                        cost: None,
+                    })))
                 }
                 events.push(Ok(LanguageModelCompletionEvent::Stop(stop_reason)));
                 events

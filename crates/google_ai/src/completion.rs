@@ -469,6 +469,7 @@ fn convert_usage(usage: &UsageMetadata) -> TokenUsage {
         output_tokens,
         cache_read_input_tokens: cached_tokens,
         cache_creation_input_tokens: 0,
+        cost: None,
     }
 }
 

@@ -748,6 +748,13 @@ impl OpenAiEventMapper {
                 output_tokens: completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
+                // zed-kask D15: observed per-call USD cost from the provider's
+                // `usage` object. Prefer `market_cost` (real compute energy,
+                // reflects BYOK/cache discounts) over `cost`/`estimated_cost`.
+                cost: usage
+                    .market_cost
+                    .or(usage.cost)
+                    .or(usage.estimated_cost),
             })));
         }
 
@@ -1497,6 +1504,7 @@ pub fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
         output_tokens: usage.output_tokens.unwrap_or_default(),
         cache_creation_input_tokens: 0,
         cache_read_input_tokens,
+        cost: None,
     }
 }
 
@@ -1707,6 +1715,7 @@ mod tests {
                 output_tokens: 3,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 2,
+                cost: None,
             }
         );
 

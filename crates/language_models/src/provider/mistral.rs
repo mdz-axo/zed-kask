@@ -705,6 +705,7 @@ impl MistralEventMapper {
                 output_tokens: usage.completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
+                cost: None,
             })));
         }
 

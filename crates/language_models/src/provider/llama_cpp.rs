@@ -985,7 +985,8 @@ impl LlamaCppEventMapper {
                 output_tokens: usage.completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
-            })));
+                cost: None,
+            })))
         }
 
         if let Some(choice) = event.choices.into_iter().next() {

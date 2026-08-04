@@ -725,6 +725,7 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
         output_tokens: usage.output_tokens.unwrap_or(0),
         cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
         cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+        cost: None,
     }
 }
 

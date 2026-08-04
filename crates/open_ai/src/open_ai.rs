@@ -741,6 +741,17 @@ pub struct Usage {
     pub prompt_tokens: Option<u64>,
     pub completion_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
+    // zed-kask D15: provider-reported USD cost. OpenRouter and KiloCode use
+    // `cost`, DeepInfra uses `estimated_cost`, KiloCode BYOK uses `market_cost`
+    // (real compute energy). Surfaced into `TokenUsage.cost` by the event
+    // mapper so kask's rJoule budget charges observed (not operator-configured)
+    // cost. `None` for providers that don't report cost (Anthropic, OpenAI).
+    #[serde(default)]
+    pub cost: Option<f64>,
+    #[serde(default)]
+    pub estimated_cost: Option<f64>,
+    #[serde(default)]
+    pub market_cost: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

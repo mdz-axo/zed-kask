@@ -1198,6 +1198,7 @@ mod tests {
                 output_tokens: 10,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 20,
+                cost: None,
             }
         );
         let language_model::CompactedContext::ProviderState(state) = result.context else {

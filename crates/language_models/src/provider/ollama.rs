@@ -661,6 +661,7 @@ fn map_to_language_model_completion_events(
                     output_tokens: delta.eval_count.unwrap_or(0),
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
+                    cost: None,
                 })));
                 if state.used_tools {
                     state.used_tools = false;

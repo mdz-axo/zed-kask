@@ -770,6 +770,7 @@ impl OpenRouterEventMapper {
                 output_tokens: usage.completion_tokens,
                 cache_creation_input_tokens,
                 cache_read_input_tokens,
+                cost: None,
             })));
         }
 

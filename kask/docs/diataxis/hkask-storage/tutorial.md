@@ -32,11 +32,11 @@ status: VERIFIED
 
 ## Steps 1-2: Pick the store and add the table
 
-Decide whether your table is core (belongs in `src/sql/schema.sql`, loaded by
-`initialize_schema` at `core/database.rs:203`) or store-specific (belongs in
-the store's `init_schema` method at e.g. `regulation_store.rs:78`). Add a
-`CREATE TABLE IF NOT EXISTS` statement with the appropriate columns and
-foreign keys.
+Decide whether your table is core (belongs in `src/core/sql/schema.sql`, loaded
+by `initialize_schema` in `core/database.rs`) or store-specific (belongs in the
+store's `init_schema` method at e.g. `regulation_store.rs:78`). Add a
+`CREATE TABLE IF NOT EXISTS` statement with the appropriate columns and foreign
+keys.
 
 The `define_driver_store!` macro (`core/store_macros.rs:11`) generates the
 `from_driver` constructor, which calls `Self::init_schema(driver)` — so your

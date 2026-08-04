@@ -602,7 +602,8 @@ impl LmStudioEventMapper {
                 output_tokens: usage.completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
-            })));
+                cost: None,
+            })))
         }
 
         // The final usage summary chunk from OpenAI-compatible servers has an empty choices array.
@@ -764,6 +765,7 @@ mod tests {
                 output_tokens: 20,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
+                cost: None,
             })]
         );
     }
@@ -805,6 +807,7 @@ mod tests {
                 output_tokens: 3,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
+                cost: None,
             })
         );
         assert_eq!(
