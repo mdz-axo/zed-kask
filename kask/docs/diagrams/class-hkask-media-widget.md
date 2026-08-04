@@ -10,7 +10,7 @@ paths) and drives playback through the `audio_player` / `video_decoder` /
 ```mermaid
 classDiagram
     class MediaKind {
-        <<enumeration>>
+        <<enum>>
         Image
         Svg
         Audio
@@ -18,10 +18,10 @@ classDiagram
     }
     class MediaRef {
         <<enum>>
-        +Asset{src: SharedString, kind: MediaKind}
-        +Error(SharedString)
+        Asset
+        Error
         +new(src, kind) MediaRef
-        +src() &str
+        +src() str
         +kind() Option~MediaKind~
         +is_error() bool
     }
@@ -33,14 +33,14 @@ classDiagram
     }
     class MediaStorage {
         <<interface>>
-        +resolve(reference: &MediaRef) Result~ResolvedMedia~
+        +resolve(reference) Result~ResolvedMedia~
     }
     class PathMediaStorage {
         +resolve(reference) Result~ResolvedMedia~
     }
     class MediaWidget {
         +reference: MediaRef
-        +storage: dyn MediaStorage
+        +storage: MediaStorage
         +focus_handle: FocusHandle
         +audio_player
         +video_player
@@ -48,13 +48,12 @@ classDiagram
         +current_frame
         +playback_task
         +error: Option~String~
-        +_subscriptions
         +new(reference, cx) MediaWidget
         +with_storage(storage) MediaWidget
         +load()
     }
     class create_media_widget {
-        +create_media_widget(body, window, cx) Option~Entity~MediaWidget~~
+        +create_media_widget(body, window, cx) Option~MediaWidget~
     }
 
     MediaRef --> MediaKind
@@ -62,10 +61,10 @@ classDiagram
     PathMediaStorage ..|> MediaStorage : implements
     MediaWidget --> MediaRef
     MediaWidget --> MediaStorage
-    MediaWidget ..|> gpui_Focusable [Focusable]
-    MediaWidget ..|> gpui_Render [Render]
-    MediaWidget ..|> EventEmitter [EventEmitter~TransportEvent~]
-    create_media_widget ..> MediaWidget : parses JSON {kind, src}
+    MediaWidget ..|> gpui_Focusable : Focusable
+    MediaWidget ..|> gpui_Render : Render
+    MediaWidget ..|> EventEmitter : emits TransportEvent
+    create_media_widget ..> MediaWidget : parses kind and src JSON
 ```
 
 **Block shape:** a JSON body with a `kind` (`"image"|"svg"|"audio"|"video"`)

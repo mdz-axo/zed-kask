@@ -16,7 +16,7 @@ classDiagram
         +tasks: Vec~TaskBody~
         +boards: Vec~BoardBody~
         +tasks_by_board: Vec~BoardTasksBody~
-        +boards_with_tasks() Vec~(String, String, &[TaskBody])~
+        +boards_with_tasks() Vec of board tuples
     }
     class BoardBody {
         +board_id: String
@@ -54,9 +54,9 @@ classDiagram
     BoardTasksBody "1" o-- "many" TaskBody : tasks
     KanbanWidget "1" o-- "many" KanbanColumn : columns
     KanbanColumn "1" o-- "many" TaskBody : tasks
-    KanbanWidget ..|> gpui_Focusable [Focusable]
-    KanbanWidget ..|> gpui_Render [Render]
-    create_kanban_widget ..> KanbanWidget : viz == "kanban"
+    KanbanWidget ..|> gpui_Focusable : Focusable
+    KanbanWidget ..|> gpui_Render : Render
+    create_kanban_widget ..> KanbanWidget : viz is kanban
 ```
 
 **Block shape:** a JSON body with `viz: "kanban"`. Two shapes are supported —

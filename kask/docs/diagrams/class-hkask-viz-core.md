@@ -10,7 +10,7 @@ of the streaming chat.
 ```mermaid
 classDiagram
     class BlockRenderer {
-        <<type>> Box~dyn Fn(&str, Window, App) → Option~AnyElement~~
+        <<interface>>
     }
     class block_renderer {
         +block_renderer() BlockRenderer
@@ -23,11 +23,11 @@ classDiagram
     }
     class CachedWidget {
         <<enum>>
-        Media(Entity~MediaWidget~)
-        Graph(Entity~GraphWidget~)
-        Kanban(Entity~KanbanWidget~)
-        Portfolio(Entity~PortfolioWidget~)
-        Scenarios(Entity~ScenariosWidget~)
+        Media
+        Graph
+        Kanban
+        Portfolio
+        Scenarios
         +render() AnyElement
     }
     class cache_key {
@@ -39,7 +39,7 @@ classDiagram
     class create_portfolio_widget
     class create_scenarios_widget
 
-    block_renderer ..> VizCache : thread-local LRU (max 32)
+    block_renderer ..> VizCache : thread-local LRU max 32
     block_renderer ..> cache_key
     block_renderer ..> create_media_widget : tries first
     block_renderer ..> create_graph_widget

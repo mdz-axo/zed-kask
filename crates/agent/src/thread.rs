@@ -2543,6 +2543,7 @@ impl Thread {
             cache_read_input_tokens: previous_accounted_usage
                 .cache_read_input_tokens
                 .max(update.cache_read_input_tokens),
+            cost: None,
         };
         self.current_request_token_usage = current_accounted_usage;
         self.cumulative_token_usage = self.cumulative_token_usage
@@ -2559,6 +2560,7 @@ impl Thread {
                 cache_read_input_tokens: current_accounted_usage
                     .cache_read_input_tokens
                     .saturating_sub(previous_accounted_usage.cache_read_input_tokens),
+                cost: None,
             };
     }
 
@@ -8361,6 +8363,7 @@ mod tests {
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 195_000,
                         output_tokens: 0,
+                        cost: None,
                     },
                 );
 
@@ -8379,6 +8382,7 @@ mod tests {
                         cache_creation_input_tokens: 0,
                         cache_read_input_tokens: 195_000,
                         output_tokens: 0,
+                        cost: None,
                     },
                 );
 
@@ -8989,6 +8993,7 @@ mod tests {
             output_tokens: 9,
             cache_creation_input_tokens: 2,
             cache_read_input_tokens: 3,
+            cost: None,
         };
         let final_usage = TokenUsage {
             input_tokens: 500,

@@ -76,12 +76,12 @@ classDiagram
     compute_layout ..> GraphBlockBody
     compute_layout ..> LayeredLayout
     recompute_marginals ..> GraphBlockBody
-    recompute_marginals ..> hkask_forecast [marginalize / certainty_tier]
+    recompute_marginals ..> hkask_forecast : marginalize and certainty_tier
     GraphWidget --> GraphBlockBody
     GraphWidget --> LayeredLayout
-    GraphWidget ..|> gpui_Focusable [Focusable]
-    GraphWidget ..|> gpui_Render [Render]
-    create_graph_widget ..> GraphWidget : viz == "event_tree"
+    GraphWidget ..|> gpui_Focusable : Focusable
+    GraphWidget ..|> gpui_Render : Render
+    create_graph_widget ..> GraphWidget : viz is event_tree
 ```
 
 **Block shape:** a JSON body with `viz: "event_tree"`, an optional `subject`

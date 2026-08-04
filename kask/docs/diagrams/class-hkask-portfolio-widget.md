@@ -65,9 +65,9 @@ classDiagram
     PortfolioBlockBody "1" o-- "many" CharacteristicField : characteristics
     PortfolioBlockBody "1" o-- "many" AttributionRow : attribution
     PortfolioWidget --> PortfolioBlockBody
-    PortfolioWidget ..|> gpui_Focusable [Focusable]
-    PortfolioWidget ..|> gpui_Render [Render]
-    create_portfolio_widget ..> PortfolioWidget : viz == "portfolio"
+    PortfolioWidget ..|> gpui_Focusable : Focusable
+    PortfolioWidget ..|> gpui_Render : Render
+    create_portfolio_widget ..> PortfolioWidget : viz is portfolio
 ```
 
 **Block shape:** a JSON body with `viz: "portfolio"`. `returns`,

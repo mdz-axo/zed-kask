@@ -1995,6 +1995,7 @@ mod tests {
                     output_tokens: 7,
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
+                    ..
                 })),
                 Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
             ]
@@ -2038,6 +2039,7 @@ mod tests {
                     output_tokens: 5,
                     cache_creation_input_tokens: 0,
                     cache_read_input_tokens: 0,
+                    ..
                 })),
                 Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
                     id,

@@ -111,6 +111,13 @@ impl LanguageModelInferencePort {
                             let mut tool_calls = Vec::new();
                             let mut finish_reason = "stop".to_string();
                             let mut usage = InferenceUsage::default();
+                            // Observed per-call USD cost from the provider's
+                            // `UsageUpdate` event (zed-kask D15 — the OpenAI-
+                            // compatible and OpenRouter provider impls populate
+                            // `TokenUsage.cost` from `usage.cost`/
+                            // `estimated_cost`/`market_cost`). `None` when the
+                            // provider reports no cost (Anthropic, Ollama, local).
+                            let mut cost_usd: Option<f64> = None;
 
                             while let Some(event) = stream.next().await {
                                 match event {
@@ -161,6 +168,7 @@ impl LanguageModelInferencePort {
                                                 + token_usage.output_tokens)
                                                 as u32,
                                         };
+                                        cost_usd = token_usage.cost;
                                     }
                                     Ok(_) => {}
                                     Err(e) => {

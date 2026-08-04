@@ -147,7 +147,7 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 
 | Location | Count |
 |----------|-------|
-| `docs/diagrams/` standalone (swarm + capability + invoke-gate) | 8 |
+| `docs/diagrams/` standalone (swarm + capability + invoke-gate + 6 viz widgets) | 14 |
 | `docs/explanation/` (cognition-and-replica, training-and-adapters, skills-and-composition) | ~12 |
 | `docs/reference/mcp-servers/` (README, companies, scenarios, condenser, swarm) | 5 |
 | `docs/reference/regulation-spans.md` | 1 |
@@ -155,11 +155,11 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 | `docs/plans/` (cybernetic-swarm ×3, evolving-test-harness, kask-skill-signing ×2, media-system-refactor, semantic-memory-wiki) | 8 |
 | `docs/research/media-research/` (gallery ERD, media landscape) | 2 |
 | `docs/diataxis/` (10 crates × ~4) | ~40 |
-| **Total surviving** | **~81** |
+| **Total surviving** | **~87** |
 
 **Removed from this registry (2026-08-03):** all "PARENT DELETED" / "removed — host status report" entries (~26 diagrams whose parents were deleted in the 2026-07-24 cleanup). Recoverable via git history.
 
-**Widgets (D18):** 6 viz-widget crates registered as source-anchored candidates (no `.md` diagram yet).
+**Widgets (D18):** 6 viz-widget class diagrams added under `docs/diagrams/` (class-hkask-viz-core, class-hkask-media-widget, class-hkask-graph-widget, class-hkask-kanban-widget, class-hkask-portfolio-widget, class-hkask-scenarios-widget), all VERIFIED 2026-08-03 against their block.rs / view.rs source.
 
 **MDS completeness:** all five MDS categories retain diagram coverage.
 

@@ -82,9 +82,9 @@ classDiagram
     PipelineOverview "1" o-- "many" RecentForecast : recent_forecasts
     EventTreeSummary "1" o-- "many" EventNode : nodes
     ScenariosWidget --> ScenariosBlockBody
-    ScenariosWidget ..|> gpui_Focusable [Focusable]
-    ScenariosWidget ..|> gpui_Render [Render]
-    create_scenarios_widget ..> ScenariosWidget : viz == "scenarios"
+    ScenariosWidget ..|> gpui_Focusable : Focusable
+    ScenariosWidget ..|> gpui_Render : Render
+    create_scenarios_widget ..> ScenariosWidget : viz is scenarios
 ```
 
 **Block shape:** a JSON body with `viz: "scenarios"`. All sub-objects default
