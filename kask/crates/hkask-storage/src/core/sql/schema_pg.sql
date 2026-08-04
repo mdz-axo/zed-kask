@@ -22,22 +22,6 @@ CREATE TABLE IF NOT EXISTS reg_alerts (id TEXT PRIMARY KEY, timestamp TEXT NOT N
 CREATE TABLE IF NOT EXISTS agent_registry (name TEXT PRIMARY KEY, agent_kind TEXT, definition_json TEXT NOT NULL, token_hash TEXT NOT NULL, registered_at TEXT NOT NULL, source_yaml TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_agent_registry_kind ON agent_registry(agent_kind);
 CREATE TABLE IF NOT EXISTS loop_cursors (key TEXT PRIMARY KEY, value INTEGER NOT NULL, updated_at TEXT NOT NULL);
--- Wallet tables — rJoule payments, multi-chain deposits, API key lifecycle
-CREATE TABLE IF NOT EXISTS wallet_balances (wallet_id TEXT PRIMARY KEY, balance_rj INTEGER NOT NULL DEFAULT 0, usdc_equivalent_micro INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (now()::text), updated_at TEXT NOT NULL DEFAULT (now()::text));
-CREATE TABLE IF NOT EXISTS wallet_transactions (id BIGSERIAL PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallet_balances(wallet_id), tx_type TEXT NOT NULL, tx_subtype TEXT, chain TEXT, on_chain_tx_hash TEXT, amount_rj INTEGER NOT NULL, balance_after_rj INTEGER NOT NULL, key_id TEXT, tool_name TEXT, gas_units INTEGER, created_at TEXT NOT NULL DEFAULT (now()::text));
-CREATE INDEX IF NOT EXISTS idx_wallet_tx_wallet_id ON wallet_transactions(wallet_id);
-CREATE INDEX IF NOT EXISTS idx_wallet_tx_created_at ON wallet_transactions(created_at);
-CREATE TABLE IF NOT EXISTS api_keys (key_id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallet_balances(wallet_id), public_key BYTEA NOT NULL, spending_limit_rj INTEGER NOT NULL, spent_rj INTEGER NOT NULL DEFAULT 0, scope TEXT NOT NULL DEFAULT '[]', purpose TEXT NOT NULL DEFAULT '', rate_limit_json TEXT, privacy_mode TEXT NOT NULL DEFAULT 'transparent', preferred_chain TEXT, expires_at TEXT, issued_at TEXT NOT NULL, revoked_at TEXT, created_at TEXT NOT NULL DEFAULT (now()::text));
-CREATE INDEX IF NOT EXISTS idx_api_keys_wallet_id ON api_keys(wallet_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_public_key ON api_keys(public_key);
-CREATE TABLE IF NOT EXISTS deposit_addresses (wallet_id TEXT NOT NULL, chain TEXT NOT NULL, address TEXT NOT NULL, derivation_index INTEGER NOT NULL, privacy_mode TEXT NOT NULL DEFAULT 'transparent', created_at TEXT NOT NULL DEFAULT (now()::text), PRIMARY KEY (wallet_id, chain, derivation_index));
-CREATE UNIQUE INDEX IF NOT EXISTS deposit_addresses_unique_address ON deposit_addresses(chain, privacy_mode, address);
-CREATE TABLE IF NOT EXISTS deposit_references (reference TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallet_balances(wallet_id), chain TEXT NOT NULL, expires_at TEXT NOT NULL, spent INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (now()::text));
-CREATE INDEX IF NOT EXISTS idx_deposit_refs_wallet_id ON deposit_references(wallet_id);
-CREATE INDEX IF NOT EXISTS idx_deposit_refs_expires ON deposit_references(expires_at);
--- Encumbrance table — rJoule locks for API key allocations
-CREATE TABLE IF NOT EXISTS encumbrances (key_id TEXT PRIMARY KEY REFERENCES api_keys(key_id), wallet_id TEXT NOT NULL REFERENCES wallet_balances(wallet_id), amount_rj INTEGER NOT NULL, consumed_rj INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (now()::text), released_at TEXT);
-CREATE INDEX IF NOT EXISTS idx_encumbrances_wallet_id ON encumbrances(wallet_id);
 -- Kata practice history — tracks practice frequency, streaks, and automaticity across sessions
 CREATE TABLE IF NOT EXISTS kata_history (id BIGSERIAL PRIMARY KEY, agent_name TEXT NOT NULL, date TEXT NOT NULL, kata_type TEXT NOT NULL, practice_name TEXT NOT NULL, steps_completed INTEGER NOT NULL DEFAULT 0, gas_consumed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (now()::text));
 CREATE INDEX IF NOT EXISTS idx_kata_history_agent ON kata_history(agent_name);

@@ -312,6 +312,16 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub cache_read_input_tokens: u64,
+    // zed-kask D15: observed USD cost of this completion, as reported by the
+    // provider in its `usage` object (`usage.cost` / `usage.estimated_cost` /
+    // `usage.market_cost`). `None` when the provider doesn't report cost
+    // (Anthropic, Ollama, local). kask's rJoule budget charges this directly
+    // (1 rJoule = $1 USD) via `InferenceResult.cost_usd` in `kask_bridge`. Populated
+    // by the OpenRouter and OpenAI-compatible provider impls; `None` elsewhere.
+    // Pinned by `test_token_usage_cost_round_trips` in this crate + the bridge
+    // cost-extraction test in `kask_bridge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<f64>,
 }
 
 impl TokenUsage {
@@ -333,6 +343,11 @@ impl Add<TokenUsage> for TokenUsage {
             cache_creation_input_tokens: self.cache_creation_input_tokens
                 + other.cache_creation_input_tokens,
             cache_read_input_tokens: self.cache_read_input_tokens + other.cache_read_input_tokens,
+            // Cumulative USD cost sums across turns; `None` only when neither side reported a cost.
+            cost: match (self.cost, other.cost) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+            },
         }
     }
 }
@@ -347,6 +362,11 @@ impl Sub<TokenUsage> for TokenUsage {
             cache_creation_input_tokens: self.cache_creation_input_tokens
                 - other.cache_creation_input_tokens,
             cache_read_input_tokens: self.cache_read_input_tokens - other.cache_read_input_tokens,
+            // USD cost delta; `None` only when neither side reported a cost.
+            cost: match (self.cost, other.cost) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(0.0) - b.unwrap_or(0.0)),
+            },
         }
     }
 }

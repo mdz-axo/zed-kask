@@ -193,7 +193,7 @@ loop:
 - **Threshold = 0.05**: converge when outputs are 95%+ similar (typical for reasoning skills)
 - **Threshold = 0.10+**: converge earlier (use for skills where refinement has diminishing returns)
 
-**Gas budget** represents the skill's energy budget. Each iteration reserves a portion. The PDCA cycle stops when gas is exhausted. Gas uses a hold-settle pattern: reserved before invocation, settled after, with refunds for over-estimates.
+**Gas budget** represents the skill's per-cascade compute budget (System B — `BudgetTracker`). Each `select` iteration charges `cost_per_iteration` against `gas.cap`; the PDCA cycle stops `MaxedOut` (`energy_spent`) when `gas_used` reaches `gas.cap` with `hard_limit: true`. There is no reserve/settle or refund — gas is a monotonic per-iteration counter. A separate `rjoule:` budget tracks the cascade's USD inference spend (charged from each call's observed `cost_usd`, 1 rJoule = $1 USD).
 
 **Loop action** is a natural-language instruction injected between PDCA iterations. It guides the LLM on how to refine its approach based on the previous output.
 

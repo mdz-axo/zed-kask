@@ -272,28 +272,16 @@ WebID.
 The `quarantined_goals` table (`schema.sql:20`) holds goals quarantined for
 repair, with `quarantine_reason`, `repair_attempts`, and `repaired` flag.
 
-### Wallet and keys
+### Wallet and keys (REMOVED 2026-08-03)
 
-The `wallet_balances` table (`schema.sql:23`) is the root of the wallet
-cluster. Three tables reference it: `wallet_transactions` (`schema.sql:24`),
-`api_keys` (`schema.sql:27`), and `deposit_references` (`schema.sql:32`). The
-`encumbrances` table (`schema.sql:36`) references both `api_keys(key_id)` and
-`wallet_balances(wallet_id)`, modeling the hold-settle pattern for gas
-budgets.
-
-The `deposit_addresses` table (`schema.sql:30`) has a composite primary key
-of `(wallet_id, chain, derivation_index)` and no foreign-key constraint,
-because it is populated before the wallet balance row is committed.
-
-The `wallet_transactions` table (`schema.sql:24`) is an append-only ledger
-with `tx_type`, `tx_subtype`, `chain`, `on_chain_tx_hash`, `amount_rj`,
-`balance_after_rj`, `key_id`, `tool_name`, and `gas_units` for gas
-accounting.
-
-The `api_keys` table (`schema.sql:27`) stores Ed25519 public keys with
-`spending_limit_rj`, `spent_rj`, `scope`, `purpose`, `rate_limit_json`,
-`privacy_mode`, `preferred_chain`, and lifecycle timestamps (`expires_at`,
-`issued_at`, `revoked_at`, `created_at`).
+The crypto wallet schema (`wallet_balances`, `wallet_transactions`, `api_keys`,
+`deposit_addresses`, `deposit_references`, `encumbrances`) and the
+`hkask-storage::wallet` Rust module that read/wrote them were deleted 2026-08-03
+as dead-in-production (zero callers). These tables are no longer created by
+`schema.sql`. Governed tool-call bounding is now in-memory via
+`hkask-regulation::CallCapManager`; per-skill-cascade USD budgeting is
+`hkask-templates::BudgetTracker`. The unrelated ABW wallet balance shown in the
+swarm panel is read from the ABW REST API, not from any local table.
 
 ### Regulation and system
 

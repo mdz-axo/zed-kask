@@ -192,13 +192,20 @@ pub struct ClassifierConfig {
 impl ClassifierConfig {
     /// Build from a ClassifierDef, resolving the canonical model and auto-deriving token costs.
     pub fn from_def(def: &ClassifierDef) -> Self {
-        // Auto-derive pricing from provider if not explicitly configured
+        // Per-token cost rates come from the classifier config
+        // (`cost_input_nj_per_token` / `cost_output_nj_per_token`). There is no
+        // hardcoded provider price fallback — fabricating per-token rates is the
+        // operator-priced anti-pattern; unconfigured classifiers get (0, 0) and
+        // their cost tracking is disabled (a warn makes the gap visible).
         let (input_nj, output_nj) =
-            if def.cost_input_nj_per_token == 0 && def.cost_output_nj_per_token == 0 {
-                provider_pricing(&def.provider)
-            } else {
-                (def.cost_input_nj_per_token, def.cost_output_nj_per_token)
-            };
+            (def.cost_input_nj_per_token, def.cost_output_nj_per_token);
+        if input_nj == 0 && output_nj == 0 {
+            tracing::warn!(
+                target: "hkask.classify",
+                provider = %def.provider,
+                "Classifier cost tracking disabled — no cost_input_nj_per_token / cost_output_nj_per_token set in the classifier config. Set them to enable nano-rJ cost accounting."
+            );
+        }
         // Canonical model resolution: an empty `model:` in the YAML defers to
         // `HKASK_CLASSIFIER_MODEL` → `DEFAULT_CLASSIFIER_MODEL`. The full
         // provider-prefixed model string is passed as `model_override` to
@@ -221,24 +228,6 @@ impl ClassifierConfig {
             cost_input_nj_per_token: input_nj,
             cost_output_nj_per_token: output_nj,
             cost_cache_read_nj_per_token: 0,
-        }
-    }
-}
-
-/// Provider pricing lookup table — nano-rJ per token (30 nJ = $0.03/M input).
-/// Returns (input_nj_per_token, output_nj_per_token).
-fn provider_pricing(provider: &str) -> (u64, u64) {
-    match provider.to_lowercase().as_str() {
-        "deepinfra" => (30, 60),  // $0.03/M in, $0.06/M out
-        "openrouter" => (50, 50), // varies by model, conservative estimate
-        "fal" => (40, 40),        // approximate
-        _ => {
-            tracing::warn!(
-                target: "hkask.classify",
-                provider = %provider,
-                "Unknown provider — cost tracking disabled. Add cost_input_nj_per_token / cost_output_nj_per_token to classifier config."
-            );
-            (0, 0)
         }
     }
 }

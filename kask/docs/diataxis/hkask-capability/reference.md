@@ -89,8 +89,9 @@ classDiagram
 1. **Capability match** — `token.is_valid_for(Tool, tool, Execute)` or
    `verify_capability_domain` (string-form capability comparison via
    `capabilities_match`). Denies with `CapabilityDenied`.
-2. **Gas** — reserve estimated cost, dispatch, settle actual cost
-   (hold-settle). Denies with `EnergyBudgetExceeded`.
+2. **Call cap** — `can_proceed(agent)` then `charge_call(agent)` (one call
+   charged against the agent's per-tick `CallCap`). Denies with
+   `EnergyBudgetExceeded` when the agent has no cap or it is exhausted.
 3. **Span emission** — `reg.tool.*` spans persisted via the wired
    `RegulationSink` (`RegulationArchive` on the curator's pod.db in
    zed-kask).

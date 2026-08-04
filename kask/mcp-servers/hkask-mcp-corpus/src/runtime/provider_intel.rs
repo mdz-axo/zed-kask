@@ -320,11 +320,6 @@ impl ProviderIntelligence for OpenRouterProvider {
 /// Always marginal.
 pub struct FalProvider;
 
-impl FalProvider {
-    pub const INPUT_NJ_PER_TOKEN: u64 = 40;
-    pub const OUTPUT_NJ_PER_TOKEN: u64 = 40;
-}
-
 #[async_trait::async_trait]
 impl ProviderIntelligence for FalProvider {
     fn provider_id(&self) -> &'static str {
@@ -356,9 +351,12 @@ impl ProviderIntelligence for FalProvider {
         _api_key: &str,
         _model_name: &str,
     ) -> Result<CostRate, ProviderIntelError> {
+        // fal.ai per-call USD cost is observed from the chat response and
+        // charged via `InferenceResult.cost_usd`; the per-token rates here are
+        // not read by any caller (only `is_marginal` is, by `adaptive_monitor`).
         Ok(CostRate {
-            input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
-            output_nj_per_unit: Self::OUTPUT_NJ_PER_TOKEN,
+            input_nj_per_unit: 0,
+            output_nj_per_unit: 0,
             cache_read_nj_per_unit: 0,
             cache_write_nj_per_unit: 0,
             fixed_nj_per_call: 0,
@@ -568,10 +566,6 @@ impl ProviderIntelligence for FirecrawlProvider {
 
 pub struct RunpodProvider;
 
-impl RunpodProvider {
-    pub const COST_NJ_PER_SECOND: u64 = 100_000; // ~$0.0001/sec
-}
-
 #[async_trait::async_trait]
 impl ProviderIntelligence for RunpodProvider {
     fn provider_id(&self) -> &'static str {
@@ -602,12 +596,15 @@ impl ProviderIntelligence for RunpodProvider {
         _api_key: &str,
         _model_name: &str,
     ) -> Result<CostRate, ProviderIntelError> {
+        // RunPod per-call cost is observed from the response and charged via
+        // `InferenceResult.cost_usd`; the per-second rate here is not read by
+        // any caller (only `is_marginal` is, by `adaptive_monitor`).
         Ok(CostRate {
             input_nj_per_unit: 0,
             output_nj_per_unit: 0,
             cache_read_nj_per_unit: 0,
             cache_write_nj_per_unit: 0,
-            fixed_nj_per_call: Self::COST_NJ_PER_SECOND,
+            fixed_nj_per_call: 0,
             image_nj_per_unit: 0,
             is_marginal: true,
         })
