@@ -2375,17 +2375,21 @@ impl Element for MarkdownElement {
                             }
 
                             // zed-kask: D18 — viz block renderer.
-                            // Only intercept fenced blocks whose language tag
-                            // is "media" or "graph" — the renderer self-selects
-                            // on the body content, but we gate on the fence
-                            // language so that ```json blocks with a `kind` field
-                            // are not misinterpreted as media blocks. Returns
-                            // None for non-viz blocks (falls through to default).
+                            // Intercept fenced blocks whose language tag is one of
+                            // the viz fence languages the registry composes
+                            // (media, graph, kanban, portfolio, scenarios). The
+                            // renderer self-selects on the body content, but we
+                            // gate on the fence language so that json blocks with
+                            // a kind/viz field are not misinterpreted as viz blocks.
+                            // The gate set MUST enumerate every viz fence language
+                            // the registry composes; widening the registry without
+                            // widening this gate makes the new branches ornamental.
+                            // Returns None for non-viz blocks (falls through to default).
                             if let Some(renderer) = &self.media_block_renderer {
                                 let is_viz_block = matches!(
                                     kind,
                                     CodeBlockKind::FencedLang(lang)
-                                        if lang == "media" || lang == "graph"
+                                        if lang == "media" || lang == "graph" || lang == "kanban" || lang == "portfolio" || lang == "scenarios"
                                 );
                                 if is_viz_block {
                                     let block_source = &parsed_markdown.source[range.clone()];
@@ -6154,7 +6158,8 @@ mod tests {
 
     // zed-kask: D18 — pins the fence-language gate. A ```json block whose
     // body happens to contain a `kind` field must NOT be intercepted by the
-    // viz renderer — only ```media and ```graph blocks are eligible.
+    // viz renderer — only the viz fence languages the registry composes
+    // (media, graph, kanban, portfolio, scenarios) are eligible.
     #[gpui::test]
     fn test_media_block_renderer_does_not_intercept_json_blocks(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
@@ -6205,5 +6210,82 @@ mod tests {
             !all_text.contains("MEDIA_WAS_HERE"),
             "```json block should not trigger the viz renderer; got: {all_text:?}"
         );
+    }
+
+    // zed-kask: D18 - pins the FULL viz fence-language gate. Every fence
+    // language the registry composes (graph, kanban, portfolio, scenarios;
+    // media is pinned by test_media_block_renderer_intercepts_media_blocks)
+    // must reach the renderer when a media_block_renderer is registered.
+    // Widening hkask_viz_core::block_renderer without widening the gate in
+    // request_layout makes the new branches ornamental - this test fails the
+    // moment a viz fence language is added to the registry but not the gate.
+    // See DIVERGENCE.md D18 and the .rules "Tests must pin deliberate
+    // zed-kask deviations from upstream".
+    #[gpui::test]
+    fn test_media_block_renderer_intercepts_all_viz_fence_languages(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                r#"```graph
+{"viz":"event_tree","marker":"GRAPH_WGT_MARKER"}
+```
+```kanban
+{"viz":"kanban","marker":"KANBAN_WGT_MARKER"}
+```
+```portfolio
+{"viz":"portfolio","marker":"PORTFOLIO_WGT_MARKER"}
+```
+```scenarios
+{"viz":"scenarios","marker":"SCENARIOS_WGT_MARKER"}
+```
+"#
+                .into(),
+                None,
+                None,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .media_block_renderer(Box::new(|body, _window, _cx| {
+                        if body.trim_start().starts_with('{') {
+                            Some(div().child("VIZ_WAS_HERE").into_any_element())
+                        } else {
+                            None
+                        }
+                    }))
+            },
+        );
+
+        let all_text: String = rendered
+            .text
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("");
+
+        for marker in [
+            "GRAPH_WGT_MARKER",
+            "KANBAN_WGT_MARKER",
+            "PORTFOLIO_WGT_MARKER",
+            "SCENARIOS_WGT_MARKER",
+        ] {
+            assert!(
+                !all_text.contains(marker),
+                "viz block body marker {marker} should not appear as code text (block must be intercepted by the gate); got: {all_text:?}"
+            );
+        }
     }
 }

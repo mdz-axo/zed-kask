@@ -28,8 +28,11 @@ impl TrainingServer {
 
             let dataset_format_owned: Option<lora_validation::DatasetFormatResult> =
                 if let Some(ref ds_path) = dataset_path {
+                    // Contain the LLM-supplied dataset path before the format
+                    // and size validators read it (CWE-200).
+                    let resolved = hkask_mcp_server::contain_for_read(ds_path)?;
                     let format_result = lora_validation::validate_dataset_format(
-                        std::path::Path::new(ds_path),
+                        &resolved,
                         trainer_preference,
                         None,
                     );
@@ -40,7 +43,8 @@ impl TrainingServer {
                 };
 
             if let Some(ref ds_path) = dataset_path {
-                findings.extend(lora_validation::validate_dataset_size(std::path::Path::new(ds_path)));
+                let resolved = hkask_mcp_server::contain_for_read(ds_path)?;
+                findings.extend(lora_validation::validate_dataset_size(&resolved));
             }
 
             if let Some(ref model) = base_model {

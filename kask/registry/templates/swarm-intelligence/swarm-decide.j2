@@ -127,6 +127,30 @@ to create a `{source}_fork_{n}` derivative (the source must have a
 slug-compliant name).
 {% endif %}
 
+**Authoring when no catalogue agent covers the transform.** If no existing
+or forkable catalogue agent covers an uncovered required transform, propose an
+`author_agent` move (agent creation + authoring as a first-class composition
+primitive, not just an implicit side-effect of "hire"). The move carries:
+`agent_type`, `description`, a draft `system_prompt` authored for the transform,
+`accepts`/`produces` (the uncovered transform's input/output types), and an
+optional `model`/`mcp_tools`/`skills`. Authoring the prompt:
+{% if mode == "local" %}
+- In local mode the cascade authors the `system_prompt` directly (there is no
+  ABW generation endpoint); the ACT phase creates the card via
+  `swarm_create_local_agent` with the authored fields. No `swarm_hire_local`
+  tool (§15.1.1 rejected) — the agent is created directly into the local
+  registry and is immediately delegable.
+{% else %}
+- In abw mode, seed the prompt via `swarm_generate_prompt` (ABW's authoring
+  aid) when the move did not carry a drafted prompt, optionally enrich the
+  agent's knowledge graph via `swarm_generate_ontology`, then create the agent
+  via `swarm_create_agent`. Authoring is followed by a `hire` move (consent-
+  gated) to add the new agent to the workspace — emit the `author_agent` move
+  and a dependent `hire` move for the same `agent_type`.
+{% endif %}
+Record the move's `authored_card` = { agent_type, description, system_prompt,
+accepts, produces, model?, mcp_tools?, skills? } so ACT can create it.
+
 ### If deficit_class = "coherence_deficit" + coherence_low_diversity
 Hire a diverse agent (different agent_type or model from the current
 monoculture). List redundant duplicates (same agent_type + model as an
@@ -159,6 +183,23 @@ agents cannot fix it.
 ### If deficit_class = "on_target"
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
+
+### If orientation.latency_outliers is non-empty (Cybernetic Swarm Plan C4, regulated)
+
+ORIENT surfaced agents whose `latency_ms` exceeded `2 * median` (and the 1000 ms
+floor). This is the C4 latency regulation the audit added — previously
+`latency_ms` was sensed but no DECIDE move consumed it. For each outlier,
+propose a `reconfigure_agent` move (local mode) seeded with the outlier's
+failure mode (latency, not a wrong answer): the re-prompt should instruct the
+agent to reduce tool-loop rounds, simplify its tool use, or switch to a faster
+model — the goal is to bring its latency under `threshold_ms` without losing
+coverage. In abw mode (no in-place reconfigure tool), propose a `remove`/fire
+move (`swarm_fire`) plus a fresh `hire` (or `author_agent`) of a faster
+variant. Record `rationale.rejected_by`-style note: `triggered_by: latency`
+with the `latency_ms` and `threshold_ms`. Do NOT reconfigure a latency outlier
+whose `task_success.pass = false` is already handled by the C6 fault rule
+below — the task-failure reconfiguration takes precedence (fix correctness
+first, then speed).
 
 ### If orientation.agent_at_fault is non-null (Cybernetic Swarm Plan C6)
 ORIENT attributed fault to a specific agent. The `fault_count` map (threaded
@@ -217,8 +258,9 @@ reynolds_alignment, reynolds_cohesion) and why, given the sensed state.
 ## Output
 
 Produce a JSON object with: proposed_moves (array of { move_type: "hire"|
-"delegate"|"remove"|"reconfigure_agent", agent_id_or_type, estimated_credits,
-covers_transforms?, redundant_candidates?, rationale }), tuning_rationale
+"delegate"|"remove"|"reconfigure_agent"|"author_agent", agent_id_or_type,
+estimated_credits, covers_transforms?, redundant_candidates?,
+authored_card?, rationale }), tuning_rationale
 (object mapping move → swarm-algorithm term), respects_no_delegation_chains
 (boolean), delegate_notes. `remove` moves are local-mode only via
 `swarm_remove_local`; in abw mode a `remove`/fire move is actionable via

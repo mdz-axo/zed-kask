@@ -42,6 +42,9 @@ workspaces. (Verified live 2026-08-01.)
 
 - Compose a new ABW swarm for a task (which agents to hire, what dependencies
   to satisfy)
+- Author a new agent when no catalogue agent (or forkable near-match) covers a
+  required transform — agent creation + authoring is a first-class `author_agent`
+  move (generate prompt + ontology + create), not an implicit side-effect of hire
 - Diagnose an existing swarm that is under-performing (variety deficit,
   coherence deficit, or a broken cost/consent feedback loop)
 - Steer a swarm toward a target condition across iterations (the PDCA loop)
@@ -120,8 +123,8 @@ iterations, so the enforcement points live in the deterministic math layer.
 | **C1** second-order monitor | Reasoning-loop + sensor-truth-divergence detection over the iteration log | `swarm.second_order_monitor` compute step (9) |
 | **C2** Go See cadence | Scheduled human check every N convergences + event trigger | `cadence_every` param in the monitor; SENSE surfaces `go_see` |
 | **C3** failed-edit memory | Anti-loop set; the FILTER drops moves matching prior failed signatures | `swarm.filter_proposed_moves` compute step (4) |
-| **C4** latency `T_q` | End-to-end delegation latency measurement | `LocalDelegateResult.latency_ms` |
-| **C5** fault attribution | Deterministic priority rule over the delegate trace; fault-count aggregation | ORIENT template (rule) + `swarm.converge_accumulate` `fault_count` (count). Fires only when `delegate_results` execution telemetry is supplied (the planning cascade emits intents, not executed results). See Steering modes below. |
+| **C4** latency `T_q` | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on) |
+| **C5** fault attribution | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → binary `tool_calls[].ok`/`executed_skills[].ok`; fault-count aggregation | ORIENT template (rules 1-6) + `swarm.converge_accumulate` `fault_count`. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning cascade emits intents, not executed results). See Steering modes below. |
 | **C6** reconfigure_agent | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis) | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode). |
 | **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm | `swarm.filter_proposed_moves` compute step (4) |
 | **C8** task-gated alignment | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port) | SENSE template `alignment` definition |
@@ -189,27 +192,26 @@ C5/C6 are inert (the planning cascade has no execution telemetry).
 ## Known limitations (audit 2026-08-03)
 
 The [Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)
-found two structural gaps operators and the Curator should know about before
-relying on the cascade:
+found structural gaps; the two High-severity ones are now mitigated in the
+registry + code (2026-08-03), with one residual:
 
-- **Loop B fidelity is binary.** C5/C6 fault attribution reads
-  `delegate_results[].tool_calls[].ok` and `executed_skills[].ok` — execution
-  success, not task success. An agent that returns `ok: true` with the wrong
-  output is not flagged. The `task_success` axis (C0) closes this only when the
-  caller supplies a deterministic oracle; for open tasks the loop can
-  reconfigure a healthy-but-wrong agent indefinitely. Remediation: an optional
-  deterministic `task_success` field on `LocalDelegateResult` fed into ORIENT.
-- **C4 latency is sensed but not regulated.** `LocalDelegateResult.latency_ms`
-  is measured, but no DECIDE move type consumes it — a slow agent is detected
-  with no response class (no "reconfigure the slow agent" move). Remediation:
-  feed `latency_ms` into DECIDE as a reconfigure signal.
-- **Loop A closure is contingent on execution mode.** The default is `advisory`,
-  where the operator must feed `delegate_results` back or the loop stays open.
-  The `swarm-steering` skill (steering mode) makes closure structural.
+- **Loop B fidelity — MITIGATED.** C5/C6 fault attribution now reads a
+  per-delegation `task_success` (deterministic verdict the executor stamps on
+  each `LocalDelegateResult`) as its highest-fidelity signal, with the binary
+  `tool_calls[].ok` as a fallback. `LocalDelegateResult` carries an optional
+  `task_success: Option<TaskSuccessVerdict>`; `llm_judged` provenance is
+  downgraded by ORIENT (Gap S3). **Residual:** open tasks with no oracle still
+  rely on the Go See loop (C2) — the cascade cannot detect a healthy-but-wrong
+  agent without a deterministic evaluator.
+- **C4 latency — REGULATED.** `LocalDelegateResult.latency_ms` now flows through
+  ORIENT (`latency_outliers`) into DECIDE, which proposes `reconfigure_agent`
+  for outlier agents. The sense-without-act sub-loop is closed.
+- **Loop A closure — OPEN (by design).** The default execution mode is
+  `advisory`, where the operator must feed `delegate_results` back or the
+  planning loop stays open. The `swarm-steering` skill (steering mode) makes
+  closure structural; it is not yet the default.
 
-These are composition-quality gaps, not safety gaps — the consent/ceiling
-algedonic gate (Loop C) keeps spend bounded in the meantime. Full per-property
-evidence and the VSM/Ashby analysis are in the audit.
+Full per-property evidence and the VSM/Ashby analysis are in the audit.
 
 ## Registry
 
@@ -225,9 +227,9 @@ templates, the registry wins.
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   `hkask-templates/src/compute.rs`)
-- MCP tool surface (41 tools — both sets always registered in either mode;
+- MCP tool surface (47 tools — both sets always registered in either mode;
   `kask.swarm.mode` selects the substrate, not the surface; pinned by
-  `tool_surface_is_exactly_41_registered_tools`):
+  `tool_surface_is_exactly_47_registered_tools`):
   - **ABW tools (27)**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
     `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
     `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
@@ -237,12 +239,16 @@ templates, the registry wins.
     `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
     `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
     `swarm_publish_agent`, `swarm_fork_agent`.
-  - **Local tools (14)**: `swarm_fund_local`, `swarm_balance_local`,
+  - **Local tools (20)**: `swarm_fund_local`, `swarm_balance_local`,
     `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
     `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
     `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
     `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
-    `swarm_create_local_agent`, `swarm_reconfigure_local_agent` (C6).
+    `swarm_create_local_agent`, `swarm_reconfigure_local_agent` (C6),
+    `swarm_create_local_swarm`, `swarm_list_local_swarms`,
+    `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`,
+    `swarm_remove_agent_local` (local-swarm lifecycle — local mode has explicit
+    named swarms/rosters, not just an ephemeral session).
 - Spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
   `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
   `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,

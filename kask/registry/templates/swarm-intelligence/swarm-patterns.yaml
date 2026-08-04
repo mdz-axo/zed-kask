@@ -72,6 +72,14 @@ tuning_palette:
     when: "variety_deficit (uncovered required_transforms)"
     source: "Bansal 2019: as more ants find the path, the concentration of pheromone gets stronger"
 
+  - id: author_new_agent
+    term: pheromone deposition to an unmapped region (authoring)
+    abw_move: author_agent
+    effect: "blaze a path where none exists — author a new agent for an uncovered transform when no catalogue agent (or forkable near-match) covers it"
+    when: "variety_deficit + no catalogue agent covers the required transform"
+    source: "ACO exploration of unmapped regions; Ousterhout: a new module is warranted when complexity reappears at the caller without it"
+    note: "abw: `swarm_generate_prompt` (optional seed) + `swarm_generate_ontology` (optional) + `swarm_create_agent`, then a dependent `hire`; local: `swarm_create_local_agent` with the cascade-authored `system_prompt` (no ABW generation endpoint, no `swarm_hire_local`). Agent creation + authoring is a first-class composition move, not an implicit side-effect of `hire`."
+
   - id: pheromone_evaporation
     term: pheromone evaporation
     abw_move: fire_redundant_duplicate
@@ -106,7 +114,7 @@ deficit_classes:
   - id: variety_deficit
     signal: "variety_coverage < target"
     ontology: "Ashby requisite variety"
-    tuning_response: [pheromone_deposition, reynolds_cohesion]
+    tuning_response: [pheromone_deposition, author_new_agent, reynolds_cohesion]
     source: "ABW plan §4.2 (Ashby variety check); Bansal 2019 (ACO)"
 
   - id: coherence_deficit_low_diversity
@@ -146,21 +154,72 @@ failure_modes:
     intervention: "escalate; do not claim convergence regardless of d"
     source: ".rules unwrap_or(0) trap; ABW plan §4.1 closure"
 
-abw_invariants:
+  - id: latency_spike
+    detection: "orientation.latency_outliers non-empty (latency_ms > 2 * median, floor 1000 ms)"
+    cause: "an agent is pathologically slow (excessive tool-loop rounds, slow model, or a stuck tool) — Cybernetic Swarm Plan C4"
+    intervention: "reconfigure_agent (local: `swarm_reconfigure_local_agent` to reduce tool rounds / switch model; abw: `swarm_fire` + fresh `hire`/`author_agent` of a faster variant). Latency is now regulated — previously sensed but no DECIDE move consumed it (audit C4 fix, 2026-08-03)."
+    source: "Cybernetic Swarm Plan C4; audit §Part 4 (Ashby variety deficit)"
+
+  - id: wrong_output_not_detected
+    detection: "agent returns `tool_calls[].ok = true` but the output is wrong (a task-failure the binary `ok` signal cannot see)"
+    cause: "Loop B fidelity was binary — execution success, not task success"
+    intervention: "the executor stamps a deterministic `task_success` per delegation; ORIENT rule 1 attributes fault to the agent whose `task_success.pass = false`; C6 reconfigures. Mitigated (audit Loop B fidelity fix, 2026-08-03); the residual gap is open tasks with no oracle, covered by the Go See loop (C2)."
+    source: "audit §Part 2 Loop B; Cybernetic Swarm Plan C0/C5/C6"
+
+move_types:
+  # The composition move vocabulary DECIDE emits and ACT routes to tools.
+  # `kask.swarm.mode` selects the tool, not the move — the vocabulary is shared.
+  # Local mode has explicit named swarms (rosters) via `swarm_create_local_swarm` /
+  # `swarm_list_local_swarms` / `swarm_get_local_swarm` / `swarm_delete_local_swarm` /
+  # `swarm_add_agent_local` / `swarm_remove_agent_local`, so composition can target a
+  # named local swarm rather than an ephemeral session.
+  - move: hire
+    abw: "`swarm_hire` (consent-gated; own `/add` = 2 cr, third-party `/hire` = 5 cr base + required + optional)"
+    local: "`swarm_create_local_agent` (free — no `swarm_hire_local`, §15.1.1 rejected) or `swarm_clone_to_local`"
+  - move: delegate
+    abw: "`swarm_delegate` / `swarm_delegate_and_wait` (consent-gated, 1 cr + tokens; one level deep)"
+    local: "`swarm_delegate_local` / `swarm_fanout_local` / `swarm_pipeline_local` (ledger-gated, 1 cr / 1000 tokens)"
+  - move: remove
+    abw: "`swarm_fire` (roster removal, verified live 2026-08-02; agent not deleted)"
+    local: "`swarm_remove_local` (deletes the local card; a synced card's ABW agent is untouched)"
+  - move: reconfigure_agent
+    abw: "no in-place tool — `swarm_fire` + fresh `hire`/`author_agent` with an improved prompt"
+    local: "`swarm_reconfigure_local_agent` (preserves id/type/deps, reloads registry) — Cybernetic Swarm Plan C6"
+  - move: author_agent
+    abw: "`swarm_generate_prompt` (optional seed) + `swarm_generate_ontology` (optional) + `swarm_create_agent`, then a dependent `hire`"
+    local: "`swarm_create_local_agent` with the cascade-authored `system_prompt` (no ABW generation endpoint)"
+    note: "agent creation + authoring as a first-class move (audit 2026-08-03): the cascade authors a new agent for an uncovered transform when no catalogue agent covers it. Permanent deletion is separate: `swarm_delete_agent` / `swarm_delete_swarm`."
+
+invariants:
   - id: no_delegation_chains
     rule: "delegates receive all workspace tools EXCEPT delegate_to_agent and execute_agent"
     enforcement: "every proposed delegate move is one level deep; respects_no_delegation_chains must be true"
     source: "ABW plan §0 (verified swarm semantics)"
 
   - id: consent_gate_blocks
-    rule: "no swarm_hire or swarm_delegate call without a valid consent_token from swarm_request_consent"
-    enforcement: "ACT phase aborts the move if the token is missing or scope-mismatched"
-    source: "ABW plan §3.6; .rules advertised-invariants trap"
+    rule: "no swarm_hire or swarm_delegate call without a valid consent_token from swarm_request_consent (abw); local mode has no consent token — the ledger balance + per-dispatch ceiling is the gate"
+    enforcement: "ACT aborts the move if the token is missing or scope-mismatched (abw); `swarm_delegate_local` returns PaymentRequired on insufficient balance (local)"
+    source: "ABW plan §3.6; .rules advertised-invariants trap; consent.rs:184"
 
   - id: curator_opt_in_default
     rule: "curator_involved defaults to false; no task content reaches Xaman Ek without explicit per-dispatch opt-in"
     enforcement: "DispatchIntent.curator_involved defaults false; set true only with separate consent"
     source: "ABW plan §3.7"
+
+  - id: deterministic_task_success
+    rule: "a task_success verdict must come from a deterministic evaluator (test pass/fail, schema validation, exit code, regex/reference match); an LLM-judged verdict is forbidden for the C0 s axis"
+    enforcement: "ORIENT Step 4 determinism guard downgrades provenance: llm_judged — not used for fault attribution, a warning emitted. Cross-mode."
+    source: "Cybernetic Swarm Plan C0; audit Gap S3"
+
+  - id: debit_before_scan
+    rule: "the local runtime debits the ledger, THEN scans the output guard — a guard-quarantined result still costs credits (the compute was already spent)"
+    enforcement: "LocalSwarmRuntime::delegate ordering (debit then scan_output); reversing it would let a guard quarantine reclaim cost"
+    source: "agent_executor.rs:11; local_runtime.rs:394-400"
+
+  - id: algedonic_override
+    rule: "a 402 or un-acknowledged curator dispatch escalates regardless of the swarm-state distance d"
+    enforcement: "CHECK Step 4 + convergence invariant; a broken algedonic channel is never read as no deviation"
+    source: ".rules unwrap_or(0) trap; swarm-check.j2 Step 4"
 
 vacuous_truth_defaults:
   # These prevent 0/0 from breaking the metrics. Recorded here so the SENSE

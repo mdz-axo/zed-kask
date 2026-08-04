@@ -125,6 +125,13 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
   (`agent_id`, `agent_type`, `description`, `system_prompt`, `accepts`,
   `produces`, `model?`, `mcp_tools?`, `skills?`) when DECIDE proposes hiring an
   agent not yet in the local registry.
+- `author_agent` → `swarm_create_local_agent` with the move's `authored_card`
+  fields (`agent_id`, `agent_type`, `description`, `system_prompt`, `accepts`,
+  `produces`, `model?`, `mcp_tools?`, `skills?`). Agent creation + authoring as
+  a first-class move: the cascade authored the `system_prompt` for an
+  uncovered transform; ACT creates the card directly into the local registry
+  (no `swarm_hire_local` tool — §15.1.1 rejected). The new agent is
+  immediately delegable; a separate `delegate` move runs it.
 - `fanout` → `swarm_fanout_local` with `{ delegations: [{ agent_name, task,
   credits_authorized }, ...] }` when DECIDE proposes parallel multi-agent
   dispatch (capped at MAX_FANOUT=10; runs sequentially to avoid ledger
@@ -144,6 +151,17 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm call:
   the agent from the roster — the redundant-duplicate pruning; no credit
   cost, no consent token). The agent itself is NOT deleted — use
   `swarm_delete_agent` for that.
+- `author_agent` → author then create the agent: (1) if the move's
+  `authored_card.system_prompt` is empty, call `swarm_generate_prompt` with
+  the move's `description`/`agent_type` to seed the prompt; (2) optionally call
+  `swarm_generate_ontology` with a `domain_description` when the agent needs a
+  knowledge-graph ontology; (3) call `swarm_create_agent` with the
+  authored/generated fields (`agent_name`, `agent_type`, `system_prompt`,
+  `description`, `model?`, `tags?`, `dependencies_required?`,
+  `dependencies_optional?`, `mcp_tools?`, `skills?`). Creation is followed by a
+  separate `hire` move (consent-gated via `swarm_request_consent`) to add the
+  new agent to the workspace — emit both the `author_agent` (create) call and
+  the dependent `hire` call.
 
 For each Abort, emit no call. Record the abort reason in aborted_reasons.
 {% endif %}

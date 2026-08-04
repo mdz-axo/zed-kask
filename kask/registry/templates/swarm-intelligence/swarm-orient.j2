@@ -13,6 +13,8 @@ contract:
     coordination_problem: string
     cybernetic_assessment: object|null
     agent_at_fault: object|null
+    latency_outliers: array
+    task_success_warning: string|null
     on_target: boolean
     delegate_notes: string
 energy_cap: 4096
@@ -52,12 +54,18 @@ You are a swarm-orientation analyst. Classify the gap between the sensed swarm s
 `delegate_results` is an array of `swarm_delegate_local` results
 (`LocalDelegateResult`-shaped: `agent_id`, `response`, `model`, `tokens_used`,
 `cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
-`executed_skills[]` (each `{skill, ok, error?}`)). These are EXECUTED outcomes —
+`executed_skills[]` (each `{skill, ok, error?}`), and an optional `task_success`
+(the executor's deterministic verdict on whether this delegation's output
+solved the task — `null` when the server returned it; populated by the Curator
+or human after running a declared evaluator)). These are EXECUTED outcomes —
 the operator or the Kask Curator ran the prior plan via `swarm_delegate_local`
-and fed the real results back. The deterministic fault-attribution inputs are
-`delegate_results[].tool_calls[].ok` and `delegate_results[].executed_skills[].ok`.
-The terminal agent (rule 1) is the `agent_id` of the LAST entry (the last
-delegation produced the terminal output the task metric scored).
+and fed the real results back. The deterministic fault-attribution inputs are:
+(1) `delegate_results[].task_success.pass` (highest fidelity — task success,
+not just execution success; Loop B fidelity fix), then (2) the binary
+`delegate_results[].tool_calls[].ok` / `executed_skills[].ok` (execution
+success). The terminal agent (fallback rule) is the `agent_id` of the LAST
+entry (the last delegation produced the terminal output the task metric
+scored).
 {% else %}
 ## Delegate Results — Execution Telemetry
 No `delegate_results` supplied. The planning cascade's ACT emits dispatch
@@ -151,34 +159,67 @@ set cybernetic_assessment = null.
 
 Attribute fault ONLY when `delegate_results` execution telemetry is present
 (an array of `LocalDelegateResult`-shaped objects, each with `agent_id`,
-`tool_calls[].ok`, `executed_skills[].ok`). The planning cascade's
-`emitted_calls` are dispatch INTENTS, not outcomes — they do NOT carry
-`tool_calls[].ok` / `executed_skills[].ok`, so they are not attribution inputs.
-Do not fabricate outcomes from intents.
+`tool_calls[].ok`, `executed_skills[].ok`, and an optional `task_success`).
+The planning cascade's `emitted_calls` are dispatch INTENTS, not outcomes —
+they do NOT carry `tool_calls[].ok` / `executed_skills[].ok` / `task_success`,
+so they are not attribution inputs. Do not fabricate outcomes from intents.
+
+**Determinism guard (audit Gap S3).** If any `delegate_results[].task_success`
+carries `provenance: "llm_judged"`, do NOT use it for attribution — an LLM
+judge violates the C0 determinism constraint. Set `task_success_warning` to a
+short note naming the agent and the provenance, and treat that entry's
+`task_success` as absent. Only `provenance: "deterministic"` (or absent
+`provenance`, treated as `deterministic` for backward compatibility) is trusted.
 
 When `delegate_results` IS present, attribute fault to exactly one agent by
 this deterministic priority rule (JudgeFlow with the LLM Judge replaced by a
 rule — the divergence IS the point: a deterministic judge is what hKask
 builds):
 
-1. If `s < epsilon` (the terminal-output task metric failed), attribute to the
-   **terminal agent** — the `agent_id` of the LAST entry in `delegate_results`
-   (the last delegation produced the terminal output the metric scored; the
-   delegation order is the deterministic ground the plan's tie-break relies on).
-2. Else if any `delegate_results[]` entry has `tool_calls[].ok = false` (a
-   dispatch failed or was not in the declared mcp_tools allowlist), attribute to
-   the **earliest such agent** (by `delegate_results` array order).
-3. Else if any `delegate_results[]` entry has `executed_skills[].ok = false` (a
-   declared skill cascade failed), attribute to the **earliest such agent**.
-4. Else if a guard redaction occurred (a tool output was redacted because it
-   tripped the input guard), attribute to that agent.
-5. Tie-break by `delegate_results` array order (deterministic).
+1. **Per-delegation task failure (highest fidelity).** If any
+   `delegate_results[]` entry has a trusted `task_success` with `pass = false`,
+   attribute to the **earliest such agent** (by `delegate_results` array
+   order). This names the specific agent whose output the deterministic
+   evaluator judged a task failure — the signal Loop B previously lacked
+   (binary `ok` could not detect "executed but wrong").
+2. **Whole-task terminal failure.** Else if the top-level `task_success` input
+   (the whole-task oracle, separate from the per-delegation verdicts) is
+   present with `pass = false`, attribute to the **terminal agent** — the
+   `agent_id` of the LAST entry in `delegate_results` (the last delegation
+   produced the terminal output the metric scored; the delegation order is
+   the deterministic ground the plan's tie-break relies on).
+3. **Execution crash.** Else if any `delegate_results[]` entry has
+   `tool_calls[].ok = false` (a dispatch failed or was not in the declared
+   `mcp_tools` allowlist), attribute to the **earliest such agent**.
+4. **Skill cascade failure.** Else if any `delegate_results[]` entry has
+   `executed_skills[].ok = false` (a declared skill cascade failed),
+   attribute to the **earliest such agent**.
+5. **Guard redaction.** Else if a guard redaction occurred (a tool output was
+   redacted because it tripped the input guard), attribute to that agent.
+6. **Tie-break** by `delegate_results` array order (deterministic).
 
 If no `delegate_results` telemetry is present (the default in the planning
-cascade), OR no task-success signal, OR no failure is present, set
-agent_at_fault = null. When non-null, agent_at_fault = { agent_name, reason,
-rule_matched (1-5), failure_detail }. Never fabricate a verdict from the plan's
-emitted_calls.
+cascade), OR no failure is present, set `agent_at_fault = null`. When
+non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-6),
+failure_detail }`. Never fabricate a verdict from the plan's `emitted_calls`.
+
+## Step 5 — Latency outliers (Cybernetic Swarm Plan C4, regulated)
+
+Compute `latency_outliers` from `delegate_results[].latency_ms` so DECIDE can
+reconfigure slow agents (the audit C4 fix: latency was sensed but not
+regulated; ORIENT now surfaces it for DECIDE to act on).
+
+- If fewer than 3 `delegate_results` entries carry `latency_ms`, set
+  `latency_outliers = []` (too few points for a meaningful median).
+- Else compute `median_ms` = median of the `latency_ms` values and
+  `threshold_ms = max(2 * median_ms, latency_floor_ms)` where
+  `latency_floor_ms = 1000` (avoid flagging fast agents). An agent is a
+  latency outlier if its `latency_ms > threshold_ms`.
+- `latency_outliers = [{ agent_id, latency_ms, threshold_ms }, ...]` in
+  `delegate_results` array order. Empty when none exceed the threshold.
+
+Latency outliers are a fault *signal*, not a deficit class — they coexist with
+the deficit classification and feed DECIDE's `reconfigure_agent` move (C6).
 
 ## Output
 
@@ -186,4 +227,6 @@ Produce a JSON object with: deficit_class (one of "variety_deficit",
 "coherence_deficit", "loop_break", "on_target"), deficit_details,
 coordination_problem (one of "cooperation", "division_of_labor", "n/a"),
 cybernetic_assessment (object or null), agent_at_fault (object or null),
-on_target (boolean), delegate_notes.
+latency_outliers (array — empty when no delegate_results or no outliers),
+task_success_warning (string or null — non-null only when an llm_judged
+task_success was detected and downgraded), on_target (boolean), delegate_notes.

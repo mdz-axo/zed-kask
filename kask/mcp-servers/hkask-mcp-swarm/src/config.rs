@@ -88,6 +88,10 @@ pub(crate) struct SwarmConfig {
     /// `LocalSwarmRegistry`. Default `agents/local/swarms` relative to the
     /// hKask data directory. The local replica of an ABW workspace roster.
     pub local_swarms_dir: String,
+    /// Whether to start the A2A HTTP gateway (loopback JSON-RPC server that
+    /// exposes local agents to external A2A clients). Default `false` (opt-in
+    /// — it opens a loopback port). Set `HKASK_A2A_HTTP_ENABLE=1` to enable.
+    pub a2a_http_enabled: bool,
     /// The governed MCP server ids this server may declare tools for (from
     /// `HKASK_MCP_SERVER_IDS`, the parent's `BUILT_IN_MCP_SERVERS_IDS`).
     /// `None` = no server-side filtering (backward compatible). When set,
@@ -118,6 +122,7 @@ impl Default for SwarmConfig {
             default_agent_model: "claude-haiku-4-5-20251001".to_string(),
             local_agents_dir: "agents/local/curated".to_string(),
             local_swarms_dir: "agents/local/swarms".to_string(),
+            a2a_http_enabled: false,
             allowed_tool_servers: None,
         }
     }
@@ -195,6 +200,11 @@ impl SwarmConfig {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.local_swarms_dir);
         let local_swarms_dir = resolve_local_swarms_dir(&local_swarms_dir);
+    let a2a_http_enabled = std::env::var("HKASK_A2A_HTTP_ENABLE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|s| s.trim().to_lowercase().parse::<bool>().ok())
+        .unwrap_or(default.a2a_http_enabled);
         let allowed_tool_servers = std::env::var("HKASK_MCP_SERVER_IDS")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -238,6 +248,7 @@ impl SwarmConfig {
                 default_agent_model,
                 local_agents_dir,
                 local_swarms_dir,
+                a2a_http_enabled,
                 allowed_tool_servers,
             },
             warning,

@@ -102,9 +102,10 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 `delegate_results` array that feeds back to swarm-intelligence:
 ```json
 {
-  "collect": "For each entry in execution_sequence, call swarm_delegate_local and collect the returned LocalDelegateResult object (agent_id, response, model, tokens_used, cost, balance, latency_ms, tool_calls[], executed_skills[]).",
+  "collect": "For each entry in execution_sequence, call swarm_delegate_local and collect the returned LocalDelegateResult object (agent_id, response, model, tokens_used, cost, balance, latency_ms, tool_calls[], executed_skills[], task_success).",
+  "task_success": "After each delegation, if the operator declared a deterministic evaluator for the task (test pass/fail, schema validation, exit code, regex/reference match), run it against the delegation `response` and stamp `task_success = { pass: bool, score?: number, detail?: string, provenance: 'deterministic' }` onto the result. When the task has no oracle (open-ended), leave `task_success = null`. NEVER use an LLM to judge task_success — provenance must be 'deterministic'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3). This is the Loop B fidelity fix: it lets ORIENT attribute fault to an agent that executed cleanly but produced the wrong output.",
   "array_field": "delegate_results",
-  "shape": "LocalDelegateResult (per swarm_delegate_local)",
+  "shape": "LocalDelegateResult (per swarm_delegate_local), with task_success stamped by the executor",
   "order": "same order as execution_sequence"
 }
 ```

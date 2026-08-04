@@ -409,6 +409,11 @@ impl LocalSwarmRuntime {
             latency_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             tool_calls: raw.tool_calls,
             executed_skills: raw.executed_skills,
+            // The server cannot judge task success — the executor (Curator or
+            // human) stamps this after running a declared deterministic
+            // evaluator against `response`. Left `None` here; ORIENT reads it
+            // from the executor-populated `delegate_results`.
+            task_success: None,
         })
     }
 }
@@ -421,7 +426,7 @@ impl LocalSwarmRuntime {
 pub(crate) const MAX_FANOUT: usize = 10;
 
 /// Result of a local delegation.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocalDelegateResult {
     pub agent_id: String,
     pub response: String,
@@ -433,7 +438,8 @@ pub struct LocalDelegateResult {
     /// component C4 — HyEvo `T_q` measurement). Captured from the start of
     /// `delegate` to just before the result is returned. Pure measurement — no
     /// gate; enables future cost-aware decisions without committing to
-    /// evolutionary search.
+    /// evolutionary search. ORIENT surfaces latency outliers so DECIDE can
+    /// reconfigure slow agents (audit C4 fix, 2026-08-03).
     pub latency_ms: u64,
     /// Summary of tool calls made during the delegation (qualified
     /// `server/tool` name + ok/error). Empty when the agent declares no
@@ -442,4 +448,55 @@ pub struct LocalDelegateResult {
     /// Summary of skill cascades executed before the LLM call (skill id +
     /// ok/error). Empty when the agent declares no `skills`.
     pub executed_skills: Vec<serde_json::Value>,
+    /// Optional deterministic task-success verdict, populated by the executor
+    /// (the Kask Curator or a human in the loop) after running a declared
+    /// evaluator against `response`. The swarm MCP server cannot judge task
+    /// success — `delegate` returns `None` here — so the executor stamps this
+    /// before feeding `delegate_results` back to swarm-intelligence. ORIENT
+    /// (C5/C6 fault attribution) consumes it to distinguish "executed but
+    /// failed the task" from "crashed" (audit Loop B fidelity fix,
+    /// 2026-08-03). Skipped from serialization when absent, so the server's
+    /// response shape is unchanged for callers that ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_success: Option<TaskSuccessVerdict>,
+}
+
+/// How a [`TaskSuccessVerdict`] was produced. The determinism constraint
+/// (Cybernetic Swarm Plan C0) requires a deterministic judge; an `llm_judged`
+/// provenance is flagged so ORIENT can warn rather than trust the verdict —
+/// the audit's Gap S3 (advertised determinism, enforced by convention).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskSuccessProvenance {
+    /// Deterministic evaluator: test pass/fail, schema validation, exit code,
+    /// regex/reference match. The only provenance ORIENT trusts for the C0
+    /// `s` axis of the swarm-state distance.
+    Deterministic,
+    /// LLM-jged. ORIENT must downgrade this to a hypothesis (warn), not a
+    /// trusted `s` — the determinism constraint forbids an LLM judging
+    /// `task_success`.
+    LlmJudged,
+    /// Unknown / not declared by the executor. Treated as untrusted.
+    Unknown,
+}
+
+/// A deterministic task-success verdict stamped onto a [`LocalDelegateResult`]
+/// by the executor (the Kask Curator or a human in the loop) after running a
+/// declared evaluator against the delegation `response`. The server returns
+/// `None`; the executor populates this. ORIENT consumes it for C5/C6 fault
+/// attribution (audit Loop B fidelity fix, 2026-08-03).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TaskSuccessVerdict {
+    /// Whether the delegation's output solved the task per the evaluator.
+    pub pass: bool,
+    /// Optional graded score in `[0.0, 1.0]` for evaluators that produce one;
+    /// when absent, `pass` is the binary signal. ORIENT maps
+    /// `s = score` if present else `1.0 if pass else 0.0`.
+    pub score: Option<f64>,
+    /// Evaluator-readable detail (which check failed, the diff, the exit
+    /// code, etc.).
+    pub detail: Option<String>,
+    /// How the verdict was produced. `Deterministic` is the only trusted
+    /// provenance; `LlmJudged` triggers an ORIENT warning (Gap S3).
+    pub provenance: TaskSuccessProvenance,
 }

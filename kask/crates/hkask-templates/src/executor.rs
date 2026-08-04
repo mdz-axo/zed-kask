@@ -1326,13 +1326,22 @@ impl ManifestExecutor {
             (result.text, result.tool_calls)
         };
 
-        // rJoule tracking — cost per token comes from inference provider.
-        // Token count is tracked; rJoule deduction wired when provider reports cost.
-        // TODO: wire rJoule deduction once InferenceResult reports token counts.
-        // For now, gas tracking (below) is the only budget enforcement; rJoule
-        // is checked at the cascade-loop level via the cap, not per-call.
-        // (When wired, call `budget.charge_rjoule(...)` here.)
-
+        // rJoule tracking — NOT YET ENFORCED.
+        //
+        // `result.usage` (InferenceUsage: prompt/completion/total_tokens) is now
+        // populated by inference providers, so the old "once InferenceResult
+        // reports token counts" blocker is gone. The remaining gap is the
+        // tokens→rJoule CONVERSION: manifests declare `rjoule.cap` in single
+        // digits (0..3), which are clearly not token counts, so charging
+        // `total_tokens` as rJoule would hard-stop every cascade after a few
+        // tokens. Defining the conversion (e.g. rJoule per 1k tokens, or via
+        // GAS_PER_RJOULE) is a design decision that must not be guessed here.
+        // Until then, gas (below) is the ONLY live budget; `rjoule.cap` is inert
+        // config — the `reg.skill.budget.rjoule_exhausted`/`*_alert` spans never
+        // fire. See `RjouleConfig::cap` doc comment ("not yet enforced").
+        // (When wired, call `budget.charge_rjoule(...)` here with the converted
+        // value from `result.usage.total_tokens`.)
+        //
         // Gas tracking — deduct one iteration of compute
         budget.charge_iteration();
 
@@ -1772,6 +1781,15 @@ impl ManifestExecutor {
             compute_ref = compute_ref,
             "REG"
         );
+        // The compute output is derived from the bound inputs — if any input
+        // was bound from a Source-tainted context entry, the output carries
+        // Source data and must inherit the label, or a downstream Sink tool fed
+        // this `step_N_result` bypasses the FIDES Source→Sink gate (the gate
+        // reads labels, not content). Same closure-break class as populate/render,
+        // which already label their outputs — compute was the remaining gap.
+        if let Some(ref mapping) = step.input_mapping {
+            self.propagate_taint_for_binding(mapping, &format!("step_{}_result", step.ordinal));
+        }
         context.insert(format!("step_{}_result", step.ordinal), result);
 
         Ok(context)
@@ -2663,5 +2681,108 @@ convergence:
             err.to_string().contains("blocked"),
             "error must surface the FIDES Source→Sink block verdict: {err}"
         );
+    }
+
+    /// #4 compute taint regression: a `compute` step whose `input_mapping` binds
+    /// from a Source-tainted context entry must label its `step_N_result` output
+    /// as Source. Before the fix, `execute_compute` labeled only the bound
+    /// input keys, not the output — so a downstream Sink tool fed the compute
+    /// output (derived from Source data) bypassed the FIDES gate, which reads
+    /// labels, not content. Uses `kata.hypotenuse` (takes two f64s).
+    #[tokio::test]
+    async fn compute_output_inherits_source_taint_from_inputs() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+        executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned")
+            .insert("step_1_result".to_string(), ToolTaint::Source);
+
+        let step = BundleManifestStep {
+            ordinal: 2,
+            action: "compute".to_string(),
+            description: "compute over Source-tainted inputs".to_string(),
+            renderer: None,
+            template_ref: None,
+            mcp: None,
+            compute_ref: Some("kata.hypotenuse".to_string()),
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: Some(serde_json::json!({
+                "object_gap": {"$ref": "step_1_result.object_gap"},
+                "process_gap": {"$ref": "step_1_result.process_gap"}
+            })),
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "step_1_result".to_string(),
+            serde_json::json!({"object_gap": 0.3, "process_gap": 0.4}),
+        );
+
+        let result = executor
+            .execute_compute(&step, context)
+            .await
+            .expect("kata.hypotenuse over numeric inputs should succeed");
+        // Sanity: the compute ran.
+        assert!(
+            result.contains_key("step_2_result"),
+            "compute output must be stored"
+        );
+        let labels = executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned");
+        assert_eq!(
+            labels.get("step_2_result").copied(),
+            Some(ToolTaint::Source),
+            "compute output derived from Source-tainted inputs must inherit the Source label"
+        );
+    }
+
+    /// #4 extract_feedback_phase contract: pins the phase derivation from a
+    /// step's template_ref. The `write`/`feedback` ordering matters — a segment
+    /// containing both (`write-feedback`) must resolve to OperatorFeedback, not
+    /// Write. `adversarial-convergence-check` (mid-segment match) must resolve to
+    /// Convergence.
+    #[test]
+    fn extract_feedback_phase_resolves_known_refs() {
+        assert_eq!(
+            extract_feedback_phase("sankey-flow/sankey-classify"),
+            Some("classify")
+        );
+        assert_eq!(
+            extract_feedback_phase("diataxis-diagram/diataxis-diagram-generate"),
+            Some("draft")
+        );
+        assert_eq!(
+            extract_feedback_phase("skill-x/evaluate-report"),
+            Some("evaluate")
+        );
+        assert_eq!(
+            extract_feedback_phase("adversarial-red-team/adversarial-convergence-check"),
+            Some("convergence")
+        );
+        // `write-feedback` contains both `write` and `feedback`; feedback must win.
+        assert_eq!(
+            extract_feedback_phase("skill-x/write-operator-feedback"),
+            Some("operator_feedback")
+        );
+        // A bare `write` (no feedback) still resolves to Write.
+        assert_eq!(
+            extract_feedback_phase("skill-x/write-report"),
+            Some("write")
+        );
+        assert_eq!(extract_feedback_phase("skill-x/unknown-step"), None);
     }
 }

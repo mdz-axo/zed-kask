@@ -11,7 +11,6 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 use serde_json::json;
 use sha2::Digest;
-use std::path::PathBuf;
 
 /// A/B baseline for retrain comparison.
 struct AbBaseline {

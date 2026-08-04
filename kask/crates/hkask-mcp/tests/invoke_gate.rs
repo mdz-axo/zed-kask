@@ -120,22 +120,22 @@ async fn governance_allows_valid_token_with_budget() {
 }
 
 #[tokio::test]
-async fn no_governance_bypasses_gate() {
+async fn no_governance_fails_closed() {
     let runtime = McpRuntime::new();
     register_test_tool(&runtime, "test-server", "test_tool").await;
 
-    // Any token — governance is None, so the gate is skipped entirely.
+    // Governance is None — invoke must fail closed rather than bypass the
+    // OCAP + gas membrane. A production embedder that forgets `with_governance`
+    // would otherwise silently lose capability verification and gas
+    // accounting. See the .rules "Process-global hooks set at runtime need a
+    // startup-failure signal" and the OCAP gate trap.
     let token = test_token_for_tool("test_tool");
     let result = runtime
         .invoke("test-server", "test_tool", json!({}), &token)
         .await;
 
     assert!(
-        !matches!(result, Err(ToolPortError::CapabilityDenied(_))),
-        "no-governance runtime must not deny via OCAP, got: {result:?}"
-    );
-    assert!(
-        !matches!(result, Err(ToolPortError::EnergyBudgetExceeded(_))),
-        "no-governance runtime must not deny via gas gate, got: {result:?}"
+        matches!(result, Err(ToolPortError::CapabilityDenied(_))),
+        "no-governance runtime must fail closed (CapabilityDenied) instead of bypassing the gate, got: {result:?}"
     );
 }

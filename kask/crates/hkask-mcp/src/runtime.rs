@@ -587,15 +587,27 @@ impl hkask_capability::ToolPort for McpRuntime {
                     ));
                 }
                 if let Err(e) = cyber_lock.reserve_gas(&agent, estimated).await {
+                    // Fail closed: the gas hold is the accounting primitive. If it
+                    // cannot be recorded, the call would be uncounted - a
+                    // persistently-failing gas store (e.g. SQLite locked) would
+                    // otherwise let every tool through with zero accounting,
+                    // defeating the budget gate (the broken-feedback-loop class
+                    // the .rules "unwrap_or(0) on regulation sense inputs" trap
+                    // generalizes).
                     tracing::warn!(
                         target: "hkask.mcp.gas",
                         error = %e,
                         agent = ?agent,
                         tool = %tool,
                         estimated_gas = estimated.0,
-                        "reserve_gas failed — tool will execute but gas may not be persisted. \
-                         If this persists, the agent's gas budget tracking will drift."
+                        "reserve_gas failed - denying the call (fail-closed) to preserve the gas gate"
                     );
+                    return Err(hkask_capability::ToolPortError::EnergyBudgetExceeded(
+                        format!(
+                            "gas could not be reserved for {:?}, tool {tool}: {e}",
+                            agent
+                        ),
+                    ));
                 }
                 drop(cyber_lock);
 
@@ -641,8 +653,16 @@ impl hkask_capability::ToolPort for McpRuntime {
 
                 result
             } else {
-                // No governance configured — call the tool directly.
-                self.call_tool_inner(server, tool, args).await
+                // No governance configured - fail closed. The OCAP + gas
+                // membrane is the security gate; invoking a tool without it
+                // would bypass capability verification and gas accounting
+                // entirely. Production must wire `with_governance` (the zed
+                // composition root does; see main.rs). `McpRuntime::new()`
+                // remains usable for registration/discovery testing that does
+                // not call `invoke`.
+                Err(hkask_capability::ToolPortError::CapabilityDenied(
+                    "governance not configured - call McpRuntime::with_governance before invoking tools".to_string(),
+                ))
             }
         })
     }

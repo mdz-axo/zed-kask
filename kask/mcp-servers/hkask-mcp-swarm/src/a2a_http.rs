@@ -1,10 +1,25 @@
-//! A2A HTTP server — `tiny_http`-based loopback HTTP server that exposes
-//! local agents via the A2A (Agent2Agent) protocol.
+//! A2A HTTP gateway — JSON-RPC 2.0 over HTTP, exposing local agents to
+//! external A2A clients (Agent2Agent protocol, https://github.com/a2aproject/A2A).
 //!
-//! Runs in a dedicated OS thread (completely outside the tokio runtime).
-//! Each A2A HTTP request is handled synchronously in that thread, then
+//! One loopback HTTP server (one port) fronts every local agent. Routing is by
+//! the JSON-RPC `tenant` field (the A2A spec's opaque routing identifier): the
+//! gateway `AgentCard` advertises one `AgentInterface` per local agent with
+//! `tenant = agent_id`, and an external client sends `SendMessage` with
+//! `tenant = <agent_id>` to reach that agent. The card is regenerated from
+//! `LocalAgentRegistry` on every request, so agents created at runtime appear
+//! without a server restart.
+//!
+//! The local ledger (`swarm_fund_local` / `LocalSwarmRuntime::delegate`) is the
+//! only spend gate — no consent tokens on this path, consistent with the local
+//! model. Streaming, push notifications, and task cancellation are not supported
+//! in v1 (the card declares `streaming=false`, `push_notifications=false`);
+//! `delegate` is synchronous and returns a completed `Task` inline, so there is
+//! no task store — `GetTask` reports not-found and `ListTasks` returns empty.
+//!
+//! Runs in a dedicated OS thread (outside the tokio runtime); each `SendMessage`
 //! dispatches to the async `LocalSwarmRuntime::delegate` via
-//! `tokio::runtime::Handle::block_on`.
+//! `tokio::runtime::Handle::block_on`. This is the swarm MCP server binary (not
+//! GPUI), so `block_on` on a dedicated thread is the correct pattern.
 
 use std::io::Cursor;
 use std::sync::Arc;
@@ -15,29 +30,27 @@ use crate::error::SwarmError;
 use crate::local_registry::LocalAgentRegistry;
 use crate::local_runtime::LazyLocalSwarmRuntime;
 
-/// A minimal A2A Message for HTTP deserialization. Wire-compatible with
-/// the A2A `Message` type but avoids importing the private `a2a::Message`.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct A2aHttpMessage {
-    #[serde(default)]
-    parts: Vec<A2aHttpPart>,
-    #[serde(default)]
-    context_id: Option<String>,
-    #[serde(default)]
-    message_id: Option<String>,
-}
+use a2a::errors::error_code;
+use a2a::jsonrpc::{self, JsonRpcError, JsonRpcId, JsonRpcRequest, JsonRpcResponse, methods};
+use a2a::{
+    AgentCapabilities, AgentCard, AgentInterface, AgentSkill, ListTasksResponse,
+    SendMessageRequest, SendMessageResponse,
+};
 
-#[derive(Debug, Clone, serde::Deserialize)]
-struct A2aHttpPart {
-    #[serde(default)]
-    text: Option<String>,
-}
+/// Loopback credits authorized per external `SendMessage`. External A2A clients
+/// do not carry a budget; the local ledger still gates the actual spend, and
+/// the per-dispatch ceiling (`max_credits_per_dispatch`) clamps this.
+const A2A_HTTP_CREDITS: u32 = 20;
 
 pub(crate) struct A2aHttpServer {
     port: u16,
 }
 
 impl A2aHttpServer {
+    /// Start the A2A HTTP gateway on an ephemeral loopback port. Spawns a
+    /// dedicated OS thread; returns the bound port. The server reflects the
+    /// current `LocalAgentRegistry` on every request (no restart needed for
+    /// agents added/removed at runtime).
     pub fn start(
         runtime: Arc<LazyLocalSwarmRuntime>,
         registry: Arc<LocalAgentRegistry>,
@@ -46,14 +59,12 @@ impl A2aHttpServer {
     ) -> Result<Self, String> {
         let server = tiny_http::Server::http("127.0.0.1:0")
             .map_err(|e| format!("failed to bind A2A HTTP server: {e}"))?;
-
         let port = match server.server_addr() {
             tiny_http::ListenAddr::IP(addr) => addr.port(),
             tiny_http::ListenAddr::Unix(_) => {
                 return Err("A2A HTTP server bound to Unix socket, not TCP".to_string());
             }
         };
-
         let base_url = format!("http://127.0.0.1:{port}");
         std::thread::spawn(move || {
             run_server(
@@ -63,10 +74,13 @@ impl A2aHttpServer {
                 tokio_handle,
                 base_url,
                 max_credits_per_dispatch,
-            );
+            )
         });
-
-        tracing::info!(target: "hkask.mcp.swarm", port, "A2A HTTP server on 127.0.0.1:{port}");
+        tracing::info!(
+            target: "hkask.mcp.swarm",
+            port,
+            "A2A HTTP gateway on 127.0.0.1:{port} (JSON-RPC over POST /)"
+        );
         Ok(Self { port })
     }
 
@@ -116,106 +130,29 @@ fn handle_request(
 
     let response: tiny_http::Response<Cursor<Vec<u8>>> = match (method.as_str(), url.as_str()) {
         ("GET", "/.well-known/agent-card.json") => {
-            let cards = registry.list();
-            let a2a_cards: Vec<_> = cards
-                .iter()
-                .map(|c| a2a::to_a2a_card(c, base_url))
-                .collect();
-            json_response(
-                200,
-                &serde_json::json!({"agent_cards": a2a_cards, "count": a2a_cards.len()}),
-            )
+            let card = build_gateway_card(registry, base_url);
+            json_response(200, &card)
         }
 
-        ("GET", path) if path.ends_with("/.well-known/agent-card.json") => {
-            let agent_id = extract_agent_id(path, "/.well-known/agent-card.json");
-            match registry.get(&agent_id) {
-                Some(card) => json_response(200, &a2a::to_a2a_card(&card, base_url)),
-                None => json_response(
-                    404,
-                    &serde_json::json!({"error": "agent not found", "agent_id": agent_id}),
-                ),
-            }
-        }
-
-        ("POST", path) if path.ends_with("/message:send") => {
-            let agent_id = extract_agent_id(path, "/message:send");
-
+        ("POST", "/") => {
             let mut body = String::new();
             if let Err(e) = request.as_reader().read_to_string(&mut body) {
-                let _ = request.respond(json_response(
-                    400,
-                    &serde_json::json!({"error": format!("failed to read body: {e}")}),
-                ));
+                let resp = json_rpc_error_response(
+                    JsonRpcId::Null,
+                    error_code::INVALID_REQUEST,
+                    format!("failed to read body: {e}"),
+                );
+                let _ = request.respond(resp);
                 return;
             }
-
-            let message: A2aHttpMessage = match serde_json::from_str(&body) {
-                Ok(m) => m,
-                Err(e) => {
-                    let _ = request.respond(json_response(
-                        400,
-                        &serde_json::json!({"error": format!("invalid A2A Message: {e}")}),
-                    ));
-                    return;
-                }
-            };
-
-            let message_text = message
-                .parts
-                .iter()
-                .filter_map(|p| p.text.clone())
-                .collect::<Vec<_>>()
-                .join("\n");
-            if message_text.is_empty() {
-                let _ = request.respond(json_response(
-                    400,
-                    &serde_json::json!({"error": "message has no text parts"}),
-                ));
-                return;
-            }
-
-            let agent = match registry.get(&agent_id) {
-                Some(card) => card,
-                None => {
-                    let _ = request.respond(json_response(
-                        404,
-                        &serde_json::json!({"error": "agent not found", "agent_id": agent_id}),
-                    ));
-                    return;
-                }
-            };
-
-            let credits = 20u32;
-            let result = tokio_handle.block_on(async {
-                let runtime = runtime
-                    .get_or_init()
-                    .await
-                    .map_err(|e| SwarmError::Unavailable(e))?;
-                runtime
-                    .delegate(&agent, &message_text, credits, max_credits_per_dispatch)
-                    .await
-            });
-
-            match result {
-                Ok(delegate_result) => {
-                    let task = a2a::task_from_response(
-                        &delegate_result.response,
-                        message.context_id,
-                        &delegate_result.model,
-                        delegate_result.tokens_used,
-                        delegate_result.cost,
-                    );
-                    json_response(200, &task)
-                }
-                Err(e) => {
-                    let status = match &e {
-                        SwarmError::PaymentRequired(_) => 402,
-                        _ => 500,
-                    };
-                    json_response(status, &serde_json::json!({"error": e.to_string()}))
-                }
-            }
+            let resp = handle_jsonrpc(
+                &body,
+                runtime,
+                registry,
+                tokio_handle,
+                max_credits_per_dispatch,
+            );
+            json_rpc_raw_response(resp)
         }
 
         ("GET", "/healthz") => json_response(200, &serde_json::json!({"status": "ok"})),
@@ -229,14 +166,283 @@ fn handle_request(
     let _ = request.respond(response);
 }
 
-fn extract_agent_id(path: &str, suffix: &str) -> String {
-    let without_suffix = path.strip_suffix(suffix).unwrap_or(path);
-    without_suffix
-        .strip_prefix("/agents/")
-        .unwrap_or(without_suffix)
-        .to_string()
+/// Build the gateway `AgentCard` from the current registry. One
+/// `AgentInterface` per local agent (same gateway URL, `tenant = agent_id`),
+/// so an external client selects an agent by its interface's `tenant` and
+/// sends `SendMessage` with that `tenant`. Regenerated per request → runtime
+/// agent changes appear without a restart. With zero agents, a single
+/// tenant-less interface keeps the card valid (`supported_interfaces` is
+/// required and must be non-empty).
+fn build_gateway_card(registry: &LocalAgentRegistry, base_url: &str) -> AgentCard {
+    let agents = registry.list();
+    let mut interfaces: Vec<AgentInterface> = agents
+        .iter()
+        .map(|card| {
+            let mut iface = AgentInterface::new(base_url, a2a::TRANSPORT_PROTOCOL_JSONRPC);
+            iface.tenant = Some(card.agent_id.clone());
+            iface
+        })
+        .collect();
+    if interfaces.is_empty() {
+        interfaces.push(AgentInterface::new(
+            base_url,
+            a2a::TRANSPORT_PROTOCOL_JSONRPC,
+        ));
+    }
+
+    let skills: Vec<AgentSkill> = agents
+        .iter()
+        .map(|card| AgentSkill {
+            id: card.agent_id.clone(),
+            name: card.agent_id.clone(),
+            description: if card.description.is_empty() {
+                format!("Local agent: {}", card.agent_id)
+            } else {
+                card.description.clone()
+            },
+            tags: vec![card.agent_type.clone()],
+            examples: None,
+            input_modes: None,
+            output_modes: None,
+            security_requirements: None,
+        })
+        .collect();
+
+    AgentCard {
+        name: "hKask Local Swarm Gateway".to_string(),
+        description: format!(
+            "A2A gateway fronting {} local agent(s). Select an agent by its interface's \
+             `tenant` (the agent id) and send `SendMessage` with that `tenant`.",
+            agents.len()
+        ),
+        version: "1.0.0".to_string(),
+        supported_interfaces: interfaces,
+        capabilities: AgentCapabilities {
+            streaming: Some(false),
+            push_notifications: Some(false),
+            extensions: None,
+            extended_agent_card: Some(false),
+        },
+        default_input_modes: vec!["text/plain".to_string()],
+        default_output_modes: vec!["text/plain".to_string()],
+        skills,
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        security_schemes: None,
+        security_requirements: None,
+        signatures: None,
+    }
 }
 
+/// Dispatch a JSON-RPC 2.0 request body to the A2A method handlers.
+fn handle_jsonrpc(
+    body: &str,
+    runtime: &Arc<LazyLocalSwarmRuntime>,
+    registry: &Arc<LocalAgentRegistry>,
+    tokio_handle: &tokio::runtime::Handle,
+    max_credits_per_dispatch: u32,
+) -> JsonRpcResponse {
+    let req: JsonRpcRequest = match serde_json::from_str(body) {
+        Ok(r) => r,
+        Err(e) => {
+            return jsonrpc::JsonRpcResponse::error(
+                JsonRpcId::Null,
+                JsonRpcError {
+                    code: error_code::PARSE_ERROR,
+                    message: format!("invalid JSON-RPC request: {e}"),
+                    data: None,
+                },
+            );
+        }
+    };
+
+    match req.method.as_str() {
+        methods::SEND_MESSAGE => {
+            let params = match req.params {
+                Some(p) => p,
+                None => {
+                    return err(
+                        &req.id,
+                        error_code::INVALID_PARAMS,
+                        "SendMessage requires params",
+                    );
+                }
+            };
+            let sm_req: SendMessageRequest = match serde_json::from_value(params) {
+                Ok(r) => r,
+                Err(e) => {
+                    return err(
+                        &req.id,
+                        error_code::INVALID_PARAMS,
+                        format!("invalid SendMessage params: {e}"),
+                    );
+                }
+            };
+            // Route by `tenant` (the A2A opaque routing identifier = agent id).
+            let agent_id = match sm_req.tenant.as_deref().filter(|s| !s.is_empty()) {
+                Some(id) => id.to_string(),
+                None => {
+                    return err(
+                        &req.id,
+                        error_code::INVALID_PARAMS,
+                        "SendMessage requires `tenant` set to the target local agent id",
+                    );
+                }
+            };
+            let agent = match registry.get(&agent_id) {
+                Some(c) => c,
+                None => {
+                    return err(
+                        &req.id,
+                        error_code::INVALID_PARAMS,
+                        format!("local agent '{agent_id}' not found"),
+                    );
+                }
+            };
+            // Extract text from the message parts (concatenate text parts; v1
+            // ignores non-text parts). An empty text is a client error, not a
+            // zero-cost dispatch.
+            let text: String = sm_req
+                .message
+                .parts
+                .iter()
+                .filter_map(|p| p.as_text().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if text.trim().is_empty() {
+                return err(
+                    &req.id,
+                    error_code::INVALID_PARAMS,
+                    "message has no text parts",
+                );
+            }
+            let context_id = sm_req.message.context_id.clone();
+            let result = tokio_handle.block_on(async {
+                let runtime = runtime
+                    .get_or_init()
+                    .await
+                    .map_err(|e| SwarmError::Unavailable(e))?;
+                runtime
+                    .delegate(&agent, &text, A2A_HTTP_CREDITS, max_credits_per_dispatch)
+                    .await
+            });
+            match result {
+                Ok(delegate_result) => {
+                    let task = a2a::task_from_response(
+                        &delegate_result.response,
+                        context_id,
+                        &delegate_result.model,
+                        delegate_result.tokens_used,
+                        delegate_result.cost,
+                    );
+                    let resp = SendMessageResponse::Task(task);
+                    let value = serde_json::to_value(&resp).unwrap_or_else(
+                        |_| serde_json::json!({"error": "failed to serialize A2A task"}),
+                    );
+                    JsonRpcResponse::success(req.id, value)
+                }
+                Err(e) => err(&req.id, error_code::INTERNAL_ERROR, e.to_string()),
+            }
+        }
+
+        methods::GET_TASK => JsonRpcResponse::error(
+            req.id,
+            JsonRpcError {
+                code: error_code::TASK_NOT_FOUND,
+                message: "no task store: delegate is synchronous and returns the completed Task \
+                          inline; GetTask has no persisted task to return"
+                    .to_string(),
+                data: None,
+            },
+        ),
+
+        methods::LIST_TASKS => {
+            let empty = ListTasksResponse {
+                tasks: Vec::new(),
+                next_page_token: String::new(),
+                page_size: 0,
+                total_size: 0,
+            };
+            match serde_json::to_value(&empty) {
+                Ok(v) => JsonRpcResponse::success(req.id, v),
+                Err(e) => err(&req.id, error_code::INTERNAL_ERROR, e.to_string()),
+            }
+        }
+
+        methods::GET_EXTENDED_AGENT_CARD => {
+            // No authenticated extended card in v1 — return the same gateway
+            // card. `registry` is an `Arc`; deref-borrow for the builder.
+            let card = build_gateway_card(registry, "");
+            match serde_json::to_value(&card) {
+                Ok(v) => JsonRpcResponse::success(req.id, v),
+                Err(e) => err(&req.id, error_code::INTERNAL_ERROR, e.to_string()),
+            }
+        }
+
+        // v1 does not support streaming, cancellation, or push notifications
+        // (the card declares streaming=false, push_notifications=false).
+        methods::SEND_STREAMING_MESSAGE
+        | methods::SUBSCRIBE_TO_TASK
+        | methods::CANCEL_TASK
+        | methods::CREATE_PUSH_CONFIG
+        | methods::GET_PUSH_CONFIG
+        | methods::LIST_PUSH_CONFIGS
+        | methods::DELETE_PUSH_CONFIG => err(
+            &req.id,
+            error_code::UNSUPPORTED_OPERATION,
+            format!(
+                "{} is not supported by the local A2A gateway in v1",
+                req.method
+            ),
+        ),
+
+        _ => err(
+            &req.id,
+            error_code::METHOD_NOT_FOUND,
+            format!("unknown A2A method: {}", req.method),
+        ),
+    }
+}
+
+fn err(id: &JsonRpcId, code: i32, message: impl Into<String>) -> JsonRpcResponse {
+    JsonRpcResponse::error(
+        id.clone(),
+        JsonRpcError {
+            code,
+            message: message.into(),
+            data: None,
+        },
+    )
+}
+
+/// Serialize a `JsonRpcResponse` into a `200` tiny_http JSON response.
+fn json_rpc_raw_response(resp: JsonRpcResponse) -> tiny_http::Response<Cursor<Vec<u8>>> {
+    let body = serde_json::to_vec(&resp)
+        .unwrap_or_else(|_| Vec::from(&b"{\"error\":\"rpc serialization failed\"}"[..]));
+    tiny_http::Response::from_data(body)
+        .with_status_code(200)
+        .with_header(
+            tiny_http::Header::from_bytes(b"Content-Type", b"application/json")
+                .expect("valid header"),
+        )
+}
+
+/// Build a `200` JSON-RPC error response directly (used when the request body
+/// could not be read, so there is no id yet).
+fn json_rpc_error_response(id: JsonRpcId, code: i32, message: impl Into<String>) -> String {
+    let resp = JsonRpcResponse::error(
+        id,
+        JsonRpcError {
+            code,
+            message: message.into(),
+            data: None,
+        },
+    );
+    serde_json::to_string(&resp).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Serialize an arbitrary JSON body into a tiny_http response with a status code.
 fn json_response(
     status: u16,
     body: &impl serde::Serialize,

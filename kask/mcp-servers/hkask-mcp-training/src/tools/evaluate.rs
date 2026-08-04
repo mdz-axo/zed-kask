@@ -6,7 +6,6 @@ use hkask_types::template::LLMParameters;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 use serde_json::json;
-use std::path::PathBuf;
 
 impl TrainingServer {
     #[tool(
@@ -23,22 +22,16 @@ impl TrainingServer {
         }): Parameters<TrainEvaluateRequest>,
     ) -> String {
         execute_tool(self, "training_evaluate", async {
-            let test_path = PathBuf::from(&test_dataset_path);
-            if !test_path.exists() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Test dataset file not found: {}",
-                    test_dataset_path
-                )));
-            }
-
-            let raw = match std::fs::read_to_string(&test_path) {
-                Ok(r) => r,
-                Err(e) => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "Failed to read test dataset: {e}"
-                    )));
-                }
-            };
+            // Contain the LLM-supplied test dataset path before reading
+            // (CWE-200): an absolute path like /etc/passwd or ~/.ssh/id_rsa must
+            // not flow back into the evaluation context.
+            let test_path = hkask_mcp_server::contain_for_read(&test_dataset_path)?;
+            let raw = std::fs::read_to_string(&test_path).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("Failed to read test dataset '{}'", test_dataset_path),
+                )
+            })?;
 
             let eval_method = method.as_deref().unwrap_or("exact_match");
 

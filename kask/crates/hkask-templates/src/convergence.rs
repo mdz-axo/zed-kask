@@ -226,21 +226,11 @@ impl ConvergenceTracker {
             self.hypotenuse_history.push(hypotenuse);
             self.brier_history.push(brier);
         } else {
-            // Legacy model: read self-grade metric from convergence field
-            let current = context
-                .get(&self.field)
-                .and_then(|v| v.as_f64())
-                .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
-            let current = if current.is_none() && self.field != "composite" {
-                context.get("composite").and_then(|v| v.as_f64())
-            } else {
-                current
-            };
-            let current = if current.is_none() {
-                context.get("_convergence_score").and_then(|v| v.as_f64())
-            } else {
-                current
-            };
+            // Legacy model: read self-grade metric via the shared resolver so
+            // the trajectory history uses the same value space as
+            // `check_legacy_met` and `capture_baseline` (field → composite →
+            // _convergence_score).
+            let current = self.resolve_quality(context);
             self.quality_history.push(current.unwrap_or(f64::NAN));
         }
     }
@@ -249,11 +239,36 @@ impl ConvergenceTracker {
     /// after the first pass completes; subsequent calls are no-ops.
     pub fn capture_baseline(&mut self, context: &HashMap<String, Value>) {
         if self.baseline_quality.is_none() {
-            self.baseline_quality = context
-                .get(&self.field)
-                .and_then(|v| v.as_f64())
-                .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
+            self.baseline_quality = self.resolve_quality(context);
         }
+    }
+
+    /// Resolve the current quality reading for the legacy self-grade model.
+    ///
+    /// Tries the configured `convergence_field` (direct, then dot-path), then
+    /// falls back to `composite` (when the field isn't itself `composite`),
+    /// then to `_convergence_score`. The SAME chain is used by
+    /// `capture_baseline`, `push_cycle_from_context`, and `check_legacy_met`
+    /// so the baseline, the trajectory history, and the threshold check all
+    /// read the same value space. Previously `capture_baseline` used only the
+    /// first step, so when the field was reachable only via the `composite` /
+    /// `_convergence_score` fallback the baseline stayed `None` and the
+    /// improvement gate (`both`) was silently disabled — convergence could
+    /// never fire even though `check_legacy_met` saw a below-threshold value.
+    fn resolve_quality(&self, context: &HashMap<String, Value>) -> Option<f64> {
+        let current = context
+            .get(&self.field)
+            .and_then(|v| v.as_f64())
+            .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
+        if current.is_some() {
+            return current;
+        }
+        if self.field != "composite" {
+            if let Some(v) = context.get("composite").and_then(|v| v.as_f64()) {
+                return Some(v);
+            }
+        }
+        context.get("_convergence_score").and_then(|v| v.as_f64())
     }
 
     /// Check whether convergence has been met.
@@ -386,21 +401,7 @@ impl ConvergenceTracker {
 
     /// Legacy self-grade convergence check (threshold + improvement + stability).
     fn check_legacy_met(&self, context: &HashMap<String, Value>) -> bool {
-        let current = context
-            .get(&self.field)
-            .and_then(|v| v.as_f64())
-            .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
-        let current = if current.is_none() && self.field != "composite" {
-            context.get("composite").and_then(|v| v.as_f64())
-        } else {
-            current
-        };
-        let current = if current.is_none() {
-            context.get("_convergence_score").and_then(|v| v.as_f64())
-        } else {
-            current
-        };
-
+        let current = self.resolve_quality(context);
         let threshold_met = current.map(|q| q <= self.threshold).unwrap_or(false);
 
         let improvement_met = if self.improvement_ratio > 0.0 {
@@ -469,7 +470,21 @@ impl ConvergenceTracker {
                 }
                 if total > 0.0 { sum / total } else { 1.0 }
             }
-            _ => 0.0,
+            other => {
+                // Fail-safe: an unknown aggregation method must NOT produce a
+                // below-threshold value — `0.0` would falsely satisfy the
+                // `quality <= threshold` stop condition (a typo'd `aggregation`
+                // silently converged on the first check). Return 1.0 (not
+                // converged) and warn so the typo is actionable (the .rules
+                // "fails open with no diagnostic" trap).
+                tracing::warn!(
+                    target: "hkask.templates.convergence",
+                    aggregation = other,
+                    "Unknown aggregation method — defaulting to 1.0 (not converged). \
+                     Remediation: set `aggregation` to all_converged | min | weighted_avg."
+                );
+                1.0
+            }
         }
     }
 
@@ -489,10 +504,7 @@ impl ConvergenceTracker {
         rjoule_used: f64,
         rjoule_cap: f64,
     ) {
-        let quality = context
-            .get(&self.field)
-            .and_then(|v| v.as_f64())
-            .or_else(|| resolve_dot_path(&self.field, context).and_then(|v| v.as_f64()));
+        let quality = self.resolve_quality(context);
 
         let improvement_achieved = self
             .baseline_quality
@@ -1076,5 +1088,63 @@ mod tests {
         let q = tracker.compute_compound_quality(&ctx, "weighted_avg", &sources);
         // (0.10*3 + 0.20*1) / (3+1) = 0.50/4 = 0.125
         assert!((q - 0.125).abs() < 1e-9);
+    }
+
+    /// C1 regression: an unknown aggregation method must return 1.0 (not
+    /// converged), NOT 0.0. The prior `_ => 0.0` arm produced a below-threshold
+    /// value, so a typo'd `aggregation` (e.g. "all_converg") silently satisfied
+    /// `quality <= threshold` and falsely converged on the first check.
+    #[test]
+    fn compute_compound_quality_unknown_method_fails_safe_not_converged() {
+        let cfg = config(0.5, "composite", 3, 0);
+        let tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        // A converged sub-report so sources would resolve if the method were
+        // recognized — but the method is a typo, so the result must be 1.0.
+        ctx.insert(
+            "step_1_result".to_string(),
+            json!({"_convergence": {"status": "converged", "quality_at_exit": 0.0}}),
+        );
+        let sources = vec![AggregationSource {
+            step_ordinal: 1,
+            field: "_convergence.status".to_string(),
+            weight: 1.0,
+        }];
+        let q = tracker.compute_compound_quality(&ctx, "all_converg", &sources);
+        assert_eq!(
+            q, 1.0,
+            "unknown aggregation method must fail-safe to 1.0 (not converged), got {q}"
+        );
+    }
+
+    /// C2 regression: `capture_baseline` must use the same field → composite →
+    /// _convergence_score fallback chain as `check_legacy_met`. Before the
+    /// fix, when the convergence field was reachable only via the composite
+    /// fallback, `baseline_quality` stayed `None` and the improvement gate
+    /// (`both`) was silently disabled — convergence could never fire even
+    /// though `check_legacy_met` saw a below-threshold value with improvement.
+    #[test]
+    fn capture_baseline_uses_composite_fallback_so_improvement_gate_can_fire() {
+        let mut cfg = config(0.15, "score", 3, 0); // field "score" is absent
+        cfg.improvement_ratio = 0.25;
+        cfg.improvement_gate = "both".to_string();
+        let mut tracker = ConvergenceTracker::new(&cfg);
+        let mut ctx = HashMap::new();
+        // "score" is missing; "composite" is the only reachable quality.
+        ctx.insert("composite".to_string(), json!(0.50)); // baseline = 0.50
+        tracker.capture_baseline(&ctx);
+        assert_eq!(
+            tracker.baseline_quality,
+            Some(0.50),
+            "capture_baseline must fall back to composite when the field is absent"
+        );
+        // Improve to 0.10 — improvement = (0.50 - 0.10) / 0.50 = 0.80 >= 0.25,
+        // and 0.10 <= 0.15 threshold → both gate must fire (previously it
+        // could not, because baseline stayed None).
+        ctx.insert("composite".to_string(), json!(0.10));
+        assert!(
+            tracker.check_met(&ctx, 1),
+            "improvement gate (both) must fire when baseline is captured via fallback"
+        );
     }
 }

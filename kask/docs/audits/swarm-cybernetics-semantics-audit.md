@@ -21,7 +21,7 @@ four feedback loops that govern swarm behavior.
 
 | Component | Primary source |
 |----------|----------------|
-| MCP server (41 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115` (`SwarmServer`), `:2822` (`tool_surface_is_exactly_41_registered_tools`) |
+| MCP server (47 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115` (`SwarmServer`), `:3003` (`tool_surface_is_exactly_47_registered_tools`) |
 | Consent gate | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56` (`ConsentStore`), `:77` (`CONSENT_TTL_SECS`), `:150`/`:184`/`:227` (mint/consume/refund) |
 | Spend gate | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` (authorize_hire/delegate/curate) |
 | Local runtime | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39` (`LazyLocalSwarmRuntime`), `:73` (`LocalSwarmRuntime`); `agent_executor.rs:55` (`AgentExecutor`), `:33`/`:38` (round/skill caps) |
@@ -42,15 +42,15 @@ breaks or where an advertised invariant lacks an enforcement point.
 
 - **Claim (SKILL.md:203):** "MCP tool surface (31 tools, both sets always
   available): 20 ABW + 11 local".
-- **Implementation (`hkask_mcp_swarm.rs:2822`):** `tool_surface_is_exactly_41_registered_tools`
-  pins **41 tools = 27 ABW + 14 local**.
+- **Implementation (`hkask_mcp_swarm.rs:3003`):** `tool_surface_is_exactly_47_registered_tools`
+  pins **47 tools = 27 ABW + 20 local**.
 - **Classification:** IS, declarative, ontology anchoring = domain_supplement
   (ABW substrate). Constraint force = Guideline. Provenance = Specification
   (SKILL.md) **conflicts** with Implementation (test).
 - **Resolution (OT ranking):** same ontological mode (IS), same epistemic mode
   (declarative); tie broken on provenance authority — **Implementation > Specification**
   for a count claim (the test is the ground truth; the SKILL.md is a generated
-  companion). Winner: **41 tools (27 ABW + 14 local)**.
+  companion). Winner: **47 tools (27 ABW + 20 local)**.
 - **Finding:** This is the `.rules` trap "Convention priors drawn from .rules must
   be verified against the codebase" applied to a SKILL.md. The drift is also
   reproduced in `kask/docs/diagrams/flowchart-swarm-architecture.md:3` (same
@@ -59,7 +59,11 @@ breaks or where an advertised invariant lacks an enforcement point.
   `swarm_delegate_and_wait`, `swarm_create_app`, `swarm_fire`, `swarm_delete_agent`,
   `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
   `swarm_publish_agent`, `swarm_fork_agent`. The new local tools are
-  `swarm_pipeline_local`, `swarm_a2a_send`, `swarm_a2a_card`.
+  `swarm_pipeline_local`, `swarm_a2a_send`, `swarm_a2a_card`, and the local-swarm
+  lifecycle set: `swarm_create_local_swarm`, `swarm_list_local_swarms`,
+  `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`,
+  `swarm_remove_agent_local` (local mode now has explicit named swarms/rosters,
+  not just an ephemeral session).
 - **Remediation:** Regenerate the `swarm-intelligence` SKILL.md from the registry
   (registry is authoritative — `SKILL.md` is a companion), and correct the
   architecture diagram. The doc fix is applied in this audit; the SKILL.md
@@ -278,7 +282,7 @@ magnitude gap — worth fixing for composition quality, not urgency.
 
 | ID | Finding | Severity | Loop/Axis |
 |----|---------|----------|-----------|
-| S1 | Tool-count drift (31 vs 41) in SKILL.md + architecture diagram | Medium (doc drift, `.rules` trap) | docs |
+| S1 | Tool-count drift (31 vs 47) in SKILL.md + architecture diagram | Medium (doc drift, `.rules` trap) | docs |
 | S2 | Steer prompt omits `swarm_pipeline_local` | Low | docs |
 | S3 | `task_success` determinism enforced by convention, not code | Medium (advertised invariant, weak enforcement point) | C0 |
 | S4 | Consent TTL is enforced — do not conflate with OCAP `DelegationToken` | None (clarification) | consent |
@@ -294,7 +298,7 @@ Loop B fidelity, closes the open-task gap); (2) feed `latency_ms` into DECIDE
 as a reconfigure signal (closes the C4 sub-loop, raises regulator variety).
 
 **Top doc fix (semantics):** regenerate `swarm-intelligence` SKILL.md from the
-registry so the 41-tool surface and the C4/task_success findings are reflected
+registry so the 47-tool surface and the C4/task_success findings are reflected
 (S1), and correct the architecture diagram (applied in this audit).
 
 ## Cross-links

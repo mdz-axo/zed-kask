@@ -141,7 +141,7 @@ impl LocalSwarmRegistry {
             .collect();
         let swarm_id = crate::abw_util::make_swarm_slug(&slug_base, std::time::SystemTime::now());
         let swarm = LocalSwarm {
-            swarm_id: swarm_id.clone(),
+            swarm_id,
             name: name.to_string(),
             mission: mission.to_string(),
             members,
@@ -300,7 +300,7 @@ mod tests {
         let dir = temp_swarms_dir("addremove");
         let registry = LocalSwarmRegistry::new(&dir);
         let swarm = registry.create("Team", "m", vec![]).unwrap();
-        let id = swarm.swarm_id.clone();
+        let id = swarm.swarm_id;
 
         let updated = registry.add_member(&id, "agent_a").unwrap();
         assert_eq!(updated.members, vec!["agent_a"]);

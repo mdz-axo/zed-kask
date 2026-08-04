@@ -82,24 +82,26 @@ C6 reconfigures the most-blamed agent.
 
 ## Known limitations (audit 2026-08-03)
 
-The directive this skill produces closes the C5/C6 feedback loop, but the loop
-it closes has two limits an operator should know (full analysis in the
-[Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)
+The directive this skill produces closes the C5/C6 feedback loop. The loop's
+fidelity was raised in the 2026-08-03 structural fixes (full analysis in the
+[Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)):
 
-- **Binary fidelity.** The `delegate_results` this skill collects carry
-  `tool_calls[].ok` / `executed_skills[].ok` — execution success, not task
-  success. ORIENT's fault attribution (C5) cannot detect an agent that returns
-  `ok: true` with the wrong output. For tasks with a deterministic oracle,
-  pass `task_success` on the re-invoke so the planner's C0 axis covers it; for
-  open tasks, the Go See loop (C2) is the only cover.
-- **`latency_ms` is collected but not yet regulated.** Each `LocalDelegateResult`
-  carries `latency_ms` (Cybernetic Swarm Plan C4), but no DECIDE move consumes it
-  yet — a slow agent is sensed with no reconfigure response. The directive
-  still collects it (forward-compatible) so a future planner that regulates
-  latency gets the telemetry.
+- **Graded fidelity (was binary).** The directive now instructs the executor to
+  stamp a deterministic `task_success` per `LocalDelegateResult` (the
+  `task_success: Option<TaskSuccessVerdict>` field). ORIENT's C5 reads it as the
+  highest-fidelity fault signal, so an agent that returns `ok: true` with the
+  wrong output is now attributable. `provenance: llm_judged` is downgraded
+  (Gap S3). **Residual:** for open tasks with no oracle, leave `task_success =
+  null` — the Go See loop (C2) is the only cover; the cascade cannot detect a
+  healthy-but-wrong agent without a deterministic evaluator.
+- **Latency is now regulated.** `latency_ms` is still collected on every
+  `LocalDelegateResult` (C4), and ORIENT now surfaces `latency_outliers` so
+  DECIDE proposes `reconfigure_agent` for slow agents. The directive's
+  collection shape is unchanged (it already collected `latency_ms`); the
+  regulation is downstream in the planner.
 
-These do not block execution — the directive is sound; they bound what the
-*next* swarm-intelligence iteration can infer from the results.
+These do not block execution — the directive is sound; the residual open-task
+  gap is the irreducible one the Go See loop covers.
 
 ## Composed with
 

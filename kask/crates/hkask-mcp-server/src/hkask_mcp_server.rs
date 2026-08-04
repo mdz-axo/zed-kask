@@ -22,7 +22,7 @@ pub use server::{
     run_stdio_server_with_preloaded, tool_internal_error, validate_identifier, validate_path,
     validate_tool_url, validate_tool_url_permissive,
 };
-pub use server::{contain_for_read, contain_for_write, map_io_error, read_capped, MAX_READ_BYTES};;
+pub use server::{contain_for_read, contain_for_write, map_io_error, read_capped, MAX_READ_BYTES};
 
 pub use tool_schema::AnyJsonValue;
 pub use tool_schema::find_boolean_schema_positions;

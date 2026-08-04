@@ -110,7 +110,7 @@ impl TrainingServer {
                 let split = split.clamp(0.0, 1.0);
                 (limit as f64 * split) as usize
             } else { limit };
-            let write_jsonl = |path: &str, items: &[serde_json::Value]| -> Result<usize, std::io::Error> {
+            let write_jsonl = |path: &std::path::Path, items: &[serde_json::Value]| -> Result<usize, std::io::Error> {
                 let mut output = String::new();
                 for item in items {
                     output.push_str(
@@ -122,15 +122,18 @@ impl TrainingServer {
                 std::fs::write(path, output)?;
                 Ok(items.len())
             };
+            // Contain the LLM-supplied output path (CWE-73): a write to
+            // ~/.ssh/authorized_keys or /etc/cron.d/... must be rejected.
+            let train_path = hkask_mcp_server::contain_for_write(&output_path)?;
             let train_items = &conversations[..train_count];
-            match write_jsonl(&output_path, train_items) {
+            match write_jsonl(&train_path, train_items) {
                 Ok(n) => {
                     let mut result = json!({"train_examples": n, "train_path": output_path, "total_matched": total});
                     if train_count < limit {
-                        let test_path = format!("{output_path}.test.jsonl");
+                        let test_path = PathBuf::from(format!("{}.test.jsonl", train_path.to_string_lossy()));
                         let test_items = &conversations[train_count..];
                         match write_jsonl(&test_path, test_items) {
-                            Ok(m) => { result["test_examples"] = json!(m); result["test_path"] = json!(test_path); }
+                            Ok(m) => { result["test_examples"] = json!(m); result["test_path"] = json!(test_path.to_string_lossy().to_string()); }
                             Err(e) => { result["test_write_error"] = json!(e.to_string()); }
                         }
                     }
@@ -153,12 +156,11 @@ impl TrainingServer {
         }): Parameters<TrainIngestDatasetRequest>,
     ) -> String {
         execute_tool(self, "training_ingest_dataset", async {
-            let file_path = PathBuf::from(&dataset_path);
-            if !file_path.exists() {
-                return Err(McpToolError::invalid_argument(format!("Dataset file not found: {dataset_path}")));
-            }
+            // Contain the caller-supplied dataset read path (CWE-200) and the
+            // optional cache_dir write target (CWE-73) before any pipeline op.
+            let file_path = hkask_mcp_server::contain_for_read(&dataset_path)?;
             let mut pipeline = if let Some(ref dir) = cache_dir {
-                DatasetPipeline::new(PathBuf::from(dir))
+                DatasetPipeline::new(hkask_mcp_server::contain_for_write(dir)?)
             } else {
                 self.pipeline.lock().unwrap_or_else(|e| e.into_inner()).clone()
             };

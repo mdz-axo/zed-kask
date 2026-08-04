@@ -284,6 +284,13 @@ impl Default for BundleGasConfig {
 #[serde(default)]
 pub struct RjouleConfig {
     /// Total rJoule budget for inference in this cascade.
+    ///
+    /// **Not yet enforced.** `BudgetTracker::charge_rjoule` has no production
+    /// call site — the `reg.skill.budget.rjoule_exhausted` / `*_alert` spans
+    /// never fire, and a non-zero `cap` does not constrain the cascade. Gas
+    /// (`gas.cap`) is the only live budget. Wiring rJoule awaits a
+    /// tokens→rJoule conversion (manifests declare `cap` in single digits,
+    /// not token counts). Treat this field as advisory config until enforced.
     pub cap: u32,
     pub alert_threshold: f64,
     pub hard_limit: bool,

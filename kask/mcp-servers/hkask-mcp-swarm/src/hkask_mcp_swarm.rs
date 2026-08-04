@@ -95,7 +95,10 @@ pub use crate::error::SwarmError;
 pub use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
 };
-pub use crate::local_runtime::{LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime};
+pub use crate::local_runtime::{
+    LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime, TaskSuccessProvenance,
+    TaskSuccessVerdict,
+};
 pub use crate::local_swarms::{LocalSwarm, LocalSwarmRegistry};
 
 use crate::abw_client::SwarmClient;
@@ -2441,13 +2444,18 @@ impl SwarmServer {
                 .delegate(&agent, &req.message, req.credits_authorized, ceiling)
                 .await
                 .map_err(SwarmError::into_tool_error)?;
-            let task = a2a::task_from_response(
+            let mut task = a2a::task_from_response(
                 &result.response,
-                req.context_id,
+                req.context_id.clone(),
                 &result.model,
                 result.tokens_used,
                 result.cost,
             );
+            // Record the inbound user message in the task history. This is the
+            // consumer of `a2a::message_from_text` (the in-process counterpart
+            // of the HTTP gateway's inbound `Message`) — without it the helper
+            // is dead code.
+            task.history = Some(vec![a2a::message_from_text(&req.message, req.context_id.clone())]);
             Ok(serde_json::to_value(&task)
                 .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize A2A task" })))
         })
@@ -2935,6 +2943,44 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 tracing::warn!(
                     target: "hkask.mcp.swarm",
                     "local swarms load failed (continuing with empty roster): {e}"
+                );
+            }
+
+            // A2A HTTP gateway (opt-in via HKASK_A2A_HTTP_ENABLE). Exposes local
+            // agents to external A2A clients over loopback JSON-RPC. Disabled by
+            // default - it opens a loopback port. The startup-failure signals
+            // below let an operator distinguish "disabled" from "enabled but
+            // broken" (the .rules trap).
+            if config.a2a_http_enabled {
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => match a2a_http::A2aHttpServer::start(
+                        local_runtime.clone(),
+                        local_registry.clone(),
+                        handle,
+                        config.max_credits_per_dispatch,
+                    ) {
+                        Ok(server) => tracing::info!(
+                            target: "hkask.mcp.swarm",
+                            port = server.port(),
+                            "A2A HTTP gateway enabled on 127.0.0.1:{} (JSON-RPC over POST /)",
+                            server.port()
+                        ),
+                        Err(e) => tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            error = %e,
+                            "A2A HTTP gateway failed to start - external A2A clients cannot reach                              local agents. Check the loopback port binding."
+                        ),
+                    },
+                    Err(e) => tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        error = %e,
+                        "A2A HTTP gateway enabled (HKASK_A2A_HTTP_ENABLE=1) but no tokio runtime                          is available - gateway not started"
+                    ),
+                }
+            } else {
+                tracing::info!(
+                    target: "hkask.mcp.swarm",
+                    "A2A HTTP gateway disabled (set HKASK_A2A_HTTP_ENABLE=1 to expose local agents                      to external A2A clients)"
                 );
             }
 
