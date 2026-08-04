@@ -21,7 +21,11 @@ cd "$(dirname "$0")/.."
 violations=0
 checked=0
 
-for dir in crates/*/ mcp-servers/*/; do
+for dir in crates/*/ mcp-servers/*/ \
+  ../crates/swarm_panel/ ../crates/hkask-viz-core/ \
+  ../crates/kask_extensions_ui/ ../crates/marketplace_ui_common/ \
+  ../crates/hkask-scenarios-widget/ ../crates/hkask-portfolio-widget/ \
+  ../crates/hkask-kanban-widget/; do
   [ -f "$dir/Cargo.toml" ] || continue
   # Extract [lib] path from Cargo.toml (falls back to src/lib.rs).
   lib_path=$(grep -A2 '^\[lib\]' "$dir/Cargo.toml" 2>/dev/null \

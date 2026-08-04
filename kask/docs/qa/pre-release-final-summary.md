@@ -1,9 +1,15 @@
 # Pre-Release Final Summary
 
+> **Addendum 2026-08-04 (post-pass): all actionable findings below are now CLOSED.**
+> F1 fixed (merge-on-overlap in `redact_spans` + canonical `reg.guard.redact` target + 2 deterministic unit tests, commit `34115403bf`). F2 fixed (same commit — direct unit tests of `redact_spans`). RR-0044: all 54 production sites audited and classified per-variant (shared `map_join_error`/`map_infra_error` promoted to hkask-mcp-server — also closes Phase C M2); remaining `internal` sites are documented as genuinely opaque. deny.toml refreshed (14 upstream-transitive ignores added; root cause was non-root config path — use `cargo deny --config kask/deny.toml check`). 3 orphaned `log` deps removed. WebID log redacted. unsafe-forbid: 7 UI crate roots gained `#![forbid(unsafe_code)]`; `check-unsafe-forbid.sh` extended to root-level kask crates (38/38 pass). runtime-posture-monitor manifest: `signal_sources`/`signal`/`convergence_metric` declared; step 2 wired via `input_mapping` from `step_1_result`. Phase C: M1 done (swarm_panel.rs 4,720→4,111 + author.rs/compose.rs; DTOs moved to parse.rs), L1 done (lifecycle_tools.rs → ledger_tools.rs), L3 done (backend errors classified per-variant). Full kask suite: 1,653 tests pass across 39 crates.
+> **Updated verdict: READY.** Residual: L2/L4 (optional file splits), no live adversarial target, `.rules` additions await reviewer decision, release version/changelog scope unconfirmed.
+
 Date: 2026-08-04. Scope: zed-kask workspace, 13 commits ahead of `origin/main` (+8415/-4582, 107 files).
 Phases: A (security skills ×4), B (code review of full diff), C (fresh refactor survey). Reports: `phase-a-security-review.md`, `phase-b-code-review.md`, `phase-c-refactor-survey.md` in this directory.
 
 ## Release-readiness verdict: READY WITH ONE RECOMMENDED FIX
+
+*(Superseded — see addendum: verdict is now READY.)*
 
 No blockers. One Medium security finding (F1) should be fixed before release if the fix is quick; it is a latent gap in a prior-pass fix, not a regression, and the pre-hardening code had the same exposure.
 

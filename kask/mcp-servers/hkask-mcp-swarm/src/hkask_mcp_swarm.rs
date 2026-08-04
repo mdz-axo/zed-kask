@@ -72,7 +72,7 @@ mod config;
 mod consent;
 mod error;
 mod knowledge_tools;
-mod lifecycle_tools;
+mod ledger_tools;
 mod local_knowledge;
 mod local_registry;
 mod local_runtime;
@@ -126,7 +126,7 @@ hkask_mcp_server::mcp_server!(
 impl SwarmServer {
     fn combined_router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
         Self::cloud_router()
-            + Self::lifecycle_router()
+            + Self::ledger_router()
             + Self::local_router()
             + Self::a2a_router()
             + Self::knowledge_router()

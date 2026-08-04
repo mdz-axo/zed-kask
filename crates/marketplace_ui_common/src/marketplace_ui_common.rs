@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! zed-kask: Shared chrome for marketplace-style catalog pages (card
 //! container, bordered search bar, empty-state row). Extracted from the
 //! duplicated copies in `crates/extensions_ui` (upstream) and

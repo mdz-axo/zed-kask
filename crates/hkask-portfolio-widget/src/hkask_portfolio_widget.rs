@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! GPUI portfolio widget for rendering ```` ```portfolio ```` fenced blocks
 //! inline in agent markdown. Replaces the deleted standalone
 //! `PortfolioDashboardView` (from the removed `kask_panel` crate) with a

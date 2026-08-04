@@ -1,4 +1,4 @@
-//! Local wallet lifecycle tools — fund, balance, and history for the local
+//! Local ledger (wallet) tools — fund, balance, and history for the local
 //! swarm ledger. Split from `hkask_mcp_swarm.rs` (M2). These are the read/seed
 //! surface for the operator-funded local economy (no ABW calls, no spend).
 use crate::SwarmServer;
@@ -7,7 +7,7 @@ use crate::request_types::*;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
-#[tool_router(router = lifecycle_router, vis = "pub")]
+#[tool_router(router = ledger_router, vis = "pub")]
 impl SwarmServer {
     /// Fund the local swarm ledger. The operator deposits credits that
     /// `swarm_delegate_local` debits per call. The ledger must be

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Block-renderer registry for the D18 markdown seam.
 //!
 //! The D18 seam (`markdown::MarkdownElement::media_block_renderer`) accepts a

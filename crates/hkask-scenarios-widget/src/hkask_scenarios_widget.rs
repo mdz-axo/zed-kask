@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! GPUI scenarios widget for rendering ```` ```scenarios ```` fenced blocks inline
 //! in agent markdown. Renders the scenario pipeline overview, event matrix, and
 //! sensitivity timeline from the `scenario_status` MCP tool response shape.

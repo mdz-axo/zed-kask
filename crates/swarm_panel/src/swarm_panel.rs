@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Swarm Panel — a center-pane `Item` listing Agent Bestiary World agents and
 //! swarms (workspaces) as cards, mirroring the Kask Extensions panel layout.
 //!

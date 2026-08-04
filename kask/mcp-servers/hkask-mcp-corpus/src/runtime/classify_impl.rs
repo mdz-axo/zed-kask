@@ -106,6 +106,16 @@ pub struct ClassifierDef {
     /// Only charged if the provider supports prompt caching.
     #[serde(default)]
     pub cost_cache_read_nj_per_token: u64,
+    /// Disable the model's thinking/reasoning mode for this classifier.
+    /// Defaults to `true`: the registry/classify configs emit short, deterministic
+    /// structured JSON (temperature 0.0, 15–500 tokens) where thinking tokens add
+    /// latency and cost without improving the few-shot-equilibrated output (Martin
+    /// et al. arXiv:2603.29878). Set to `false` to opt a classifier into thinking
+    /// (e.g. qa-triage root-cause analysis). Maps to `enable_thinking: false` /
+    /// `chat_template_kwargs: {"enable_thinking": false}` on the wire; harmless
+    /// no-op on models without a thinking mode.
+    #[serde(default = "default_disable_thinking")]
+    pub disable_thinking: bool,
 }
 
 impl Default for ClassifierDef {
@@ -123,6 +133,7 @@ impl Default for ClassifierDef {
             cost_input_nj_per_token: 0,
             cost_output_nj_per_token: 0,
             cost_cache_read_nj_per_token: 0,
+            disable_thinking: true,
         }
     }
 }
@@ -135,6 +146,9 @@ fn default_max_tokens() -> u32 {
 }
 fn default_fallback() -> String {
     "Statement".to_string()
+}
+fn default_disable_thinking() -> bool {
+    true
 }
 
 /// Load a classifier config from registry/classify/{name}.yaml.
@@ -187,6 +201,7 @@ pub struct ClassifierConfig {
     pub cost_input_nj_per_token: u64,
     pub cost_output_nj_per_token: u64,
     pub cost_cache_read_nj_per_token: u64,
+    pub disable_thinking: bool,
 }
 
 impl ClassifierConfig {
@@ -227,6 +242,7 @@ impl ClassifierConfig {
             cost_input_nj_per_token: input_nj,
             cost_output_nj_per_token: output_nj,
             cost_cache_read_nj_per_token: 0,
+            disable_thinking: def.disable_thinking,
         }
     }
 }
@@ -257,6 +273,7 @@ async fn classify_one(
         top_p: 1.0,
         top_k: 0,
         system_prompt: Some(config.system_prompt.clone()),
+        disable_thinking: config.disable_thinking,
         ..Default::default()
     };
 
@@ -497,6 +514,7 @@ async fn extract_triples_one(
         top_p: 1.0,
         top_k: 0,
         system_prompt: Some(config.system_prompt.clone()),
+        disable_thinking: config.disable_thinking,
         ..Default::default()
     };
 
@@ -603,4 +621,47 @@ pub fn parse_triple_extraction(content: &str) -> Result<TripleExtraction, Servic
             extra
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The classifier thinking-disabled default is the invariant this change
+    /// introduces: registry/classify configs must run with thinking off by
+    /// default so short structured-JSON outputs stay prompt and cheap. If this
+    /// regresses, every registry/classify/*.yaml silently re-enables thinking.
+    #[test]
+    fn classifier_def_default_disables_thinking() {
+        assert!(ClassifierDef::default().disable_thinking);
+    }
+
+    /// `from_def` must propagate the def's `disable_thinking` into the runtime
+    /// config — the field is only effective if it reaches `classify_one` /
+    /// `extract_triples_one`, which read it off `ClassifierConfig`.
+    #[test]
+    fn from_def_propagates_disable_thinking_true() {
+        let cfg = ClassifierConfig::from_def(&ClassifierDef::default());
+        assert!(cfg.disable_thinking);
+    }
+
+    /// A YAML that omits `disable_thinking` must deserialize to `true` via the
+    /// serde default — the 7 shipped registry/classify configs rely on this.
+    #[test]
+    fn yaml_without_field_defaults_to_disabled() {
+        let yaml = "classifier:\n  name: t\n  concurrency: 1\n  system_prompt: x\n";
+        let parsed: ClassifierYaml = serde_yaml_neo::from_str(yaml).unwrap();
+        assert!(parsed.classifier.disable_thinking);
+    }
+
+    /// A YAML that opts into thinking (`disable_thinking: false`) must be
+    /// honored — qa-triage root-cause analysis is the documented opt-in case.
+    #[test]
+    fn yaml_opt_in_thinking_is_honored() {
+        let yaml = "classifier:\n  name: t\n  concurrency: 1\n  system_prompt: x\n  disable_thinking: false\n";
+        let parsed: ClassifierYaml = serde_yaml_neo::from_str(yaml).unwrap();
+        assert!(!parsed.classifier.disable_thinking);
+        let cfg = ClassifierConfig::from_def(&parsed.classifier);
+        assert!(!cfg.disable_thinking);
+    }
 }

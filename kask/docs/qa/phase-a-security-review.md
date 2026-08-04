@@ -1,5 +1,7 @@
 # Phase A — Security Review (Pre-Release, Post-Hardening)
 
+> **Addendum 2026-08-04: F1–F4 and the RR-0044 residual are all CLOSED.** F1/F2 fixed in commit `34115403bf` (merge-on-overlap + canonical `reg.guard.redact` target + deterministic unit tests). F3 fixed (`redacted_display()`). F4 fixed (7 UI crate roots gained `forbid(unsafe_code)`; `check-unsafe-forbid.sh` extended — 38/38 pass). RR-0044: all 54 sites audited; mis-classifications converted to per-variant mappers; remaining `internal` sites documented as genuinely opaque; shared `map_join_error`/`map_infra_error` now live in hkask-mcp-server. deny.toml refreshed — advisories check passes with `--config kask/deny.toml`.
+
 Date: 2026-08-04. Scope: all kask-owned crates. Read-only audit.
 Prior pass: Phase 4 (2 High + 5 Medium fixed) and bug hunt (1 Critical + 3 High + 5 Medium fixed).
 

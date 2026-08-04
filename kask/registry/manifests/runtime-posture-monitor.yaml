@@ -62,6 +62,15 @@ inputs:
   - name: defense_layers_silent
     type: array
     required: false
+  - name: signal_sources
+    type: array
+    required: false
+  - name: signal
+    type: object
+    required: false
+  - name: convergence_metric
+    type: number
+    required: false
 
 ledger:
   span_namespace: reg.skill.runtime-posture-monitor
@@ -83,6 +92,9 @@ steps:
     template_ref: runtime-posture-monitor/classify-threat
     gas_cap: 2048
     timeout_seconds: 60
+    input_mapping:
+      signal_sources: "{{ step_1_result.signal_sources | default(signal_sources) | default([]) }}"
+      signal: "{{ step_1_result.signal | default(signal) | default({}) }}"
   - ordinal: 3
     action: select
     description: >

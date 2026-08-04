@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! GPUI kanban widget for rendering ```` ```kanban ```` fenced blocks inline
 //! in agent markdown. Renders a horizontal column layout (Backlog, Ready, In
 //! Progress, Review, Done) from JSON data already in the chat stream — a
