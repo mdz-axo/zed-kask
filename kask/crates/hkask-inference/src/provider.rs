@@ -14,6 +14,7 @@
 
 use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
+use std::cmp::Ordering;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -150,30 +151,72 @@ impl ProviderRegistry {
     /// error, falls back to the next supporting provider (with a `reg.inference`
     /// warn). Returns the first success, or the last error if all fail.
     ///
+    /// When multiple providers can serve `op`, the primary is chosen via the
+    /// 7-dimension scored engine (`scoring::select_scored`), which emits the
+    /// `reg.media.select` span, and the fallback chain is ordered by descending
+    /// weighted score. With a single candidate there is no selection to make —
+    /// the lone provider is used directly. The default score table reproduces
+    /// the prior registration-order policy (DeepInfra-first / fal-fallback), so
+    /// dispatch behavior is preserved.
+    ///
     /// expect: "The system routes media ops through the configured provider membrane"
     /// pre:  at least one provider supports op (otherwise returns Connection error)
     /// post: returns Ok(value) from the first succeeding provider
     /// post: if all supporting providers fail → Err(last error)
     /// post: fallback attempts emit a `reg.inference` warn naming the failed provider
+    /// post: multi-provider ops emit a `reg.media.select` span with candidate scores
     pub async fn execute(
         &self,
         op: MediaOp,
         params: &MediaGenerateParams,
     ) -> Result<Value, InferenceError> {
-        let candidates: Vec<&Arc<dyn MediaProvider>> =
-            self.providers.iter().filter(|p| p.supports(op)).collect();
+        let candidates: Vec<Arc<dyn MediaProvider>> = self
+            .providers
+            .iter()
+            .filter(|p| p.supports(op))
+            .map(Arc::clone)
+            .collect();
         if candidates.is_empty() {
             return Err(InferenceError::Connection(format!(
                 "no provider configured for media op: {}",
                 op.as_str()
             )));
         }
+
+        // When multiple providers can serve the op, select the primary via the
+        // 7-dimension scored engine (which emits the `reg.media.select` span)
+        // and order the fallback chain by descending weighted score. With a
+        // single candidate there is no selection to make — use it directly
+        // so single-provider ops don't emit a spurious selection span.
+        let ordered: Vec<Arc<dyn MediaProvider>> = if candidates.len() > 1 {
+            let (chosen, scores) = crate::scoring::select_scored(self, op, params)?;
+            let chosen_id = chosen.id();
+            let mut by_score: Vec<Arc<dyn MediaProvider>> = Vec::with_capacity(candidates.len());
+            by_score.push(chosen);
+            // Remaining candidates, best weighted score first.
+            let mut remaining: Vec<&crate::scoring::ScoredProvider> =
+                scores.iter().filter(|s| s.id != chosen_id).collect();
+            remaining.sort_by(|a, b| {
+                b.weighted
+                    .partial_cmp(&a.weighted)
+                    .unwrap_or(Ordering::Equal)
+            });
+            for s in remaining {
+                if let Some(p) = self.providers.iter().find(|p| p.id() == s.id.as_str()) {
+                    by_score.push(Arc::clone(p));
+                }
+            }
+            by_score
+        } else {
+            candidates
+        };
+
         let mut last_err: Option<InferenceError> = None;
-        for (idx, provider) in candidates.iter().enumerate() {
+        for (idx, provider) in ordered.iter().enumerate() {
             match provider.execute(op, params).await {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    if idx + 1 < candidates.len() {
+                    if idx + 1 < ordered.len() {
                         tracing::warn!(
                             target: "reg.inference",
                             provider = provider.id(),

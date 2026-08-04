@@ -623,7 +623,7 @@ pub struct SwarmPanel {
     entries: Vec<SwarmEntry>,
     filtered_entry_indices: Vec<usize>,
     query_editor: Entity<Editor>,
-    _subscriptions: [gpui::Subscription; 1],
+    _subscriptions: [gpui::Subscription; 2],
     search_task: Option<Task<()>>,
     /// Current ABW wallet balance (the algedonic channel). `None` = unknown
     /// (unauthenticated or the balance query failed) — never a fabricated zero.
@@ -795,7 +795,19 @@ impl SwarmPanel {
                 );
                 input
             });
-            let subscriptions = [cx.subscribe(&query_editor, Self::on_query_change)];
+            let query_sub = cx.subscribe(&query_editor, Self::on_query_change);
+            // Re-filter the browse list whenever settings change. The backend
+            // mode toggle (`set_swarm_mode`) writes `kask.swarm.mode` via
+            // `update_settings_file`, which is async — `current_swarm_mode` is
+            // stale until the settings reload completes. This observer fires on
+            // that reload and re-runs `filter_entries` with the live mode, so
+            // the list reflects the new backend even though `set_swarm_mode`'s
+            // immediate filter call read a stale value. Mirrors
+            // `AgentRegistryPage`'s settings observer.
+            let settings_sub = cx.observe_global::<SettingsStore>(|this, cx| {
+                this.filter_entries(Self::current_swarm_mode(cx), cx);
+            });
+            let subscriptions = [query_sub, settings_sub];
 
             let scroll_handle = UniformListScrollHandle::new();
 
@@ -976,19 +988,19 @@ impl SwarmPanel {
                                     this.entries.retain(|e| matches!(e, SwarmEntry::Swarm(_)));
                                     this.entries.extend(agents);
                                     this.agents_error = None;
-                                    this.filter_entries(cx);
+                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
                                 }
                                 None => {
                                     this.agents_error =
                                         Some(format!("Failed to parse agents: {output}").into());
-                                    this.filter_entries(cx);
+                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
                                 }
                             }
                         }
                         Err(err) => {
                             this.agents_error =
                                 Some(format!("Failed to list agents: {err}").into());
-                            this.filter_entries(cx);
+                            this.filter_entries(Self::current_swarm_mode(cx), cx);
                         }
                     }
                     cx.notify();
@@ -1062,13 +1074,13 @@ impl SwarmPanel {
                                             });
                                     }
                                     this.swarms_error = None;
-                                    this.filter_entries(cx);
+                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
                                 }
                                 None => {
                                     this.swarms_error = Some(
                                         format!("Failed to parse workspaces: {output}").into(),
                                     );
-                                    this.filter_entries(cx);
+                                    this.filter_entries(Self::current_swarm_mode(cx), cx);
                                 }
                             }
                         }
@@ -1078,7 +1090,7 @@ impl SwarmPanel {
                             log::warn!(
                                 "swarm-panel: could not fetch workspaces (agents-only mode): {err}"
                             );
-                            this.filter_entries(cx);
+                            this.filter_entries(Self::current_swarm_mode(cx), cx);
                         }
                     }
                     cx.notify();
@@ -1155,7 +1167,7 @@ impl SwarmPanel {
                                         source: AgentSource::Local,
                                     }));
                                 }
-                                this.filter_entries(cx);
+                                this.filter_entries(Self::current_swarm_mode(cx), cx);
                             }
                         }
                         Err(err) => {
@@ -1240,7 +1252,7 @@ impl SwarmPanel {
                                     SwarmEntry::Swarm(s) => s.source != AgentSource::Local,
                                 });
                                 this.entries.extend(local_swarms);
-                                this.filter_entries(cx);
+                                this.filter_entries(Self::current_swarm_mode(cx), cx);
                             }
                         }
                         Err(err) => {
@@ -2173,10 +2185,11 @@ impl SwarmPanel {
         }
         // Re-filter the browse list so the toggle is visually connected to
         // what is shown: ABW mode shows cloud agents/swarms, Local mode shows
-        // local agents/swarms. Without this the toggle only re-routed the
-        // substrate but left the list unchanged — the operator's "cloud/local"
-        // buttons appeared disconnected from the displayed entries.
-        self.filter_entries(cx);
+        // local agents/swarms. Pass the target `mode` directly —
+        // `update_settings_file` above is async, so `current_swarm_mode` is
+        // still stale at this point. A `SettingsStore` observer re-runs the
+        // filter with the live mode once the settings reload completes.
+        self.filter_entries(mode, cx);
         cx.notify();
     }
 
@@ -2646,16 +2659,14 @@ impl SwarmPanel {
         cx.notify();
     }
 
-    fn filter_entries(&mut self, cx: &mut Context<Self>) {
+    /// Filter the browse entries by the active `SwarmFilter` (All/Swarms/Agents),
+    /// the search query, and the backend mode. The mode is a parameter rather
+    /// than re-read from settings so `set_swarm_mode` can pass the target mode
+    /// for immediate feedback — `update_settings_file` is async, so
+    /// `current_swarm_mode` is stale until the settings reload completes. A
+    /// `SettingsStore` observer re-runs this with the live mode on reload.
+    fn filter_entries(&mut self, mode: kask_bridge::SwarmModeConfig, cx: &mut Context<Self>) {
         let filter = self.filter;
-        // The backend-mode toggle (ABW / Local) drives a source filter on the
-        // browse list. ABW mode shows cloud + synced agents and cloud swarms;
-        // Local mode shows local + synced agents and local swarms. Synced
-        // agents (exist in both) are shown in either view so the operator can
-        // act on the link from either side. Without this, the toggle only
-        // re-routed the swarm server substrate but left the browse list
-        // showing every entry regardless of the selected backend.
-        let mode = Self::current_swarm_mode(cx);
         let query = self.search_query(cx).map(|q| q.to_lowercase());
         let indices: Vec<usize> = self
             .entries
@@ -3811,7 +3822,7 @@ impl SwarmPanel {
             };
 
             this.update(cx, |this, cx| {
-                this.filter_entries(cx);
+                this.filter_entries(Self::current_swarm_mode(cx), cx);
                 this.scroll_to_top(cx);
             })
             .ok();
@@ -4258,7 +4269,7 @@ impl Render for SwarmPanel {
                                                     "All",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.filter = SwarmFilter::All;
-                                                        this.filter_entries(cx);
+                                                        this.filter_entries(Self::current_swarm_mode(cx), cx);
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),
@@ -4266,7 +4277,7 @@ impl Render for SwarmPanel {
                                                     "Swarms",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.filter = SwarmFilter::Swarms;
-                                                        this.filter_entries(cx);
+                                                        this.filter_entries(Self::current_swarm_mode(cx), cx);
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),
@@ -4274,7 +4285,7 @@ impl Render for SwarmPanel {
                                                     "Agents",
                                                     cx.listener(|this, _event, _, cx| {
                                                         this.filter = SwarmFilter::Agents;
-                                                        this.filter_entries(cx);
+                                                        this.filter_entries(Self::current_swarm_mode(cx), cx);
                                                         this.scroll_to_top(cx);
                                                     }),
                                                 ),

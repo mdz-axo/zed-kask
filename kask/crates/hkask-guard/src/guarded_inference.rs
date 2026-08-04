@@ -444,9 +444,10 @@ mod tests {
     use super::GuardedStream;
     use super::guard_output;
     use crate::{ContentGuard, GuardConfig};
+    use futures_util::Stream;
     use futures_util::stream::iter as stream_iter;
-    use futures_util::{Stream, StreamExt};
-    use hkask_types::{InferenceResult, InferenceStreamChunk, InferenceUsage};
+    use hkask_types::{InferenceError, InferenceResult, InferenceStreamChunk, InferenceUsage};
+    use std::pin::Pin;
     use std::sync::Arc;
     use std::task::{Context, Poll};
 
@@ -486,9 +487,23 @@ mod tests {
         }
     }
 
-    /// A no-op waker for manually polling `GuardedStream` in synchronous tests.
-    fn noop_cx() -> Context<'static> {
-        Context::from_waker(futures_util::task::noop_waker())
+    /// Synchronously drain a `GuardedStream` by polling it with a no-op
+    /// waker. The synthetic inner streams (`stream::iter`) are always ready,
+    /// so this never blocks. Avoids pulling in an async runtime dev-dep.
+    fn drain(stream: GuardedStream<'static>) -> Vec<Result<InferenceStreamChunk, InferenceError>> {
+        let waker = futures_util::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        let mut pinned = std::pin::pin!(stream);
+        let mut out = Vec::new();
+        loop {
+            match pinned.as_mut().poll_next(&mut cx) {
+                Poll::Ready(Some(item)) => out.push(item),
+                Poll::Ready(None) => break,
+                // Synthetic `stream::iter` never yields `Pending`.
+                Poll::Pending => break,
+            }
+        }
+        out
     }
 
     /// Clean chunks pass through unchanged and the stream ends cleanly with
@@ -496,15 +511,15 @@ mod tests {
     /// more returns `Ready(None)` (the guard found nothing to redact).
     #[test]
     fn guarded_stream_clean_passes_through() {
-        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let guard = Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
         let chunks = vec![
             chunk("hello ", ""),
             chunk("world", ""),
             chunk("", "thinking step"),
         ];
-        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+        let stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
 
-        let collected: Vec<_> = stream.by_ref().collect::<Vec<_>>();
+        let collected = drain(stream);
 
         // All non-redaction chunks pass through as Ok; none carry a
         // `finish_reason: "redacted"`.
@@ -529,12 +544,12 @@ mod tests {
     /// `finish_reason: "redacted"` once the inner stream ends.
     #[test]
     fn guarded_stream_secret_in_text_emits_redaction() {
-        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let guard = Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
         let canary = guard.canary().as_str().to_string();
         let chunks = vec![chunk("here is the secret: ", ""), chunk(&canary, "")];
-        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+        let stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
 
-        let collected: Vec<_> = stream.collect();
+        let collected = drain(stream);
 
         // Two source chunks plus one redaction chunk.
         assert_eq!(
@@ -558,15 +573,15 @@ mod tests {
     /// A secret in `reasoning_delta` is redacted via the reasoning channel.
     #[test]
     fn guarded_stream_secret_in_reasoning_emits_redaction() {
-        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let guard = Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
         let canary = guard.canary().as_str().to_string();
         let chunks = vec![
             chunk("clean answer", ""),
             chunk("", &format!("thinking... {canary} ...done")),
         ];
-        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+        let stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
 
-        let collected: Vec<_> = stream.collect();
+        let collected = drain(stream);
 
         assert_eq!(
             collected.len(),
@@ -590,18 +605,24 @@ mod tests {
     /// re-entrancy on the redaction path.
     #[test]
     fn guarded_stream_double_poll_after_end_returns_none() {
-        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
-        let chunks = vec![chunk("clean", "")];
-        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+        let guard = Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let stream = guarded_stream_from_chunks(vec![chunk("clean", "")], Arc::clone(&guard));
 
-        // Drain the stream fully.
-        let _ = stream.by_ref().collect::<Vec<_>>();
-
-        // Pin the stream and poll manually; the inner stream is exhausted and
-        // `scanned` is set, so this must return `Ready(None)` without invoking
-        // the guard again.
-        let mut cx = noop_cx();
+        // Poll the stream to end, then poll again twice to confirm `scanned`
+        // keeps returning `Ready(None)` without re-scanning.
+        let waker = futures_util::task::noop_waker();
+        let mut cx = Context::from_waker(&waker);
         let mut pinned = std::pin::pin!(stream);
+
+        loop {
+            match pinned.as_mut().poll_next(&mut cx) {
+                Poll::Ready(Some(_)) => {}
+                Poll::Ready(None) => break,
+                Poll::Pending => break,
+            }
+        }
+
+        // Post-end polls must return Ready(None) without re-scanning.
         let poll1 = pinned.as_mut().poll_next(&mut cx);
         assert!(
             matches!(poll1, Poll::Ready(None)),

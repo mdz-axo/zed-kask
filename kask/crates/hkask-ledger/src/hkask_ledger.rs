@@ -171,6 +171,119 @@ impl Ledger {
         }
     }
 
+    /// Atomically debit `amount` of `asset` from `account` to `external`,
+    /// enforcing the non-negative balance invariant.
+    ///
+    /// The balance check and the posting insert happen inside a single
+    /// `BEGIN IMMEDIATE` transaction. `BEGIN IMMEDIATE` acquires the write
+    /// lock before the balance read, so two concurrent `debit_if_funds`
+    /// calls serialize: the first commits its debit, the second re-reads the
+    /// now-reduced balance and rejects if it has dropped below `amount`.
+    /// This closes the TOCTOU window that a separate check-then-commit path
+    /// leaves open (both callers read the pre-debit balance, both commit,
+    /// the account goes negative).
+    ///
+    /// `reference` must be unique (it backs the transactions.reference
+    /// UNIQUE constraint); callers mint a fresh UUID per debit. `metadata` is
+    /// stored verbatim on the committed transaction (e.g. `{"action":"debit"}`).
+    ///
+    /// Returns the post-debit balance of `(account, asset)`, or
+    /// `Err(InsufficientFunds)` if the balance (read inside the transaction)
+    /// is less than `amount`.
+    pub fn debit_if_funds(
+        &self,
+        account: &str,
+        asset: &str,
+        amount: i64,
+        reference: &str,
+        metadata: &serde_json::Value,
+    ) -> Result<i64, LedgerError> {
+        if amount <= 0 {
+            return Err(LedgerError::InsufficientFunds {
+                account: account.to_string(),
+                asset: asset.to_string(),
+                balance: 0,
+                required: amount,
+            });
+        }
+
+        let tx_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Acquire the write lock up front. Any concurrent writer (another
+        // debit, a commit) blocks until this transaction finishes, so the
+        // balance read below sees the committed effect of all prior writers.
+        self.driver.execute_batch("BEGIN IMMEDIATE")?;
+        let result: Result<(), LedgerError> = (|| {
+            // Re-read the balance INSIDE the transaction. The write lock
+            // guarantees no other writer can land a debit between this read
+            // and the insert below.
+            let row = self.driver.query_optional(
+                "SELECT COALESCE(SUM(CASE WHEN destination = ?1 THEN amount ELSE 0 END), 0)
+                      - COALESCE(SUM(CASE WHEN source = ?1 THEN amount ELSE 0 END), 0)
+                     FROM postings WHERE (source = ?1 OR destination = ?1) AND asset = ?2",
+                &[
+                    DbValue::Text(account.to_string()),
+                    DbValue::Text(asset.to_string()),
+                ],
+            )?;
+            let balance = match row {
+                Some(r) => r.get_int(0)?,
+                None => 0,
+            };
+            if balance < amount {
+                return Err(LedgerError::InsufficientFunds {
+                    account: account.to_string(),
+                    asset: asset.to_string(),
+                    balance,
+                    required: amount,
+                });
+            }
+
+            self.driver.execute(
+                "INSERT INTO transactions (id, timestamp, reference, metadata, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                &[
+                    DbValue::Text(tx_id.clone()),
+                    DbValue::Text(now.clone()),
+                    DbValue::Text(reference.to_string()),
+                    DbValue::Text(metadata.to_string()),
+                    DbValue::Text(now.clone()),
+                ],
+            )?;
+            self.driver.execute(
+                "INSERT INTO postings (transaction_id, source, destination, asset, amount, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                &[
+                    DbValue::Text(tx_id),
+                    DbValue::Text(account.to_string()),
+                    DbValue::Text("external".to_string()),
+                    DbValue::Text(asset.to_string()),
+                    DbValue::Integer(amount),
+                    DbValue::Text(now),
+                ],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.driver.execute_batch("COMMIT")?;
+            }
+            Err(e) => {
+                if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
+                    tracing::error!(
+                        target: "hkask.ledger",
+                        error = %rollback_err,
+                        "Failed to rollback debit_if_funds transaction"
+                    );
+                }
+                return Err(e);
+            }
+        }
+
+        self.balance(account, Some(asset))
+    }
+
     /// REQ: P9-ledger-balance
     /// expect: "I can query the balance of any account and see all credits minus debits" \[P9\]
     /// pre:  account is a valid account ID (may or may not exist)
@@ -662,5 +775,113 @@ mod tests {
         };
         let results = ledger.query(&range, &filter).unwrap();
         assert!(!results.is_empty());
+    }
+
+    fn fund_account(ledger: &Ledger, account: &str, asset: &str, amount: i64, reference: &str) {
+        let tx = LedgerTransaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            reference: reference.to_string(),
+            postings: vec![Posting {
+                source: "external".to_string(),
+                destination: account.to_string(),
+                asset: asset.to_string(),
+                amount,
+            }],
+            metadata: serde_json::json!({ "action": "fund" }),
+        };
+        ledger.commit(&tx).unwrap();
+    }
+
+    #[test]
+    fn debit_if_funds_debits_and_returns_new_balance() {
+        let ledger = db();
+        ledger.ensure_account("op", "wallet").unwrap();
+        fund_account(&ledger, "op", "rj", 500, "fund-1");
+
+        let new_balance = ledger
+            .debit_if_funds(
+                "op",
+                "rj",
+                200,
+                "debit-1",
+                &serde_json::json!({ "action": "debit" }),
+            )
+            .unwrap();
+        assert_eq!(new_balance, 300);
+        assert_eq!(ledger.balance("op", Some("rj")).unwrap(), 300);
+    }
+
+    #[test]
+    fn debit_if_funds_rejects_insufficient_balance() {
+        let ledger = db();
+        ledger.ensure_account("op", "wallet").unwrap();
+        fund_account(&ledger, "op", "rj", 100, "fund-2");
+
+        let result = ledger.debit_if_funds(
+            "op",
+            "rj",
+            200,
+            "debit-2",
+            &serde_json::json!({ "action": "debit" }),
+        );
+        assert!(matches!(
+            result,
+            Err(LedgerError::InsufficientFunds {
+                balance: 100,
+                required: 200,
+                ..
+            })
+        ));
+        // Balance is unchanged — the transaction was rolled back.
+        assert_eq!(ledger.balance("op", Some("rj")).unwrap(), 100);
+    }
+
+    #[test]
+    fn debit_if_funds_rejects_zero_and_negative() {
+        let ledger = db();
+        ledger.ensure_account("op", "wallet").unwrap();
+        fund_account(&ledger, "op", "rj", 500, "fund-3");
+
+        let zero = ledger.debit_if_funds("op", "rj", 0, "debit-zero", &serde_json::json!({}));
+        assert!(matches!(zero, Err(LedgerError::InsufficientFunds { .. })));
+
+        let negative = ledger.debit_if_funds("op", "rj", -10, "debit-neg", &serde_json::json!({}));
+        assert!(matches!(
+            negative,
+            Err(LedgerError::InsufficientFunds { .. })
+        ));
+
+        // No spurious postings were inserted.
+        assert_eq!(ledger.balance("op", Some("rj")).unwrap(), 500);
+    }
+
+    #[test]
+    fn debit_if_funds_sequential_debits_serial_correctly() {
+        // Simulates the TOCTOU scenario: two debits that each individually
+        // would pass a non-atomic pre-check (balance >= amount), but the
+        // second must reject because the first already committed. The atomic
+        // balance re-read inside BEGIN IMMEDIATE is the gate.
+        let ledger = db();
+        ledger.ensure_account("op", "wallet").unwrap();
+        fund_account(&ledger, "op", "rj", 300, "fund-4");
+
+        let first = ledger
+            .debit_if_funds("op", "rj", 200, "debit-a", &serde_json::json!({}))
+            .unwrap();
+        assert_eq!(first, 100);
+
+        // A second debit of 200 must reject — only 100 remains. A pre-check
+        // that read the pre-first-debit balance (300) would have passed.
+        let second = ledger.debit_if_funds("op", "rj", 200, "debit-b", &serde_json::json!({}));
+        assert!(matches!(
+            second,
+            Err(LedgerError::InsufficientFunds {
+                balance: 100,
+                required: 200,
+                ..
+            })
+        ));
+        assert_eq!(ledger.balance("op", Some("rj")).unwrap(), 100);
     }
 }

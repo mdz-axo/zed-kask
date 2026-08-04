@@ -45,7 +45,7 @@ use std::sync::Arc;
 /// (cheapest for background removal / TTS / STT, with fal.ai fallback),
 /// fal.ai for everything else.
 pub struct MediaRouter {
-    registry: ProviderRegistry,
+    pub(crate) registry: ProviderRegistry,
 }
 
 impl MediaRouter {

@@ -175,3 +175,77 @@ pub fn select_scored(
 
     Ok((chosen, scored))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::InferenceConfig;
+    use crate::media_router::MediaRouter;
+
+    /// Build a router with both DeepInfra and fal.ai keys so both backends
+    /// register — the multi-provider case where `select_scored` is exercised.
+    fn router_with_both() -> MediaRouter {
+        let config = InferenceConfig {
+            deepinfra_api_key: "di-key".into(),
+            fal_api_key: "fal-key".into(),
+            ..Default::default()
+        };
+        MediaRouter::new(config)
+    }
+
+    #[test]
+    fn select_scored_prefers_deepinfra_for_shared_ops() {
+        let router = router_with_both();
+        let params = MediaGenerateParams::default();
+        // RemoveBackground is served by both DeepInfra and fal.ai. The score
+        // table ranks DeepInfra higher for the three shared ops.
+        for op in [
+            MediaOp::RemoveBackground,
+            MediaOp::GenerateSpeech,
+            MediaOp::Transcribe,
+        ] {
+            let (chosen, scores) =
+                select_scored(&router.registry, op, &params).expect("candidates exist");
+            assert_eq!(chosen.id(), "deepinfra", "DeepInfra must win for {op:?}");
+            assert!(
+                scores.iter().any(|s| s.id == "deepinfra"),
+                "DeepInfra scored"
+            );
+            assert!(scores.iter().any(|s| s.id == "fal.ai"), "fal.ai scored");
+        }
+    }
+
+    #[test]
+    fn select_scored_errors_when_no_provider_supports_op() {
+        let router = MediaRouter::new(InferenceConfig::default());
+        let result = select_scored(
+            &router.registry,
+            MediaOp::GenerateImage,
+            &MediaGenerateParams::default(),
+        );
+        assert!(result.is_err(), "empty registry must error, not panic");
+    }
+
+    #[test]
+    fn select_scored_returns_all_candidate_scores() {
+        let router = router_with_both();
+        let (chosen, scores) = select_scored(
+            &router.registry,
+            MediaOp::RemoveBackground,
+            &MediaGenerateParams::default(),
+        )
+        .expect("candidates exist");
+        // Both providers support RemoveBackground → both appear in scores.
+        assert_eq!(scores.len(), 2, "both candidates scored");
+        // The chosen provider's score must be the maximum.
+        let max = scores
+            .iter()
+            .map(|s| s.weighted)
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            scores
+                .iter()
+                .any(|s| s.id == chosen.id() && (s.weighted - max).abs() < f64::EPSILON)
+        );
+    }
+}

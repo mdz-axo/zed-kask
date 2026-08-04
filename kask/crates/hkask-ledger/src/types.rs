@@ -17,6 +17,19 @@ pub enum LedgerError {
     DoubleEntryViolation(i64),
     #[error("idempotency conflict: reference '{reference}' already exists with different postings")]
     IdempotencyConflict { reference: String },
+    /// The account balance is insufficient to cover a debit. The check and the
+    /// commit happened inside the same `BEGIN IMMEDIATE` transaction, so this
+    /// is the authoritative non-negative-balance invariant — not a TOCTOU
+    /// pre-check.
+    #[error(
+        "insufficient funds: account '{account}' asset '{asset}' has {balance}, needs {required}"
+    )]
+    InsufficientFunds {
+        account: String,
+        asset: String,
+        balance: i64,
+        required: i64,
+    },
 }
 
 /// A single entry in a transaction — moves `amount` of `asset` from

@@ -13,6 +13,8 @@ use crate::error::SwarmError;
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
+use hkask_ledger::LedgerError;
+
 /// The local swarm runtime — ledger + inference + guard.
 ///
 /// Constructed lazily on first tool call (the `run_server` factory closure
@@ -281,43 +283,39 @@ impl LocalSwarmRuntime {
 
     /// Debit credits from the operator's account. Returns the new balance.
     /// Returns `Err(PaymentRequired)` if the balance is insufficient.
+    ///
+    /// The balance check and the commit happen atomically inside a single
+    /// `BEGIN IMMEDIATE` transaction in `Ledger::debit_if_funds`, closing the
+    /// TOCTOU window where two concurrent `delegate` calls could both pass a
+    /// separate pre-check and both commit (driving the account negative). The
+    /// pre-inference balance check in `delegate` remains as a fast-fail so we
+    /// don't run multi-second inference when the account is obviously
+    /// unfunded, but it is NOT the authoritative gate.
     pub(crate) fn debit(&self, amount: i64, reference: &str) -> Result<i64, SwarmError> {
         if amount <= 0 {
             return Err(SwarmError::PaymentRequired(
                 "debit amount must be positive".to_string(),
             ));
         }
-        let balance = self.balance().ok_or_else(|| {
-            SwarmError::Unavailable("ledger balance query failed — cannot verify funds".to_string())
-        })?;
-        if balance < amount {
-            return Err(SwarmError::PaymentRequired(format!(
-                "insufficient local credits: have {balance}, need {amount} \
-                 — fund via swarm_fund_local"
-            )));
-        }
-        let tx_id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().to_rfc3339();
-        let tx = hkask_ledger::LedgerTransaction {
-            id: tx_id,
-            timestamp: now,
-            reference: reference.to_string(),
-            postings: vec![hkask_ledger::Posting {
-                source: self.operator_account.clone(),
-                destination: "external".to_string(),
-                asset: self.asset.clone(),
+        let new_balance = self
+            .ledger
+            .debit_if_funds(
+                &self.operator_account,
+                &self.asset,
                 amount,
-            }],
-            metadata: serde_json::json!({ "action": "debit" }),
-        };
-        self.ledger
-            .commit(&tx)
-            .map_err(|e| SwarmError::Unavailable(format!("ledger commit failed: {e}")))?;
-        self.balance().ok_or_else(|| {
-            SwarmError::Unavailable(
-                "balance query failed after debit — ledger may be in a bad state".to_string(),
+                reference,
+                &serde_json::json!({ "action": "debit" }),
             )
-        })
+            .map_err(|e| match e {
+                LedgerError::InsufficientFunds {
+                    balance, required, ..
+                } => SwarmError::PaymentRequired(format!(
+                    "insufficient local credits: have {balance}, need {required} \
+                     — fund via swarm_fund_local"
+                )),
+                other => SwarmError::Unavailable(format!("ledger debit failed: {other}")),
+            })?;
+        Ok(new_balance)
     }
 
     /// Execute a local agent: scan the task → run the agent (skill cascade +

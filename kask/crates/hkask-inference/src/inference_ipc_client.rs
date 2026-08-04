@@ -53,6 +53,15 @@ use tokio::sync::Mutex;
 /// because the shared types crate is owned by another workstream.
 const MAX_IPC_LINE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// Maximum time to wait for a single IPC response line.
+///
+/// Generous enough for long-running inference, but prevents the MCP server
+/// from blocking forever if the zed process hangs. On timeout the returned
+/// `std::io::Error` is treated by callers as a read failure, which nulls the
+/// cached stream so the next call reconnects instead of retrying on a dead
+/// connection.
+const IPC_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Read one newline-delimited response from the socket, capped at
 /// `MAX_IPC_LINE_BYTES`. Returns `None` when the server closed the
 /// connection before sending any bytes; a line without a terminating
@@ -62,7 +71,14 @@ async fn read_response_line(stream: &mut UnixStream) -> Result<Option<String>, s
     // while anything longer is detected as missing-newline.
     let mut reader = BufReader::new(stream.take(MAX_IPC_LINE_BYTES + 1));
     let mut line = String::new();
-    let bytes_read = reader.read_line(&mut line).await?;
+    let bytes_read = tokio::time::timeout(IPC_READ_TIMEOUT, reader.read_line(&mut line))
+        .await
+        .map_err(|_elapsed| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("IPC read timed out after {}s", IPC_READ_TIMEOUT.as_secs()),
+            )
+        })??;
     if bytes_read == 0 {
         return Ok(None);
     }
@@ -259,9 +275,15 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let line = read_response_line(stream)
-            .await
-            .map_err(|e| EmbeddingGenerationError::Connection(format!("IPC read failed: {e}")))?;
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(EmbeddingGenerationError::Connection(format!(
+                    "IPC read failed: {e}"
+                )));
+            }
+        };
 
         let Some(line) = line else {
             *guard = None;
@@ -270,10 +292,18 @@ impl InferenceIpcClient {
             ));
         };
 
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| EmbeddingGenerationError::Json(format!("IPC deserialize failed: {e}")))?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                *guard = None;
+                return Err(EmbeddingGenerationError::Json(format!(
+                    "IPC deserialize failed: {e}"
+                )));
+            }
+        };
 
         if response.id != id {
+            *guard = None;
             return Err(EmbeddingGenerationError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
@@ -379,9 +409,13 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let line = read_response_line(stream)
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+            }
+        };
 
         let Some(line) = line else {
             *guard = None;
@@ -390,10 +424,16 @@ impl InferenceIpcClient {
             ));
         };
 
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
+            }
+        };
 
         if response.id != id {
+            *guard = None;
             return Err(InferenceError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
@@ -487,9 +527,13 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let line = read_response_line(stream)
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+            }
+        };
 
         let Some(line) = line else {
             *guard = None;
@@ -498,10 +542,16 @@ impl InferenceIpcClient {
             ));
         };
 
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
+            }
+        };
 
         if response.id != id {
+            *guard = None;
             return Err(InferenceError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
@@ -613,9 +663,13 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let line = read_response_line(stream)
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+            }
+        };
 
         let Some(line) = line else {
             *guard = None;
@@ -624,10 +678,16 @@ impl InferenceIpcClient {
             ));
         };
 
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
+            }
+        };
 
         if response.id != id {
+            *guard = None;
             return Err(InferenceError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
@@ -706,9 +766,13 @@ impl InferenceIpcClient {
             .await
             .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
 
-        let line = read_response_line(stream)
-            .await
-            .map_err(|e| InferenceError::Connection(format!("IPC read failed: {e}")))?;
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+            }
+        };
 
         let Some(line) = line else {
             *guard = None;
@@ -717,10 +781,16 @@ impl InferenceIpcClient {
             ));
         };
 
-        let response: InferenceResponse = serde_json::from_str(&line)
-            .map_err(|e| InferenceError::Json(format!("IPC deserialize failed: {e}")))?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
+            }
+        };
 
         if response.id != id {
+            *guard = None;
             return Err(InferenceError::Connection(format!(
                 "IPC ID mismatch: expected {id}, got {}",
                 response.id
