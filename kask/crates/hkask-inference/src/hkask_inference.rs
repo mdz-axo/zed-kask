@@ -46,6 +46,7 @@ pub mod model_constants;
 pub mod ollama_registry;
 pub mod openai_compat;
 pub mod openrouter_backend;
+pub mod pricing;
 pub mod provider;
 pub mod scoring;
 pub mod workflow;
@@ -57,6 +58,7 @@ pub use media_router::MediaRouter;
 pub use ollama_registry::{
     LocalAdapter, ModelFrom, ModelfileSpec, OllamaRegistry, OllamaRegistryError, RegisteredModel,
 };
+pub use pricing::compute_cost_usd;
 pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
 pub use workflow::{FailurePolicy, GraphNode, NodeExecutor, WorkflowGraph};
 

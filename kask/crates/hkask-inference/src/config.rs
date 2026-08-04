@@ -240,7 +240,7 @@ impl Default for InferenceConfig {
             atlascloud_api_key: String::new(),
             timeout_secs: 120,
             pool_max_idle: 5,
-            default_model: "OpenRouter/z-ai/glm-5.2".to_string(),
+            default_model: crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string(),
         }
     }
 }
@@ -311,7 +311,7 @@ impl InferenceConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(256),
             default_model: resolve_config_str("HKASK_DEFAULT_MODEL")
-                .unwrap_or_else(|| "OpenRouter/z-ai/glm-5.2".to_string()),
+                .unwrap_or_else(|| crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string()),
         }
     }
 
@@ -344,7 +344,7 @@ impl InferenceConfig {
 ///
 /// This function reads **only** the environment variable. It does **not**
 /// fall back to the `hkask` keychain namespace — that namespace is reserved
-/// for sovereignty keys (a2a_secret, db_passphrase, ocap_secret) per the
+/// for sovereignty keys (db_passphrase, ocap_secret) per the
 /// `hkask_keystore` module contract. Reading inference keys from the `hkask`
 /// namespace was a spec violation: the settings UI writes to zed's
 /// `CredentialsProvider` (`kask://credentials/<key>`), not the `hkask`
@@ -598,7 +598,7 @@ mod tests {
     /// Regression test for the two-namespace split. `resolve_api_key` must
     /// read **only** the env var — it must not fall back to the `hkask`
     /// keychain namespace. The `hkask` namespace is reserved for sovereignty
-    /// keys (a2a_secret, db_passphrase, ocap_secret) per the `hkask_keystore`
+    /// keys (db_passphrase, ocap_secret) per the `hkask_keystore`
     /// module contract. Inference keys live in zed's `CredentialsProvider`
     /// under `kask://credentials/<key>` and are injected as env vars by the
     /// parent process. This test pins that contract: with the env var unset,

@@ -433,21 +433,27 @@ pub fn chat_response_to_result(response: ChatResponse) -> Result<InferenceResult
     };
 
     let usage = response.usage.unwrap_or_default();
+    let inference_usage = InferenceUsage {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+    };
+    // rJoule = USD: charge the inference cost to the manifest executor's
+    // rJoule budget. Price resolved from the env price table by
+    // `compute_cost_usd`. `None` for unpriced models (local, unconfigured).
+    let cost_usd = crate::pricing::compute_cost_usd(&response.model, &inference_usage);
 
     Ok(InferenceResult {
         text,
         model: response.model,
         reasoning,
-        usage: InferenceUsage {
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            total_tokens: usage.total_tokens,
-        },
+        usage: inference_usage,
         finish_reason: choice
             .finish_reason
             .unwrap_or_else(|| "unknown".to_string()),
         token_probabilities,
         tool_calls,
+        cost_usd,
     })
 }
 

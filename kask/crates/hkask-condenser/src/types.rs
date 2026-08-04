@@ -1,7 +1,9 @@
 //! hKask Condenser — Domain types
 //!
-//! Pure domain types with no MCP dependencies. Error types use `String`
-//! for `FromStr` impls; MCP servers wrap these at the boundary.
+//! Domain types for the condenser; shares the schema-correct `AnyJsonValue`
+//! type from `hkask_mcp_server` so request structs render as provider-safe
+//! JSON Schema. Error types use `String` for `FromStr` impls; MCP servers
+//! wrap these at the boundary.
 
 use hkask_mcp_server::AnyJsonValue;
 use schemars::JsonSchema;

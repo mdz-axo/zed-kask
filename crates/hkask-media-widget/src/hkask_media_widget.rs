@@ -14,7 +14,7 @@
 //!          D18 seam: MarkdownElement.media_block_renderer
 //!                          │
 //!                          ▼
-//!              hkask_media_widget::media_block_renderer()
+//!              hkask_viz_core::block_renderer() → create_media_widget
 //!                          │
 //!                          ▼
 //!                    MediaWidget view
@@ -35,45 +35,7 @@ pub mod video_decoder;
 pub use media_ref::{GalleryMediaStorage, MediaKind, MediaRef, MediaStorage, ResolvedMedia};
 pub use media_widget::MediaWidget;
 
-use gpui::{AnyElement, App, AppContext, Entity, SharedString, Window};
-
-/// The callback type registered at the D18 seam.
-///
-/// Called with the body text of a fenced code block. If the body is a
-/// valid media reference (JSON with `kind` and `src`), returns `Some(element)`
-/// to render the media widget; otherwise returns `None` to fall through to
-/// the default code block renderer.
-pub type MediaBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
-
-/// Create the media block renderer callback for the D18 seam.
-///
-/// Usage in `render_agent_markdown`:
-///
-/// ```ignore
-/// MarkdownElement::new(markdown, style)
-///     .media_block_renderer(hkask_media_widget::media_block_renderer())
-/// ```
-pub fn media_block_renderer() -> MediaBlockRenderer {
-    Box::new(|body, window, cx| {
-        if !body.trim_start().starts_with('{') {
-            return None;
-        }
-        match parse_media_block_body(body) {
-            Ok(media_ref) => Some(render_media_ref(media_ref, window, cx)),
-            Err(error) => {
-                log::warn!(
-                    "hkask-media-widget: failed to parse media block: {error}. Body: {body}"
-                );
-                None
-            }
-        }
-    })
-}
-
-/// Render a `MediaRef` as a GPUI `AnyElement`.
-fn render_media_ref(reference: MediaRef, _window: &mut Window, cx: &mut App) -> AnyElement {
-    media_widget::render_media_ref(reference, cx)
-}
+use gpui::{App, AppContext, Entity, SharedString, Window};
 
 /// Parse the JSON body of a ```` ```media ```` block.
 ///

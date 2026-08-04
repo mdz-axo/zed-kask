@@ -107,15 +107,14 @@ impl ServiceConfig {
     ///
     /// Reads `HKASK_DB_PATH`, `HKASK_TEMPLATE_CACHE_PATH`,
     /// `HKASK_MEMORY_DB_PATH`, and `HKASK_AGENT_NAME` from environment.
-    /// The A2A authority secret and database passphrase are resolved via
-    /// `hkask-keystore`.
+    /// The database passphrase is resolved via `hkask-keystore`.
     ///
     /// The agent name defaults to `HKASK_AGENT_NAME` env var (set by the
     /// zed-kask composition root from the Zed login username), falling back to
     /// `DEFAULT_USER_NAME` ("curator") for standalone CLI usage.
     ///
     /// \[P5\] Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
-    /// pre:  keystore must have a2a_secret and db_passphrase configured
+    /// pre:  keystore must have db_passphrase configured
     /// post: returns ServiceConfig with env-derived values and keystore secrets; Err(Keystore) on secret resolution failure
     #[must_use = "result must be used"]
     pub fn from_env() -> Result<Self, ServiceError> {

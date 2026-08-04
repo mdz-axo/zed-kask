@@ -26,11 +26,7 @@
 pub mod block;
 pub mod view;
 
-use gpui::{AnyElement, App, AppContext, Entity, Window};
-
-/// The scenarios block renderer callback type (mirrors
-/// `markdown::MediaBlockRendererFn`).
-pub type ScenariosBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
+use gpui::{App, AppContext, Entity};
 
 pub use view::ScenariosWidget;
 

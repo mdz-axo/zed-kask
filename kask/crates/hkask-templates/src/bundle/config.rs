@@ -283,14 +283,23 @@ impl Default for BundleGasConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RjouleConfig {
-    /// Total rJoule budget for inference in this cascade.
+    /// Total rJoule budget for inference in this cascade — a **USD budget**
+    /// (`1 rJoule = $1 USD`).
     ///
-    /// **Not yet enforced.** `BudgetTracker::charge_rjoule` has no production
-    /// call site — the `reg.skill.budget.rjoule_exhausted` / `*_alert` spans
-    /// never fire, and a non-zero `cap` does not constrain the cascade. Gas
-    /// (`gas.cap`) is the only live budget. Wiring rJoule awaits a
-    /// tokens→rJoule conversion (manifests declare `cap` in single digits,
-    /// not token counts). Treat this field as advisory config until enforced.
+    /// Enforced: `ManifestExecutor::execute_select` charges each inference
+    /// call's USD cost (token usage × the model's per-token price, computed by
+    /// `hkask_inference::compute_cost_usd` and carried on `InferenceResult.cost_usd`)
+    /// to this budget via `BudgetTracker::charge_rjoule`. When cumulative spend
+    /// exceeds `cap` and `hard_limit` is true, `check_exhausted` trips the
+    /// `reg.skill.budget.rjoule_exhausted` span and exits the cascade `MaxedOut`.
+    /// A threshold-crossing `reg.skill.budget.rjoule_alert` fires once at
+    /// `alert_threshold`. Unpriced models (local Ollama, unconfigured cloud)
+    /// report `cost_usd = None` and are free (not charged).
+    ///
+    /// Scope: only LLM inference (`select` steps) is charged here. MCP `execute`
+    /// steps that hit paid external APIs are NOT yet charged rJoule through the
+    /// executor — `hkask-mcp-media` self-gates its own rJoule budget per call
+    /// (`MediaBudget`); other paid MCP servers will follow that pattern. TODO.
     pub cap: u32,
     pub alert_threshold: f64,
     pub hard_limit: bool,

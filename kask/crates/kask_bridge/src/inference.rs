@@ -168,10 +168,19 @@ impl LanguageModelInferencePort {
                                     }
                                 }
                             }
-
+                            let model_name = model.name().0.to_string();
+                            // rJoule = USD: charge the inference cost to the
+                            // manifest executor's rJoule budget. The price is
+                            // resolved from the env price table
+                            // (HKASK_PRICE_*_PER_1M_<MODEL> / global fallback)
+                            // by `hkask_inference::compute_cost_usd`. `None` for
+                            // unpriced models (local Ollama, unconfigured cloud) —
+                            // free, not charged.
+                            let cost_usd =
+                                hkask_inference::compute_cost_usd(&model_name, &usage);
                             Ok(InferenceResult {
                                 text,
-                                model: model.name().0.to_string(),
+                                model: model_name,
                                 usage,
                                 finish_reason,
                                 token_probabilities: None,
@@ -181,6 +190,7 @@ impl LanguageModelInferencePort {
                                 } else {
                                     Some(reasoning)
                                 },
+                                cost_usd,
                             })
                         }
                     }

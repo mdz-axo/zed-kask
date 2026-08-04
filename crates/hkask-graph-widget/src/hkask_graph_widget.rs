@@ -25,39 +25,9 @@ pub mod layout;
 pub mod propagate;
 pub mod view;
 
-use gpui::{AnyElement, App, AppContext, Entity, Window};
-
-/// The graph block renderer callback type (mirrors
-/// `markdown::MediaBlockRendererFn` — same erased `dyn Fn` type).
-pub type GraphBlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyElement>>;
+use gpui::{App, AppContext, Entity};
 
 pub use view::GraphWidget;
-
-/// Create the graph block renderer for the D18 seam.
-///
-/// Self-selects on a JSON body whose `viz` field equals `"event_tree"`. Other
-/// bodies (including media blocks, which are claimed first by the media
-/// renderer in [`hkask_viz_core::block_renderer`]) fall through with `None` so
-/// the default code-block renderer handles them.
-pub fn graph_block_renderer() -> GraphBlockRenderer {
-    Box::new(|body, window, cx| {
-        // Only JSON-shaped bodies can be graph blocks; skip everything else
-        // silently (the renderer is invoked for every fenced block).
-        if !body.trim_start().starts_with('{') {
-            return None;
-        }
-        match block::parse_graph_body(body) {
-            Ok(parsed) if parsed.viz.as_deref() == Some("event_tree") => {
-                Some(view::render_event_tree(parsed, body, window, cx))
-            }
-            Ok(_) => None,
-            Err(error) => {
-                log::warn!("hkask-graph-widget: malformed graph block: {error}");
-                None
-            }
-        }
-    })
-}
 
 /// Create a `GraphWidget` entity from a block body, without wrapping it in an
 /// element. Used by `hkask_viz_core::block_renderer` to cache the entity across

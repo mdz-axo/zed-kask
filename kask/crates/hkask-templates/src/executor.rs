@@ -172,7 +172,6 @@ impl ManifestExecutor {
     ///
     /// expect: "The system resolves and executes template manifest cascades"
     /// \[P3\] Motivating: Generative Space — executor for template manifest cascades
-    /// \[P4\] Constraining: Clear Boundaries — requires A2A secret for delegation
     /// pre:  inference and mcp are initialized
     /// post: returns ManifestExecutor with default template_base_path
     pub fn new(
@@ -1306,7 +1305,11 @@ impl ManifestExecutor {
         let tools: Option<&[ChatToolDefinition]> =
             structured_tool.as_ref().map(std::slice::from_ref);
 
-        let (result_text, tool_calls): (String, Vec<hkask_types::StructuredToolCall>) = {
+        let (result_text, tool_calls, cost_usd): (
+            String,
+            Vec<hkask_types::StructuredToolCall>,
+            Option<f64>,
+        ) = {
             let timeout_dur = std::time::Duration::from_secs(step.timeout_seconds as u64);
             let result: InferenceResult = match tokio::time::timeout(
                 timeout_dur,
@@ -1323,25 +1326,25 @@ impl ManifestExecutor {
                     )));
                 }
             };
-            (result.text, result.tool_calls)
+            let cost_usd = result.cost_usd;
+            (result.text, result.tool_calls, cost_usd)
         };
 
-        // rJoule tracking — NOT YET ENFORCED.
-        //
-        // `result.usage` (InferenceUsage: prompt/completion/total_tokens) is now
-        // populated by inference providers, so the old "once InferenceResult
-        // reports token counts" blocker is gone. The remaining gap is the
-        // tokens→rJoule CONVERSION: manifests declare `rjoule.cap` in single
-        // digits (0..3), which are clearly not token counts, so charging
-        // `total_tokens` as rJoule would hard-stop every cascade after a few
-        // tokens. Defining the conversion (e.g. rJoule per 1k tokens, or via
-        // GAS_PER_RJOULE) is a design decision that must not be guessed here.
-        // Until then, gas (below) is the ONLY live budget; `rjoule.cap` is inert
-        // config — the `reg.skill.budget.rjoule_exhausted`/`*_alert` spans never
-        // fire. See `RjouleConfig::cap` doc comment ("not yet enforced").
-        // (When wired, call `budget.charge_rjoule(...)` here with the converted
-        // value from `result.usage.total_tokens`.)
-        //
+        // rJoule (USD) tracking — charge the inference call's USD cost. The
+        // InferencePort populates `cost_usd` from token usage × the model's
+        // per-token price (1 rJoule = $1 USD; see `hkask_inference::compute_cost_usd`).
+        // `None` for unpriced models (local Ollama, unconfigured cloud) — free,
+        // not charged. Charged AFTER the call (cost is token-driven, only known
+        // post-call); the `check_exhausted` below trips the rJoule hard limit once
+        // cumulative spend exceeds `rjoule.cap` (a USD budget). Only LLM inference
+        // (`select` steps) is charged here — MCP `execute` steps that hit paid
+        // external APIs are NOT yet charged rJoule through the executor (TODO:
+        // per-MCP-server gates like `hkask-mcp-media`'s `MediaBudget`, or a
+        // `cost_usd` field on the MCP tool response envelope).
+        if let Some(cost) = cost_usd {
+            budget.charge_rjoule(cost);
+        }
+
         // Gas tracking — deduct one iteration of compute
         budget.charge_iteration();
 
@@ -2784,5 +2787,94 @@ convergence:
             Some("write")
         );
         assert_eq!(extract_feedback_phase("skill-x/unknown-step"), None);
+    }
+
+    /// rJoule (USD) wiring (#3): `execute_select` must charge the inference
+    /// call's `cost_usd` to the rJoule budget (1 rJoule = $1 USD). The
+    /// InferencePort populates `cost_usd` from token usage × the model's
+    /// per-token price; the executor passes it to `BudgetTracker::charge_rjoule`.
+    /// This pins the core wiring that makes `rjoule.cap` a live USD budget.
+    #[tokio::test]
+    async fn execute_select_charges_rjoule_from_cost_usd() {
+        // Stub InferencePort returning a result with a known USD cost.
+        struct PricedInference;
+        impl InferencePort for PricedInference {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[ChatToolDefinition]>,
+            ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+            {
+                Box::pin(async {
+                    Ok(InferenceResult {
+                        text: "{}".to_string(), // valid JSON so parse_json_response succeeds
+                        model: "testpriced".to_string(),
+                        usage: hkask_types::InferenceUsage {
+                            prompt_tokens: 1_000_000,
+                            completion_tokens: 0,
+                            total_tokens: 1_000_000,
+                        },
+                        finish_reason: "stop".to_string(),
+                        token_probabilities: None,
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: Some(0.50), // $0.50 → 0.50 rJoule
+                    })
+                })
+            }
+        }
+
+        let executor = ManifestExecutor::new(
+            Arc::new(PricedInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+
+        let step = BundleManifestStep {
+            ordinal: 1,
+            action: "select".to_string(),
+            description: "priced inference call".to_string(),
+            renderer: None,
+            template_ref: Some("{{data}}".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 30,
+            input_mapping: None,
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        use crate::budget::BudgetTracker;
+        use crate::bundle::config::{BundleGasConfig, RjouleConfig};
+        let gas = BundleGasConfig {
+            cap: u32::MAX,
+            cost_per_iteration: 0,
+            alert_threshold: 1.0,
+            hard_limit: false,
+        };
+        let rjoule = RjouleConfig {
+            cap: 1, // $1 budget (1 rJoule = $1 USD)
+            alert_threshold: 0.8,
+            hard_limit: true,
+        };
+        let mut budget = BudgetTracker::new(&gas, &rjoule);
+
+        let _result = executor
+            .execute_select(&step, HashMap::new(), &mut budget)
+            .await
+            .expect("select with priced inference should succeed");
+
+        let snap = budget.snapshot();
+        assert!(
+            (snap.rjoule_used - 0.50).abs() < 1e-9,
+            "execute_select must charge cost_usd ($0.50) to the rJoule budget, got {} rJoule",
+            snap.rjoule_used
+        );
     }
 }

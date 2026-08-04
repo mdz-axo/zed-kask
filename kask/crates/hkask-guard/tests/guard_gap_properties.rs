@@ -27,6 +27,7 @@ fn make_result(text: String, reasoning: Option<String>) -> InferenceResult {
         token_probabilities: None,
         tool_calls: vec![],
         reasoning,
+        cost_usd: None,
     }
 }
 

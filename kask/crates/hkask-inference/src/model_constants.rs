@@ -30,7 +30,7 @@ pub const DEFAULT_EMBEDDING_MODEL: &str = "DeepInfra/Qwen/Qwen3-Embedding-0.6B";
 pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 
 /// Fallback model when no other model is configured.
-/// Prefixed with `KiloCode/` so it routes to KiloCode (which hosts this exact id).
+/// Prefixed with `OpenRouter/` so it routes to OpenRouter (which hosts this exact id).
 /// Matches `InferenceConfig::from_env()` default.
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 

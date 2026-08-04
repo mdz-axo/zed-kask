@@ -3,9 +3,9 @@
 //! with transport controls, video via FFmpeg → `RenderImage` → `img()`).
 
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    ImageSource, InteractiveElement, IntoElement, ObjectFit, ParentElement, RenderImage,
-    SharedString, Styled, StyledImage, Subscription, Task, Window, div, img, px,
+    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
+    InteractiveElement, IntoElement, ObjectFit, ParentElement, RenderImage, SharedString, Styled,
+    StyledImage, Subscription, Task, Window, div, img, px,
 };
 use smallvec::SmallVec;
 use theme::ActiveTheme;
@@ -492,25 +492,4 @@ impl gpui::Render for MediaWidget {
             .min_h(px(80.0))
             .child(main_content)
     }
-}
-
-/// Render a `MediaRef` as a GPUI `AnyElement` — the entry point called from the
-/// D18 seam (`media_block_renderer`). Uses `PathMediaStorage` for resolution.
-pub fn render_media_ref(reference: MediaRef, cx: &mut App) -> AnyElement {
-    render_media_ref_with_storage(reference, Arc::new(PathMediaStorage), cx)
-}
-
-/// Render a `MediaRef` with a custom `MediaStorage` — allows gallery-backed
-/// resolution (`GalleryMediaStorage`) when a gallery store is available.
-pub fn render_media_ref_with_storage(
-    reference: MediaRef,
-    storage: Arc<dyn MediaStorage>,
-    cx: &mut App,
-) -> AnyElement {
-    let entity = cx.new(|cx| {
-        let mut widget = MediaWidget::with_storage(reference, storage, cx);
-        widget.load(cx);
-        widget
-    });
-    div().size_full().child(entity).into_any_element()
 }
