@@ -21,7 +21,7 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 ///
 /// To make granular edits to an existing file, prefer the `edit_file` tool instead.
 ///
-/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location
+/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location. If the parent directory does not exist, create it first with the `create_directory` tool (which creates parent directories recursively) before calling this tool.
 ///
 /// The only supported path outside the project is the global skills directory or a descendant, for global agent skills.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

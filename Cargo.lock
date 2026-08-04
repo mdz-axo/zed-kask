@@ -9193,6 +9193,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-kanban-widget"
+version = "0.31.1"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
+]
+
+[[package]]
 name = "hkask-keystore"
 version = "0.31.1"
 dependencies = [

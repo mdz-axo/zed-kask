@@ -1,0 +1,22 @@
+[package]
+name = "hkask-kanban-widget"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUI kanban widget rendering ```kanban fenced blocks inline in agent markdown"
+
+[lib]
+path = "src/hkask_kanban_widget.rs"
+doctest = false
+
+[dependencies]
+gpui.workspace = true
+theme.workspace = true
+anyhow.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+
+[lints]
+workspace = true
