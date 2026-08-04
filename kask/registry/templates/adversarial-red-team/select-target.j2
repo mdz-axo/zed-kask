@@ -59,7 +59,7 @@ target the layer's weakness.
 1. Input filtering (scan_input — BanSubstrings, Deobfuscate, RoleOverride, TokenLimit)
 2. Data/instruction separation (Spotlighter — Delimit/Datamark/Encode modes)
 3. Instruction hierarchy (System P10 > User P20 > Tool P30)
-4. Capability gating (ed25519 DelegationToken per tool call)
+4. Capability gating (in-process DelegationToken (resource, resource_id, action) match at McpRuntime::invoke + per-agent mcp_tools allowlist (no signature verification — per .rules OCAP rule))
 5. Information flow control (ToolTaint: Source→Sink blocked without Endorser)
 6. Runtime monitoring (RuntimePolicy: Allow/Block/RequireHuman/Log)
 7. Output filtering (scan_output — Secrets redaction + CanaryToken check)

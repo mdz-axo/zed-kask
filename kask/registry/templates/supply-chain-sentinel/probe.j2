@@ -100,6 +100,7 @@ CONSTRAINTS (same as report — P5 minimalism, P8 evidence integrity, P12 host):
 - Registry (`manifest.yaml` + `.j2`) authoritative.
 
 CONVERGENCE INDEPENDENT: Convergence-check is a separate phase; this
-probe phase does not compute metric (that is `convergence-check.j2`
-responsibility). This maintains pipeline decomposition (P5 minimalism —
-each phase answers one 5W1H dimension clearly).
+probe phase does not compute metric (that is the `compute` step's
+responsibility (`compute_ref: kata.convergence_check`)). This maintains
+pipeline decomposition (P5 minimalism — each phase answers one 5W1H
+dimension clearly).

@@ -79,7 +79,7 @@ unpinned versions, missing lockfile tracking).
 
 1. Discover dependency surfaces in workspace root: `Cargo.toml`,
    `Cargo.lock`, `package-lock.json`, `go.sum`, `deny.toml`,
-   `go.mod`, `go.sum`, `requirements.txt`.
+   `go.mod`, `requirements.txt`.
 2. If zero manifest files found, return empty `manifest_paths` (do NOT
    invent files) and recommend `surface: cargo` or `surface: deny` based
    on workspace evidence (`.rs` source presence, `rust-toolchain`).

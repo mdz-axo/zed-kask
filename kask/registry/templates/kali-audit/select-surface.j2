@@ -43,11 +43,21 @@ You are a security auditor selecting the audit surface for **{{ target_surface }
 
 If `target_surface` is "auto", discover surfaces by scanning the codebase:
 - `crates/hkask-*/src/` → code surface (one per crate)
+- `kask/crates/kask_bridge/` → code surface (kask bridge — does not match `crates/hkask-*` glob)
+- `crates/hkask-*-widget/` → code surface (widget crates)
+- `crates/hkask-viz-core/` → code surface (visualization core)
+- `crates/kask_extensions_ui/` → code surface (marketplace UI)
+- `crates/swarm_panel/` → code surface (swarm panel)
+- `crates/marketplace_ui_common/` → code surface (shared marketplace chrome)
 - `registry/templates/*/` → template surface
 - `mcp-servers/hkask-mcp-*/` → mcp surface
 - `deny.toml` + `Cargo.lock` → supply-chain surface
 - `scripts/*.sh` + `.github/workflows/*.yml` → config surface
 - `crates/hkask-guard/` → llm-io surface
+
+D-seam boundary: files outside `kask/` and outside the D1–D14 seams track
+upstream Zed — do not audit them as kask code. See `DIVERGENCE.md` for the
+full divergence surface.
 
 If `target_surface` is specified, use it directly.
 

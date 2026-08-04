@@ -131,6 +131,7 @@ NO SYNTHETIC DATA: `evidence_snippet` must be verifiable by reading the
 cited `manifest_path`. `dependency` and `version_spec` must exist in that
 file. `line` must reference an actual line number.
 CONVERGENCE INDEPENDENT: Convergence-check is a separate phase; this
-report phase does not compute metric (that is `convergence-check.j2`
-responsibility). This maintains pipeline decomposition (P5 minimalism — each
-phase answers one 5W1H dimension clearly
+report phase does not compute metric (that is the `compute` step's
+responsibility (`compute_ref: kata.convergence_check`)). This maintains
+pipeline decomposition (P5 minimalism — each phase answers one 5W1H
+dimension clearly

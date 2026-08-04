@@ -9113,7 +9113,7 @@ version = "0.31.2"
 dependencies = [
  "criterion",
  "hkask-bridge-dublincore",
- "hkask-mcp-server",
+ "hkask-types",
  "proptest",
  "schemars 1.2.2",
  "serde",
@@ -9745,6 +9745,7 @@ dependencies = [
  "hex",
  "proptest",
  "rusqlite",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "sha2 0.10.9",

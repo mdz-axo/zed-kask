@@ -1,11 +1,11 @@
 //! hKask Condenser — Domain types
 //!
 //! Domain types for the condenser; shares the schema-correct `AnyJsonValue`
-//! type from `hkask_mcp_server` so request structs render as provider-safe
-//! JSON Schema. Error types use `String` for `FromStr` impls; MCP servers
-//! wrap these at the boundary.
+//! type from `hkask_types` so request structs render as provider-safe JSON
+//! Schema. Error types use `String` for `FromStr` impls; MCP servers wrap
+//! these at the boundary.
 
-use hkask_mcp_server::AnyJsonValue;
+use hkask_types::AnyJsonValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -388,7 +388,7 @@ pub struct ThreadSummaryOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hkask_mcp_server::find_boolean_schema_positions;
+    use hkask_types::find_boolean_schema_positions;
     use schemars::schema_for;
 
     /// `messages` is typed `Vec<AnyJsonValue>` so its schema is the empty
