@@ -1,0 +1,19 @@
+id: RR-0046
+title: "Kask settings defaults encoded in serde attributes instead of Default impls (drift class)"
+surface: config
+cwe: CWE-1188
+owasp_llm_2025: N/A
+atlas_tactic: N/A
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/kask_bridge/src/settings.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-04
+severity: medium
+detection:
+  kind: grep
+  pattern: '#\[serde\(default = "'
+  include: "kask/crates/kask_bridge/src/settings.rs"
+mitigation: "The settings system deserializes SettingsContent, not KaskSettings, so #[serde(default = \"...\")] attributes on KaskSettings never fire. Encode defaults in the Default impl (the single source of truth) and use unwrap_or(default.field) in From<Content>. The drift class (serde says true, Default says false, mcp_env says 1024) silently disabled all 10 kask MCP servers when users omitted kask.mcp. See .rules: Kask settings defaults must live in Default impls."
+source: ".rules: Kask settings defaults must live in Default impls"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

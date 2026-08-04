@@ -1,0 +1,19 @@
+id: RR-0043
+title: "background_spawn of tokio-dependent futures panics at poll time (no tokio reactor on GPUI worker)"
+surface: code
+cwe: CWE-440
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/kask_bridge/src/
+discovered_by: kali-audit
+discovered_at: 2026-08-04
+severity: high
+detection:
+  kind: grep
+  pattern: 'background_spawn'
+  include: "kask/crates/ kask/mcp-servers/"
+mitigation: "cx.background_spawn schedules on GPUI's thread-pool executor, which has no tokio reactor. Any future driving reqwest, tokio::time, tokio::process, or tokio::io panics with 'there is no reactor running'. Use gpui_tokio::Tokio::spawn(&*cx, async move { ... }) instead. The let _guard = Tokio::handle_async(&*cx).enter() pattern does NOT help — enter() sets a thread-local for the current scope, but the future is polled later on a different thread. See .rules: background_spawn of tokio-dependent futures panics at poll time."
+source: ".rules: background_spawn of tokio-dependent futures panics at poll time"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

@@ -393,18 +393,25 @@ impl ContentGuard {
 fn redact_spans(text: &str, matches: &[llm_guard::Match<'_>]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0usize;
-    for m in matches {
-        if m.scanner != "secrets" {
-            continue;
-        }
+
+    // Collect and sort secret matches by span.start. Multi-pattern scanners
+    // (e.g. llm-guard's Secrets) emit matches in pattern-id order, then
+    // position — not sorted by span.start. Without sorting, a later-registered
+    // pattern matching at an earlier position is skipped (start < cursor),
+    // leaking the secret verbatim into the sanitized output.
+    let mut secret_matches: Vec<&llm_guard::Match<'_>> =
+        matches.iter().filter(|m| m.scanner == "secrets").collect();
+    secret_matches.sort_by_key(|m| m.span.start);
+
+    for m in secret_matches {
         let start = m.span.start.min(text.len());
         let end = m.span.end.min(text.len());
         if start < cursor || end < start {
-            // Overlapping or out-of-order span — skip to avoid corruption.
+            // Overlapping span — skip to avoid corruption.
             tracing::warn!(
                 target: "hkask.guard.redact",
                 start, end, cursor,
-                "skipping overlapping or out-of-order span during redaction"
+                "skipping overlapping span during redaction"
             );
             continue;
         }
@@ -606,5 +613,36 @@ mod tests {
             sanitized.contains("[REDACTED-CANARY]"),
             "sanitized output should contain the redaction marker"
         );
+    }
+
+    /// BH-F1: secrets from different scanner patterns must all be redacted
+    /// even when they appear out of pattern-id order. Multi-pattern scanners
+    /// emit matches in pattern-id order, then position — a later-registered
+    /// pattern matching at an earlier position would be skipped without sorting,
+    /// leaking the secret verbatim into the sanitized output.
+    #[test]
+    fn out_of_order_secrets_all_redacted() {
+        // AWS access key (AKIA + 16 chars) appears BEFORE the OpenAI key.
+        // If the OpenAI pattern is registered before the AWS pattern in
+        // llm-guard, the matches come in pattern-id order: OpenAI (later
+        // position), then AWS (earlier position). Without sorting by
+        // span.start, the AWS key is skipped (start < cursor) and leaks.
+        let text = "AKIAIOSFODNN7EXAMPLE and then sk-proj-abc123XYZ456_-defGHI789jkl";
+        let result = test_guard().scan_output(text);
+        if !result.passed {
+            match &result.output {
+                GuardOutput::Sanitized(s) => {
+                    assert!(
+                        !s.contains("AKIAIOSFODNN7EXAMPLE"),
+                        "AWS key leaked in sanitized output: {s}"
+                    );
+                    assert!(
+                        !s.contains("sk-proj-abc123XYZ456_-defGHI789jkl"),
+                        "OpenAI key leaked in sanitized output: {s}"
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 }

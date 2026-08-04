@@ -1,0 +1,19 @@
+id: RR-0044
+title: "MCP tool error classification uses blanket McpToolError::internal instead of per-variant mapping"
+surface: mcp
+cwe: CWE-440
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: kask/mcp-servers/hkask-mcp-corpus/src/services/convert.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-04
+severity: medium
+detection:
+  kind: grep
+  pattern: 'McpToolError::internal\(format!'
+  include: "kask/mcp-servers/"
+mitigation: "Inline McpToolError::internal(format!(\"...: {e}\")) over every variant of a domain error mis-classifies NotFound/PermissionDenied/auth variants as Internal. Use a map_<domain>_error(e) -> McpToolError fn that classifies per variant. See map_media_error (hkask-mcp-media/src/error.rs), map_kanban_error (hkask-mcp-kata-kanban), and tools/error_mapping.rs (hkask-mcp-training) for the clean pattern. See .rules: MCP tool error classification — classify per variant, not blanket internal."
+source: ".rules: MCP tool error classification — classify per variant, not blanket internal"
+ci_gate: scripts/check-kali-regressions.sh
+status: pending

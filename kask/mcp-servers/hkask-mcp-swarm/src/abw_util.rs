@@ -89,7 +89,14 @@ pub fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
     // `_` separator + the full millis suffix and truncate the base.
     let max_base = 64usize.saturating_sub(suffix.len() + 1);
     let base = if base.len() > max_base {
-        &base[..max_base]
+        // Truncate on a char boundary — base may contain multi-byte UTF-8
+        // (local_swarms::create uses char::is_alphanumeric which admits
+        // CJK/accented chars). A byte slice mid-codepoint would panic.
+        let mut end = max_base;
+        while !base.is_char_boundary(end) {
+            end -= 1;
+        }
+        &base[..end]
     } else {
         base
     };

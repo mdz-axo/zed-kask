@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), forbid(unsafe_code))]
+#![warn(clippy::let_underscore_future)]
 //! kask_bridge — the sole bidirectional seam between hKask and zed-kask (D8).
 //!
 //! hKask crates define port traits in `hkask-types` (`InferencePort`,
@@ -6,8 +8,6 @@
 //!
 //! Governing invariant: hKask crates NEVER depend on zed crates; zed-kask
 //! depends on hKask. This bridge is the only crate that depends on both sides.
-#![cfg_attr(not(test), forbid(unsafe_code))]
-#![warn(clippy::let_underscore_future)]
 
 mod condenser_bridge;
 mod context_injector;

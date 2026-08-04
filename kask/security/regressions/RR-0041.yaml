@@ -1,0 +1,19 @@
+id: RR-0041
+title: "OcapConfig struct or required_capabilities re-introduction (dead config, no enforcement point)"
+surface: code
+cwe: CWE-1188
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0008
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-capability/src/token_types.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-04
+severity: medium
+detection:
+  kind: grep
+  pattern: 'OcapConfig|required_capabilities|template_capabilities|CapabilityAwareValidator'
+  include: "kask/crates/ kask/mcp-servers/"
+mitigation: "OcapConfig, required_capabilities, template_capabilities (SQL table), and CapabilityAwareValidator were removed as dead code. CapabilityAwareValidator had zero production call sites and expected flat strings while manifests wrote objects. The real OCAP gate is McpRuntime::invoke + per-agent mcp_tools allowlist. Do not re-add these without wiring them into the runtime gate. See .rules: Manifest ocap: is declared config, not a security gate."
+source: ".rules: Manifest ocap: is declared config, not a security gate"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

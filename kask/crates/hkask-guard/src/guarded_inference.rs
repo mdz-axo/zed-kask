@@ -27,6 +27,13 @@ use hkask_types::{
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// Cap on `GuardedStream` output accumulation. The input side is bounded by a
+/// 32K `TokenLimit` scanner; the output side needs an equivalent bound so a
+/// runaway stream cannot grow memory without limit. 256KB is generous for
+/// normal completions (the largest thinking-mode traces stay well under this)
+/// while preventing unbounded growth from a misbehaving provider.
+const GUARD_ACCUMULATION_LIMIT: usize = 256 * 1024;
+
 /// A stream wrapper that buffers `text_delta` chunks, forwards them unchanged
 /// (preserving streaming latency for the common clean case), and on stream end
 /// runs `scan_output` on the full accumulated text.
@@ -114,7 +121,22 @@ impl<'a> Stream for GuardedStream<'a> {
             std::task::Poll::Ready(Some(Ok(chunk))) => {
                 this.accumulated.push_str(&chunk.text_delta);
                 this.accumulated_reasoning.push_str(&chunk.reasoning_delta);
-                std::task::Poll::Ready(Some(Ok(chunk)))
+                // Bound output accumulation. Without this a runaway provider
+                // stream grows memory without limit — the input side is bounded
+                // by the 32K TokenLimit scanner, but the output side had no
+                // equivalent. Abort the stream once the combined accumulated
+                // text/reasoning exceeds the cap; mark `scanned` so further
+                // polls return `Ready(None)` without re-scanning.
+                if this.accumulated.len() + this.accumulated_reasoning.len()
+                    > GUARD_ACCUMULATION_LIMIT
+                {
+                    this.scanned = true;
+                    std::task::Poll::Ready(Some(Err(InferenceError::Generation(
+                        "output exceeded guard accumulation limit".to_string(),
+                    ))))
+                } else {
+                    std::task::Poll::Ready(Some(Ok(chunk)))
+                }
             }
             std::task::Poll::Ready(Some(Err(e))) => {
                 this.scanned = true;
@@ -419,9 +441,178 @@ impl InferencePort for GuardedInferencePort {
 
 #[cfg(test)]
 mod tests {
+    use super::GuardedStream;
     use super::guard_output;
     use crate::{ContentGuard, GuardConfig};
-    use hkask_types::{InferenceResult, InferenceUsage};
+    use futures_util::stream::iter as stream_iter;
+    use futures_util::{Stream, StreamExt};
+    use hkask_types::{InferenceResult, InferenceStreamChunk, InferenceUsage};
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+
+    /// Build a `GuardedStream` wrapping a synthetic chunk stream.
+    ///
+    /// `GuardedStream` is a private struct, so the streaming-path tests must
+    /// live in this module (which already has access to private items) rather
+    /// than in an integration test.
+    fn guarded_stream_from_chunks(
+        chunks: Vec<InferenceStreamChunk>,
+        guard: std::sync::Arc<ContentGuard>,
+    ) -> GuardedStream<'static> {
+        let inner: Pin<
+            Box<
+                dyn Stream<Item = Result<InferenceStreamChunk, hkask_types::InferenceError>> + Send,
+            >,
+        > = Box::pin(stream_iter(
+            chunks.into_iter().map(Ok::<_, hkask_types::InferenceError>),
+        ));
+        GuardedStream {
+            inner,
+            guard,
+            accumulated: String::new(),
+            accumulated_reasoning: String::new(),
+            scanned: false,
+        }
+    }
+
+    fn chunk(text: &str, reasoning: &str) -> InferenceStreamChunk {
+        InferenceStreamChunk {
+            text_delta: text.to_string(),
+            reasoning_delta: reasoning.to_string(),
+            model: String::new(),
+            finish_reason: None,
+            usage: None,
+            tool_calls: vec![],
+        }
+    }
+
+    /// A no-op waker for manually polling `GuardedStream` in synchronous tests.
+    fn noop_cx() -> Context<'static> {
+        Context::from_waker(futures_util::task::noop_waker())
+    }
+
+    /// Clean chunks pass through unchanged and the stream ends cleanly with
+    /// no redaction chunk. After the inner stream is exhausted, polling once
+    /// more returns `Ready(None)` (the guard found nothing to redact).
+    #[test]
+    fn guarded_stream_clean_passes_through() {
+        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let chunks = vec![
+            chunk("hello ", ""),
+            chunk("world", ""),
+            chunk("", "thinking step"),
+        ];
+        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+
+        let collected: Vec<_> = stream.by_ref().collect::<Vec<_>>();
+
+        // All non-redaction chunks pass through as Ok; none carry a
+        // `finish_reason: "redacted"`.
+        assert_eq!(collected.len(), 3, "all three clean chunks pass through");
+        for item in &collected {
+            let chunk = item.as_ref().expect("clean chunk should be Ok");
+            assert_ne!(
+                chunk.finish_reason.as_deref(),
+                Some("redacted"),
+                "clean stream must not emit a redaction chunk"
+            );
+        }
+        assert_eq!(collected[0].as_ref().unwrap().text_delta, "hello ");
+        assert_eq!(collected[1].as_ref().unwrap().text_delta, "world");
+        assert_eq!(
+            collected[2].as_ref().unwrap().reasoning_delta,
+            "thinking step"
+        );
+    }
+
+    /// A secret (canary) in `text_delta` triggers a redaction chunk with
+    /// `finish_reason: "redacted"` once the inner stream ends.
+    #[test]
+    fn guarded_stream_secret_in_text_emits_redaction() {
+        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let canary = guard.canary().as_str().to_string();
+        let chunks = vec![chunk("here is the secret: ", ""), chunk(&canary, "")];
+        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+
+        let collected: Vec<_> = stream.collect();
+
+        // Two source chunks plus one redaction chunk.
+        assert_eq!(
+            collected.len(),
+            3,
+            "expected 2 source chunks + 1 redaction chunk"
+        );
+        let redaction = collected[2].as_ref().expect("redaction chunk should be Ok");
+        assert_eq!(
+            redaction.finish_reason.as_deref(),
+            Some("redacted"),
+            "redaction chunk must carry finish_reason=redacted"
+        );
+        // The redaction chunk must not re-emit the leaked canary verbatim.
+        assert!(
+            !redaction.text_delta.contains(&canary),
+            "redaction chunk re-emitted the canary verbatim"
+        );
+    }
+
+    /// A secret in `reasoning_delta` is redacted via the reasoning channel.
+    #[test]
+    fn guarded_stream_secret_in_reasoning_emits_redaction() {
+        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let canary = guard.canary().as_str().to_string();
+        let chunks = vec![
+            chunk("clean answer", ""),
+            chunk("", &format!("thinking... {canary} ...done")),
+        ];
+        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+
+        let collected: Vec<_> = stream.collect();
+
+        assert_eq!(
+            collected.len(),
+            3,
+            "expected 2 source chunks + 1 redaction chunk"
+        );
+        let redaction = collected[2].as_ref().expect("redaction chunk should be Ok");
+        assert_eq!(
+            redaction.finish_reason.as_deref(),
+            Some("redacted"),
+            "reasoning-secret redaction must carry finish_reason=redacted"
+        );
+        assert!(
+            !redaction.reasoning_delta.contains(&canary),
+            "redaction chunk re-emitted the canary in reasoning verbatim"
+        );
+    }
+
+    /// After the stream ends (and `scanned` is set), subsequent polls return
+    /// `Ready(None)` without re-scanning. This pins the `scanned` guard against
+    /// re-entrancy on the redaction path.
+    #[test]
+    fn guarded_stream_double_poll_after_end_returns_none() {
+        let guard = std::sync::Arc::new(ContentGuard::mandatory(&GuardConfig::default()));
+        let chunks = vec![chunk("clean", "")];
+        let mut stream = guarded_stream_from_chunks(chunks, Arc::clone(&guard));
+
+        // Drain the stream fully.
+        let _ = stream.by_ref().collect::<Vec<_>>();
+
+        // Pin the stream and poll manually; the inner stream is exhausted and
+        // `scanned` is set, so this must return `Ready(None)` without invoking
+        // the guard again.
+        let mut cx = noop_cx();
+        let mut pinned = std::pin::pin!(stream);
+        let poll1 = pinned.as_mut().poll_next(&mut cx);
+        assert!(
+            matches!(poll1, Poll::Ready(None)),
+            "post-end poll returned {poll1:?}"
+        );
+        let poll2 = pinned.as_mut().poll_next(&mut cx);
+        assert!(
+            matches!(poll2, Poll::Ready(None)),
+            "second post-end poll returned {poll2:?}"
+        );
+    }
 
     fn make_result(text: String, reasoning: Option<String>) -> InferenceResult {
         InferenceResult {

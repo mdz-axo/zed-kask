@@ -48,7 +48,7 @@ use settings::Settings as _;
 use settings::SettingsStore;
 use ui::{
     ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
-    ToggleButtonSimple, WithScrollbar, prelude::*,
+    ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -651,6 +651,10 @@ pub struct SwarmPanel {
     /// The swarm roster drill-down (item 4). `Some` renders the detail view
     /// instead of the browse list.
     swarm_detail: Option<SwarmDetailView>,
+    /// Single-line editor for the swarm-detail "add agent" affordance. Reads
+    /// the agent id to add to the open swarm's roster. Only read when the
+    /// detail view is open and the operator clicks Add.
+    swarm_add_agent_editor: Entity<Editor>,
     /// The most recently requested swarm run status (item 3), rendered as a
     /// dismissible strip. `None` = no status shown.
     run_status: Option<RunStatusView>,
@@ -737,6 +741,15 @@ struct SwarmRosterAgent {
 struct SwarmDetailView {
     workspace_id: String,
     name: String,
+    /// The swarm's mission / description. Displayed read-only in the detail
+    /// header — there is no MCP tool to rename a swarm or change its mission,
+    /// so the panel surfaces it as context rather than an editable field.
+    mission: String,
+    /// Which substrate this swarm lives on. Drives the add/remove affordances:
+    /// `Local` uses `swarm_add_agent_local` / `swarm_remove_agent_local` /
+    /// `swarm_delete_local_swarm`; `Cloud` uses the consent-gated `swarm_hire`
+    /// and `swarm_fire`.
+    source: AgentSource,
     loading: bool,
     error: Option<SharedString>,
     agents: Vec<SwarmRosterAgent>,
@@ -844,6 +857,11 @@ impl SwarmPanel {
                 xaman_suggested_agents: Vec::new(),
                 xaman_busy: false,
             };
+            let swarm_add_agent_editor = cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("Agent id to add to this swarm", window, cx);
+                e
+            });
 
             let mut this = Self {
                 workspace: workspace_handle,
@@ -868,6 +886,7 @@ impl SwarmPanel {
                 selected_workspace: None,
                 spend_in_flight: None,
                 swarm_detail: None,
+                swarm_add_agent_editor,
                 run_status: None,
                 mode: PanelMode::Browse,
                 author,
@@ -1325,19 +1344,31 @@ impl SwarmPanel {
         .detach();
     }
 
-    /// Open the roster drill-down for a swarm (item 4): fetch
-    /// `swarm_get_swarm(workspace_id)` and render the hired agents. The
-    /// roster response is ABW's raw (server-sanitized) payload; parse
-    /// defensively across the plausible envelope shapes.
-    fn open_swarm_detail(&mut self, workspace_id: String, name: String, cx: &mut Context<Self>) {
+    /// Open the roster drill-down for a swarm (item 4). The fetch is
+    /// mode-aware: `Local` swarms are read via `swarm_get_local_swarm`
+    /// (members are agent ids; agent_type/description are not carried by the
+    /// local swarm record, so the roster rows show the id only), while `Cloud`
+    /// swarms are read via `swarm_get_swarm` (ABW's server-sanitized roster
+    /// payload, parsed defensively across plausible envelope shapes).
+    fn open_swarm_detail(
+        &mut self,
+        workspace_id: String,
+        name: String,
+        source: AgentSource,
+        mission: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
             return;
         };
+        let is_local = source == AgentSource::Local;
         self.swarm_detail = Some(SwarmDetailView {
             workspace_id: workspace_id.clone(),
             name,
+            mission,
+            source,
             loading: true,
             error: None,
             agents: Vec::new(),
@@ -1346,13 +1377,23 @@ impl SwarmPanel {
         cx.spawn({
             let invoker = invoker.clone();
             async move |this, cx| {
-                let result = invoker
-                    .invoke_tool(
-                        SWARM_SERVER,
-                        "swarm_get_swarm",
-                        json!({ "workspace_id": workspace_id }),
-                    )
-                    .await;
+                let result = if is_local {
+                    invoker
+                        .invoke_tool(
+                            SWARM_SERVER,
+                            "swarm_get_local_swarm",
+                            json!({ "swarm_id": workspace_id }),
+                        )
+                        .await
+                } else {
+                    invoker
+                        .invoke_tool(
+                            SWARM_SERVER,
+                            "swarm_get_swarm",
+                            json!({ "workspace_id": workspace_id }),
+                        )
+                        .await
+                };
                 this.update(cx, |this, cx| {
                     let Some(detail) = this.swarm_detail.as_mut() else {
                         return;
@@ -1360,7 +1401,25 @@ impl SwarmPanel {
                     detail.loading = false;
                     match result {
                         Ok(output) => {
-                            match parse_tool_response(&output).and_then(parse_swarm_roster) {
+                            let parsed = parse_tool_response(&output);
+                            let agents = if is_local {
+                                parsed.and_then(|c| {
+                                    c.get("members").and_then(|m| m.as_array()).map(|members| {
+                                        members
+                                            .iter()
+                                            .filter_map(|m| m.as_str().map(str::to_string))
+                                            .map(|agent_id| SwarmRosterAgent {
+                                                agent_id,
+                                                agent_type: String::new(),
+                                                description: String::new(),
+                                            })
+                                            .collect()
+                                    })
+                                })
+                            } else {
+                                parsed.and_then(parse_swarm_roster)
+                            };
+                            match agents {
                                 Some(agents) => detail.agents = agents,
                                 None => {
                                     detail.error =
@@ -1520,12 +1579,156 @@ impl SwarmPanel {
                                 this.open_swarm_detail(
                                     detail.workspace_id.clone(),
                                     detail.name,
+                                    detail.source,
+                                    detail.mission,
                                     cx,
                                 );
                             }
                         }
                         Err(err) => {
                             this.hire_error = Some(format!("Failed to fire agent: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Add a local agent to the open local swarm's roster (item 4 local
+    /// management). Calls `swarm_add_agent_local` — idempotent, no cost, no
+    /// consent. On success, re-opens the detail so the new member appears.
+    fn add_agent_to_swarm(&mut self, swarm_id: String, agent_name: String, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("add-{agent_name}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_add_agent_local",
+                        json!({ "swarm_id": swarm_id, "agent_name": agent_name }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            if let Some(detail) = this.swarm_detail.clone() {
+                                this.open_swarm_detail(
+                                    detail.workspace_id.clone(),
+                                    detail.name,
+                                    detail.source,
+                                    detail.mission,
+                                    cx,
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            this.hire_error =
+                                Some(format!("Failed to add agent to swarm: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Remove a local agent from the open local swarm's roster (item 4 local
+    /// management). Calls `swarm_remove_agent_local` — idempotent, does not
+    /// delete the agent card. On success, re-opens the detail.
+    fn remove_agent_from_swarm(
+        &mut self,
+        swarm_id: String,
+        agent_name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("roster-remove-{agent_name}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_remove_agent_local",
+                        json!({ "swarm_id": swarm_id, "agent_name": agent_name }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            if let Some(detail) = this.swarm_detail.clone() {
+                                this.open_swarm_detail(
+                                    detail.workspace_id.clone(),
+                                    detail.name,
+                                    detail.source,
+                                    detail.mission,
+                                    cx,
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            this.hire_error =
+                                Some(format!("Failed to remove agent from swarm: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Permanently delete a local swarm (item 4 local management). Calls
+    /// `swarm_delete_local_swarm` — the roster is dropped; member agents are
+    /// NOT deleted. On success, closes the detail and re-fetches the swarm
+    /// list so the deleted swarm disappears.
+    fn delete_local_swarm(&mut self, swarm_id: String, cx: &mut Context<Self>) {
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.hire_error = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.spend_in_flight = Some(format!("delete-swarm-{swarm_id}"));
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_delete_local_swarm",
+                        json!({ "swarm_id": swarm_id }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.spend_in_flight = None;
+                    match result {
+                        Ok(_) => {
+                            this.close_swarm_detail(cx);
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.hire_error = Some(format!("Failed to delete swarm: {err}").into());
                         }
                     }
                     cx.notify();
@@ -1732,6 +1935,18 @@ impl SwarmPanel {
                         log::info!("swarm-panel: hired '{agent_name}' into {workspace_id}");
                         // Refresh so the new hire appears in the swarm roster.
                         this.fetch_all(cx);
+                        // If the roster drill-down is open for this workspace,
+                        // re-open it so the new member appears immediately
+                        // (fetch_all refreshes the card list, not the detail).
+                        if let Some(detail) = this.swarm_detail.clone() {
+                            this.open_swarm_detail(
+                                detail.workspace_id.clone(),
+                                detail.name,
+                                detail.source,
+                                detail.mission,
+                                cx,
+                            );
+                        }
                     }
                     Err(err) => {
                         this.hire_error = Some(format!("Hire failed: {err}").into());
@@ -2020,7 +2235,10 @@ impl SwarmPanel {
         self.steer_conversation = Some(conversation_view);
     }
 
-    /// Create a new agent from the authoring form.
+    /// Create a new agent from the authoring form. Mode-aware: in Local mode
+    /// the agent is created on the local substrate via `swarm_create_local_agent`
+    /// (field `agent_id`, no cost, no consent); in ABW mode it is created in the
+    /// ABW catalogue via `swarm_create_agent` (field `agent_name`).
     fn create_agent(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.author.status = Some("Tool invoker not wired.".into());
@@ -2036,23 +2254,39 @@ impl SwarmPanel {
             return;
         }
         let agent_type = self.author.agent_type.clone();
+        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
         self.author.busy = true;
         self.author.status = None;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let result = invoker
-                .invoke_tool(
-                    SWARM_SERVER,
-                    "swarm_create_agent",
-                    json!({
-                        "agent_name": name.trim(),
-                        "agent_type": agent_type,
-                        "system_prompt": system_prompt.trim(),
-                        "description": description.trim(),
-                    }),
-                )
-                .await;
+            let result = if is_local {
+                invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_create_local_agent",
+                        json!({
+                            "agent_id": name.trim(),
+                            "agent_type": agent_type,
+                            "system_prompt": system_prompt.trim(),
+                            "description": description.trim(),
+                        }),
+                    )
+                    .await
+            } else {
+                invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_create_agent",
+                        json!({
+                            "agent_name": name.trim(),
+                            "agent_type": agent_type,
+                            "system_prompt": system_prompt.trim(),
+                            "description": description.trim(),
+                        }),
+                    )
+                    .await
+            };
             this.update(cx, |this, cx| {
                 this.author.busy = false;
                 match result {
@@ -2076,7 +2310,10 @@ impl SwarmPanel {
         .detach();
     }
 
-    /// Create a new swarm from the compose form, hiring any listed agents.
+    /// Create a new swarm from the compose form. Mode-aware: in Local mode the
+    /// swarm is created on the local substrate via `swarm_create_local_swarm`
+    /// (no cost, no consent — members are agent ids); in ABW mode the existing
+    /// consent-gated `swarm_create_swarm` path is used, hiring any listed agents.
     fn create_swarm(&mut self, cx: &mut Context<Self>) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.compose.status = Some("Tool invoker not wired.".into());
@@ -2096,12 +2333,45 @@ impl SwarmPanel {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
 
         self.compose.busy = true;
         self.compose.status = None;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
+            // Local mode: create the swarm on the local substrate directly — no
+            // cost, no consent tokens. Members are agent ids (the local swarm
+            // roster is ids; resolution happens at delegation time).
+            if is_local {
+                let result = invoker
+                    .invoke_tool(
+                        SWARM_SERVER,
+                        "swarm_create_local_swarm",
+                        json!({
+                            "name": name.trim(),
+                            "mission": mission.trim(),
+                            "agents": agents,
+                        }),
+                    )
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.compose.busy = false;
+                    match result {
+                        Ok(_) => {
+                            this.compose.status =
+                                Some(format!("Local swarm '{}' created.", name.trim()).into());
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.compose.status = Some(format!("Create failed: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
             // Mint a consent token per agent to hire (each hire is gated).
             // Fetch the real hire cost per agent first (BH-02): a hardcoded
             // `credits_authorized: 5` would under-authorize an agent that
@@ -2528,13 +2798,34 @@ impl SwarmPanel {
             })
     }
 
-    /// The swarm roster drill-down (item 4): the hired agents of the
-    /// selected workspace, replacing the browse list while open.
+    /// The swarm roster drill-down (item 4): the members of the selected
+    /// swarm, replacing the browse list while open. This is the swarm
+    /// configuration surface — the operator can add agents to the roster,
+    /// remove them, and (for local swarms) delete the swarm. Name and mission
+    /// are shown read-only (there is no MCP tool to rename a swarm or change
+    /// its mission). The add/remove affordances are mode-aware: local swarms
+    /// use `swarm_add_agent_local` / `swarm_remove_agent_local` (no cost);
+    /// ABW swarms use the consent-gated `swarm_hire` (via `begin_hire`) and
+    /// `swarm_fire`.
     fn render_swarm_detail(
         &self,
         detail: &SwarmDetailView,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let border = cx.theme().colors().border;
+        let is_local = detail.source == AgentSource::Local;
+        let source_badge = detail.source.badge();
+        let source_label = detail.source.label();
+        let add_label = if is_local { "Add" } else { "Hire…" };
+        let remove_label = if is_local { "Remove" } else { "Fire" };
+        let add_tooltip = if is_local {
+            "Adds the named local agent id to this swarm's roster. \
+             Idempotent, no cost. The agent need not exist in the registry yet."
+        } else {
+            "Hires the named ABW agent into this workspace. Pre-flighted for \
+             cost and consent-gated — the consent banner appears before any \
+             credits are spent."
+        };
         v_flex()
             .w_full()
             .gap_2()
@@ -2546,6 +2837,7 @@ impl SwarmPanel {
                         Button::new("back-to-swarms", "← Back")
                             .style(ButtonStyle::Subtle)
                             .label_size(LabelSize::XSmall)
+                            .tooltip(Tooltip::text("Back to the swarm list."))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.close_swarm_detail(cx);
                             })),
@@ -2553,12 +2845,81 @@ impl SwarmPanel {
                     .child(
                         Headline::new(format!("{} — roster", detail.name))
                             .size(HeadlineSize::Small),
+                    )
+                    .child(
+                        Label::new(format!("{} {}", source_badge, source_label))
+                            .color(Color::Accent)
+                            .size(LabelSize::XSmall),
                     ),
             )
             .child(
-                Label::new(format!("workspace {}", detail.workspace_id))
+                Label::new(format!("id: {}", detail.workspace_id))
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),
+            )
+            .when(!detail.mission.is_empty(), |this| {
+                this.child(
+                    Label::new(format!("mission: {}", detail.mission))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+            })
+            // Add-agent affordance: an input + button. Mode-aware dispatch.
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .id("swarm-detail-add-agent")
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .tooltip(Tooltip::text(if is_local {
+                                "Local agent id to add to this swarm's roster."
+                            } else {
+                                "ABW agent name to hire into this workspace."
+                            }))
+                            .child(self.swarm_add_agent_editor.clone()),
+                    )
+                    .child(
+                        Button::new(
+                            SharedString::from(format!("add-agent-{}", detail.workspace_id)),
+                            add_label,
+                        )
+                        .style(ButtonStyle::Filled)
+                        .label_size(LabelSize::XSmall)
+                        .disabled(self.spend_in_flight.is_some())
+                        .tooltip(Tooltip::text(add_tooltip))
+                        .on_click(cx.listener({
+                            let workspace_id = detail.workspace_id.clone();
+                            move |this, _, window, cx| {
+                                let agent_name = this
+                                    .swarm_add_agent_editor
+                                    .read(cx)
+                                    .text(cx)
+                                    .trim()
+                                    .to_string();
+                                if agent_name.is_empty() {
+                                    return;
+                                }
+                                if is_local {
+                                    this.add_agent_to_swarm(workspace_id.clone(), agent_name, cx);
+                                } else {
+                                    // ABW: target the open workspace and
+                                    // route through the consent-gated hire
+                                    // flow. `confirm_hire` re-opens this
+                                    // detail on success.
+                                    this.selected_workspace = Some(workspace_id.clone());
+                                    this.begin_hire(agent_name, cx);
+                                }
+                                // Clear the input whether the add/hire
+                                // succeeded or is awaiting consent.
+                                this.swarm_add_agent_editor
+                                    .update(cx, |editor, cx| editor.clear(window, cx));
+                            }
+                        })),
+                    ),
             )
             .when(detail.loading, |this| {
                 this.child(
@@ -2574,24 +2935,50 @@ impl SwarmPanel {
                 this.child(v_flex().gap_1().children(detail.agents.iter().map(|a| {
                     let row_agent_id = a.agent_id.clone();
                     let row_workspace = detail.workspace_id.clone();
+                    let row_remove_label = remove_label;
+                    let row_is_local = is_local;
                     h_flex()
                         .gap_2()
                         .child(Label::new(a.agent_id.clone()).color(Color::Default))
-                        .child(Label::new(a.agent_type.clone()).color(Color::Accent))
+                        .when(!a.agent_type.is_empty(), |this| {
+                            this.child(Label::new(a.agent_type.clone()).color(Color::Accent))
+                        })
                         .child(div().flex_1())
-                        .child(Label::new(a.description.clone()).color(Color::Muted))
+                        .when(!a.description.is_empty(), |this| {
+                            this.child(Label::new(a.description.clone()).color(Color::Muted))
+                        })
                         .child(
-                            Button::new(SharedString::from(format!("fire-{row_agent_id}")), "Fire")
-                                .style(ButtonStyle::Subtle)
-                                .label_size(LabelSize::XSmall)
-                                .disabled(self.spend_in_flight.is_some())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.fire_agent(
-                                        row_workspace.clone(),
-                                        row_agent_id.clone(),
-                                        cx,
-                                    );
-                                })),
+                            Button::new(
+                                SharedString::from(format!("roster-remove-{row_agent_id}")),
+                                row_remove_label,
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .disabled(self.spend_in_flight.is_some())
+                            .tooltip(Tooltip::text(if row_is_local {
+                                "Removes this agent from the swarm's roster. \
+                                 Idempotent. The agent card is not deleted."
+                            } else {
+                                "Fires this agent from the ABW workspace. \
+                                 No credit cost; the agent itself is not deleted."
+                            }))
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    if row_is_local {
+                                        this.remove_agent_from_swarm(
+                                            row_workspace.clone(),
+                                            row_agent_id.clone(),
+                                            cx,
+                                        );
+                                    } else {
+                                        this.fire_agent(
+                                            row_workspace.clone(),
+                                            row_agent_id.clone(),
+                                            cx,
+                                        );
+                                    }
+                                },
+                            )),
                         )
                 })))
             })
@@ -2599,12 +2986,38 @@ impl SwarmPanel {
                 detail.agents.is_empty() && !detail.loading && detail.error.is_none(),
                 |this| {
                     this.child(
-                        Label::new("No agents in this swarm.")
+                        Label::new("No agents in this swarm. Add one above.")
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
                 },
             )
+            // Local swarms can be deleted from the panel (ABW swarm deletion
+            // stays on the swarm card / server surface to avoid an accidental
+            // irreversible delete from the detail view).
+            .when(is_local, |this| {
+                this.child(
+                    h_flex().gap_2().child(div().flex_1()).child(
+                        Button::new(
+                            SharedString::from(format!("delete-swarm-{}", detail.workspace_id)),
+                            "Delete Swarm",
+                        )
+                        .style(ButtonStyle::Subtle)
+                        .label_size(LabelSize::XSmall)
+                        .disabled(self.spend_in_flight.is_some())
+                        .tooltip(Tooltip::text(
+                            "Permanently deletes this local swarm and its \
+                                 roster. Member agent cards are NOT deleted.",
+                        ))
+                        .on_click(cx.listener({
+                            let swarm_id = detail.workspace_id.clone();
+                            move |this, _, _, cx| {
+                                this.delete_local_swarm(swarm_id.clone(), cx);
+                            }
+                        })),
+                    ),
+                )
+            })
     }
 
     /// Compute a freshness chip for a cloud agent from its `updated_at`
@@ -2768,6 +3181,10 @@ impl SwarmPanel {
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
                                     .disabled(self.spend_in_flight.is_some())
+                                    .tooltip(Tooltip::text(
+                                        "Hire this agent into the selected swarm. \
+                                         Pre-flighted for cost and consent-gated.",
+                                    ))
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
                                             this.begin_hire(hire_name.clone(), cx);
@@ -2783,6 +3200,10 @@ impl SwarmPanel {
                                         .style(ButtonStyle::Subtle)
                                         .label_size(LabelSize::XSmall)
                                         .disabled(self.spend_in_flight.is_some())
+                                        .tooltip(Tooltip::text(
+                                            "Copies this ABW agent to the local registry \
+                                             (agents/local/curated) and marks it synced.",
+                                        ))
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.clone_to_local(clone_name.clone(), cx);
@@ -2799,6 +3220,10 @@ impl SwarmPanel {
                                         .style(ButtonStyle::Subtle)
                                         .label_size(LabelSize::XSmall)
                                         .disabled(self.spend_in_flight.is_some())
+                                        .tooltip(Tooltip::text(
+                                            "Publishes this local agent to the ABW catalogue \
+                                             and links it via cloud_id (becomes synced).",
+                                        ))
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.push_to_cloud(push_name.clone(), cx);
@@ -2815,6 +3240,11 @@ impl SwarmPanel {
                                         .style(ButtonStyle::Subtle)
                                         .label_size(LabelSize::XSmall)
                                         .disabled(self.spend_in_flight.is_some())
+                                        .tooltip(Tooltip::text(
+                                            "Runs publish preflight checks, then publishes \
+                                             the agent to the ABW catalogue. An admin \
+                                             force-publish path is available if checks fail.",
+                                        ))
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.begin_publish(publish_name.clone(), cx);
@@ -2831,6 +3261,10 @@ impl SwarmPanel {
                                         .style(ButtonStyle::Subtle)
                                         .label_size(LabelSize::XSmall)
                                         .disabled(self.spend_in_flight.is_some())
+                                        .tooltip(Tooltip::text(
+                                            "Deletes this local-only agent card. A synced \
+                                             card's ABW agent is untouched.",
+                                        ))
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.remove_local_agent(remove_name.clone(), cx);
@@ -2844,11 +3278,15 @@ impl SwarmPanel {
             SwarmEntry::Swarm(swarm) => {
                 let swarm_id = swarm.id.clone();
                 let swarm_name = swarm.name.clone();
+                let swarm_source = swarm.source.clone();
+                let swarm_mission = swarm.description.clone();
                 let source_badge = swarm.source.badge();
                 let source_label = swarm.source.label();
                 // Each button closure gets its own clone (moved-in closures).
                 let detail_id = swarm_id.clone();
                 let detail_name = swarm_name.clone();
+                let detail_source = swarm_source;
+                let detail_mission = swarm_mission;
                 let runs_id = swarm_id.clone();
                 let runs_name = swarm_name;
                 MarketplaceCard::new().child(
@@ -2913,11 +3351,17 @@ impl SwarmPanel {
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
+                                    .tooltip(Tooltip::text(
+                                        "Open this swarm's roster and configuration view \
+                                         — add/remove agents, view mission.",
+                                    ))
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
                                             this.open_swarm_detail(
                                                 detail_id.clone(),
                                                 detail_name.clone(),
+                                                detail_source.clone(),
+                                                detail_mission.clone(),
                                                 cx,
                                             );
                                         },
@@ -2932,6 +3376,10 @@ impl SwarmPanel {
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
+                                    .tooltip(Tooltip::text(
+                                        "Show recent run activity (workspace messages) \
+                                         for this swarm.",
+                                    ))
                                     .on_click(cx.listener(
                                         move |this, _, _, cx| {
                                             this.show_run_status(
@@ -2952,9 +3400,19 @@ impl SwarmPanel {
         marketplace_search_bar(&self.query_editor, false, cx)
     }
 
-    /// The agent-authoring surface: name, description, system prompt, create.
+    /// The agent-authoring surface: name, agent type, description, system
+    /// prompt, create. Every field carries a tooltip so the operator always
+    /// has a nudge for what to enter and which backend it targets.
     fn render_author(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
+        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let create_label = if self.author.busy {
+            "Creating…"
+        } else if is_local {
+            "Create Local Agent"
+        } else {
+            "Create Agent"
+        };
         v_flex()
             .w_full()
             .gap_3()
@@ -2970,10 +3428,73 @@ impl SwarmPanel {
                     )
                     .child(
                         div()
+                            .id("author-name")
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "Agent identifier (lowercase_with_underscores). Becomes the \
+                                 system id used to hire, delegate, and reference the agent.",
+                            ))
                             .child(self.author.name.clone()),
+                    ),
+            )
+            // Agent type selector — previously the type was hardcoded to
+            // "research" with no UI control, so the operator could never
+            // choose it. Wired to `self.author.agent_type`.
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Agent type")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id("author-agent-type-group")
+                            .tooltip(Tooltip::text(
+                                "The agent's role category. Drives how the catalogue \
+                                 groups the agent and which delegation filters match it.",
+                            ))
+                            .child(
+                                ToggleButtonGroup::single_row(
+                                    "author-agent-type",
+                                    [
+                                        ToggleButtonSimple::new(
+                                            "research",
+                                            cx.listener(|this, _event, _, cx| {
+                                                this.author.agent_type = "research".to_string();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                        ToggleButtonSimple::new(
+                                            "creative",
+                                            cx.listener(|this, _event, _, cx| {
+                                                this.author.agent_type = "creative".to_string();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                        ToggleButtonSimple::new(
+                                            "meta",
+                                            cx.listener(|this, _event, _, cx| {
+                                                this.author.agent_type = "meta".to_string();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ],
+                                )
+                                .style(ToggleButtonGroupStyle::Outlined)
+                                .size(ToggleButtonGroupSize::Custom(rems_from_px(28.)))
+                                .label_size(LabelSize::Small)
+                                .auto_width()
+                                .selected_index(match self.author.agent_type.as_str() {
+                                    "creative" => 1,
+                                    "meta" => 2,
+                                    _ => 0,
+                                })
+                                .into_any_element(),
+                            ),
                     ),
             )
             .child(
@@ -2986,9 +3507,14 @@ impl SwarmPanel {
                     )
                     .child(
                         div()
+                            .id("author-description")
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "One-sentence summary shown on the agent card in the \
+                                 browse list. Optional but recommended for discovery.",
+                            ))
                             .child(self.author.description.clone()),
                     ),
             )
@@ -3002,9 +3528,15 @@ impl SwarmPanel {
                     )
                     .child(
                         div()
+                            .id("author-system-prompt")
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "The agent's instructions — what it should do, how \
+                                 it should behave, and any constraints. Multiple lines \
+                                 supported. Required.",
+                            ))
                             .child(self.author.system_prompt.clone()),
                     ),
             )
@@ -3013,19 +3545,19 @@ impl SwarmPanel {
                     .gap_2()
                     .items_center()
                     .child(
-                        Button::new(
-                            "create-agent",
-                            if self.author.busy {
-                                "Creating…"
+                        Button::new("create-agent", create_label)
+                            .style(ButtonStyle::Filled)
+                            .disabled(self.author.busy)
+                            .tooltip(Tooltip::text(if is_local {
+                                "Creates the agent on the local substrate \
+                                 (agents/local/curated). No cost, no consent."
                             } else {
-                                "Create Agent"
-                            },
-                        )
-                        .style(ButtonStyle::Filled)
-                        .disabled(self.author.busy)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.create_agent(cx);
-                        })),
+                                "Creates the agent in the ABW catalogue. \
+                                 The catalogue may apply its own validation."
+                            }))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.create_agent(cx);
+                            })),
                     )
                     .when_some(self.author.status.clone(), |this, status| {
                         this.child(
@@ -3037,9 +3569,24 @@ impl SwarmPanel {
             )
     }
 
-    /// The swarm-composition surface: name, mission, agents, create.
+    /// The swarm-composition surface: name, mission, agents, create. Each
+    /// field carries a tooltip; the create button label reflects the active
+    /// backend (Local vs ABW) and its tooltip explains the cost/consent model.
     fn render_compose(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
+        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let create_label = if self.compose.busy {
+            "Creating…"
+        } else if is_local {
+            "Create Local Swarm"
+        } else {
+            "Create Swarm"
+        };
+        let create_tooltip: &str = if is_local {
+            "Creates the swarm on the local substrate (agents/local/swarms). No cost, no consent."
+        } else {
+            "Creates the ABW workspace and hires the listed agents. Each hire is pre-flighted for cost and consent-gated; the swarm is not created if any consent fails."
+        };
         v_flex()
             .w_full()
             .gap_3()
@@ -3055,9 +3602,14 @@ impl SwarmPanel {
                     )
                     .child(
                         div()
+                            .id("compose-name")
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "Swarm (workspace) name. Required. A path-safe id is \
+                                 derived from this name on the local substrate.",
+                            ))
                             .child(self.compose.name.clone()),
                     ),
             )
@@ -3071,9 +3623,14 @@ impl SwarmPanel {
                     )
                     .child(
                         div()
+                            .id("compose-mission")
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "Mission / description for the swarm. Optional. Shown \
+                                 on the swarm card and in the detail header.",
+                            ))
                             .child(self.compose.mission.clone()),
                     ),
             )
@@ -3081,15 +3638,30 @@ impl SwarmPanel {
                 v_flex()
                     .gap_1()
                     .child(
-                        Label::new("Agents to hire (comma-separated)")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
+                        Label::new(if is_local {
+                            "Agents to add (comma-separated)"
+                        } else {
+                            "Agents to hire (comma-separated)"
+                        })
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
                     )
                     .child(
                         div()
+                            .id("compose-agents")
                             .border_1()
                             .border_color(border)
                             .rounded_sm()
+                            .tooltip(Tooltip::text(if is_local {
+                                "Local agent ids to seed the roster with, \
+                                 comma-separated. Optional. The agents need not exist \
+                                 in the registry yet (the roster is ids; resolution \
+                                 happens at delegation time)."
+                            } else {
+                                "ABW agent names to hire into the new swarm, \
+                                 comma-separated. Optional. Each hire is consent-gated \
+                                 and pre-flighted for cost before the swarm is created."
+                            }))
                             .child(self.compose.agents.clone()),
                     ),
             )
@@ -3124,9 +3696,15 @@ impl SwarmPanel {
                             .child(
                                 div()
                                     .flex_1()
+                                    .id("compose-xaman-query")
                                     .border_1()
                                     .border_color(border)
                                     .rounded_sm()
+                                    .tooltip(Tooltip::text(
+                                        "Ask the Xaman Ek curator to recommend a team \
+                                         for your task. The session continues across \
+                                         messages so you can refine the plan.",
+                                    ))
                                     .child(self.compose.xaman_query.clone()),
                             )
                             .child(
@@ -3141,6 +3719,10 @@ impl SwarmPanel {
                                 .style(ButtonStyle::Subtle)
                                 .label_size(LabelSize::XSmall)
                                 .disabled(self.compose.xaman_busy)
+                                .tooltip(Tooltip::text(
+                                    "Sends the question to Xaman Ek (consent-gated \
+                                     curator call; costs no credits).",
+                                ))
                                 .on_click(cx.listener(
                                     |this, _, _, cx| {
                                         this.ask_xaman(cx);
@@ -3184,19 +3766,13 @@ impl SwarmPanel {
                     .gap_2()
                     .items_center()
                     .child(
-                        Button::new(
-                            "create-swarm",
-                            if self.compose.busy {
-                                "Creating…"
-                            } else {
-                                "Create Swarm"
-                            },
-                        )
-                        .style(ButtonStyle::Filled)
-                        .disabled(self.compose.busy)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.create_swarm(cx);
-                        })),
+                        Button::new("create-swarm", create_label)
+                            .style(ButtonStyle::Filled)
+                            .disabled(self.compose.busy)
+                            .tooltip(Tooltip::text(create_tooltip))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.create_swarm(cx);
+                            })),
                     )
                     .when_some(self.compose.status.clone(), |this, status| {
                         this.child(
