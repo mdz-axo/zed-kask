@@ -54,6 +54,19 @@ pub fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolError {
     }
 }
 
+/// Classify a `std::io::Error` from a tool-level filesystem operation.
+///
+/// A missing file is `not_found` and a permission failure is
+/// `permission_denied`; other I/O kinds stay `internal`.
+pub fn map_fs_error(context: &str, e: std::io::Error) -> McpToolError {
+    let message = format!("{context}: {e}");
+    match e.kind() {
+        std::io::ErrorKind::NotFound => McpToolError::not_found(message),
+        std::io::ErrorKind::PermissionDenied => McpToolError::permission_denied(message),
+        _ => McpToolError::internal(message),
+    }
+}
+
 /// Classify a `DatasetError` into the MCP wire-level `McpToolError` kind.
 ///
 /// `Io`/`Cache` are infrastructure failures (internal); `UnsupportedFormat` /

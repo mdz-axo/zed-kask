@@ -97,3 +97,20 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         | MediaError::FaceRegistration(_) => McpToolError::internal(e.to_string()),
     }
 }
+
+/// Classify an `image::open` failure on a caller-referenced path.
+///
+/// A missing file is `not_found` and a permission failure is
+/// `permission_denied` (caller/environment errors); other I/O kinds and
+/// opaque decode failures stay `internal`.
+pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> McpToolError {
+    let message = format!("Failed to open {}: {}", path.display(), e);
+    match e {
+        image::ImageError::IoError(io) => match io.kind() {
+            std::io::ErrorKind::NotFound => McpToolError::not_found(message),
+            std::io::ErrorKind::PermissionDenied => McpToolError::permission_denied(message),
+            _ => McpToolError::internal(message),
+        },
+        _ => McpToolError::internal(message),
+    }
+}

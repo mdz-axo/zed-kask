@@ -256,7 +256,7 @@ pub fn provision_agent(username: &str) -> Result<ProvisionedAgent, ProvisionErro
         resolve_or_create_passphrase()?
     };
 
-    tracing::info!("Agent provisioned: name={agent_name}, db={db_path}, webid={webid:?}");
+    tracing::info!(name = agent_name, db = db_path, webid = %webid.redacted_display(), "Agent provisioned");
 
     Ok(ProvisionedAgent {
         db_path,

@@ -9197,7 +9197,6 @@ version = "0.31.2"
 dependencies = [
  "anyhow",
  "gpui",
- "log",
  "serde",
  "serde_json",
  "theme",
@@ -9619,7 +9618,6 @@ version = "0.31.2"
 dependencies = [
  "anyhow",
  "gpui",
- "log",
  "serde",
  "serde_json",
  "ui",
@@ -9650,7 +9648,6 @@ version = "0.31.2"
 dependencies = [
  "anyhow",
  "gpui",
- "log",
  "serde",
  "serde_json",
  "theme",

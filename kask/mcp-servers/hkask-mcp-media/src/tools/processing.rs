@@ -193,10 +193,7 @@ impl MediaServer {
 
             let mut images = Vec::new();
             for path in &paths {
-                images.push(
-                    image::open(path)
-                        .map_err(|e| McpToolError::internal(format!("Failed to open {}: {}", path.display(), e)))?,
-                );
+                images.push(image::open(path).map_err(|e| map_image_open_error(path, e))?);
             }
 
             if images.is_empty() {
@@ -720,8 +717,7 @@ impl MediaServer {
                 .resolve_image_path(image_index)
                 .map_err(map_media_error)?;
 
-            let mut img =
-                image::open(&image_path).map_err(|e| McpToolError::internal(format!("Failed to open image: {}", e)))?;
+            let mut img = image::open(&image_path).map_err(|e| map_image_open_error(&image_path, e))?;
 
             let font = load_meme_font(font_path.as_deref()).map_err(|e| {
                 McpToolError::unavailable(format!(
