@@ -227,9 +227,9 @@ templates, the registry wins.
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   `hkask-templates/src/compute.rs`)
-- MCP tool surface (47 tools — both sets always registered in either mode;
+- MCP tool surface (50 tools — both sets always registered in either mode;
   `kask.swarm.mode` selects the substrate, not the surface; pinned by
-  `tool_surface_is_exactly_47_registered_tools`):
+  `tool_surface_is_exactly_50_registered_tools`):
   - **ABW tools (27)**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
     `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
     `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
@@ -239,7 +239,7 @@ templates, the registry wins.
     `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
     `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
     `swarm_publish_agent`, `swarm_fork_agent`.
-  - **Local tools (20)**: `swarm_fund_local`, `swarm_balance_local`,
+  - **Local tools (23)**: `swarm_fund_local`, `swarm_balance_local`,
     `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
     `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
     `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
@@ -248,7 +248,11 @@ templates, the registry wins.
     `swarm_create_local_swarm`, `swarm_list_local_swarms`,
     `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`,
     `swarm_remove_agent_local` (local-swarm lifecycle — local mode has explicit
-    named swarms/rosters, not just an ephemeral session).
+    named swarms/rosters, not just an ephemeral session),
+    `swarm_search_knowledge_local`, `swarm_generate_prompt_local`,
+    `swarm_generate_ontology_local` (local knowledge analogs — search/generate
+    over the operator's `hkask-memory` + local inference; no ABW; see
+    [Local Knowledge Tools design](../../../kask/docs/plans/local-swarm-knowledge-tools.md)).
 - Spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
   `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
   `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,

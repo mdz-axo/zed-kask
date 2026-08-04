@@ -187,7 +187,7 @@ move_types:
     local: "`swarm_reconfigure_local_agent` (preserves id/type/deps, reloads registry) — Cybernetic Swarm Plan C6"
   - move: author_agent
     abw: "`swarm_generate_prompt` (optional seed) + `swarm_generate_ontology` (optional) + `swarm_create_agent`, then a dependent `hire`"
-    local: "`swarm_create_local_agent` with the cascade-authored `system_prompt` (no ABW generation endpoint)"
+    local: "`swarm_search_knowledge_local` (optional seed retrieval from the agent's `hkask-memory`) + `swarm_generate_prompt_local` (optional prompt seed over the local `InferencePort`) + `swarm_create_local_agent` with the authored/seeded `system_prompt`; `swarm_generate_ontology_local` for a seed ontology when the agent needs a knowledge graph. No ABW generation endpoint — the cascade authors or the local generate tools seed."
     note: "agent creation + authoring as a first-class move (audit 2026-08-03): the cascade authors a new agent for an uncovered transform when no catalogue agent covers it. Permanent deletion is separate: `swarm_delete_agent` / `swarm_delete_swarm`."
 
 invariants:

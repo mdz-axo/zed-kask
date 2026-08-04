@@ -1,5 +1,5 @@
 ---
-title: "Swarm Systems — Reference: The 47-Tool Surface and Components"
+title: "Swarm Systems — Reference: The 50-Tool Surface and Components"
 audience: [developers, operators]
 last_updated: 2026-08-03
 version: "0.1.0"
@@ -8,16 +8,16 @@ domain: "Swarm"
 mds_categories: [domain]
 ---
 
-# Swarm Systems — Reference: The 47-Tool Surface and Components
+# Swarm Systems — Reference: The 50-Tool Surface and Components
 
 A reference for the `hkask-mcp-swarm` tool surface, the panel components, and
-the two skills. The surface is pinned by `tool_surface_is_exactly_47_registered_tools`
-(`hkask_mcp_swarm.rs:3003`) — 27 ABW + 20 local, both sets always registered
+the two skills. The surface is pinned by `tool_surface_is_exactly_50_registered_tools`
+(`hkask_mcp_swarm.rs:3355`) — 27 ABW + 23 local, both sets always registered
 in either mode; `kask.swarm.mode` selects the substrate, not the surface. See
 the [class diagram](../../diagrams/class-swarm-server.md) for the type
 relationships.
 
-## Tool surface (47)
+## Tool surface (50)
 
 ### ABW tools (27) — cloud, `mode: abw`
 
@@ -51,7 +51,7 @@ relationships.
 | `swarm_publish_agent` | catalogue publish (admin force-publish path) | — |
 | `swarm_fork_agent` | derivative fork | — |
 
-### Local tools (20) — `mode: local`, zed-kask substrate
+### Local tools (23) — `mode: local`, zed-kask substrate
 
 | Tool | Purpose | Gate |
 |------|---------|------|
@@ -75,16 +75,89 @@ relationships.
 | `swarm_delete_local_swarm` | delete a named local swarm | — |
 | `swarm_add_agent_local` | add an agent to a local swarm | — |
 | `swarm_remove_agent_local` | remove an agent from a local swarm | — |
+| `swarm_search_knowledge_local` | search the agent's prefix-scoped `hkask-memory` (EAV) | read |
+| `swarm_generate_prompt_local` | local-LLM system-prompt authoring aid (memory-seeded, guard-scanned) | read |
+| `swarm_generate_ontology_local` | local-LLM seed Mermaid ER from a domain / agent memory | read |
 
 Note: `swarm_pipeline_local` and the A2A pair are omitted from the Steer
 system prompt's curated tool list (audit Gap S2); they remain available via
 the governed tool surface.
 
+## Local Knowledge Tools — search & author over `hkask-memory`
+
+The three local knowledge tools are the kask-vernacular analogs of ABW's
+`swarm_search_knowledge` / `swarm_generate_prompt` / `swarm_generate_ontology`.
+Where ABW backs them with fermi's per-agent dreaming-memory KG + fermi's LLM
+generation, the local analogs back them with the **operator's own
+`hkask-memory`** and the **local `InferencePort`** (Ollama/cloud via the zed IPC
+bridge). They execute and resolve entirely on the kask substrate — no ABW
+round-trips, no fermi code. Design rationale: [Local Knowledge Tools design](../../plans/local-swarm-knowledge-tools.md).
+
+The unifying idea: **memory IS the knowledge graph.** A local agent's
+"knowledge graph" is its prefix-scoped slice (`agent:<agent_id>:`) of the
+operator's consolidated `SemanticMemory` (entity-attribute-value triples).
+Consolidation (`ConsolidationBridge`) already promotes episodic memories into
+semantic triples — the local KG is that consolidated memory.
+
+### Contracts
+
+```
+swarm_search_knowledge_local({agent_name, query, limit?}) -> {fragments[], source, agent_name, note}
+swarm_generate_prompt_local({description, agent_name, agent_type?}) -> {prompt, raw}
+swarm_generate_ontology_local({domain_description, agent_name?}) -> {ontology, raw}
+```
+
+- **`swarm_search_knowledge_local`** — searches the agent's prefix-scoped
+  semantic memory. The `query` is matched case-insensitively against each
+  triple's entity, attribute, and value (EAV retrieval — "memory as a graph").
+  Returns `fragments[]` of `{entity, attribute, value, confidence}`. This is
+  the EAV path; vector-KNN search is a future option (see the design doc).
+- **`swarm_generate_prompt_local`** — a local one-shot LLM generate that turns a
+  `description` into a system prompt, seeded with the agent's memory when
+  available. Output is guard-scanned (canary/secret). Returns `{prompt, raw}`
+  (matches the ABW `swarm_generate_prompt` envelope).
+- **`swarm_generate_ontology_local`** — a local one-shot LLM generate of a
+  Mermaid `erDiagram` for a domain, optionally seeded with an agent's
+  semantic-memory graph. Guard-scanned. Returns `{ontology, raw}`.
+
+The generate tools use the **already-resolved** `InferencePort` (via
+`LocalSwarmRuntime::inference()`), not a second inference path. Generated
+output is scanned by the same `ContentGuard` as the delegate loop.
+
+### Configuration & the default passphrase
+
+The semantic-memory store is SQLCipher-encrypted. The passphrase is read
+from `HKASK_SWARM_MEMORY_PASSPHRASE`; the **pre-release default is `"allostery"`**
+(the kask-wide default for any user-facing passphrase that isn't an internally
+generated key), so the tools work out of the box without operator config.
+Override the passphrase for a real secret; the DB path is
+`<hkask data dir>/swarm_memory.db` (override `HKASK_SWARM_MEMORY_DB`). The
+embedding-dim config (`HKASK_SWARM_EMBEDDING_DIM`, default 1024) is reserved
+for the future vector-KNN path; the EAV search does not depend on it.
+
+### Graceful degradation
+
+If the store cannot be opened (e.g., an existing DB was created under a
+different passphrase), `swarm_search_knowledge_local` returns
+`{fragments: [], note: "memory_unconfigured: ..."}` — never a panic, never a
+fabricated hit (the `.rules` `unwrap_or(0)` trap avoided). The generate tools
+proceed unseeded (memory is an enhancement, not a dependency) — they still
+produce a prompt/ontology via the local LLM, just without the memory seed.
+
+### Source
+
+| Symbol | Location |
+|--------|----------|
+| `LazyLocalMemory` / `search_agent_knowledge` / `one_shot_generate` | `local_knowledge.rs` |
+| `SwarmConfig.memory_passphrase` / `memory_db_path` / `embedding_dim` | `config.rs` |
+| `swarm_search_knowledge_local` / `swarm_generate_prompt_local` / `swarm_generate_ontology_local` | `hkask_mcp_swarm.rs` |
+| `SemanticMemory` (`search_similar`, `query_deduped`, `query_by_attribute`) | `kask/crates/hkask-memory/src/semantic.rs` |
+
 ## Server components
 
 | Component | Source | Role |
 |-----------|--------|------|
-| `SwarmServer` | `hkask_mcp_swarm.rs:115` | the rmcp server; `combined_router` (`:124`) registers all 47 tools |
+| `SwarmServer` | `hkask_mcp_swarm.rs:115` | the rmcp server; `combined_router` (`:124`) registers all 50 tools |
 | `AbwClient` | `abw_client.rs` | ABW REST; 200 body may carry upstream LLM error, 500 for domain failure (`SwarmError` inspects body) |
 | `ConsentStore` | `consent.rs:56` | real-time spend gate; `mint`/`consume`/`refund`; sqlite or memory; TTL `:77` enforced |
 | `SpendGate` | `spend_gate.rs` | `authorize_hire`/`complete_hire`, `authorize_delegate`, `authorize_curate`, session variants; ceiling refunds on refusal |

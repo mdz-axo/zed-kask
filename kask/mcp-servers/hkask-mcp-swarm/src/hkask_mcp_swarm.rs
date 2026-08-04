@@ -74,7 +74,7 @@ mod local_knowledge;
 mod local_registry;
 mod local_runtime;
 mod local_swarms;
-mod request_types;
+pub mod request_types;
 mod sanitize;
 mod spend_gate;
 
@@ -2977,9 +2977,10 @@ impl SwarmServer {
     /// ABW `swarm_search_knowledge`). Returns matching knowledge fragments
     /// (entity-attribute-value triples) from the operator's consolidated
     /// `hkask-memory`. No ABW calls. Degrades to an empty result with a
-    /// `memory_unconfigured` note when `HKASK_SWARM_MEMORY_PASSPHRASE` is unset.
+    /// `memory_unconfigured` note when the store cannot be opened (e.g., a
+    /// passphrase mismatch with an existing DB).
     #[tool(
-        description = "Search a local agent's prefix-scoped semantic memory (the local analog of ABW swarm_search_knowledge). Returns matching knowledge fragments (entity-attribute-value triples) from the operator's consolidated hkask-memory. No ABW calls. Degrades to an empty result with a memory_unconfigured note when HKASK_SWARM_MEMORY_PASSPHRASE is unset."
+        description = "Search a local agent's prefix-scoped semantic memory (the local analog of ABW swarm_search_knowledge). Returns matching knowledge fragments (entity-attribute-value triples) from the operator's consolidated hkask-memory. No ABW calls. Degrades to an empty result with a memory_unconfigured note when the store cannot be opened (e.g., a passphrase mismatch with an existing DB)."
     )]
     pub(crate) async fn swarm_search_knowledge_local(
         &self,
@@ -3066,7 +3067,9 @@ impl SwarmServer {
             let guard = runtime.guard();
             let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.4)
                 .await
-                .map_err(SwarmError::into_tool_error)?;
+                .map_err(|e| {
+                    McpToolError::internal(format!("local prompt generation failed: {e}"))
+                })?;
             Ok(serde_json::json!({
                 "prompt": text,
                 "raw": serde_json::json!({
@@ -3123,7 +3126,7 @@ impl SwarmServer {
             let guard = runtime.guard();
             let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.3)
                 .await
-                .map_err(SwarmError::into_tool_error)?;
+                .map_err(|e| McpToolError::internal(format!("local ontology generation failed: {e}")))?;
             Ok(serde_json::json!({
                 "ontology": text,
                 "raw": serde_json::json!({
@@ -3239,12 +3242,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             }
 
             // Local swarm semantic memory — backs `swarm_search_knowledge_local`
-            // (and seeds the generate tools). Lazily opened on first use; opens
-            // only when `HKASK_SWARM_MEMORY_PASSPHRASE` is set (>=8 chars). When
-            // unset, the search tool degrades to an empty result and the
-            // generate tools proceed unseeded (memory is an enhancement, not a
-            // dependency). Constructed here from config so it shares the
-            // resolved data-dir path.
+            // (and seeds the generate tools). Lazily opened on first use. The
+            // passphrase defaults to "allostery" (pre-release) so the tools work
+            // out of the box; override via `HKASK_SWARM_MEMORY_PASSPHRASE`. If the
+            // store cannot be opened (e.g., an existing DB was created under a
+            // different passphrase), the search tool degrades to an empty result
+            // and the generate tools proceed unseeded (memory is an enhancement,
+            // not a dependency).
             let local_memory = std::sync::Arc::new(local_knowledge::LazyLocalMemory::lazy(
                 config.memory_db_path.clone(),
                 config.memory_passphrase.clone(),

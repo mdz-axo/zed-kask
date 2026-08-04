@@ -12,7 +12,7 @@ use serde::Deserialize;
 // ── Request types ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ListAgentsRequest {
+pub struct ListAgentsRequest {
     /// Filter by agent type (e.g. "research", "creative", "meta"). Optional.
     pub agent_type: Option<String>,
     /// Filter by tag. Optional.
@@ -22,13 +22,13 @@ pub(crate) struct ListAgentsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetSwarmRequest {
+pub struct GetSwarmRequest {
     /// Workspace ID (UUID) or slug. Lists workspaces when omitted.
     pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ExecuteAgentRequest {
+pub struct ExecuteAgentRequest {
     /// Agent name (e.g. "market_analyst").
     pub agent_name: String,
     /// The query or task for the agent.
@@ -36,28 +36,28 @@ pub(crate) struct ExecuteAgentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetAgentRequest {
+pub struct GetAgentRequest {
     /// Agent name or id.
     pub agent_name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ListAppsRequest {
+pub struct ListAppsRequest {
     /// Max apps to return. Default 50.
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct OntologyTemplatesRequest {}
+pub struct OntologyTemplatesRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct HireCostRequest {
+pub struct HireCostRequest {
     /// Agent name (e.g. "social_media_studio").
     pub agent_name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct RequestConsentRequest {
+pub struct RequestConsentRequest {
     /// The action to authorize: "hire" or "delegate".
     pub action: String,
     /// The target: agent name (hire) or workspace id (delegate).
@@ -67,7 +67,7 @@ pub(crate) struct RequestConsentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct HireRequest {
+pub struct HireRequest {
     /// Workspace (swarm) id to hire into.
     pub workspace_id: String,
     /// Agent name to hire.
@@ -87,7 +87,7 @@ pub(crate) struct HireRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DelegateRequest {
+pub struct DelegateRequest {
     /// Workspace (swarm) id containing the agent.
     pub workspace_id: String,
     /// Agent name to delegate to (the @mention target).
@@ -107,7 +107,7 @@ pub(crate) struct DelegateRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SwarmRunRequest {
+pub struct SwarmRunRequest {
     /// Workspace (swarm) id to read the run status from.
     pub workspace_id: String,
     /// Max messages to return. Default 50.
@@ -117,7 +117,7 @@ pub(crate) struct SwarmRunRequest {
 // ── Authoring & composition ────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GeneratePromptRequest {
+pub struct GeneratePromptRequest {
     /// Natural-language description of what the agent should do.
     pub description: String,
     /// Agent name (lowercase_with_underscores).
@@ -127,13 +127,13 @@ pub(crate) struct GeneratePromptRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GenerateOntologyRequest {
+pub struct GenerateOntologyRequest {
     /// Natural-language description of the agent's knowledge domain.
     pub domain_description: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CreateAgentRequest {
+pub struct CreateAgentRequest {
     /// Agent name (lowercase_with_underscores) — becomes the system identifier.
     pub agent_name: String,
     /// Agent type (e.g. "research", "creative", "meta").
@@ -166,7 +166,7 @@ pub(crate) struct CreateAgentRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CreateSwarmRequest {
+pub struct CreateSwarmRequest {
     /// Workspace (swarm) name.
     pub name: String,
     /// Mission / description. Optional.
@@ -185,7 +185,7 @@ pub(crate) struct CreateSwarmRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct XamanRequest {
+pub struct XamanRequest {
     /// Message for Xaman Ek.
     pub message: String,
     /// Session type: "composition_design" (team planning), "workspace_help",
@@ -203,7 +203,7 @@ pub(crate) struct XamanRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CreateAppRequest {
+pub struct CreateAppRequest {
     /// The Xaman Ek session id to turn into an App.
     pub session_id: String,
 }
@@ -211,7 +211,7 @@ pub(crate) struct CreateAppRequest {
 // ── Local mode request types (v2 §15 Slice 9) ──────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FundLocalRequest {
+pub struct FundLocalRequest {
     /// Number of local credits to deposit into the operator's ledger
     /// account. Must be positive.
     pub credits: i64,
@@ -219,10 +219,10 @@ pub(crate) struct FundLocalRequest {
 
 /// Read-only balance query — no fields.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct BalanceLocalRequest {}
+pub struct BalanceLocalRequest {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DelegateLocalRequest {
+pub struct DelegateLocalRequest {
     /// The agent id to delegate to. Must exist in the local agent registry
     /// (`agents/local/curated/<id>/agent_card.json`).
     pub agent_name: String,
@@ -238,7 +238,7 @@ pub(crate) struct DelegateLocalRequest {
 // ── Local mode request types (v2 §15 Slice 11) ─────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ListLocalAgentsRequest {
+pub struct ListLocalAgentsRequest {
     /// Optional filter by agent_type. When empty, returns all local agents.
     #[serde(default)]
     pub agent_type: Option<String>,
@@ -248,7 +248,7 @@ pub(crate) struct ListLocalAgentsRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CloneToLocalRequest {
+pub struct CloneToLocalRequest {
     /// The ABW agent id to clone to the local registry. The server fetches
     /// the agent card from ABW, sets `min_provider_class: local`, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id`
@@ -257,7 +257,7 @@ pub(crate) struct CloneToLocalRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PushToCloudRequest {
+pub struct PushToCloudRequest {
     /// The local agent id to push to ABW. The server reads the local card,
     /// creates or updates the ABW agent via `swarm_create_agent`, and sets
     /// `cloud_id` on the local card to the ABW agent id.
@@ -266,14 +266,14 @@ pub(crate) struct PushToCloudRequest {
 
 /// Read-only local ledger history query.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct LocalHistoryRequest {
+pub struct LocalHistoryRequest {
     /// Max transactions to return (default 50, capped at 500).
     pub limit: Option<u32>,
 }
 
 /// Remove a local agent card.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct RemoveLocalRequest {
+pub struct RemoveLocalRequest {
     /// The local agent id to remove. The server deletes its card directory
     /// (`agents/local/curated/<id>/`) after path-safety checks. A synced
     /// card's ABW agent is NOT touched.
@@ -287,7 +287,7 @@ pub(crate) struct RemoveLocalRequest {
 /// consent token — local mode has no consent gate (the ledger balance is the
 /// gate for *execution*, but card creation is free).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CreateLocalAgentRequest {
+pub struct CreateLocalAgentRequest {
     pub agent_id: String,
     pub agent_type: String,
     pub description: String,
@@ -310,12 +310,12 @@ pub(crate) struct CreateLocalAgentRequest {
 /// concurrent debits would race the balance read). Capped at `MAX_FANOUT`.
 /// No consent token — local mode.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FanoutLocalRequest {
+pub struct FanoutLocalRequest {
     pub delegations: Vec<FanoutEntry>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FanoutEntry {
+pub struct FanoutEntry {
     pub agent_name: String,
     pub task: String,
     pub credits_authorized: u32,
@@ -331,7 +331,7 @@ pub(crate) struct FanoutEntry {
 /// token — local mode; re-prompting is generation (an LLM producing a new
 /// prompt), not judging, so it is admissible under the determinism constraint.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ReconfigureLocalAgentRequest {
+pub struct ReconfigureLocalAgentRequest {
     pub agent_name: String,
     pub system_prompt: String,
     #[serde(default)]
@@ -349,7 +349,7 @@ pub(crate) struct ReconfigureLocalAgentRequest {
 /// local ledger gates delegation, not roster edits). Optionally seed members.
 /// Returns the new swarm with its generated `swarm_id`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct CreateLocalSwarmRequest {
+pub struct CreateLocalSwarmRequest {
     /// Human-readable swarm name. A path-safe slug id is derived from this.
     pub name: String,
     /// Mission / description for the swarm.
@@ -366,11 +366,11 @@ pub(crate) struct CreateLocalSwarmRequest {
 /// List all local swarms. Each entry has `swarm_id`, `name`, `mission`,
 /// `members`, `created_at`.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ListLocalSwarmsRequest {}
+pub struct ListLocalSwarmsRequest {}
 
 /// Get a single local swarm by id, including its roster.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetLocalSwarmRequest {
+pub struct GetLocalSwarmRequest {
     /// The `swarm_id` returned by `swarm_create_local_swarm`.
     pub swarm_id: String,
 }
@@ -378,14 +378,14 @@ pub(crate) struct GetLocalSwarmRequest {
 /// Permanently delete a local swarm. The roster is dropped with the swarm;
 /// member agents are NOT touched (they stay in `LocalAgentRegistry`).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DeleteLocalSwarmRequest {
+pub struct DeleteLocalSwarmRequest {
     /// The `swarm_id` to delete.
     pub swarm_id: String,
 }
 
 /// Add a local agent to a local swarm's roster (idempotent).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct AddAgentToLocalSwarmRequest {
+pub struct AddAgentToLocalSwarmRequest {
     /// The swarm to add the agent to.
     pub swarm_id: String,
     /// The agent id (from `LocalAgentRegistry`) to add.
@@ -394,7 +394,7 @@ pub(crate) struct AddAgentToLocalSwarmRequest {
 
 /// Remove a local agent from a local swarm's roster (idempotent).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct RemoveAgentFromLocalSwarmRequest {
+pub struct RemoveAgentFromLocalSwarmRequest {
     /// The swarm to remove the agent from.
     pub swarm_id: String,
     /// The agent id to remove.
@@ -403,7 +403,7 @@ pub(crate) struct RemoveAgentFromLocalSwarmRequest {
 
 /// Fire (un-hire) an agent from an ABW workspace.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FireRequest {
+pub struct FireRequest {
     /// The workspace (swarm) id.
     pub workspace_id: String,
     /// The agent to fire — the roster's `agent_name` or `agent_id` (ABW
@@ -413,7 +413,7 @@ pub(crate) struct FireRequest {
 
 /// Permanently delete an ABW agent.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DeleteAgentRequest {
+pub struct DeleteAgentRequest {
     /// The agent to delete — the `agent_id` or `agent_name` from
     /// `swarm_list_agents` (for owned agents the catalogue carries a uuid in
     /// `agent_id` and the slug in `agent_name`; the tool resolves either).
@@ -422,7 +422,7 @@ pub(crate) struct DeleteAgentRequest {
 
 /// Permanently delete an ABW workspace (swarm).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DeleteSwarmRequest {
+pub struct DeleteSwarmRequest {
     /// The workspace (swarm) id to delete.
     pub workspace_id: String,
 }
@@ -435,7 +435,7 @@ pub(crate) struct DeleteSwarmRequest {
 /// not exist); v0.10.26 fixed it to OpenAI `text-embedding-3-large` @ 1024,
 /// matching the existing pgvector column. Requires API key.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SearchKnowledgeRequest {
+pub struct SearchKnowledgeRequest {
     /// Agent name (slug) or UUID.
     pub agent_name: String,
     /// Natural-language query to vector-search the agent's knowledge graph.
@@ -448,7 +448,7 @@ pub(crate) struct SearchKnowledgeRequest {
 /// `can_publish` and the list of failing checks (name/description/system_prompt/
 /// tags). Requires API key.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PublishChecksRequest {
+pub struct PublishChecksRequest {
     /// Agent name (slug) or UUID.
     pub agent_name: String,
 }
@@ -458,7 +458,7 @@ pub(crate) struct PublishChecksRequest {
 /// audited to `admin_bypass_events` (mig-164, wired in fermi v0.10.5/v0.10.15).
 /// Requires API key.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PublishAgentRequest {
+pub struct PublishAgentRequest {
     /// Agent name (slug) or UUID to publish.
     pub agent_name: String,
     /// Force-publish past failing checks (admin only). When `true`, `reason` is
@@ -477,7 +477,7 @@ pub(crate) struct PublishAgentRequest {
 /// a detailed 400 — those need an admin rename via `/api/admin/agents/legacy-slugs`
 /// first). Requires API key.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ForkAgentRequest {
+pub struct ForkAgentRequest {
     /// Source agent name (slug) or UUID to fork.
     pub agent_name: String,
     /// Carry the source's ontology into the fork. Default false.
@@ -494,7 +494,7 @@ pub(crate) struct ForkAgentRequest {
 /// the tool posts all messages and returns per-agent status. Responses arrive
 /// via `swarm_run_status` polling. Capped at `MAX_FANOUT` (10).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FanoutRequest {
+pub struct FanoutRequest {
     /// Workspace (swarm) id containing the agents.
     pub workspace_id: String,
     /// Delegations to post. Each must have its own consent token.
@@ -503,7 +503,7 @@ pub(crate) struct FanoutRequest {
 
 /// A single fan-out delegation entry for ABW.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct FanoutAbwEntry {
+pub struct FanoutAbwEntry {
     /// Agent name to delegate to (the @mention target).
     pub agent_name: String,
     /// The task for the agent.
@@ -524,14 +524,14 @@ pub(crate) struct FanoutAbwEntry {
 /// output as context to the next via `{prev_output}` substitution. Each step
 /// runs via `swarm_delegate_local`. Capped at `MAX_PIPELINE_STEPS` (10).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PipelineLocalRequest {
+pub struct PipelineLocalRequest {
     /// Pipeline steps, executed in order.
     pub steps: Vec<PipelineStep>,
 }
 
 /// A single step in a local pipeline.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PipelineStep {
+pub struct PipelineStep {
     /// Agent id to delegate to. Must exist in the local registry.
     pub agent_name: String,
     /// Task text. May contain `{prev_output}` which is replaced with the
@@ -546,7 +546,7 @@ pub(crate) struct PipelineStep {
 /// responds or the timeout is reached. Wraps `swarm_delegate` +
 /// `swarm_run_status` into a single call.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct DelegateAndWaitRequest {
+pub struct DelegateAndWaitRequest {
     /// Workspace (swarm) id containing the agent.
     pub workspace_id: String,
     /// Agent name to delegate to (the @mention target).
@@ -577,7 +577,7 @@ pub(crate) struct DelegateAndWaitRequest {
 /// requires a new session. The per-dispatch ceiling
 /// (`HKASK_ABW_MAX_CREDITS`) still gates individual spends.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct AuthorizeSessionRequest {
+pub struct AuthorizeSessionRequest {
     /// Total credits to pre-authorize for the session. Each spend deducts
     /// from this total. Must be positive.
     pub total_credits: u32,
@@ -595,7 +595,7 @@ pub(crate) struct AuthorizeSessionRequest {
 /// as an A2A Task with the agent's output as a text Artifact. No HTTP server —
 /// the MCP tool dispatch IS the A2A transport.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct A2aSendRequest {
+pub struct A2aSendRequest {
     /// Agent id to send the message to. Must exist in the local registry.
     pub agent_name: String,
     /// The message text to send to the agent.
@@ -612,7 +612,7 @@ pub(crate) struct A2aSendRequest {
 /// Get the A2A Agent Card for a local agent. The card describes the agent's
 /// capabilities, skills, and supported interface (in-process transport).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct A2aCardRequest {
+pub struct A2aCardRequest {
     /// Agent id to get the card for. If omitted, returns cards for all local
     /// agents.
     #[serde(default)]
@@ -627,7 +627,7 @@ pub(crate) struct A2aCardRequest {
 /// `hkask-memory`. No ABW calls. Degrades to an empty result with a
 /// `memory_unconfigured` note when `HKASK_SWARM_MEMORY_PASSPHRASE` is unset.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct SearchKnowledgeLocalRequest {
+pub struct SearchKnowledgeLocalRequest {
     /// Agent id whose prefix-scoped memory (`agent:<id>:`) to search.
     pub agent_name: String,
     /// The search query. Matched case-insensitively against each triple's
@@ -643,7 +643,7 @@ pub(crate) struct SearchKnowledgeLocalRequest {
 /// nothing. Uses the local `InferencePort` (no ABW); optionally seeded with
 /// the agent's consolidated memory. Output is guard-scanned.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GeneratePromptLocalRequest {
+pub struct GeneratePromptLocalRequest {
     /// Natural-language description of what the agent should do.
     pub description: String,
     /// Agent name (used to seed the prompt from the agent's memory and as the
@@ -659,7 +659,7 @@ pub(crate) struct GeneratePromptLocalRequest {
 /// `InferencePort`; optionally seeded with an agent's semantic-memory graph.
 /// Output is guard-scanned.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GenerateOntologyLocalRequest {
+pub struct GenerateOntologyLocalRequest {
     /// Natural-language description of the knowledge domain.
     pub domain_description: String,
     /// Optional agent id — when set, the ontology is seeded from that agent's

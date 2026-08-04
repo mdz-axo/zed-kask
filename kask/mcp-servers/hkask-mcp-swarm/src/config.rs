@@ -101,10 +101,14 @@ pub(crate) struct SwarmConfig {
     pub allowed_tool_servers: Option<Vec<String>>,
     /// SQLCipher passphrase for the local swarm semantic-memory store (the
     /// `hkask-memory` `SemanticMemory` backing the local knowledge tools). Must
-    /// be >=8 chars; empty/unset degrades `swarm_search_knowledge_local` to an
-    /// empty result with a `memory_unconfigured` note (the generate tools are
-    /// unaffected — memory is an enhancement, not a dependency). Read from
-    /// `HKASK_SWARM_MEMORY_PASSPHRASE`.
+    /// be >=8 chars. Pre-release default `"allostery"` (the kask-wide default for
+    /// any user-facing passphrase that isn't an internally generated key) — the
+    /// local knowledge tools work out of the box without operator config. Override
+    /// via `HKASK_SWARM_MEMORY_PASSPHRASE` for a real secret; if an existing store
+    /// was created under a different passphrase, open fails and
+    /// `swarm_search_knowledge_local` degrades to an empty result with a
+    /// `memory_unconfigured` note (the generate tools proceed unseeded — memory
+    /// is an enhancement, not a dependency).
     pub memory_passphrase: String,
     /// On-disk path for the local swarm semantic-memory DB. Default
     /// `<hkask data dir>/swarm_memory.db` (resolved under the data dir so the
@@ -141,7 +145,7 @@ impl Default for SwarmConfig {
             local_swarms_dir: "agents/local/swarms".to_string(),
             a2a_http_enabled: false,
             allowed_tool_servers: None,
-            memory_passphrase: String::new(),
+            memory_passphrase: "allostery".to_string(),
             memory_db_path: "swarm_memory.db".to_string(),
             embedding_dim: 1024,
         }
@@ -330,6 +334,17 @@ mod tests {
         // HKASK_ABW_MAX_CREDITS.
         let c = SwarmConfig::default();
         assert_eq!(c.max_credits_per_dispatch, 50);
+    }
+
+    #[test]
+    fn config_memory_passphrase_default_is_allostery() {
+        // Pre-release kask-wide default for any user-facing passphrase that
+        // isn't an internally generated key. Pin it so the local knowledge
+        // tools work out of the box (SemanticMemory::open needs >=8 chars);
+        // override via HKASK_SWARM_MEMORY_PASSPHRASE for a real secret.
+        let c = SwarmConfig::default();
+        assert_eq!(c.memory_passphrase, "allostery");
+        assert!(c.memory_passphrase.len() >= 8);
     }
 
     // ── SwarmMode parsing (v2 §15 Slice 8) ───────────────────────────────────

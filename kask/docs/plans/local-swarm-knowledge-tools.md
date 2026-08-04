@@ -257,8 +257,8 @@ debit, no consent, no ABW.
 
 - [Swarm Cybernetics/Semantics Audit](../audits/swarm-cybernetics-semantics-audit.md)
   — the audit that identified the local-mode cloud-catalogue gap.
-- [Swarm Systems Reference (47-tool surface)](../diataxis/swarm_system/reference.md)
-  — will become 50 with these tools.
+- [Swarm Systems Reference (50-tool surface)](../diataxis/swarm_system/reference.md)
+  — includes the local knowledge tools added in this build.
 - `hkask-memory` API: `kask/crates/hkask-memory/src/semantic.rs`
   (`search_similar:456`, `query_by_attribute:396`, `embeddings_by_prefix:502`).
 - ABW targets: `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs`

@@ -81,7 +81,7 @@ lifecycle definition.
 | Document | Status | Description |
 |----------|--------|-------------|
 | [`plans/kask-skill-signing-and-trust.md`](plans/kask-skill-signing-and-trust.md) | Active | Skill marketplace signing & trust model — Ed25519-signed manifests with `expires_at` set at signing, server verification (upload 400 / poll skip), 120-day catalog expiry + sweep, client install verification. All 5 phases complete. Supersedes the deleted `kask-extensions-panel-and-skill-sharing.md` (removed 2026-08-01). |
-| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Active | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (47 tools: 27 ABW + 20 local) + `swarm_panel`. v1 feature-complete (slices 1–7 + Xaman Ek); v2 local mode implemented (local substrate: hkask-inference + hkask-ledger + hkask-guard). |
+| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Active | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (50 tools: 27 ABW + 23 local) + `swarm_panel`. v1 feature-complete (slices 1–7 + Xaman Ek); v2 local mode implemented (local substrate: hkask-inference + hkask-ledger + hkask-guard). |
 | [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md) | Active | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade (SENSE→ORIENT→DECIDE→FILTER→ACT→CHECK→CONVERGE), C0–C8 cybernetic components, steering modes (advisory/steering), `delegate_results` contract, the `swarm-steering` skill, Appendix C implementation record. |
 
 ## QA

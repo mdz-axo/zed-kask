@@ -25,7 +25,7 @@ spend, and the feedback path that closes the loop. Read the
 | `ensure_steer_conversation` | `crates/swarm_panel/src/swarm_panel.rs:1870` |
 | `begin_hire` / `confirm_hire` | `crates/swarm_panel/src/swarm_panel.rs:1441` / `:1543` |
 | `create_swarm` / `ask_xaman` | `crates/swarm_panel/src/swarm_panel.rs:1973` / `:2145` |
-| 47-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:3003` |
+| 50-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:3355` |
 | Consent gate (mint/consume/refund) | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:150`/`:184`/`:227` |
 | Spend gate (hire/delegate/curate) | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` |
 | Debit-before-scan invariant | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:11` |
@@ -56,7 +56,7 @@ status: VERIFIED
 
 ## How-to 1: Switch the backend
 
-The backend toggles the substrate, not the tool surface (all 47 tools stay
+The backend toggles the substrate, not the tool surface (all 50 tools stay
 registered). Toggle in the panel header, or set `kask.swarm.mode` in
 `settings.json`:
 
@@ -178,8 +178,39 @@ Go See is the gap-cover for open tasks (no oracle). Its closure depends on you
 - Publish: `swarm_publish_checks` (preflight) then `swarm_publish_agent`
   (catalogue publish, with an audited admin force-publish path).
 
+## How-to 8: Search and author with the local knowledge tools
+
+The local knowledge tools (`swarm_search_knowledge_local`,
+`swarm_generate_prompt_local`, `swarm_generate_ontology_local`) are the local
+analogs of ABW's knowledge/prompt/ontology tools, backed by your own
+`hkask-memory` + the local `InferencePort`. They work out of the box: the
+memory passphrase defaults to `"allostery"` pre-release (override
+`HKASK_SWARM_MEMORY_PASSPHRASE` for a real secret). See the
+[Reference § Local Knowledge Tools](./reference.md) for the contracts.
+
+1. **Search an agent's knowledge:**
+   `swarm_search_knowledge_local({agent_name: "researcher", query: "ROIC", limit: 10})`
+   → returns the agent's semantic-memory triples (entity/attribute/value)
+   matching `ROIC`. Empty `fragments[]` with a `memory_unconfigured` note means
+   the store couldn't be opened (e.g., a passphrase mismatch) or the agent
+   has no consolidated memory yet — not an error.
+2. **Author a system prompt for a new local agent:**
+   `swarm_generate_prompt_local({description: "a Damodaran-style ROIC analyst",
+   agent_name: "roic_analyst", agent_type: "research"})` → a guard-scanned
+   system prompt, seeded with `roic_analyst`'s memory if any. Feed it to
+   `swarm_create_local_agent` (the `author_agent` move in `swarm-intelligence`
+   does this end-to-end).
+3. **Author a seed ontology for a domain:**
+   `swarm_generate_ontology_local({domain_description: "corporate valuation",
+   agent_name: "roic_analyst"})` → a Mermaid `erDiagram` seeded with the
+   agent's semantic-memory graph (memory-as-graph).
+
+These are read-only authoring aids — no ledger debit, no consent. They never
+call ABW. For the cloud equivalents (fermi-backed), use `swarm_search_knowledge`
+/ `swarm_generate_prompt` / `swarm_generate_ontology` in `abw` mode.
+
 ## See also
 
-- [Reference: The 47-Tool Surface](./reference.md)
+- [Reference: The 50-Tool Surface](./reference.md)
 - [Explanation: Why the Loops Are Shaped This Way](./explanation.md)
 - [Swarm Cybernetics/Semantics Audit](../../audits/swarm-cybernetics-semantics-audit.md)

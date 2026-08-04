@@ -21,7 +21,7 @@ four feedback loops that govern swarm behavior.
 
 | Component | Primary source |
 |----------|----------------|
-| MCP server (47 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115` (`SwarmServer`), `:3003` (`tool_surface_is_exactly_47_registered_tools`) |
+| MCP server (50 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115` (`SwarmServer`), `:3003` (`tool_surface_is_exactly_50_registered_tools`) |
 | Consent gate | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56` (`ConsentStore`), `:77` (`CONSENT_TTL_SECS`), `:150`/`:184`/`:227` (mint/consume/refund) |
 | Spend gate | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` (authorize_hire/delegate/curate) |
 | Local runtime | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39` (`LazyLocalSwarmRuntime`), `:73` (`LocalSwarmRuntime`); `agent_executor.rs:55` (`AgentExecutor`), `:33`/`:38` (round/skill caps) |
@@ -42,15 +42,15 @@ breaks or where an advertised invariant lacks an enforcement point.
 
 - **Claim (SKILL.md:203):** "MCP tool surface (31 tools, both sets always
   available): 20 ABW + 11 local".
-- **Implementation (`hkask_mcp_swarm.rs:3003`):** `tool_surface_is_exactly_47_registered_tools`
-  pins **47 tools = 27 ABW + 20 local**.
+- **Implementation (`hkask_mcp_swarm.rs:3355`):** `tool_surface_is_exactly_50_registered_tools`
+  pins **50 tools = 27 ABW + 23 local**.
 - **Classification:** IS, declarative, ontology anchoring = domain_supplement
   (ABW substrate). Constraint force = Guideline. Provenance = Specification
   (SKILL.md) **conflicts** with Implementation (test).
 - **Resolution (OT ranking):** same ontological mode (IS), same epistemic mode
   (declarative); tie broken on provenance authority — **Implementation > Specification**
   for a count claim (the test is the ground truth; the SKILL.md is a generated
-  companion). Winner: **47 tools (27 ABW + 20 local)**.
+  companion). Winner: **50 tools (27 ABW + 23 local)**.
 - **Finding:** This is the `.rules` trap "Convention priors drawn from .rules must
   be verified against the codebase" applied to a SKILL.md. The drift is also
   reproduced in `kask/docs/diagrams/flowchart-swarm-architecture.md:3` (same
@@ -64,10 +64,16 @@ breaks or where an advertised invariant lacks an enforcement point.
   `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`,
   `swarm_remove_agent_local` (local mode now has explicit named swarms/rosters,
   not just an ephemeral session).
-- **Remediation:** Regenerate the `swarm-intelligence` SKILL.md from the registry
-  (registry is authoritative — `SKILL.md` is a companion), and correct the
-  architecture diagram. The doc fix is applied in this audit; the SKILL.md
-  regeneration belongs to a `skill-maintenance` run.
+- **Remediation:** Regenerate the `swarm-intelligence` SKILL.md from the
+  registry (registry is authoritative — `SKILL.md` is a companion), and correct
+  the architecture diagram. The doc fix is applied in this audit; the SKILL.md
+  regeneration belongs to a `skill-maintenance` run. **Note:** the surface
+  subsequently grew 47 > 50 with the three local knowledge tools
+  (`swarm_search_knowledge_local` / `swarm_generate_prompt_local` /
+  `swarm_generate_ontology_local`) added 2026-08-03 — see
+  [Local Knowledge Tools design](../plans/local-swarm-knowledge-tools.md). The
+  drift mechanism (test is ground truth; SKILL.md is a generated companion)
+  is the durable finding, independent of the current count.
 
 ### Gap S2 — Steering system prompt omits pipeline tool
 
@@ -298,7 +304,7 @@ Loop B fidelity, closes the open-task gap); (2) feed `latency_ms` into DECIDE
 as a reconfigure signal (closes the C4 sub-loop, raises regulator variety).
 
 **Top doc fix (semantics):** regenerate `swarm-intelligence` SKILL.md from the
-registry so the 47-tool surface and the C4/task_success findings are reflected
+registry so the 50-tool surface and the C4/task_success findings are reflected
 (S1), and correct the architecture diagram (applied in this audit).
 
 ## Cross-links

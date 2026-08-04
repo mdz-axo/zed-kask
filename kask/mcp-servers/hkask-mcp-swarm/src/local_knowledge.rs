@@ -10,11 +10,13 @@
 //! Design rationale: `kask/docs/plans/local-swarm-knowledge-tools.md`.
 //!
 //! Graceful degradation: `LazyLocalMemory::get_or_init` opens the
-//! `SemanticMemory` lazily. Opening requires a SQLCipher passphrase (≥8 chars,
-//! env `HKASK_SWARM_MEMORY_PASSPHRASE`); if it is unset or open fails, the
-//! search tool returns an empty result with a `memory_unconfigured` note (never
-//! a panic, never a fabricated hit — the `.rules` unwrap_or(0) trap), and the
-//! generate tools proceed unseeded (memory is an enhancement, not a dependency).
+//! `SemanticMemory` lazily. The SQLCipher passphrase defaults to `"allostery"`
+//! (pre-release kask-wide default) so the tools work out of the box; override
+//! via `HKASK_SWARM_MEMORY_PASSPHRASE`. If open fails (e.g., an existing DB was
+//! created under a different passphrase), the search tool returns an empty
+//! result with a `memory_unconfigured` note (never a panic, never a fabricated
+//! hit — the `.rules` unwrap_or(0) trap), and the generate tools proceed
+//! unseeded (memory is an enhancement, not a dependency).
 
 use hkask_memory::SemanticMemory;
 use std::sync::Arc;

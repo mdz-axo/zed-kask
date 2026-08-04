@@ -141,8 +141,13 @@ fn steer_system_prompt(
          `swarm_delegate_local`, `swarm_fanout_local`, \
          `swarm_pipeline_local` (sequential pipeline with {{prev_output}} \
          substitution), `swarm_clone_to_local`, `swarm_remove_local`, \
-         `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, \
-         `swarm_push_to_cloud`. These run on the local \
+         `swarm_create_local_agent`, `swarm_reconfigure_local_agent`,
+         `swarm_push_to_cloud`, `swarm_search_knowledge_local` (search the
+         agent's prefix-scoped `hkask-memory` semantic graph — the local analog
+         of `swarm_search_knowledge`), `swarm_generate_prompt_local` /
+         `swarm_generate_ontology_local` (local LLM authoring aids over the
+         local `InferencePort`, seeded with the agent's memory — the local
+         analogs of `swarm_generate_prompt` / `swarm_generate_ontology`). These run on the local \
          substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \

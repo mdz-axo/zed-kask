@@ -1,6 +1,6 @@
 # Swarm Server Class Diagram
 
-The `hkask-mcp-swarm` server (`SwarmServer`) exposes 47 tools (27 ABW + 20
+The `hkask-mcp-swarm` server (`SwarmServer`) exposes 50 tools (27 ABW + 20
 local) selected by `kask.swarm.mode`. `SwarmServer` composes four collaborators:
 the ABW REST client, the consent store (real-time spend gate with TTL), the
 local agent registry, and the lazily-initialized local runtime. The spend gate
@@ -100,7 +100,7 @@ classDiagram
     A2A ..> LocalSwarmRuntime : wraps delegate
     LocalAgentRegistry ..> LocalSwarmRuntime : reads cards
 
-    note for SwarmServer "47 tools = 27 ABW + 20 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_47_registered_tools"
+    note for SwarmServer "50 tools = 27 ABW + 23 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_50_registered_tools"
     note for LocalDelegateResult "Fed back as delegate_results\nto swarm-intelligence ORIENT\nactivates C5 fault attribution\nand C6 reconfigure"
 ```
 
