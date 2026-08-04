@@ -34,8 +34,6 @@ pub(crate) struct ConsentGrant {
 /// budget upfront instead of approving each spend individually.
 #[derive(Clone)]
 struct SessionGrant {
-    token: String,
-    total_credits: u32,
     remaining_credits: u32,
     actions: Vec<String>, // empty = all actions allowed
     created_at: chrono::DateTime<chrono::Utc>,
@@ -255,8 +253,6 @@ impl ConsentStore {
                     .insert(
                         token.clone(),
                         SessionGrant {
-                            token: token.clone(),
-                            total_credits,
                             remaining_credits: total_credits,
                             actions: actions.to_vec(),
                             created_at: chrono::Utc::now(),

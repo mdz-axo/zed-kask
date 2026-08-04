@@ -59,7 +59,7 @@ boundary, external deps, McpToolError kinds used) is in
 | corpus | 26 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
 | curator | 11 | no — reads Regulation ledger, does not call LLM | sqlite (SQLCipher) |
 | kata-kanban | 18 | no — pure state machine over sqlite | sqlite (SQLCipher) |
-| media | 37 | yes — `generate_image`, `generate_video`, `voice_design`, `generate_speech`, `transcribe`, `describe_image`, `gallery_analyze`, `video_caption` all return model output | DeepInfra, fal.ai, Together AI, ElevenLabs (reqwest) |
+| media | 37 | yes — `generate_image`, `generate_video`, `voice_design`, `generate_speech`, `transcribe`, `describe_image`, `gallery_analyze`, `video_caption` all return model output | DeepInfra, fal.ai, AtlasCloud, ElevenLabs (reqwest) |
 | research | 15 | yes — `web_search`, `web_extract`, `web_browse`, `web_find_similar` return fetched/scraped content (indirect LLM boundary via tool output) | Brave, Firecrawl, Tavily, SerpAPI, Exa, Browserbase, arXiv, Semantic Scholar (reqwest) |
 | scenarios | 18 | yes — `scenario_brainstorm`, `scenario_synthesize`, `scenario_assess` call inference; `scenario_research` calls research server | inference port, research server, companies server |
 | training | 8 | yes — `training_validate_config`, `training_evaluate` call LLM; `training_submit` provisions GPU pods | RunPod, DeepInfra, Nebius, HuggingFace, OpenAI (reqwest) |

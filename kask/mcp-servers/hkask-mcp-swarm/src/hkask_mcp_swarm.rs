@@ -596,51 +596,28 @@ impl SwarmServer {
             // in `spend_gate` now — `swarm_create_swarm`'s per-hire loop routes
             // through the same functions, so the two cannot desync.
             let include_optional = req.include_optional.unwrap_or(false);
-            let data = match spend_gate::resolve_auth(
-                req.consent_token.as_deref(),
-                req.session_token.as_deref(),
-            )? {
-                spend_gate::SpendAuth::SingleUse(token) => {
-                    let auth = spend_gate::authorize_hire(
-                        &self.client,
-                        &self.consent,
-                        token,
-                        &req.agent_name,
-                        req.credits_authorized,
-                        Some(req.credits_authorized),
-                        include_optional,
-                    )
-                    .await?;
-                    spend_gate::complete_hire(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &req.workspace_id,
-                        &req.agent_name,
-                        include_optional,
-                    )
-                    .await?
-                }
-                spend_gate::SpendAuth::Session(session_token) => {
-                    let auth = spend_gate::authorize_hire_with_session(
-                        &self.client,
-                        &self.consent,
-                        session_token,
-                        &req.agent_name,
-                        include_optional,
-                    )
-                    .await?;
-                    spend_gate::complete_hire_with_session(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &req.workspace_id,
-                        &req.agent_name,
-                        include_optional,
-                    )
-                    .await?
-                }
-            };
+            let auth = spend_gate::authorize_hire(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.agent_name,
+                req.credits_authorized,
+                Some(req.credits_authorized),
+                include_optional,
+            )
+            .await?;
+            let data = spend_gate::complete_hire(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                include_optional,
+            )
+            .await?;
 
             Ok(self
                 .client
@@ -683,47 +660,25 @@ impl SwarmServer {
             // architecture: zed-kask posts a message; ABW executes and charges.
             // The local mode (`swarm_delegate_local`) does not have this
             // limitation — the local ledger debit is a hard gate.
-            let data = match spend_gate::resolve_auth(
-                req.consent_token.as_deref(),
-                req.session_token.as_deref(),
-            )? {
-                spend_gate::SpendAuth::SingleUse(token) => {
-                    let auth = spend_gate::authorize_delegate(
-                        &self.client,
-                        &self.consent,
-                        token,
-                        &req.workspace_id,
-                        req.credits_authorized,
-                    )?;
-                    spend_gate::complete_delegate(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &req.workspace_id,
-                        &req.agent_name,
-                        &req.task,
-                    )
-                    .await?
-                }
-                spend_gate::SpendAuth::Session(session_token) => {
-                    let auth = spend_gate::authorize_delegate_with_session(
-                        &self.client,
-                        &self.consent,
-                        session_token,
-                        &req.workspace_id,
-                        req.credits_authorized,
-                    )?;
-                    spend_gate::complete_delegate_with_session(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &req.workspace_id,
-                        &req.agent_name,
-                        &req.task,
-                    )
-                    .await?
-                }
-            };
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.workspace_id,
+                req.credits_authorized,
+            )?;
+            let data = spend_gate::complete_delegate(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                &req.task,
+            )
+            .await?;
 
             Ok(self
                 .client
@@ -764,48 +719,26 @@ impl SwarmServer {
             let timeout_secs = req.timeout_secs.unwrap_or(60).min(300);
             // Step 1: post the @mention via the spend gate. A session token
             // (from `swarm_authorize_session`) may be used in place of a
-            // single-use consent token.
-            let post_result = match spend_gate::resolve_auth(
-                req.consent_token.as_deref(),
-                req.session_token.as_deref(),
-            )? {
-                spend_gate::SpendAuth::SingleUse(token) => {
-                    let auth = spend_gate::authorize_delegate(
-                        &self.client,
-                        &self.consent,
-                        token,
-                        &req.workspace_id,
-                        req.credits_authorized,
-                    )?;
-                    spend_gate::complete_delegate(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &req.workspace_id,
-                        &req.agent_name,
-                        &req.task,
-                    )
-                    .await?
-                }
-                spend_gate::SpendAuth::Session(session_token) => {
-                    let auth = spend_gate::authorize_delegate_with_session(
-                        &self.client,
-                        &self.consent,
-                        session_token,
-                        &req.workspace_id,
-                        req.credits_authorized,
-                    )?;
-                    spend_gate::complete_delegate_with_session(
-                        &self.client,
-                        &self.consent,
-                        auth,
-                        &req.workspace_id,
-                        &req.agent_name,
-                        &req.task,
-                    )
-                    .await?
-                }
-            };
+            // single-use consent token — the gate handles both.
+            let auth = spend_gate::authorize_delegate(
+                &self.client,
+                &self.consent,
+                spend_gate::resolve_auth(
+                    req.consent_token.as_deref(),
+                    req.session_token.as_deref(),
+                )?,
+                &req.workspace_id,
+                req.credits_authorized,
+            )?;
+            let post_result = spend_gate::complete_delegate(
+                &self.client,
+                &self.consent,
+                auth,
+                &req.workspace_id,
+                &req.agent_name,
+                &req.task,
+            )
+            .await?;
             // Record the post timestamp for filtering messages.
             let post_time = chrono::Utc::now();
             // Step 2: poll for the agent's response.
@@ -1158,71 +1091,51 @@ impl SwarmServer {
             let mut hired = Vec::new();
             let mut hire_errors = Vec::new();
             for (ix, agent) in agents.iter().enumerate() {
-                let outcome: Result<(), String> = if let Some(session_token) = session_token {
-                    match spend_gate::authorize_hire_with_session(
-                        &self.client,
-                        &self.consent,
-                        session_token,
-                        agent,
-                        false,
-                    )
-                    .await
-                    {
-                        Ok(auth) => match spend_gate::complete_hire_with_session(
-                            &self.client,
-                            &self.consent,
-                            auth,
-                            &workspace_id,
-                            agent,
-                            false,
-                        )
-                        .await
-                        {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(e.to_string()),
-                        },
-                        Err(e) => Err(e.to_string()),
-                    }
-                } else {
-                    let Some(token) = tokens.get(ix) else {
-                        hire_errors.push(serde_json::json!({
-                            "agent": agent,
-                            "error": "no consent token provided for this hire",
-                        }));
-                        continue;
-                    };
-                    match spend_gate::authorize_hire(
-                        &self.client,
-                        &self.consent,
-                        token,
-                        agent,
-                        0,
-                        None,
-                        false,
-                    )
-                    .await
-                    {
-                        Ok(auth) => match spend_gate::complete_hire(
-                            &self.client,
-                            &self.consent,
-                            auth,
-                            &workspace_id,
-                            agent,
-                            false,
-                        )
-                        .await
-                        {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(e.to_string()),
-                        },
-                        Err(e) => Err(e.to_string()),
-                    }
+                // One auth source per hire: a shared session token, or a
+                // per-agent single-use consent token. The gate handles either.
+                let spend_auth = match session_token {
+                    Some(st) => spend_gate::SpendAuth::Session(st),
+                    None => match tokens.get(ix) {
+                        Some(token) => spend_gate::SpendAuth::SingleUse(token.as_str()),
+                        None => {
+                            hire_errors.push(serde_json::json!({
+                                "agent": agent,
+                                "error": "no consent token provided for this hire",
+                            }));
+                            continue;
+                        }
+                    },
                 };
-                match outcome {
-                    Ok(()) => hired.push(agent.clone()),
+                match spend_gate::authorize_hire(
+                    &self.client,
+                    &self.consent,
+                    spend_auth,
+                    agent,
+                    0,
+                    None,
+                    false,
+                )
+                .await
+                {
+                    Ok(auth) => match spend_gate::complete_hire(
+                        &self.client,
+                        &self.consent,
+                        auth,
+                        &workspace_id,
+                        agent,
+                        false,
+                    )
+                    .await
+                    {
+                        Ok(_) => hired.push(agent.clone()),
+                        Err(e) => hire_errors.push(serde_json::json!({
+                            "agent": agent,
+                            "error": e.to_string(),
+                        })),
+                    },
                     Err(e) => hire_errors.push(serde_json::json!({
                         "agent": agent,
-                        "error": e,
+                        "error": e.to_string(),
                     })),
                 }
             }
@@ -1440,49 +1353,27 @@ impl SwarmServer {
                 }
                 // Each delegation routes through the spend gate. A session
                 // token (from `swarm_authorize_session`) may be used in place
-                // of a single-use consent token.
+                // of a single-use consent token; the gate handles both.
                 let delegated: Result<serde_json::Value, McpToolError> = async {
-                    match spend_gate::resolve_auth(
-                        entry.consent_token.as_deref(),
-                        entry.session_token.as_deref(),
-                    )? {
-                        spend_gate::SpendAuth::SingleUse(token) => {
-                            let auth = spend_gate::authorize_delegate(
-                                &self.client,
-                                &self.consent,
-                                token,
-                                &req.workspace_id,
-                                entry.credits_authorized,
-                            )?;
-                            spend_gate::complete_delegate(
-                                &self.client,
-                                &self.consent,
-                                auth,
-                                &req.workspace_id,
-                                &entry.agent_name,
-                                &entry.task,
-                            )
-                            .await
-                        }
-                        spend_gate::SpendAuth::Session(session_token) => {
-                            let auth = spend_gate::authorize_delegate_with_session(
-                                &self.client,
-                                &self.consent,
-                                session_token,
-                                &req.workspace_id,
-                                entry.credits_authorized,
-                            )?;
-                            spend_gate::complete_delegate_with_session(
-                                &self.client,
-                                &self.consent,
-                                auth,
-                                &req.workspace_id,
-                                &entry.agent_name,
-                                &entry.task,
-                            )
-                            .await
-                        }
-                    }
+                    let auth = spend_gate::authorize_delegate(
+                        &self.client,
+                        &self.consent,
+                        spend_gate::resolve_auth(
+                            entry.consent_token.as_deref(),
+                            entry.session_token.as_deref(),
+                        )?,
+                        &req.workspace_id,
+                        entry.credits_authorized,
+                    )?;
+                    spend_gate::complete_delegate(
+                        &self.client,
+                        &self.consent,
+                        auth,
+                        &req.workspace_id,
+                        &entry.agent_name,
+                        &entry.task,
+                    )
+                    .await
                 }
                 .await;
                 match delegated {
