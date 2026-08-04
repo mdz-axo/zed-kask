@@ -541,7 +541,7 @@ impl SqliteConsentStore {
         let actions_str = row.get_str(1).map_err(consent_store_err)?;
         if !actions_str.is_empty() {
             let allowed: Vec<&str> = actions_str.split(',').collect();
-            if !allowed.iter().any(|a| *a == action) {
+            if !allowed.contains(&action) {
                 return Err(SwarmError::ConsentDenied(format!(
                     "session does not authorize action '{action}'"
                 )));

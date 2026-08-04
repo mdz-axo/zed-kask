@@ -75,8 +75,13 @@ pub(crate) struct HireRequest {
     /// Whether to also hire the agent's optional dependency team.
     pub include_optional: Option<bool>,
     /// The consent token from `swarm_request_consent` (action "hire",
-    /// target = agent_name). Required — the spend is refused without it.
-    pub consent_token: String,
+    /// target = agent_name). Single-use; mutually exclusive with
+    /// `session_token` - provide exactly one.
+    pub consent_token: Option<String>,
+    /// A pre-authorized session token from `swarm_authorize_session`.
+    /// Reusable across multiple hires/delegates; deducts from the session's
+    /// credit budget. Mutually exclusive with `consent_token`.
+    pub session_token: Option<String>,
     /// The credit cost the operator authorized (from `swarm_hire_cost`).
     pub credits_authorized: u32,
 }
@@ -90,8 +95,13 @@ pub(crate) struct DelegateRequest {
     /// The task for the agent.
     pub task: String,
     /// The consent token from `swarm_request_consent` (action "delegate",
-    /// target = workspace_id). Required.
-    pub consent_token: String,
+    /// target = workspace_id). Single-use; mutually exclusive with
+    /// `session_token` - provide exactly one.
+    pub consent_token: Option<String>,
+    /// A pre-authorized session token from `swarm_authorize_session`.
+    /// Reusable; deducts from the session's credit budget. Mutually exclusive
+    /// with `consent_token`.
+    pub session_token: Option<String>,
     /// The credit cost the operator authorized.
     pub credits_authorized: u32,
 }
@@ -165,8 +175,13 @@ pub(crate) struct CreateSwarmRequest {
     /// separately — pass `consent_tokens` aligned with `agents`.
     pub agents: Option<Vec<String>>,
     /// Consent tokens for the hires (action "hire", target = agent name).
-    /// Required when `agents` is non-empty; the swarm itself is free to create.
+    /// Per-agent single-use tokens, aligned with `agents`. Mutually exclusive
+    /// with `session_token` - provide exactly one of the two.
     pub consent_tokens: Option<Vec<String>>,
+    /// A pre-authorized session token from `swarm_authorize_session` that
+    /// funds ALL hires in `agents` from one reusable budget. Mutually exclusive
+    /// with `consent_tokens`.
+    pub session_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -496,8 +511,13 @@ pub(crate) struct FanoutAbwEntry {
     /// The credit cost the operator authorized.
     pub credits_authorized: u32,
     /// Consent token from `swarm_request_consent` (action "delegate",
-    /// target = workspace_id). Each entry needs its own token.
-    pub consent_token: String,
+    /// target = workspace_id). Single-use; mutually exclusive with
+    /// `session_token` - provide exactly one per entry.
+    pub consent_token: Option<String>,
+    /// A pre-authorized session token from `swarm_authorize_session`.
+    /// Reusable; the same session can fund multiple entries. Mutually
+    /// exclusive with `consent_token`.
+    pub session_token: Option<String>,
 }
 
 /// Sequential pipeline: run N local agents in order, passing each agent's
@@ -534,8 +554,13 @@ pub(crate) struct DelegateAndWaitRequest {
     /// The task for the agent.
     pub task: String,
     /// Consent token from `swarm_request_consent` (action "delegate",
-    /// target = workspace_id). Required.
-    pub consent_token: String,
+    /// target = workspace_id). Single-use; mutually exclusive with
+    /// `session_token` - provide exactly one.
+    pub consent_token: Option<String>,
+    /// A pre-authorized session token from `swarm_authorize_session`.
+    /// Reusable; deducts from the session's credit budget. Mutually exclusive
+    /// with `consent_token`.
+    pub session_token: Option<String>,
     /// The credit cost the operator authorized.
     pub credits_authorized: u32,
     /// Maximum seconds to wait for the agent's response. Default 60, max 300.
