@@ -6,6 +6,7 @@
 //! inspect 200-response bodies for upstream errors ABW buries in the body
 //! (never leaks reqwest types — `detect_embedded_error` maps to `SwarmError`).
 
+use crate::error::LocalSwarmError;
 use crate::error::SwarmError;
 
 /// Inspect a 200-response body for ABW's embedded upstream-error pattern.
@@ -109,19 +110,21 @@ pub fn make_swarm_slug(slug_base: &str, now: std::time::SystemTime) -> String {
 /// rejected with HTTP 400 "slug must contain only lowercase letters, digits,
 /// and underscores"). Rejecting here turns ABW's confusing 400 into a clear
 /// argument error.
-pub fn validate_agent_name(name: &str) -> Result<(), String> {
+pub fn validate_agent_name(name: &str) -> Result<(), LocalSwarmError> {
     let len = name.chars().count();
     if !(3..=64).contains(&len) {
-        return Err(format!("invalid agent_name: must be 3–64 chars, got {len}"));
+        return Err(LocalSwarmError::InvalidInput(format!(
+            "invalid agent_name: must be 3–64 chars, got {len}"
+        )));
     }
     if !name
         .bytes()
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
     {
-        return Err(
+        return Err(LocalSwarmError::InvalidInput(
             "invalid agent_name: must contain only lowercase letters, digits, and underscores"
                 .to_string(),
-        );
+        ));
     }
     Ok(())
 }

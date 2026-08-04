@@ -15,6 +15,8 @@
 
 use std::sync::Mutex;
 
+use crate::error::LocalSwarmError;
+
 /// A local swarm — the local replica of an ABW workspace.
 ///
 /// `swarm_id` is a path-safe slug generated from `name` (see `make_swarm_slug`);
@@ -66,25 +68,35 @@ impl LocalSwarmRegistry {
     /// missing directory yields zero swarms (not an error). A malformed
     /// `swarm.json` aborts the load and returns `Err` — a corrupt roster must
     /// not be silently dropped (the operator should see which file failed).
-    pub fn load(&self) -> Result<usize, String> {
+    pub fn load(&self) -> Result<usize, LocalSwarmError> {
         let path = std::path::Path::new(&self.dir);
         if !path.exists() {
             *self.swarms.lock().unwrap() = Some(Vec::new());
             return Ok(0);
         }
         let mut swarms = Vec::new();
-        let entries = std::fs::read_dir(path)
-            .map_err(|e| format!("failed to read local swarms dir '{}': {e}", self.dir))?;
+        let entries = std::fs::read_dir(path).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to read local swarms dir '{}': {e}",
+                self.dir
+            ))
+        })?;
         for entry in entries {
-            let entry = entry.map_err(|e| format!("readdir entry error: {e}"))?;
+            let entry =
+                entry.map_err(|e| LocalSwarmError::Io(format!("readdir entry error: {e}")))?;
             let swarm_path = entry.path().join("swarm.json");
             if !swarm_path.exists() {
                 continue;
             }
-            let json = std::fs::read_to_string(&swarm_path)
-                .map_err(|e| format!("failed to read {}: {e}", swarm_path.display()))?;
-            let swarm: LocalSwarm = serde_json::from_str(&json)
-                .map_err(|e| format!("failed to parse {}: {e}", swarm_path.display()))?;
+            let json = std::fs::read_to_string(&swarm_path).map_err(|e| {
+                LocalSwarmError::Io(format!("failed to read {}: {e}", swarm_path.display()))
+            })?;
+            let swarm: LocalSwarm = serde_json::from_str(&json).map_err(|e| {
+                LocalSwarmError::InvalidInput(format!(
+                    "failed to parse {}: {e}",
+                    swarm_path.display()
+                ))
+            })?;
             swarms.push(swarm);
         }
         swarms.sort_by(|a, b| a.swarm_id.cmp(&b.swarm_id));
@@ -130,9 +142,11 @@ impl LocalSwarmRegistry {
         name: &str,
         mission: &str,
         members: Vec<String>,
-    ) -> Result<LocalSwarm, String> {
+    ) -> Result<LocalSwarm, LocalSwarmError> {
         if name.trim().is_empty() {
-            return Err("swarm name must be non-empty".to_string());
+            return Err(LocalSwarmError::InvalidInput(
+                "swarm name must be non-empty".to_string(),
+            ));
         }
         let slug_base: String = name
             .to_lowercase()
@@ -156,12 +170,18 @@ impl LocalSwarmRegistry {
     /// exists in `LocalAgentRegistry` — the roster is ids; resolution happens
     /// at delegation time (mirrors ABW workspaces, which carry agent ids that
     /// may not yet be hired).
-    pub fn add_member(&self, swarm_id: &str, agent_id: &str) -> Result<LocalSwarm, String> {
-        let mut swarm = self
-            .get(swarm_id)
-            .ok_or_else(|| format!("local swarm '{swarm_id}' not found"))?;
+    pub fn add_member(
+        &self,
+        swarm_id: &str,
+        agent_id: &str,
+    ) -> Result<LocalSwarm, LocalSwarmError> {
+        let mut swarm = self.get(swarm_id).ok_or_else(|| {
+            LocalSwarmError::NotFound(format!("local swarm '{swarm_id}' not found"))
+        })?;
         if agent_id.trim().is_empty() {
-            return Err("agent_name must be non-empty".to_string());
+            return Err(LocalSwarmError::InvalidInput(
+                "agent_name must be non-empty".to_string(),
+            ));
         }
         if !swarm.members.iter().any(|m| m == agent_id) {
             swarm.members.push(agent_id.to_string());
@@ -172,10 +192,14 @@ impl LocalSwarmRegistry {
 
     /// Remove an agent id from a swarm's roster (idempotent — removing a
     /// non-member is a no-op). Errors if the swarm does not exist.
-    pub fn remove_member(&self, swarm_id: &str, agent_id: &str) -> Result<LocalSwarm, String> {
-        let mut swarm = self
-            .get(swarm_id)
-            .ok_or_else(|| format!("local swarm '{swarm_id}' not found"))?;
+    pub fn remove_member(
+        &self,
+        swarm_id: &str,
+        agent_id: &str,
+    ) -> Result<LocalSwarm, LocalSwarmError> {
+        let mut swarm = self.get(swarm_id).ok_or_else(|| {
+            LocalSwarmError::NotFound(format!("local swarm '{swarm_id}' not found"))
+        })?;
         let before = swarm.members.len();
         swarm.members.retain(|m| m != agent_id);
         if swarm.members.len() != before {
@@ -187,21 +211,32 @@ impl LocalSwarmRegistry {
     /// Permanently delete a swarm (its directory + roster). The member agents
     /// are NOT touched — they stay in `LocalAgentRegistry`. Errors if the
     /// swarm does not exist or the directory cannot be removed.
-    pub fn delete(&self, swarm_id: &str) -> Result<(), String> {
-        let safe_id = crate::sanitize::sanitize_agent_id(swarm_id)
-            .ok_or_else(|| format!("swarm_id '{swarm_id}' contains no safe characters"))?;
+    pub fn delete(&self, swarm_id: &str) -> Result<(), LocalSwarmError> {
+        let safe_id = crate::sanitize::sanitize_agent_id(swarm_id).ok_or_else(|| {
+            LocalSwarmError::Sanitize(format!("swarm_id '{swarm_id}' contains no safe characters"))
+        })?;
         let root = std::path::Path::new(&self.dir)
             .canonicalize()
-            .map_err(|e| format!("failed to resolve local swarms dir '{}': {e}", self.dir))?;
+            .map_err(|e| {
+                LocalSwarmError::Io(format!(
+                    "failed to resolve local swarms dir '{}': {e}",
+                    self.dir
+                ))
+            })?;
         let swarm_dir = root.join(&safe_id);
         if !swarm_dir.starts_with(&root) {
-            return Err("refusing to delete a path outside the local swarms dir".to_string());
+            return Err(LocalSwarmError::Sanitize(
+                "refusing to delete a path outside the local swarms dir".to_string(),
+            ));
         }
         if !swarm_dir.exists() {
-            return Err(format!("local swarm '{swarm_id}' not found"));
+            return Err(LocalSwarmError::NotFound(format!(
+                "local swarm '{swarm_id}' not found"
+            )));
         }
-        std::fs::remove_dir_all(&swarm_dir)
-            .map_err(|e| format!("failed to remove {}: {e}", swarm_dir.display()))?;
+        std::fs::remove_dir_all(&swarm_dir).map_err(|e| {
+            LocalSwarmError::Io(format!("failed to remove {}: {e}", swarm_dir.display()))
+        })?;
         self.load()?;
         Ok(())
     }
@@ -212,27 +247,40 @@ impl LocalSwarmRegistry {
     /// (path-traversal defense); the file is written under a canonicalized,
     /// path-contained directory — the same invariant
     /// `LocalAgentRegistry::write_card` pins.
-    fn write_swarm(&self, swarm: &LocalSwarm) -> Result<(), String> {
+    fn write_swarm(&self, swarm: &LocalSwarm) -> Result<(), LocalSwarmError> {
         let safe_id = crate::sanitize::sanitize_agent_id(&swarm.swarm_id).ok_or_else(|| {
-            format!(
+            LocalSwarmError::Sanitize(format!(
                 "swarm_id '{}' contains no safe characters (alphanumeric, dash, underscore, dot)",
                 swarm.swarm_id
-            )
+            ))
         })?;
         let root = std::path::Path::new(&self.dir)
             .canonicalize()
-            .map_err(|e| format!("failed to resolve local swarms dir '{}': {e}", self.dir))?;
+            .map_err(|e| {
+                LocalSwarmError::Io(format!(
+                    "failed to resolve local swarms dir '{}': {e}",
+                    self.dir
+                ))
+            })?;
         let swarm_dir = root.join(&safe_id);
         if !swarm_dir.starts_with(&root) {
-            return Err("refusing to write a path outside the local swarms dir".to_string());
+            return Err(LocalSwarmError::Sanitize(
+                "refusing to write a path outside the local swarms dir".to_string(),
+            ));
         }
-        std::fs::create_dir_all(&swarm_dir)
-            .map_err(|e| format!("failed to create swarm dir {}: {e}", swarm_dir.display()))?;
+        std::fs::create_dir_all(&swarm_dir).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to create swarm dir {}: {e}",
+                swarm_dir.display()
+            ))
+        })?;
         let swarm_path = swarm_dir.join("swarm.json");
-        let json = serde_json::to_string_pretty(swarm)
-            .map_err(|e| format!("failed to serialize swarm: {e}"))?;
-        std::fs::write(&swarm_path, json)
-            .map_err(|e| format!("failed to write {}: {e}", swarm_path.display()))?;
+        let json = serde_json::to_string_pretty(swarm).map_err(|e| {
+            LocalSwarmError::InvalidInput(format!("failed to serialize swarm: {e}"))
+        })?;
+        std::fs::write(&swarm_path, json).map_err(|e| {
+            LocalSwarmError::Io(format!("failed to write {}: {e}", swarm_path.display()))
+        })?;
         self.load()?;
         Ok(())
     }

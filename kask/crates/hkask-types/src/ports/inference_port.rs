@@ -128,6 +128,41 @@ impl ToolDispatchPort for Arc<dyn ToolDispatchPort> {
     }
 }
 
+/// Error returned by [`SkillExecPort::execute_skill`].
+///
+/// Replaces the previous `Result<String, String>` return, which erased the
+/// error category and forced every impl to flatten structured errors (e.g.
+/// [`InferenceError`]) into a string. The D1-seam-constrained
+/// `agent::SkillManifestExecutor` impl (`kask_bridge::BridgeManifestExecutor`)
+/// still returns `Result<String, String>` because the upstream Zed trait
+/// requires it — the [`From<String>`] conversion lets that impl bridge into
+/// this typed error with `.map_err(Into::into)` without an upstream change.
+#[derive(Debug, thiserror::Error)]
+pub enum SkillExecError {
+    /// Skill execution is unavailable (no IPC socket, no manifest executor
+    /// wired). The message names the missing dependency so an operator can
+    /// remediate.
+    #[error("skill execution unavailable: {0}")]
+    Unavailable(String),
+    /// An inference-layer failure while running the cascade (connection,
+    /// model, JSON, circuit). Carries the underlying [`InferenceError`].
+    #[error(transparent)]
+    Inference(#[from] InferenceError),
+    /// The cascade itself failed (no manifest, manifest load error, step
+    /// failure, task join error). The string is the message produced by the
+    /// manifest executor — kept as a string because the upstream
+    /// `agent::SkillManifestExecutor` trait (D1 seam) returns
+    /// `Result<String, String>`.
+    #[error("skill cascade failed: {0}")]
+    Failed(String),
+}
+
+impl From<String> for SkillExecError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
 /// MCP-server-side skill-execution boundary.
 ///
 /// Lets a child MCP server process (e.g. `hkask-mcp-swarm`'s local delegate)
@@ -148,7 +183,7 @@ pub trait SkillExecPort: Send + Sync {
         &'a self,
         name: &'a str,
         task: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<String, SkillExecError>> + Send + 'a>>;
 }
 
 impl SkillExecPort for Arc<dyn SkillExecPort> {
@@ -156,7 +191,7 @@ impl SkillExecPort for Arc<dyn SkillExecPort> {
         &'a self,
         name: &'a str,
         task: &'a str,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<String, SkillExecError>> + Send + 'a>> {
         self.as_ref().execute_skill(name, task)
     }
 }

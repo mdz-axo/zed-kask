@@ -9,7 +9,7 @@
 use std::time::Instant;
 
 use crate::agent_executor::{AgentExecutor, RawDelegateResult};
-use crate::error::SwarmError;
+use crate::error::{LocalSwarmError, SwarmError};
 use crate::local_registry::LocalAgentCard;
 use crate::sanitize::strip_leading_mentions;
 
@@ -56,7 +56,7 @@ impl LazyLocalSwarmRuntime {
     /// Get the runtime, initializing it on first call. Returns `Err` if
     /// initialization fails (ledger open, inference port resolution, guard
     /// init). Subsequent calls return the cached runtime.
-    pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, String> {
+    pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
             .get_or_try_init(|| async { LocalSwarmRuntime::new(&self.ledger_path).await })
             .await
@@ -90,22 +90,26 @@ impl LocalSwarmRuntime {
     ///
     /// The operator account is ensured in the ledger namespace "local_swarm".
     /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
-    pub(crate) async fn new(db_path: &str) -> Result<Self, String> {
+    pub(crate) async fn new(db_path: &str) -> Result<Self, LocalSwarmError> {
         // Open the ledger at the file path. Create the directory if needed.
         if let Some(parent) = std::path::Path::new(db_path).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create ledger dir {}: {e}", parent.display()))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                LocalSwarmError::Io(format!(
+                    "failed to create ledger dir {}: {e}",
+                    parent.display()
+                ))
+            })?;
         }
         let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path)
             .with_init(|conn| conn.execute_batch(hkask_storage::WAL_PRAGMA_BATCH));
         let pool = r2d2::Pool::builder()
             .max_size(4)
             .build(manager)
-            .map_err(|e| format!("failed to create ledger pool: {e}"))?;
+            .map_err(|e| LocalSwarmError::Database(format!("failed to create ledger pool: {e}")))?;
         let driver: std::sync::Arc<dyn hkask_storage::DatabaseDriver> =
             std::sync::Arc::new(hkask_storage::SqliteDriver::new(pool));
         let ledger = hkask_ledger::Ledger::from_driver(driver)
-            .map_err(|e| format!("failed to init ledger: {e}"))?;
+            .map_err(|e| LocalSwarmError::Database(format!("failed to init ledger: {e}")))?;
 
         // Resolve the agent-run ports once at construction: inference,
         // tool dispatch, and skill execution all route through the zed IPC
@@ -127,7 +131,9 @@ impl LocalSwarmRuntime {
         let asset = "credits".to_string();
         ledger
             .ensure_account(&operator_account, "local_swarm")
-            .map_err(|e| format!("failed to ensure operator account: {e}"))?;
+            .map_err(|e| {
+                LocalSwarmError::Ledger(format!("failed to ensure operator account: {e}"))
+            })?;
 
         Ok(Self {
             ledger: std::sync::Arc::new(ledger),
@@ -156,12 +162,14 @@ impl LocalSwarmRuntime {
         guard: hkask_guard::ContentGuard,
         tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
         skill_exec: std::sync::Arc<dyn hkask_types::SkillExecPort>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LocalSwarmError> {
         let operator_account = "operator".to_string();
         let asset = "credits".to_string();
         ledger
             .ensure_account(&operator_account, "local_swarm")
-            .map_err(|e| format!("failed to ensure operator account: {e}"))?;
+            .map_err(|e| {
+                LocalSwarmError::Ledger(format!("failed to ensure operator account: {e}"))
+            })?;
         let executor = AgentExecutor::with_deps(inference, tool_dispatch, skill_exec, guard);
         Ok(Self {
             ledger: std::sync::Arc::new(ledger),
@@ -199,7 +207,7 @@ impl LocalSwarmRuntime {
     /// amount (fund = +, debit = −) and the metadata `action` ("fund" |
     /// "debit"). Returns `Err` on a query failure — a failed query is not an
     /// empty history (the `.rules` trap).
-    pub(crate) fn history(&self, limit: usize) -> Result<Vec<serde_json::Value>, String> {
+    pub(crate) fn history(&self, limit: usize) -> Result<Vec<serde_json::Value>, LocalSwarmError> {
         let range = hkask_ledger::DateRange {
             start: "0000-01-01T00:00:00Z".to_string(),
             end: "9999-12-31T23:59:59Z".to_string(),
@@ -212,7 +220,7 @@ impl LocalSwarmRuntime {
         let mut txs = self
             .ledger
             .query(&range, &filter)
-            .map_err(|e| format!("ledger query failed: {e}"))?;
+            .map_err(|e| LocalSwarmError::Ledger(format!("ledger query failed: {e}")))?;
         // The ledger query returns oldest-first; the tool wants newest-first.
         txs.reverse();
         txs.truncate(limit);
@@ -254,9 +262,11 @@ impl LocalSwarmRuntime {
 
     /// Deposit credits into the operator's account. Returns the new balance.
     /// Used by `swarm_fund_local`.
-    pub(crate) fn fund(&self, amount: i64) -> Result<i64, String> {
+    pub(crate) fn fund(&self, amount: i64) -> Result<i64, LocalSwarmError> {
         if amount <= 0 {
-            return Err("fund amount must be positive".to_string());
+            return Err(LocalSwarmError::InvalidInput(
+                "fund amount must be positive".to_string(),
+            ));
         }
         let tx_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -275,9 +285,11 @@ impl LocalSwarmRuntime {
         };
         self.ledger
             .commit(&tx)
-            .map_err(|e| format!("ledger commit failed: {e}"))?;
+            .map_err(|e| LocalSwarmError::Ledger(format!("ledger commit failed: {e}")))?;
         self.balance().ok_or_else(|| {
-            "balance query failed after fund — ledger may be in a bad state".to_string()
+            LocalSwarmError::Ledger(
+                "balance query failed after fund — ledger may be in a bad state".to_string(),
+            )
         })
     }
 

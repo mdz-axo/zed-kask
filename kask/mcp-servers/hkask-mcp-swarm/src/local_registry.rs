@@ -5,6 +5,8 @@
 //! (`swarm_delegate_local`). The cache distinguishes not-loaded from
 //! loaded-empty via the `loaded` flag (the `.rules` trap on lazy-load caches).
 
+use crate::error::LocalSwarmError;
+
 /// A local agent card — the minimal subset of fermi's `AgentCard` we need for
 /// catalogue + future execution. Mirrors the JSON shape in
 /// `agents/local/curated/<id>/agent_card.json`.
@@ -98,25 +100,35 @@ impl LocalAgentRegistry {
     /// Load (or reload) agent cards from the directory. Returns the number of
     /// cards loaded. A missing directory yields zero cards (not an error) —
     /// the startup warning in `SwarmConfig::from_env` covers this case.
-    pub fn load(&self) -> Result<usize, String> {
+    pub fn load(&self) -> Result<usize, LocalSwarmError> {
         let path = std::path::Path::new(&self.dir);
         if !path.exists() {
             *self.cards.lock().unwrap() = Some(Vec::new());
             return Ok(0);
         }
         let mut cards = Vec::new();
-        let entries = std::fs::read_dir(path)
-            .map_err(|e| format!("failed to read local agents dir '{}': {e}", self.dir))?;
+        let entries = std::fs::read_dir(path).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to read local agents dir '{}': {e}",
+                self.dir
+            ))
+        })?;
         for entry in entries {
-            let entry = entry.map_err(|e| format!("readdir entry error: {e}"))?;
+            let entry =
+                entry.map_err(|e| LocalSwarmError::Io(format!("readdir entry error: {e}")))?;
             let card_path = entry.path().join("agent_card.json");
             if !card_path.exists() {
                 continue;
             }
-            let json = std::fs::read_to_string(&card_path)
-                .map_err(|e| format!("failed to read {}: {e}", card_path.display()))?;
-            let card: LocalAgentCard = serde_json::from_str(&json)
-                .map_err(|e| format!("failed to parse {}: {e}", card_path.display()))?;
+            let json = std::fs::read_to_string(&card_path).map_err(|e| {
+                LocalSwarmError::Io(format!("failed to read {}: {e}", card_path.display()))
+            })?;
+            let card: LocalAgentCard = serde_json::from_str(&json).map_err(|e| {
+                LocalSwarmError::InvalidInput(format!(
+                    "failed to parse {}: {e}",
+                    card_path.display()
+                ))
+            })?;
             cards.push(card);
         }
         cards.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
@@ -174,28 +186,40 @@ impl LocalAgentRegistry {
     /// the card is written under a canonicalized, path-contained directory —
     /// the same invariant `swarm_create_local_agent`/`swarm_remove_local` pin.
     /// Returns the written card path on success.
-    pub fn write_card(&self, card: &LocalAgentCard) -> Result<String, String> {
+    pub fn write_card(&self, card: &LocalAgentCard) -> Result<String, LocalSwarmError> {
         let safe_id = crate::sanitize::sanitize_agent_id(&card.agent_id).ok_or_else(|| {
-            format!(
+            LocalSwarmError::Sanitize(format!(
                 "agent_id '{}' contains no safe characters (alphanumeric, dash, underscore, dot)",
                 card.agent_id
-            )
+            ))
         })?;
         let registry_root = std::path::Path::new(&self.dir)
             .canonicalize()
-            .map_err(|e| format!("failed to resolve local agents dir '{}': {e}", self.dir))?;
+            .map_err(|e| {
+                LocalSwarmError::Io(format!(
+                    "failed to resolve local agents dir '{}': {e}",
+                    self.dir
+                ))
+            })?;
         let card_dir = registry_root.join(&safe_id);
         // Defense-in-depth: refuse to write outside the registry root.
         if !card_dir.starts_with(&registry_root) {
-            return Err("refusing to write a path outside the local agents dir".to_string());
+            return Err(LocalSwarmError::Sanitize(
+                "refusing to write a path outside the local agents dir".to_string(),
+            ));
         }
-        std::fs::create_dir_all(&card_dir)
-            .map_err(|e| format!("failed to create agent dir {}: {e}", card_dir.display()))?;
+        std::fs::create_dir_all(&card_dir).map_err(|e| {
+            LocalSwarmError::Io(format!(
+                "failed to create agent dir {}: {e}",
+                card_dir.display()
+            ))
+        })?;
         let card_path = card_dir.join("agent_card.json");
         let json = serde_json::to_string_pretty(card)
-            .map_err(|e| format!("failed to serialize card: {e}"))?;
-        std::fs::write(&card_path, json)
-            .map_err(|e| format!("failed to write {}: {e}", card_path.display()))?;
+            .map_err(|e| LocalSwarmError::InvalidInput(format!("failed to serialize card: {e}")))?;
+        std::fs::write(&card_path, json).map_err(|e| {
+            LocalSwarmError::Io(format!("failed to write {}: {e}", card_path.display()))
+        })?;
         self.load()?;
         Ok(card_path.to_string_lossy().to_string())
     }

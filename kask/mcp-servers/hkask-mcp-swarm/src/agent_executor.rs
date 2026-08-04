@@ -218,7 +218,7 @@ impl AgentExecutor {
                     executed_skills.push(serde_json::json!({
                         "skill": skill,
                         "ok": false,
-                        "error": e,
+                        "error": e.to_string(),
                     }));
                 }
             }

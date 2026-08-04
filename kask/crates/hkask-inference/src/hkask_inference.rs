@@ -328,14 +328,18 @@ impl hkask_types::SkillExecPort for UnavailableSkillExec {
         &'a self,
         _name: &'a str,
         _task: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
-    {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<String, hkask_types::SkillExecError>>
+                + Send
+                + 'a,
+        >,
+    > {
         Box::pin(async {
-            Err(
-                "skill execution unavailable: HKASK_INFERENCE_SOCKET not set or IPC bridge \
-                 unreachable — running a declared skill requires the zed process"
+            Err(hkask_types::SkillExecError::Unavailable(
+                "HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — running a declared skill requires the zed process"
                     .to_string(),
-            )
+            ))
         })
     }
 }

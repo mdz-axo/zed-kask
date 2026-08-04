@@ -717,7 +717,7 @@ async fn dispatch(
             Err(e) => InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "SkillExec".to_string(),
-                    message: e,
+                    message: e.to_string(),
                 },
             },
         };

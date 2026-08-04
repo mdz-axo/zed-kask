@@ -108,6 +108,7 @@ use crate::abw_util::{
 };
 use crate::config::SwarmConfig;
 use crate::consent::ConsentStore;
+use crate::error::map_local_swarm_error;
 use crate::local_runtime::MAX_FANOUT;
 use crate::request_types::*;
 use crate::sanitize::{
@@ -966,7 +967,7 @@ impl SwarmServer {
             // names here so ABW's confusing 400 becomes a clear argument error
             // (verified live 2026-08-02).
             if let Err(e) = validate_agent_name(&req.agent_name) {
-                return Err(McpToolError::invalid_argument(e));
+                return Err(map_local_swarm_error(e));
             }
 
             let mut card = serde_json::json!({
@@ -1427,10 +1428,12 @@ impl SwarmServer {
                     "credits must be positive".to_string(),
                 ));
             }
-            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
-                McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
-            })?;
-            let new_balance = runtime.fund(req.credits).map_err(McpToolError::internal)?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let new_balance = runtime.fund(req.credits).map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "funded": req.credits,
                 "balance": new_balance,
@@ -1453,9 +1456,11 @@ impl SwarmServer {
         _parameters: Parameters<BalanceLocalRequest>,
     ) -> String {
         execute_tool_semantic(self, "swarm_balance_local", Some("pko"), async {
-            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
-                McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
-            })?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
             match runtime.balance() {
                 // A failed measurement must be distinguishable from a measured
                 // zero (the `.rules` trap) — surface it as an error, not 0.
@@ -1486,10 +1491,12 @@ impl SwarmServer {
         execute_tool_semantic(self, "swarm_local_history", Some("pko"), async {
             let req = parameters.0;
             let limit = req.limit.unwrap_or(50).min(500) as usize;
-            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
-                McpToolError::unavailable(format!("local swarm runtime initialization failed: {e}"))
-            })?;
-            let transactions = runtime.history(limit).map_err(McpToolError::internal)?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let transactions = runtime.history(limit).map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "count": transactions.len(),
                 "transactions": transactions,
@@ -1527,11 +1534,7 @@ impl SwarmServer {
                     "agent_name and task must be non-empty".to_string(),
                 ));
             }
-            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
-                McpToolError::unavailable(format!(
-                    "local swarm runtime initialization failed: {e}"
-                ))
-            })?;
+            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
             // Look up the agent in the local registry.
             let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
                 McpToolError::not_found(format!(

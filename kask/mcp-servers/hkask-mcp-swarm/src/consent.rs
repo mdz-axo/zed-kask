@@ -7,6 +7,7 @@
 //! processes, with single-use enforced atomically via the DELETE-affected-rows
 //! check). Grants expire after `CONSENT_TTL_SECS`.
 
+use crate::error::LocalSwarmError;
 use crate::error::SwarmError;
 use hkask_storage::database::value::DbValue;
 use std::sync::Arc;
@@ -95,13 +96,13 @@ impl ConsentStore {
     /// path (default `~/.hkask/swarm_consent.db`), making consent tokens
     /// consumable across processes — the panel's hire flow and the Steer
     /// curator's spend flow compose.
-    pub(crate) fn open_sqlite(path: &str) -> Result<Self, String> {
+    pub(crate) fn open_sqlite(path: &str) -> Result<Self, LocalSwarmError> {
         if let Some(parent) = std::path::Path::new(path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                format!(
+                LocalSwarmError::Io(format!(
                     "failed to create consent store dir {}: {e}",
                     parent.display()
-                )
+                ))
             })?;
         }
         let manager = r2d2_sqlite::SqliteConnectionManager::file(path)
@@ -109,7 +110,9 @@ impl ConsentStore {
         let pool = r2d2::Pool::builder()
             .max_size(4)
             .build(manager)
-            .map_err(|e| format!("failed to create consent store pool: {e}"))?;
+            .map_err(|e| {
+                LocalSwarmError::Database(format!("failed to create consent store pool: {e}"))
+            })?;
         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
             Arc::new(hkask_storage::SqliteDriver::new(pool));
         driver
@@ -122,7 +125,9 @@ impl ConsentStore {
                      created_at TEXT NOT NULL \
                  )",
             )
-            .map_err(|e| format!("failed to init consent store schema: {e}"))?;
+            .map_err(|e| {
+                LocalSwarmError::Database(format!("failed to init consent store schema: {e}"))
+            })?;
         driver
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS consent_sessions (\
@@ -133,7 +138,9 @@ impl ConsentStore {
                      created_at TEXT NOT NULL \
                  )",
             )
-            .map_err(|e| format!("failed to init consent sessions schema: {e}"))?;
+            .map_err(|e| {
+                LocalSwarmError::Database(format!("failed to init consent sessions schema: {e}"))
+            })?;
         Ok(Self {
             inner: ConsentInner::Sqlite(Arc::new(SqliteConsentStore { driver })),
             sessions: std::sync::Mutex::new(std::collections::HashMap::new()),

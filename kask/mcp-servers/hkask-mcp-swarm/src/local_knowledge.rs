@@ -21,6 +21,8 @@
 use hkask_memory::SemanticMemory;
 use std::sync::Arc;
 
+use crate::error::LocalSwarmError;
+
 /// The per-agent memory prefix. A local agent's "knowledge graph" is its
 /// prefix-scoped slice of the operator's semantic memory.
 pub(crate) const AGENT_PREFIX: &str = "agent:";
@@ -55,30 +57,31 @@ impl LazyLocalMemory {
     /// `Err` if the passphrase is unset/too short or the store fails to open —
     /// callers degrade gracefully (the `.rules` startup-failure-signal rule: a
     /// missing memory is signaled, not silently empty).
-    pub(crate) async fn get_or_init(&self) -> Result<&SemanticMemory, String> {
+    pub(crate) async fn get_or_init(&self) -> Result<&SemanticMemory, LocalSwarmError> {
         self.inner
             .get_or_try_init(|| async {
                 if self.passphrase.len() < 8 {
-                    return Err(format!(
+                    return Err(LocalSwarmError::InvalidInput(format!(
                         "swarm memory passphrase too short ({} chars — need >=8; set \
                          HKASK_SWARM_MEMORY_PASSPHRASE). Local knowledge tools will degrade.",
                         self.passphrase.len()
-                    ));
+                    )));
                 }
                 // Create the parent directory so a first-run open does not fail
                 // on a missing data dir.
                 if let Some(parent) = std::path::Path::new(&self.db_path).parent() {
                     if !parent.as_os_str().is_empty() {
                         std::fs::create_dir_all(parent).map_err(|e| {
-                            format!(
+                            LocalSwarmError::Io(format!(
                                 "failed to create swarm memory dir {}: {e}",
                                 parent.display()
-                            )
+                            ))
                         })?;
                     }
                 }
-                SemanticMemory::open(&self.db_path, &self.passphrase, self.dim)
-                    .map_err(|e| format!("failed to open swarm semantic memory: {e}"))
+                SemanticMemory::open(&self.db_path, &self.passphrase, self.dim).map_err(|e| {
+                    LocalSwarmError::Database(format!("failed to open swarm semantic memory: {e}"))
+                })
             })
             .await
     }
@@ -107,7 +110,7 @@ pub(crate) async fn search_agent_knowledge(
     agent_id: &str,
     query: &str,
     limit: usize,
-) -> Result<Vec<KnowledgeFragment>, String> {
+) -> Result<Vec<KnowledgeFragment>, LocalSwarmError> {
     let store = match memory.get_or_init().await {
         Ok(s) => s,
         Err(reason) => {
@@ -118,7 +121,7 @@ pub(crate) async fn search_agent_knowledge(
     let entity = format!("{AGENT_PREFIX}{agent_id}");
     let triples = store
         .query_deduped(&entity)
-        .map_err(|e| format!("semantic memory query failed: {e}"))?;
+        .map_err(|e| LocalSwarmError::Database(format!("semantic memory query failed: {e}")))?;
     let needle = query.to_lowercase();
     let mut fragments: Vec<KnowledgeFragment> = triples
         .into_iter()
@@ -177,7 +180,7 @@ pub(crate) async fn one_shot_generate(
     guard: &Arc<hkask_guard::ContentGuard>,
     prompt: &str,
     temperature: f32,
-) -> Result<String, String> {
+) -> Result<String, LocalSwarmError> {
     let params = hkask_types::template::LLMParameters {
         temperature,
         ..hkask_types::template::LLMParameters::default()
@@ -185,17 +188,19 @@ pub(crate) async fn one_shot_generate(
     let result = inference
         .generate(prompt, &params, None)
         .await
-        .map_err(|e| format!("local inference generate failed: {e}"))?;
+        .map_err(|e| {
+            LocalSwarmError::Unavailable(format!("local inference generate failed: {e}"))
+        })?;
     // Scan the generated output for canary exfiltration / secret leakage.
     // A canary hit is a hard failure (system-prompt exfiltration); a secret
     // hit is logged and the text returned (the generated prompt/ontology may
     // be legitimately useful despite a false-positive secret match — mirrors
     // `AgentExecutor::scan_output`'s asymmetric policy).
     if guard.check_canary(&result.text) {
-        return Err(
+        return Err(LocalSwarmError::Unavailable(
             "canary token detected in generated output — system prompt exfiltration suspected"
                 .to_string(),
-        );
+        ));
     }
     let scan = guard.scan_output(&result.text);
     if !scan.passed {

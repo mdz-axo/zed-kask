@@ -2709,17 +2709,31 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
         &'a self,
         name: &'a str,
         task: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send + 'a>>
-    {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<String, hkask_types::SkillExecError>>
+                + Send
+                + 'a,
+        >,
+    > {
         let name = name.to_string();
         let task = task.to_string();
         Box::pin(async move {
             let Some(executor) = agent::manifest_executor_cloned() else {
-                return Err("manifest executor not wired — skills cannot run".to_string());
+                return Err(hkask_types::SkillExecError::Unavailable(
+                    "manifest executor not wired — skills cannot run".to_string(),
+                ));
             };
             let mut context = std::collections::HashMap::new();
             context.insert("task".to_string(), serde_json::Value::String(task));
-            executor.execute_skill(&name, context).await
+            // `executor` is the upstream `agent::SkillManifestExecutor` (D1 seam),
+            // whose `execute_skill` returns `Result<String, String>`. The
+            // `From<String>` conversion (into `SkillExecError::Failed`) bridges
+            // that into the typed `SkillExecError` without an upstream change.
+            executor
+                .execute_skill(&name, context)
+                .await
+                .map_err(Into::into)
         })
     }
 }

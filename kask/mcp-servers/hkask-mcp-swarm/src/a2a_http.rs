@@ -25,6 +25,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::error::LocalSwarmError;
 use crate::error::SwarmError;
 use crate::local_registry::LocalAgentRegistry;
 use crate::local_runtime::LazyLocalSwarmRuntime;
@@ -55,13 +56,15 @@ impl A2aHttpServer {
         registry: Arc<LocalAgentRegistry>,
         tokio_handle: tokio::runtime::Handle,
         max_credits_per_dispatch: u32,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, LocalSwarmError> {
         let server = tiny_http::Server::http("127.0.0.1:0")
-            .map_err(|e| format!("failed to bind A2A HTTP server: {e}"))?;
+            .map_err(|e| LocalSwarmError::Io(format!("failed to bind A2A HTTP server: {e}")))?;
         let port = match server.server_addr() {
             tiny_http::ListenAddr::IP(addr) => addr.port(),
             tiny_http::ListenAddr::Unix(_) => {
-                return Err("A2A HTTP server bound to Unix socket, not TCP".to_string());
+                return Err(LocalSwarmError::InvalidInput(
+                    "A2A HTTP server bound to Unix socket, not TCP".to_string(),
+                ));
             }
         };
         let base_url = format!("http://127.0.0.1:{port}");

@@ -1051,13 +1051,15 @@ impl SkillExecPort for InferenceIpcClient {
         &'a self,
         name: &'a str,
         task: &'a str,
-    ) -> std::pin::Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<String, hkask_types::SkillExecError>> + Send + 'a>,
+    > {
         let name = name.to_string();
         let task = task.to_string();
         Box::pin(async move {
             self.execute_skill(&name, &task)
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(hkask_types::SkillExecError::from)
         })
     }
 }
