@@ -1677,7 +1677,11 @@ impl SwarmServer {
                     req.steps.len()
                 )));
             }
-            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
             let ceiling = self.client.config().max_credits_per_dispatch;
             let mut results = Vec::new();
             let mut prev_output = String::new();
@@ -1923,17 +1927,24 @@ impl SwarmServer {
             // Write the card to the local registry directory.
             let dir = self.client.config().local_agents_dir.clone();
             let card_dir = std::path::Path::new(&dir).join(&safe_agent_id);
-            std::fs::create_dir_all(&card_dir)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, &format!("failed to create local agent dir {}", card_dir.display())))?;
+            std::fs::create_dir_all(&card_dir).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to create local agent dir {}", card_dir.display()),
+                )
+            })?;
             let card_path = card_dir.join("agent_card.json");
-            let json = serde_json::to_string_pretty(&local_card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize local card: {e}")))?;
-            std::fs::write(&card_path, json)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, &format!("failed to write {}", card_path.display())))?;
+            let json = serde_json::to_string_pretty(&local_card).map_err(|e| {
+                McpToolError::internal(format!("failed to serialize local card: {e}"))
+            })?;
+            std::fs::write(&card_path, json).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to write {}", card_path.display()),
+                )
+            })?;
             // Reload the registry so the new card is visible.
-            self.local_registry
-                .load()
-                .map_err(map_local_swarm_error)?;
+            self.local_registry.load().map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "cloned": safe_agent_id,
                 "cloud_id": req.agent_name,
@@ -2017,11 +2028,13 @@ impl SwarmServer {
                 .join("agent_card.json");
             let json = serde_json::to_string_pretty(&updated_card)
                 .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?;
-            std::fs::write(&card_path, json)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, &format!("failed to write {}", card_path.display())))?;
-            self.local_registry
-                .load()
-                .map_err(map_local_swarm_error)?;
+            std::fs::write(&card_path, json).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to write {}", card_path.display()),
+                )
+            })?;
+            self.local_registry.load().map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "pushed": local_card.agent_id,
                 "cloud_id": cloud_id,
@@ -2068,8 +2081,12 @@ impl SwarmServer {
                 ))
             })?;
             let dir = self.client.config().local_agents_dir.clone();
-            let registry_root = std::fs::canonicalize(&dir)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, &format!("failed to resolve local agents dir {}", dir)))?;
+            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to resolve local agents dir {}", dir),
+                )
+            })?;
             let card_dir = registry_root.join(&safe_id);
             // Defense-in-depth: refuse to remove anything outside the registry
             // root (the id is sanitized, but a canonicalized check costs
@@ -2084,12 +2101,14 @@ impl SwarmServer {
                 ));
             }
             if target.exists() {
-                std::fs::remove_dir_all(&target)
-                    .map_err(|e| hkask_mcp_server::map_io_error(e, &format!("failed to remove local agent dir {}", target.display())))?;
+                std::fs::remove_dir_all(&target).map_err(|e| {
+                    hkask_mcp_server::map_io_error(
+                        e,
+                        &format!("failed to remove local agent dir {}", target.display()),
+                    )
+                })?;
             }
-            self.local_registry
-                .load()
-                .map_err(map_local_swarm_error)?;
+            self.local_registry.load().map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "removed": card.agent_id,
                 "cloud_id": card.cloud_id,
@@ -2161,8 +2180,12 @@ impl SwarmServer {
                 cloud_id: None,
             };
             let dir = self.client.config().local_agents_dir.clone();
-            let registry_root = std::fs::canonicalize(&dir)
-                .map_err(|e| hkask_mcp_server::map_io_error(e, &format!("failed to resolve local agents dir {}", dir)))?;
+            let registry_root = std::fs::canonicalize(&dir).map_err(|e| {
+                hkask_mcp_server::map_io_error(
+                    e,
+                    &format!("failed to resolve local agents dir {}", dir),
+                )
+            })?;
             let card_dir = registry_root.join(&safe_id);
             // Defense-in-depth: refuse to write outside the registry root (the
             // id is sanitized, but a canonicalized check costs nothing and pins
@@ -2179,9 +2202,7 @@ impl SwarmServer {
                 .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?;
             std::fs::write(&card_path, &json)
                 .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to write card"))?;
-            self.local_registry
-                .load()
-                .map_err(map_local_swarm_error)?;
+            self.local_registry.load().map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
                 "created": safe_id,
                 "path": card_path.to_string_lossy(),
@@ -2349,7 +2370,9 @@ impl SwarmServer {
                     "swarm_id must be non-empty".to_string(),
                 ));
             }
-            self.local_swarms.delete(&req.swarm_id).map_err(map_local_swarm_error)?;
+            self.local_swarms
+                .delete(&req.swarm_id)
+                .map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({ "deleted": req.swarm_id }))
         })
         .await
@@ -2430,7 +2453,11 @@ impl SwarmServer {
                     "agent_name and message must be non-empty".to_string(),
                 ));
             }
-            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
             let agent = self.local_registry.get(&req.agent_name).ok_or_else(|| {
                 McpToolError::not_found(format!(
                     "agent '{}' not found in local registry",
@@ -2908,7 +2935,11 @@ impl SwarmServer {
                     "description and agent_name must be non-empty".to_string(),
                 ));
             }
-            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
             let agent_type = req.agent_type.unwrap_or_else(|| "research".to_string());
             let seed =
                 local_knowledge::agent_memory_seed(&self.local_memory, &req.agent_name, 20).await;

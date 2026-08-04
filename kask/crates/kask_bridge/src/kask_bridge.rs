@@ -31,7 +31,8 @@ pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
 /// types.
 pub use hkask_inference::{InferenceConfig, MediaRouter};
 pub use identity::{
-    ProvisionedAgent, agent_name_from_username, provision_agent, webid_from_username,
+    ProvisionError, ProvisionedAgent, agent_name_from_username, provision_agent,
+    webid_from_username,
 };
 pub use inference::LanguageModelEmbeddingPort;
 pub use inference::LanguageModelInferencePort;
