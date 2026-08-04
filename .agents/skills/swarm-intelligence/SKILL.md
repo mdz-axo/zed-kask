@@ -186,6 +186,31 @@ today the Curator can steer with swarm-intelligence in steering mode directly.
 accumulates; C6 reconfigures the most-blamed agent. Absent `delegate_results`,
 C5/C6 are inert (the planning cascade has no execution telemetry).
 
+## Known limitations (audit 2026-08-03)
+
+The [Swarm Cybernetics/Semantics Audit](../../docs/audits/swarm-cybernetics-semantics-audit.md)
+found two structural gaps operators and the Curator should know about before
+relying on the cascade:
+
+- **Loop B fidelity is binary.** C5/C6 fault attribution reads
+  `delegate_results[].tool_calls[].ok` and `executed_skills[].ok` — execution
+  success, not task success. An agent that returns `ok: true` with the wrong
+  output is not flagged. The `task_success` axis (C0) closes this only when the
+  caller supplies a deterministic oracle; for open tasks the loop can
+  reconfigure a healthy-but-wrong agent indefinitely. Remediation: an optional
+  deterministic `task_success` field on `LocalDelegateResult` fed into ORIENT.
+- **C4 latency is sensed but not regulated.** `LocalDelegateResult.latency_ms`
+  is measured, but no DECIDE move type consumes it — a slow agent is detected
+  with no response class (no "reconfigure the slow agent" move). Remediation:
+  feed `latency_ms` into DECIDE as a reconfigure signal.
+- **Loop A closure is contingent on execution mode.** The default is `advisory`,
+  where the operator must feed `delegate_results` back or the loop stays open.
+  The `swarm-steering` skill (steering mode) makes closure structural.
+
+These are composition-quality gaps, not safety gaps — the consent/ceiling
+algedonic gate (Loop C) keeps spend bounded in the meantime. Full per-property
+evidence and the VSM/Ashby analysis are in the audit.
+
 ## Registry
 
 Registry is authoritative — when this SKILL.md disagrees with registry
@@ -200,8 +225,29 @@ templates, the registry wins.
 - Deterministic compute primitives: `swarm.converge_accumulate`,
   `swarm.second_order_monitor`, `swarm.filter_proposed_moves` (in
   `hkask-templates/src/compute.rs`)
-- MCP tool surface (31 tools, both sets always available): 20 ABW + 11 local
-  (`swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`,
-  `swarm_delegate_local`, `swarm_fanout_local`, `swarm_list_local_agents`,
-  `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
-  `swarm_create_local_agent`, `swarm_reconfigure_local_agent`).
+- MCP tool surface (41 tools — both sets always registered in either mode;
+  `kask.swarm.mode` selects the substrate, not the surface; pinned by
+  `tool_surface_is_exactly_41_registered_tools`):
+  - **ABW tools (27)**: `swarm_list_agents`, `swarm_get_swarm`, `swarm_get_agent`,
+    `swarm_list_apps`, `swarm_ontology_templates`, `swarm_execute_agent`,
+    `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`,
+    `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_fanout`,
+    `swarm_run_status`, `swarm_generate_prompt`, `swarm_generate_ontology`,
+    `swarm_create_agent`, `swarm_create_swarm`, `swarm_xaman`, `swarm_create_app`,
+    `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
+    `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
+    `swarm_publish_agent`, `swarm_fork_agent`.
+  - **Local tools (14)**: `swarm_fund_local`, `swarm_balance_local`,
+    `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
+    `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
+    `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
+    `swarm_clone_to_local`, `swarm_push_to_cloud`, `swarm_remove_local`,
+    `swarm_create_local_agent`, `swarm_reconfigure_local_agent` (C6).
+- Spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
+  `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
+  `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,
+  action+target+credits-scoped, TTL-bounded) or `swarm_authorize_session`
+  (headless). In local mode there is no consent token — the ledger balance +
+  the per-dispatch ceiling (`HKASK_ABW_MAX_CREDITS`, default 50) is the gate.
+  See the [Swarm Systems Reference](../../docs/diataxis/swarm_system/reference.md)
+  for the full tool/contract table and the token model.

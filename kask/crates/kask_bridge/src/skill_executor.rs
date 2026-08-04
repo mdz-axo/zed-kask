@@ -441,29 +441,19 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
     }
 }
 
-/// Deterministically extract the final step's result from the cascade context.
-///
-/// `ManifestExecutor::execute_manifest` stores each step's output under a
-/// `step_{ordinal}_result` key. HashMap iteration order is randomized, so
-/// `values().last()` would pick an arbitrary step. This function parses the
-/// ordinal from each `step_N_result` key and returns the value of the highest
-/// ordinal, serialized as JSON. Falls back to the full context if no
-/// `step_N_result` keys are present (e.g. manifests that only emit
-/// `step_N_populated` or other keys).
+/// Deterministically extract the final step's result from the cascade context,
+/// reusing the canonical ordinal-keyed selector `hkask_templates::extract_final_step_result`
+/// (the .rules "ManifestExecutor final-result extraction must be ordinal-keyed"
+/// trap — do not re-implement the ordinal parse). Falls back to the full context
+/// JSON when no `step_N_result` keys exist (e.g. manifests whose final step is
+/// `populate`, emitting only `step_N_populated`); this fallback is a bridge
+/// policy layer on top of the shared selector, which returns `Value::Null`.
 fn extract_final_step_result(result: &std::collections::HashMap<String, Value>) -> String {
-    let mut step_results: Vec<(u32, &Value)> = result
-        .iter()
-        .filter_map(|(key, value)| {
-            key.strip_prefix("step_")
-                .and_then(|rest| rest.strip_suffix("_result"))
-                .and_then(|n| n.parse::<u32>().ok())
-                .map(|ordinal| (ordinal, value))
-        })
-        .collect();
-    step_results.sort_by_key(|(ordinal, _)| *ordinal);
-    match step_results.last() {
-        Some((_, value)) => value.to_string(),
-        None => serde_json::to_string(result).unwrap_or_default(),
+    let value = hkask_templates::extract_final_step_result(result);
+    if value.is_null() {
+        serde_json::to_string(result).unwrap_or_default()
+    } else {
+        value.to_string()
     }
 }
 

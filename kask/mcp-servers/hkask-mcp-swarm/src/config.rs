@@ -84,6 +84,10 @@ pub(crate) struct SwarmConfig {
     /// read by `LocalAgentRegistry` in `Local` mode. Default
     /// `agents/local/curated` relative to the working directory.
     pub local_agents_dir: String,
+    /// Directory containing local swarms (`<id>/swarm.json`), read/written by
+    /// `LocalSwarmRegistry`. Default `agents/local/swarms` relative to the
+    /// hKask data directory. The local replica of an ABW workspace roster.
+    pub local_swarms_dir: String,
     /// The governed MCP server ids this server may declare tools for (from
     /// `HKASK_MCP_SERVER_IDS`, the parent's `BUILT_IN_MCP_SERVERS_IDS`).
     /// `None` = no server-side filtering (backward compatible). When set,
@@ -113,6 +117,7 @@ impl Default for SwarmConfig {
             curator_consent_default: false,
             default_agent_model: "claude-haiku-4-5-20251001".to_string(),
             local_agents_dir: "agents/local/curated".to_string(),
+            local_swarms_dir: "agents/local/swarms".to_string(),
             allowed_tool_servers: None,
         }
     }
@@ -135,6 +140,20 @@ pub fn resolve_local_agents_dir(local_agents_dir: &str) -> String {
         local_agents_dir.to_string()
     } else {
         hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(local_agents_dir))
+            .to_string_lossy()
+            .to_string()
+    }
+}
+
+/// Resolve `local_swarms_dir` against the hKask data directory. Same rule as
+/// [`resolve_local_agents_dir`]: a relative path (the default
+/// `agents/local/swarms`) is joined under the data dir; an absolute path
+/// (operator-set via `HKASK_LOCAL_SWARMS_DIR`) is used as-is.
+pub fn resolve_local_swarms_dir(local_swarms_dir: &str) -> String {
+    if std::path::Path::new(local_swarms_dir).is_absolute() {
+        local_swarms_dir.to_string()
+    } else {
+        hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(local_swarms_dir))
             .to_string_lossy()
             .to_string()
     }
@@ -171,6 +190,11 @@ impl SwarmConfig {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(default.local_agents_dir);
         let local_agents_dir = resolve_local_agents_dir(&local_agents_dir);
+        let local_swarms_dir = std::env::var("HKASK_LOCAL_SWARMS_DIR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(default.local_swarms_dir);
+        let local_swarms_dir = resolve_local_swarms_dir(&local_swarms_dir);
         let allowed_tool_servers = std::env::var("HKASK_MCP_SERVER_IDS")
             .ok()
             .filter(|s| !s.trim().is_empty())
@@ -213,6 +237,7 @@ impl SwarmConfig {
                 curator_consent_default,
                 default_agent_model,
                 local_agents_dir,
+                local_swarms_dir,
                 allowed_tool_servers,
             },
             warning,

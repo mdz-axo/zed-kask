@@ -80,6 +80,27 @@ fault from `delegate_results[].tool_calls[].ok` / `executed_skills[].ok`;
 `fault_count` accumulates (deterministic, in `swarm.converge_accumulate`);
 C6 reconfigures the most-blamed agent.
 
+## Known limitations (audit 2026-08-03)
+
+The directive this skill produces closes the C5/C6 feedback loop, but the loop
+it closes has two limits an operator should know (full analysis in the
+[Swarm Cybernetics/Semantics Audit](../../docs/audits/swarm-cybernetics-semantics-audit.md)):
+
+- **Binary fidelity.** The `delegate_results` this skill collects carry
+  `tool_calls[].ok` / `executed_skills[].ok` — execution success, not task
+  success. ORIENT's fault attribution (C5) cannot detect an agent that returns
+  `ok: true` with the wrong output. For tasks with a deterministic oracle,
+  pass `task_success` on the re-invoke so the planner's C0 axis covers it; for
+  open tasks, the Go See loop (C2) is the only cover.
+- **`latency_ms` is collected but not yet regulated.** Each `LocalDelegateResult`
+  carries `latency_ms` (Cybernetic Swarm Plan C4), but no DECIDE move consumes it
+  yet — a slow agent is sensed with no reconfigure response. The directive
+  still collects it (forward-compatible) so a future planner that regulates
+  latency gets the telemetry.
+
+These do not block execution — the directive is sound; they bound what the
+*next* swarm-intelligence iteration can infer from the results.
+
 ## Composed with
 
 | Skill | Role | When Invoked |

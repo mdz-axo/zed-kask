@@ -15,7 +15,9 @@
 //!   Bayesian, Brier, calibration adjustment).
 //! - **choice**: Evaluate a condition against context, branch by setting `_next_ordinal`.
 //! - **loop**: Re-enter the cascade from `loop_target` ordinal (defaults to 0),
-//!   incrementing the iteration counter. Respects matryoshka depth limit (7).
+//!   incrementing the iteration counter. Iterative re-entry is bounded by
+//!   `convergence.max_iterations`; the matryoshka depth limit bounds recursive
+//!   nesting (flowdef sub-cascades), not this.
 //!   `loop_target` is a Jinja expression rendered against the current context,
 //!   enabling targeted re-entry: the convergence check can emit a numeric
 //!   `re_entry_target` field that routes the loop to the failing step.
@@ -101,10 +103,10 @@ fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
         Some(SkillFeedbackSpan::Evaluate.phase())
     } else if last_segment.contains("convergence") || last_segment.contains("converge") {
         Some(SkillFeedbackSpan::Convergence.phase())
-    } else if last_segment.contains("write") {
-        Some(SkillFeedbackSpan::Write.phase())
     } else if last_segment.contains("operator_feedback") || last_segment.contains("feedback") {
         Some(SkillFeedbackSpan::OperatorFeedback.phase())
+    } else if last_segment.contains("write") {
+        Some(SkillFeedbackSpan::Write.phase())
     } else if last_segment.contains("outcome") {
         Some(SkillFeedbackSpan::Outcome.phase())
     } else {
@@ -260,6 +262,21 @@ impl ManifestExecutor {
                 map.values().any(|v| self.check_untrusted_input(v))
             }
             Value::Array(arr) => arr.iter().any(|v| self.check_untrusted_input(v)),
+            // Inline Jinja: `{{ step_N_result }}` is the same reference grammar
+            // `propagate_taint_for_binding` recognizes (RR-0026/0027). The gate
+            // must scan the same grammar as the propagation it complements —
+            // otherwise a Source-tainted entry bound into a Sink tool via
+            // inline Jinja bypasses the FIDES Source→Sink block (the gate saw
+            // only `$ref` while propagation already handled inline Jinja).
+            Value::String(_) => {
+                let keys = self.extract_referenced_keys(value);
+                if keys.is_empty() {
+                    return false;
+                }
+                let labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
+                keys.iter()
+                    .any(|k| labels.get(k).copied().unwrap_or(ToolTaint::Pure) == ToolTaint::Source)
+            }
             _ => false,
         }
     }
@@ -472,6 +489,32 @@ impl ManifestExecutor {
         manifest: &BundleManifest,
         initial_context: HashMap<String, Value>,
     ) -> Result<HashMap<String, Value>> {
+        self.run_cascade(manifest, initial_context, 0).await
+    }
+
+    /// Drive the cascade with an explicit recursion `depth`.
+    ///
+    /// The public `execute_manifest` enters at depth 0; `execute_flowdef`
+    /// re-enters with `depth + 1`. The matryoshka guard fires when `depth`
+    /// exceeds `SYSTEM_MAX_RECURSION`, bounding *recursive nesting* (flowdef
+    /// sub-cascades) — NOT iterative loop re-entry, which is bounded by
+    /// `convergence.max_iterations`. Conflating the two (the prior bug)
+    /// silently capped `max_iterations` at `SYSTEM_MAX_RECURSION`: a manifest
+    /// declaring `max_iterations: 10` that failed to converge errored at
+    /// iteration 8 with "Matryoshka depth limit exceeded" instead of exiting
+    /// `MaxedOut` at iteration 10.
+    async fn run_cascade(
+        &self,
+        manifest: &BundleManifest,
+        initial_context: HashMap<String, Value>,
+        depth: u8,
+    ) -> Result<HashMap<String, Value>> {
+        if depth > hkask_capability::SYSTEM_MAX_RECURSION {
+            return Err(TemplateError::Manifest(format!(
+                "Matryoshka depth limit ({}) exceeded",
+                hkask_capability::SYSTEM_MAX_RECURSION
+            )));
+        }
         let mut context = initial_context;
         let mut steps = manifest.steps.clone();
         steps.sort_by_key(|s| s.ordinal);
@@ -485,8 +528,6 @@ impl ManifestExecutor {
         let field = convergence.field().to_string();
         let improvement_enabled = convergence.improvement_enabled();
         let mut iteration: u32 = 0;
-        let mut recursion_depth: u8 = 0;
-        let matryoshka_limit: u8 = hkask_capability::SYSTEM_MAX_RECURSION;
         // Unified gas + rJoule budget tracking (extracted to `budget.rs`).
         // Replaces 6 `let mut` locals (gas_used, gas_alerted, rjoule_used,
         // rjoule_alerted, plus the cap/threshold reads) with one tracker.
@@ -665,34 +706,10 @@ impl ManifestExecutor {
                     }
 
                     // ── Loop: re-enter cascade from target ordinal ──
+                    // Iterative loop re-entry is bounded by `convergence.max_iterations`
+                    // (checked below); the matryoshka guard in `run_cascade` bounds
+                    // recursive nesting (flowdef), not this.
                     "loop" => {
-                        recursion_depth += 1;
-                        if recursion_depth > matryoshka_limit {
-                            info!(
-                                target: "reg.skill.convergence.escalated",
-                                iteration = iteration,
-                                reason = "matryoshka depth exceeded",
-                                depth = recursion_depth,
-                                limit = matryoshka_limit,
-                                "REG"
-                            );
-                            let snap = budget.snapshot();
-                            convergence.finalize_report(
-                                &mut context,
-                                ConvergenceStatus::MaxedOut,
-                                "energy_spent",
-                                iteration,
-                                snap.gas_used,
-                                snap.gas_cap,
-                                snap.rjoule_used,
-                                snap.rjoule_cap,
-                            );
-                            return Err(TemplateError::Manifest(format!(
-                                "Matryoshka depth limit ({}) exceeded at iteration {}",
-                                matryoshka_limit, iteration
-                            )));
-                        }
-
                         let loop_target = step
                             .input_mapping
                             .as_ref()
@@ -710,7 +727,7 @@ impl ManifestExecutor {
                             target: "reg.skill.cascade.step_executed",
                             iteration = iteration,
                             loop_target = loop_target,
-                            depth = recursion_depth,
+                            recursion_depth = depth,
                             "REG"
                         );
 
@@ -972,6 +989,7 @@ impl ManifestExecutor {
                                 context,
                                 budget.remaining_gas(),
                                 budget.remaining_rjoule(),
+                                depth,
                             )
                             .await?;
                         context = new_context;
@@ -1163,31 +1181,13 @@ impl ManifestExecutor {
                 break 'cascade;
             }
 
-            // Implicit loop: re-enter from step 0
-            recursion_depth += 1;
-            if recursion_depth > matryoshka_limit {
-                let snap = budget.snapshot();
-                convergence.finalize_report(
-                    &mut context,
-                    ConvergenceStatus::MaxedOut,
-                    "energy_spent",
-                    iteration,
-                    snap.gas_used,
-                    snap.gas_cap,
-                    snap.rjoule_used,
-                    snap.rjoule_cap,
-                );
-                return Err(TemplateError::Manifest(format!(
-                    "Matryoshka depth limit ({}) exceeded at iteration {}",
-                    matryoshka_limit, iteration
-                )));
-            }
+            // Implicit loop: re-enter from step 0. Iterative re-entry is
+            // bounded by `convergence.max_iterations` (checked above); the
+            // matryoshka guard in `run_cascade` bounds recursive nesting
+            // (flowdef), not this.
         }
 
-        context.insert(
-            "_recursion_depth".to_string(),
-            Value::Number(recursion_depth.into()),
-        );
+        context.insert("_recursion_depth".to_string(), Value::Number(depth.into()));
         Ok(context)
     }
 
@@ -1498,6 +1498,7 @@ impl ManifestExecutor {
         mut context: HashMap<String, Value>,
         parent_gas_remaining: u64,
         parent_rjoule_remaining: f64,
+        depth: u8,
     ) -> Result<(HashMap<String, Value>, u64, f64)> {
         let template_ref = step.template_ref.as_deref().ok_or_else(|| {
             TemplateError::Manifest(format!(
@@ -1582,8 +1583,10 @@ impl ManifestExecutor {
 
         // Execute the sub-cascade. Box::pin is required because this is a
         // recursive async fn — without it, the future would be infinitely
-        // sized.
-        let sub_result = Box::pin(self.execute_manifest(&sub_manifest, context)).await?;
+        // sized. Re-enter `run_cascade` with `depth + 1` so the matryoshka
+        // guard in `run_cascade` bounds recursive nesting (this is the ONLY
+        // path that increments depth; iterative loop re-entry does not).
+        let sub_result = Box::pin(self.run_cascade(&sub_manifest, context, depth + 1)).await?;
 
         // Extract the sub-cascade's final result value. We do NOT merge the
         // full sub-context back into the parent — only the result is stored,
@@ -1862,7 +1865,7 @@ impl ManifestExecutor {
 ///
 /// Used by `execute_flowdef` to extract the sub-cascade's final result without
 /// merging the full sub-context back into the parent.
-fn extract_final_step_result(context: &HashMap<String, Value>) -> Value {
+pub fn extract_final_step_result(context: &HashMap<String, Value>) -> Value {
     extract_final_step_entry(context)
         .map(|(_, value)| value)
         .unwrap_or(Value::Null)
@@ -2366,7 +2369,7 @@ convergence:
         };
 
         let (parent_context, _gas, _rjoule) = executor
-            .execute_flowdef(&step, HashMap::new(), 100, 100.0)
+            .execute_flowdef(&step, HashMap::new(), 100, 100.0, 0)
             .await
             .expect("sub-cascade with a Source tool should succeed");
 
@@ -2389,5 +2392,222 @@ convergence:
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// S1 regression: iterative loop re-entry must be bounded by
+    /// `convergence.max_iterations`, NOT by `SYSTEM_MAX_RECURSION`. Before the
+    /// fix, `recursion_depth` was incremented on every loop re-entry (explicit
+    /// `loop` and implicit end-of-pass) and never reset, so a manifest with
+    /// `max_iterations: 10` that failed to converge errored at iteration 8 with
+    /// "Matryoshka depth limit (7) exceeded" instead of exiting `MaxedOut` at
+    /// iteration 10 — silently capping `max_iterations` at the matryoshka limit.
+    #[tokio::test]
+    async fn iterative_loop_is_bounded_by_max_iterations_not_matryoshka() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+        let manifest_yaml = r#"
+manifest:
+  id: matryoshka-regression
+steps:
+  - ordinal: 1
+    action: render
+    description: produce artifact
+    template_ref: "artifact"
+convergence:
+  max_iterations: 10
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#;
+        let manifest = load_manifest_from_yaml(manifest_yaml).expect("manifest must parse");
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("non-converging cascade must exit MaxedOut, not error with matryoshka limit");
+        let status = result
+            .get("_convergence")
+            .and_then(|c| c.get("status"))
+            .and_then(|s| s.as_str())
+            .expect("_convergence.status must be present");
+        assert_eq!(
+            status, "maxed_out",
+            "non-converging cascade bounded by max_iterations must exit MaxedOut, got {status}"
+        );
+        let iterations = result
+            .get("_convergence")
+            .and_then(|c| c.get("iterations_completed"))
+            .and_then(|v| v.as_u64())
+            .expect("iterations_completed must be present");
+        assert_eq!(
+            iterations, 10,
+            "cascade must run all 10 iterations before MaxedOut (matryoshka previously capped at 7)"
+        );
+    }
+
+    /// S1 regression: the matryoshka guard must still bound recursive nesting
+    /// (flowdef sub-cascades). A flowdef chain nested deeper than
+    /// `SYSTEM_MAX_RECURSION` must error with the matryoshka message — this
+    /// confirms the guard moved to the recursion edge (run_cascade entry) and
+    /// wasn't deleted along with the iterative-loop increments.
+    #[tokio::test]
+    async fn matryoshka_guard_still_bounds_flowdef_recursion() {
+        let tmp = std::env::temp_dir().join("hkask-matryoshka-recursion-test");
+        std::fs::create_dir_all(&tmp).expect("create temp template dir");
+        // A sub-manifest whose only step re-enters itself via flowdef. Each
+        // recursive call increments depth by 1; once depth exceeds
+        // SYSTEM_MAX_RECURSION the guard fires.
+        std::fs::write(
+            tmp.join("self-recurse.yaml"),
+            r#"
+manifest:
+  id: self-recurse
+steps:
+  - ordinal: 1
+    action: flowdef
+    description: re-enter self
+    template_ref: "self-recurse"
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+"#,
+        )
+        .expect("write sub-manifest");
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        )
+        .with_template_base_path(tmp.clone());
+
+        let step = BundleManifestStep {
+            ordinal: 1,
+            action: "flowdef".to_string(),
+            description: "kick off the recursion".to_string(),
+            renderer: None,
+            template_ref: Some("self-recurse".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: None,
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+        let err = executor
+            .execute_flowdef(&step, HashMap::new(), u64::MAX, f64::MAX, 0)
+            .await
+            .expect_err("deeply nested flowdef recursion must hit the matryoshka guard");
+        assert!(
+            err.to_string().contains("Matryoshka depth limit"),
+            "deeply nested flowdef must error with the matryoshka message, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// S2 regression: the FIDES Source→Sink gate (`check_untrusted_input`) must
+    /// recognize inline-Jinja `{{ step_N_result }}` references, not only `$ref`.
+    /// Before the fix, a Sink tool fed Source data via inline Jinja bypassed the
+    /// block because `has_untrusted_input` was computed by scanning only `$ref`.
+    /// The propagation (RR-0026/0027) already labeled inline-Jinja bindings; the
+    /// gate must scan the same grammar to make the label load-bearing.
+    #[tokio::test]
+    async fn fides_gate_blocks_sink_tool_fed_via_inline_jinja() {
+        struct SinkToolPort;
+        impl hkask_capability::ToolPort for SinkToolPort {
+            fn invoke<'a>(
+                &'a self,
+                _server: &'a str,
+                _tool: &'a str,
+                _args: Value,
+                _token: &'a DelegationToken,
+            ) -> ToolFuture<'a, Result<Value, ToolPortError>> {
+                Box::pin(async {
+                    Ok(serde_json::json!(
+                        "sink tool must not be invoked when the gate blocks"
+                    ))
+                })
+            }
+            fn get_tool_info<'a>(
+                &'a self,
+                _tool_name: &'a str,
+            ) -> ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+                Box::pin(async {
+                    Some(hkask_capability::ToolInfo {
+                        name: "write".to_string(),
+                        description: "Sink tool stub".to_string(),
+                        input_schema: serde_json::json!({}),
+                        server_id: "hkask-mcp-stub".to_string(),
+                        required_capability: None,
+                        taint: ToolTaint::Sink,
+                    })
+                })
+            }
+            fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
+                Box::pin(async { vec!["write".to_string()] })
+            }
+        }
+
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(SinkToolPort),
+            LLMParameters::default(),
+        )
+        .with_runtime_policy(Arc::new(hkask_regulation::DefaultPolicy::new(
+            hkask_regulation::PolicyConfig::default(),
+        )));
+        // Label step_1_result as Source, as `execute_tool_invoke` would for a
+        // Source tool's output. The gate must consult this label when the input
+        // references step_1_result via inline Jinja.
+        executor
+            .taint_labels
+            .lock()
+            .expect("taint labels mutex not poisoned")
+            .insert("step_1_result".to_string(), ToolTaint::Source);
+
+        let step = BundleManifestStep {
+            ordinal: 2,
+            action: "execute".to_string(),
+            description: "sink fed via inline jinja".to_string(),
+            renderer: None,
+            template_ref: None,
+            mcp: Some("hkask-mcp-stub/write".to_string()),
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: Some(serde_json::json!({ "query": "{{ step_1_result }}" })),
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "step_1_result".to_string(),
+            Value::String("untrusted external content".to_string()),
+        );
+
+        let err = executor
+            .execute_tool_invoke(&step, &mut context)
+            .await
+            .expect_err("FIDES gate must block Sink tool fed Source data via inline Jinja");
+        assert!(
+            err.to_string().contains("blocked"),
+            "error must surface the FIDES Source→Sink block verdict: {err}"
+        );
     }
 }

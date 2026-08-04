@@ -2,11 +2,12 @@
 # hKask v0.31.0
 #
 # Maps classical swarm-intelligence algorithms (PSO, ACO, Reynolds boids) onto
-# ABW's hire/delegate vocabulary (fire is NOT yet implemented — the ABW fire
-# endpoint has no tool, so redundancy moves are flagged for manual pruning).
-# Each tuning term corresponds to a concrete composition move. The substrate
-# is Onto4MAT team properties (alignment, cohesion, separation) measured
-# against the ABW workspace roster.
+# ABW's hire/fire/delegate vocabulary. Redundancy moves fire duplicates via
+# `swarm_fire` (abw mode, verified live 2026-08-02 — roster removal, the agent
+# itself is not deleted) or `swarm_remove_local` (local mode — deletes the local
+# card; a synced card's ABW agent is untouched). Each tuning term corresponds
+# to a concrete composition move. The substrate is Onto4MAT team properties
+# (alignment, cohesion, separation) measured against the ABW workspace roster.
 #
 # Sources:
 #   - Bansal, Singh, Pal (2019), Evolutionary and Swarm Intelligence Algorithms,
@@ -50,11 +51,11 @@ tuning_palette:
 
   - id: lower_omega
     term: omega (inertia)
-    abw_move: flag_redundant_duplicate
+    abw_move: fire_redundant_duplicate
     effect: "reduce momentum — the swarm escapes the current basin and explores"
     when: "coherence_deficit + low diversity (stuck in a basin)"
     source: "Bansal 2019: inertia weight balances exploration/exploitation"
-    note: "no fire tool yet — the move flags the duplicate for operator pruning"
+    note: "abw: `swarm_fire` removes the duplicate from the roster (verified live 2026-08-02); local: `swarm_remove_local` deletes the local card. Neither deletes the agent permanently — `swarm_delete_agent` / `swarm_delete_swarm` are the permanent-delete tools."
 
   - id: raise_c2
     term: c2 (social scaling)
@@ -73,11 +74,11 @@ tuning_palette:
 
   - id: pheromone_evaporation
     term: pheromone evaporation
-    abw_move: flag_redundant_duplicate
-    effect: "forget stale paths — flag over-deposited pheromone so the swarm can explore"
+    abw_move: fire_redundant_duplicate
+    effect: "forget stale paths — remove over-deposited pheromone so the swarm can explore"
     when: "coherence_deficit + redundant duplicates crowding out diversity"
     source: "Bansal 2019: pheromone evaporates with time; longer paths have more evaporation"
-    note: "no fire tool yet — the move flags the duplicate for operator pruning"
+    note: "abw: `swarm_fire` (roster removal, verified live 2026-08-02); local: `swarm_remove_local`. The agent itself is not deleted — use `swarm_delete_agent` for permanent deletion."
 
   # ── Reynolds (1987) flocking ──
   - id: reynolds_separation

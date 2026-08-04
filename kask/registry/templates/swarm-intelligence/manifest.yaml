@@ -4,8 +4,10 @@
 #
 # Substrate ontology: Agent Bestiary World (ABW) swarm semantics — a swarm is
 # an ABW workspace with hired agents; compound agents orchestrate via
-# execute_agent / delegate_to_agent (delegation chains forbidden); gas is
-# hire 5cr / @mention 1cr / delegation 1cr+tokens; Thagard coherence scoring.
+# execute_agent / delegate_to_agent (delegation chains forbidden). Gas (verified
+# live 2026-08-02): own-agent hire via `/add` = flat 2 cr; third-party `/hire` =
+# flat 5 cr base (quote `total` = base + required + optional); @mention 1 cr +
+# tokens, delegation 1 cr + tokens. Thagard coherence scoring.
 #
 # Surface ontologies:
 #   - Onto4MAT (Kiesel et al. 2022): Team { alignment, cohesion, separation,

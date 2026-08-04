@@ -72,6 +72,7 @@ mod consent;
 mod error;
 mod local_registry;
 mod local_runtime;
+mod local_swarms;
 mod request_types;
 mod sanitize;
 mod spend_gate;
@@ -95,6 +96,7 @@ pub use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentRegistry,
 };
 pub use crate::local_runtime::{LazyLocalSwarmRuntime, LocalDelegateResult, LocalSwarmRuntime};
+pub use crate::local_swarms::{LocalSwarm, LocalSwarmRegistry};
 
 use crate::abw_client::SwarmClient;
 use crate::abw_util::{
@@ -117,6 +119,7 @@ hkask_mcp_server::mcp_server!(
         pub consent: std::sync::Arc<ConsentStore>,
         pub local_registry: std::sync::Arc<LocalAgentRegistry>,
         pub local_runtime: std::sync::Arc<LazyLocalSwarmRuntime>,
+        pub local_swarms: std::sync::Arc<LocalSwarmRegistry>,
     }
 );
 
