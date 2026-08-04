@@ -11,7 +11,9 @@ use crate::codegraph::indexer::pipeline::IndexPipeline;
 use crate::codegraph::types::Direction;
 use crate::codegraph::{ContextBudget, graph};
 use hkask_mcp_server::run_server;
-use hkask_mcp_server::server::{CapabilityTier, CredentialRequirement, McpToolError, execute_tool};
+use hkask_mcp_server::server::{
+    CapabilityTier, CredentialRequirement, McpToolError, execute_tool, map_io_error,
+};
 use hkask_types::InferencePort;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use schemars::JsonSchema;
@@ -42,6 +44,29 @@ fn db_err(e: impl std::fmt::Display) -> McpToolError {
     McpToolError::internal(e.to_string())
 }
 
+/// Classify a `CodeGraphError` into the MCP wire-level `McpToolError` kind.
+///
+/// `Io` errors route through `map_io_error` so `NotFound`/`PermissionDenied`
+/// surface as caller-fixable kinds; `NotUtf8` is a user-input problem
+/// (`invalid_argument`); the remaining variants are infrastructure or
+/// source-parse failures that remain `internal`.
+fn map_codegraph_error(e: crate::codegraph::CodeGraphError) -> McpToolError {
+    use crate::codegraph::error::IndexError;
+    match e {
+        crate::codegraph::CodeGraphError::Io(io) => map_io_error(io, "codegraph I/O"),
+        crate::codegraph::CodeGraphError::Index(IndexError::FileNotAccessible { path, source }) => {
+            match source {
+                Some(io) => map_io_error(io, &format!("file not accessible: {path}")),
+                None => McpToolError::not_found(format!("file not accessible: {path}")),
+            }
+        }
+        crate::codegraph::CodeGraphError::Index(IndexError::NotUtf8 { path }) => {
+            McpToolError::invalid_argument(format!("file not valid UTF-8: {path}"))
+        }
+        _ => McpToolError::internal(e.to_string()),
+    }
+}
+
 impl CodeGraphServer {
     fn pipeline_guard(&self) -> Result<std::sync::MutexGuard<'_, IndexPipeline>, McpToolError> {
         self.pipeline
@@ -66,7 +91,7 @@ impl CodeGraphServer {
         // For now: index entire workspace (standalone mode).
         let results = pipeline
             .index_directory(&cwd)
-            .map_err(|e| McpToolError::internal(format!("index failed: {e}")))?;
+            .map_err(map_codegraph_error)?;
 
         let total: usize = results.iter().map(|r| r.symbols).sum();
         tracing::info!(target: "hkask.mcp.codegraph", symbols = total, "Auto-indexed");

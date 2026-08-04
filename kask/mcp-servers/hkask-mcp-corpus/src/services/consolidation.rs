@@ -14,6 +14,7 @@ use hkask_types::template::LLMParameters;
 use serde_json::json;
 
 use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
+use crate::helpers::map_corpus_io_error;
 use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
 use crate::tools::semantic::configured_qa_model;
 use crate::{embedding_dim, normalize_concept, normalize_in_place, render_docproc_template};
@@ -445,9 +446,8 @@ impl ConsolidationService {
             out.push('\n');
         }
         let output_path = crate::path_safety::contain_for_write(&output)?;
-        std::fs::write(&output_path, &out).map_err(|e| {
-            McpToolError::internal(format!("Cannot write output '{}': {e}", output))
-        })?;
+        std::fs::write(&output_path, &out)
+            .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", output)))?;
 
         let result = json!({
             "original": chunks.len(),

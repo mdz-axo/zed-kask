@@ -327,7 +327,7 @@ fn handle_jsonrpc(
                 let runtime = runtime
                     .get_or_init()
                     .await
-                    .map_err(|e| SwarmError::Unavailable(e))?;
+                    .map_err(|e| SwarmError::Unavailable(e.to_string()))?;
                 runtime
                     .delegate(&agent, &text, A2A_HTTP_CREDITS, max_credits_per_dispatch)
                     .await

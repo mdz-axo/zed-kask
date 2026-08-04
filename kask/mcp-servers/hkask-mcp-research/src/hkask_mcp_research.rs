@@ -75,10 +75,47 @@ macro_rules! handle_db_result {
                 let v: serde_json::Value = $ok(v);
                 Ok(v)
             }
-            Ok(Err(e)) => Err(McpToolError::internal(e.to_string())),
-            Err(e) => Err(McpToolError::internal(format!("Task error: {}", e))),
+            Ok(Err(e)) => Err($crate::map_db_error(e)),
+            Err(e) => Err($crate::map_join_error(e)),
         }
     };
+}
+
+/// Classify an `anyhow::Error` from a `spawn_db` closure (almost always a wrapped
+/// `rusqlite::Error`) into the MCP wire-level `McpToolError` kind by the
+/// underlying SQLite error code: constraint violations are user-input problems
+/// (`invalid_argument`), a missing DB row is `not_found`, a read-only DB is a
+/// failed precondition, lock/busy/cannot-open/full/IO failures are availability
+/// issues (`unavailable`), permission errors are `permission_denied`, and the
+/// remaining SQL/infra failures remain `internal`.
+pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
+    let message = e.to_string();
+    if let Some(rusqlite::Error::SqliteFailure(ffi, _)) = e.downcast_ref::<rusqlite::Error>() {
+        return match ffi.code {
+            rusqlite::ErrorCode::ConstraintViolation => McpToolError::invalid_argument(message),
+            rusqlite::ErrorCode::PermissionDenied => McpToolError::permission_denied(message),
+            rusqlite::ErrorCode::NotFound => McpToolError::not_found(message),
+            rusqlite::ErrorCode::ReadOnly => McpToolError::failed_precondition(message),
+            rusqlite::ErrorCode::CannotOpen
+            | rusqlite::ErrorCode::DatabaseBusy
+            | rusqlite::ErrorCode::DatabaseLocked
+            | rusqlite::ErrorCode::DiskFull
+            | rusqlite::ErrorCode::SystemIoFailure => McpToolError::unavailable(message),
+            _ => McpToolError::internal(message),
+        };
+    }
+    McpToolError::internal(message)
+}
+
+/// Classify a `tokio::task::JoinError` from `spawn_db` into the MCP wire-level
+/// `McpToolError` kind: cancellation → `unavailable` (the task could not run
+/// to completion), panic → `internal` (a bug in the task body).
+pub(crate) fn map_join_error(e: tokio::task::JoinError) -> McpToolError {
+    if e.is_cancelled() {
+        McpToolError::unavailable("db task cancelled".to_string())
+    } else {
+        McpToolError::internal(format!("db task failed: {e}"))
+    }
 }
 
 /// Require RSS database, returning an Err if not configured.

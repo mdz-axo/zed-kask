@@ -188,6 +188,19 @@ fn map_portfolio_error(e: PortfolioError) -> McpToolError {
     }
 }
 
+/// Classify a `tokio::task::JoinError` from a `spawn_blocking` portfolio task
+/// into the MCP wire-level `McpToolError` kind: cancellation → `unavailable`
+/// (the task could not run to completion), panic → `internal` (a bug in the
+/// task body). Replaces the blanket `internal(format!("... task failed: {e}"))`
+/// that flattened both variants to Internal.
+fn map_join_error(error: tokio::task::JoinError, context: &str) -> McpToolError {
+    if error.is_cancelled() {
+        McpToolError::unavailable(format!("{context}: task cancelled"))
+    } else {
+        McpToolError::internal(format!("{context}: {error}"))
+    }
+}
+
 impl CompaniesServer {
     async fn fetch(
         &self,
@@ -216,7 +229,7 @@ impl CompaniesServer {
         let portfolio = self.portfolio.clone();
         tokio::task::spawn_blocking(move || portfolio.save_forecast(&forecast))
             .await
-            .map_err(|error| McpToolError::internal(format!("forecast task failed: {error}")))?
+            .map_err(|error| map_join_error(error, "forecast task failed"))?
             .map_err(map_portfolio_error)
     }
 
@@ -227,7 +240,7 @@ impl CompaniesServer {
         let portfolio = self.portfolio.clone();
         tokio::task::spawn_blocking(move || portfolio.get_forecast(&forecast_id))
             .await
-            .map_err(|error| McpToolError::internal(format!("forecast task failed: {error}")))?
+            .map_err(|error| map_join_error(error, "forecast task failed"))?
             .map_err(map_portfolio_error)
     }
 
@@ -238,7 +251,7 @@ impl CompaniesServer {
         let portfolio = self.portfolio.clone();
         tokio::task::spawn_blocking(move || portfolio.list_forecasts(&symbol))
             .await
-            .map_err(|error| McpToolError::internal(format!("forecast task failed: {error}")))?
+            .map_err(|error| map_join_error(error, "forecast task failed"))?
             .map_err(map_portfolio_error)
     }
 
@@ -252,7 +265,7 @@ impl CompaniesServer {
             portfolio.record_forecast_outcome(&forecast_id, outcome)
         })
         .await
-        .map_err(|error| McpToolError::internal(format!("forecast task failed: {error}")))?
+        .map_err(|error| map_join_error(error, "forecast task failed"))?
         .map_err(map_portfolio_error)
     }
 }

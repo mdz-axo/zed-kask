@@ -8,6 +8,7 @@
 //! and generates a corpus.yaml. `corpus_cache_work` caches extracted text
 //! content to disk for reuse by the embedding pipeline.
 
+use crate::helpers::map_corpus_io_error;
 use crate::{CorpusServer, McpToolError, Parameters, execute_tool, tool, tool_router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -196,11 +197,10 @@ impl CorpusServer {
             let cache_path = cache_dir.join(format!("{}.txt", params.slug));
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(McpToolError::internal(format!(
-                    "Failed to create cache directory '{}': {}",
-                    cache_dir.display(),
-                    e
-                )));
+                return Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to create cache directory '{}'", cache_dir.display()),
+                ));
             }
 
             let bytes = params.content.as_bytes();
@@ -215,11 +215,10 @@ impl CorpusServer {
                         .unwrap_or_else(|_| serde_json::json!({"error": "serialization failed"}));
                     Ok(output)
                 }
-                Err(e) => Err(McpToolError::internal(format!(
-                    "Failed to write cache file '{}': {}",
-                    cache_path.display(),
-                    e
-                ))),
+                Err(e) => Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to write cache file '{}'", cache_path.display()),
+                )),
             }
         })
         .await

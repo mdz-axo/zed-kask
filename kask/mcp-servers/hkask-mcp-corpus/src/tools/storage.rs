@@ -1,4 +1,5 @@
 //! Storage and query tools — cache, passage query, similarity.
+use crate::helpers::map_corpus_io_error;
 use crate::{
     CorpusServer, IndexedPassage, LLMParameters, McpToolError, Parameters, SemanticMemory,
     cosine_similarity, embedding_dim, execute_tool, json, render_docproc_template, tool,
@@ -32,11 +33,10 @@ impl CorpusServer {
                 .join("docproc-cache");
 
             if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                return Err(McpToolError::internal(format!(
-                    "Failed to create cache directory '{}': {}",
-                    cache_dir.display(),
-                    e
-                )));
+                return Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to create cache directory '{}'", cache_dir.display()),
+                ));
             }
 
             // Sanitize label for filesystem
@@ -61,11 +61,10 @@ impl CorpusServer {
                     });
                     Ok(result)
                 }
-                Err(e) => Err(McpToolError::internal(format!(
-                    "Failed to write cache file '{}': {}",
-                    cache_path.display(),
-                    e
-                ))),
+                Err(e) => Err(map_corpus_io_error(
+                    e,
+                    &format!("Failed to write cache file '{}'", cache_path.display()),
+                )),
             }
         })
         .await

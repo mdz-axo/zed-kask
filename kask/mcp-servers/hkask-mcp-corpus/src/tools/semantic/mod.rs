@@ -14,6 +14,7 @@ mod qa;
 mod triples;
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
+use crate::helpers::map_corpus_io_error;
 use crate::services::triples::{TriplesRequest, TriplesService};
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Mutex, Parameters, default_owner,
@@ -253,11 +254,8 @@ impl CorpusServer {
 
             // Output file writer (with incremental flush every 10 completions)
             let output_path = crate::path_safety::contain_for_write(&output)?;
-            let file = std::fs::File::create(&output_path).map_err(|e| {
-                McpToolError::internal(format!(
-                    "Cannot create output file '{}': {e}",
-                    output
-                ))
+                        let file = std::fs::File::create(&output_path).map_err(|e| {
+                map_corpus_io_error(e, &format!("Cannot create output file '{}'", output))
             })?;
             let output_writer = Arc::new(Mutex::new(std::io::BufWriter::new(file)));
             let write_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));

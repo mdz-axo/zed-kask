@@ -12,6 +12,7 @@
 //! `convert_directory` stays here (on `CorpusServer`) because it recurses
 //! through the `corpus_convert` tool wrapper to preserve per-file Regulation
 //! spans; it does not call the OCR helpers directly.
+use crate::helpers::map_corpus_io_error;
 use crate::services::convert::ConvertService;
 use crate::{
     CorpusServer, ExtractOutcome, McpToolError, Parameters, chunk_structure, chunk_word_bounds,
@@ -74,10 +75,10 @@ impl CorpusServer {
             let file_bytes = match std::fs::read(&resolved) {
                 Ok(b) => b,
                 Err(e) => {
-                    return Err(McpToolError::internal(format!(
-                        "Failed to read file '{}': {}",
-                        path, e
-                    )));
+                    return Err(map_corpus_io_error(
+                        e,
+                        &format!("Failed to read file '{}'", path),
+                    ));
                 }
             };
 
@@ -279,10 +280,7 @@ impl CorpusServer {
                         // Try OCR fallback; use partial_text if OCR unavailable/fails
                         if let Ok(model) = service.resolve_ocr_model(None).await {
                             let file_bytes = std::fs::read(file_path).map_err(|e| {
-                                McpToolError::internal(format!(
-                                    "Failed to read '{}': {}",
-                                    file_path, e
-                                ))
+                                map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
                             })?;
                             match service
                                 .do_ocr(&file_bytes, &model, default_ocr_max_tokens())
@@ -317,10 +315,7 @@ impl CorpusServer {
                             && let Ok(model) = service.resolve_ocr_model(None).await
                         {
                             let file_bytes = std::fs::read(file_path).map_err(|e| {
-                                McpToolError::internal(format!(
-                                    "Failed to read '{}': {}",
-                                    file_path, e
-                                ))
+                                map_corpus_io_error(e, &format!("Failed to read '{}'", file_path))
                             })?;
                             match service
                                 .do_ocr(&file_bytes, &model, default_ocr_max_tokens())
@@ -472,16 +467,15 @@ impl CorpusServer {
 
             let output_dir = output.as_path();
             std::fs::create_dir_all(output_dir).map_err(|e| {
-                McpToolError::internal(format!(
-                    "Failed to create output directory '{}': {}",
-                    output_dir.display(),
-                    e
-                ))
+                map_corpus_io_error(
+                    e,
+                    &format!("Failed to create output directory '{}'", output_dir.display()),
+                )
             })?;
 
             let mut sources = std::fs::read_dir(&path)
                 .map_err(|e| {
-                    McpToolError::internal(format!("Failed to read directory '{}': {}", path.display(), e))
+                    map_corpus_io_error(e, &format!("Failed to read directory '{}'", path.display()))
                 })?
                 .filter_map(Result::ok)
                 .map(|entry| entry.path())

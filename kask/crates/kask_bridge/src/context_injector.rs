@@ -1,4 +1,4 @@
-//! Context injector — retrieves salient memories and injects into prompts (D11).
+//! Context injector — retrieves salient memories and injects into prompts (D8).
 //!
 //! The `BridgeContextInjector` implements the `agent::ContextInjector` trait
 //! by delegating to an `hkask_types::MemoryPort`. It:

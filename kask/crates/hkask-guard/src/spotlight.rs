@@ -48,7 +48,7 @@ impl Spotlighter {
     /// Create a new spotlighter with a per-session random marker.
     ///
     /// expect: "The system generates a per-session random marker for untrusted content delimitation"
-    /// post: returns a Spotlighter with an 8-hex-char uppercase marker
+    /// post: returns a Spotlighter with a 32-hex-char (128-bit) uppercase marker
     pub fn new(mode: SpotlightMode) -> Self {
         let mut bytes = [0u8; 16];
         rand::rng().fill_bytes(&mut bytes);
@@ -156,7 +156,7 @@ mod tests {
     fn marker_is_random_per_instance() {
         let a = Spotlighter::new(SpotlightMode::Delimit);
         let b = Spotlighter::new(SpotlightMode::Delimit);
-        // Collision probability for 8 hex chars is 1/2^32 — practically zero.
+        // Collision probability for 128 bits is 1/2^128 — practically zero.
         assert_ne!(a.marker, b.marker, "markers must be per-session random");
     }
 

@@ -9,6 +9,7 @@ use hkask_memory::SemanticMemory;
 use hkask_types::corpus::TaggedChunk;
 use serde_json::json;
 
+use crate::helpers::map_corpus_io_error;
 use crate::tools::corpus::{
     QaType, parse_type_distribution, qa_type_instruction, qa_type_str, read_tagged_chunks,
 };
@@ -466,9 +467,8 @@ impl PromptBuilderService {
         }
 
         let output_path = crate::path_safety::contain_for_write(&output)?;
-        std::fs::write(&output_path, &out).map_err(|e| {
-            McpToolError::internal(format!("Cannot write output '{}': {e}", output))
-        })?;
+        std::fs::write(&output_path, &out)
+            .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", output)))?;
 
         let result = json!({
             "total_chunks": total,

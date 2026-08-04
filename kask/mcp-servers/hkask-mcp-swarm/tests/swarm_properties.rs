@@ -182,7 +182,7 @@ proptest! {
         let result = registry.write_card(&card);
         let output = match &result {
             Ok(path) => serde_json::json!({ "ok": true, "path": path }),
-            Err(msg) => serde_json::json!({ "ok": false, "error": msg }),
+            Err(msg) => serde_json::json!({ "ok": false, "error": msg.to_string() }),
         };
 
         let oracle = oracle_invariant(|input: &JsonValue, output: &JsonValue| {
@@ -243,7 +243,7 @@ proptest! {
                     "list_contains": listed.iter().any(|c| c.agent_id == card.agent_id),
                 })
             }
-            Err(msg) => serde_json::json!({ "ok": false, "error": msg }),
+            Err(msg) => serde_json::json!({ "ok": false, "error": msg.to_string() }),
         };
 
         let oracle = oracle_invariant(|input: &JsonValue, output: &JsonValue| {

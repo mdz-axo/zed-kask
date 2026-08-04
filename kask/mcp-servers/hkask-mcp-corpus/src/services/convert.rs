@@ -802,7 +802,7 @@ impl<'a> ConvertService<'a> {
 
         let mut sources = std::fs::read_dir(&input_dir)
             .map_err(|e| {
-                McpToolError::internal(format!("Failed to read '{}': {e}", input_dir.display()))
+                map_corpus_io_error(e, &format!("Failed to read '{}'", input_dir.display()))
             })?
             .filter_map(Result::ok)
             .map(|entry| entry.path())
@@ -818,12 +818,12 @@ impl<'a> ConvertService<'a> {
 
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                McpToolError::internal(format!("Failed to create '{}': {e}", parent.display()))
+                map_corpus_io_error(e, &format!("Failed to create '{}'", parent.display()))
             })?;
         }
         let temp_path = std::path::PathBuf::from(format!("{}.tmp", output_path.display()));
         let file = std::fs::File::create(&temp_path).map_err(|e| {
-            McpToolError::internal(format!("Failed to create '{}': {e}", temp_path.display()))
+            map_corpus_io_error(e, &format!("Failed to create '{}'", temp_path.display()))
         })?;
         let mut writer = std::io::BufWriter::new(file);
         let mut total_chunks = 0usize;
@@ -846,7 +846,7 @@ impl<'a> ConvertService<'a> {
             // chunk_directory operates on already-extracted plain text;
             // format detection and OCR are handled by corpus_convert.
             let source_text = std::fs::read_to_string(source).map_err(|e| {
-                McpToolError::internal(format!("Failed to read '{}': {}", source.display(), e))
+                map_corpus_io_error(e, &format!("Failed to read '{}'", source.display()))
             })?;
 
             // Apply Gutenberg stripping if requested
@@ -880,21 +880,24 @@ impl<'a> ConvertService<'a> {
                 })?;
                 writer
                     .write_all(b"\n")
-                    .map_err(|e| McpToolError::internal(format!("Failed to write chunks: {e}")))?;
+                    .map_err(|e| map_corpus_io_error(e, "Failed to write chunks"))?;
                 total_chunks += 1;
             }
         }
 
         use std::io::Write as _;
         writer.flush().map_err(|e| {
-            McpToolError::internal(format!("Failed to flush '{}': {e}", temp_path.display()))
+            map_corpus_io_error(e, &format!("Failed to flush '{}'", temp_path.display()))
         })?;
         std::fs::rename(&temp_path, &output_path).map_err(|e| {
-            McpToolError::internal(format!(
-                "Failed to publish '{}' as '{}': {e}",
-                temp_path.display(),
-                output_path.display()
-            ))
+            map_corpus_io_error(
+                e,
+                &format!(
+                    "Failed to publish '{}' as '{}'",
+                    temp_path.display(),
+                    output_path.display()
+                ),
+            )
         })?;
 
         Ok(json!({

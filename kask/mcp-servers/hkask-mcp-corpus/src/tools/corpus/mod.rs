@@ -11,6 +11,7 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
+use crate::helpers::map_corpus_io_error;
 use crate::services::consolidation::{ConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
@@ -121,9 +122,8 @@ impl CorpusServer {
                 out.push('\n');
             }
             let output_path = crate::path_safety::contain_for_write(&req.output)?;
-            std::fs::write(&output_path, &out).map_err(|e| {
-                McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
-            })?;
+            std::fs::write(&output_path, &out)
+                .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", req.output)))?;
 
             Ok(result)
         })
@@ -260,9 +260,8 @@ impl CorpusServer {
                     .unwrap_or_default()
             }).collect::<Vec<_>>().join("\n");
             let output_path = crate::path_safety::contain_for_write(&req.output)?;
-            std::fs::write(&output_path, train + "\n").map_err(|e| {
-                McpToolError::internal(format!("Cannot write output '{}': {e}", req.output))
-            })?;
+            std::fs::write(&output_path, train + "\n")
+                .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", req.output)))?;
             tracing::info!("  Wrote: {} QAs to {}", deduped_count, req.output);
 
             // Store h_mems + embeddings
@@ -618,10 +617,10 @@ impl CorpusServer {
                 let output_path = crate::path_safety::contain_for_write(&req.output_jsonl)?;
                 std::fs::write(&output_path, chatml_lines.join("\n") + "\n")
                     .map_err(|e| {
-                        McpToolError::internal(format!(
-                            "Cannot write output '{}': {e}",
-                            req.output_jsonl
-                        ))
+                        map_corpus_io_error(
+                            e,
+                            &format!("Cannot write output '{}'", req.output_jsonl),
+                        )
                     })?;
             }
 

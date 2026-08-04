@@ -33,14 +33,14 @@ use hkask_condenser::saliency;
 use hkask_condenser::types::*;
 
 use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
-use hkask_memory::EpisodicMemory;
 use hkask_memory::SemanticMemory;
+use hkask_memory::{EpisodicMemory, EpisodicMemoryError};
 use hkask_storage::database::sqlite::SqliteDriver;
-use hkask_storage::{Database, EmbeddingStore, HMem};
-use hkask_types::InferencePort;
+use hkask_storage::{Database, EmbeddingStore, HMem, HMemError};
 use hkask_types::Visibility;
 use hkask_types::template::LLMParameters;
 use hkask_types::time::now_rfc3339;
+use hkask_types::{InferenceError, InferencePort};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
@@ -56,6 +56,39 @@ hkask_mcp_server::mcp_server!(
         pub capability_tier: CapabilityTier,
     }
 );
+
+/// Classify an `InferenceError` from the inference router into the MCP
+/// wire-level `McpToolError` kind: connection/circuit-breaker failures are
+/// availability issues (`unavailable`), a bad model or unsupported vision
+/// request is a user-input problem (`invalid_argument`), and generation/JSON
+/// failures remain `internal`.
+fn map_inference_error(e: InferenceError) -> McpToolError {
+    let message = e.to_string();
+    match e {
+        InferenceError::Connection(_) | InferenceError::CircuitOpen(_) => {
+            McpToolError::unavailable(message)
+        }
+        InferenceError::Model(_) | InferenceError::VisionUnsupported(_) => {
+            McpToolError::invalid_argument(message)
+        }
+        InferenceError::Generation(_) | InferenceError::Json(_) => McpToolError::internal(message),
+    }
+}
+
+/// Classify an `EpisodicMemoryError` from `EpisodicMemory::store` into the MCP
+/// wire-level `McpToolError` kind: a missing h_mem is `not_found`, invalid
+/// visibility is a user-input problem (`invalid_argument`), a missing
+/// perspective is a failed precondition, and infrastructure failures remain
+/// `internal`.
+fn map_episodic_error(e: EpisodicMemoryError) -> McpToolError {
+    let message = e.to_string();
+    match e {
+        EpisodicMemoryError::HMem(HMemError::NotFound(_)) => McpToolError::not_found(message),
+        EpisodicMemoryError::HMem(HMemError::Infra(_)) => McpToolError::internal(message),
+        EpisodicMemoryError::InvalidVisibility(_) => McpToolError::invalid_argument(message),
+        EpisodicMemoryError::MissingPerspective => McpToolError::failed_precondition(message),
+    }
+}
 
 impl CondenserServer {
     /// Fallback persona keywords when no configuration is provided.
@@ -204,10 +237,7 @@ impl CondenserServer {
                     "attribute": "content",
                     "perspective": self.webid.to_string(),
                 })),
-                Err(e) => Err(McpToolError::internal(format!(
-                    "Failed to persist to episodic memory: {}",
-                    e
-                ))),
+                Err(e) => Err(map_episodic_error(e)),
             }
         })
         .await
@@ -280,7 +310,7 @@ impl CondenserServer {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    return Err(McpToolError::internal(format!("Inference failed: {e}")));
+                    return Err(map_inference_error(e));
                 }
             };
 

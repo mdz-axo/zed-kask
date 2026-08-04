@@ -7,6 +7,7 @@
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
 use crate::guard::GUARD;
+use crate::helpers::map_corpus_io_error;
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
     extract_json_from_response, json, normalize_concept, read_jsonl_lenient,
@@ -388,9 +389,8 @@ impl CorpusServer {
                 out.push('\n');
             }
             let output_path = crate::path_safety::contain_for_write(&req.output)?;
-            std::fs::write(&output_path, &out).map_err(|e| {
-                McpToolError::internal(format!("Cannot write output '{}': {}", req.output, e))
-            })?;
+            std::fs::write(&output_path, &out)
+                .map_err(|e| map_corpus_io_error(e, &format!("Cannot write output '{}'", req.output)))?;
 
             // Stats
             let dim_counts: std::collections::HashMap<&str, usize> = {

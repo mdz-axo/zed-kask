@@ -1,6 +1,6 @@
 //! Portfolio management tools.
 use crate::{
-    CompaniesServer, fibo, map_portfolio_error,
+    CompaniesServer, fibo, map_join_error, map_portfolio_error,
     portfolio::{self, PortfolioError, PortfolioManager, TxType},
     types::{
         self, FileAttachRequest, FileDeleteRequest, FileListRequest, LedgerExportRequest,
@@ -22,7 +22,7 @@ where
 {
     tokio::task::spawn_blocking(move || operation(portfolio))
         .await
-        .map_err(|error| McpToolError::internal(format!("portfolio task failed: {error}")))?
+        .map_err(|error| map_join_error(error, "portfolio task failed"))?
         .map_err(map_portfolio_error)
 }
 
