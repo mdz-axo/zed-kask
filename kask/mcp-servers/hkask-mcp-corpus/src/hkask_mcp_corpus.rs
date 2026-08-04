@@ -376,7 +376,7 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
                 structure: None,
             },
             Err(e) => {
-                return Err(McpToolError::internal(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "Failed to decode text file '{}': {}",
                     path, e
                 )));
@@ -393,7 +393,7 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
                 }
             }
             Err(e) => {
-                return Err(McpToolError::internal(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "Failed to decode markdown file '{}': {}",
                     path, e
                 )));
@@ -410,7 +410,7 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
                 }
             }
             Err(e) => {
-                return Err(McpToolError::internal(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "Failed to decode HTML file '{}': {}",
                     path, e
                 )));
@@ -422,7 +422,7 @@ async fn extract_text(path: &str) -> Result<ExtractOutcome, McpToolError> {
             let word_count = structure.word_count();
             let text = structure.text();
             if word_count == 0 {
-                return Err(McpToolError::internal(format!(
+                return Err(McpToolError::invalid_argument(format!(
                     "Backend '{}' extracted 0 words from '{}'",
                     format, path
                 )));
@@ -540,7 +540,15 @@ fn parse_with_backend(
             )));
         }
     }
-    .map_err(|e| McpToolError::internal(format!("Backend error: {e}")))?;
+    .map_err(|error| match error {
+        backend::BackendError::Read { path, source } => hkask_mcp_server::server::map_io_error(
+            source,
+            &format!("Backend '{format}' failed to read '{path}'"),
+        ),
+        parse_error @ backend::BackendError::Parse { .. } => {
+            McpToolError::invalid_argument(parse_error.to_string())
+        }
+    })?;
     Ok(structure)
 }
 

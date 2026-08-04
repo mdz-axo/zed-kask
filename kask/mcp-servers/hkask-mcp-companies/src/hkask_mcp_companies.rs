@@ -69,7 +69,7 @@
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, validate_identifier};
+use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};
 use serde::{Deserialize, Serialize};
 
 pub mod aggregation;
@@ -185,19 +185,6 @@ fn map_portfolio_error(e: PortfolioError) -> McpToolError {
     match &e {
         PortfolioError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
         _ => McpToolError::internal(e.to_string()),
-    }
-}
-
-/// Classify a `tokio::task::JoinError` from a `spawn_blocking` portfolio task
-/// into the MCP wire-level `McpToolError` kind: cancellation → `unavailable`
-/// (the task could not run to completion), panic → `internal` (a bug in the
-/// task body). Replaces the blanket `internal(format!("... task failed: {e}"))`
-/// that flattened both variants to Internal.
-fn map_join_error(error: tokio::task::JoinError, context: &str) -> McpToolError {
-    if error.is_cancelled() {
-        McpToolError::unavailable(format!("{context}: task cancelled"))
-    } else {
-        McpToolError::internal(format!("{context}: {error}"))
     }
 }
 

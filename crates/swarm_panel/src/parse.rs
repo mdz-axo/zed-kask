@@ -13,9 +13,155 @@
 
 use gpui::SharedString;
 use hkask_types::tool_response::parse_tool_response;
+use serde::Deserialize;
 use ui::Color;
 
 use crate::{PendingPublish, SwarmRosterAgent};
+
+// ── View model ─────────────────────────────────────────────────────────────
+
+/// Where an agent card lives.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AgentSource {
+    /// Exists only on ABW (cloud). Can be cloned to local.
+    Cloud,
+    /// Exists only in the local registry. Can be pushed to cloud.
+    Local,
+    /// Exists in both — synced via `cloud_id`. Changes can flow both
+    /// directions.
+    Synced,
+}
+
+impl AgentSource {
+    pub(crate) fn badge(&self) -> &'static str {
+        match self {
+            Self::Cloud => "☁",
+            Self::Local => "■",
+            Self::Synced => "⇅",
+        }
+    }
+
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Cloud => "cloud",
+            Self::Local => "local",
+            Self::Synced => "synced",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AgentCard {
+    pub(crate) id: String,
+    pub(crate) agent_type: String,
+    pub(crate) description: String,
+    pub(crate) author: String,
+    pub(crate) executions: u64,
+    /// ISO-8601 timestamp of the agent's last update (fermi v0.10.27
+    /// `agents.updated_at`). `None` for local cards (no ABW freshness signal).
+    pub(crate) updated_at: Option<String>,
+    /// Where this agent card lives: cloud (ABW only), local (local registry
+    /// only), or synced (both, linked by `cloud_id`).
+    pub(crate) source: AgentSource,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SwarmCard {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) description: String,
+    /// Number of hired agents. `None` when ABW's workspace payload omits the
+    /// field (the field name is NOT part of the verified API surface) — the
+    /// card renders "-" then, never a fabricated "0 agents".
+    pub(crate) agent_count: Option<u64>,
+    pub(crate) budget: Option<u64>,
+    pub(crate) remaining: Option<u64>,
+    /// Where this swarm lives: `Cloud` (an ABW workspace) or `Local` (a
+    /// `LocalSwarmRegistry` entry). The backend mode toggle filters the
+    /// browse list by this field — ABW mode shows cloud swarms, Local mode
+    /// shows local swarms.
+    pub(crate) source: AgentSource,
+}
+
+// ── MCP response structs (minimal, mirror hkask-mcp-swarm's tool output) ────
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AgentListResponse {
+    pub(crate) agents: Vec<AgentInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AgentInfo {
+    pub(crate) agent_id: Option<String>,
+    pub(crate) agent_type: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) author: Option<String>,
+    pub(crate) execution_stats: Option<ExecutionStats>,
+    /// fermi v0.10.27: agent last-update timestamp. Forwarded by
+    /// `swarm_list_agents`; absent on local cards and on ABW responses predating
+    /// the column (backfilled to `created_at` server-side).
+    pub(crate) updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ExecutionStats {
+    pub(crate) total_executions: Option<u64>,
+}
+
+// ── Local agent response (v2 §15 Slice 11) ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LocalAgentListResponse {
+    pub(crate) agents: Vec<LocalAgentInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LocalAgentInfo {
+    pub(crate) agent_id: String,
+    pub(crate) agent_type: String,
+    #[serde(default)]
+    pub(crate) description: String,
+    /// The ABW agent id this local card is synced with. `None` = local-only.
+    #[serde(default)]
+    pub(crate) cloud_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkspaceListResponse {
+    pub(crate) workspaces: Vec<WorkspaceInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct WorkspaceInfo {
+    pub(crate) id: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) agent_count: Option<u64>,
+    pub(crate) workspace_budget: Option<u64>,
+    pub(crate) workspace_remaining: Option<u64>,
+}
+
+// ── Local swarm response (v2 §15) ─────────────────────────────────────────
+//
+// `swarm_list_local_swarms` returns `{ count, swarms: [LocalSwarm] }` where each
+// `LocalSwarm` is `{ swarm_id, name, mission, members, created_at }`. Fields are
+// declared `Option` (with `members` defaulting to empty) so a malformed card
+// degrades to an empty row rather than failing the whole list parse — the same
+// defensive pattern as `WorkspaceInfo` above.
+#[derive(Debug, Deserialize)]
+pub(crate) struct LocalSwarmListResponse {
+    pub(crate) swarms: Vec<LocalSwarmInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LocalSwarmInfo {
+    pub(crate) swarm_id: Option<String>,
+    pub(crate) name: Option<String>,
+    #[serde(default)]
+    pub(crate) mission: String,
+    #[serde(default)]
+    pub(crate) members: Vec<String>,
+}
 
 /// The canonical list of tool names exposed by the `swarm` MCP server —
 /// every `#[tool]` fn in `hkask-mcp-swarm/src/hkask_mcp_swarm.rs`. This is the

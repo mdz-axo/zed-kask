@@ -89,6 +89,43 @@ pub fn map_io_error(e: std::io::Error, context: &str) -> McpToolError {
     }
 }
 
+/// Classify a `tokio::task::JoinError` from a `spawn_blocking` task into the
+/// MCP wire-level `McpToolError` kind: cancellation → `unavailable` (the task
+/// could not run to completion), panic → `internal` (a bug in the task body).
+/// Replaces the blanket `internal(format!("... task failed: {e}"))` that
+/// flattened both variants to Internal.
+#[must_use = "result must be used"]
+pub fn map_join_error(error: tokio::task::JoinError, context: &str) -> McpToolError {
+    if error.is_cancelled() {
+        McpToolError::unavailable(format!("{context}: task cancelled"))
+    } else {
+        McpToolError::internal(format!("{context}: {error}"))
+    }
+}
+
+/// Classify an `hkask_types::InfrastructureError` from a storage-layer query
+/// into the MCP wire-level `McpToolError` kind: `NotFound` → `not_found`,
+/// database connection failures → `unavailable`, lock poisoning → `internal`
+/// (a panic happened while holding the lock), serialization/IO/query failures
+/// → `internal`. Replaces the blanket `internal(format!("...: {e}"))` that
+/// flattened caller-fixable `NotFound`s and transient connection failures to
+/// Internal.
+#[must_use = "result must be used"]
+pub fn map_infra_error(error: &hkask_types::InfrastructureError, context: &str) -> McpToolError {
+    let message = format!("{context}: {error}");
+    match error {
+        hkask_types::InfrastructureError::NotFound(_) => McpToolError::not_found(message),
+        hkask_types::InfrastructureError::Database {
+            kind: hkask_types::DatabaseErrorKind::Connection,
+            ..
+        } => McpToolError::unavailable(message),
+        hkask_types::InfrastructureError::Database { .. }
+        | hkask_types::InfrastructureError::Serialization(_)
+        | hkask_types::InfrastructureError::LockPoisoned
+        | hkask_types::InfrastructureError::Io(_) => McpToolError::internal(message),
+    }
+}
+
 /// Default read size cap for [`read_capped`] (32 MiB). Bounds a hostile or
 /// mistaken path from exhausting memory (CWE-400).
 pub const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;

@@ -1,6 +1,6 @@
 //! Portfolio management tools.
 use crate::{
-    CompaniesServer, fibo, map_join_error, map_portfolio_error,
+    CompaniesServer, fibo, map_portfolio_error,
     portfolio::{self, PortfolioError, PortfolioManager, TxType},
     types::{
         self, FileAttachRequest, FileDeleteRequest, FileListRequest, LedgerExportRequest,
@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use chrono::Datelike;
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 pub(crate) async fn run_portfolio<T>(

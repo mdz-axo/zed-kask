@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use base64::Engine;
 use hkask_mcp_server::server::{
-    CredentialRequirement, McpToolError, ServerContext, execute_tool, validate_tool_url,
+    CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
+    validate_tool_url,
 };
 use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -76,7 +77,7 @@ macro_rules! handle_db_result {
                 Ok(v)
             }
             Ok(Err(e)) => Err($crate::map_db_error(e)),
-            Err(e) => Err($crate::map_join_error(e)),
+            Err(e) => Err(map_join_error(e, "db task failed")),
         }
     };
 }
@@ -105,17 +106,6 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
         };
     }
     McpToolError::internal(message)
-}
-
-/// Classify a `tokio::task::JoinError` from `spawn_db` into the MCP wire-level
-/// `McpToolError` kind: cancellation → `unavailable` (the task could not run
-/// to completion), panic → `internal` (a bug in the task body).
-pub(crate) fn map_join_error(e: tokio::task::JoinError) -> McpToolError {
-    if e.is_cancelled() {
-        McpToolError::unavailable("db task cancelled".to_string())
-    } else {
-        McpToolError::internal(format!("db task failed: {e}"))
-    }
 }
 
 /// Require RSS database, returning an Err if not configured.
@@ -571,7 +561,7 @@ impl ResearchServer {
                     return Err(McpToolError::not_found(e.to_string()));
                 }
                 Err(e) => {
-                    return Err(McpToolError::internal(format!("Task error: {}", e)));
+                    return Err(map_join_error(e, "rss fetch task failed"));
                 }
             };
 

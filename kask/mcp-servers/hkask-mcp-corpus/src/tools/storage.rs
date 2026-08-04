@@ -116,11 +116,13 @@ impl CorpusServer {
             let (results, total_indexed) = {
                 let index = match self.index.lock() {
                     Ok(i) => i,
-                    Err(e) => {
-                        return Err(McpToolError::internal(format!(
-                            "Index lock error: {}",
-                            e
-                        )));
+                    Err(poisoned) => {
+                        tracing::warn!(
+                            target: "hkask.mcp.corpus",
+                            error = %poisoned,
+                            "index lock poisoned — recovering inner state"
+                        );
+                        poisoned.into_inner()
                     }
                 };
                 if index.is_empty() {
@@ -218,8 +220,13 @@ impl CorpusServer {
         execute_tool(self, "corpus_clear_index", async {
             let mut index = match self.index.lock() {
                 Ok(i) => i,
-                Err(e) => {
-                    return Err(McpToolError::internal(format!("Index lock error: {}", e)));
+                Err(poisoned) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.corpus",
+                        error = %poisoned,
+                        "index lock poisoned — recovering inner state"
+                    );
+                    poisoned.into_inner()
                 }
             };
             let cleared = index.len();

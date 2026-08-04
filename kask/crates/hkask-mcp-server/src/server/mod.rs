@@ -39,7 +39,7 @@ pub use tool_span::{
 pub use transport::{run_stdio_server, run_stdio_server_with_preloaded};
 pub use validation::{MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped};
 pub use validation::{
-    map_io_error, validate_identifier, validate_path, validate_tool_url,
+    map_io_error, map_join_error, validate_identifier, validate_path, validate_tool_url,
     validate_tool_url_permissive,
 };
 

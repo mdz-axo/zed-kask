@@ -47,7 +47,9 @@ use types::*;
 ///
 /// Caller-input defects (bad probabilities, cycles, unknown parents, empty
 /// input) map to `InvalidArgument`; missing entities map to `NotFound`;
-/// empty-store and computation failures map to `Internal`.
+/// empty-store maps to `Internal`. `Forecast` computation errors are
+/// classified per variant (all current `ForecastError` variants are
+/// caller-input defects).
 fn map_scenario_error(error: ScenarioError) -> McpToolError {
     match &error {
         ScenarioError::EventNotFound(id) => {
@@ -56,9 +58,13 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
         ScenarioError::NoForecastData => {
             McpToolError::internal("no stored forecasts found for calibration")
         }
-        ScenarioError::Forecast(forecast_error) => {
-            McpToolError::internal(format!("forecast computation failed: {forecast_error}"))
-        }
+        ScenarioError::Forecast(forecast_error) => match forecast_error {
+            hkask_forecast::ForecastError::InvalidProbability(..)
+            | hkask_forecast::ForecastError::BrierLengthMismatch(..)
+            | hkask_forecast::ForecastError::BrierNoData => McpToolError::invalid_argument(
+                format!("forecast computation failed: {forecast_error}"),
+            ),
+        },
         // Caller-side input defects
         ScenarioError::NoEvents
         | ScenarioError::InvalidProbability(..)
