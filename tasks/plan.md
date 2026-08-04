@@ -34,6 +34,7 @@ T0 (spike) ── no deps (fail-fast gate)
    │      ├─> T4 (unified annotated contract + reliability_tier + dual-axis ontology block) ── depends T2,T3
    │      │      │
    │      │      ├─> T4b (market_ontology_map tool: mapping as first-class output) ── depends T4
+   │      │      ├─> T4c (market_match: event ↔ market entity resolution) ── depends T4
    │      │      │
    │      ├─> T5 (calibration math via hkask-forecast + ForecastStore) ── depends T4
    │      │      │
@@ -141,15 +142,30 @@ R1 Polymarket Gamma field shapes unverified — **Phase 0 resolves**. R2 Kalshi 
 #### T4 — Unified annotated contract + `market_lookup` tool
 - **slice_id:** `markets/annotated-contract`
 - **Description:** Define the annotated `MarketRecord` (the contract from integration report §4, **including the dual-axis `ontology` block**) and the first end-to-end tool `market_lookup { query, deadline?, category? } → MarketRecord[]` that calls T2/T3 and returns the full annotated record including `reliability_tier` (derived from volume/spread/last-update thresholds). Surface `calibration.domain_bias` from a static per-domain table seeded from 2602.19520 (politics → underconfident) until T5 computes it from data. **Ontology mapping work:** (a) resolve open questions Q-O1/Q-O2 by grepping existing kask MCP servers + registry for a PKO/Dublin Core output-annotation precedent and any existing `hkask:` forecasting vocabulary — follow the precedent if one exists; (b) implement the dual-axis mapping: `ontology.process` = PKO (`pko:ProcedureExecution` + 2604.20421 lifecycle stage + probability-as-StepExecution-output), `ontology.state` = Dublin Core (`dcterms:identifier` = `{source}:{market_id}`, `title` ← question, `description`, `temporal` ← deadline, `provenance` ← resolution_source), plus `mapping_version`. Use `AnyJsonValue` for any arbitrary-JSON field. Run `find_boolean_schema_positions` on `schema_for!(MarketLookupRequest)`.
+**Ontology mapping work:** (a) resolve open questions Q-O1/Q-O2 by grepping existing kask MCP servers + registry for a PKO/Dublin Core output-annotation precedent and any existing `hkask:` forecasting vocabulary — follow the precedent if one exists; (b) implement the dual-axis mapping: `ontology.process` = PKO (`pko:ProcedureExecution` + 2604.20421 lifecycle stage + probability-as-StepExecution-output), `ontology.state` = Dublin Core (`dcterms:identifier` = `{source}:{market_id}`, `title` ← question, `description`, `temporal` ← deadline, `provenance` ← resolution_source), plus `mapping_version`. **Volatility annotation:** compute `volatility.realized_variance` from `price_history` deltas and set `volatility.structural_flag` per 2607.08199 (`near_deadline`, `near_coinflip`) — consumers get an interpretable stability signal without re-implementing the math. Use `AnyJsonValue` for any arbitrary-JSON field. Run `find_boolean_schema_positions` on `schema_for!(MarketLookupRequest)`.
 - **Acceptance criteria:**
-  - `market_lookup` returns records with non-null `probability`, `spread`, `volume`, `last_update`, `calibration`, `reliability_tier` for any live query.
+  - `market_lookup` returns records with non-null `probability`, `spread`, `volume`, `last_update`, `calibration`, `reliability_tier`, `volatility` for any live query.
   - A politics-category record carries `domain_bias: "underconfident"` (the 2602.19520 guardrail) — pinned by a test.
   - Every returned record carries a populated `ontology` block with both `process` (PKO) and `state` (Dublin Core) sub-blocks — pinned by a test.
+  - A market near its deadline at ~0.50 price carries `structural_flag: "near_deadline_and_coinflip"` — pinned by a test.
   - Q-O1/Q-O2 resolution is recorded in the spike note or a short comment: precedent followed, or new shape justified.
   - Tool-input schema has no bare-boolean positions (AnyJsonValue enforced).
 - **Verification:** `cargo test -p hkask-mcp-markets market_lookup`; boolean-schema test green; ontology-block test green.
 - **Dependencies:** T2, T3.
 - **Files likely touched:** `kask/mcp-servers/hkask-mcp-markets/src/{types.rs,tools.rs}`, tests.
+- **Estimated scope:** M.
+
+#### T4c — Event ↔ market matcher (`market_match`)
+- **slice_id:** `markets/market-match`
+- **Description:** Implement `market_match { question, deadline?, category? } → [{ market: MarketRecord, match_confidence, match_basis }]`: given a scenario/forecast question, find the market(s) about the *same underlying event*. Owns question normalization (entity extraction, date/horizon alignment), candidate retrieval via T2/T3 search, and confidence-tiered ranking. Match confidence must be conservative: wrong-entity matches (different Fed meeting, different election cycle) score low. This is the mechanical path T8's `scenario_from_markets` bridge and T9's FlowDef injection consume — without it, the agent improvises the event mapping per-invocation, the highest-error-risk step in the whole pipeline.
+- **Acceptance criteria:**
+  - A query for a known live market's own question returns that market at high confidence (fixture test).
+  - A query with a mismatched deadline (same entities, different cycle) returns low confidence or no match — pinned by a test.
+  - Low-confidence matches are refusable downstream (confidence field consumed by T8's gate).
+  - `schema_for!(MarketMatchRequest)` has no bare-boolean positions.
+- **Verification:** `cargo test -p hkask-mcp-markets market_match`.
+- **Dependencies:** T4.
+- **Files likely touched:** `kask/mcp-servers/hkask-mcp-markets/src/{tools.rs,matcher.rs}`, tests.
 - **Estimated scope:** M.
 
 #### T4b — Ontology-mapping tool (`market_ontology_map`)
@@ -208,11 +224,12 @@ R1 Polymarket Gamma field shapes unverified — **Phase 0 resolves**. R2 Kalshi 
 
 #### T8 — `scenario_from_markets` native bridge (optional, Phase 2)
 - **slice_id:** `consumer/scenario-from-markets`
-- **Description:** Add a `scenario_from_markets` tool to `hkask-mcp-scenarios` mirroring `scenario_from_companies` (`hkask_mcp_scenarios.rs:598`, request at L125): it calls the markets MCP server over the in-process tool boundary (or a shared lib — confirm via Q4) and returns `ScenarioEvent` JSON with `basis` tagged `polymarket:slug`/`kalshi:ticker` and `base_rate` = market probability (gated by `reliability_tier`). **No `reqwest` added to the scenarios crate.**
+- **Description:** Add a `scenario_from_markets` tool to `hkask-mcp-scenarios` mirroring `scenario_from_companies` (`hkask_mcp_scenarios.rs:598`, request at L125): it calls the markets MCP server over the in-process tool boundary (or a shared lib — confirm via Q4), resolves the event via T4c's `market_match`, and returns `ScenarioEvent` JSON with `basis` tagged `polymarket:slug`/`kalshi:ticker` and `base_rate` = market probability (gated by `reliability_tier`). **No `reqwest` added to the scenarios crate.**
 - **Acceptance criteria:**
   - `scenario_from_markets` returns a `ScenarioEvent` with `base_rate` from a market record and a `basis` provenance tag.
   - The scenarios crate `Cargo.toml` gains no `reqwest` dependency.
   - A low-`reliability_tier` market yields `base_rate = None` with a warning field (refuses to anchor on unreliable data).
+  - A low-`match_confidence` result from `market_match` yields `base_rate = None` with a warning (refuses to anchor on a wrong-event match).
 - **Verification:** `cargo test -p hkask-mcp-scenarios scenario_from_markets`.
 - **Dependencies:** T7.
 - **Files likely touched:** `kask/mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs`, `src/types.rs` (add `basis` provenance convention only), tests.
@@ -260,6 +277,18 @@ R1 Polymarket Gamma field shapes unverified — **Phase 0 resolves**. R2 Kalshi 
 - **Estimated scope:** L → split into T11a (pre-weighting, S) and T11b (streaming, M) if it exceeds one session.
 
 > **CHECKPOINT 3** — closed negative feedback loop; live streaming updates; full integration reviewed against the research report's six findings.
+
+#### T12 — Event-base persistence decision (graph DB vs flat store)
+- **slice_id:** `phase3/event-base-decision`
+- **Description:** Decide the persistence shape for the resolved-outcome store, match history, and cross-server event relationships. Apply the essentialist deletion test: adopt a graph "event base" **only if** flat-store (SQLite/JSONL) relationship queries demonstrably reappear in consumers (scenarios event trees, companies entities, corpus docs referencing markets). Research findings (verified 2026-08-04): Grafeo (Apache-2.0, pure-Rust embedded, GQL/Cypher/SPARQL + vector/BM25, pre-1.0) ranked first; CozoDB (MPL-2.0, Datalog, SQLite backend, time-travel) fallback; SurrealDB (BSL 1.1 license caution, heavy) third; IndraDB/Kuzu disqualified. **No candidate has CRDT** — if multi-device sync is ever needed, layer automerge/yrs above the store; do not select on CRDT claims. If adopted: storage goes behind a thin trait (ADR-042 port pattern) so the backend is swappable while the event-graph schema stabilizes, and the same graph can serve companies/scenarios/corpus relationship queries.
+- **Acceptance criteria:**
+  - Deletion test documented: either (a) ≥2 concrete consumer relationship queries that a flat store cannot serve without re-deriving joins in Rust, or (b) decision record keeping the flat store with the revisit trigger written down.
+  - If graph adopted: spike `cargo add grafeo` in a scratch crate; embedded open + insert + GQL relationship query works; compile-time/dep-weight impact recorded.
+  - The decision record states the CRDT-layering position explicitly.
+- **Verification:** decision record committed to `docs/reports/prediction-markets/03-event-base-decision.md`; spike compiles if (b) is not the outcome.
+- **Dependencies:** T5 (the store exists), T7 (first consumer evidence of relationship-query need).
+- **Files likely touched:** `docs/reports/prediction-markets/03-event-base-decision.md`, possibly a new `kask/crates/hkask-eventgraph` crate.
+- **Estimated scope:** M.
 
 ---
 

@@ -64,6 +64,11 @@ Every market record the server returns carries the annotation the research repor
   "liquidity": 98765.0,       // reliability
   "open_interest": 4321,     // Kalshi only
   "last_update": "2026-08-04T...",
+  "volatility": {              // 2607.08199 — variance structure, computed from price_history
+    "realized_variance": 0.0021,     // variance of price deltas over the window
+    "structural_flag": "none" | "near_deadline" | "near_coinflip" | "near_deadline_and_coinflip",
+    "interpretation": "high" | "medium" | "low"   // derived: expected price instability
+  },
   "status": "open" | "closed" | "settled" | "resolved",
   "resolved_outcome": null | "yes" | "no" | 1 | 0,
   "resolution_source": "uma_oracle" | "kalshi_exchange" | ...,
@@ -100,6 +105,7 @@ Every market record the server returns carries the annotation the research repor
 3. **Guideline — prefer Kalshi percentile-history.** `probability_method` records provenance; `kalshi_percentile_history` is a stronger signal than `reconstructed_bucket` (which itself is a known approximation per 2604.20421 §6.2).
 4. **Cybernetic guardrail — `calibration.stale` ≠ `calibration.brier = 0`.** A read failure propagates `stale: true`, never a synthetic 0 (the `.rules` "unwrap_or(0) on regulation sense inputs" trap generalized to the market-calibration signal).
 5. **Guideline — every record carries its dual-axis ontology mapping.** The `ontology.process` (PKO) block types the market as a `pko:ProcedureExecution` in one of 2604.20421's six lifecycle stages; the `ontology.state` (Dublin Core) block types the record as an information resource with `dcterms:identifier/title/description/temporal/provenance`. Consumers (scenarios, superforecasting FlowDef, future skills) receive the mapping *with* the data, so downstream provenance and stage-aware reasoning (e.g. distrust prices in `dispute` stage per 2604.20421's oracle-risk finding) need no re-derivation. The `dcterms:provenance` value makes the UMA-vs-Kalshi trust distinction machine-checkable for the T10 calibration loop.
+6. **Guideline — volatility is a first-class annotation, not raw covariates only.** `volatility.realized_variance` is computed from `price_history` deltas; `volatility.structural_flag` encodes 2607.08199's two structural findings (volatility rises near the deadline and near 0.50 prices). Consumers get an interpretable stability signal without re-implementing the math.
 
 ---
 
@@ -128,6 +134,19 @@ This is a **FlowDef edit + cascade-context injection**, not a template-contract 
 ### 5.3 `scenario-builder` skill (weaker fit — pre-weighting only)
 
 `scenario-builder` is qualitative (Schwartz 2×2). Its `driving-forces.j2` takes `key_forces` but no probability field. The cleanest attach is upstream context injection: pre-weight/rank `key_forces` by market probabilities (e.g., a Kalshi recession market informs the "Economy" STEEP force's uncertainty). This is lower-value than the superforecasting path and is **deferred** to a later phase.
+
+### 5.4 Event ↔ market entity resolution (the matching problem)
+
+A market is only useful to a scenario if the two refer to the *same* underlying event. `market_lookup` is a text search; the load-bearing operation is **matching**: given a `ScenarioEvent.question` (or a superforecasting `forecasting_question`), find the market(s) about the same event with a match confidence. Without a mechanical matcher, the agent improvises the mapping per-invocation — the exact place errors enter (a market about a *different* Fed meeting, a *different* election cycle). The matcher is a data-service tool (`market_match`), not consumer logic: it owns question normalization, deadline alignment, and candidate ranking, and returns confidence-tiered candidates so the consumer can refuse low-confidence matches (same epistemic posture as `reliability_tier`).
+
+### 5.5 Persistence: the "event base" question (OUGHT — open design decision)
+
+The resolved-outcome store (T5) and the match history (T4c) both imply persistence. Two shapes:
+
+- **Flat store** (SQLite/JSONL journal): markets, outcomes, calibration rows as tables/documents. Lowest weight, sufficient for Brier computation and caching. **Sufficient for Phases 1–2.**
+- **Graph "event base"**: events as nodes; typed edges for *market→resolves→outcome*, *market→matches→scenario_event*, *event→parent_series→event*, *market→references→company/corpus_doc*. Earns its existence when consumers ask **relationship questions** ("which scenario events share a market anchor?", "what resolved markets are in this event's reference class?", "which companies does this market reference?") rather than lookup questions. The scenarios server already maintains event trees (`tree_cache`); companies and corpus servers have entities that interlink with markets.
+
+**Research finding (2026-08-04, verified against GitHub):** no embedded/local Rust graph DB offers CRDT/multi-writer replication — Grafeo (Apache-2.0, pure-Rust embedded, GQL/Cypher/SPARQL + vector/BM25, 0.5.x, no CRDT), CozoDB (MPL-2.0, Datalog, SQLite backend, time-travel, pre-1.0 storage instability), SurrealDB (BSL 1.1 — license caution for an editor-shipped component, heavy footprint, consensus not CRDT), IndraDB (no query language), Kuzu (archived Oct 2025). **If CRDT sync is ever required, it must be layered above the store (automerge/yrs as substrate, graph as materialized view) — do not select a DB on CRDT claims none of them make.** Ranking for this use case: Grafeo > CozoDB > SurrealDB > IndraDB. This is a Phase-2 decision (T12), gated on the essentialist deletion test: adopt the graph only if flat-store relationship queries demonstrably reappear in consumers.
 
 ---
 

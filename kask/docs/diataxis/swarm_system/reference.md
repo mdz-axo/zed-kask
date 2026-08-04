@@ -171,10 +171,10 @@ produce a prompt/ontology via the local LLM, just without the memory seed.
 
 | Component | Source | Role |
 |-----------|--------|------|
-| `SwarmPanel` | `swarm_panel.rs:574` | the center-pane `Item`; 4 modes |
-| `PanelMode` | `swarm_panel.rs:289` | `Browse` / `Author` / `Compose` / `Steer` |
-| `SwarmFilter` | `swarm_panel.rs:279` | `All` / `Swarms` / `Agents` (Browse) |
-| `steer_system_prompt` | `swarm_panel.rs:100` | the Curator's system prompt in Steer |
+| `SwarmPanel` | `swarm_panel.rs:345` | the center-pane `Item`; 4 modes |
+| `PanelMode` | `swarm_panel.rs:322` | `Browse` / `Author` / `Compose` / `Steer` |
+| `SwarmFilter` | `swarm_panel.rs:312` | `All` / `Swarms` / `Agents` (Browse) |
+| `steer_system_prompt` | `swarm_panel.rs:112` | the Curator's system prompt in Steer |
 | `set_mode` / `set_swarm_mode` | `:1798` / `:1834` | mode + backend toggles |
 | `ensure_steer_conversation` | `:1870` | lazily builds the curator `ConversationView` |
 | `init` (Toggle) | `:230` / `:261` | deploys panel + explicit focus fix (`.rules` deploy-and-focus trap) |

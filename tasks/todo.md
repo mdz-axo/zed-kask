@@ -29,6 +29,7 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
   - [ ] `market_lookup` returns full annotated `MarketRecord` (probability + spread + volume + last_update + calibration + reliability_tier)
   - [ ] Politics-category record carries `domain_bias: "underconfident"` (pinned by test)
   - [ ] Every record carries populated `ontology.process` (PKO) + `ontology.state` (Dublin Core) blocks (pinned by test)
+  - [ ] Record carries `volatility.realized_variance` + `structural_flag`; near-deadline ~0.50 market flags `near_deadline_and_coinflip` (pinned by test)
   - [ ] Q-O1/Q-O2 resolved: existing PKO/DC annotation precedent + `hkask:` namespace greped; resolution recorded
   - [ ] `schema_for!(MarketLookupRequest)` has no bare-boolean positions (AnyJsonValue)
   - Verify: `cargo test -p hkask-mcp-markets market_lookup` + boolean-schema test
@@ -37,6 +38,12 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
   - [ ] Test asserts tool output and `MarketRecord.ontology` share the same constants (no drift)
   - [ ] `schema_for!(MarketOntologyMapRequest)` has no bare-boolean positions
   - Verify: `cargo test -p hkask-mcp-markets ontology_map`
+- ☐ **T4c — Event ↔ market matcher (`market_match`)** (`markets/market-match`)
+  - [ ] Query for a known market's own question returns it at high confidence (fixture test)
+  - [ ] Mismatched deadline (same entities, different cycle) returns low confidence — pinned by test
+  - [ ] Low-confidence matches are refusable downstream (confidence consumed by T8's gate)
+  - [ ] `schema_for!(MarketMatchRequest)` has no bare-boolean positions
+  - Verify: `cargo test -p hkask-mcp-markets market_match`
 - ☐ **T5 — Calibration math via `hkask-forecast` + store** (`markets/calibration`)
   - [ ] `market_calibration` returns `{brier, domain_bias, sample_size, stale}`
   - [ ] Thin sample ⇒ `stale: true`, not `brier: 0` (pinned by test)
@@ -81,3 +88,9 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
   - Verify: scenario-builder context test + streaming unit test
 
 > **CHECKPOINT 3** — closed negative feedback loop; live streaming; full integration reviewed against research report findings.
+
+- ☐ **T12 — Event-base persistence decision** (`phase3/event-base-decision`)
+  - [ ] Deletion test documented: ≥2 consumer relationship queries a flat store can't serve, OR flat-store decision with revisit trigger
+  - [ ] If graph adopted: Grafeo embedded spike compiles; dep-weight recorded; CRDT-layering position stated
+  - [ ] `docs/reports/prediction-markets/03-event-base-decision.md` committed
+  - Verify: decision record exists; spike compiles if graph path taken

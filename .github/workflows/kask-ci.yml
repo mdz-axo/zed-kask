@@ -158,6 +158,20 @@ jobs:
       - name: Check hKask crates do not depend on zed-kask crates (DIVERGENCE.md §13.1)
         run: cd kask && bash scripts/check-hkask-no-zed-deps.sh
 
+  kali-regressions:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce security regression library (status: enforced entries)
+        run: cd kask && bash scripts/check-kali-regressions.sh
+
+  unsafe-forbid:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check unsafe-gating attributes on kask crate roots (RR-0020)
+        run: cd kask && bash scripts/check-unsafe-forbid.sh
+
   deps:
     runs-on: ubuntu-24.04
     steps:

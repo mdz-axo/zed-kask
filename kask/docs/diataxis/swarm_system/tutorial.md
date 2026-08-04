@@ -25,10 +25,10 @@ loop:
 1. **The Swarm Panel** (`crates/swarm_panel`) — a center-pane `Item` with four
    modes: Browse, Author, Compose, Steer. Open it from the status bar
    (`SwarmPanelButton`, `panel_button.rs:13`) or the View menu's `Toggle`
-   action (`swarm_panel.rs:230`).
+   action (`swarm_panel.rs:79`).
 2. **The swarm MCP server** (`hkask-mcp-swarm`) — 50 tools (27 ABW + 23 local)
    that talk to one of two substrates, selected by `kask.swarm.mode`
-   (`swarm_panel.rs:1834`). It is launched by two independent paths
+   (`swarm_panel.rs:1814`). It is launched by two independent paths
    (`McpRuntime` app-global + `ContextServerStore` per-project) — both correct
    by design.
 3. **Two skills** — `swarm-intelligence` (the planner, a 10-step PDCA cascade)
@@ -53,7 +53,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-TUT
 verified_date: 2026-08-03
-verified_against: crates/swarm_panel/src/swarm_panel.rs:230,289,1834,1870; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:3355
+verified_against: crates/swarm_panel/src/swarm_panel.rs:79,1814; author.rs:16; compose.rs:14; kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:350
 status: VERIFIED
 -->
 
@@ -71,13 +71,13 @@ all 50 tools are always registered.
   in local mode — the balance check is the gate (`swarm_panel.rs:149`).
 
 Toggle it in the panel header (the `Abw`/`Local` buttons call `set_swarm_mode`,
-`swarm_panel.rs:1834`). Toggling drops any open Steer conversation so the next
+`swarm_panel.rs:1814`). Toggling drops any open Steer conversation so the next
 entry rebuilds with the new mode.
 
 ## Step 2: Browse the catalogue
 
-`Browse` mode lists agents and swarms. The filter (`SwarmFilter`, `:279`) scopes
-the list to All / Swarms / Agents. `fetch_all` (`:863`) pulls both cloud and
+`Browse` mode lists agents and swarms. The filter (`SwarmFilter`, `:312`) scopes
+the list to All / Swarms / Agents. `fetch_all` (`:578`) pulls both cloud and
 local rosters. Use `swarm_list_agents` (ABW) or `swarm_list_local_agents` (local)
 under the hood. Clone a cloud agent to local with `swarm_clone_to_local`
 (cloud agents carry a `cloud_id` to track the sync link); push a local agent
@@ -85,13 +85,13 @@ back with `swarm_push_to_cloud`.
 
 ## Step 3: Author or hire an agent
 
-`Author` mode (`swarm_panel.rs:642`) creates a new agent: name, description,
-system prompt, agent type. `create_agent` (`:1917`) calls `swarm_create_agent`
+`Author` mode (`author.rs:16`) creates a new agent: name, description,
+system prompt, agent type. `create_agent` (`:1907`) calls `swarm_create_agent`
 (ABW) or `swarm_create_local_agent` (local). Before hiring in ABW, call
 `swarm_hire_cost` and check `within_budget`; if false, raise
 `HKASK_ABW_MAX_CREDITS` (default 50) rather than attempting the hire
 (`swarm_panel.rs:191`). The panel's `begin_hire`/`confirm_hire` flow
-(`:1441`/`:1543`) shows the cost breakdown (base + required + optional).
+(`:1409`/`:1511`) shows the cost breakdown (base + required + optional).
 
 ## Step 4: Compose a swarm
 

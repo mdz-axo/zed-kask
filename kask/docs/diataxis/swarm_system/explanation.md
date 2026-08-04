@@ -98,7 +98,7 @@ closure, by design. It is the acknowledged gap-cover for open tasks where C0
 is absent.
 
 The remediation is to surface the `go_see` directive in the Steer UI (the
-panel's `render_run_status_strip`, `swarm_panel.rs:2340`) as an actionable
+panel's `render_run_status_strip`, `swarm_panel.rs:2405`) as an actionable
 prompt, not a log line — so the human closure is more likely to fire.
 
 ## Why the determinism constraint (Gap S3)
