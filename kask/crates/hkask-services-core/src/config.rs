@@ -10,7 +10,6 @@
 use crate::error::{DomainKind, ErrorKind, ServiceError};
 use hkask_inference::InferenceConfig;
 use hkask_storage::database::types::DbProvider;
-use hkask_types::WalletConfig;
 
 // ── Default values ──────────────────────────────────────────────────────────
 // Centralized here so all three constructors share the same defaults.
@@ -90,9 +89,6 @@ pub struct ServiceConfig {
     /// when not explicitly set. Ignored when `in_memory: true`.
     pub memory_db_path: Option<String>,
 
-    /// Wallet configuration for rJoule payments and multi-chain deposits.
-    pub wallet_config: WalletConfig,
-
     /// Episodic memory life in days — configurable, default 180 (6 months × 30).
     ///
     /// Sets S in Wozniak & Gorzelanczyk (1995) forgetting curve: R(t) = exp(-t/S).
@@ -161,7 +157,6 @@ impl ServiceConfig {
             user_name,
             template_cache_path,
             memory_db_path,
-            wallet_config: WalletConfig::default(),
             memory_life_days,
         })
     }
@@ -201,7 +196,6 @@ impl ServiceConfig {
             user_name,
             template_cache_path,
             memory_db_path,
-            wallet_config: WalletConfig::default(),
             memory_life_days,
         }
     }
@@ -229,7 +223,6 @@ impl ServiceConfig {
             user_name: TEST_USER_NAME.to_string(),
             template_cache_path: DEFAULT_TEMPLATE_CACHE_PATH.to_string(),
             memory_db_path: None,
-            wallet_config: WalletConfig::default(),
             memory_life_days: 180.0,
         }
     }

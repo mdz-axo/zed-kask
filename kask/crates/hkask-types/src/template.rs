@@ -66,7 +66,7 @@ pub struct LLMParameters {
     /// base model and cannot be applied to a different one.
     ///
     /// Format: `"Qwen3.5-9B#pragmatic-semantics-v1"` (multi-LoRA)
-    ///         `"accounts/together/models/my-model"` (Together AI fine-tuned)
+    ///         `"accounts/<org>/models/my-model"` (hosted fine-tuned)
     ///
     /// The caller is responsible for resolving which base model the adapter
     /// was trained on (via AdapterStore lookup by skill_name).

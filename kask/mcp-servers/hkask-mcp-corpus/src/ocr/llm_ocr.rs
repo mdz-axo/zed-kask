@@ -133,7 +133,7 @@ fn now_unix() -> i64 {
 ///
 /// Encodes page images as base64 PNG and dispatches to vision-capable
 /// models via `generate_vision`. Supports all inference backends
-/// (DeepInfra, Together AI) through provider-prefixed model names.
+/// (DeepInfra, OpenRouter) through provider-prefixed model names.
 ///
 /// The router is constructed once and shared across all concurrent
 /// OCR tasks via `Arc<dyn InferencePort>`.

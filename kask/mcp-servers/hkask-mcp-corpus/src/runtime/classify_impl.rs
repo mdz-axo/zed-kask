@@ -230,7 +230,6 @@ impl ClassifierConfig {
 fn provider_pricing(provider: &str) -> (u64, u64) {
     match provider.to_lowercase().as_str() {
         "deepinfra" => (30, 60),  // $0.03/M in, $0.06/M out
-        "together" => (20, 20),   // $0.02/M in, $0.02/M out (approximate)
         "openrouter" => (50, 50), // varies by model, conservative estimate
         "fal" => (40, 40),        // approximate
         _ => {

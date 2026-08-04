@@ -32,9 +32,9 @@ pub enum HuggingFaceError {
 /// Strip known provider prefixes to extract the raw HuggingFace model ID.
 ///
 /// This is the canonical resolution logic used by removed provider.
-/// Provider prefixes: DeepInfra/, fal.ai/, Together AI/, OpenRouter/ (zed syntax).
+/// Provider prefixes: DeepInfra/, fal.ai/, OpenRouter/ (zed syntax).
 pub fn resolve_model_id(base_model: &str) -> String {
-    let known_prefixes = ["DeepInfra/", "fal.ai/", "Together AI/", "OpenRouter/"];
+    let known_prefixes = ["DeepInfra/", "fal.ai/", "OpenRouter/"];
     let mut model = base_model;
     for prefix in &known_prefixes {
         if model.starts_with(prefix) {
@@ -52,14 +52,6 @@ mod tests {
     #[test]
     fn resolve_provider_prefix() {
         assert_eq!(resolve_model_id("DeepInfra/some-model"), "some-model");
-    }
-
-    #[test]
-    fn resolve_together_prefix() {
-        assert_eq!(
-            resolve_model_id("Together AI/Qwen/Qwen3.5-9B"),
-            "Qwen/Qwen3.5-9B"
-        );
     }
 
     #[test]

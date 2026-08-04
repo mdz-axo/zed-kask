@@ -36,7 +36,6 @@ use thiserror::Error;
 
 use hkask_types::InfrastructureError;
 use hkask_types::McpErrorKind;
-use hkask_types::WalletError;
 use hkask_types::{EmbeddingGenerationError, InferenceError};
 
 // ── Helper implementation modules ─────────────────────────────────────
@@ -227,18 +226,6 @@ impl From<uuid::Error> for ServiceError {
         let msg = e.to_string();
         ServiceError::InvalidWebID {
             source: Some(e),
-            message: msg,
-        }
-    }
-}
-
-impl From<WalletError> for ServiceError {
-    fn from(e: WalletError) -> Self {
-        let msg = e.to_string();
-        ServiceError::Domain {
-            kind: ErrorKind::ServiceUnavailable,
-            domain: DomainKind::Wallet,
-            source: Some(Box::new(e)),
             message: msg,
         }
     }
@@ -759,20 +746,6 @@ mod tests {
             matches!(&e, ServiceError::Infra(_)),
             "From<InfrastructureError> must produce Infra variant"
         );
-    }
-
-    /// From<WalletError> round-trips through the Domain variant.
-    #[test]
-    fn from_wallet_error_produces_domain_with_wallet_kind() {
-        use hkask_types::WalletError;
-        let inner = WalletError::InsufficientBalance {
-            have: hkask_types::RJoule(0),
-            need: hkask_types::RJoule(100),
-        };
-        let e = ServiceError::from(inner);
-        assert_eq!(e.domain(), DomainKind::Wallet);
-        assert_eq!(e.kind(), ErrorKind::ServiceUnavailable);
-        assert!(e.to_string().contains("insufficient"));
     }
 
     /// Source chains are preserved: every variant that carries source should expose it.

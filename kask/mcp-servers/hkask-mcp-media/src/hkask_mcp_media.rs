@@ -1519,7 +1519,7 @@ impl MediaServer {
     }
 
     /// Resolve the best available vision model with fallback chain.
-    /// Tries: fal.ai → DeepInfra → OpenRouter → Together AI.
+    /// Tries: fal.ai → DeepInfra → OpenRouter.
     /// Returns (model_name, label) or None if no vision provider is configured.
     async fn resolve_vision_model(&self) -> Option<(&'static str, &'static str)> {
         let models = self.vision_port.list_vision_models().await;
@@ -1542,9 +1542,6 @@ impl MediaServer {
                 }
                 "openrouter" => {
                     return Some(("OpenRouter/qwen/qwen-2.5-vl-72b-instruct", "qwen2.5-vl-72b"));
-                }
-                "together ai" | "together" => {
-                    return Some(("Together AI/Qwen/Qwen2.5-VL-72B-Instruct", "qwen-vl"));
                 }
                 _ => continue,
             }
@@ -1616,7 +1613,7 @@ impl MediaServer {
     ) -> (u32, Vec<String>) {
         let (vision_model, vision_label) = match self.resolve_vision_model().await {
             Some(v) => v,
-            None => return (0, vec!["No vision model available — configure a vision-capable provider (DeepInfra, OpenRouter, or Together AI)".to_string()]),
+            None => return (0, vec!["No vision model available — configure a vision-capable provider (DeepInfra, OpenRouter, or fal.ai)".to_string()]),
         };
         let mut analyzed = 0u32;
         let mut errors = Vec::new();

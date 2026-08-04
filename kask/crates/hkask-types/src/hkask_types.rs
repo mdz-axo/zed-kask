@@ -32,7 +32,6 @@ pub mod tool_taint;
 pub mod transcript;
 pub mod visibility;
 pub mod voice;
-pub mod wallet_types;
 
 #[cfg(feature = "sql")]
 pub mod sql_impls;
@@ -49,8 +48,8 @@ pub use error::{
 pub use event::{RegulationRecord, RegulationSink};
 pub use goal::GoalState;
 pub use id::{
-    ApiKeyId, BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID,
-    HMemId, Id, IdKind, PhaseId, PodID, TaskId, TemplateID, UserID, WalletId, WebID,
+    BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
+    IdKind, PhaseId, PodID, TaskId, TemplateID, UserID, WebID,
 };
 pub use regulation::LedgerHealth;
 
@@ -70,11 +69,6 @@ pub use visibility::{Confidence, Dimension, Visibility};
 pub use voice::VoiceDesign;
 
 pub use ports::*;
-pub use wallet_types::{
-    ApiKeyCapability, ChainId, DepositAddress, DepositReference, Encumbrance, EncumbranceStatus,
-    GAS_PER_RJOULE, PrivacyMode, RJoule, RateLimitConfig, TransactionType, WalletBalance,
-    WalletConfig, WalletError, WalletTransaction,
-};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HMemEntry {
