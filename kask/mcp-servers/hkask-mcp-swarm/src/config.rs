@@ -99,6 +99,23 @@ pub(crate) struct SwarmConfig {
     /// segment is not in this set — a third-party ABW card must not extend
     /// the delegated tool surface beyond the operator's own governed servers.
     pub allowed_tool_servers: Option<Vec<String>>,
+    /// SQLCipher passphrase for the local swarm semantic-memory store (the
+    /// `hkask-memory` `SemanticMemory` backing the local knowledge tools). Must
+    /// be >=8 chars; empty/unset degrades `swarm_search_knowledge_local` to an
+    /// empty result with a `memory_unconfigured` note (the generate tools are
+    /// unaffected — memory is an enhancement, not a dependency). Read from
+    /// `HKASK_SWARM_MEMORY_PASSPHRASE`.
+    pub memory_passphrase: String,
+    /// On-disk path for the local swarm semantic-memory DB. Default
+    /// `<hkask data dir>/swarm_memory.db` (resolved under the data dir so the
+    /// server finds it regardless of CWD). Read from `HKASK_SWARM_MEMORY_DB`
+    /// (an absolute override is used as-is).
+    pub memory_db_path: String,
+    /// Embedding vector dimension for the semantic-memory embedding store.
+    /// Only relevant if the embedding-search path is used; the EAV-retrieval
+    /// path (`query_deduped`) used by `swarm_search_knowledge_local` does not
+    /// depend on it. Default 1024. Read from `HKASK_SWARM_EMBEDDING_DIM`.
+    pub embedding_dim: usize,
 }
 
 impl Default for SwarmConfig {
@@ -124,6 +141,9 @@ impl Default for SwarmConfig {
             local_swarms_dir: "agents/local/swarms".to_string(),
             a2a_http_enabled: false,
             allowed_tool_servers: None,
+            memory_passphrase: String::new(),
+            memory_db_path: "swarm_memory.db".to_string(),
+            embedding_dim: 1024,
         }
     }
 }
@@ -215,6 +235,26 @@ impl SwarmConfig {
                     .map(str::to_string)
                     .collect::<Vec<_>>()
             });
+        let memory_passphrase = std::env::var("HKASK_SWARM_MEMORY_PASSPHRASE")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(default.memory_passphrase);
+        let memory_db_raw = std::env::var("HKASK_SWARM_MEMORY_DB")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(default.memory_db_path);
+        let memory_db_path = if std::path::Path::new(&memory_db_raw).is_absolute() {
+            memory_db_raw
+        } else {
+            hkask_types::agent_paths::resolve_under_data_dir(std::path::Path::new(&memory_db_raw))
+                .to_string_lossy()
+                .to_string()
+        };
+        let embedding_dim = std::env::var("HKASK_SWARM_EMBEDDING_DIM")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .filter(|d| *d > 0)
+            .unwrap_or(default.embedding_dim);
         let warning = if api_key.is_none() && mode == SwarmMode::Abw {
             Some(
                 "HKASK_ABW_API_KEY not set and mode=abw — swarm server in catalogue-only mode; \
@@ -250,6 +290,9 @@ impl SwarmConfig {
                 local_swarms_dir,
                 a2a_http_enabled,
                 allowed_tool_servers,
+                memory_passphrase,
+                memory_db_path,
+                embedding_dim,
             },
             warning,
         )

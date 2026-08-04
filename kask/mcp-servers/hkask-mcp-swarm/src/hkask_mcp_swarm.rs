@@ -70,6 +70,7 @@ mod agent_executor;
 mod config;
 mod consent;
 mod error;
+mod local_knowledge;
 mod local_registry;
 mod local_runtime;
 mod local_swarms;
@@ -123,6 +124,7 @@ hkask_mcp_server::mcp_server!(
         pub local_registry: std::sync::Arc<LocalAgentRegistry>,
         pub local_runtime: std::sync::Arc<LazyLocalSwarmRuntime>,
         pub local_swarms: std::sync::Arc<LocalSwarmRegistry>,
+        pub local_memory: std::sync::Arc<local_knowledge::LazyLocalMemory>,
     }
 );
 
@@ -2970,6 +2972,168 @@ impl SwarmServer {
         })
         .await
     }
+
+    /// Search a local agent's prefix-scoped semantic memory (the kask analog of
+    /// ABW `swarm_search_knowledge`). Returns matching knowledge fragments
+    /// (entity-attribute-value triples) from the operator's consolidated
+    /// `hkask-memory`. No ABW calls. Degrades to an empty result with a
+    /// `memory_unconfigured` note when `HKASK_SWARM_MEMORY_PASSPHRASE` is unset.
+    #[tool(
+        description = "Search a local agent's prefix-scoped semantic memory (the local analog of ABW swarm_search_knowledge). Returns matching knowledge fragments (entity-attribute-value triples) from the operator's consolidated hkask-memory. No ABW calls. Degrades to an empty result with a memory_unconfigured note when HKASK_SWARM_MEMORY_PASSPHRASE is unset."
+    )]
+    pub(crate) async fn swarm_search_knowledge_local(
+        &self,
+        parameters: Parameters<SearchKnowledgeLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_search_knowledge_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.agent_name.trim().is_empty() || req.query.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "agent_name and query must be non-empty".to_string(),
+                ));
+            }
+            let limit = req.limit.unwrap_or(10).clamp(1, 50);
+            match local_knowledge::search_agent_knowledge(
+                &self.local_memory,
+                &req.agent_name,
+                &req.query,
+                limit,
+            )
+            .await
+            {
+                Ok(fragments) => Ok(serde_json::json!({
+                    "fragments": fragments,
+                    "source": "local_semantic_memory",
+                    "agent_name": req.agent_name,
+                    "note": "",
+                })),
+                Err(reason) => Ok(serde_json::json!({
+                    "fragments": [],
+                    "source": "local_semantic_memory",
+                    "agent_name": req.agent_name,
+                    "note": format!("memory_unconfigured: {reason}"),
+                })),
+            }
+        })
+        .await
+    }
+
+    /// Generate a system prompt for a local agent from a description (the kask
+    /// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only. Uses
+    /// the local `InferencePort` (no ABW); seeded with the agent's consolidated
+    /// memory when available. Output is guard-scanned.
+    #[tool(
+        description = "Generate a system prompt for a local agent from a description (the local analog of ABW swarm_generate_prompt). Authoring aid — read-only, spends nothing. Uses the local InferencePort (no ABW); optionally seeded with the agent's consolidated memory. Output is guard-scanned."
+    )]
+    pub(crate) async fn swarm_generate_prompt_local(
+        &self,
+        parameters: Parameters<GeneratePromptLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_generate_prompt_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.description.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "description and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+                McpToolError::unavailable(format!(
+                    "local runtime unavailable — cannot run local generation: {e}"
+                ))
+            })?;
+            let agent_type = req.agent_type.unwrap_or_else(|| "research".to_string());
+            let seed =
+                local_knowledge::agent_memory_seed(&self.local_memory, &req.agent_name, 20).await;
+            let seeded = !seed.is_empty();
+            let seed_block = if seeded {
+                format!("{seed}\n\n")
+            } else {
+                String::new()
+            };
+            let prompt = format!(
+                "You are authoring a system prompt for a new hKask local agent.\n\
+                 Agent name: {agent_name}\nAgent type: {agent_type}\n\
+                 Description: {description}\n\n{seed_block}\
+                 Write a complete, focused system prompt that defines the agent's role, \
+                 inputs, outputs, and constraints. Return ONLY the system prompt text, \
+                 no preamble or explanation.",
+                agent_name = req.agent_name,
+                agent_type = agent_type,
+                description = req.description,
+                seed_block = seed_block,
+            );
+            let inference = runtime.inference();
+            let guard = runtime.guard();
+            let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.4)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(serde_json::json!({
+                "prompt": text,
+                "raw": serde_json::json!({
+                    "agent_name": req.agent_name,
+                    "agent_type": agent_type,
+                    "seeded": seeded,
+                }),
+            }))
+        })
+        .await
+    }
+
+    /// Generate a seed ontology (Mermaid ER diagram) for a knowledge domain
+    /// (the kask analog of ABW `swarm_generate_ontology`). Authoring aid —
+    /// read-only. Uses the local `InferencePort`; optionally seeded with an
+    /// agent's semantic-memory graph. Output is guard-scanned.
+    #[tool(
+        description = "Generate a seed ontology (Mermaid ER diagram) for a knowledge domain (the local analog of ABW swarm_generate_ontology). Authoring aid — read-only. Uses the local InferencePort; optionally seeded with an agent's semantic-memory graph. Output is guard-scanned."
+    )]
+    pub(crate) async fn swarm_generate_ontology_local(
+        &self,
+        parameters: Parameters<GenerateOntologyLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_generate_ontology_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.domain_description.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "domain_description must be non-empty".to_string(),
+                ));
+            }
+            let runtime = self.local_runtime.get_or_init().await.map_err(|e| {
+                McpToolError::unavailable(format!(
+                    "local runtime unavailable — cannot run local generation: {e}"
+                ))
+            })?;
+            let seed = match req.agent_name.as_deref() {
+                Some(name) if !name.trim().is_empty() => {
+                    local_knowledge::agent_memory_seed(&self.local_memory, name, 30).await
+                }
+                _ => String::new(),
+            };
+            let seeded = !seed.is_empty();
+            let seed_block = if seeded { format!("{seed}\n\n") } else { String::new() };
+            let prompt = format!(
+                "You are authoring a seed ontology (entity-relationship model) for a knowledge domain.\n\
+                 Domain: {domain}\n\n{seed_block}\
+                 Produce a Mermaid erDiagram that captures the core entities, their attributes, \
+                 and the relationships between them for this domain. Return ONLY the mermaid block \
+                 inside a fenced code block, no preamble.",
+                domain = req.domain_description,
+                seed_block = seed_block,
+            );
+            let inference = runtime.inference();
+            let guard = runtime.guard();
+            let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.3)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+            Ok(serde_json::json!({
+                "ontology": text,
+                "raw": serde_json::json!({
+                    "domain_description": req.domain_description,
+                    "seeded": seeded,
+                }),
+            }))
+        })
+        .await
+    }
 }
 
 #[rmcp::tool_handler(router = Self::combined_router())]
@@ -3074,6 +3238,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 );
             }
 
+            // Local swarm semantic memory — backs `swarm_search_knowledge_local`
+            // (and seeds the generate tools). Lazily opened on first use; opens
+            // only when `HKASK_SWARM_MEMORY_PASSPHRASE` is set (>=8 chars). When
+            // unset, the search tool degrades to an empty result and the
+            // generate tools proceed unseeded (memory is an enhancement, not a
+            // dependency). Constructed here from config so it shares the
+            // resolved data-dir path.
+            let local_memory = std::sync::Arc::new(local_knowledge::LazyLocalMemory::lazy(
+                config.memory_db_path.clone(),
+                config.memory_passphrase.clone(),
+                config.embedding_dim,
+            ));
+
             // A2A HTTP gateway (opt-in via HKASK_A2A_HTTP_ENABLE). Exposes local
             // agents to external A2A clients over loopback JSON-RPC. Disabled by
             // default - it opens a loopback port. The startup-failure signals
@@ -3154,6 +3331,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 local_registry,
                 local_runtime,
                 local_swarms,
+                local_memory,
             ))
         },
         vec![CredentialRequirement::optional(
@@ -3171,7 +3349,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_surface_is_exactly_47_registered_tools() {
+    fn tool_surface_is_exactly_50_registered_tools() {
         let router = SwarmServer::combined_router();
         let mut names: Vec<String> = router
             .list_all()
@@ -3208,7 +3386,7 @@ mod tests {
             "swarm_publish_checks",
             "swarm_publish_agent",
             "swarm_fork_agent",
-            // Local (20).
+            // Local (23).
             "swarm_fund_local",
             "swarm_balance_local",
             "swarm_local_history",
@@ -3229,6 +3407,9 @@ mod tests {
             "swarm_delete_local_swarm",
             "swarm_add_agent_local",
             "swarm_remove_agent_local",
+            "swarm_search_knowledge_local",
+            "swarm_generate_prompt_local",
+            "swarm_generate_ontology_local",
         ]
         .into_iter()
         .map(str::to_string)
@@ -3236,7 +3417,7 @@ mod tests {
         expected.sort();
         assert_eq!(
             names, expected,
-            "registered tool surface drifted from the documented 47"
+            "registered tool surface drifted from the documented 50"
         );
     }
 }

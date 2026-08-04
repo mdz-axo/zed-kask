@@ -618,3 +618,52 @@ pub(crate) struct A2aCardRequest {
     #[serde(default)]
     pub agent_name: Option<String>,
 }
+
+// ── Local knowledge tools (kask analogs of ABW knowledge/prompt/ontology) ─────
+
+/// Vector-search an agent's prefix-scoped semantic memory (the local analog of
+/// ABW `swarm_search_knowledge`). Returns matching knowledge fragments
+/// (entity-attribute-value triples) from the operator's consolidated
+/// `hkask-memory`. No ABW calls. Degrades to an empty result with a
+/// `memory_unconfigured` note when `HKASK_SWARM_MEMORY_PASSPHRASE` is unset.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct SearchKnowledgeLocalRequest {
+    /// Agent id whose prefix-scoped memory (`agent:<id>:`) to search.
+    pub agent_name: String,
+    /// The search query. Matched case-insensitively against each triple's
+    /// entity, attribute, and value.
+    pub query: String,
+    /// Maximum fragments to return. Default 10.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Generate a system prompt for a local agent from a description (the local
+/// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only, spends
+/// nothing. Uses the local `InferencePort` (no ABW); optionally seeded with
+/// the agent's consolidated memory. Output is guard-scanned.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct GeneratePromptLocalRequest {
+    /// Natural-language description of what the agent should do.
+    pub description: String,
+    /// Agent name (used to seed the prompt from the agent's memory and as the
+    /// generated prompt's identifier).
+    pub agent_name: String,
+    /// Agent type hint (e.g. "research", "creative", "meta"). Default "research".
+    #[serde(default)]
+    pub agent_type: Option<String>,
+}
+
+/// Generate a seed ontology (Mermaid ER diagram) for a domain (the local analog
+/// of ABW `swarm_generate_ontology`). Authoring aid — read-only. Uses the local
+/// `InferencePort`; optionally seeded with an agent's semantic-memory graph.
+/// Output is guard-scanned.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct GenerateOntologyLocalRequest {
+    /// Natural-language description of the knowledge domain.
+    pub domain_description: String,
+    /// Optional agent id — when set, the ontology is seeded from that agent's
+    /// prefix-scoped semantic memory (memory-as-graph).
+    #[serde(default)]
+    pub agent_name: Option<String>,
+}

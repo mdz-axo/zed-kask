@@ -74,6 +74,20 @@ impl AgentExecutor {
         }
     }
 
+    /// The resolved local inference port. Exposed so the local knowledge tools
+    /// (`swarm_generate_prompt_local` / `swarm_generate_ontology_local`) can do a
+    /// one-shot generate without going through the full agent-run loop (they
+    /// are authoring aids — no ledger debit, no tool loop).
+    pub(crate) fn inference(&self) -> Arc<dyn hkask_types::InferencePort> {
+        Arc::clone(&self.inference)
+    }
+
+    /// The content guard. Exposed so the local knowledge tools can scan their
+    /// LLM-generated output for canary/secret leakage before returning it.
+    pub(crate) fn guard(&self) -> Arc<hkask_guard::ContentGuard> {
+        Arc::clone(&self.guard)
+    }
+
     /// Test-only constructor with injected dependencies (mirrors the
     /// `StubInferencePort` pattern). Accepts a pre-built guard so tests can
     /// use `ContentGuard::mandatory(&default)`.

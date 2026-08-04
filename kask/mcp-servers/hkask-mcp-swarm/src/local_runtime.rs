@@ -178,6 +178,20 @@ impl LocalSwarmRuntime {
             .ok()
     }
 
+    /// The resolved local inference port. Exposed so the local knowledge tools
+    /// (`swarm_generate_prompt_local` / `swarm_generate_ontology_local`) can do a
+    /// one-shot generate via the same inference port the delegate loop uses —
+    /// reuse, not a second resolution.
+    pub(crate) fn inference(&self) -> std::sync::Arc<dyn hkask_types::InferencePort> {
+        self.executor.inference()
+    }
+
+    /// The content guard. Exposed so the local knowledge tools can scan their
+    /// LLM-generated output for canary/secret leakage before returning it.
+    pub(crate) fn guard(&self) -> std::sync::Arc<hkask_guard::ContentGuard> {
+        self.executor.guard()
+    }
+
     /// Recent ledger transactions for the operator account, newest first,
     /// capped at `limit`. Each entry carries the operator-relevant signed
     /// amount (fund = +, debit = −) and the metadata `action` ("fund" |

@@ -9,7 +9,7 @@
 //! - Cost estimation
 
 use crate::huggingface::TrainingArtifacts;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -362,6 +362,7 @@ pub struct LoraParams {
 /// LoRA initialization strategy (mirrors PEFT `init_lora_weights`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+#[schemars(transform = strip_bare_additional_properties)]
 pub enum LoraInit {
     /// PEFT default: B=0, A~Gaussian Kaiming-uniform. Adapter is a no-op at step 0.
     #[default]
@@ -388,6 +389,49 @@ pub enum LoraInit {
     Eva,
     /// Random init (debugging only — not a no-op at step 0).
     Random,
+}
+
+/// schemars `transform` for [`LoraInit`]: strip the bare-boolean
+/// `additionalProperties: false` that schemars emits for the externally-tagged
+/// newtype variant `PissaNiter(u32)`. A boolean in a schema-valued position
+/// (`additionalProperties`, a property value, `items`, an `anyOf` member, ...)
+/// is rejected by strict-schema-decoding providers (Ollama: `400 cannot
+/// unmarshal bool into ... of type api.ToolProperty`; Gemini likewise) - see
+/// the `.rules` trap "kask MCP tool inputs that accept arbitrary JSON use
+/// `AnyJsonValue`" and `hkask_mcp_server::find_boolean_schema_positions`.
+///
+/// Removing the keyword leaves the schema correct (it still accepts
+/// `{"pissa_niter": N}`; serde ignores unknown fields by default, so allowing
+/// extras matches the deserializer's lenient behavior) but not closed with a
+/// boolean. Only a bare-boolean `additionalProperties` is removed; a
+/// schema-valued `additionalProperties` (object) is left intact. The serde wire
+/// format is unchanged (this is a `JsonSchema` transform, not a `serde` attr).
+fn strip_bare_additional_properties(schema: &mut Schema) {
+    fn strip_map(obj: &mut serde_json::Map<String, serde_json::Value>) {
+        if matches!(
+            obj.get("additionalProperties"),
+            Some(serde_json::Value::Bool(_))
+        ) {
+            obj.remove("additionalProperties");
+        }
+        for (_, child) in obj.iter_mut() {
+            strip_value(child);
+        }
+    }
+    fn strip_value(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(obj) => strip_map(obj),
+            serde_json::Value::Array(arr) => {
+                for child in arr {
+                    strip_value(child);
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(obj) = schema.as_object_mut() {
+        strip_map(obj);
+    }
 }
 
 impl LoraInit {

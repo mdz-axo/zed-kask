@@ -9529,6 +9529,7 @@ dependencies = [
  "hkask-inference",
  "hkask-ledger",
  "hkask-mcp-server",
+ "hkask-memory",
  "hkask-storage",
  "hkask-test-harness",
  "hkask-types",
