@@ -61,8 +61,7 @@ impl CorpusServer {
         }): Parameters<OcrRequest>,
     ) -> String {
         execute_tool(self, "corpus_ocr", async {
-            hkask_mcp_server::validate_path("path", &path, 4096)
-                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let resolved = crate::path_safety::contain_for_read(&path)?;
 
             let service = ConvertService::from_corpus(self);
             let model = match service.resolve_ocr_model(model.as_deref()).await {
@@ -72,7 +71,7 @@ impl CorpusServer {
                 }
             };
 
-            let file_bytes = match std::fs::read(&path) {
+            let file_bytes = match std::fs::read(&resolved) {
                 Ok(b) => b,
                 Err(e) => {
                     return Err(McpToolError::internal(format!(
@@ -114,8 +113,7 @@ impl CorpusServer {
         Parameters(IsComplexRequest { path, target_pages }): Parameters<IsComplexRequest>,
     ) -> String {
         execute_tool(self, "corpus_is_complex", async {
-            hkask_mcp_server::validate_path("path", &path, 4096)
-                .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+            let resolved = crate::path_safety::contain_for_read(&path)?;
             let (format, _, _) = convert::detect_format(&path);
             if format != "pdf" {
                 return Err(McpToolError::invalid_argument(
@@ -123,7 +121,7 @@ impl CorpusServer {
                 ));
             }
             let cfg = crate::ocr::TriageConfig::from_env();
-            let mut verdicts = crate::ocr::triage::triage_pdf(std::path::Path::new(&path), &cfg)
+            let mut verdicts = crate::ocr::triage::triage_pdf(&resolved, &cfg)
                 .await
                 .map_err(|e| McpToolError::internal(format!("triage failed: {e}")))?;
 

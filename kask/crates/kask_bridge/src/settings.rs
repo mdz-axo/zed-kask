@@ -488,6 +488,11 @@ pub struct KaskSwarmSettings {
     /// read by `LocalAgentRegistry` in `Local` mode. When empty, uses the
     /// default `agents/local/curated`.
     pub local_agents_dir: String,
+
+    /// Directory containing local swarms (`<id>/swarm.json`), read/written by
+    /// `LocalSwarmRegistry` - the local replica of an ABW workspace roster.
+    /// When empty, uses the default `agents/local/swarms`.
+    pub local_swarms_dir: String,
 }
 
 /// Mirror of `SwarmMode` in the server crate, kept separate to avoid a
@@ -540,6 +545,7 @@ impl Default for KaskSwarmSettings {
             max_credits_per_dispatch: 50,
             curator_consent_default: false,
             local_agents_dir: String::new(),
+            local_swarms_dir: String::new(),
         }
     }
 }
@@ -840,6 +846,12 @@ impl KaskSettings {
             env.insert(
                 "HKASK_LOCAL_AGENTS_DIR".to_string(),
                 self.swarm.local_agents_dir.clone(),
+            );
+        }
+        if !self.swarm.local_swarms_dir.is_empty() {
+            env.insert(
+                "HKASK_LOCAL_SWARMS_DIR".to_string(),
+                self.swarm.local_swarms_dir.clone(),
             );
         }
 
@@ -1156,6 +1168,7 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
                 .curator_consent_default
                 .unwrap_or(default.curator_consent_default),
             local_agents_dir: c.local_agents_dir.unwrap_or(default.local_agents_dir),
+            local_swarms_dir: c.local_swarms_dir.unwrap_or(default.local_swarms_dir),
         }
     }
 }
@@ -1609,6 +1622,7 @@ mod tests {
         assert!(!env.contains_key("HKASK_ABW_CURATOR_CONSENT_DEFAULT"));
         assert!(!env.contains_key("HKASK_SWARM_MODE"));
         assert!(!env.contains_key("HKASK_LOCAL_AGENTS_DIR"));
+        assert!(!env.contains_key("HKASK_LOCAL_SWARMS_DIR"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
             "the ABW API key is a credential, not config — it must never appear in mcp_env()"
@@ -1626,6 +1640,7 @@ mod tests {
         settings.swarm.api_url = "https://staging.agent-bestiary.world".to_string();
         settings.swarm.curator_consent_default = true;
         settings.swarm.local_agents_dir = "/custom/agents/dir".to_string();
+        settings.swarm.local_swarms_dir = "/custom/swarms/dir".to_string();
         let env = settings.mcp_env();
         assert_eq!(
             env.get("HKASK_SWARM_MODE").map(String::as_str),
@@ -1647,6 +1662,10 @@ mod tests {
         assert_eq!(
             env.get("HKASK_LOCAL_AGENTS_DIR").map(String::as_str),
             Some("/custom/agents/dir")
+        );
+        assert_eq!(
+            env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
+            Some("/custom/swarms/dir")
         );
     }
 

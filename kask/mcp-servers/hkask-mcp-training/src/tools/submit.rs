@@ -37,10 +37,10 @@ impl TrainingServer {
         }): Parameters<TrainSubmitRequest>,
     ) -> String {
         execute_tool(self, "training_submit", async {
-            let file_path = PathBuf::from(&dataset_path);
-            if !file_path.exists() {
-                return Err(McpToolError::invalid_argument(format!("Dataset file not found: {dataset_path}")));
-            }
+            // Contain the caller-supplied dataset path before any read: an
+            // absolute path like /etc/passwd or a traversal must not reach the
+            // pipeline reads (CWE-200).
+            let file_path = hkask_mcp_server::contain_for_read(&dataset_path)?;
 
             // G-P1: Persistence preflight — verify HuggingFace artifact persistence
             // is configured before the expensive dataset normalization step.
@@ -88,11 +88,9 @@ impl TrainingServer {
             let mut resolved_adapter_name: Option<String> = adapter_name.clone();
 
             let normalized_path = if retrain_mode {
-                let feedback = PathBuf::from(feedback_path.as_ref().unwrap());
-                hkask_mcp_server::validate_path("feedback_path", feedback.to_str().unwrap_or(""), 4096)?;
-                if !feedback.exists() {
-                    return Err(McpToolError::invalid_argument(format!("Feedback file not found: {}", feedback.display())));
-                }
+                let feedback = hkask_mcp_server::contain_for_read(
+                    feedback_path.as_ref().unwrap(),
+                )?;
                 let skill = skill_name.clone().unwrap_or_default();
                 if skill.is_empty() {
                     return Err(McpToolError::invalid_argument("skill_name is required when feedback_path is set (retrain mode)"));
@@ -132,8 +130,20 @@ impl TrainingServer {
                     return Err(McpToolError::invalid_argument("No valid examples found in either dataset"));
                 }
 
-                let merged_path = merged_output_path.unwrap_or_else(|| format!("/tmp/hkask-retrain-{skill}.jsonl"));
-                hkask_mcp_server::validate_path("merged_output_path", &merged_path, 4096)?;
+                let merged_path = match merged_output_path {
+                    // LLM-supplied write target: contain to the project root so a
+                    // path like ~/.ssh/authorized_keys is rejected (CWE-73).
+                    Some(p) => hkask_mcp_server::contain_for_write(&p)?,
+                    // Server-chosen scratch: the pipeline cache dir is not
+                    // LLM-controlled, so no containment is needed (and it lives
+                    // under the data dir, outside the project root anyway).
+                    None => self
+                        .pipeline
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .cache_dir()
+                        .join(format!("hkask-retrain-{skill}.jsonl")),
+                };
                 std::fs::write(&merged_path, &merged).map_err(|e| McpToolError::internal(format!("Failed to write merged dataset: {e}")))?;
 
                 let previous_adapter_exists: bool;
@@ -156,7 +166,7 @@ impl TrainingServer {
                 }
                 let _ = (previous_adapter_exists, original_examples, feedback_examples);
 
-                match self.pipeline.lock().unwrap_or_else(|e| e.into_inner()).ingest(&PathBuf::from(&merged_path)) {
+                match self.pipeline.lock().unwrap_or_else(|e| e.into_inner()).ingest(&merged_path) {
                     Ok(path) => path,
                     Err(e) => return Err(McpToolError::invalid_argument(format!("Dataset pipeline error: {e}"))),
                 }

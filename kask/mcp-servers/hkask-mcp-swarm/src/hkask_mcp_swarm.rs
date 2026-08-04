@@ -2248,6 +2248,167 @@ impl SwarmServer {
         .await
     }
 
+    // ── Local swarm membership (local replica of an ABW workspace) ─────────────
+
+    /// Create a local swarm - the local replica of an ABW workspace/team. A
+    /// named, mission-bearing grouping of local agent ids. No cost and no
+    /// consent token - the local ledger gates delegation, not roster edits.
+    /// Optionally seeds the roster with `agents`. Returns the new swarm with
+    /// its generated `swarm_id`. The counterpart of `swarm_create_swarm` for
+    /// the local backend.
+    #[tool(
+        description = "Create a local swarm (the local replica of an ABW workspace). A named grouping of local agent ids with a mission. No cost, no consent token. Optionally seed members via `agents`. Counterpart of swarm_create_swarm for the local backend."
+    )]
+    pub(crate) async fn swarm_create_local_swarm(
+        &self,
+        parameters: Parameters<CreateLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_create_local_swarm", Some("pko"), async {
+            let req = parameters.0;
+            if req.name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .create(&req.name, &req.mission, req.agents)
+                .map_err(|e| {
+                    McpToolError::internal(format!("failed to create local swarm: {e}"))
+                })?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
+        .await
+    }
+
+    /// List all local swarms (id, name, mission, members, created_at). The
+    /// local counterpart of `swarm_get_swarm` (no-id list mode).
+    #[tool(
+        description = "List all local swarms. Each entry has swarm_id, name, mission, members (agent ids), and created_at. Read-only. Local counterpart of swarm_get_swarm list mode."
+    )]
+    pub(crate) async fn swarm_list_local_swarms(
+        &self,
+        _parameters: Parameters<ListLocalSwarmsRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_list_local_swarms", Some("pko"), async {
+            let swarms = self.local_swarms.list();
+            Ok(serde_json::json!({
+                "count": swarms.len(),
+                "swarms": swarms,
+            }))
+        })
+        .await
+    }
+
+    /// Get a single local swarm by id, including its roster.
+    #[tool(
+        description = "Get a single local swarm by swarm_id, including its member roster (agent ids). Returns not-found if the swarm does not exist."
+    )]
+    pub(crate) async fn swarm_get_local_swarm(
+        &self,
+        parameters: Parameters<GetLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_get_local_swarm", Some("pko"), async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self.local_swarms.get(&req.swarm_id).ok_or_else(|| {
+                McpToolError::not_found(format!("local swarm '{}' not found", req.swarm_id))
+            })?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "name": swarm.name }),
+            ))
+        })
+        .await
+    }
+
+    /// Permanently delete a local swarm. The roster is dropped with the swarm;
+    /// member agents are NOT touched (they stay in `LocalAgentRegistry`). The
+    /// local counterpart of `swarm_delete_swarm`.
+    #[tool(
+        description = "Permanently delete a local swarm by swarm_id. The roster is dropped; member agents are NOT deleted (use swarm_remove_local for that). Counterpart of swarm_delete_swarm for the local backend."
+    )]
+    pub(crate) async fn swarm_delete_local_swarm(
+        &self,
+        parameters: Parameters<DeleteLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_delete_local_swarm", Some("pko"), async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id must be non-empty".to_string(),
+                ));
+            }
+            self.local_swarms.delete(&req.swarm_id).map_err(|e| {
+                McpToolError::internal(format!("failed to delete local swarm: {e}"))
+            })?;
+            Ok(serde_json::json!({ "deleted": req.swarm_id }))
+        })
+        .await
+    }
+
+    /// Add a local agent to a local swarm's roster (idempotent - a duplicate
+    /// add is a no-op). The local counterpart of `swarm_hire` (add member),
+    /// without the cost or consent gate. The agent need not already exist in
+    /// `LocalAgentRegistry` (the roster is ids; resolution happens at
+    /// delegation time, mirroring ABW workspaces).
+    #[tool(
+        description = "Add a local agent to a local swarm's roster by swarm_id + agent_name. Idempotent. No cost, no consent token. The agent need not exist in the registry yet (roster is ids). Counterpart of swarm_hire (add member) for the local backend."
+    )]
+    pub(crate) async fn swarm_add_agent_local(
+        &self,
+        parameters: Parameters<AddAgentToLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_add_agent_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .add_member(&req.swarm_id, &req.agent_name)
+                .map_err(|e| McpToolError::internal(format!("failed to add agent: {e}")))?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+            ))
+        })
+        .await
+    }
+
+    /// Remove a local agent from a local swarm's roster (idempotent - removing
+    /// a non-member is a no-op). The local counterpart of `swarm_fire`
+    /// (remove member). Does NOT delete the agent from `LocalAgentRegistry`.
+    #[tool(
+        description = "Remove a local agent from a local swarm's roster by swarm_id + agent_name. Idempotent. Does NOT delete the agent (use swarm_remove_local for that). Counterpart of swarm_fire (remove member) for the local backend."
+    )]
+    pub(crate) async fn swarm_remove_agent_local(
+        &self,
+        parameters: Parameters<RemoveAgentFromLocalSwarmRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_remove_agent_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.swarm_id.trim().is_empty() || req.agent_name.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "swarm_id and agent_name must be non-empty".to_string(),
+                ));
+            }
+            let swarm = self
+                .local_swarms
+                .remove_member(&req.swarm_id, &req.agent_name)
+                .map_err(|e| McpToolError::internal(format!("failed to remove agent: {e}")))?;
+            Ok(serde_json::to_value(&swarm).unwrap_or_else(
+                |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
+            ))
+        })
+        .await
+    }
     /// Send an A2A (Agent2Agent) protocol message to a local agent. Wraps the
     /// message in A2A types (Message → Task → Artifact) and dispatches through
     /// the existing in-process `LocalSwarmRuntime::delegate`. The response is
@@ -2764,6 +2925,19 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 });
             let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
 
+            // Local swarm registry — the local replica of an ABW workspace
+            // roster. A missing directory is not an error (created on first
+            // `swarm_create_local_swarm`); an empty roster is the normal
+            // initial state. Created lazily on first write.
+            let local_swarms =
+                std::sync::Arc::new(LocalSwarmRegistry::new(config.local_swarms_dir.clone()));
+            if let Err(e) = local_swarms.load() {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    "local swarms load failed (continuing with empty roster): {e}"
+                );
+            }
+
             // Build the consent store. Default: the shared SQLite store
             // (~/.hkask/swarm_consent.db, operator-overridable via
             // `HKASK_SWARM_CONSENT_STORE`) so a token minted by the panel's
@@ -2805,6 +2979,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 std::sync::Arc::new(consent_store),
                 local_registry,
                 local_runtime,
+                local_swarms,
             ))
         },
         vec![CredentialRequirement::optional(
@@ -2822,7 +2997,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_surface_is_exactly_41_registered_tools() {
+    fn tool_surface_is_exactly_47_registered_tools() {
         let router = SwarmServer::combined_router();
         let mut names: Vec<String> = router
             .list_all()
@@ -2859,7 +3034,7 @@ mod tests {
             "swarm_publish_checks",
             "swarm_publish_agent",
             "swarm_fork_agent",
-            // Local (14).
+            // Local (20).
             "swarm_fund_local",
             "swarm_balance_local",
             "swarm_local_history",
@@ -2874,6 +3049,12 @@ mod tests {
             "swarm_remove_local",
             "swarm_create_local_agent",
             "swarm_reconfigure_local_agent",
+            "swarm_create_local_swarm",
+            "swarm_list_local_swarms",
+            "swarm_get_local_swarm",
+            "swarm_delete_local_swarm",
+            "swarm_add_agent_local",
+            "swarm_remove_agent_local",
         ]
         .into_iter()
         .map(str::to_string)
@@ -2881,7 +3062,7 @@ mod tests {
         expected.sort();
         assert_eq!(
             names, expected,
-            "registered tool surface drifted from the documented 41"
+            "registered tool surface drifted from the documented 47"
         );
     }
 }

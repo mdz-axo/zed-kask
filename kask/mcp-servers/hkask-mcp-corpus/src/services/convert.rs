@@ -267,8 +267,11 @@ impl<'a> ConvertService<'a> {
         force_ocr: bool,
         target_pages: Option<String>,
     ) -> Result<Value, McpToolError> {
-        hkask_mcp_server::validate_path("path", &path, 4096)
-            .map_err(|e| McpToolError::new(e.kind, e.to_json_string()))?;
+        // Contain the caller-supplied path before any read or subprocess spawn:
+        // validate_path rejects `..`/control chars but NOT absolute paths, so
+        // `/etc/passwd` would pass and be read. contain_for_read canonicalizes
+        // and rejects anything escaping the project root (CWE-22/CWE-200).
+        let resolved = contain_for_read(&path)?;
 
         let (format, _, _) = detect_format(&path);
 
@@ -297,8 +300,9 @@ impl<'a> ConvertService<'a> {
             v
         };
 
-        // Read the file
-        let file_bytes = match std::fs::read(&path) {
+        // Read the file from the canonicalized, contained path so a TOCTOU
+        // swap between contain_for_read and the read cannot escape the root.
+        let file_bytes = match std::fs::read(&resolved) {
             Ok(b) => b,
             Err(e) => {
                 return Err(map_corpus_io_error(
@@ -362,14 +366,9 @@ impl<'a> ConvertService<'a> {
             // Not an image — try decimation + pipeline for PDFs (72 DPI JPEG to stay within 128K token limit)
             if format == "pdf" {
                 let imgs_res = if let Some(ref ts) = target_set {
-                    decimation::pdf_to_images_for_pages(
-                        std::path::Path::new(&path),
-                        72,
-                        &target_indices(ts),
-                    )
-                    .await
+                    decimation::pdf_to_images_for_pages(&resolved, 72, &target_indices(ts)).await
                 } else {
-                    decimation::pdf_to_images(std::path::Path::new(&path), 72).await
+                    decimation::pdf_to_images(&resolved, 72).await
                 };
                 match imgs_res {
                     Ok(page_images) => {
@@ -580,14 +579,9 @@ impl<'a> ConvertService<'a> {
                 && let Ok(model) = self.resolve_ocr_model(None).await
             {
                 let imgs_res = if let Some(ref ts) = target_set {
-                    decimation::pdf_to_images_for_pages(
-                        std::path::Path::new(&path),
-                        72,
-                        &target_indices(ts),
-                    )
-                    .await
+                    decimation::pdf_to_images_for_pages(&resolved, 72, &target_indices(ts)).await
                 } else {
-                    decimation::pdf_to_images(std::path::Path::new(&path), 72).await
+                    decimation::pdf_to_images(&resolved, 72).await
                 };
                 match imgs_res {
                     Ok(page_images) => {

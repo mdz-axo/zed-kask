@@ -51,7 +51,7 @@ use crate::bundle::BundleManifestStep;
 use crate::compute::dispatch_compute;
 use crate::condition::{evaluate_step_condition, parse_choice_condition};
 use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
-use crate::input_mapping::{bind_parameters, resolve_mapping_value};
+use crate::input_mapping::resolve_mapping_value;
 use crate::load_manifest_from_yaml;
 use crate::output_schema::{build_structured_output_tool, resolve_output_schema};
 use crate::ports::{Result, TemplateError};
@@ -1381,27 +1381,25 @@ impl ManifestExecutor {
         step: &BundleManifestStep,
         mut context: HashMap<String, Value>,
     ) -> Result<HashMap<String, Value>> {
-        // Resolve bindings from input_mapping and merge into context.
-        // Uses {"$ref": "dot.path"} syntax — same as execute_tool_invoke.
+        // Resolve bindings from input_mapping and merge into context. Uses
+        // `resolve_mapping_value` (not the legacy `bind_parameters`) so inline
+        // `{{ expr }}` Jinja binding values render — matching every other step
+        // action. `bind_parameters` passed `{{ }}` strings through as literals,
+        // silently leaving populate templates with unresolved `{{ }}` source
+        // (12 manifests in the registry hit this: root-cause-analysis,
+        // voice-models, prompt-injection-diagnostic, rag-pipeline, ...).
         if let Some(ref mapping) = step.input_mapping
-            && let Value::Object(orig_map) = mapping
+            && let Value::Object(map) = mapping
         {
-            let resolved = bind_parameters(mapping, &context);
-            if let Value::Object(resolved_map) = resolved {
-                // Iterate original and resolved maps in lockstep: the original
-                // mapping value carries the $ref / {{ }} markers that
-                // propagate_taint_for_binding inspects to find referenced keys;
-                // the resolved value is what gets inserted into context.
-                for (k, orig_v) in orig_map {
-                    let bound = resolved_map.get(k).cloned().unwrap_or(Value::Null);
-                    // Propagate taint from referenced Source entries to the new
-                    // binding key (RR-0027 — same FIDES closure break as RR-0026,
-                    // missed here because execute_populate uses bind_parameters
-                    // instead of resolve_mapping_value). Pass the *original*
-                    // mapping value (with $ref markers), not the resolved value.
-                    self.propagate_taint_for_binding(orig_v, k);
-                    context.insert(k.clone(), bound);
-                }
+            for (k, v) in map {
+                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                // Propagate taint from referenced Source entries to the new
+                // binding key (RR-0027 — same FIDES closure break as RR-0026).
+                // Pass the *original* mapping value (with $ref / {{ }} markers),
+                // not the resolved value — propagate_taint_for_binding inspects
+                // pre-resolution markers to find referenced keys.
+                self.propagate_taint_for_binding(v, k);
+                context.insert(k.clone(), bound);
             }
         }
 
@@ -2107,8 +2105,9 @@ steps:
     /// RR-0027: `execute_populate` must call `propagate_taint_for_binding`
     /// before `context.insert`, otherwise Source-tainted values bound via
     /// `$ref` lose their label and bypass the FIDES Source→Sink block. Same
-    /// closure-break class as RR-0026, missed because `execute_populate` uses
-    /// `bind_parameters` (not `resolve_mapping_value`).
+    /// closure-break class as RR-0026. (execute_populate now uses
+    /// `resolve_mapping_value` like every other step action — the legacy
+    /// `bind_parameters` was deleted since it passed `{{ }}` through verbatim.)
     #[tokio::test]
     async fn execute_populate_propagates_source_taint() {
         let executor = test_executor_with_taint(vec![("step_1_result", ToolTaint::Source)]);
@@ -2162,6 +2161,61 @@ steps:
             labels.get("step_2_populated").copied(),
             Some(ToolTaint::Source),
             "rendered output derived from Source bindings must inherit the label"
+        );
+    }
+
+    /// Regression for the `bind_parameters` deletion: a `populate` step whose
+    /// `input_mapping` uses an inline-Jinja `{{ }}` binding value must RENDER
+    /// the expression (resolve it from context), not pass it through as a
+    /// literal string. Before the fix, `execute_populate` used `bind_parameters`,
+    /// which returned the literal `"{{ step_1_result }}"` string as the binding —
+    /// 12 manifests in the registry hit this (root-cause-analysis, voice-models,
+    /// prompt-injection-diagnostic, rag-pipeline, ...).
+    #[tokio::test]
+    async fn execute_populate_renders_inline_jinja_binding() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+
+        let step = BundleManifestStep {
+            ordinal: 2,
+            action: "populate".to_string(),
+            description: "bind via inline jinja".to_string(),
+            renderer: None,
+            // Template references the bound variable by name.
+            template_ref: Some("{{problem_statement}}".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: Some(serde_json::json!({
+                "problem_statement": "{{ step_1_result }}"
+            })),
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        let mut context = HashMap::new();
+        context.insert(
+            "step_1_result".to_string(),
+            Value::String("the real problem".to_string()),
+        );
+
+        let result = executor
+            .execute_populate(&step, context)
+            .await
+            .expect("populate with inline-jinja binding should render");
+        assert_eq!(
+            result.get("step_2_populated").and_then(|v| v.as_str()),
+            Some("the real problem"),
+            "inline-Jinja binding in populate input_mapping must render to the context value, \
+             not pass through as the literal `{{{{ step_1_result }}}}` string"
         );
     }
 

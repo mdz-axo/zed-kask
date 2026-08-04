@@ -4,50 +4,19 @@
 //! compute.rs extraction pattern). Three binding forms are supported:
 //! `{{ expr }}` strings (rendered via minijinja with `| tojson`), `$ref`
 //! objects (context references, with dot-path fallback), and literals.
+//!
+//! `resolve_mapping_value` is the single resolver — it handles all three
+//! forms. The legacy `bind_parameters`/`bind_single_parameter` pair was
+//! removed: it only handled `$ref` + literals and passed `{{ }}` strings
+//! through verbatim, which silently broke populate steps whose input_mapping
+//! used inline Jinja (12 manifests in the registry). `resolve_mapping_value`
+//! is a strict superset (same `$ref` + dot-path resolution, plus `{{ }}`
+//! rendering), so the last `bind_parameters` call site (execute_populate)
+//! switched to it and the dead pair was deleted.
 
 use crate::template_renderer::render_minijinja;
 use serde_json::Value;
 use std::collections::HashMap;
-
-/// Bind parameters from an input mapping to values from the context.
-///
-/// The input mapping is a JSON object where values are either:
-/// - Direct values (strings, numbers, etc.)
-/// - Context references: {"$ref": "step_1_result.field"}
-pub(crate) fn bind_parameters(mapping: &Value, context: &HashMap<String, Value>) -> Value {
-    match mapping {
-        Value::Object(map) => {
-            let mut result = serde_json::Map::new();
-            for (key, value) in map {
-                let bound = bind_single_parameter(value, context);
-                result.insert(key.clone(), bound);
-            }
-            Value::Object(result)
-        }
-        other => other.clone(),
-    }
-}
-
-/// Bind a single parameter value from the context.
-fn bind_single_parameter(value: &Value, context: &HashMap<String, Value>) -> Value {
-    match value {
-        Value::Object(map) => {
-            // Check for context reference: {"$ref": "variable_name"}
-            if let Some(Value::String(ref_path)) = map.get("$ref") {
-                if let Some(context_val) = context.get(ref_path.as_str()) {
-                    return context_val.clone();
-                }
-                // Fallback: try dot notation
-                if let Some(nested) = resolve_dot_path(ref_path, context) {
-                    return nested;
-                }
-            }
-            // Not a reference — recurse
-            bind_parameters(value, context)
-        }
-        other => other.clone(),
-    }
-}
 
 /// Resolve a dot-path like "step_1_result.field" from the context.
 pub(crate) fn resolve_dot_path(path: &str, context: &HashMap<String, Value>) -> Option<Value> {

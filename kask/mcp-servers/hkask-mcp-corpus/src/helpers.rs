@@ -5,21 +5,11 @@ use hkask_mcp_server::server::McpToolError;
 use serde::de::DeserializeOwned;
 
 /// Classify a `std::io::Error` from a caller-facing file operation into the
-/// appropriate `McpToolError` kind.
-///
-/// `NotFound` and `PermissionDenied` are caller-fixable (the user supplied a
-/// missing path or lacks access), so they map to `not_found` /
-/// `permission_denied` rather than `internal`. Other IO failures remain genuine
-/// system errors.
-pub(crate) fn map_corpus_io_error(e: std::io::Error, context: &str) -> McpToolError {
-    match e.kind() {
-        std::io::ErrorKind::NotFound => McpToolError::not_found(format!("{context}: {e}")),
-        std::io::ErrorKind::PermissionDenied => {
-            McpToolError::permission_denied(format!("{context}: {e}"))
-        }
-        _ => McpToolError::internal(format!("{context}: {e}")),
-    }
-}
+/// appropriate `McpToolError` kind. Alias of the canonical
+/// `hkask_mcp_server::server::map_io_error` (NotFound/PermissionDenied are
+/// caller-fixable; others remain internal) kept under the corpus-local name
+/// so existing call sites stay readable.
+pub(crate) use hkask_mcp_server::server::map_io_error as map_corpus_io_error;
 
 /// Read a JSONL file and parse each non-empty line into `T`.
 ///

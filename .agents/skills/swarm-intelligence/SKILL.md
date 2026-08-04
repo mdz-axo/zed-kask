@@ -188,7 +188,7 @@ C5/C6 are inert (the planning cascade has no execution telemetry).
 
 ## Known limitations (audit 2026-08-03)
 
-The [Swarm Cybernetics/Semantics Audit](../../docs/audits/swarm-cybernetics-semantics-audit.md)
+The [Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)
 found two structural gaps operators and the Curator should know about before
 relying on the cascade:
 
@@ -249,5 +249,5 @@ templates, the registry wins.
   action+target+credits-scoped, TTL-bounded) or `swarm_authorize_session`
   (headless). In local mode there is no consent token — the ledger balance +
   the per-dispatch ceiling (`HKASK_ABW_MAX_CREDITS`, default 50) is the gate.
-  See the [Swarm Systems Reference](../../docs/diataxis/swarm_system/reference.md)
+  See the [Swarm Systems Reference](../../../kask/docs/diataxis/swarm_system/reference.md)
   for the full tool/contract table and the token model.

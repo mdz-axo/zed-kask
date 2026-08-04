@@ -84,7 +84,7 @@ C6 reconfigures the most-blamed agent.
 
 The directive this skill produces closes the C5/C6 feedback loop, but the loop
 it closes has two limits an operator should know (full analysis in the
-[Swarm Cybernetics/Semantics Audit](../../docs/audits/swarm-cybernetics-semantics-audit.md)):
+[Swarm Cybernetics/Semantics Audit](../../../kask/docs/audits/swarm-cybernetics-semantics-audit.md)
 
 - **Binary fidelity.** The `delegate_results` this skill collects carry
   `tool_calls[].ok` / `executed_skills[].ok` — execution success, not task

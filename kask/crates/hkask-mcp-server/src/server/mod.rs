@@ -37,8 +37,10 @@ pub use tool_span::{
     ToolContext, ToolSpanGuard, execute_tool, execute_tool_semantic, tool_internal_error,
 };
 pub use transport::{run_stdio_server, run_stdio_server_with_preloaded};
+pub use validation::{MAX_READ_BYTES, contain_for_read, contain_for_write, read_capped};
 pub use validation::{
-    validate_identifier, validate_path, validate_tool_url, validate_tool_url_permissive,
+    map_io_error, validate_identifier, validate_path, validate_tool_url,
+    validate_tool_url_permissive,
 };
 
 #[cfg(test)]

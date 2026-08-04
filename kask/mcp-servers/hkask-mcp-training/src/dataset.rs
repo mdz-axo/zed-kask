@@ -287,6 +287,14 @@ impl DatasetPipeline {
         }
     }
 
+    /// The pipeline's cache directory (server-chosen, not LLM-controlled).
+    /// Used by callers that need to place a transient scratch file (e.g. the
+    /// retrain merge) in an existing legitimate scratch location rather than
+    /// an LLM-supplied path.
+    pub fn cache_dir(&self) -> &std::path::Path {
+        &self.cache_dir
+    }
+
     /// Ingest a raw dataset file and return the path to normalized output.
     ///
     /// Full pipeline: detect format → normalize to ChatML → validate → cache.

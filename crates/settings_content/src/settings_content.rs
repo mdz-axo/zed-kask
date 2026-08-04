@@ -1713,6 +1713,10 @@ pub struct KaskSwarmSettingsContent {
     /// read in `local` mode. When empty, uses the default
     /// `agents/local/curated`.
     pub local_agents_dir: Option<String>,
+    /// Directory containing local swarms (`<id>/swarm.json`), the local
+    /// replica of an ABW workspace roster. When empty, uses the default
+    /// `agents/local/swarms`.
+    pub local_swarms_dir: Option<String>,
 }
 
 /// Mirror of `SwarmModeConfig` in the bridge crate, kept separate to avoid a

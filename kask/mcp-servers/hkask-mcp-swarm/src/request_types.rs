@@ -327,6 +327,65 @@ pub(crate) struct ReconfigureLocalAgentRequest {
     pub skills: Vec<String>,
 }
 
+// ── Local swarm membership (local replica of an ABW workspace) ───────────────
+
+/// Create a local swarm — the local replica of an ABW workspace/team. A named
+/// grouping of local agent ids with a mission. No cost, no consent token (the
+/// local ledger gates delegation, not roster edits). Optionally seed members.
+/// Returns the new swarm with its generated `swarm_id`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct CreateLocalSwarmRequest {
+    /// Human-readable swarm name. A path-safe slug id is derived from this.
+    pub name: String,
+    /// Mission / description for the swarm.
+    #[serde(default)]
+    pub mission: String,
+    /// Optional initial member agent ids to seed the roster with. Each id SHOULD
+    /// exist in `LocalAgentRegistry`, but this is not enforced at create time
+    /// (the roster is ids; resolution happens at delegation time, mirroring ABW
+    /// workspaces).
+    #[serde(default)]
+    pub agents: Vec<String>,
+}
+
+/// List all local swarms. Each entry has `swarm_id`, `name`, `mission`,
+/// `members`, `created_at`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ListLocalSwarmsRequest {}
+
+/// Get a single local swarm by id, including its roster.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct GetLocalSwarmRequest {
+    /// The `swarm_id` returned by `swarm_create_local_swarm`.
+    pub swarm_id: String,
+}
+
+/// Permanently delete a local swarm. The roster is dropped with the swarm;
+/// member agents are NOT touched (they stay in `LocalAgentRegistry`).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DeleteLocalSwarmRequest {
+    /// The `swarm_id` to delete.
+    pub swarm_id: String,
+}
+
+/// Add a local agent to a local swarm's roster (idempotent).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct AddAgentToLocalSwarmRequest {
+    /// The swarm to add the agent to.
+    pub swarm_id: String,
+    /// The agent id (from `LocalAgentRegistry`) to add.
+    pub agent_name: String,
+}
+
+/// Remove a local agent from a local swarm's roster (idempotent).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct RemoveAgentFromLocalSwarmRequest {
+    /// The swarm to remove the agent from.
+    pub swarm_id: String,
+    /// The agent id to remove.
+    pub agent_name: String,
+}
+
 /// Fire (un-hire) an agent from an ABW workspace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct FireRequest {

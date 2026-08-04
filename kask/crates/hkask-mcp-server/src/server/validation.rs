@@ -68,6 +68,147 @@ pub fn validate_path(name: &str, value: &str, max_len: usize) -> Result<(), McpT
     Ok(())
 }
 
+/// Classify a `std::io::Error` from a caller-facing file operation into the
+/// appropriate `McpToolError` kind.
+///
+/// `NotFound` and `PermissionDenied` are caller-fixable (the user supplied a
+/// missing path or lacks access), so they map to `not_found` /
+/// `permission_denied` rather than `internal`. Other IO failures remain genuine
+/// system errors. This is the canonical per-variant IO-error mapper for MCP
+/// tool file operations — reuse it instead of re-implementing
+/// `McpToolError::internal(format!("...: {e}"))` (which mis-classifies
+/// caller-fixable errors as Internal).
+#[must_use = "result must be used"]
+pub fn map_io_error(e: std::io::Error, context: &str) -> McpToolError {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => McpToolError::not_found(format!("{context}: {e}")),
+        std::io::ErrorKind::PermissionDenied => {
+            McpToolError::permission_denied(format!("{context}: {e}"))
+        }
+        _ => McpToolError::internal(format!("{context}: {e}")),
+    }
+}
+
+/// Default read size cap for [`read_capped`] (32 MiB). Bounds a hostile or
+/// mistaken path from exhausting memory (CWE-400).
+pub const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;
+
+/// Canonicalize `path` for a target that may not exist yet (writes): resolve
+/// the nearest existing ancestor, then re-append the remaining components.
+/// Reads use `Path::canonicalize` directly (the target must exist).
+fn canonicalize_lenient(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    match path.canonicalize() {
+        Ok(canonical) => Ok(canonical),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let mut ancestor = path;
+            let mut suffix: Vec<&std::ffi::OsStr> = Vec::new();
+            loop {
+                match ancestor.parent() {
+                    Some(parent) => {
+                        if let Some(name) = ancestor.file_name() {
+                            suffix.push(name);
+                        }
+                        ancestor = parent;
+                        if ancestor.exists() {
+                            break;
+                        }
+                    }
+                    None => return Err(e),
+                }
+            }
+            let mut resolved = ancestor.canonicalize()?;
+            for component in suffix.iter().rev() {
+                resolved.push(component);
+            }
+            Ok(resolved)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn rejection(path: &std::path::Path, root: &std::path::Path, reason: &str) -> McpToolError {
+    tracing::warn!(
+        target: "hkask.mcp.path_safety",
+        path = %path.display(),
+        root = %root.display(),
+        reason = %reason,
+        "Path rejected by containment check — refusing file operation outside the project root"
+    );
+    McpToolError::invalid_argument(format!(
+        "Path '{}' is outside the allowed root '{}': {}",
+        path.display(),
+        root.display(),
+        reason
+    ))
+}
+
+/// Contain `path` under the process current working directory (the project
+/// root when the MCP server is launched per-project via `ContextServerStore`,
+/// or zed's launch cwd for the app-global `McpRuntime` spawn — fail-safe in
+/// both cases). Canonicalization collapses symlink escapes. Absolute paths
+/// like `/etc/passwd` and traversals like `../../escape` are rejected.
+fn contain(path: &std::path::Path, write: bool) -> Result<std::path::PathBuf, McpToolError> {
+    let root = std::env::current_dir()
+        .and_then(|cwd| cwd.canonicalize())
+        .map_err(|e| McpToolError::internal(format!("Cannot resolve working directory: {e}")))?;
+
+    let resolved = if write {
+        canonicalize_lenient(path)
+    } else {
+        path.canonicalize()
+    }
+    .map_err(|e| {
+        McpToolError::invalid_argument(format!("Cannot resolve path '{}': {e}", path.display()))
+    })?;
+
+    if !resolved.starts_with(&root) {
+        return Err(rejection(path, &root, "path escapes the project root"));
+    }
+    Ok(resolved)
+}
+
+/// Resolve a caller-supplied write target, rejecting anything outside the
+/// project root (CWE-73). The target need not exist yet.
+#[must_use = "result must be used"]
+pub fn contain_for_write(path: &str) -> Result<std::path::PathBuf, McpToolError> {
+    contain(std::path::Path::new(path), true)
+}
+
+/// Resolve a caller-supplied read path, rejecting anything outside the
+/// project root (CWE-22/CWE-200). The target must exist.
+#[must_use = "result must be used"]
+pub fn contain_for_read(path: &str) -> Result<std::path::PathBuf, McpToolError> {
+    contain(std::path::Path::new(path), false)
+}
+
+/// Read a caller-supplied file with containment and a size cap, so a hostile
+/// or mistaken path cannot exfiltrate arbitrary files (CWE-200) or exhaust
+/// memory (CWE-400). Combines [`contain_for_read`] with a metadata size check
+/// before the read.
+#[must_use = "result must be used"]
+pub fn read_capped(path: &str, max_bytes: u64) -> Result<Vec<u8>, McpToolError> {
+    let resolved = contain_for_read(path)?;
+    let metadata = std::fs::metadata(&resolved)
+        .map_err(|e| map_io_error(e, &format!("Cannot stat file '{}'", resolved.display())))?;
+    if metadata.len() > max_bytes {
+        tracing::warn!(
+            target: "hkask.mcp.path_safety",
+            path = %resolved.display(),
+            size = metadata.len(),
+            cap = max_bytes,
+            "Read rejected — file exceeds size cap"
+        );
+        return Err(McpToolError::invalid_argument(format!(
+            "File '{}' is {} bytes, exceeding the {} byte read cap",
+            resolved.display(),
+            metadata.len(),
+            max_bytes
+        )));
+    }
+    std::fs::read(&resolved)
+        .map_err(|e| map_io_error(e, &format!("Failed to read file '{}'", path)))
+}
+
 /// Validate a URL parameter against SSRF protection rules.
 ///
 /// Delegates to `hkask_mcp::validate_url()` with the default (strict) config.
@@ -120,6 +261,61 @@ mod tests {
     #[test]
     fn path_rejects_parent_traversal_and_control_characters() {
         assert!(validate_path("path", "../secret", 4096).is_err());
-        assert!(validate_path("path", "safe/evil\0name", 4096).is_err());
+        assert!(validate_path("path", "safe/evil\u{0000}name", 4096).is_err());
+    }
+
+    #[test]
+    fn contain_for_read_rejects_absolute_escape() {
+        // /etc/passwd is outside any plausible cargo-test cwd (the crate dir).
+        assert!(
+            contain_for_read("/etc/passwd").is_err(),
+            "read of /etc/passwd must be rejected"
+        );
+    }
+
+    #[test]
+    fn contain_for_write_rejects_absolute_escape() {
+        assert!(
+            contain_for_write("/tmp/hkask-escape-test.jsonl").is_err(),
+            "write to /tmp must be rejected"
+        );
+    }
+
+    #[test]
+    fn contain_for_write_rejects_traversal() {
+        assert!(
+            contain_for_write("../../hkask-escape-test").is_err(),
+            "write via ../.. must be rejected"
+        );
+    }
+
+    #[test]
+    fn contain_for_write_accepts_inside_cwd() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let target = cwd.join("hkask-path-safety-test-output.jsonl");
+        let resolved =
+            contain_for_write(target.to_str().expect("utf8 path")).expect("inside cwd accepted");
+        assert!(resolved.starts_with(cwd.canonicalize().expect("canonical cwd")));
+        let _cleanup = std::fs::remove_file(&target);
+    }
+
+    #[test]
+    fn read_capped_rejects_oversized() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let file_path = cwd.join("hkask-path-safety-oversized-test.bin");
+        std::fs::write(&file_path, vec![0u8; 64]).expect("write fixture");
+        let result = read_capped(file_path.to_str().expect("utf8 path"), 32);
+        let _cleanup = std::fs::remove_file(&file_path);
+        assert!(result.is_err(), "file larger than cap must be rejected");
+    }
+
+    #[test]
+    fn read_capped_accepts_inside_cwd_within_cap() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let file_path = cwd.join("hkask-path-safety-read-test.txt");
+        std::fs::write(&file_path, b"hello").expect("write fixture");
+        let bytes = read_capped(file_path.to_str().expect("utf8 path"), 1024).expect("read ok");
+        let _cleanup = std::fs::remove_file(&file_path);
+        assert_eq!(bytes, b"hello");
     }
 }
