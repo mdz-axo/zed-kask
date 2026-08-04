@@ -66,7 +66,6 @@ classDiagram
     class KaskInferenceProvidersSettings {
         +deepinfra_enabled: bool
         +fal_enabled: bool
-        +together_enabled: bool
         +openrouter_enabled: bool
     }
     class KaskMemorySettings {

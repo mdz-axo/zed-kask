@@ -735,19 +735,17 @@ mod tests {
     }
 
     // The media server should only receive the keys it actually reads
-    // (FALAI_API_KEY, DEEPINFRA_API_KEY), not other inference keys or
-    // unrelated secrets. Vision routes through the IPC bridge to zed's
-    // LanguageModelRegistry — the media server process never reads
-    // TOGETHERAI_API_KEY / OPENROUTER_API_KEY. This pins the allowlist
-    // against a future edit that re-widens it. See
-    // kask/docs/plans/media-system-refactor.md §6 (F-2).
+    // (FALAI_API_KEY, DEEPINFRA_API_KEY, ATLASCLOUD_API_KEY), not other
+    // inference keys or unrelated secrets. Vision routes through the IPC
+    // bridge to zed's LanguageModelRegistry — the media server process never
+    // reads OPENROUTER_API_KEY. This pins the allowlist against a future edit
+    // that re-widens it. See kask/docs/plans/media-system-refactor.md §6 (F-2).
     #[test]
     fn media_credentials_only_include_used_keys() {
         let all_credentials: Vec<(String, String)> = [
             "DEEPINFRA_API_KEY",
             "FALAI_API_KEY",
             "ATLASCLOUD_API_KEY",
-            "TOGETHERAI_API_KEY",
             "OPENROUTER_API_KEY",
             "KILOCODE_API_KEY",
             "HKASK_SMTP_PASSWORD",
@@ -768,10 +766,6 @@ mod tests {
         assert!(
             keys.contains(&"ATLASCLOUD_API_KEY"),
             "media server reads ATLASCLOUD_API_KEY — it must be in credentials"
-        );
-        assert!(
-            !keys.contains(&"TOGETHERAI_API_KEY"),
-            "media server must not receive TOGETHERAI_API_KEY — it never reads it (vision routes via the IPC bridge)"
         );
         assert!(
             !keys.contains(&"OPENROUTER_API_KEY"),

@@ -65,8 +65,6 @@ classDiagram
         +deepinfra_api_key: String
         +fal_base_url: String
         +fal_api_key: String
-        +together_base_url: String
-        +together_api_key: String
         +openrouter_base_url: String
         +openrouter_api_key: String
         +kilocode_base_url: String

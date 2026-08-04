@@ -89,7 +89,6 @@ enabled:
 |-------|---------|---------------------------|
 | `deepinfra_enabled` | `false` | `DEEPINFRA_API_KEY` set |
 | `fal_enabled` | `false` | `FALAI_API_KEY` set |
-| `together_enabled` | `false` | `TOGETHERAI_API_KEY` set |
 | `openrouter_enabled` | `false` | `OPENROUTER_API_KEY` set |
 | `kilocode_enabled` | `false` | `KILOCODE_API_KEY` set |
 | `cline_enabled` | `false` | `CLINE_API_KEY` set |
@@ -328,7 +327,6 @@ environment. Shell env vars take precedence over keychain values.
 |---------|--------|
 | `DEEPINFRA_API_KEY` | DeepInfra |
 | `FALAI_API_KEY` | fal.ai |
-| `TOGETHERAI_API_KEY` | Together AI |
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `KILOCODE_API_KEY` | KiloCode |
 | `CLINE_API_KEY` | Cline |
