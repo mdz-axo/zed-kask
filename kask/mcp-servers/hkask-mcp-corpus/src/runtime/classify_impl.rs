@@ -197,8 +197,7 @@ impl ClassifierConfig {
         // hardcoded provider price fallback — fabricating per-token rates is the
         // operator-priced anti-pattern; unconfigured classifiers get (0, 0) and
         // their cost tracking is disabled (a warn makes the gap visible).
-        let (input_nj, output_nj) =
-            (def.cost_input_nj_per_token, def.cost_output_nj_per_token);
+        let (input_nj, output_nj) = (def.cost_input_nj_per_token, def.cost_output_nj_per_token);
         if input_nj == 0 && output_nj == 0 {
             tracing::warn!(
                 target: "hkask.classify",

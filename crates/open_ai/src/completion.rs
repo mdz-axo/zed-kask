@@ -748,13 +748,10 @@ impl OpenAiEventMapper {
                 output_tokens: completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
-                // zed-kask D15: observed per-call USD cost from the provider's
+                // zed-kask D20: observed per-call USD cost from the provider's
                 // `usage` object. Prefer `market_cost` (real compute energy,
                 // reflects BYOK/cache discounts) over `cost`/`estimated_cost`.
-                cost: usage
-                    .market_cost
-                    .or(usage.cost)
-                    .or(usage.estimated_cost),
+                cost: usage.market_cost.or(usage.cost).or(usage.estimated_cost),
             })));
         }
 
@@ -4712,6 +4709,68 @@ mod tests {
                     )
                 )),
             ]
+        );
+    }
+
+    /// D20: the chat-completions event mapper surfaces the provider's reported USD
+    /// cost into `TokenUsage.cost`, preferring `market_cost` (real compute energy)
+    /// over `cost`/`estimated_cost`. kask's rJoule budget charges this observed
+    /// (not operator-configured) cost via `kask_bridge`.
+    #[test]
+    fn test_map_event_populates_cost_from_usage() {
+        let usage_with_cost =
+            |cost: Option<f64>, est: Option<f64>, market: Option<f64>| crate::Usage {
+                prompt_tokens: Some(10),
+                completion_tokens: Some(5),
+                total_tokens: Some(15),
+                cost,
+                estimated_cost: est,
+                market_cost: market,
+            };
+        let event_with = |usage| ResponseStreamEvent {
+            choices: vec![],
+            usage: Some(usage),
+        };
+        let cost_of = |events: Vec<LanguageModelCompletionEvent>| {
+            events.into_iter().find_map(|e| match e {
+                LanguageModelCompletionEvent::UsageUpdate(u) => Some(u.cost),
+                _ => None,
+            })
+        };
+
+        // OpenRouter / KiloCode: `usage.cost`.
+        assert_eq!(
+            cost_of(map_completion_events(vec![event_with(usage_with_cost(
+                Some(0.001),
+                None,
+                None
+            ))])),
+            Some(Some(0.001))
+        );
+        // DeepInfra: `usage.estimated_cost` (different key, same meaning).
+        assert_eq!(
+            cost_of(map_completion_events(vec![event_with(usage_with_cost(
+                None,
+                Some(0.002),
+                None
+            ))])),
+            Some(Some(0.002))
+        );
+        // KiloCode BYOK: `market_cost` wins over `cost == 0` (real compute energy).
+        assert_eq!(
+            cost_of(map_completion_events(vec![event_with(usage_with_cost(
+                Some(0.0),
+                None,
+                Some(0.003)
+            ))])),
+            Some(Some(0.003))
+        );
+        // Providers that report no cost (Anthropic, Ollama, local) -> `None`.
+        assert_eq!(
+            cost_of(map_completion_events(vec![event_with(usage_with_cost(
+                None, None, None
+            ))])),
+            Some(None)
         );
     }
 }

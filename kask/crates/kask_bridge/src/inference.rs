@@ -112,7 +112,7 @@ impl LanguageModelInferencePort {
                             let mut finish_reason = "stop".to_string();
                             let mut usage = InferenceUsage::default();
                             // Observed per-call USD cost from the provider's
-                            // `UsageUpdate` event (zed-kask D15 — the OpenAI-
+                            // `UsageUpdate` event (zed-kask D20 — the OpenAI-
                             // compatible and OpenRouter provider impls populate
                             // `TokenUsage.cost` from `usage.cost`/
                             // `estimated_cost`/`market_cost`). `None` when the
@@ -177,17 +177,13 @@ impl LanguageModelInferencePort {
                                 }
                             }
                             let model_name = model.name().0.to_string();
-                            // rJoule = USD: observed per-call cost. zed's
-                            // `LanguageModel` abstraction surfaces only token
-                            // counts (`TokenUsage`), not the provider's USD
-                            // cost, so the IPC bridge path cannot charge rJoule
-                            // — `cost_usd` is `None` here and the cascade does
-                            // not spend budget on bridged calls. The
-                            // direct-HTTP backends (`chat_response_to_result`)
-                            // read the provider's `usage.cost`/`market_cost`
-                            // for the standalone path. Bridged cost tracking
-                            // would require zed to surface `usage.cost`.
-                            let cost_usd: Option<f64> = None;
+                            // rJoule = USD: `cost_usd` is the observed per-call
+                            // cost the provider reported in its `UsageUpdate` event
+                            // (zed-kask D20), now that zed's `TokenUsage` carries
+                            // `cost`. The manifest executor charges this to the
+                            // rJoule budget via `BudgetTracker::charge_rjoule`.
+                            // `None` when the provider reports no cost (Anthropic,
+                            // Ollama, local) — free, not charged.
                             Ok(InferenceResult {
                                 text,
                                 model: model_name,

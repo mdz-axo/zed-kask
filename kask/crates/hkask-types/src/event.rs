@@ -175,6 +175,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.cybernetics.substitution",
     // ── Email (curator interaction — outbound reg.email.sent + inbound reg.email.received) ──
     "reg.email",
+    "reg.email.sent",
     // ── Deploy / Sessions ──
     "reg.deploy.backup_auto_export",
     "reg.deploy.backup_export",
@@ -217,6 +218,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.mcp.media.face",
     // ── Media / Memory ──
     "reg.media",
+    "reg.media.select",
     "reg.memory",
     "reg.memory.budget",
     "reg.memory.decay",
@@ -272,6 +274,8 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.cascade",
     "reg.skill.cascade.step_executed",
     "reg.skill.cascade.compute",
+    "reg.skill.cascade.escalated",
+    "reg.skill.cascade.branching_misconfigured",
     // Convergence: cascade outcomes
     "reg.skill.convergence",
     "reg.skill.convergence.converged",
@@ -282,6 +286,9 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.budget.gas_alert",
     "reg.skill.budget.rjoule_exhausted",
     "reg.skill.budget.rjoule_alert",
+    // Provenance + profile enforcement (skill_executor / manifest executor)
+    "reg.skill.provenance",
+    "reg.skill.profile_enforcement",
     // Frontmatter: SKILL.md parse errors (F-02 fix)
     "reg.skill.frontmatter",
     "reg.skill.frontmatter.missing",

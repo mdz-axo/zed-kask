@@ -312,7 +312,7 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: u64,
     #[serde(default, skip_serializing_if = "is_default")]
     pub cache_read_input_tokens: u64,
-    // zed-kask D15: observed USD cost of this completion, as reported by the
+    // zed-kask D20: observed USD cost of this completion, as reported by the
     // provider in its `usage` object (`usage.cost` / `usage.estimated_cost` /
     // `usage.market_cost`). `None` when the provider doesn't report cost
     // (Anthropic, Ollama, local). kask's rJoule budget charges this directly
@@ -942,5 +942,66 @@ mod tests {
         assert_eq!(deserialized.id, original.id);
         assert_eq!(deserialized.name, original.name);
         assert_eq!(deserialized.thought_signature, None);
+    }
+
+    /// D20: `TokenUsage.cost` round-trips through serde and defaults to `None`
+    /// when the provider omits it (Anthropic, Ollama, local).
+    #[test]
+    fn test_token_usage_cost_round_trips() {
+        let with_cost = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: Some(0.001),
+        };
+        let serialized = serde_json::to_value(&with_cost).unwrap();
+        // `cost` is serialized when present.
+        assert_eq!(serialized["cost"], serde_json::json!(0.001));
+        let back: TokenUsage = serde_json::from_value(serialized).unwrap();
+        assert_eq!(back.cost, Some(0.001));
+
+        // Omitted `cost` deserializes to `None` (backward-compatible).
+        let without_cost = serde_json::json!({
+            "input_tokens": 10,
+            "output_tokens": 5
+        });
+        let parsed: TokenUsage = serde_json::from_value(without_cost).unwrap();
+        assert_eq!(parsed.cost, None);
+        // And `None` is skipped on serialize.
+        let none_serialized = serde_json::to_value(&parsed).unwrap();
+        assert!(none_serialized.get("cost").is_none());
+    }
+
+    /// D20: `Add`/`Sub` for `TokenUsage` sum/subtract `cost` for cumulative
+    /// accounting; `None` only when neither side reported a cost.
+    #[test]
+    fn test_token_usage_cost_adds_and_subs() {
+        let a = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: Some(0.001),
+        };
+        let b = TokenUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: Some(0.002),
+        };
+        assert_eq!((a + b).cost, Some(0.003));
+        assert_eq!((b - a).cost, Some(0.001));
+
+        let none = TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+            cost: None,
+        };
+        assert_eq!((a + none).cost, Some(0.001));
+        assert_eq!((none + none).cost, None);
     }
 }

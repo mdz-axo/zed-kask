@@ -44,7 +44,7 @@ There is no cloud server, no Kubernetes, no Kask OAuth, and no Admin/Member role
 - Not a multi-tenant cloud server. Zed-Kask is a local single-user install — sovereignty is the local pod, not row-level isolation across a group.
 - Not its own transport. Federation and multiplayer go through Zed's collab/voip, not Kask's Matrix stack.
 
-The full Kask README (architecture diagrams, the four essential patterns, crate structure, current metrics, design philosophy) lives at [`kask/README.md`](./kask/README.md). The fork's divergence manifest and upstream-sync procedure live at [`DIVERGENCE.md`](./DIVERGENCE.md).
+The full Kask documentation index (architecture, reference, explanation, research, plans, QA, and status) lives at [`kask/docs/README.md`](./kask/docs/README.md). The fork's divergence manifest and upstream-sync procedure live at [`DIVERGENCE.md`](./DIVERGENCE.md).
 
 ---
 
@@ -52,7 +52,7 @@ The full Kask README (architecture diagrams, the four essential patterns, crate 
 
 Zed-Kask keeps Kask's hexagonal port surface and implements every adapter in one bridge crate, `kask/crates/kask_bridge`, so that Kask crates never depend on Zed crates — Zed-Kask depends on Kask, never the reverse. This is the governing invariant, enforced in CI by `kask/scripts/check-hkask-no-zed-deps.sh`.
 
-The seam between the two sides is small and documented: fourteen divergence points (D1–D14) cover every edit to Zed's tree outside `kask/` — skill execution, the Curator agent, in-process MCP tools, the guard layer, sovereignty keys, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, the Kask panel, plus four smaller seams (a `time` deprecation allow, an env-var-name fix, an OpenRouter output-budget fix, and a streaming-reveal timer interval). See [`DIVERGENCE.md`](./DIVERGENCE.md) for the table and [`kask/docs/specs/`](./kask/docs/specs/) for the per-seam specifications.
+The seam between the two sides is small and documented: twenty named divergence points (D1–D20, one of which — D10, the Kask panel — has since been removed) cover every edit to Zed's tree outside `kask/`. The first ten (D1–D10) wire the core integration — skill execution, the Curator agent, in-process MCP tools, the guard layer, keychain access, thread→memory ingestion, app-identity rename, the bridge, settings/credentials, and the (since-removed) Kask panel. The remaining ten (D11–D20) are targeted upstream fixes that zed-kask carries until upstream lands them: a `time` deprecation allow (D11), an env-var-name fix for OpenAI-compatible providers (D12), an OpenRouter output-budget fix (D13), a streaming-reveal timer interval (D14), bounded cursor-blink timers (D15), an app-menu rename + update item (D16), a GitHub-backed zed-kask update feed (D17), media/graph/kanban/portfolio/scenarios block rendering in markdown (D18), an update-progress popup (D19), and observed per-call USD cost in `TokenUsage` (D20). See [`DIVERGENCE.md`](./DIVERGENCE.md) for the full table and [`kask/docs/architecture/zed-host-architecture-plan.md`](./kask/docs/architecture/zed-host-architecture-plan.md) for the composition-root wiring.
 
 ---
 
@@ -83,7 +83,7 @@ Environment variables the installer honors:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.31.0`) or `weekly` |
+| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.31.2`) or `weekly` |
 | `HKASK_CHANNEL` | `stable` | Set to `weekly` for the weekly build |
 | `INSTALL_DIR` | `$HOME/.local` | Install prefix; binaries land in `$INSTALL_DIR/bin` |
 | `HKASK_SYSTEM_INSTALL` | unset | Set to `true` to symlink into `/usr/local/bin` |
@@ -119,15 +119,15 @@ The Kask side builds as part of the same workspace — the `kask/` crates are wo
 
 ### Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For Kask-specific contribution (skills, MCP servers, the architecture), start at [`kask/README.md`](./kask/README.md) and [`kask/docs/`](./kask/docs/).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed. For Kask-specific contribution (skills, MCP servers, the architecture), start at [`kask/docs/README.md`](./kask/docs/README.md) and [`kask/docs/`](./kask/docs/).
 
-Per-crate documentation (tutorial, how-to, reference, explanation for each major crate) lives in the [Diataxis set](./kask/docs/diataxis/INDEX.md).
+Per-crate documentation (tutorial, how-to, reference, explanation for each major crate) lives in the [Diataxis set](./kask/docs/diataxis/INDEX.md) — 43 artifacts across 11 cross-cutting crate sets.
 
 ---
 
 ## Releases
 
-Releases are cut by pushing a `v*` tag (e.g. `v0.31.0`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A weekly build runs on schedule at 08:00 UTC each Monday, force-moving the `weekly` tag.
+Releases are cut by pushing a `v*` tag (e.g. `v0.31.2`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A weekly build runs on schedule at 08:00 UTC each Monday, force-moving the `weekly` tag.
 
 Release assets:
 

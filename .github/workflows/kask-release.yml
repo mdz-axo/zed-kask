@@ -2,7 +2,7 @@
 # Release on tag push. Fork-specific: runs on standard GitHub Actions runners
 # (no Namespace, no sccache, no zed-industries gating).
 #
-# Trigger: push a tag matching `v*` (e.g. `v0.31.0`).
+# Trigger: push a tag matching `v*` (e.g. `v0.31.2`).
 #
 # Artifacts:
 #   zed-kask-x86_64-unknown-linux-gnu.tar.gz   (zed-kask + hkask-mcp-* binaries)
