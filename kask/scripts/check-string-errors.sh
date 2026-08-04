@@ -45,7 +45,7 @@ if [ $FAIL -eq 0 ]; then
 else
     echo ""
     echo "FAIL: Result<_, String> patterns found. Replace String error types with thiserror enums."
-    echo "See: crates/hkask-acp/src/cloud.rs (CloudError example)"
-    echo "     crates/hkask-agents/src/curator/semantic_sync.rs (SyncError example)"
+    echo "See: crates/hkask-keystore/src/error.rs (KeychainError example)"
+    echo "     crates/hkask-memory/src/episodic.rs (EpisodicError example)")
     exit 1
 fi

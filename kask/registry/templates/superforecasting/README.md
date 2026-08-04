@@ -63,6 +63,8 @@ mechanically verified by `scripts/check-forecast-conformance.sh` in CI.
 | Quality gate | — | Natural-language only (independent rubric evaluation). |
 | Convergence check | — | Natural-language only (materiality guard + weighted-penalty rubric). |
 | Brier scoring (cross-cutting) | `brier_score`, `brier_score_multi`, `brier_interpretation` | Used by stage 7 record feedback and the MCP servers' outcome tracking. |
+| Marginalization (cross-cutting) | `marginalize` | Marginal probability over a set of parent variables with conditional probabilities. Used by event-tree scenario analysis in `hkask-mcp-scenarios`. |
+| Certainty tier (cross-cutting) | `certainty_tier` | Maps a probability to a qualitative tier (proximate / probable / possible) for display coloring consistency. |
 | Calibration feedback (cross-cutting) | `apply_calibration_adjustment` | Closes the Tetlock learning loop: consumes a calibration curve's overconfidence bias (from `compute_calibration_curve` in `hkask-mcp-scenarios`) to adjust the next forecast's prior toward 0.5. The first operational bridge between recorded outcomes and future forecasts. |
 
 **Layering rule:** `hkask-forecast` holds pure-math primitives only — no domain

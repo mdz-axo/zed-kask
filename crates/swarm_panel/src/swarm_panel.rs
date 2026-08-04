@@ -368,6 +368,11 @@ struct SwarmCard {
     agent_count: Option<u64>,
     budget: Option<u64>,
     remaining: Option<u64>,
+    /// Where this swarm lives: `Cloud` (an ABW workspace) or `Local` (a
+    /// `LocalSwarmRegistry` entry). The backend mode toggle filters the
+    /// browse list by this field — ABW mode shows cloud swarms, Local mode
+    /// shows local swarms.
+    source: AgentSource,
 }
 
 // ── MCP response structs (minimal, mirror hkask-mcp-swarm's tool output) ────
@@ -426,6 +431,28 @@ struct WorkspaceInfo {
     agent_count: Option<u64>,
     workspace_budget: Option<u64>,
     workspace_remaining: Option<u64>,
+}
+
+// ── Local swarm response (v2 §15) ─────────────────────────────────────────
+//
+// `swarm_list_local_swarms` returns `{ count, swarms: [LocalSwarm] }` where each
+// `LocalSwarm` is `{ swarm_id, name, mission, members, created_at }`. Fields are
+// declared `Option` (with `members` defaulting to empty) so a malformed card
+// degrades to an empty row rather than failing the whole list parse — the same
+// defensive pattern as `WorkspaceInfo` above.
+#[derive(Debug, Deserialize)]
+struct LocalSwarmListResponse {
+    swarms: Vec<LocalSwarmInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LocalSwarmInfo {
+    swarm_id: Option<String>,
+    name: Option<String>,
+    #[serde(default)]
+    mission: String,
+    #[serde(default)]
+    members: Vec<String>,
 }
 
 /// Extract the algedonic wallet balance from a tool response (the
@@ -876,7 +903,7 @@ impl SwarmPanel {
             return;
         };
 
-        self.in_flight = 3;
+        self.in_flight = 4;
         self.agents_error = None;
         self.swarms_error = None;
         cx.notify();
@@ -981,11 +1008,20 @@ impl SwarmPanel {
                                                 agent_count: w.agent_count,
                                                 budget: w.workspace_budget,
                                                 remaining: w.workspace_remaining,
+                                                source: AgentSource::Cloud,
                                             })
                                         })
                                         .collect::<Vec<_>>();
-                                    // Replace swarm entries, keep agent entries.
-                                    this.entries.retain(|e| matches!(e, SwarmEntry::Agent(_)));
+                                    // Replace cloud swarm entries, keep agent entries
+                                    // and any local swarm entries (fetched by the
+                                    // `swarm_list_local_swarms` spawn below). The
+                                    // prior `retain` only kept agents, which would
+                                    // silently drop local swarms on every cloud
+                                    // refresh.
+                                    this.entries.retain(|e| match e {
+                                        SwarmEntry::Agent(_) => true,
+                                        SwarmEntry::Swarm(s) => s.source != AgentSource::Cloud,
+                                    });
                                     swarms.append(&mut this.entries);
                                     this.entries = swarms;
                                     // Default the hire target to the first swarm if unset,
@@ -1133,6 +1169,66 @@ impl SwarmPanel {
                         Err(err) => {
                             log::debug!(
                                 "swarm-panel: local balance fetch failed (non-fatal): {err}"
+                            );
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+        // Local swarms (from `agents/local/swarms/` via
+        // `swarm_list_local_swarms`). This fetch always succeeds (it reads the
+        // local filesystem, not ABW). Local swarms are tagged `Local` so the
+        // backend-mode toggle can filter the browse list to local swarms only
+        // — previously local swarms were never fetched, so the Local toggle
+        // showed an empty swarm list even when local swarms existed on disk.
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(SWARM_SERVER, "swarm_list_local_swarms", json!({}))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.in_flight = this.in_flight.saturating_sub(1);
+                    match result {
+                        Ok(output) => {
+                            let parsed = parse_tool_response(&output).and_then(|c| {
+                                serde_json::from_value::<LocalSwarmListResponse>(c).ok()
+                            });
+                            if let Some(response) = parsed {
+                                let local_swarms = response
+                                    .swarms
+                                    .into_iter()
+                                    .map(|s| {
+                                        SwarmEntry::Swarm(SwarmCard {
+                                            id: s.swarm_id.unwrap_or_default(),
+                                            name: s.name.unwrap_or_default(),
+                                            description: s.mission,
+                                            agent_count: Some(s.members.len() as u64),
+                                            budget: None,
+                                            remaining: None,
+                                            source: AgentSource::Local,
+                                        })
+                                    })
+                                    .collect::<Vec<_>>();
+                                // Replace local swarm entries, keep agent entries
+                                // and any cloud swarm entries.
+                                this.entries.retain(|e| match e {
+                                    SwarmEntry::Agent(_) => true,
+                                    SwarmEntry::Swarm(s) => s.source != AgentSource::Local,
+                                });
+                                this.entries.extend(local_swarms);
+                                this.filter_entries(cx);
+                            }
+                        }
+                        Err(err) => {
+                            // Local swarms fetch failure is not fatal — the
+                            // panel still shows cloud swarms. Log and continue.
+                            log::debug!(
+                                "swarm-panel: local swarms fetch failed (non-fatal): {err}"
                             );
                         }
                     }
@@ -1860,6 +1956,12 @@ impl SwarmPanel {
                 "swarm-panel: backend mode toggled — Steer conversation rebuilt with the new mode"
             );
         }
+        // Re-filter the browse list so the toggle is visually connected to
+        // what is shown: ABW mode shows cloud agents/swarms, Local mode shows
+        // local agents/swarms. Without this the toggle only re-routed the
+        // substrate but left the list unchanged — the operator's "cloud/local"
+        // buttons appeared disconnected from the displayed entries.
+        self.filter_entries(cx);
         cx.notify();
     }
 
@@ -2276,6 +2378,14 @@ impl SwarmPanel {
 
     fn filter_entries(&mut self, cx: &mut Context<Self>) {
         let filter = self.filter;
+        // The backend-mode toggle (ABW / Local) drives a source filter on the
+        // browse list. ABW mode shows cloud + synced agents and cloud swarms;
+        // Local mode shows local + synced agents and local swarms. Synced
+        // agents (exist in both) are shown in either view so the operator can
+        // act on the link from either side. Without this, the toggle only
+        // re-routed the swarm server substrate but left the browse list
+        // showing every entry regardless of the selected backend.
+        let mode = Self::current_swarm_mode(cx);
         let query = self.search_query(cx).map(|q| q.to_lowercase());
         let indices: Vec<usize> = self
             .entries
@@ -2289,6 +2399,23 @@ impl SwarmPanel {
                     _ => false,
                 };
                 if !kind_matches {
+                    return false;
+                }
+                let source_matches = match entry {
+                    SwarmEntry::Agent(a) => match mode {
+                        kask_bridge::SwarmModeConfig::Abw => {
+                            a.source == AgentSource::Cloud || a.source == AgentSource::Synced
+                        }
+                        kask_bridge::SwarmModeConfig::Local => {
+                            a.source == AgentSource::Local || a.source == AgentSource::Synced
+                        }
+                    },
+                    SwarmEntry::Swarm(s) => match mode {
+                        kask_bridge::SwarmModeConfig::Abw => s.source == AgentSource::Cloud,
+                        kask_bridge::SwarmModeConfig::Local => s.source == AgentSource::Local,
+                    },
+                };
+                if !source_matches {
                     return false;
                 }
                 match &query {
@@ -2717,6 +2844,8 @@ impl SwarmPanel {
             SwarmEntry::Swarm(swarm) => {
                 let swarm_id = swarm.id.clone();
                 let swarm_name = swarm.name.clone();
+                let source_badge = swarm.source.badge();
+                let source_label = swarm.source.label();
                 // Each button closure gets its own clone (moved-in closures).
                 let detail_id = swarm_id.clone();
                 let detail_name = swarm_name.clone();
@@ -2755,6 +2884,14 @@ impl SwarmPanel {
                                                     .map_or("-".to_string(), |v| v.to_string())
                                             ))
                                             .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {}",
+                                                source_badge, source_label
+                                            ))
+                                            .color(Color::Accent)
+                                            .size(LabelSize::XSmall),
                                         ),
                                 )
                                 .child(Label::new(swarm.description).color(Color::Muted)),
