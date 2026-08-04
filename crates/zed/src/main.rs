@@ -2701,7 +2701,7 @@ struct PanelToolInvoker {
 /// Resolves the executor at call time (it is wired in the deferred
 /// post-login task, after the IPC server starts) — the same resolver
 /// pattern as `SkillTool`. The cascade runs with the executor's own
-/// gas/OCAP enforcement on this side; the wrapper only forwards name + task.
+/// call-cap/OCAP enforcement on this side; the wrapper only forwards name + task.
 struct AgentSkillExec;
 
 impl hkask_types::SkillExecPort for AgentSkillExec {

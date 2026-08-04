@@ -120,16 +120,24 @@ pub enum CallCapError {
     Persistence(String),
 }
 
+/// A curation override: remembers the agent's original ceiling so `clear_override`
+/// can restore it.
+#[derive(Debug, Clone, Copy)]
+struct OverrideRecord {
+    original_ceiling: u32,
+    override_ceiling: u32,
+}
+
 /// Per-agent call-cap registry with curation overrides.
 ///
-/// The cap/override maps are interior-mutable (`Arc<RwLock<…>>`) so the manager
+/// The cap/override maps are interior-mutable (`Arc<RwLock<..>>`) so the manager
 /// can be shared behind an `Arc<RwLock<CallCapManager>>` while still exposing
 /// `&self` async methods — matching the prior `GasBudgetManager` shape callers
 /// depend on. Agents without a registered cap are denied (fail-closed); the
 /// composition root must seed a cap for every agent making governed tool calls.
 pub struct CallCapManager {
     caps: Arc<RwLock<HashMap<WebID, CallCap>>>,
-    overrides: Arc<RwLock<HashMap<WebID, u32>>>,
+    overrides: Arc<RwLock<HashMap<WebID, OverrideRecord>>>,
 }
 
 impl Default for CallCapManager {
@@ -199,7 +207,7 @@ impl CallCapManager {
             .read()
             .await
             .iter()
-            .map(|(id, cap)| (id.clone(), AgentCallCapStatus::from(cap)))
+            .map(|(id, cap)| (*id, AgentCallCapStatus::from(cap)))
             .collect()
     }
 
@@ -209,17 +217,34 @@ impl CallCapManager {
         let overrides = self.overrides.read().await;
         let mut caps = self.caps.write().await;
         for (agent, cap) in caps.iter_mut() {
-            if let Some(&override_ceiling) = overrides.get(agent) {
-                cap.set_ceiling(override_ceiling);
+            if let Some(rec) = overrides.get(agent) {
+                cap.set_ceiling(rec.override_ceiling);
             }
             cap.reset();
         }
     }
 
     /// Curation override: install a new ceiling for an agent. The override
-    /// survives per-tick resets until `clear_override` is called.
+    /// survives per-tick resets until `clear_override` is called, which restores
+    /// the agent's original ceiling. A second override replaces the first and
+    /// still remembers the *original* (pre-override) ceiling for restore.
     pub async fn apply_override(&self, agent: WebID, ceiling: u32) {
-        self.overrides.write().await.insert(agent, ceiling);
+        let mut overrides = self.overrides.write().await;
+        let original = match overrides.get(&agent) {
+            Some(rec) => rec.original_ceiling, // already overridden — keep the true original
+            None => {
+                let caps = self.caps.read().await;
+                caps.get(&agent).map_or(ceiling, CallCap::ceiling)
+            }
+        };
+        overrides.insert(
+            agent,
+            OverrideRecord {
+                original_ceiling: original,
+                override_ceiling: ceiling,
+            },
+        );
+        drop(overrides);
         let mut caps = self.caps.write().await;
         if let Some(cap) = caps.get_mut(&agent) {
             cap.set_ceiling(ceiling);
@@ -227,10 +252,17 @@ impl CallCapManager {
         }
     }
 
-    /// Remove a curation override, restoring the agent's original ceiling on the
-    /// next `reset_all`. The cap's current `remaining` is untouched until then.
+    /// Remove a curation override, restoring the agent's original ceiling and
+    /// resetting its remaining calls to that ceiling.
     pub async fn clear_override(&self, agent: WebID) {
-        self.overrides.write().await.remove(&agent);
+        let removed = self.overrides.write().await.remove(&agent);
+        if let Some(rec) = removed {
+            let mut caps = self.caps.write().await;
+            if let Some(cap) = caps.get_mut(&agent) {
+                cap.set_ceiling(rec.original_ceiling);
+                cap.reset();
+            }
+        }
     }
 
     /// Read access to the cap map (for persistence snapshots).

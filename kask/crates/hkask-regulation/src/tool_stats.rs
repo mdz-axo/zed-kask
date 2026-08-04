@@ -5,9 +5,10 @@
 //! success/failure outcomes, enabling:
 //!
 //! - **Layer 1 (cost):** Reserve at the 90th percentile instead of a point estimate,
-//!   tightening with more observations. Wired into the `McpRuntime::invoke` /
-//!   `ToolGovernance` membrane (in `hkask-mcp`) as a distribution-based override of
-//!   the `FlatEnergyEstimator`'s flat point estimate.
+//!   tightening with more observations. Intended as a distribution-based cost
+//!   signal for the governed tool-call membrane (the per-agent call cap charges a
+//!   flat one call per invocation today; this layer is the seam for a future
+//!   calibrated per-tool cost).
 //! - **Layer 2 (reliability):** Pre-escalate when success probability drops below
 //!   a threshold, detecting degrading tools before they fail.
 //! - **Layer 3 (auto-calibration):** Cost data feeds back into the estimator —
@@ -66,10 +67,9 @@ pub struct ToolReliabilityAlert {
 
 /// Thread-safe statistical learner for all MCP tools.
 ///
-/// Owned by `RegState`. Called by `McpRuntime::invoke` (via `CyberneticsLoop::settle_gas`)
-/// at settle time to record outcomes. Queried by `McpRuntime::invoke` (via
-/// `CyberneticsLoop::reserve_gas`) at reserve time for distribution-based estimates
-/// via `reserve_estimate()`.
+/// Owned by `RegState`. Called by `McpRuntime::invoke` (via `CyberneticsLoop::charge_call`)
+/// after each governed tool call to record outcomes. Queried by `McpRuntime::invoke`
+/// for distribution-based estimates via `reserve_estimate()`.
 pub struct ToolStats {
     state: RwLock<HashMap<String, ToolState>>,
     reliability_threshold: f64,

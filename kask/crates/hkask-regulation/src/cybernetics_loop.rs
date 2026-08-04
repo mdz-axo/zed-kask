@@ -6,7 +6,7 @@
 //! 1. **Sense** — receive `reg.*` spans from all loops (tool invocations,
 //!    prompt outcomes, agent pod lifecycle, connector I/O).
 //! 2. **Compare** — evaluate each signal against homeostatic set-points:
-//!    gas budget remaining, variety counter balance, error rate threshold,
+//!    call-cap remaining, variety counter balance, error rate threshold,
 //!    connector latency envelope.
 //! 3. **Compute** — when a signal deviates beyond its set-point, produce an
 //!    efferent signal: throttle, escalate, calibrate, or circuit-break.
@@ -250,9 +250,9 @@ impl CyberneticsLoop {
         self
     }
 
-    /// Enable gas budget persistence across restarts.
+    /// Enable call-cap persistence across restarts.
     ///
-    /// Budgets are saved to the given path after each replenishment cycle
+    /// Caps are saved to the given path after each reset cycle
     /// and loaded automatically on construction.
     ///
     /// expect: "The system provides configurable cybernetic self-regulation"

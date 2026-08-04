@@ -647,7 +647,7 @@ impl InferenceIpcClient {
     ///
     /// `name` is the skill id (e.g. "grill-me"), `task` the text the cascade
     /// acts on. The zed process runs the skill through its global
-    /// `ManifestExecutor` (gas/OCAP enforcement on that side). Returns the
+    /// `ManifestExecutor` (call-cap/OCAP enforcement on that side). Returns the
     /// cascade's final output text.
     pub async fn execute_skill(&self, name: &str, task: &str) -> Result<String, InferenceError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);

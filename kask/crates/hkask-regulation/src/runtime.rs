@@ -23,7 +23,6 @@ use crate::algedonic::{
 use crate::set_points::DEFAULT_VARIETY_MAX_DEFICIT;
 use crate::tool_stats::ToolStats;
 
-use hkask_types::WebID;
 use hkask_types::event::{RegulationRecord, RegulationSink, SpanNamespace};
 use hkask_types::regulation::{LedgerHealth, RegulationHealth};
 use parking_lot::RwLock as ParkingRwLock;

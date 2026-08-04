@@ -9,7 +9,7 @@ use hkask_types::NotFound;
 pub enum ToolPortError {
     #[error("Capability denied: {0}")]
     CapabilityDenied(String),
-    #[error("Gas budget exceeded: {0}")]
+    #[error("Call cap exceeded: {0}")]
     EnergyBudgetExceeded(String),
     #[error("Tool not found: {0}")]
     NotFound(NotFound),
@@ -49,7 +49,8 @@ pub trait ToolPort: Send + Sync {
     ///
     /// The implementation matches the token's declared `(resource, resource_id,
     /// action)` against the invoked tool (`McpRuntime::invoke` →
-    /// `DelegationToken::is_valid_for`), plus a gas gate via `CyberneticsLoop`.
+    /// `DelegationToken::is_valid_for`), plus a per-agent call-cap gate via
+    /// `CyberneticsLoop`.
     ///
     /// post: returns tool output or `ToolPortError::CapabilityDenied` if the token
     ///       does not authorize this (resource, resource_id, action)

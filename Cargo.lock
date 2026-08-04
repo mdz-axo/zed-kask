@@ -9634,7 +9634,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "hkask-storage",
  "hkask-test-harness",
  "hkask-types",
  "parking_lot",

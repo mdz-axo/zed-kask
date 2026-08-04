@@ -1,13 +1,14 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_skills::GLOBAL_SKILLS_DIR_DISPLAY;
-use auto_update::{AutoUpdater, release_notes_url};
+use auto_update::{AutoUpdateStatus, AutoUpdater, release_notes_url};
 use client::zed_urls;
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TaskExt, Window, actions,
-    prelude::*,
+    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Subscription, TaskExt,
+    Window, actions, prelude::*,
 };
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use prompt_store::rules_to_skills_migration;
@@ -15,13 +16,16 @@ use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
-use ui::{AnnouncementToast, ListBulletItem, SkillsIllustration, prelude::*};
+use ui::{
+    AnnouncementToast, CommonAnimationExt, ListBulletItem, ProgressBar, SkillsIllustration,
+    Tooltip, prelude::*,
+};
 use util::{ResultExt as _, maybe};
 use workspace::{
     Workspace,
     notifications::{
-        Notification, NotificationId, SuppressEvent, show_app_notification,
-        simple_message_notification::MessageNotification,
+        Notification, NotificationId, SuppressEvent, dismiss_app_notification,
+        show_app_notification, simple_message_notification::MessageNotification,
     },
     workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
@@ -52,6 +56,20 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+
+    // zed-kask: D18 — surface a prominent progress popup while a manual
+    // (single-click) zed-kask update is checking / downloading / installing.
+    // The popup re-renders in place on every progress tick via the entity's
+    // own observer on the shared `AutoUpdater`; this App-level observer only
+    // manages the show/dismiss lifecycle on rising/falling edges so the
+    // notification is not torn down and rebuilt on every percent change.
+    if let Some(updater) = AutoUpdater::get(cx) {
+        cx.observe(&updater, |_updater, cx| {
+            manage_update_progress_notification(cx)
+        })
+        .detach();
+        manage_update_progress_notification(cx);
+    }
 }
 
 #[derive(Deserialize)]
@@ -396,4 +414,245 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
         anyhow::Ok(())
     })
     .detach();
+}
+
+// zed-kask: D18 — prominent update-progress popup. The title bar already shows
+// a compact `UpdateButton` with a circular progress ring; this popup adds a
+// larger, horizontal `ProgressBar` surface so a single-click `Update Zed-Kask`
+// gives visible feedback while the GitHub release asset downloads. The popup
+// is driven entirely by the existing `AutoUpdater` status machine (D17) — no
+// new download logic.
+
+/// Marker type for the app-global progress notification id.
+struct UpdateProgressNotificationId;
+
+/// Tracks whether the progress popup is currently shown so the App-level
+/// observer only calls `show_app_notification` / `dismiss_app_notification` on
+/// rising / falling edges. Without edge detection, every progress tick (which
+/// `cx.notify()`s the `AutoUpdater`) would tear down and rebuild the
+/// notification entity.
+static PROGRESS_NOTIFICATION_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct UpdateProgressNotification {
+    focus_handle: FocusHandle,
+    updater: Entity<AutoUpdater>,
+    _subscription: Subscription,
+}
+
+impl UpdateProgressNotification {
+    fn new(updater: Entity<AutoUpdater>, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        // Re-render in place on every `AutoUpdater::notify` (i.e. every progress
+        // tick) so the bar fills smoothly without re-creating the notification.
+        let _subscription = cx.observe(&updater, |_this, _updater, cx| cx.notify());
+        Self {
+            focus_handle,
+            updater,
+            _subscription,
+        }
+    }
+
+    fn dismiss_current(&mut self, cx: &mut Context<Self>) {
+        let status = self.updater.read(cx).status();
+        self.updater
+            .update(cx, |updater, cx| updater.dismiss_status(status, cx));
+        cx.emit(DismissEvent);
+    }
+}
+
+impl Focusable for UpdateProgressNotification {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for UpdateProgressNotification {}
+impl EventEmitter<SuppressEvent> for UpdateProgressNotification {}
+impl Notification for UpdateProgressNotification {}
+
+impl Render for UpdateProgressNotification {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let updater = self.updater.read(cx);
+        let status = updater.status();
+        let is_manual = updater.update_check_type().is_manual();
+
+        let title: SharedString;
+        let body: AnyElement;
+        // Close button is only offered for terminal states (Updated / Errored),
+        // mirroring the title-bar `UpdateVersion` which only wires `on_dismiss`
+        // for those states. Dismissing in-progress work would just re-show on the
+        // next tick.
+        let show_close: bool;
+        let mut actions = h_flex().gap_1();
+
+        match status {
+            AutoUpdateStatus::Checking if is_manual => {
+                title = "Checking for zed-kask updates".into();
+                body = Label::new("Looking up the latest GitHub release…")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .into_any_element();
+                show_close = false;
+            }
+            AutoUpdateStatus::Downloading { version, progress } => {
+                title = format!("Downloading zed-kask {version}").into();
+                let pct = progress.map(|p| (p.clamp(0.0, 1.0) * 100.0).round() as u32);
+                body = v_flex()
+                    .gap_1()
+                    .child(match progress {
+                        Some(p) => ProgressBar::new("update-download", p.clamp(0.0, 1.0), 1.0, cx)
+                            .into_any_element(),
+                        None => Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_rotate_animation(2)
+                            .into_any_element(),
+                    })
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                Label::new(match progress {
+                                    Some(_) => "Downloading…",
+                                    None => "Downloading… (size unknown)",
+                                })
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                            )
+                            .when_some(pct, |el, pct| {
+                                el.child(
+                                    Label::new(format!("{pct}%"))
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                            }),
+                    )
+                    .into_any_element();
+                show_close = false;
+            }
+            AutoUpdateStatus::Installing { version } => {
+                title = format!("Installing zed-kask {version}").into();
+                body = Label::new("Applying the update…")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .into_any_element();
+                show_close = false;
+            }
+            AutoUpdateStatus::Updated { version } => {
+                title = format!("zed-kask {version} is ready").into();
+                body = Label::new("Restart to apply the update.")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .into_any_element();
+                show_close = true;
+                actions = actions.child(
+                    Button::new(("restart", cx.entity_id()), "Restart")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|_this, _, _, cx| {
+                            workspace::reload(cx);
+                        })),
+                );
+            }
+            AutoUpdateStatus::Errored { error } => {
+                title = "Update failed".into();
+                body = Label::new(error.to_string())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .into_any_element();
+                show_close = true;
+                actions = actions.child(
+                    Button::new(("view-logs", cx.entity_id()), "View Logs")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(|_this, _, window, cx| {
+                            window.dispatch_action(Box::new(workspace::OpenLog), cx);
+                        })),
+                );
+            }
+            // Idle or an automatic (background) check: the title bar still
+            // shows the compact indicator; the popup should not be visible.
+            AutoUpdateStatus::Idle | AutoUpdateStatus::Checking => {
+                return Empty.into_any_element();
+            }
+        }
+
+        let close = show_close.then(|| {
+            IconButton::new(("update-progress-close", cx.entity_id()), IconName::Close)
+                .icon_size(IconSize::Indicator)
+                .tooltip(Tooltip::text("Dismiss"))
+                .on_click(cx.listener(|this, _, _, cx| this.dismiss_current(cx)))
+        });
+
+        let header_actions = h_flex()
+            .flex_shrink_0()
+            .gap_1()
+            .child(actions)
+            .children(close);
+
+        v_flex()
+            .id(("update-progress-notification", cx.entity_id()))
+            .occlude()
+            .p_3()
+            .gap_2()
+            .elevation_3(cx)
+            .child(
+                h_flex()
+                    .gap_4()
+                    .justify_between()
+                    .items_start()
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(Label::new(title))
+                            .child(div().max_w_96().child(body)),
+                    )
+                    .child(header_actions),
+            )
+            .into_any_element()
+    }
+}
+
+/// Show or hide the progress popup based on the current `AutoUpdater` status,
+/// but only on rising / falling edges of the active state (see
+/// `PROGRESS_NOTIFICATION_ACTIVE`). Gating mirrors the title-bar `UpdateVersion`:
+/// `Checking` is surfaced only for manual checks, while `Downloading`,
+/// `Installing`, `Updated`, and `Errored` are surfaced for any check type.
+/// A dismissed status (set by the popup's close button) keeps the popup hidden.
+fn manage_update_progress_notification(cx: &mut App) {
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
+    let reader = updater.read(cx);
+    let status = reader.status();
+    let is_manual = reader.update_check_type().is_manual();
+    let dismissed = reader.dismissed_status().as_ref() == Some(&status);
+
+    let should_show = !dismissed
+        && match status {
+            AutoUpdateStatus::Idle => false,
+            AutoUpdateStatus::Checking if !is_manual => false,
+            AutoUpdateStatus::Checking
+            | AutoUpdateStatus::Downloading { .. }
+            | AutoUpdateStatus::Installing { .. }
+            | AutoUpdateStatus::Updated { .. }
+            | AutoUpdateStatus::Errored { .. } => true,
+        };
+
+    let was_active = PROGRESS_NOTIFICATION_ACTIVE.swap(should_show, Ordering::SeqCst);
+    if should_show && !was_active {
+        show_app_notification(
+            NotificationId::unique::<UpdateProgressNotificationId>(),
+            cx,
+            move |cx| {
+                let updater = updater.clone();
+                cx.new(|cx| UpdateProgressNotification::new(updater, cx))
+            },
+        );
+    } else if !should_show && was_active {
+        dismiss_app_notification(
+            &NotificationId::unique::<UpdateProgressNotificationId>(),
+            cx,
+        );
+    }
 }
