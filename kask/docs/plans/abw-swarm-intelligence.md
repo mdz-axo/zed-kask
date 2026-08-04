@@ -143,12 +143,14 @@ re-confirming (`refund`). The panel renders the gate as a consent banner
    outside it **before** minting the panel token (fail closed on a missing
    allowlist). The allowlist is therefore enforced at the dispatch boundary,
    not only inside the child process.
-5. **Gas budget seed (2026-08-02)** — `GasBudgetManager::can_proceed` denies
-   agents without a registered budget (fail-closed). The composition root
-   seeds a `kask-panel` persona budget (`KASK_PANEL_GAS_BUDGET_CAP = 100_000`
-   in `crates/zed/src/main.rs`, 10% replenish per regulation tick), which is
-   the account every governed tool call — panel, skill cascade, and swarm
-   `tool_invoke` dispatch — charges.
+5. **Call-cap seed (updated 2026-08-03)** — `CallCapManager::can_proceed` denies
+   agents without a registered cap (fail-closed). The composition root seeds a
+   `swarm-panel` persona cap (`SWARM_PANEL_CALL_CAP = 10_000` in
+   `crates/zed/src/main.rs`, reset to the ceiling each regulation tick), which
+   is the account every governed tool call — panel, skill cascade, and swarm
+   `tool_invoke` dispatch — charges (one call per invocation). This replaces the
+   former `GasBudgetManager` gas hold-settle (`KASK_PANEL_GAS_BUDGET_CAP = 100_000`,
+   10% replenish/tick), which was removed as the gas ritual.
 
 Known limit → resolved (2026-08-02): consent tokens previously lived in
 in-memory stores **per server process**, so the panel's hire flow and the

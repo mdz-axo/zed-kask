@@ -11,10 +11,10 @@ mds_categories: [domain, lifecycle]
 # hkask-regulation — Reference
 
 `hkask-regulation` implements the Regulation nervous system for hKask. It
-provides the cybernetic loop that monitors agent behavior, enforces gas
-budgets, detects variety deficits, and escalates algedonic alerts. The crate
-defines the `RegulationLedger`, `CyberneticsLoop`, `MetacognitionLoop`,
-`WalletManager`, `Well`, `GasBudget`, and the span enums that emit `reg.*`
+provides the cybernetic loop that monitors agent behavior, bounds governed
+tool calls via a per-agent call cap, detects variety deficits, and escalates
+algedonic alerts. The crate defines the `RegulationLedger`, `CyberneticsLoop`,
+`MetacognitionLoop`, `CallCapManager`, and the span enums that emit `reg.*`
 observable events.
 
 ## Source citations
@@ -35,17 +35,11 @@ observable events.
 | `AlertSink` trait | `kask/crates/hkask-regulation/src/metacognition.rs:78` |
 | `AlertEvent` | `kask/crates/hkask-regulation/src/metacognition.rs:61` |
 | `EscalationSeverity` enum | `kask/crates/hkask-types/src/curator.rs:68` |
-| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:79` |
-| `ProposedAction` struct | `kask/crates/hkask-regulation/src/regulation_policy.rs:27` |
-| `WalletManager` struct | `kask/crates/hkask-regulation/src/wallet_manager.rs:36` |
-| `WalletBalance` | `kask/crates/hkask-regulation/src/wallet_manager.rs:26` |
-| `Well` struct | `kask/crates/hkask-regulation/src/well.rs:28` |
-| `WellID` newtype | `kask/crates/hkask-regulation/src/well.rs:24` |
-| `WellManager` | `kask/crates/hkask-regulation/src/well.rs:73` |
-| `WellConfig` | `kask/crates/hkask-regulation/src/well.rs:13` |
-| `GasBudget` struct | `kask/crates/hkask-regulation/src/energy.rs:99` |
-| `GasCost` newtype | `kask/crates/hkask-regulation/src/energy.rs:13` |
-| `AgentGasStatus` | `kask/crates/hkask-regulation/src/energy.rs:323` |
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs` |
+| `ProposedAction` struct | `kask/crates/hkask-regulation/src/regulation_policy.rs` |
+| `CallCapManager` | `kask/crates/hkask-regulation/src/energy.rs` |
+| `CallCap` | `kask/crates/hkask-regulation/src/energy.rs` |
+| `AgentCallCapStatus` | `kask/crates/hkask-regulation/src/energy.rs` |
 | `RuntimeAlert` | `kask/crates/hkask-regulation/src/algedonic.rs:37` |
 | `AlertSeverity` enum | `kask/crates/hkask-regulation/src/algedonic.rs:26` |
 | `AlertEmailSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:54` |
@@ -60,7 +54,7 @@ observable events.
 ## Regulation architecture
 
 The crate has five responsibility clusters: the ledger and event sink, the
-cybernetics loop, the metacognition loop, the wallet and gas budget, and the
+cybernetic loop, the metacognition loop, the per-agent call cap, and the
 algedonic alert path. The class diagram below shows the key types and their
 relationships.
 
@@ -85,25 +79,18 @@ classDiagram
         +run()
         +compare(snapshot) Vec~EscalationAlert~
     }
-    class WalletManager {
-        +balance(agent) WalletBalance
-        +settle_rjoules(wallet_id, amount)
-        +gas_to_rjoules(gas) RJoule
+    class CallCapManager {
+        +caps: HashMap~WebID, CallCap~
+        +register_call_cap(agent, ceiling)
+        +can_proceed(agent) bool
+        +charge(agent) Result
+        +reset_all()
     }
-    class Well {
-        +config: WellConfig
-        +gas_available: GasCost
-        +rjoule_available: u64
-        +replenish()
-        +draw(gas, rjoule)
-    }
-    class GasBudget {
-        +cap: GasCost
-        +remaining: GasCost
-        +replenish_rate: GasCost
-        +reserved: GasCost
-        +reserve(amount) Result
-        +replenish()
+    class CallCap {
+        +ceiling: u32
+        +remaining: u32
+        +charge() bool
+        +reset()
     }
     class RuntimeAlert {
         +domain: String
@@ -136,15 +123,15 @@ classDiagram
     CyberneticsLoop ..> ProposedAction : consumes
     MetacognitionLoop --> EscalationAlert : emits
     RuntimeAlert --> AlertSeverity
-    WalletManager --> Well : draws from
-    WalletManager --> GasBudget : manages
+    CallCapManager --> CallCap : manages
+    CyberneticsLoop --> CallCapManager : governs tool-call ceiling
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-regulation/src/runtime.rs:405,343,276,57,1045,1067; kask/crates/hkask-regulation/src/metacognition.rs:150,121,103,113,88,78,61; kask/crates/hkask-regulation/src/cybernetics_loop.rs:79; kask/crates/hkask-regulation/src/regulation_policy.rs:27; kask/crates/hkask-regulation/src/wallet_manager.rs:36,26; kask/crates/hkask-regulation/src/well.rs:28,24,73,13; kask/crates/hkask-regulation/src/energy.rs:99,13,323; kask/crates/hkask-regulation/src/algedonic.rs:37,26,54; kask/crates/hkask-regulation/src/runtime_policy.rs:14,47,66; kask/crates/hkask-regulation/src/tool_stats.rs:73,49,60; kask/crates/hkask-types/src/curator.rs:68
-status: VERIFIED
+verified_date: 2026-08-03
+verified_against: kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-regulation/src/metacognition.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs; kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-regulation/src/algedonic.rs; kask/crates/hkask-regulation/src/runtime_policy.rs; kask/crates/hkask-regulation/src/tool_stats.rs; kask/crates/hkask-types/src/curator.rs
+status: STALE — diagram updated for the call-cap refactor (2026-08-03); the WalletManager/Well/GasBudget classes and the deleted wallet_manager.rs/well.rs files were removed. Per-symbol line numbers pending re-verification.
 -->
 
 ## Ledger and event sink
@@ -208,21 +195,23 @@ The `EscalationSeverity` enum (re-exported from `hkask_types::curator`,
 `kask/crates/hkask-types/src/curator.rs:68`) is used by `EscalationAlert` and
 also has three levels: `Info`, `Warning`, `Critical`.
 
-## Wallet and gas budget
+## Per-agent call cap
 
-The `WalletManager` (`wallet_manager.rs:36`) manages per-agent rJoule balances via a
-`WalletStore` and delegates gas draws to a `WellManager`. The gas→rJoule
-conversion rate is configured via `WalletConfig.gas_per_rjoule` in `hkask-types`.
-The `WalletBalance` struct (`wallet_manager.rs:26`) holds the
-current `gas` and `rjoule` balances.
+The `CallCapManager` (in `energy.rs`) is the honest replacement for the former
+gas hold-settle ritual. Each agent has a hard `CallCap` ceiling on governed tool
+calls per regulation tick; `McpRuntime::invoke` charges one call per invocation
+via `can_proceed` + `charge`, and the cap resets to its ceiling each tick
+(`reset_all`). The `EnergyBudgetSensor` reads the worst remaining ratio across
+agents and emits an `EnergyRemaining` signal, which the regulation policy turns
+into an `EnergyBudgetLow` throttle action when it drops below
+`SetPoints.gas_min_remaining`.
 
-The `Well` struct (`well.rs:28`) is a replenishment source. Each well has a
-`WellConfig` (`well.rs:13`) carrying `gas_rate` and `rjoule_rate`, and a
-`WellID` (`well.rs:24`) newtype. The `WellManager` (`well.rs:73`) manages
-multiple wells, with the first-created well becoming the default. The
-`GasBudget` (`energy.rs:99`) holds the `cap`, `remaining`, `replenish_rate`,
-`reserved`, `alert_threshold`, `hard_limit`, and `priority` for an agent's
-gas allocation, enforcing the invariant `remaining + reserved ≤ cap`.
+Curation can override an agent's ceiling (`CuratorDirective::OverrideEnergyBudget`),
+clear the override (`ClearOverride`, restoring the original ceiling), or credit
+calls (`ReplenishBudget`). Overrides survive per-tick resets until explicitly
+cleared. Agents without a registered cap are denied fail-closed — the composition
+root seeds a cap for every agent that makes governed tool calls (e.g. the
+`swarm-panel` persona in `crates/zed/src/main.rs`).
 
 ## See also
 

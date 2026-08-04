@@ -110,8 +110,9 @@ impl BudgetTracker {
         self.gas_used = self.gas_used.saturating_add(self.gas_cost_per_iter);
     }
 
-    /// Charge rJoule for an inference call. Called once the inference provider
-    /// reports token usage (currently a placeholder — see executor TODO).
+    /// Charge rJoule for an inference call. The executor calls this with the
+    /// inference result's observed USD cost (`InferenceResult.cost_usd`, which
+    /// prefers the provider's `market_cost` over `cost`) once per `select` step.
     pub fn charge_rjoule(&mut self, rjoules: f64) {
         self.rjoule_used += rjoules;
     }

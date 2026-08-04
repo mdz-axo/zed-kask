@@ -626,18 +626,7 @@ fn manage_update_progress_notification(cx: &mut App) {
     let reader = updater.read(cx);
     let status = reader.status();
     let is_manual = reader.update_check_type().is_manual();
-    let dismissed = reader.dismissed_status().as_ref() == Some(&status);
-
-    let should_show = !dismissed
-        && match status {
-            AutoUpdateStatus::Idle => false,
-            AutoUpdateStatus::Checking if !is_manual => false,
-            AutoUpdateStatus::Checking
-            | AutoUpdateStatus::Downloading { .. }
-            | AutoUpdateStatus::Installing { .. }
-            | AutoUpdateStatus::Updated { .. }
-            | AutoUpdateStatus::Errored { .. } => true,
-        };
+    let should_show = should_show_progress(&status, is_manual, reader.dismissed_status().as_ref());
 
     let was_active = PROGRESS_NOTIFICATION_ACTIVE.swap(should_show, Ordering::SeqCst);
     if should_show && !was_active {
@@ -654,5 +643,105 @@ fn manage_update_progress_notification(cx: &mut App) {
             &NotificationId::unique::<UpdateProgressNotificationId>(),
             cx,
         );
+    }
+}
+
+/// Pure decision extracted from `manage_update_progress_notification` so the
+/// gating contract can be unit-tested without the HTTP-mock update harness.
+/// Mirrors the title-bar `UpdateVersion` gating: `Checking` surfaces only for
+/// manual checks; `Downloading` / `Installing` / `Updated` / `Errored` surface
+/// for any check type; a dismissed status suppresses only the matching state.
+fn should_show_progress(
+    status: &AutoUpdateStatus,
+    is_manual: bool,
+    dismissed_status: Option<&AutoUpdateStatus>,
+) -> bool {
+    let dismissed = dismissed_status == Some(status);
+    !dismissed
+        && match status {
+            AutoUpdateStatus::Idle => false,
+            AutoUpdateStatus::Checking if !is_manual => false,
+            AutoUpdateStatus::Checking
+            | AutoUpdateStatus::Downloading { .. }
+            | AutoUpdateStatus::Installing { .. }
+            | AutoUpdateStatus::Updated { .. }
+            | AutoUpdateStatus::Errored { .. } => true,
+        }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn version() -> semver::Version {
+        semver::Version::new(1, 0, 0)
+    }
+
+    // zed-kask: D18 — pins the popup gating contract: Idle never shows;
+    // Checking shows only for manual checks; Downloading / Installing /
+    // Updated / Errored show for any check type; a dismissed status suppresses
+    // only the matching state.
+    #[test]
+    fn progress_popup_gating() {
+        // Idle never shows, regardless of check type or dismiss.
+        assert!(!should_show_progress(&AutoUpdateStatus::Idle, true, None));
+        assert!(!should_show_progress(&AutoUpdateStatus::Idle, false, None));
+
+        // Checking surfaces only for a manual (single-click) check.
+        assert!(should_show_progress(
+            &AutoUpdateStatus::Checking,
+            true,
+            None
+        ));
+        assert!(!should_show_progress(
+            &AutoUpdateStatus::Checking,
+            false,
+            None
+        ));
+
+        // Downloading / Installing / Updated / Errored surface for any check
+        // type (matches the title-bar `UpdateVersion` gating).
+        assert!(should_show_progress(
+            &AutoUpdateStatus::Downloading {
+                version: version(),
+                progress: Some(0.5)
+            },
+            false,
+            None
+        ));
+        assert!(should_show_progress(
+            &AutoUpdateStatus::Installing { version: version() },
+            false,
+            None
+        ));
+        assert!(should_show_progress(
+            &AutoUpdateStatus::Updated { version: version() },
+            false,
+            None
+        ));
+        let error: Arc<anyhow::Error> = Arc::new(anyhow::anyhow!("network timeout"));
+        assert!(should_show_progress(
+            &AutoUpdateStatus::Errored { error },
+            false,
+            None
+        ));
+
+        // A dismissed status suppresses the matching state…
+        let downloading = AutoUpdateStatus::Downloading {
+            version: version(),
+            progress: Some(0.3),
+        };
+        assert!(!should_show_progress(
+            &downloading,
+            true,
+            Some(&downloading)
+        ));
+        // …but does not suppress a different active state.
+        assert!(should_show_progress(
+            &AutoUpdateStatus::Installing { version: version() },
+            true,
+            Some(&downloading)
+        ));
     }
 }

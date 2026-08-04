@@ -22,7 +22,7 @@ pub mod sensor_provider; // Pluggable metric sensors (Fermi Extractor pattern) �
 pub(crate) mod strategy_evaluator; // Loop 6 — multi-model strategy selection (Fermi improvement-loop pattern)
 pub(crate) mod system_simulator; // Loop 6 — predictive regulation via digital twin (Fermi dynamics pattern)
 pub(crate) mod tool_stats; // Loop 6 — statistical learning for MCP tool costs and reliability
-pub mod types; // Loop 6 → Inference energy estimation
+pub mod types; // Loop 6 — regulation loop types
 
 pub mod runtime; // Loop 6 — runtime
 pub mod runtime_policy; // Layer 6 — runtime action policy (VeriGuard + AgentGuard)

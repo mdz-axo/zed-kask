@@ -409,13 +409,22 @@ Convergence is validated by `FlowDefValidationReport` in `hkask-types::flowdef_v
 
 ### Gas Consumption
 
-Every skill execution consumes **gas** from the agent's energy budget:
+Skill execution is bounded by **two independent budgets**:
 
-1. `McpRuntime::invoke` / `ToolGovernance` estimates cost via `FlatEnergyEstimator::estimate_cost()`
-2. Gas is **reserved** before invocation (hold-settle pattern)
-3. After invocation, actual gas is **settled** — if actual < reserved, the difference is refunded
+1. **Per-agent call cap (System A)** — every governed MCP tool call via
+   `McpRuntime::invoke` charges one call against the agent's `CallCap`
+   (`CallCapManager::can_proceed` + `charge`). The cap resets to its ceiling each
+   regulation tick. An agent with no registered cap is denied fail-closed.
+2. **Per-cascade budget (System B)** — the cascade runs against a
+   `BudgetTracker` declared in the skill manifest's `gas:`/`rjoule:` blocks:
+   `gas` is charged per `select` iteration (`charge_iteration`), and `rJoule` is
+   charged from each inference call's observed USD cost (`charge_rjoule(cost_usd)`).
+   Hitting a hard limit finalizes the cascade `MaxedOut` (`energy_spent`).
 
-Gas consumption is observable via Regulation spans. Query the in-process Regulation span surface (kask panel or agent panel) and look for `reg.tool.invoked` (pre-invocation) and `reg.tool.completed` (post-invocation with settled cost). The former `kask regulation alerts` CLI has been removed.
+Gas/cost consumption is observable via Regulation spans. Query the in-process
+Regulation span surface (kask panel or agent panel) and look for `reg.tool.invoked`
+(pre-invocation) and `reg.tool.completed` (post-invocation). The former
+`kask regulation alerts` CLI has been removed.
 
 ### Error Handling
 

@@ -27,7 +27,6 @@ capability types live in their owning domain crates.
 | `tool_taint` | `ToolTaint` — FIDES information-flow labels (Source/Sink/Pure/Endorser) |
 | `transcript` | `TimedWord`, `TranscriptSegment`, `TranscriptBundle` |
 | `voice` | `VoiceDesign` |
-| `wallet_types` | `RJoule`, `WalletConfig`, `WalletBalance`, `WalletTransaction`, `Encumbrance`, `ApiKeyCapability`, `ChainId`, `GAS_PER_RJOULE` |
 | `corpus` | `TaggedChunk`, `ChunkOntology`, `ExpertiseLevel` |
 | `document` | `DocStructure`, `Page`, `Block` |
 | `crypto` / `secret` | `Ed25519PublicKey`, `Ed25519Signature`, `SecretRef`, `ZeroizingSecret` |

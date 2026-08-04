@@ -180,7 +180,7 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 
 **File:** `crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted as tracing events by `crates/hkask-regulation/src/cybernetics_loop.rs` and `crates/hkask-services-core/src/error/regulation_record.rs`
 
-Wallet spans are canonical namespace strings (not a dedicated `WalletSpan` enum). The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`. Wallet types live in `hkask-types`. The `InfraSpan::WalletConversion` variant covers the `reg.wallet.conversion` namespace; the remaining wallet spans are emitted as raw tracing events.
+Wallet spans are canonical namespace strings (not a dedicated `WalletSpan` enum). The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup, and the residual crypto wallet ledger (`hkask-storage::wallet`), `hkask-regulation::WalletManager`/`Well`, and the `hkask-types::wallet_types` module (`RJoule`/`WalletConfig`/`GAS_PER_RJOULE`/…) were removed 2026-08-03 as dead-in-production. The `reg.wallet.*` namespace strings below are **retained** in `CANONICAL_NAMESPACES` for tracing-target stability; the only remaining emitters are the regulation loop's raw `reg.wallet` events for the `WalletBalanceLow`/`WalletKeyUnhealthy` reasons and `InfraSpan::WalletConversion` (which covers the `reg.wallet.conversion` namespace). The unrelated ABW wallet balance shown in the swarm panel is read from the ABW REST API, not from these spans.
 
 | Namespace | Emitted When |
 |---|---|

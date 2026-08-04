@@ -1,6 +1,6 @@
 # hkask-regulation — Regulation System
 
-Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of Requisite Variety through variety sensing, algedonic alerts, energy budgets, OCAP governance, and sovereignty enforcement (Loop 6).
+Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of Requisite Variety through variety sensing, algedonic alerts, per-agent tool-call caps, OCAP governance, and sovereignty enforcement (Loop 6).
 
 ## Public Modules
 
@@ -8,12 +8,11 @@ Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of
 |--------|---------|
 | `runtime` | `RegulationLedger` — central Regulation state machine |
 | `cybernetics_loop` | Loop 6 main sense→compute→act cycle |
-| `energy` | Gas budgets (`hJoules`), `GasBudget`, `GasCost` |
-| `energy_budget_management` | Budget registration, reservation, settlement |
-
-| `algedonic` | Algedonic signal channel (positive/negative valence) |
-| `types::loops` | `CurationInput`, `LoopAction`, `CuratorDirective` |
-| `wallet_manager` | Wallet-backed energy budgets |
+| `energy` | Per-agent tool-call caps (`CallCap`, `CallCapManager`) |
+| `metacognition` | Curator's sense→compare→compute→act governance loop |
+| `set_points` | Loop 6 set-points config & loaders |
+| `sensor_provider` | Pluggable metric sensors (Fermi Extractor pattern) — public for cross-loop registration |
+| `types::loops` | `CurationInput`, `ExperienceClassification`, `RegulatoryAction` |
 | `runtime_policy` | Layer 6 defense — pre-execution policy check (VeriGuard/AgentGuard) |
 
 ## Key Types
@@ -22,16 +21,15 @@ Homeostatic self-regulation engine for hKask. Regulation enforces Ashby's Law of
 |------|-------------|
 | `RegulationLedger` | Central Regulation state machine with health, variety, alerts |
 | `CyberneticsLoop` | Loop 6 regulation cycle |
-
-The OCAP-gated tool invocation membrane (`McpRuntime::invoke` / `ToolGovernance`) lives in `hkask-mcp`; it consumes this crate's `CyberneticsLoop`, `GasBudget`, and `ToolStats` primitives via the hold-settle pattern.
-
-| `GasBudget` | Energy budget with hJoule accounting |
+| `CallCap` | Per-agent tool-call cap (ceiling + remaining + reset cycle) |
+| `CallCapManager` | Registry of per-agent `CallCap`s with curation overrides |
 | `SetPoints` | Configurable regulatory thresholds |
 | `DefaultPolicy` | Pre-execution policy check (Allow/Block/RequireHuman/Log) — FIDES taint flow + rate limiting + human-in-the-loop enforcement |
 
+The OCAP-gated tool invocation membrane (`McpRuntime::invoke`) lives in `hkask-mcp`; it consumes this crate's `CyberneticsLoop`, `CallCapManager`, and `ToolStats` primitives via the call-charge pattern (`CyberneticsLoop::charge_call`).
+
 ## Dependencies
 
-- `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError, InferencePort)
-- `hkask-types` — shared foundation types
+- `hkask-types` — foundation types (WebID, NuEvent, InfrastructureError, `InferencePort`)
 - `hkask-capability` — OCAP delegation tokens
 - `tokio`, `tracing`, `serde`, `chrono`

@@ -136,12 +136,11 @@ records (`persist`, `persist_if_absent`). `RegulationArchive` (in
 `hkask-storage/src/regulation_store.rs:72`) implements `RegulationSink` and
 persists/replays Regulation records (`query_algedonic`, `replay_weighted`,
 `persist_cursor`, `load_cursor`, `query_by_namespace`) and is used directly by
-consumers (no port trait beyond `RegulationSink`). `WalletManager` (in
-`hkask-regulation/src/wallet_manager.rs:28`) manages gas-budget balance,
-encumbrance, and settlement (`gas_to_rjoules`, `get_encumbrance`,
-`can_afford`, `consume`, `settle_rjoules`) and is used directly by consumers
-(no port trait). `RegulationLedger` (the in-memory subscriber bus) lives in
-`hkask-regulation/src/runtime.rs:423`.
+consumers (no port trait beyond `RegulationSink`). `CallCapManager` (in
+`hkask-regulation/src/energy.rs`) bounds governed tool calls per agent per
+regulation tick (`register_call_cap`, `can_proceed`, `charge`, `reset_all`)
+and is used directly by consumers (no port trait). `RegulationLedger` (the
+in-memory subscriber bus) lives in `hkask-regulation/src/runtime.rs`.
 
 ### Persistence cluster
 

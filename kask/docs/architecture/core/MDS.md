@@ -33,12 +33,10 @@ The ontology is re-anchored to the **19 surviving hKask crates** (18 `hkask-*` +
 | Entity | Crate / Surface | Description | Goal Principle |
 |--------|-------|-------------|---------------|
 | `HumanUser` | zed account (replaces deleted `hkask-identity` user store) | Human identity, role, provider link — owned by zed-kask, not a parallel hKask identity store | P1 |
-| Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a user's agent identity (persona, voice, wallet link). The `UserPod` type does not exist in `hkask-types` — the per-user data directory *is* the agent identity container post-pivot. Pod abstraction deleted in 2026-07-25 cleanup. | P6, P1 |
-| `Wallet` | `hkask-regulation::WalletManager` (replaces deleted `hkask-wallet`) | rJoule balance, encumbrance, multi-chain deposits — in-process, no service layer. `gas_per_rjoule` conversion rate is configured via `WalletConfig` in `hkask-types`. | P9 |
-| `ApiKey` | `hkask-types` (wallet types; replaces deleted `hkask-wallet`) | Scoped API key with spending limits and expiry | P1 |
+| Per-user data directory | zed-kask (replaces deleted `hkask-pods` `AgentPod`) | Runtime container for a user's agent identity (persona, voice). The `UserPod` type does not exist in `hkask-types` — the per-user data directory *is* the agent identity container post-pivot. Pod abstraction deleted in 2026-07-25 cleanup. | P6, P1 |
 | `hMem` | `hkask-storage` | Entity-Attribute-Value knowledge representation, bitemporal | P3 |
-| `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, gas budgets | P9 |
-| `GasBudget` | `hkask-regulation` | Per-agent gas budget with cap, replenish rate, hold-settle pattern | P9 |
+| `RegulationLedger` | `hkask-regulation` | Cybernetic nervous system — variety monitoring, alerts, per-agent call caps | P9 |
+| `CallCap` | `hkask-regulation` | Per-agent hard ceiling on governed tool calls per regulation tick; one call charged per `McpRuntime::invoke`; resets to the ceiling each tick (replaces the former gas hold-settle `GasBudget`, deleted 2026-08-03) | P9 |
 
 
 ### 1.2 Kata-Kanban Domain
@@ -96,7 +94,7 @@ The deleted subcrates (`hkask-services-chat`, `hkask-services-onboarding`, `hkas
 | `hkask-services-chat` | zed's agent panel (`crates/agent`, `agent_ui`) — zed owns chat |
 | `hkask-services-onboarding` | zed's first-launch flow — zed owns onboarding |
 | `hkask-services-skill` | `hkask-templates` / `ManifestExecutor` (D1) — skill execution is native, no service layer |
-| `hkask-services-wallet` | In-process wallet primitives (`hkask-regulation::WalletManager` + `hkask-ledger`); no service layer — consumers compose `WalletManager` + `ApiKeyIssuer` + Regulation directly (`hkask-wallet` deleted; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`) |
+| `hkask-services-wallet` | Deleted outright (2026-08-03). The crypto rJoule ledger (`hkask-storage::wallet`), `WalletManager`/`Well`/`agent_wallet_store`, and `hkask-types::wallet_types` were dead-in-production (zero callers); governed tool-call bounding now lives in `hkask-regulation::CallCapManager`, and the per-skill-cascade USD budget lives in `hkask-templates::BudgetTracker` |
 
 Surviving subcrates (kept temporarily while MCP servers depend on them; dissolve at T3.0):
 
@@ -500,15 +498,15 @@ Cross-references are verified by the link checker in CI (relative links within t
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
 | `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign` (moved from deleted `hkask-pods`), `HMemEntry` (moved from deleted `hkask-git-cas`), `ExpectProposal` (moved from deleted `hkask-test-harness`) |
-| `hkask-storage` | Domain, Lifecycle | `hMem`, `WalletStore`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) |
+| `hkask-storage` | Domain, Lifecycle | `hMem`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) The crypto `wallet` module and `WalletStore` were deleted 2026-08-03 (dead-in-production). |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
-| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `GasBudget`, `CyberneticsLoop`, variety/algedonic, `WalletManager` (gas/rJoule balance, `gas_per_rjoule` config via `WalletConfig`) |
+| `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling, replaces deleted `GasBudget` hold-settle), `CyberneticsLoop`, variety/algedonic |
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
 | `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
 | `hkask-capability` | Trust | capability-match gate, capability tokens |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
-| ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup; `gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `WalletManager` uses it for gas/rJoule conversion; wallet types live in `hkask-types` |
+| ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup. The residual `hkask-storage::wallet` crypto ledger, `hkask-regulation::WalletManager`/`Well`/`agent_wallet_store`, and `hkask-types::wallet_types` were also deleted 2026-08-03 (dead-in-production, zero callers). Tool-call bounding is now `hkask-regulation::CallCapManager`; per-cascade USD budgeting is `hkask-templates::BudgetTracker`. |
 | `hkask-ledger` | Trust, Lifecycle | hMem accounting, double-entry ledger |
 | `hkask-inference` | Composition | `MediaRouter`, `InferenceIpcClient`, `ProviderId` — reads keys via the `keyring` crate directly (MCP-server-internal only; user-facing inference is zed's `LanguageModelRegistry` via `kask_bridge` D4/D8; embeddings via `kask_bridge::LanguageModelEmbeddingPort`) |
 | `hkask-mcp-server` (framework) | Composition | `reg.tool.* + capability-match gating for the 11 MCP servers |
