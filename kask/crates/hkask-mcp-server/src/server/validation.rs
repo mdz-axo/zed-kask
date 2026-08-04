@@ -123,6 +123,8 @@ pub fn map_infra_error(error: &hkask_types::InfrastructureError, context: &str) 
         | hkask_types::InfrastructureError::Serialization(_)
         | hkask_types::InfrastructureError::LockPoisoned
         | hkask_types::InfrastructureError::Io(_) => McpToolError::internal(message),
+        // Non-exhaustive enum: future variants stay internal (conservative).
+        _ => McpToolError::internal(message),
     }
 }
 

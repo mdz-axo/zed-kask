@@ -18,7 +18,7 @@ pub mod media_block;
 mod templates;
 pub mod video;
 
-pub use error::{MediaError, map_image_open_error, map_media_error};
+pub use error::{MediaError, map_gallery_store_error, map_image_open_error, map_media_error};
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 

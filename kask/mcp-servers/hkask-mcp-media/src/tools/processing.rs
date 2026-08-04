@@ -112,7 +112,7 @@ impl MediaServer {
                 let all_tags = self
                     .gallery_store
                     .get_all_tags(&ga.gallery_id)
-                    .map_err(|e| McpToolError::internal(format!("Failed to query tags: {}", e)))?;
+                    .map_err(map_gallery_store_error)?;
 
                 let mut image_scores: HashMap<String, f64> = HashMap::new();
                 for (tag, relative_path) in &all_tags {
@@ -141,12 +141,12 @@ impl MediaServer {
                 let ref_tags = self
                     .gallery_store
                     .get_tags(&ref_image_id)
-                    .map_err(|e| McpToolError::internal(format!("Failed to get reference tags: {}", e)))?;
+                    .map_err(map_gallery_store_error)?;
 
                 let all_tags = self
                     .gallery_store
                     .get_all_tags(&ga.gallery_id)
-                    .map_err(|e| McpToolError::internal(format!("Failed to query tags: {}", e)))?;
+                    .map_err(map_gallery_store_error)?;
 
                 let mut image_scores: HashMap<String, f64> = HashMap::new();
                 for (tag, relative_path) in &all_tags {
@@ -245,7 +245,7 @@ impl MediaServer {
 
             canvas
                 .save(&output_path)
-                .map_err(|e| McpToolError::internal(format!("Failed to save collage: {}", e)))?;
+                .map_err(|e| map_image_open_error(&output_path, e))?;
 
             let result = serde_json::json!({
                 "status": "created",
@@ -485,13 +485,13 @@ impl MediaServer {
                 .ffmpeg
                 .clip(&video_url, start_sec, end_sec)
                 .await
-                .map_err(|e| McpToolError::internal(format!("Clip step failed: {}", e)))?;
+                .map_err(map_media_error)?;
 
             let captioned = if let Some(ref cap) = caption_text {
                 self.ffmpeg
                     .add_caption(&clipped.to_string_lossy(), cap, "bottom", 24)
                     .await
-                    .map_err(|e| McpToolError::internal(format!("Caption step failed: {}", e)))?
+                    .map_err(map_media_error)?
             } else {
                 clipped.clone()
             };
@@ -513,8 +513,7 @@ impl MediaServer {
                 let _ = std::fs::remove_file(&captioned);
             }
 
-            let gif = gif_result
-                .map_err(|e| McpToolError::internal(format!("GIF step failed: {}", e)))?;
+            let gif = gif_result.map_err(map_media_error)?;
 
             let result = serde_json::json!({
                 "status": "remixed",
@@ -640,9 +639,7 @@ impl MediaServer {
                 .ffmpeg
                 .extract_keyframes(&video_url, 2.0, 10)
                 .await
-                .map_err(|e| {
-                    McpToolError::internal(format!("Keyframe extraction failed: {}", e))
-                })?;
+                .map_err(map_media_error)?;
 
             if frames.is_empty() {
                 return Err(McpToolError::internal(
@@ -756,7 +753,7 @@ impl MediaServer {
 
             let mut buf = std::io::Cursor::new(Vec::new());
             img.write_to(&mut buf, image::ImageFormat::Png)
-                .map_err(|e| McpToolError::internal(format!("Failed to encode composited image: {}", e)))?;
+                .map_err(|e| map_image_open_error(std::path::Path::new("<meme composite>"), e))?;
             let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.get_ref());
             let data_uri = format!("data:image/png;base64,{}", b64);
 

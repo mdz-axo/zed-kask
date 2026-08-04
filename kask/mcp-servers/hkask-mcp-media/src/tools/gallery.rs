@@ -111,9 +111,10 @@ impl MediaServer {
             }
 
             {
-                let mut guard = self.gallery_state.lock().map_err(|e| {
-                    McpToolError::internal(format!("Gallery state lock error: {}", e))
-                })?;
+                let mut guard = self
+                    .gallery_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 *guard = Some(state);
             }
 
@@ -189,7 +190,7 @@ impl MediaServer {
             let all_tags = self
                 .gallery_store
                 .get_all_tags(&ga.gallery_id)
-                .map_err(|e| McpToolError::internal(format!("Failed to query tags: {}", e)))?;
+                .map_err(map_gallery_store_error)?;
 
             let limit = limit.unwrap_or(10);
             let min_sim = min_similarity.unwrap_or(0.3);
@@ -718,7 +719,7 @@ impl MediaServer {
                 Some(vision_model),
             )
             .await
-            .map_err(|e| McpToolError::internal(format!("Face validation failed: {}", e)))?;
+            .map_err(map_media_error)?;
 
             Ok(serde_json::json!(validation))
         })
@@ -1010,7 +1011,7 @@ impl MediaServer {
                     workflow_id.as_deref(),
                     parent_image_id.as_deref(),
                 )
-                .map_err(|e| map_media_error(e.into()))?;
+                .map_err(map_gallery_store_error)?;
             serde_json::to_value(&record)
                 .map_err(|e| McpToolError::internal(format!("encode lineage: {e}")))
         })

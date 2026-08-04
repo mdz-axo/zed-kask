@@ -11,7 +11,7 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::map_corpus_io_error;
+use crate::helpers::{map_corpus_io_error, map_semantic_memory_error};
 use crate::services::consolidation::{ConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
@@ -58,7 +58,7 @@ impl CorpusServer {
             })?;
             let embeddings = semantic
                 .embeddings_by_prefix(&req.prefix)
-                .map_err(|e| McpToolError::internal(format!("Embedding query failed: {e}")))?;
+                .map_err(|e| map_semantic_memory_error(e, "Embedding query failed"))?;
 
             // Pre-normalize all vectors
             let normalized: Vec<(String, Vec<f32>)> = embeddings

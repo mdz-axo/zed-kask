@@ -7,6 +7,7 @@
 //! `Internal`. Each `map_*` fn below classifies per variant instead.
 
 use crate::adapter::AdapterStoreError;
+use crate::adapters::JobStoreError;
 use crate::dataset::DatasetError;
 use crate::huggingface::TrainingArtifactError;
 use crate::providers::types::HostProviderError;
@@ -78,5 +79,46 @@ pub fn map_dataset_error(e: DatasetError) -> McpToolError {
         | DatasetError::Validation { .. }
         | DatasetError::Empty => McpToolError::invalid_argument(message),
         DatasetError::Io(_) | DatasetError::Cache(_) => McpToolError::internal(message),
+    }
+}
+
+/// Classify a `JobStoreError` from a job-persistence operation into the MCP
+/// wire-level `McpToolError` kind. `Storage` (SQLite failure) is `unavailable`
+/// (transient infra — the operator can retry); `Serialization` is `internal`.
+pub fn map_job_store_error(e: JobStoreError) -> McpToolError {
+    let message = e.to_string();
+    match e {
+        JobStoreError::Storage(_) => McpToolError::unavailable(message),
+        JobStoreError::Serialization(_) => McpToolError::internal(message),
+    }
+}
+
+/// Classify a `SemanticMemoryError` from a semantic-memory query into the MCP
+/// wire-level `McpToolError` kind: `NotFound` variants → `not_found`,
+/// infrastructure → per-variant via the shared `map_infra_error`, domain
+/// contract violations (`InvalidVisibility`, `HasPerspective`) →
+/// `invalid_argument`, missing centroid embeddings → `not_found`, remaining
+/// embedding failures → `internal`.
+pub fn map_semantic_memory_error(e: hkask_memory::SemanticMemoryError) -> McpToolError {
+    use hkask_memory::SemanticMemoryError;
+    let message = e.to_string();
+    match e {
+        SemanticMemoryError::HMem(hkask_storage::HMemError::NotFound(_)) => {
+            McpToolError::not_found(message)
+        }
+        SemanticMemoryError::HMem(hkask_storage::HMemError::Infra(ref infra)) => {
+            hkask_mcp_server::map_infra_error(infra, "semantic memory query")
+        }
+        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
+            McpToolError::not_found(message)
+        }
+        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::Infrastructure(
+            ref infra,
+        )) => hkask_mcp_server::map_infra_error(infra, "semantic memory query"),
+        SemanticMemoryError::InvalidVisibility(_) | SemanticMemoryError::HasPerspective => {
+            McpToolError::invalid_argument(message)
+        }
+        SemanticMemoryError::NoEmbeddingsForCentroid(_) => McpToolError::not_found(message),
+        SemanticMemoryError::Embedding(_) => McpToolError::internal(message),
     }
 }

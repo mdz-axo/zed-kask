@@ -11,6 +11,103 @@ use serde::de::DeserializeOwned;
 /// so existing call sites stay readable.
 pub(crate) use hkask_mcp_server::server::map_io_error as map_corpus_io_error;
 
+/// Classify a `SemanticMemoryError` from a memory-DB operation into the
+/// appropriate `McpToolError` kind. Infrastructure variants (HMem/Embedding
+/// wrapping an `InfrastructureError`) route through the shared
+/// `map_infra_error`; domain contract violations (`InvalidVisibility`,
+/// `HasPerspective`) are caller-fixable (`invalid_argument`); missing
+/// centroid embeddings are `not_found`.
+pub(crate) fn map_semantic_memory_error(
+    error: hkask_memory::SemanticMemoryError,
+    context: &str,
+) -> McpToolError {
+    use hkask_memory::SemanticMemoryError;
+    match error {
+        SemanticMemoryError::HMem(hkask_storage::HMemError::NotFound(_)) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::HMem(hkask_storage::HMemError::Infra(ref infra)) => {
+            hkask_mcp_server::server::map_infra_error(infra, context)
+        }
+        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::Infrastructure(
+            ref infra,
+        )) => hkask_mcp_server::server::map_infra_error(infra, context),
+        SemanticMemoryError::InvalidVisibility(_) | SemanticMemoryError::HasPerspective => {
+            McpToolError::invalid_argument(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::NoEmbeddingsForCentroid(_) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
+    }
+}
+
+/// Classify a `DatabaseError` from opening a memory DB into the appropriate
+/// `McpToolError` kind: a passphrase mismatch is an auth failure
+/// (`permission_denied`); a corrupted DB file is a caller-fixable data
+/// problem (`invalid_argument`); SQLite/SQLCipher/key-derivation/Postgres
+/// failures are infrastructure (`internal`).
+pub(crate) fn map_database_error(
+    error: hkask_storage::DatabaseError,
+    context: &str,
+) -> McpToolError {
+    use hkask_storage::DatabaseError;
+    let message = format!("{context}: {error}");
+    match error {
+        DatabaseError::PassphraseMismatch(_) => McpToolError::permission_denied(message),
+        DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
+        DatabaseError::Sqlite(_)
+        | DatabaseError::SqlCipher(_)
+        | DatabaseError::KeyDerivation(_)
+        | DatabaseError::Postgres(_) => McpToolError::internal(message),
+        // Non-exhaustive enum: future variants stay internal (conservative).
+        _ => McpToolError::internal(message),
+    }
+}
+
+/// Classify an `EmbeddingError` from an embedding-store operation into the
+/// appropriate `McpToolError` kind: missing refs → `not_found`, dimension
+/// mismatches → `invalid_argument` (caller stored vectors with a different
+/// model), infrastructure → shared `map_infra_error`, storage/decode →
+/// `internal`.
+pub(crate) fn map_embedding_error(
+    error: hkask_storage::EmbeddingError,
+    context: &str,
+) -> McpToolError {
+    use hkask_storage::EmbeddingError;
+    let message = format!("{context}: {error}");
+    match error {
+        EmbeddingError::NotFound(_) => McpToolError::not_found(message),
+        EmbeddingError::DimensionMismatch { .. } => McpToolError::invalid_argument(message),
+        EmbeddingError::Infrastructure(ref infra) => {
+            hkask_mcp_server::server::map_infra_error(infra, context)
+        }
+        EmbeddingError::Storage(_) | EmbeddingError::Decode(_) => McpToolError::internal(message),
+    }
+}
+
+/// Classify a `ServiceError` from the compose pipeline into the appropriate
+/// `McpToolError` kind via its semantic `ErrorKind`: `NotFound` → `not_found`,
+/// `Forbidden` → `permission_denied`, `BadRequest` → `invalid_argument`,
+/// `Conflict` → `failed_precondition`, `ServiceUnavailable` → `unavailable`.
+pub(crate) fn map_service_error(
+    error: hkask_services_core::ServiceError,
+    context: &str,
+) -> McpToolError {
+    use hkask_services_core::ErrorKind;
+    let message = format!("{context}: {error}");
+    match error.kind() {
+        ErrorKind::NotFound => McpToolError::not_found(message),
+        ErrorKind::Forbidden => McpToolError::permission_denied(message),
+        ErrorKind::BadRequest => McpToolError::invalid_argument(message),
+        ErrorKind::Conflict => McpToolError::failed_precondition(message),
+        ErrorKind::ServiceUnavailable => McpToolError::unavailable(message),
+    }
+}
+
 /// Read a JSONL file and parse each non-empty line into `T`.
 ///
 /// Lines are split on newlines, trimmed, and empty lines are skipped. Parse errors

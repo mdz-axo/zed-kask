@@ -10,6 +10,7 @@
 //! and `hkask_storage::EmbeddingStore` for centroid retrieval.
 
 use crate::corpus::EmbedService;
+use crate::helpers::{map_database_error, map_embedding_error, map_service_error};
 use crate::{
     CorpusServer, McpToolError, Parameters, cosine_distance, default_embedding_model,
     embedding_dim, execute_tool, json, tool, tool_router,
@@ -308,7 +309,7 @@ impl CorpusServer {
                 self.inference_router.clone(),
             )
             .await
-            .map_err(|e| McpToolError::internal(e.to_string()))?;
+            .map_err(|e| map_service_error(e, "Embed corpus failed"))?;
 
             let json_str = serde_json::to_string(&BuildResult {
                 author: result.author,
@@ -367,7 +368,7 @@ impl CorpusServer {
 
             let result = crate::compose::ComposeService::compose(request)
                 .await
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_service_error(e, "Compose failed"))?;
 
             let json_str = serde_json::to_string(&ComposeResult {
                 prose: result.generated_prose,
@@ -452,7 +453,7 @@ impl CorpusServer {
 
             let result = crate::compose::ComposeService::compose(request)
                 .await
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_service_error(e, "Rewrite failed"))?;
 
             let json_str = serde_json::to_string(&serde_json::json!({
                 "rewritten": result.generated_prose,
@@ -480,13 +481,13 @@ impl CorpusServer {
 
         execute_tool(self, "corpus_compare", async {
             let db = Database::open(&params.db_path, &params.passphrase)
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_database_error(e, "Open memory DB"))?;
             let pool = db
                 .sqlite_pool()
-                .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
+                .map_err(|e| map_database_error(e, "sqlite pool"))?;
             let store =
                 EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
-                    .map_err(|e| McpToolError::internal(format!("embedding store init: {e}")))?;
+                    .map_err(|e| map_embedding_error(e, "embedding store init"))?;
 
             // ── Document comparison path ──────────────────────────────
             if let Some(ref doc_text) = document_content {
@@ -498,7 +499,7 @@ impl CorpusServer {
                     .embed(&emb_model, std::slice::from_ref(doc_text))
                     .await
                     .map_err(|e| {
-                        McpToolError::internal(format!("Failed to embed document: {e}"))
+                        McpToolError::unavailable(format!("Failed to embed document: {e}"))
                     })?;
                 let doc_vec = vectors
                     .first()
@@ -507,7 +508,7 @@ impl CorpusServer {
                 let prefix = format!("style:{}:", persona.as_deref().unwrap_or(""));
                 let all_refs = store
                     .query_by_prefix(&prefix)
-                    .map_err(|e| McpToolError::internal(e.to_string()))?;
+                    .map_err(|e| map_embedding_error(e, "query persona embeddings"))?;
 
                 let total_passages = all_refs.iter().filter(|r| !is_centroid_entity(r)).count();
 
@@ -521,7 +522,7 @@ impl CorpusServer {
 
                     let emb = store
                         .get(entity_ref)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?;
+                        .map_err(|e| map_embedding_error(e, "get centroid embedding"))?;
                     let dist = cosine_distance(doc_vec, &emb.vector);
 
                     let last_segment = entity_ref.rsplit(':').next().unwrap_or(entity_ref);
@@ -585,7 +586,7 @@ impl CorpusServer {
             // ── Pairwise author comparison path (backward compat) ─────
             let centroids = store
                 .query_by_prefix("style:")
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_embedding_error(e, "query centroids"))?;
 
             let mut author_names: Vec<String> = Vec::new();
             let mut author_info: Vec<AuthorInfo> = Vec::new();
@@ -601,7 +602,7 @@ impl CorpusServer {
                         let prefix = format!("style:{}:", name);
                         let refs = store
                             .query_by_prefix(&prefix)
-                            .map_err(|e| McpToolError::internal(e.to_string()))?;
+                            .map_err(|e| map_embedding_error(e, "query author passages"))?;
                         let passage_count =
                             refs.iter().filter(|r| !r.ends_with(":centroid")).count();
                         author_names.push(name.clone());
@@ -652,13 +653,13 @@ impl CorpusServer {
             );
 
             let db = Database::open(&params.db_path, &params.passphrase)
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_database_error(e, "Open memory DB"))?;
             let pool = db
                 .sqlite_pool()
-                .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
+                .map_err(|e| map_database_error(e, "sqlite pool"))?;
             let store =
                 EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
-                    .map_err(|e| McpToolError::internal(format!("embedding store init: {e}")))?;
+                    .map_err(|e| map_embedding_error(e, "embedding store init"))?;
 
             let emb_a = store.get(&centroid_a_ref).map_err(|_| {
                 McpToolError::invalid_argument(format!(
@@ -687,7 +688,7 @@ impl CorpusServer {
             let gen_model = generation_model();
             store
                 .store(&blended_ref, &blended, &model)
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_embedding_error(e, "store blended centroid"))?;
 
             let inf_cfg = inference_config();
             let config = crate::compose::CognitionConfig {
@@ -721,7 +722,7 @@ impl CorpusServer {
 
             let result = crate::compose::ComposeService::compose(request)
                 .await
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_service_error(e, "Mashup failed"))?;
 
             let json_str = serde_json::to_string(&MashupResult {
                 prose: result.generated_prose,
@@ -744,19 +745,19 @@ impl CorpusServer {
     pub async fn corpus_registry(&self, Parameters(params): Parameters<RegistryRequest>) -> String {
         execute_tool(self, "corpus_registry", async {
             let db = Database::open(&params.db_path, &params.passphrase)
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| map_database_error(e, "Open memory DB"))?;
             let pool = db
                 .sqlite_pool()
-                .map_err(|e| McpToolError::internal(format!("pool: {e}")))?;
+                .map_err(|e| map_database_error(e, "sqlite pool"))?;
             let store =
                 EmbeddingStore::from_driver(Arc::new(SqliteDriver::new(pool)), embedding_dim())
-                    .map_err(|e| McpToolError::internal(format!("embedding store init: {e}")))?;
+                    .map_err(|e| map_embedding_error(e, "embedding store init"))?;
 
             let json_str = match params.action {
                 RegistryAction::List => {
                     let centroids = store
                         .query_by_prefix("style:")
-                        .map_err(|e| McpToolError::internal(e.to_string()))?;
+                        .map_err(|e| map_embedding_error(e, "query centroids"))?;
                     let mut entries: Vec<RegistryEntry> = Vec::new();
                     for entity_ref in &centroids {
                         if entity_ref.ends_with(":centroid") {
@@ -766,7 +767,7 @@ impl CorpusServer {
                                 let prefix = format!("style:{}:", name);
                                 let refs = store
                                     .query_by_prefix(&prefix)
-                                    .map_err(|e| McpToolError::internal(e.to_string()))?;
+                                    .map_err(|e| map_embedding_error(e, "query author passages"))?;
                                 let passage_count =
                                     refs.iter().filter(|r| !r.ends_with(":centroid")).count();
                                 entries.push(RegistryEntry {
@@ -787,14 +788,14 @@ impl CorpusServer {
                     let prefix = format!("style:{}:", author);
                     let refs = store
                         .query_by_prefix(&prefix)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?;
+                        .map_err(|e| map_embedding_error(e, "query author embeddings"))?;
                     let emb_count = refs.len();
                     for entity_ref in &refs {
                         let _ = store.delete(entity_ref);
                     }
                     let pool = db
                         .sqlite_pool()
-                        .map_err(|e| McpToolError::internal(e.to_string()))?;
+                        .map_err(|e| map_database_error(e, "sqlite pool"))?;
                     let driver = Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
                     let h_mem_store = hkask_storage::HMemStore::from_driver(driver)
                         .map_err(|e| McpToolError::internal(e.to_string()))?;

@@ -23,7 +23,8 @@ pub use server::{
     validate_tool_url, validate_tool_url_permissive,
 };
 pub use server::{
-    MAX_READ_BYTES, contain_for_read, contain_for_write, map_io_error, map_join_error, read_capped,
+    MAX_READ_BYTES, contain_for_read, contain_for_write, map_infra_error, map_io_error,
+    map_join_error, read_capped,
 };
 
 pub use tool_schema::AnyJsonValue;

@@ -98,6 +98,23 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
     }
 }
 
+/// Classify a `GalleryStoreError` from a gallery-store query into the MCP
+/// wire-level `McpToolError` kind: `NotFound` → `not_found`, infrastructure
+/// → per-variant via the shared `map_infra_error`, `InvalidMode` /
+/// `AlreadyExists` are caller-fixable (`invalid_argument`).
+pub fn map_gallery_store_error(e: GalleryStoreError) -> McpToolError {
+    let message = e.to_string();
+    match e {
+        GalleryStoreError::NotFound(_) => McpToolError::not_found(message),
+        GalleryStoreError::Infra(ref infra) => {
+            hkask_mcp_server::server::map_infra_error(infra, "gallery store")
+        }
+        GalleryStoreError::InvalidMode(_) | GalleryStoreError::AlreadyExists(_) => {
+            McpToolError::invalid_argument(message)
+        }
+    }
+}
+
 /// Classify an `image::open` failure on a caller-referenced path.
 ///
 /// A missing file is `not_found` and a permission failure is

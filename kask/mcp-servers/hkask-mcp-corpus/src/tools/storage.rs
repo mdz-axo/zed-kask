@@ -1,5 +1,5 @@
 //! Storage and query tools — cache, passage query, similarity.
-use crate::helpers::map_corpus_io_error;
+use crate::helpers::{map_corpus_io_error, map_semantic_memory_error};
 use crate::{
     CorpusServer, IndexedPassage, LLMParameters, McpToolError, Parameters, SemanticMemory,
     cosine_similarity, embedding_dim, execute_tool, json, render_docproc_template, tool,
@@ -252,7 +252,7 @@ impl CorpusServer {
             // Purge embeddings with matching entity_ref prefix
             let purged_embeddings = semantic
                 .purge_by_prefix(&req.prefix)
-                .map_err(|e| McpToolError::internal(format!("Purge embeddings failed: {e}")))?;
+                .map_err(|e| map_semantic_memory_error(e, "Purge embeddings failed"))?;
 
             // Purge h_mems — old schema (entity="corpus:qa") vs new schema (entity starts with prefix)
             let mut purged_h_mems = 0usize;
@@ -262,7 +262,7 @@ impl CorpusServer {
                 // Old schema: entity is exactly "corpus:qa"
                 let h_mems = semantic
                     .query_deduped(&req.prefix)
-                    .map_err(|e| McpToolError::internal(format!("Query h_mems failed: {e}")))?;
+                    .map_err(|e| map_semantic_memory_error(e, "Query h_mems failed"))?;
                 for h_mem in &h_mems {
                     match semantic.delete_h_mem(&h_mem.id) {
                         Ok(()) => purged_h_mems += 1,
@@ -273,7 +273,7 @@ impl CorpusServer {
                 // New schema: query by attribute "training_qa_pair" and filter by entity prefix
                 let h_mems = semantic
                     .query_by_attribute("training_qa_pair")
-                    .map_err(|e| McpToolError::internal(format!("Query h_mems failed: {e}")))?;
+                    .map_err(|e| map_semantic_memory_error(e, "Query h_mems failed"))?;
                 for h_mem in &h_mems {
                     if h_mem.entity.starts_with(&req.prefix) {
                         match semantic.delete_h_mem(&h_mem.id) {

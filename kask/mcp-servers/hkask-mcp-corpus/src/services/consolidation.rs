@@ -14,7 +14,7 @@ use hkask_types::template::LLMParameters;
 use serde_json::json;
 
 use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
-use crate::helpers::map_corpus_io_error;
+use crate::helpers::{map_corpus_io_error, map_semantic_memory_error};
 use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
 use crate::tools::semantic::configured_qa_model;
 use crate::{embedding_dim, normalize_concept, normalize_in_place, render_docproc_template};
@@ -79,7 +79,7 @@ impl ConsolidationService {
         })?;
         let embeddings = semantic
             .embeddings_by_prefix(&prefix)
-            .map_err(|e| McpToolError::internal(format!("Embedding query failed: {e}")))?;
+            .map_err(|e| map_semantic_memory_error(e, "Embedding query failed"))?;
 
         // Pre-normalize all vectors
         let normalized: Vec<(String, Vec<f32>)> = embeddings

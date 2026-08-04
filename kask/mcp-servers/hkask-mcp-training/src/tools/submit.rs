@@ -3,7 +3,8 @@ use crate::huggingface::HuggingFaceTraining;
 use crate::lora_validation;
 use crate::providers::{TrainingHostId, TrainingJob, TrainingJobStatus};
 use crate::tools::error_mapping::{
-    map_adapter_store_error, map_fs_error, map_host_provider_error, map_training_artifact_error,
+    map_adapter_store_error, map_fs_error, map_host_provider_error, map_job_store_error,
+    map_training_artifact_error,
 };
 use crate::types::TrainSubmitRequest;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
@@ -310,7 +311,7 @@ impl TrainingServer {
             }
 
             if let (Some(job_store), Some(artifacts)) = (&self.job_store, &job.artifacts) {
-                job_store.update_artifacts(&job.id, artifacts).map_err(|error| McpToolError::internal(format!("Persist training artifacts: {error}")))?;
+                job_store.update_artifacts(&job.id, artifacts).map_err(map_job_store_error)?;
             }
 
             if retrain_mode {
@@ -328,7 +329,7 @@ impl TrainingServer {
             match self.host.submit(&job).await {
                 Ok(provider_job_id) => {
                     if let Some(job_store) = &self.job_store {
-                        job_store.update_provider_job_id(&job.id, &provider_job_id).map_err(|error| McpToolError::internal(format!("Persist provider job ID: {error}")))?;
+                        job_store.update_provider_job_id(&job.id, &provider_job_id).map_err(map_job_store_error)?;
                     }
                     let mut result = json!({"job_id": job.id, "provider_job_id": provider_job_id, "status": "queued", "base_model": base_model, "host": format!("{:?}", self.host_id)});
                     result["estimated_cost_urj"] = json!(job.estimated_cost_urj);

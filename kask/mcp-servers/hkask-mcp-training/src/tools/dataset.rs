@@ -1,6 +1,6 @@
 use crate::TrainingServer;
 use crate::dataset::DatasetPipeline;
-use crate::tools::error_mapping::map_dataset_error;
+use crate::tools::error_mapping::{map_dataset_error, map_fs_error, map_semantic_memory_error};
 use crate::types::{AssembleDatasetRequest, IngestQaRequest, TrainIngestDatasetRequest};
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use hkask_storage::HMem;
@@ -79,7 +79,7 @@ impl TrainingServer {
             };
             let h_mems = match semantic.query_by_attribute("training_qa_pair") {
                 Ok(t) => t,
-                Err(e) => return Err(McpToolError::internal(format!("Failed to query QA h_mems: {e}"))),
+                Err(e) => return Err(map_semantic_memory_error(e)),
             };
             if h_mems.is_empty() {
                 return Err(McpToolError::invalid_argument("No training_qa_pair h_mems found. Ingest QA pairs first with training_ingest_qa."));
@@ -139,7 +139,7 @@ impl TrainingServer {
                     }
                     Ok(result)
                 }
-                Err(e) => Err(McpToolError::internal(format!("Failed to write dataset file: {e}"))),
+                Err(e) => Err(map_fs_error("Failed to write dataset file", e)),
             }
         })
         .await

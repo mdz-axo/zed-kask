@@ -271,10 +271,10 @@ impl MediaServer {
                 .ffmpeg
                 .capture_audio(duration_secs, None)
                 .await
-                .map_err(|e| McpToolError::internal(format!("Audio capture failed: {}", e)))?;
+                .map_err(map_media_error)?;
 
             let audio_data = std::fs::read(&audio_path).map_err(|e| {
-                McpToolError::internal(format!("Failed to read captured audio: {}", e))
+                hkask_mcp_server::map_io_error(e, "Failed to read captured audio")
             })?;
             let b64 =
                 base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_data);

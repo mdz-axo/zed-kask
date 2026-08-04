@@ -14,7 +14,7 @@ pub mod types;
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_infra_error};
 use hkask_services_core::{ErrorKind, ServiceError};
 use hkask_storage::database::sqlite::SqliteDriver;
 
@@ -417,7 +417,15 @@ impl CuratorServer {
                         .collect();
                     Ok(json!({"count": serialized.len(), "total": h_mems.len(), "results": serialized}))
                 }
-                Err(e) => Err(McpToolError::internal(format!("Semantic recall failed: {e}"))),
+                Err(e) => Err(match e {
+                    hkask_memory::SemanticMemoryError::HMem(
+                        hkask_storage::HMemError::Infra(ref infra),
+                    )
+                    | hkask_memory::SemanticMemoryError::Embedding(
+                        hkask_storage::EmbeddingError::Infrastructure(ref infra),
+                    ) => map_infra_error(infra, "Semantic recall failed"),
+                    other => McpToolError::internal(format!("Semantic recall failed: {other}")),
+                }),
             }
         })
         .await
@@ -519,9 +527,7 @@ impl CuratorServer {
                         .collect();
                     Ok(json!({"window_hours": hours, "count": s.len(), "events": s}))
                 }
-                Err(e) => Err(McpToolError::internal(format!(
-                    "Algedonic query failed: {e}"
-                ))),
+                Err(e) => Err(map_infra_error(&e, "Algedonic query failed")),
             }
         })
         .await
@@ -543,7 +549,7 @@ impl CuratorServer {
 
             let weighted = store
                 .replay_weighted(since, limit, &config)
-                .map_err(|e| McpToolError::internal(format!("Regulation query failed: {e}")))?;
+                .map_err(|e| map_infra_error(&e, "Regulation query failed"))?;
             let replayed_count = weighted.len();
             let filtered: Vec<serde_json::Value> = weighted
                 .into_iter()
