@@ -18,7 +18,7 @@ pub const FIBO_SCENARIO_PROBABILITY: &str = "fibo-fbc-fct-ra:ScenarioProbability
 /// `viz` selects the renderer; `"scenarios"` renders the pipeline/matrix/
 /// sensitivity/timeline dashboard. The event-tree DAG is handled separately
 /// by `hkask-graph-widget` (`viz: "event_tree"`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ScenariosBlockBody {
     #[serde(default)]
     pub viz: Option<String>,
@@ -114,18 +114,6 @@ pub struct EventNode {
     pub has_base_rate: Option<bool>,
     #[serde(default)]
     pub brier_score: Option<f64>,
-}
-
-impl Default for ScenariosBlockBody {
-    fn default() -> Self {
-        Self {
-            viz: None,
-            pipeline: PipelineOverview::default(),
-            calibration: None,
-            event_tree: None,
-            recent_forecasts: Vec::new(),
-        }
-    }
 }
 
 /// Parse a ```` ```scenarios ```` block body. Tolerant: missing `viz`/`nodes`

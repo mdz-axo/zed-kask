@@ -153,7 +153,7 @@ impl PortfolioWidget {
         // iteration order is randomized).
         let mut fields: Vec<(&String, &CharacteristicField)> =
             self.body.characteristics.iter().collect();
-        fields.sort_by(|(left, _), (right, _)| left.cmp(right));
+        fields.sort_by_key(|(left, _)| *left);
 
         let rows: Vec<AnyElement> = fields
             .into_iter()

@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-03
+version: "0.2.2"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -24,10 +24,11 @@ Every artifact cites concrete file:line references in the current tree.
 | Reference | Look up a fact | Domain | ERD or class diagram |
 | Explanation | Understand why | Trust + Curation | State or sequence diagram |
 
-## Major crates (10 crates, 39 artifacts)
+## Major crates (11 cross-cutting sets, 43 artifacts)
 
 | Crate | Tutorial | How-to | Reference | Explanation |
 |-------|----------|--------|-----------|-------------|
+| [swarm_system](./swarm_system/) | [Tutorial](./swarm_system/tutorial.md) | [How-to](./swarm_system/how-to.md) | [Reference](./swarm_system/reference.md) | [Explanation](./swarm_system/explanation.md) |
 | [hkask-types](./hkask-types/) | [Tutorial](./hkask-types/tutorial.md) | [How-to](./hkask-types/how-to.md) | [Reference](./hkask-types/reference.md) | [Explanation](./hkask-types/explanation.md) |
 | [hkask-capability](./hkask-capability/) | [Tutorial](./hkask-capability/tutorial.md) | — | [Reference](./hkask-capability/reference.md) | [Explanation](./hkask-capability/explanation.md) |
 | [hkask-storage](./hkask-storage/) | [Tutorial](./hkask-storage/tutorial.md) | [How-to](./hkask-storage/how-to.md) | [Reference](./hkask-storage/reference.md) | [Explanation](./hkask-storage/explanation.md) |

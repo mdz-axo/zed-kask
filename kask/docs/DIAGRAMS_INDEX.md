@@ -1,8 +1,8 @@
 ---
 title: "Diagram Verification Registry"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.32.0"
+last_updated: 2026-08-03
+version: "0.32.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [lifecycle, curation]
@@ -133,7 +133,22 @@ The following diagrams were standalone files not individually tracked in the ori
 | `state-invite-lifecycle.md` | state | `how-to/deployment-and-transport.md` | Invite Lifecycle State Machine | ⚠️ PARENT DELETED |
 | `state-loop-action-lifecycle.md` | state | `explanation/regulation-and-loops.md` | RegulatoryAction Lifecycle | ⚠️ PARENT DELETED |
 
-## 12. Summary
+## 12. Swarm System Diagrams
+
+The swarm system (`hkask-mcp-swarm` + `crates/swarm_panel` + the `swarm-intelligence` / `swarm-steering` skills) is documented cross-cuttingly in `diagrams/` and the `diataxis/swarm_system/` set. These standalone diagram files survive in `docs/diagrams/` (the directory was not eliminated — the §12 summary note was stale).
+
+| Diagram ID | Type | File | Description | Verified Against | Status |
+|-----------|------|------|-------------|------------------|--------|
+| DIAG-DIA-SWARM-001 | flowchart | `diagrams/flowchart-swarm-architecture.md` | Swarm MCP server architecture — two launch paths, two substrates, panel + skills + curator | `hkask_mcp_swarm.rs:2822`, `swarm_panel.rs:1870` | ✅ VERIFIED 2026-08-03 (tool count corrected 31→41) |
+| DIAG-DIA-SWARM-002 | flowchart | `diagrams/flowchart-swarm-pdca-cascade.md` | swarm-intelligence 10-step PDCA cascade with deterministic compute steps | `swarm-intelligence/SKILL.md:62` | ✅ VERIFIED |
+| DIAG-DIA-SWARM-003 | sequence | `diagrams/sequence-swarm-steering-loop.md` | Steering loop — advisory vs steering execution, delegate_results feedback | `swarm-steering/SKILL.md:59` | ✅ VERIFIED |
+| DIAG-DIA-SWARM-006 | class | `diagrams/class-swarm-server.md` | SwarmServer collaborators — AbwClient, ConsentStore, SpendGate, runtime, executor, A2A, LocalDelegateResult | `hkask_mcp_swarm.rs:115`, `consent.rs:56`, `spend_gate.rs:83`, `local_runtime.rs:39`, `agent_executor.rs:55`, `a2a.rs:24` | ✅ VERIFIED 2026-08-03 |
+| DIAG-DIA-SWARM-007 | state | `diagrams/state-swarm-panel-modes.md` | SwarmPanel PanelMode states (Browse/Author/Compose/Steer) + backend toggle | `swarm_panel.rs:230,289,1798,1834,1870` | ✅ VERIFIED 2026-08-03 |
+| DIAG-DIA-SWARM-008 | flowchart | `diagrams/flowchart-swarm-feedback-loops.md` | Four feedback loops with 5-property health + algedonic override + C4 latency deficit | `swarm-intelligence/SKILL.md:62,96,104,122,124,182`, `consent.rs:77,184`, `swarm_panel.rs:191` | ✅ VERIFIED 2026-08-03 |
+
+**Companion audit:** [`audits/swarm-cybernetics-semantics-audit.md`](audits/swarm-cybernetics-semantics-audit.md) — pragmatic-semantics gap analysis + pragmatic-cybernetics per-property loop assessment + VSM map + Ashby variety check.
+
+## 13. Summary
 
 All Mermaid diagrams were inline in their parent documents. The former `docs/diagrams/` directory has been eliminated (all standalone files inlined or deleted as duplicates). **A 2026-07-24 cleanup deleted several parent documents** (`explanation/regulation-and-loops.md`, `explanation/architecture-patterns.md`, `explanation/sovereignty-and-ocap.md`, `explanation/federation-and-transport.md`, `how-to/training-and-adapters.md`, `how-to/deployment-and-transport.md`); diagrams inlined into those files are recoverable via git history only. The Diataxis documentation set (`docs/diataxis/`) added 40 new per-crate diagrams (one per artifact) that are tracked in `diataxis/INDEX.md`, not here.
 
