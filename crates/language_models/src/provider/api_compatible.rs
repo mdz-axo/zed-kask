@@ -328,16 +328,10 @@ mod tests {
         assert_eq!(api_key_env_var_name_for("DeepInfra"), "DEEPINFRA_API_KEY");
         assert_eq!(api_key_env_var_name_for("OpenRouter"), "OPENROUTER_API_KEY");
         assert_eq!(api_key_env_var_name_for("fal.ai"), "FALAI_API_KEY");
-        assert_eq!(
-            api_key_env_var_name_for("Together AI"),
-            "TOGETHERAI_API_KEY"
-        );
         assert_eq!(api_key_env_var_name_for("KiloCode"), "KILOCODE_API_KEY");
         assert_eq!(api_key_env_var_name_for("Cline"), "CLINE_API_KEY");
-        assert_eq!(api_key_env_var_name_for("Z.ai"), "ZAI_API_KEY");
         // Lowercase IDs (used by some kask docs) must also resolve correctly.
         assert_eq!(api_key_env_var_name_for("deepinfra"), "DEEPINFRA_API_KEY");
         assert_eq!(api_key_env_var_name_for("openrouter"), "OPENROUTER_API_KEY");
-        assert_eq!(api_key_env_var_name_for("z.ai"), "ZAI_API_KEY");
     }
 }

@@ -9589,7 +9589,6 @@ dependencies = [
  "base64 0.22.1",
  "ffmpeg-next",
  "gpui",
- "hkask-storage",
  "image",
  "log",
  "parking_lot",

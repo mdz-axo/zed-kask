@@ -32,7 +32,7 @@ pub mod simple_slider;
 pub mod transport;
 pub mod video_decoder;
 
-pub use media_ref::{GalleryMediaStorage, MediaKind, MediaRef, MediaStorage, ResolvedMedia};
+pub use media_ref::{MediaKind, MediaRef, MediaStorage, ResolvedMedia};
 pub use media_widget::MediaWidget;
 
 use gpui::{App, AppContext, Entity, SharedString, Window};

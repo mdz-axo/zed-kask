@@ -38,31 +38,27 @@ use serde_json::{Value as JsonValue, json};
 const PROVIDER_ALIASES: &[(&[&str], &str)] = &[
     (&["deepinfra", "di"], "DI"),
     (&["fal", "fa", "fal.ai"], "FA"),
-    (&["together", "tg"], "TG"),
     (&["runpod", "rp"], "RP"),
     (&["openrouter", "or"], "OR"),
     (&["kilocode", "kc"], "KC"),
     (&["ollama", "om"], "OM"),
     (&["cline", "cl"], "CL"),
-    (&["z.ai", "zai", "za"], "ZA"),
 ];
 
 /// The serde id for every `ProviderId` variant (for the "valid provider"
 /// invariant). `OpenRouter` is the fallback, so it appears once here.
-const ALL_PROVIDER_IDS: &[&str] = &["DI", "FA", "TG", "RP", "OR", "KC", "OM", "CL", "ZA"];
+const ALL_PROVIDER_IDS: &[&str] = &["DI", "FA", "RP", "OR", "KC", "OM", "CL"];
 
-/// All ten `ProviderId` variants — for `prop::sample::select` when generating
+/// All seven `ProviderId` variants — for `prop::sample::select` when generating
 /// `RouterModelEntry`.
-const ALL_PROVIDERS: [ProviderId; 9] = [
+const ALL_PROVIDERS: [ProviderId; 7] = [
     ProviderId::DeepInfra,
     ProviderId::Fal,
-    ProviderId::Together,
     ProviderId::Runpod,
     ProviderId::OpenRouter,
     ProviderId::KiloCode,
     ProviderId::Ollama,
     ProviderId::Cline,
-    ProviderId::Zai,
 ];
 
 /// Reference implementation of `ModelInfo::from(ModelEntry)`, written as a
@@ -96,8 +92,6 @@ fn arb_prefixed_name() -> BoxedStrategy<String> {
         Just("fal".to_string()),
         Just("fa".to_string()),
         Just("fal.ai".to_string()),
-        Just("together".to_string()),
-        Just("tg".to_string()),
         Just("runpod".to_string()),
         Just("rp".to_string()),
         Just("openrouter".to_string()),
@@ -108,9 +102,6 @@ fn arb_prefixed_name() -> BoxedStrategy<String> {
         Just("om".to_string()),
         Just("cline".to_string()),
         Just("cl".to_string()),
-        Just("z.ai".to_string()),
-        Just("zai".to_string()),
-        Just("za".to_string()),
         Just("unknown-provider".to_string()),
         Just(String::new()),
         any::<String>(),

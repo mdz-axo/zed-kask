@@ -231,6 +231,18 @@ impl MediaServer {
             ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             ranked.truncate(limit);
 
+            // One renderable ```media block per result so the agent can surface
+            // the matched gallery images inline. absolute_path is
+            // root_path.join(relative_path) — that is what gallery_organize
+            // stored at scan time (gallery.rs:94), so the D18 MediaWidget
+            // (PathMediaStorage) can read the file.
+            let display_hints: Vec<String> = ranked
+                .iter()
+                .map(|(rel, _, _)| {
+                    crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
+                })
+                .collect();
+
             let results: Vec<serde_json::Value> = ranked
                 .into_iter()
                 .map(|(path, score, matches)| {
@@ -246,6 +258,7 @@ impl MediaServer {
                 "query": query,
                 "results": results,
                 "total_matches": results.len(),
+                "display_hints": display_hints,
             }))
         })
         .await
@@ -366,6 +379,15 @@ impl MediaServer {
             scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scored.truncate(limit);
 
+            // One renderable ```media block per result (see gallery_search for
+            // the root_path.join rationale).
+            let display_hints: Vec<String> = scored
+                .iter()
+                .map(|(rel, _)| {
+                    crate::media_block::image_block(&ga.root_path.join(rel).to_string_lossy())
+                })
+                .collect();
+
             let results: Vec<serde_json::Value> = scored
                 .into_iter()
                 .map(|(path, score)| serde_json::json!({"image": path, "similarity": score}))
@@ -374,6 +396,7 @@ impl MediaServer {
             Ok(serde_json::json!({
                 "query": query_label,
                 "results": results,
+                "display_hints": display_hints,
             }))
         })
         .await
@@ -867,7 +890,10 @@ impl MediaServer {
         execute_tool(self, "gallery_timeline", async {
             let ga = self.access_gallery().map_err(map_media_error)?;
 
-            let mut dated_images: Vec<(String, String)> = Vec::new();
+            // (period_key, relative_path, absolute_path). absolute_path drives
+            // the inline-renderable display_hints; relative_path stays in the
+            // result as a human-readable image identifier.
+            let mut dated_images: Vec<(String, String, String)> = Vec::new();
             for idx in 0..ga.image_count as usize {
                 let img = match self
                     .gallery_store
@@ -903,28 +929,39 @@ impl MediaServer {
                     _ => date_str.chars().take(4).collect(),
                 };
 
-                dated_images.push((period_key, img.relative_path));
+                dated_images.push((period_key, img.relative_path, img.absolute_path));
             }
 
-            let mut periods: std::collections::BTreeMap<String, Vec<String>> =
+            let mut periods: std::collections::BTreeMap<String, Vec<(String, String)>> =
                 std::collections::BTreeMap::new();
-            for (key, path) in &dated_images {
-                periods.entry(key.clone()).or_default().push(path.clone());
+            for (key, rel, abs) in &dated_images {
+                periods
+                    .entry(key.clone())
+                    .or_default()
+                    .push((rel.clone(), abs.clone()));
             }
 
             let mut result_periods: Vec<serde_json::Value> = Vec::new();
+            let mut display_hints: Vec<String> = Vec::new();
             for (key, images) in periods.iter().rev().take(count) {
-                let selected: Vec<&String> = images.iter().take(per_period).collect();
+                let selected: Vec<&(String, String)> = images.iter().take(per_period).collect();
                 result_periods.push(serde_json::json!({
                     "period": key,
                     "total_images": images.len(),
-                    "images": selected,
+                    "images": selected.iter().map(|(rel, _)| rel.clone()).collect::<Vec<_>>(),
                 }));
+                // One renderable ```media block per selected image so the agent
+                // can surface them inline; the D18 MediaWidget resolves the
+                // filesystem path via PathMediaStorage.
+                for (_, abs) in &selected {
+                    display_hints.push(crate::media_block::image_block(abs));
+                }
             }
 
             Ok(serde_json::json!({
                 "period_type": period,
                 "periods": result_periods,
+                "display_hints": display_hints,
             }))
         })
         .await

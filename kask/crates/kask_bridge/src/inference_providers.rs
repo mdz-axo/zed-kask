@@ -147,11 +147,9 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
         let enabled = match provider.credential_key {
             "deepinfra" => settings.inference_providers.deepinfra_enabled,
             "fal" => settings.inference_providers.fal_enabled,
-            "together" => settings.inference_providers.together_enabled,
             "openrouter" => settings.inference_providers.openrouter_enabled,
             "kilocode" => settings.inference_providers.kilocode_enabled,
             "cline" => settings.inference_providers.cline_enabled,
-            "zai" => settings.inference_providers.zai_enabled,
             "atlascloud" => settings.inference_providers.atlascloud_enabled,
             _ => false,
         };
@@ -187,17 +185,15 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
 pub fn ensure_openai_compatible_entries(settings: &super::KaskSettings, cx: &mut App) {
     // Extract the enabled states before the closure so we don't borrow
     // `settings` inside the `move` closure.
-    let enabled_states: [(&'static str, bool); 8] = [
+    let enabled_states: [(&'static str, bool); 6] = [
         ("DeepInfra", settings.inference_providers.deepinfra_enabled),
         ("fal.ai", settings.inference_providers.fal_enabled),
-        ("Together AI", settings.inference_providers.together_enabled),
         (
             "OpenRouter",
             settings.inference_providers.openrouter_enabled,
         ),
         ("KiloCode", settings.inference_providers.kilocode_enabled),
         ("Cline", settings.inference_providers.cline_enabled),
-        ("Z.ai", settings.inference_providers.zai_enabled),
         (
             "AtlasCloud",
             settings.inference_providers.atlascloud_enabled,

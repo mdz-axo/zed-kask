@@ -1597,7 +1597,7 @@ pub struct KaskDataServiceSettingsContent {
 /// written to settings.json so zed's OpenAI-compatible provider machinery
 /// registers it in the LLM Providers page and the agent model picker.
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
-:pub struct KaskInferenceProvidersSettingsContent {
+pub struct KaskInferenceProvidersSettingsContent {
     pub deepinfra_enabled: Option<bool>,
     pub fal_enabled: Option<bool>,
     pub openrouter_enabled: Option<bool>,

@@ -19,7 +19,6 @@ log.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true
 base64.workspace = true
-hkask-storage = { path = "../../kask/crates/hkask-storage" }
 
 # Video decode — gated behind cargo features to keep dev builds fast.
 # - `video`: uses system FFmpeg via pkg-config

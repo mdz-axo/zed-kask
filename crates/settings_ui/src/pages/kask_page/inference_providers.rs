@@ -38,18 +38,16 @@ pub(crate) fn render_inference_providers_page(
     let mut rows: Vec<AnyElement> = Vec::new();
     for desc in kask_bridge::INFERENCE_PROVIDERS {
         // Match on `credential_key` (lowercase canonical key: "deepinfra",
-        // "fal", "together", "openrouter", "kilocode", "cline", "zai"), not `desc.id`
-        // (which is the display-form "DeepInfra", "fal.ai", "Together AI", …).
+        // "fal", "openrouter", "kilocode", "cline"), not `desc.id`
+        // (which is the display-form "DeepInfra", "fal.ai", …).
         // The runtime matchers in `kask_bridge` use `credential_key`; the UI
         // must agree or every toggle renders off and writes no-op.
         let enabled = match desc.credential_key {
             "deepinfra" => inference.deepinfra_enabled,
             "fal" => inference.fal_enabled,
-            "together" => inference.together_enabled,
             "openrouter" => inference.openrouter_enabled,
             "kilocode" => inference.kilocode_enabled,
             "cline" => inference.cline_enabled,
-            "zai" => inference.zai_enabled,
             _ => false,
         };
         rows.push(render_inference_provider_row(
@@ -263,11 +261,9 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
     let credential_key = match provider_id {
         "DeepInfra" => "deepinfra",
         "fal.ai" => "fal",
-        "Together AI" => "together",
         "OpenRouter" => "openrouter",
         "KiloCode" => "kilocode",
         "Cline" => "cline",
-        "Z.ai" => "zai",
         other => other,
     }
     .to_string();
@@ -277,11 +273,9 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
         match credential_key.as_str() {
             "deepinfra" => inference.deepinfra_enabled = Some(enabled),
             "fal" => inference.fal_enabled = Some(enabled),
-            "together" => inference.together_enabled = Some(enabled),
             "openrouter" => inference.openrouter_enabled = Some(enabled),
             "kilocode" => inference.kilocode_enabled = Some(enabled),
             "cline" => inference.cline_enabled = Some(enabled),
-            "zai" => inference.zai_enabled = Some(enabled),
             _ => {}
         }
     });

@@ -67,13 +67,11 @@ impl From<hkask_types::ModelEntry> for ModelInfo {
         let provider = match provider_str.to_lowercase().as_str() {
             "deepinfra" | "di" => ProviderId::DeepInfra,
             "fal" | "fa" | "fal.ai" => ProviderId::Fal,
-            "together" | "tg" => ProviderId::Together,
             "runpod" | "rp" => ProviderId::Runpod,
             "openrouter" | "or" => ProviderId::OpenRouter,
             "kilocode" | "kc" => ProviderId::KiloCode,
             "ollama" | "om" => ProviderId::Ollama,
             "cline" | "cl" => ProviderId::Cline,
-            "z.ai" | "zai" | "za" => ProviderId::Zai,
             _ => ProviderId::OpenRouter,
         };
         Self {

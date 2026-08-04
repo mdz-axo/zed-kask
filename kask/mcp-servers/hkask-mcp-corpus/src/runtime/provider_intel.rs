@@ -164,11 +164,6 @@ fn usage_status(consumed: u64, limit: u64) -> (f64, Option<chrono::DateTime<chro
 
 pub struct DeepInfraProvider;
 
-impl DeepInfraProvider {
-    pub const INPUT_NJ_PER_TOKEN: u64 = 30;
-    pub const OUTPUT_NJ_PER_TOKEN: u64 = 60;
-}
-
 #[async_trait::async_trait]
 impl ProviderIntelligence for DeepInfraProvider {
     fn provider_id(&self) -> &'static str {
@@ -226,9 +221,14 @@ impl ProviderIntelligence for DeepInfraProvider {
         _api_key: &str,
         _model_name: &str,
     ) -> Result<CostRate, ProviderIntelError> {
+        // Per-call USD cost is observed from the provider's chat response
+        // (`usage.estimated_cost`) and charged via `InferenceResult.cost_usd`;
+        // the per-token rates here are not read by any caller (only `is_marginal`
+        // is, by `adaptive_monitor`). Kept zero so the operator-priced
+        // per-token constants are not re-introduced.
         Ok(CostRate {
-            input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
-            output_nj_per_unit: Self::OUTPUT_NJ_PER_TOKEN,
+            input_nj_per_unit: 0,
+            output_nj_per_unit: 0,
             cache_read_nj_per_unit: 0,
             cache_write_nj_per_unit: 0,
             fixed_nj_per_call: 0,
@@ -243,11 +243,6 @@ impl ProviderIntelligence for DeepInfraProvider {
 // Response: { data: { label, limit, limit_remaining, limit_reset, usage, usage_monthly, ... } }
 
 pub struct OpenRouterProvider;
-
-impl OpenRouterProvider {
-    pub const INPUT_NJ_PER_TOKEN: u64 = 50;
-    pub const OUTPUT_NJ_PER_TOKEN: u64 = 50;
-}
 
 #[async_trait::async_trait]
 impl ProviderIntelligence for OpenRouterProvider {
@@ -302,94 +297,14 @@ impl ProviderIntelligence for OpenRouterProvider {
         _api_key: &str,
         _model_name: &str,
     ) -> Result<CostRate, ProviderIntelError> {
-        // OpenRouter pricing is model-specific — the classify_batch caller
-        // should use the model's pricing from the /models API or config.
-        // These are conservative fallback defaults.
+        // OpenRouter's per-call USD cost is observed from the chat response
+        // (`usage.cost` / `usage.market_cost`) and charged via
+        // `InferenceResult.cost_usd`; the per-token rates here are not read by
+        // any caller (only `is_marginal` is, by `adaptive_monitor`). Kept zero
+        // so the operator-priced per-token constants are not re-introduced.
         Ok(CostRate {
-            input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
-            output_nj_per_unit: Self::OUTPUT_NJ_PER_TOKEN,
-            cache_read_nj_per_unit: 10, // typical discounted cache read
-            cache_write_nj_per_unit: 0,
-            fixed_nj_per_call: 0,
-            image_nj_per_unit: 0,
-            is_marginal: true,
-        })
-    }
-}
-
-// ── Together AI ─────────────────────────────────────────────────────────────────
-// Together AI is fully prepaid — no free credits tier.
-// API: GET /v1/billing/usage → array of { date, model, input_tokens, output_tokens, total_cost }
-
-pub struct TogetherProvider;
-
-impl TogetherProvider {
-    pub const INPUT_NJ_PER_TOKEN: u64 = 20;
-    pub const OUTPUT_NJ_PER_TOKEN: u64 = 20;
-}
-
-#[async_trait::async_trait]
-impl ProviderIntelligence for TogetherProvider {
-    fn provider_id(&self) -> &'static str {
-        "together"
-    }
-
-    async fn discover(&self, _api_key: &str) -> Result<ProviderState, ProviderIntelError> {
-        // Together is fully prepaid — always pay-as-you-go, no free tier
-        Ok(ProviderState {
-            tier: "prepaid".into(),
-            monthly_limit: None,
-            limit_unit: LimitUnit::Tokens,
-            overage_rate: None,
-            billing_period_start: default_billing_start(),
-        })
-    }
-
-    async fn usage(&self, api_key: &str) -> Result<UsageStatus, ProviderIntelError> {
-        #[derive(Deserialize)]
-        #[allow(dead_code)] // populated by serde deserialization
-        struct UsageEntry {
-            #[serde(default)]
-            input_tokens: u64,
-            #[serde(default)]
-            output_tokens: u64,
-            #[serde(default)]
-            total_cost: Option<f64>,
-        }
-
-        match fetch_json::<Vec<UsageEntry>>("https://api.together.xyz/v1/billing/usage", api_key)
-            .await
-        {
-            Ok(entries) => {
-                let total_tokens: u64 = entries
-                    .iter()
-                    .map(|e| e.input_tokens + e.output_tokens)
-                    .sum();
-                Ok(UsageStatus {
-                    consumed: total_tokens,
-                    limit: u64::MAX,
-                    fraction: 0.0,
-                    estimated_exhaustion: None,
-                })
-            }
-            Err(_) => Ok(UsageStatus {
-                consumed: 0,
-                limit: u64::MAX,
-                fraction: 0.0,
-                estimated_exhaustion: None,
-            }),
-        }
-    }
-
-    async fn actual_cost(
-        &self,
-        _api_key: &str,
-        _model_name: &str,
-    ) -> Result<CostRate, ProviderIntelError> {
-        // Always marginal — prepaid credits consumed at per-token rate
-        Ok(CostRate {
-            input_nj_per_unit: Self::INPUT_NJ_PER_TOKEN,
-            output_nj_per_unit: Self::OUTPUT_NJ_PER_TOKEN,
+            input_nj_per_unit: 0,
+            output_nj_per_unit: 0,
             cache_read_nj_per_unit: 0,
             cache_write_nj_per_unit: 0,
             fixed_nj_per_call: 0,
@@ -713,7 +628,6 @@ pub fn create_provider(
     match provider_id.to_lowercase().as_str() {
         "deepinfra" => Some(Box::new(DeepInfraProvider)),
         "openrouter" => Some(Box::new(OpenRouterProvider)),
-        "together" => Some(Box::new(TogetherProvider)),
         "fal" => Some(Box::new(FalProvider)),
         "brave" => driver.map(|d| {
             Box::new(SelfTrackedProvider::new(

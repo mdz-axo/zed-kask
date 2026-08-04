@@ -916,4 +916,96 @@ data: [DONE]
         // Overlong → error
         assert!(validate_prompt(&"x".repeat(1_000_001)).is_err());
     }
+
+    // Observed per-call cost: the provider's `usage.cost` is carried onto
+    // `InferenceResult.cost_usd` so the manifest executor can charge rJoule
+    // (1 rJoule = $1 USD) from the provider-reported value, not an
+    // operator-configured price table.
+    #[test]
+    fn chat_result_carries_observed_usage_cost() {
+        let raw = r#"{
+            "model": "OpenRouter/z-ai/glm-5.2",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "cost": 0.001
+            }
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        let result = chat_response_to_result(resp).expect("result");
+        assert_eq!(result.cost_usd, Some(0.001));
+    }
+
+    // DeepInfra reports cost under `estimated_cost` (different key, same meaning).
+    #[test]
+    fn chat_result_carries_deepinfra_estimated_cost() {
+        let raw = r#"{
+            "model": "DeepInfra/meta-llama/Llama-3.3-70B-Instruct",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "estimated_cost": 0.002
+            }
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        let result = chat_response_to_result(resp).expect("result");
+        assert_eq!(result.cost_usd, Some(0.002));
+    }
+
+    // `market_cost` (real compute energy) wins over `cost` (what you pay), so
+    // BYOK calls where `cost == 0` still charge rJoule for the energy spent.
+    #[test]
+    fn chat_result_prefers_market_cost_over_cost() {
+        let raw = r#"{
+            "model": "KiloCode/qwen/qwen3-235b",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "cost": 0.0,
+                "market_cost": 0.003
+            }
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        let result = chat_response_to_result(resp).expect("result");
+        assert_eq!(result.cost_usd, Some(0.003));
+    }
+
+    // Providers that report no cost (Ollama, local, $0) → `None` (free, not charged).
+    #[test]
+    fn chat_result_no_cost_when_usage_omits_cost_fields() {
+        let raw = r#"{
+            "model": "ollama/qwen3:8b",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        }"#;
+        let resp: ChatResponse = serde_json::from_str(raw).expect("deserialize");
+        let result = chat_response_to_result(resp).expect("result");
+        assert_eq!(result.cost_usd, None);
+    }
 }

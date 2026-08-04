@@ -339,7 +339,7 @@ fn main() {
 
     // Load kask `.env` file if present. The file contains API keys and
     // configuration for kask inference providers (DEEPINFRA_API_KEY, FALAI_API_KEY,
-    // TOGETHERAI_API_KEY, OPENROUTER_API_KEY, etc.) and kask runtime settings (HKASK_*).
+    // OPENROUTER_API_KEY, etc.) and kask runtime settings (HKASK_*).
     // Without this, the keys are invisible to the process even though they're
     // in the file.
     //
