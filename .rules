@@ -375,18 +375,22 @@ configured at startup — the "Process-global hooks set at runtime need a
 startup-failure signal" trap. It must be wired from the deferred task that
 runs after the Zed user resolves.
 
-`set_tool_invoker` and `set_thread_condenser` are `Mutex`-based (re-settable)
-and are wired twice: once unconditionally (pre-login, so the panel and
-condenser work before the model resolves) and once in the deferred task
-(post-login, to upgrade). The `Mutex` pattern allows the deferred call to
-replace the early one. `set_memory_port` uses the same `Mutex` pattern for
-the same reason.
+`set_thread_condenser` and `set_memory_port` are `Mutex`-based (re-settable)
+and are wired twice: once unconditionally (pre-login, so the condenser works
+before the model resolves) and once in the deferred task (post-login, to
+upgrade). The `Mutex` pattern allows the deferred call to replace the early
+one.
+
+`set_tool_invoker` (now in `crates/swarm_panel/src/tool_invoker.rs`, moved from
+the deleted `kask_panel` crate) is `Mutex`-based and wired once in the
+deferred task — it only needs the `tool_port`, which is available before the
+model resolves, but the swarm panel's lifecycle actions are rarely used before
+login so the single deferred wiring is sufficient.
 
 Note: `set_curator_session_factory`, `set_regulation_status`, and
-`set_scoped_inference` were removed when the kask panel was refactored to
-route curator turns through `NativeAgent` (the `ConversationView` handles
-streaming + tool dispatch). The kask panel has structural-pin tests asserting
-these traits/structs do not exist in the crate. Do not re-add them.
+`set_scoped_inference` were removed when curator turns were routed through
+`NativeAgent` (the `ConversationView` handles streaming + tool dispatch).
+Do not re-add them — they have no consumer.
 
 ## LazyToolRouter filters MCP tools only
 

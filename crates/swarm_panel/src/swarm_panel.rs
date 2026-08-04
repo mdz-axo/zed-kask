@@ -3,9 +3,9 @@
 //!
 //! Entities are **agents** (from the ABW catalogue) and **swarms** (the
 //! operator's workspaces), not skills. Data is fetched through the global
-//! `ToolInvoker` hook (the same governed, OCAP-gated path the kask panel's
-//! visualization views use), so all ABW calls flow through `hkask-mcp-swarm`
-//! and the kask MCP runtime rather than ad-hoc HTTP from the UI.
+//! `ToolInvoker` hook (the governed, OCAP-gated MCP runtime path), so all
+//! ABW calls flow through `hkask-mcp-swarm` and the kask MCP runtime rather
+//! than ad-hoc HTTP from the UI.
 //!
 //! Layout mirrors `KaskExtensionsPage`: headline, search bar, filter toggle
 //! (All / Swarms / Agents), a uniform list of `MarketplaceCard`s, and an
@@ -16,12 +16,12 @@
 //! audited admin force-publish path). Spend actions are gated behind the
 //! cost/consent gate (see `kask/docs/plans/abw-swarm-intelligence.md` §3.6).
 //!
-//! **Steer mode** hosts a `ConversationView` scoped to the swarm MCP server,
-//! mirroring `KaskPanel`'s per-tab agent pattern. The operator asks the
-//! curator to compose/steer a swarm; the curator's `SkillTool` invokes the
-//! `swarm-intelligence` cascade (see `kask/docs/plans/abw-swarm-intelligence.md`
-//! §13). The conversation is not persisted — re-clicking Steer after a
-//! restart starts a fresh composition conversation.
+//! **Steer mode** hosts a `ConversationView` scoped to the swarm MCP server.
+//! The operator asks the curator to compose/steer a swarm; the curator's
+//! `SkillTool` invokes the `swarm-intelligence` cascade (see
+//! `kask/docs/plans/abw-swarm-intelligence.md` §13). The conversation is not
+//! persisted — re-clicking Steer after a restart starts a fresh composition
+//! conversation.
 
 mod panel_button;
 mod tool_invoker;
@@ -56,10 +56,10 @@ use workspace::{
     register_serializable_item,
 };
 
-// Steer mode: a `ConversationView` scoped to the swarm MCP server, mirroring
-// `KaskPanel`'s per-tab agent pattern. The curator's `SkillTool` invokes the
-// `swarm-intelligence` cascade when the operator asks to compose/steer a
-// swarm. See `kask/docs/plans/abw-swarm-intelligence.md` §13.
+// Steer mode: a `ConversationView` scoped to the swarm MCP server. The
+// curator's `SkillTool` invokes the `swarm-intelligence` cascade when the
+// operator asks to compose/steer a swarm. See
+// `kask/docs/plans/abw-swarm-intelligence.md` §13.
 use agent::ThreadStore;
 use agent_ui::{Agent, AgentConnectionStore, AgentThreadSource, ConversationView};
 use gpui::SharedString;
@@ -292,8 +292,7 @@ enum PanelMode {
     Compose,
     /// Steer: a `ConversationView` scoped to the swarm MCP server. The
     /// operator asks the curator to compose/steer a swarm; the curator's
-    /// `SkillTool` invokes the `swarm-intelligence` cascade. Mirrors
-    /// `KaskPanel`'s per-tab `ConversationView` pattern.
+    /// `SkillTool` invokes the `swarm-intelligence` cascade.
     Steer,
 }
 
@@ -631,12 +630,11 @@ pub struct SwarmPanel {
     compose: ComposeForm,
     /// Lazily-constructed `ConversationView` for Steer mode, scoped to the
     /// swarm MCP server. `None` until the operator first selects Steer.
-    /// Mirrors `KaskPanel`'s `threads: HashMap<usize, Entity<ConversationView>>`
-    /// — one retained view, reused across re-renders.
+    /// Uses the retained-view pattern (one `ConversationView`, reused across
+    /// re-renders).
     steer_conversation: Option<Entity<ConversationView>>,
-    /// Per-view connection store for the Steer `ConversationView`. Mirrors
-    /// `KaskPanel`'s per-tab `connection_stores` (one store = one connection
-    /// = one prompt, preventing cross-view prompt bleed).
+    /// Per-view connection store for the Steer `ConversationView`. One store =
+    /// one connection = one prompt, preventing cross-view prompt bleed.
     steer_connection_store: Option<Entity<AgentConnectionStore>>,
 }
 
@@ -733,7 +731,7 @@ impl SwarmPanel {
         // `cx.entity().read(cx)` — the `Toggle` action handler already holds
         // an `update` lease on the `Workspace` entity, so a re-entrant `read`
         // triggers `double_lease_panic` ("cannot read workspace::Workspace
-        // while it is already being updated"). Mirrors `KaskPanel::new`.
+        // while it is already being updated").
         let workspace_handle = workspace.weak_handle();
         let project = workspace.project().clone();
         let fs = workspace.app_state().fs.clone();
@@ -1861,11 +1859,11 @@ impl SwarmPanel {
     }
 
     /// Lazily construct the `ConversationView` for Steer mode if it doesn't
-    /// exist yet. Mirrors `KaskPanel::ensure_thread_for_tab`: constructs a
-    /// `CuratorAgentServer` scoped to the swarm MCP server, with a system
-    /// prompt that tells the curator about the `swarm-intelligence` skill and
-    /// the active swarm. The curator's `SkillTool` invokes the cascade when
-    /// the operator asks to compose/steer a swarm.
+    /// exist yet. Constructs a `CuratorAgentServer` scoped to the swarm MCP
+    /// server, with a system prompt that tells the curator about the
+    /// `swarm-intelligence` skill and the active swarm. The curator's
+    /// `SkillTool` invokes the cascade when the operator asks to compose/steer
+    /// a swarm.
     ///
     /// `window` is required because `ConversationView::new` may focus its
     /// inner `MessageEditor`.

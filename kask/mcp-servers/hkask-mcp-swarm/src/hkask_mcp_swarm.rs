@@ -63,6 +63,7 @@ use hkask_mcp_server::server::{CredentialRequirement, McpToolError, execute_tool
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
 mod a2a;
+mod a2a_http;
 mod abw_client;
 mod abw_util;
 mod agent_executor;
