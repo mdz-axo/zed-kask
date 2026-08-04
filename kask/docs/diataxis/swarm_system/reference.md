@@ -1,5 +1,5 @@
 ---
-title: "Swarm Systems — Reference: The 41-Tool Surface and Components"
+title: "Swarm Systems — Reference: The 47-Tool Surface and Components"
 audience: [developers, operators]
 last_updated: 2026-08-03
 version: "0.1.0"
@@ -8,16 +8,16 @@ domain: "Swarm"
 mds_categories: [domain]
 ---
 
-# Swarm Systems — Reference: The 41-Tool Surface and Components
+# Swarm Systems — Reference: The 47-Tool Surface and Components
 
 A reference for the `hkask-mcp-swarm` tool surface, the panel components, and
-the two skills. The surface is pinned by `tool_surface_is_exactly_41_registered_tools`
-(`hkask_mcp_swarm.rs:2822`) — 27 ABW + 14 local, both sets always registered
+the two skills. The surface is pinned by `tool_surface_is_exactly_47_registered_tools`
+(`hkask_mcp_swarm.rs:3003`) — 27 ABW + 20 local, both sets always registered
 in either mode; `kask.swarm.mode` selects the substrate, not the surface. See
 the [class diagram](../../diagrams/class-swarm-server.md) for the type
 relationships.
 
-## Tool surface (41)
+## Tool surface (47)
 
 ### ABW tools (27) — cloud, `mode: abw`
 
@@ -51,7 +51,7 @@ relationships.
 | `swarm_publish_agent` | catalogue publish (admin force-publish path) | — |
 | `swarm_fork_agent` | derivative fork | — |
 
-### Local tools (14) — `mode: local`, zed-kask substrate
+### Local tools (20) — `mode: local`, zed-kask substrate
 
 | Tool | Purpose | Gate |
 |------|---------|------|
@@ -69,6 +69,12 @@ relationships.
 | `swarm_remove_local` | delete local card (cloud untouched) | — |
 | `swarm_create_local_agent` | create local agent | — |
 | `swarm_reconfigure_local_agent` | re-prompt in place (C6) | — |
+| `swarm_create_local_swarm` | create a named local swarm | — |
+| `swarm_list_local_swarms` | list named local swarms | read |
+| `swarm_get_local_swarm` | get a named local swarm's detail | read |
+| `swarm_delete_local_swarm` | delete a named local swarm | — |
+| `swarm_add_agent_local` | add an agent to a local swarm | — |
+| `swarm_remove_agent_local` | remove an agent from a local swarm | — |
 
 Note: `swarm_pipeline_local` and the A2A pair are omitted from the Steer
 system prompt's curated tool list (audit Gap S2); they remain available via
@@ -78,7 +84,7 @@ the governed tool surface.
 
 | Component | Source | Role |
 |-----------|--------|------|
-| `SwarmServer` | `hkask_mcp_swarm.rs:115` | the rmcp server; `combined_router` (`:124`) registers all 41 tools |
+| `SwarmServer` | `hkask_mcp_swarm.rs:115` | the rmcp server; `combined_router` (`:124`) registers all 47 tools |
 | `AbwClient` | `abw_client.rs` | ABW REST; 200 body may carry upstream LLM error, 500 for domain failure (`SwarmError` inspects body) |
 | `ConsentStore` | `consent.rs:56` | real-time spend gate; `mint`/`consume`/`refund`; sqlite or memory; TTL `:77` enforced |
 | `SpendGate` | `spend_gate.rs` | `authorize_hire`/`complete_hire`, `authorize_delegate`, `authorize_curate`, session variants; ceiling refunds on refusal |

@@ -45,6 +45,9 @@ inputs:
     required: true
     description: "Natural language description of the media pipeline to build"
 
+ledger:
+  span_namespace: reg.skill.media-workflow
+
 steps:
   # ── Step 1: Understand the Direction ──
   - ordinal: 1

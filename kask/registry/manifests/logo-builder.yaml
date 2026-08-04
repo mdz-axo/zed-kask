@@ -64,6 +64,9 @@ inputs:
     required: false
     description: "User style preference (if any) — overrides discovery"
 
+ledger:
+  span_namespace: reg.skill.logo-builder
+
 steps:
   # ── Step 1: Understand the Direction ──
   - ordinal: 1

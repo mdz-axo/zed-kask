@@ -2455,7 +2455,10 @@ impl SwarmServer {
             // consumer of `a2a::message_from_text` (the in-process counterpart
             // of the HTTP gateway's inbound `Message`) — without it the helper
             // is dead code.
-            task.history = Some(vec![a2a::message_from_text(&req.message, req.context_id.clone())]);
+            task.history = Some(vec![a2a::message_from_text(
+                &req.message,
+                req.context_id.clone(),
+            )]);
             Ok(serde_json::to_value(&task)
                 .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize A2A task" })))
         })

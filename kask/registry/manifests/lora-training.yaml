@@ -212,6 +212,9 @@ inputs:
       {title, level, text, step}). When absent, runtime-phase gates remain
       `deferred` and G-R1 is `not_applicable` in preflight.
 
+ledger:
+  span_namespace: reg.skill.lora-training
+
 steps:
   - ordinal: 0
     action: select

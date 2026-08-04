@@ -48,6 +48,9 @@ inputs:
     type: string
     required: false
 
+ledger:
+  span_namespace: reg.skill.mcda
+
 steps:
   - ordinal: 1
     action: select

@@ -45,6 +45,9 @@ inputs:
     type: array
     required: false
 
+ledger:
+  span_namespace: reg.skill.structured-extraction
+
 steps:
   - ordinal: 1
     action: select

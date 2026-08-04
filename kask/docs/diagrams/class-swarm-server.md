@@ -107,6 +107,6 @@ classDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
 verified_date: 2026-08-03
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115,124,2822; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56,77,150,184,227; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83,253,334; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115,124,3003; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56,77,150,184,227; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83,253,334; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24
 status: VERIFIED
 -->

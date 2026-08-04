@@ -79,6 +79,9 @@ inputs:
       Installed skill catalog for skill-router matching. Injected by the
       executor from the runtime skill registry.
 
+ledger:
+  span_namespace: reg.skill.sequential-inquiry
+
 steps:
   # ── Kata Step 1: Grasp Current Condition ──
   # Measure the agent's current understanding of the problem. What thoughts

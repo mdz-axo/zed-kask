@@ -58,6 +58,9 @@ inputs:
     required: false
     description: Previous Wardley Map for movement/drift detection.
 
+ledger:
+  span_namespace: reg.skill.wardley-mapper
+
 steps:
   - ordinal: 1
     action: select

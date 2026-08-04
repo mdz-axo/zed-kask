@@ -59,6 +59,9 @@ inputs:
     type: boolean
     required: false
 
+ledger:
+  span_namespace: reg.skill.diagnose
+
 steps:
   - ordinal: 1
     action: select

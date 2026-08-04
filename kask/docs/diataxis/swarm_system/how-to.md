@@ -25,7 +25,7 @@ spend, and the feedback path that closes the loop. Read the
 | `ensure_steer_conversation` | `crates/swarm_panel/src/swarm_panel.rs:1870` |
 | `begin_hire` / `confirm_hire` | `crates/swarm_panel/src/swarm_panel.rs:1441` / `:1543` |
 | `create_swarm` / `ask_xaman` | `crates/swarm_panel/src/swarm_panel.rs:1973` / `:2145` |
-| 41-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:2822` |
+| 47-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:3003` |
 | Consent gate (mint/consume/refund) | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:150`/`:184`/`:227` |
 | Spend gate (hire/delegate/curate) | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` |
 | Debit-before-scan invariant | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:11` |
@@ -56,7 +56,7 @@ status: VERIFIED
 
 ## How-to 1: Switch the backend
 
-The backend toggles the substrate, not the tool surface (all 41 tools stay
+The backend toggles the substrate, not the tool surface (all 47 tools stay
 registered). Toggle in the panel header, or set `kask.swarm.mode` in
 `settings.json`:
 
@@ -180,6 +180,6 @@ Go See is the gap-cover for open tasks (no oracle). Its closure depends on you
 
 ## See also
 
-- [Reference: The 41-Tool Surface](./reference.md)
+- [Reference: The 47-Tool Surface](./reference.md)
 - [Explanation: Why the Loops Are Shaped This Way](./explanation.md)
 - [Swarm Cybernetics/Semantics Audit](../../audits/swarm-cybernetics-semantics-audit.md)

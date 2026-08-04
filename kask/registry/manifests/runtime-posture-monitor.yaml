@@ -40,6 +40,9 @@ inputs:
     required: false
   - name: workspace_context
 
+ledger:
+  span_namespace: reg.skill.runtime-posture-monitor
+
 steps:
   - ordinal: 1
     action: select

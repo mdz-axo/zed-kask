@@ -83,6 +83,9 @@ inputs:
       prior_validation_failures.fix_suggestions to direct the next
       iteration. When absent, the creation runs as a first pass.
 
+ledger:
+  span_namespace: reg.skill.create-skill
+
 steps:
   - ordinal: 1
     action: select

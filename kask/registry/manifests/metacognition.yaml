@@ -123,6 +123,9 @@ inputs:
       constraints: no file system access, no network calls, no environment
       variable access.
 
+ledger:
+  span_namespace: reg.skill.metacognition
+
 steps:
   # ── Improvement Kata Step 1: Grasp the Current Condition ──
   # Measure the agent's actual metacognitive state right now. This is the

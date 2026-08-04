@@ -21,4 +21,5 @@ rjoule:
   alert_threshold: 0.8
   hard_limit: true
 
-
+ledger:
+  span_namespace: reg.skill.regulation-gas-tracking
