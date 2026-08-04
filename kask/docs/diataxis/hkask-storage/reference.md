@@ -12,60 +12,44 @@ mds_categories: [domain, lifecycle]
 
 `hkask-storage` provides the persistence layer for hKask. It implements the
 port traits from `hkask-types` against a SQLCipher (SQLite with encryption)
-backend. The schema is defined in SQL files under `src/sql/` and in inline
-`CREATE TABLE` statements in the store modules.
+backend. The core schema is `src/core/sql/schema.sql` (loaded by
+`Database::initialize_schema` in `core/database.rs`); Postgres mirrors it in
+`src/core/sql/schema_pg.sql`. Store-specific tables are defined inline in their
+store modules' `init_schema` methods.
 
 ## Source citations
 
 | Symbol | Location |
 |--------|----------|
-| `schema.sql` (core tables) | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
-| `hmems` table | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
-| `embeddings` table | `kask/crates/hkask-storage/src/sql/schema.sql:2` |
-| `vec_embeddings` virtual table | `kask/crates/hkask-storage/src/sql/schema.sql:4` |
-| `nu_events` table | `kask/crates/hkask-storage/src/sql/schema.sql:5` |
-| `audit_log` table | `kask/crates/hkask-storage/src/sql/schema.sql:8` |
-| `reg_variety_checkpoint` table | `kask/crates/hkask-storage/src/sql/schema.sql:11` |
-| `reg_alerts` table | `kask/crates/hkask-storage/src/sql/schema.sql:12` |
-| `agent_registry` table | `kask/crates/hkask-storage/src/sql/schema.sql:13` |
-| `goals` table | `kask/crates/hkask-storage/src/sql/schema.sql:15` |
-| `goal_criteria` table (FK to goals) | `kask/crates/hkask-storage/src/sql/schema.sql:16` |
-| `goal_artifacts` table (FK to goals) | `kask/crates/hkask-storage/src/sql/schema.sql:17` |
-| `consent_records` table | `kask/crates/hkask-storage/src/sql/schema.sql:18` |
-| `quarantined_goals` table | `kask/crates/hkask-storage/src/sql/schema.sql:20` |
-| `loop_cursors` table | `kask/crates/hkask-storage/src/sql/schema.sql:21` |
-| `wallet_balances` table | `kask/crates/hkask-storage/src/sql/schema.sql:23` |
-| `wallet_transactions` table (FK to wallet_balances) | `kask/crates/hkask-storage/src/sql/schema.sql:24` |
-| `api_keys` table (FK to wallet_balances) | `kask/crates/hkask-storage/src/sql/schema.sql:27` |
-| `deposit_addresses` table | `kask/crates/hkask-storage/src/sql/schema.sql:30` |
-| `deposit_references` table (FK to wallet_balances) | `kask/crates/hkask-storage/src/sql/schema.sql:32` |
-| `encumbrances` table (FK to api_keys, wallet_balances) | `kask/crates/hkask-storage/src/sql/schema.sql:36` |
-| `kata_history` table | `kask/crates/hkask-storage/src/sql/schema.sql:39` |
-| `pod_meta` table | `kask/crates/hkask-storage/src/sql/schema.sql:44` |
-| `reg_records` table (inline) | `kask/crates/hkask-storage/src/regulation_store.rs:82` |
-| `reg_cursors` table (inline) | `kask/crates/hkask-storage/src/regulation_store.rs:98` |
-| `delegation_tokens` table (inline) | `kask/crates/hkask-storage/src/token_registry.rs:29` |
-| `escalations` table (inline) | `kask/crates/hkask-storage/src/escalation.rs:86` |
+| `schema.sql` (core tables) | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
+| `hmems` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
+| `embeddings` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:2` |
+| `vec_embeddings` virtual table | `kask/crates/hkask-storage/src/core/sql/schema.sql:4` |
+| `nu_events` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:5` |
+| `audit_log` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:8` |
+| `reg_variety_checkpoint` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:11` |
+| `reg_alerts` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:12` |
+| `agent_registry` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:13` |
+| `loop_cursors` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:15` |
+| `kata_history` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:17` |
+| `pod_meta` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:22` |
+| `reg_records` table (inline) | `kask/crates/hkask-storage/src/regulation_store.rs` |
+| `reg_cursors` table (inline) | `kask/crates/hkask-storage/src/regulation_store.rs` |
+| `escalations` table (inline) | `kask/crates/hkask-storage/src/escalation.rs` |
 | `EmbeddingStore` | `kask/crates/hkask-storage/src/embeddings.rs` |
 | `EscalationQueue` | `kask/crates/hkask-storage/src/escalation.rs:58` |
 | `RegulationArchive` (impl `RegulationSink`) | `kask/crates/hkask-storage/src/regulation_store.rs:508` |
 
 ## Entity relationship diagram
 
-The schema has four clusters: memory and events, goals and consent, wallet
-and keys, and regulation. The ERD below shows the tables and their foreign-key
-relationships.
+The schema's core tables cluster around memory/events and regulation/system.
+(The `goals`/`consent`/`wallet` tables were removed — see the corresponding
+REMOVED sections under Schema clusters.) The ERD below shows the surviving
+core tables.
 
 ```mermaid
 erDiagram
     hmems ||--o{ embeddings : "entity_ref"
-    goals ||--o{ goal_criteria : "goal_id"
-    goals ||--o{ goal_artifacts : "goal_id"
-    wallet_balances ||--o{ wallet_transactions : "wallet_id"
-    wallet_balances ||--o{ api_keys : "wallet_id"
-    wallet_balances ||--o{ deposit_references : "wallet_id"
-    api_keys ||--o{ encumbrances : "key_id"
-    wallet_balances ||--o{ encumbrances : "wallet_id"
 
     hmems {
         TEXT id PK
@@ -104,102 +88,6 @@ erDiagram
         TEXT parent_event
         TEXT visibility
     }
-    goals {
-        TEXT id PK
-        TEXT webid
-        TEXT text
-        TEXT state
-        TEXT visibility
-        TEXT created_at
-        TEXT completed_at
-        TEXT parent_goal_id
-        INTEGER depth
-        TEXT display_name
-    }
-    goal_criteria {
-        TEXT id PK
-        TEXT goal_id FK
-        TEXT type
-        TEXT description
-        INTEGER satisfied
-    }
-    goal_artifacts {
-        TEXT id PK
-        TEXT goal_id FK
-        TEXT artifact_ref
-        TEXT artifact_type
-        TEXT created_at
-    }
-    consent_records {
-        TEXT id PK
-        TEXT webid
-        TEXT granted_categories
-        INTEGER granted_at
-        INTEGER revoked_at
-        INTEGER active
-    }
-    wallet_balances {
-        TEXT wallet_id PK
-        INTEGER balance_rj
-        INTEGER usdc_equivalent_micro
-        TEXT created_at
-        TEXT updated_at
-    }
-    wallet_transactions {
-        INTEGER id PK
-        TEXT wallet_id FK
-        TEXT tx_type
-        TEXT tx_subtype
-        TEXT chain
-        TEXT on_chain_tx_hash
-        INTEGER amount_rj
-        INTEGER balance_after_rj
-        TEXT key_id
-        TEXT tool_name
-        INTEGER gas_units
-        TEXT created_at
-    }
-    api_keys {
-        TEXT key_id PK
-        TEXT wallet_id FK
-        BLOB public_key
-        INTEGER spending_limit_rj
-        INTEGER spent_rj
-        TEXT scope
-        TEXT purpose
-        TEXT rate_limit_json
-        TEXT privacy_mode
-        TEXT preferred_chain
-        TEXT expires_at
-        TEXT issued_at
-        TEXT revoked_at
-        TEXT created_at
-    }
-    deposit_addresses {
-        TEXT wallet_id PK
-        TEXT chain PK
-        INTEGER derivation_index PK
-        TEXT address
-        TEXT privacy_mode
-        TEXT created_at
-    }
-    deposit_references {
-        TEXT reference PK
-        TEXT wallet_id FK
-        TEXT chain
-        TEXT expires_at
-        INTEGER spent
-        TEXT created_at
-    }
-    encumbrances {
-        TEXT key_id PK
-        TEXT wallet_id FK
-        INTEGER amount_rj
-        INTEGER consumed_rj
-        TEXT status
-        TEXT created_at
-        TEXT released_at
-    }
     audit_log {
         TEXT id PK
         TEXT timestamp
@@ -229,9 +117,9 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-STOR-001
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-storage/src/sql/schema.sql:1,2,4,5,8,11,12,13,15,16,17,18,20,21,23,24,27,30,32,36,39,44; kask/crates/hkask-storage/src/regulation_store.rs:82,98; kask/crates/hkask-storage/src/token_registry.rs:29; kask/crates/hkask-storage/src/escalation.rs:86
-status: VERIFIED
+verified_date: 2026-08-03
+verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1,2,4,5,8,11,12,13,15,17,22; kask/crates/hkask-storage/src/regulation_store.rs; kask/crates/hkask-storage/src/escalation.rs
+status: STALE — diagram path corrected from the abandoned src/sql/schema.sql to the loaded src/core/sql/schema.sql (2026-08-03); the wallet tables, goals/consent/quarantined_goals tables, and the delegation_tokens table (token_registry.rs deleted 2026-08-02) were removed. Per-symbol line numbers in the store modules pending re-verification.
 -->
 
 ## Schema clusters
@@ -255,22 +143,15 @@ recursive span nesting, and `visibility`.
 The `audit_log` table (`schema.sql:8`) records actor-action-resource-outcome
 tuples for compliance forensics, with `ip_address` and `created_at`.
 
-### Goals and consent
+### Goals and consent (REMOVED)
 
-The `goals` table (`schema.sql:15`) stores user goals with a `parent_goal_id`
-for hierarchical decomposition, a `depth` field, `visibility`, `created_at`,
-`completed_at`, and `display_name`. The `goal_criteria` table
-(`schema.sql:16`) has a foreign key to `goals(id)` and stores acceptance
-criteria with a `satisfied` flag. The `goal_artifacts` table (`schema.sql:17`)
-links artifacts to goals with `artifact_ref` and `artifact_type`.
-
-The `consent_records` table (`schema.sql:18`) stores per-WebID consent grants
-with `granted_categories`, `granted_at`, `revoked_at`, and an `active` flag.
-The `webid` column has a `UNIQUE` constraint — one active consent record per
-WebID.
-
-The `quarantined_goals` table (`schema.sql:20`) holds goals quarantined for
-repair, with `quarantine_reason`, `repair_attempts`, and `repaired` flag.
+The `goals`, `goal_criteria`, `goal_artifacts`, `consent_records`, and
+`quarantined_goals` tables no longer exist. The `hkask-goal` crate and its
+storage were deleted (see the architecture plan §2.3); `GoalState` survives only
+as a type in `hkask-types`. Consent records and the multi-user identity store
+(`users.sql`) were removed when zed-kask's account system replaced them. The
+`schema.sql` line numbers that previously pointed at these tables now point at
+other tables (e.g. `goals` was `:15`, which is now `loop_cursors`).
 
 ### Wallet and keys (REMOVED 2026-08-03)
 
@@ -299,19 +180,18 @@ variety counts for Ashby's Law monitoring. The `reg_alerts` table
 flag. The `agent_registry` table (`schema.sql:13`) registers agent
 definitions with `token_hash` for integrity verification.
 
-The `loop_cursors` table (`schema.sql:21`) stores key-value loop state for
-the Regulation cycle. The `kata_history` table (`schema.sql:39`) tracks
+The `loop_cursors` table (`schema.sql:15`) stores key-value loop state for
+the Regulation cycle. The `kata_history` table (`schema.sql:17`) tracks
 practice frequency, streaks, and automaticity across sessions. The `pod_meta`
-table (`schema.sql:44`) stores pod metadata (webid, pod_kind, schema_version).
+table (`schema.sql:22`) stores pod metadata (webid, pod_kind).
 
-### Users (dead SQL — not loaded)
+### Users (dead SQL — deleted 2026-08-03)
 
-The file `src/sql/users.sql` defines `human_users`, `userpod_identities`,
-`user_sessions`, and `invites` tables. However, no Rust code loads this
-file — `grep` for `users.sql` in `*.rs` returns no matches. The architecture
-plan calls for deleting the userpod abstraction (the Zed account replaces
-it). These tables are dead SQL and should not be relied upon. They are not
-shown in the ERD above.
+The `src/sql/users.sql` file (`human_users`, `userpod_identities`,
+`user_sessions`, `invites`) was an orphan from the deleted multi-user identity
+store — no Rust code loaded it (the Zed account replaces the userpod
+abstraction). The entire `src/sql/` directory was deleted 2026-08-03; the
+canonical schema now lives solely in `src/core/sql/schema.sql`.
 
 ## Port trait implementors
 

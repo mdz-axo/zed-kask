@@ -21,11 +21,11 @@ and "what was true at time T?".
 
 | Symbol | Location |
 |--------|----------|
-| `hmems` table | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
-| `valid_from` column | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
-| `valid_to` column | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
-| `transaction_at` column | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
-| `recalled_at` column | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
+| `hmems` table | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
+| `valid_from` column | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
+| `valid_to` column | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
+| `transaction_at` column | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
+| `recalled_at` column | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
 | `HMemEntry` struct | `kask/crates/hkask-types/src/hkask_types.rs` |
 
 ## Bitemporal state machine
@@ -41,9 +41,9 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-STOR-004
-verified_date: 2026-07-29
-verified_against: kask/crates/hkask-storage/src/sql/schema.sql:1
-status: VERIFIED
+verified_date: 2026-08-03
+verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1
+status: VERIFIED (path corrected 2026-08-03 from the abandoned src/sql/schema.sql to the loaded src/core/sql/schema.sql; `hmems` is still line 1)
 -->
 
 ## Why bitemporal

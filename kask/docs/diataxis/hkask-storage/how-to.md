@@ -26,10 +26,7 @@ a centralized migration runner. Each store module owns its schema and runs
 | `open_postgres` fn | `kask/crates/hkask-storage/src/core/database.rs:440` |
 | Store macro (init_schema contract) | `kask/crates/hkask-storage/src/core/store_macros.rs:11` |
 | `regulation_store.rs` init_schema | `kask/crates/hkask-storage/src/regulation_store.rs:78` |
-| `token_registry.rs` init_schema | `kask/crates/hkask-storage/src/token_registry.rs:26` |
-| `consent_store.rs` init_schema | `kask/crates/hkask-storage/src/consent_store.rs:37` |
-| `wallet/mod.rs` init_schema | `kask/crates/hkask-storage/src/wallet/mod.rs:35` |
-| `schema.sql` | `kask/crates/hkask-storage/src/sql/schema.sql:1` |
+| `schema.sql` | `kask/crates/hkask-storage/src/core/sql/schema.sql:1` |
 
 ## Procedure
 
@@ -56,15 +53,15 @@ status: VERIFIED
 ### Step 1: Identify the owning store module
 
 Determine which store module owns the new table. If the table is used by
-multiple stores or is foundational (like `hmems`, `goals`, `wallet_balances`),
-it belongs in `src/sql/schema.sql` (loaded by `initialize_schema` at
-`core/database.rs:203`). If the table is specific to one store (like
-`reg_records` for regulation or `delegation_tokens` for the token registry),
-it belongs in that store's `init_schema` method.
+multiple stores or is foundational (like `hmems` or `agent_registry`), it
+belongs in `src/core/sql/schema.sql` (loaded by `initialize_schema` in
+`core/database.rs`). If the table is specific to one store (like `reg_records`
+for regulation or `escalations` for the escalation queue), it belongs in that
+store's `init_schema` method.
 
 ### Step 2: Add the CREATE TABLE statement
 
-For core tables, add the statement to `src/sql/schema.sql`. The file uses
+For core tables, add the statement to `src/core/sql/schema.sql`. The file uses
 single-line `CREATE TABLE IF NOT EXISTS` statements. The `IF NOT EXISTS`
 clause makes the initialization idempotent.
 
@@ -85,7 +82,7 @@ with Postgres-specific syntax. The `open_postgres` function at
 Add methods to the store struct for inserting, querying, updating, and
 deleting rows. The store struct holds an `Arc<dyn DatabaseDriver>` (generated
 by `define_driver_store!`) and calls `driver.execute` or `driver.query`
-methods. Follow the pattern in `regulation_store.rs` or `consent_store.rs`.
+methods. Follow the pattern in `regulation_store.rs` or `escalation.rs`.
 
 ### Step 5: Add tests
 
