@@ -169,15 +169,17 @@ impl LanguageModelInferencePort {
                                 }
                             }
                             let model_name = model.name().0.to_string();
-                            // rJoule = USD: charge the inference cost to the
-                            // manifest executor's rJoule budget. The price is
-                            // resolved from the env price table
-                            // (HKASK_PRICE_*_PER_1M_<MODEL> / global fallback)
-                            // by `hkask_inference::compute_cost_usd`. `None` for
-                            // unpriced models (local Ollama, unconfigured cloud) —
-                            // free, not charged.
-                            let cost_usd =
-                                hkask_inference::compute_cost_usd(&model_name, &usage);
+                            // rJoule = USD: observed per-call cost. zed's
+                            // `LanguageModel` abstraction surfaces only token
+                            // counts (`TokenUsage`), not the provider's USD
+                            // cost, so the IPC bridge path cannot charge rJoule
+                            // — `cost_usd` is `None` here and the cascade does
+                            // not spend budget on bridged calls. The
+                            // direct-HTTP backends (`chat_response_to_result`)
+                            // read the provider's `usage.cost`/`market_cost`
+                            // for the standalone path. Bridged cost tracking
+                            // would require zed to surface `usage.cost`.
+                            let cost_usd: Option<f64> = None;
                             Ok(InferenceResult {
                                 text,
                                 model: model_name,

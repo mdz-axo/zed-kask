@@ -287,14 +287,15 @@ pub struct RjouleConfig {
     /// (`1 rJoule = $1 USD`).
     ///
     /// Enforced: `ManifestExecutor::execute_select` charges each inference
-    /// call's USD cost (token usage × the model's per-token price, computed by
-    /// `hkask_inference::compute_cost_usd` and carried on `InferenceResult.cost_usd`)
-    /// to this budget via `BudgetTracker::charge_rjoule`. When cumulative spend
-    /// exceeds `cap` and `hard_limit` is true, `check_exhausted` trips the
+    /// call's observed USD cost (the provider's `usage.cost` / `market_cost` /
+    /// `estimated_cost`, carried on `InferenceResult.cost_usd`) to this budget
+    /// via `BudgetTracker::charge_rjoule`. When cumulative spend exceeds `cap`
+    /// and `hard_limit` is true, `check_exhausted` trips the
     /// `reg.skill.budget.rjoule_exhausted` span and exits the cascade `MaxedOut`.
     /// A threshold-crossing `reg.skill.budget.rjoule_alert` fires once at
-    /// `alert_threshold`. Unpriced models (local Ollama, unconfigured cloud)
-    /// report `cost_usd = None` and are free (not charged).
+    /// `alert_threshold`. Calls that report no cost (local Ollama, the zed IPC
+    /// bridge path which surfaces only token counts) have `cost_usd = None`
+    /// and are free (not charged).
     ///
     /// Scope: only LLM inference (`select` steps) is charged here. MCP `execute`
     /// steps that hit paid external APIs are NOT yet charged rJoule through the

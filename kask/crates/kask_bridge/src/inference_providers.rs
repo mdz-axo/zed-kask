@@ -60,14 +60,6 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         dashboard_url: "https://fal.ai/",
     },
     InferenceProviderDescriptor {
-        id: "Together AI",
-        name: "Together AI",
-        api_url: "https://api.together.xyz/v1",
-        env_var: "TOGETHERAI_API_KEY",
-        credential_key: "together",
-        dashboard_url: "https://together.ai/",
-    },
-    InferenceProviderDescriptor {
         id: "OpenRouter",
         name: "OpenRouter",
         api_url: "https://openrouter.ai/api/v1",
@@ -90,14 +82,6 @@ pub static INFERENCE_PROVIDERS: &[InferenceProviderDescriptor] = &[
         env_var: "CLINE_API_KEY",
         credential_key: "cline",
         dashboard_url: "https://cline.bot/",
-    },
-    InferenceProviderDescriptor {
-        id: "Z.ai",
-        name: "Z.ai",
-        api_url: "https://api.z.ai/api/paas/v4",
-        env_var: "ZAI_API_KEY",
-        credential_key: "zai",
-        dashboard_url: "https://z.ai/",
     },
     InferenceProviderDescriptor {
         id: "AtlasCloud",

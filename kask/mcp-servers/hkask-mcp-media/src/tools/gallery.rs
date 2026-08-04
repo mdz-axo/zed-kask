@@ -833,10 +833,21 @@ impl MediaServer {
                 object_description: Some(object_description.clone()),
                 ..Default::default()
             };
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate("segment_object", &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Object extraction failed: {}", e)))
+                .map_err(|e| {
+                    McpToolError::unavailable(format!("Object extraction failed: {}", e))
+                })?;
+            // Connect the extracted object to the inline widget: emit a
+            // ```media display_hint (mirrors generate_image/transform_image) so
+            // the agent can copy the block and the D18 MediaWidget renders it.
+            let display_hint = crate::media_block::image_hint_from_result(&result);
+            Ok(crate::media_block::enrich_with_display_hint(
+                result,
+                display_hint,
+            ))
         })
         .await
     }
@@ -1024,10 +1035,20 @@ impl MediaServer {
                 media_params.image_url =
                     Some(self.resolve_image_url(image_index).map_err(map_media_error)?);
             }
-            self.vision_port
+            let result = self
+                .vision_port
                 .media_generate(&lineage.op, &media_params)
                 .await
-                .map_err(|e| McpToolError::unavailable(format!("Reproduce failed: {e}")))
+                .map_err(|e| McpToolError::unavailable(format!("Reproduce failed: {e}")))?;
+            // Connect the reproduced asset to the inline widget (mirrors
+            // generate_image/generate_video). image_to_video yields a video;
+            // every other recorded op yields an image.
+            let display_hint = if lineage.op == "image_to_video" {
+                crate::media_block::video_hint_from_result(&result)
+            } else {
+                crate::media_block::image_hint_from_result(&result)
+            };
+            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
         })
         .await
     }

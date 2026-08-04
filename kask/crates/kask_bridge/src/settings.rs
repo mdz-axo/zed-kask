@@ -149,9 +149,6 @@ pub struct KaskInferenceProvidersSettings {
     /// Enable fal.ai (OpenAI-compatible inference + media).
     pub fal_enabled: bool,
 
-    /// Enable Together AI (OpenAI-compatible inference).
-    pub together_enabled: bool,
-
     /// Enable OpenRouter (unified API for 200+ models).
     pub openrouter_enabled: bool,
 
@@ -160,9 +157,6 @@ pub struct KaskInferenceProvidersSettings {
 
     /// Enable Cline (open source unified API for models and tools).
     pub cline_enabled: bool,
-
-    /// Enable Z.ai (OpenAI-compatible platform hosting GLM models).
-    pub zai_enabled: bool,
 
     /// Enable AtlasCloud (task-based media + OpenAI-compatible LLM).
     pub atlascloud_enabled: bool,
@@ -179,11 +173,9 @@ impl KaskInferenceProvidersSettings {
         Self {
             deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
             fal_enabled: std::env::var("FALAI_API_KEY").is_ok(),
-            together_enabled: std::env::var("TOGETHERAI_API_KEY").is_ok(),
             openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
             kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
             cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
-            zai_enabled: std::env::var("ZAI_API_KEY").is_ok(),
             atlascloud_enabled: std::env::var("ATLASCLOUD_API_KEY").is_ok(),
         }
     }
@@ -1205,11 +1197,9 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
         Self {
             deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
             fal_enabled: c.fal_enabled.unwrap_or(from_env.fal_enabled),
-            together_enabled: c.together_enabled.unwrap_or(from_env.together_enabled),
             openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
             kilocode_enabled: c.kilocode_enabled.unwrap_or(from_env.kilocode_enabled),
             cline_enabled: c.cline_enabled.unwrap_or(from_env.cline_enabled),
-            zai_enabled: c.zai_enabled.unwrap_or(from_env.zai_enabled),
             atlascloud_enabled: c.atlascloud_enabled.unwrap_or(from_env.atlascloud_enabled),
         }
     }
@@ -1678,7 +1668,6 @@ mod tests {
         let default = KaskInferenceProvidersSettings::default();
         assert!(!default.deepinfra_enabled);
         assert!(!default.fal_enabled);
-        assert!(!default.together_enabled);
         assert!(!default.openrouter_enabled);
         assert!(!default.kilocode_enabled);
         assert!(!default.cline_enabled);
@@ -1720,11 +1709,9 @@ mod tests {
                 env_var.as_str(),
                 "DEEPINFRA_API_KEY"
                     | "FALAI_API_KEY"
-                    | "TOGETHERAI_API_KEY"
                     | "OPENROUTER_API_KEY"
                     | "KILOCODE_API_KEY"
                     | "CLINE_API_KEY"
-                    | "ZAI_API_KEY"
                     | "ATLASCLOUD_API_KEY"
             )
         });

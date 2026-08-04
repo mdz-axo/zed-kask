@@ -1,7 +1,7 @@
 //! Shared OpenAI-compatible chat completion protocol types and helpers.
 //!
-//! All seven chat backends (DeepInfra, Together AI, fal.ai, OpenRouter,
-//! KiloCode, Ollama, Cline) speak the same `/v1/chat/completions` wire format.
+//! All six chat backends (DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama,
+//! Cline) speak the same `/v1/chat/completions` wire format.
 //! This module provides the shared request/response types and helper functions
 //! used by all backends.
 //!
@@ -156,7 +156,7 @@ pub fn build_vision_request(
 }
 
 /// Shared vision inference — sends OpenAI multimodal request and parses response.
-/// Used by DeepInfra, Together, OpenRouter, and KiloCode backends.
+/// Used by DeepInfra, OpenRouter, and KiloCode backends.
 pub(crate) async fn vision_infer(
     client: &reqwest::Client,
     base_url: &str,
@@ -261,6 +261,23 @@ pub struct ChatUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    /// Observed USD cost of this inference call (provider-reported, not
+    /// operator-configured). `None` when the provider doesn't report cost
+    /// (e.g. Ollama, local, $0). OpenRouter and KiloCode use this field name.
+    #[serde(default)]
+    pub cost: Option<f64>,
+    /// DeepInfra's cost field (same meaning as `cost`, different key).
+    #[serde(default)]
+    pub estimated_cost: Option<f64>,
+    /// Market compute value (KiloCode BYOK). The real energy cost of the
+    /// inference regardless of BYOK discounts. When present, preferred over
+    /// `cost` for rJoule (energy spend) tracking.
+    #[serde(default)]
+    pub market_cost: Option<f64>,
+    /// Cache discount details (OpenRouter: `prompt_tokens_details.cached_tokens`).
+    /// Opaque JSON; the executor only reads the resolved `cost`/`market_cost`.
+    #[serde(default)]
+    pub prompt_tokens_details: Option<serde_json::Value>,
 }
 
 // ── Token probability types ─────────────────────────────────────────────────
@@ -438,10 +455,11 @@ pub fn chat_response_to_result(response: ChatResponse) -> Result<InferenceResult
         completion_tokens: usage.completion_tokens,
         total_tokens: usage.total_tokens,
     };
-    // rJoule = USD: charge the inference cost to the manifest executor's
-    // rJoule budget. Price resolved from the env price table by
-    // `compute_cost_usd`. `None` for unpriced models (local, unconfigured).
-    let cost_usd = crate::pricing::compute_cost_usd(&response.model, &inference_usage);
+    // Observed per-call cost from the provider's response. rJoule = USD.
+    // Prefer `market_cost` (real compute energy, reflects discounts/cache
+    // regardless of BYOK) over `cost`/`estimated_cost` (what you pay, may
+    // be 0 with BYOK). `None` when the provider reports no cost (Ollama, $0).
+    let cost_usd = usage.market_cost.or(usage.cost).or(usage.estimated_cost);
 
     Ok(InferenceResult {
         text,

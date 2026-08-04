@@ -1331,11 +1331,12 @@ impl ManifestExecutor {
         };
 
         // rJoule (USD) tracking — charge the inference call's USD cost. The
-        // InferencePort populates `cost_usd` from token usage × the model's
-        // per-token price (1 rJoule = $1 USD; see `hkask_inference::compute_cost_usd`).
-        // `None` for unpriced models (local Ollama, unconfigured cloud) — free,
-        // not charged. Charged AFTER the call (cost is token-driven, only known
-        // post-call); the `check_exhausted` below trips the rJoule hard limit once
+        // InferencePort populates `cost_usd` from the provider's observed response
+        // (`usage.cost` / `market_cost` / `estimated_cost`), not an operator-configured
+        // price table (1 rJoule = $1 USD). `None` when the provider reports no cost
+        // (local Ollama, the zed IPC bridge path which doesn't surface cost, $0) —
+        // free, not charged. Charged AFTER the call (cost is response-driven, only
+        // known post-call); the `check_exhausted` below trips the rJoule hard limit once
         // cumulative spend exceeds `rjoule.cap` (a USD budget). Only LLM inference
         // (`select` steps) is charged here — MCP `execute` steps that hit paid
         // external APIs are NOT yet charged rJoule through the executor (TODO:

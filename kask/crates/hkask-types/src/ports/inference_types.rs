@@ -152,12 +152,15 @@ pub struct InferenceResult {
     /// excluded from context history and episodic storage by default.
     #[serde(default)]
     pub reasoning: Option<String>,
-    /// The USD cost of this inference call, computed from `usage` (token
-    /// counts) × the model's per-token price. `1 rJoule = $1 USD`, so the
-    /// manifest executor charges this directly to the rJoule budget via
+    /// The USD cost of this inference call, observed from the provider's
+    /// response (`usage.cost` / `market_cost` / `estimated_cost`), not an
+    /// operator-configured price table. `1 rJoule = $1 USD`, so the manifest
+    /// executor charges this directly to the rJoule budget via
     /// `BudgetTracker::charge_rjoule`. Populated by the `InferencePort` impl
-    /// (which knows the model price); `None` when the model is unpriced/unknown
-    /// (e.g. local Ollama) — unpriced calls are free and not charged.
+    /// that has access to the provider's raw response (the direct-HTTP
+    /// backends); `None` when the provider reports no cost (e.g. local Ollama,
+    /// or the zed IPC bridge path which surfaces only token counts) —
+    /// unpriced calls are free and not charged.
     #[serde(default)]
     pub cost_usd: Option<f64>,
 }

@@ -287,12 +287,12 @@ the failure branch naming the hook, the failure reason, and the remediation
 pattern exists for `TOOL_ROUTER`, `CONTEXT_INJECTOR`, and `THREAD_CONDENSER`.
 
 `OnceLock`-based hooks (`set_manifest_executor`, `set_context_injector`,
-`set_curator_context_injector`, `set_tool_router`, `set_metacognition_provider`)
-must `log::warn!` on the `Err` branch of `OnceLock::set` — a second call
-(e.g. deferred task re-firing) is silently dropped without the warn.
-`Mutex`-based hooks (`set_memory_port`, `set_thread_condenser`,
-`set_tool_invoker`) are re-settable and don't need the warn (the second call
-replaces the first).
+`set_curator_context_injector`) must `log::warn!` on the `Err` branch of
+`OnceLock::set` — a second call (e.g. deferred task re-firing) is silently
+dropped without the warn. `Mutex`-based hooks (`set_memory_port`,
+`set_thread_condenser`, `set_tool_invoker`, `set_tool_router`,
+`set_metacognition_provider`) are re-settable and don't need the warn (the
+second call replaces the first).
 
 When a deferred task wires multiple `set_*` hooks inside a single `if`
 block, the `else` branch warn must name ALL hooks left unwired, not just
