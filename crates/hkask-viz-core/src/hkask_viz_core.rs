@@ -44,7 +44,10 @@ use std::hash::{Hash, Hasher};
 use gpui::{AnyElement, App, Entity, IntoElement, ParentElement, Styled, Window, div};
 
 use hkask_graph_widget::GraphWidget;
+use hkask_kanban_widget::KanbanWidget;
 use hkask_media_widget::MediaWidget;
+use hkask_portfolio_widget::PortfolioWidget;
+use hkask_scenarios_widget::ScenariosWidget;
 
 /// The composed block renderer: tries each registered renderer in order and
 /// returns the first `Some(element)`. Structurally identical to
@@ -57,6 +60,9 @@ pub type BlockRenderer = Box<dyn Fn(&str, &mut Window, &mut App) -> Option<AnyEl
 enum CachedWidget {
     Media(Entity<MediaWidget>),
     Graph(Entity<GraphWidget>),
+    Kanban(Entity<KanbanWidget>),
+    Portfolio(Entity<PortfolioWidget>),
+    Scenarios(Entity<ScenariosWidget>),
 }
 
 impl CachedWidget {
@@ -69,6 +75,15 @@ impl CachedWidget {
                 div().size_full().child(entity.clone()).into_any_element()
             }
             CachedWidget::Graph(entity) => {
+                div().size_full().child(entity.clone()).into_any_element()
+            }
+            CachedWidget::Kanban(entity) => {
+                div().size_full().child(entity.clone()).into_any_element()
+            }
+            CachedWidget::Portfolio(entity) => {
+                div().size_full().child(entity.clone()).into_any_element()
+            }
+            CachedWidget::Scenarios(entity) => {
                 div().size_full().child(entity.clone()).into_any_element()
             }
         }
@@ -158,6 +173,31 @@ pub fn block_renderer() -> BlockRenderer {
         if let Some(entity) = hkask_graph_widget::create_graph_widget(body, cx) {
             VIZ_CACHE.with(|cache| {
                 cache.borrow_mut().insert(key, CachedWidget::Graph(entity));
+            });
+            return VIZ_CACHE.with(|cache| cache.borrow().get(key).map(|widget| widget.render()));
+        }
+
+        if let Some(entity) = hkask_kanban_widget::create_kanban_widget(body, cx) {
+            VIZ_CACHE.with(|cache| {
+                cache.borrow_mut().insert(key, CachedWidget::Kanban(entity));
+            });
+            return VIZ_CACHE.with(|cache| cache.borrow().get(key).map(|widget| widget.render()));
+        }
+
+        if let Some(entity) = hkask_portfolio_widget::create_portfolio_widget(body, cx) {
+            VIZ_CACHE.with(|cache| {
+                cache
+                    .borrow_mut()
+                    .insert(key, CachedWidget::Portfolio(entity));
+            });
+            return VIZ_CACHE.with(|cache| cache.borrow().get(key).map(|widget| widget.render()));
+        }
+
+        if let Some(entity) = hkask_scenarios_widget::create_scenarios_widget(body, cx) {
+            VIZ_CACHE.with(|cache| {
+                cache
+                    .borrow_mut()
+                    .insert(key, CachedWidget::Scenarios(entity));
             });
             return VIZ_CACHE.with(|cache| cache.borrow().get(key).map(|widget| widget.render()));
         }

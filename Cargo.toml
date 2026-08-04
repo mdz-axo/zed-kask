@@ -290,7 +290,9 @@ members = [
     "crates/hkask-viz-core",
     "crates/hkask-graph-widget",
     "crates/hkask-kanban-widget",
-        "kask/crates/hkask-test-harness",
+    "crates/hkask-portfolio-widget",
+    "crates/hkask-scenarios-widget",
+    "kask/crates/hkask-test-harness",
 
     #
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
@@ -386,6 +388,8 @@ hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-medi
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
 hkask_kanban_widget = { path = "crates/hkask-kanban-widget", package = "hkask-kanban-widget" }
+hkask_portfolio_widget = { path = "crates/hkask-portfolio-widget", package = "hkask-portfolio-widget" }
+hkask_scenarios_widget = { path = "crates/hkask-scenarios-widget", package = "hkask-scenarios-widget" }
 diagnostics = { path = "crates/diagnostics" }
 dialoguer = { version = "0.12", default-features = false }
 editor = { path = "crates/editor" }

@@ -9615,6 +9615,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hkask-portfolio-widget"
+version = "0.31.1"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
+]
+
+[[package]]
 name = "hkask-regulation"
 version = "0.31.1"
 dependencies = [
@@ -9632,6 +9645,19 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "hkask-scenarios-widget"
+version = "0.31.1"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "theme",
+ "ui",
 ]
 
 [[package]]
@@ -9737,7 +9763,10 @@ version = "0.31.1"
 dependencies = [
  "gpui",
  "hkask-graph-widget",
+ "hkask-kanban-widget",
  "hkask-media-widget",
+ "hkask-portfolio-widget",
+ "hkask-scenarios-widget",
 ]
 
 [[package]]
