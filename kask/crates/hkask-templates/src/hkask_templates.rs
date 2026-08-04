@@ -30,12 +30,8 @@ pub use bundle::BundleManifest;
 pub use bundle::BundleRegistryIndex;
 pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
-pub use hkask_types::InferencePort;
-pub use hkask_types::Skill;
-pub use hkask_types::SkillPolarity;
-pub use hkask_types::SkillZone;
 
-pub use inputs::{render_input_param_spec, validate_inputs};
+pub use inputs::{InputValidationError, render_input_param_spec, validate_inputs};
 pub use manifest_loader::{
     ManifestLoadError, load_manifest_from_file, load_manifest_from_yaml, resolve_manifest,
 };

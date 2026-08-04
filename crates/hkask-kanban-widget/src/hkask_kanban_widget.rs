@@ -20,34 +20,7 @@
 pub mod block;
 pub mod view;
 
-use gpui::{App, AppContext, Entity};
-
 pub use view::KanbanWidget;
-
-/// Create a `KanbanWidget` entity from a block body, without wrapping it in an
-/// element. Used by `hkask_viz_core::block_renderer` to cache the entity across
-/// renders (so board/column state survives re-renders).
-///
-/// Self-selects on a JSON body whose `viz` field equals `"kanban"`. Other bodies
-/// (including media blocks claimed first by the media renderer, and graph blocks
-/// claimed by the graph renderer) fall through with `None`.
-///
-/// Returns `None` if the body is not a valid kanban block.
-pub fn create_kanban_widget(body: &str, cx: &mut App) -> Option<Entity<view::KanbanWidget>> {
-    if !body.trim_start().starts_with('{') {
-        return None;
-    }
-    match block::parse_kanban_body(body) {
-        Ok(parsed) if parsed.viz.as_deref() == Some("kanban") => {
-            Some(cx.new(|cx| view::KanbanWidget::new(parsed, cx)))
-        }
-        Ok(_) => None,
-        Err(error) => {
-            log::warn!("hkask-kanban-widget: malformed kanban block: {error}");
-            None
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -25,36 +25,7 @@
 pub mod block;
 pub mod view;
 
-use gpui::{App, AppContext, Entity};
-
 pub use view::PortfolioWidget;
-
-/// Create a `PortfolioWidget` entity from a block body, without wrapping it in
-/// an element. Used by `hkask_viz_core::block_renderer` to cache the entity
-/// across renders.
-///
-/// Self-selects on a JSON body whose `viz` field equals `"portfolio"`. Other
-/// bodies (including media blocks, which are claimed first by the media
-/// renderer in [`hkask_viz_core::block_renderer`], and graph blocks claimed by
-/// the graph renderer) fall through with `None` so the default code-block
-/// renderer handles them.
-///
-/// Returns `None` if the body is not a valid `portfolio` block.
-pub fn create_portfolio_widget(body: &str, cx: &mut App) -> Option<Entity<view::PortfolioWidget>> {
-    if !body.trim_start().starts_with('{') {
-        return None;
-    }
-    match block::parse_portfolio_body(body) {
-        Ok(parsed) if parsed.viz.as_deref() == Some("portfolio") => {
-            Some(cx.new(|cx| view::PortfolioWidget::new(parsed, cx)))
-        }
-        Ok(_) => None,
-        Err(error) => {
-            log::warn!("hkask-portfolio-widget: malformed portfolio block: {error}");
-            None
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

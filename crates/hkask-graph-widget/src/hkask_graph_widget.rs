@@ -18,6 +18,9 @@
 //! Edges are child-side: each node lists its parents in
 //! `depends_on[].parent_event_ids` (the server's edge model) or, as a tolerant
 //! fallback, in a flat `parents` array.
+//!
+//! The create-and-cache pattern (guard → parse → `viz` check → construct) lives
+//! in `hkask_viz_core::VizWidget`, implemented for [`GraphWidget`] there.
 #![warn(clippy::let_underscore_future)]
 
 pub mod block;
@@ -25,30 +28,7 @@ pub mod layout;
 pub mod propagate;
 pub mod view;
 
-use gpui::{App, AppContext, Entity};
-
 pub use view::GraphWidget;
-
-/// Create a `GraphWidget` entity from a block body, without wrapping it in an
-/// element. Used by `hkask_viz_core::block_renderer` to cache the entity across
-/// renders (so pan/zoom/evidence state survives re-renders).
-///
-/// Returns `None` if the body is not a valid `event_tree` graph block.
-pub fn create_graph_widget(body: &str, cx: &mut App) -> Option<Entity<view::GraphWidget>> {
-    if !body.trim_start().starts_with('{') {
-        return None;
-    }
-    match block::parse_graph_body(body) {
-        Ok(parsed) if parsed.viz.as_deref() == Some("event_tree") => {
-            Some(cx.new(|cx| view::GraphWidget::new(parsed, cx)))
-        }
-        Ok(_) => None,
-        Err(error) => {
-            log::warn!("hkask-graph-widget: malformed graph block: {error}");
-            None
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -9,7 +9,10 @@ description = "Block-renderer registry composing kask viz widgets (media, graph,
 path = "src/hkask_viz_core.rs"
 
 [dependencies]
+anyhow.workspace = true
 gpui.workspace = true
+log.workspace = true
+serde.workspace = true
 hkask_media_widget.workspace = true
 hkask_graph_widget.workspace = true
 hkask_kanban_widget.workspace = true

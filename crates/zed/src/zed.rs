@@ -630,8 +630,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         let git_blame_status = cx.new(|_| git_ui::GitBlameStatus::default());
         let merge_conflict_indicator =
             cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
-        let kask_extensions_button = cx.new(|_| kask_extensions_ui::KaskExtensionsButton::new());
-        let swarm_panel_button = cx.new(|_| swarm_panel::SwarmPanelButton::new());
+        let kask_extensions_button = cx.new(|_| kask_extensions_ui::panel_button::new());
+        let swarm_panel_button = cx.new(|_| swarm_panel::panel_button::new());
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);

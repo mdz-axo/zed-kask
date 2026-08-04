@@ -651,3 +651,18 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
         .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D7: App identity constants must be zed-kask, not upstream Zed.
+    /// An upstream merge that reverts these produces a silently broken
+    /// app identity (wrong bundle ID, wrong data dirs, wrong URL scheme).
+    #[test]
+    fn app_identity_constants_are_kask() {
+        assert_eq!(APP_NAME, "Zed-Kask");
+        assert_eq!(URL_SCHEME, "zed-kask");
+        assert_eq!(APP_NAME_LOWERCASE, "zed-kask");
+    }
+}

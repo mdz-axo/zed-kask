@@ -47,12 +47,19 @@ use std::collections::HashMap;
 /// system key) are logged via `tracing::warn!` but do NOT fail validation —
 /// manifests may declare inputs sparsely, and rejecting unknown keys would
 /// break skills that read keys they forgot to declare.
+/// Error from manifest input validation — a semicolon-joined list of
+/// missing-required and wrong-type messages.
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("{0}")]
+pub struct InputValidationError(pub String);
+
+/// Validate the manifest's declared `inputs` against the runtime `context`.
 pub fn validate_inputs(
     enforce_inputs: Option<bool>,
     inputs: Option<&Value>,
     context: &HashMap<String, Value>,
     system_keys: &[&str],
-) -> Result<(), String> {
+) -> Result<(), InputValidationError> {
     // Opt-in gate: skills must explicitly enable enforcement so existing skills
     // (whose required inputs may be supplied programmatically, not via the
     // interactive `context` map) are not broken.
@@ -120,7 +127,7 @@ pub fn validate_inputs(
     if errors.is_empty() {
         Ok(())
     } else {
-        Err(errors.join("; "))
+        Err(InputValidationError(errors.join("; ")))
     }
 }
 
@@ -216,8 +223,8 @@ mod tests {
         ]));
         let err =
             validate_inputs(Some(true), inputs.as_ref(), &HashMap::new(), &["task"]).unwrap_err();
-        assert!(err.contains("missing required input `change_spec`"));
-        assert!(err.contains("missing required input `diff_base`"));
+        assert!(err.0.contains("missing required input `change_spec`"));
+        assert!(err.0.contains("missing required input `diff_base`"));
     }
 
     #[test]
@@ -232,8 +239,14 @@ mod tests {
             ("delegate_security", Value::String("true".into())),
         ]);
         let err = validate_inputs(Some(true), inputs.as_ref(), &c, &["task"]).unwrap_err();
-        assert!(err.contains("`fix_mode` expects type `string` but got `boolean`"));
-        assert!(err.contains("`delegate_security` expects type `boolean` but got `string`"));
+        assert!(
+            err.0
+                .contains("`fix_mode` expects type `string` but got `boolean`")
+        );
+        assert!(
+            err.0
+                .contains("`delegate_security` expects type `boolean` but got `string`")
+        );
     }
 
     #[test]
@@ -334,7 +347,7 @@ inputs:
             &["task"],
         )
         .unwrap_err();
-        assert!(err.contains("missing required input `change_spec`"));
+        assert!(err.0.contains("missing required input `change_spec`"));
 
         // Well-formed context → ok.
         let c = ctx(&[

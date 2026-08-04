@@ -1,4 +1,4 @@
-mod panel_button;
+pub mod panel_button;
 mod publish;
 
 pub use panel_button::KaskExtensionsButton;

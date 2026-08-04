@@ -9759,12 +9759,15 @@ dependencies = [
 name = "hkask-viz-core"
 version = "0.31.2"
 dependencies = [
+ "anyhow",
  "gpui",
  "hkask-graph-widget",
  "hkask-kanban-widget",
  "hkask-media-widget",
  "hkask-portfolio-widget",
  "hkask-scenarios-widget",
+ "log",
+ "serde",
 ]
 
 [[package]]
@@ -12432,6 +12435,7 @@ dependencies = [
  "smallvec 1.15.2",
  "theme_settings",
  "ui",
+ "workspace",
 ]
 
 [[package]]

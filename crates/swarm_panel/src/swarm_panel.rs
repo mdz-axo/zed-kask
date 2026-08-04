@@ -23,7 +23,7 @@
 //! persisted — re-clicking Steer after a restart starts a fresh composition
 //! conversation.
 
-mod panel_button;
+pub mod panel_button;
 mod parse;
 mod tool_invoker;
 

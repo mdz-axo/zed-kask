@@ -13,6 +13,9 @@ use smallvec::SmallVec;
 use theme_settings::ThemeSettings;
 use ui::prelude::*;
 
+mod panel_button;
+pub use panel_button::PanelToggleButton;
+
 /// The bordered card container used by both extension and kask-skill
 /// catalog pages. Callers supply the card's inner layout as children.
 #[derive(IntoElement)]

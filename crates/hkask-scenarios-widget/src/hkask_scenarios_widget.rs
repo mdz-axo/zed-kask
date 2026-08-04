@@ -26,31 +26,7 @@
 pub mod block;
 pub mod view;
 
-use gpui::{App, AppContext, Entity};
-
 pub use view::ScenariosWidget;
-
-/// Create a `ScenariosWidget` entity from a block body, without wrapping it in
-/// an element. Used by `hkask_viz_core::block_renderer` to cache the entity
-/// across renders.
-///
-/// Returns `None` if the body is not a valid `scenarios` block (including
-/// `event_tree` bodies, which belong to `hkask-graph-widget`).
-pub fn create_scenarios_widget(body: &str, cx: &mut App) -> Option<Entity<view::ScenariosWidget>> {
-    if !body.trim_start().starts_with('{') {
-        return None;
-    }
-    match block::parse_scenarios_body(body) {
-        Ok(parsed) if parsed.viz.as_deref() == Some("scenarios") => {
-            Some(cx.new(|cx| view::ScenariosWidget::new(parsed, cx)))
-        }
-        Ok(_) => None,
-        Err(error) => {
-            log::warn!("hkask-scenarios-widget: malformed scenarios block: {error}");
-            None
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

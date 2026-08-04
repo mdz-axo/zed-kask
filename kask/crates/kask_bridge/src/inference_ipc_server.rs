@@ -862,6 +862,16 @@ async fn dispatch_media(
 mod tests {
     use super::*;
 
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Mutex;
+
+    use hkask_capability::ToolInfo;
+    use hkask_capability::{DelegationToken, ToolFuture, ToolPort, ToolPortError};
+    use hkask_types::inference_ipc::InferenceParams;
+    use hkask_types::{InferenceUsage, LLMParameters, SkillExecError, SkillExecPort};
+    use tokio::sync::mpsc;
+
     /// RR-0031: the inference IPC socket directory must be owner-private
     /// (mode 0700) so other local users cannot reach the socket — the socket
     /// drives LLM calls billed to the operator's API keys. Restored from the
@@ -877,5 +887,556 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o700, "socket dir must be owner-only, got {mode:o}");
+    }
+
+    // ── Stub ports ───────────────────────────────────────────────────────
+    //
+    // The IPC server dispatches to three trait objects (`InferencePort`,
+    // `ToolPort`, `SkillExecPort`). These stubs record their inputs and
+    // return canned outputs so the dispatch routing can be exercised without
+    // a real LLM backend, MCP runtime, or manifest executor.
+
+    /// `InferencePort` stub that records the prompt and returns a canned
+    /// `InferenceResult`. Only `generate` is implemented — the dispatch tests
+    /// for `Generate` route through it.
+    struct StubInferencePort {
+        recorded_prompt: Mutex<Option<String>>,
+        result_text: String,
+    }
+
+    impl StubInferencePort {
+        fn new(result_text: &str) -> Self {
+            Self {
+                recorded_prompt: Mutex::new(None),
+                result_text: result_text.to_string(),
+            }
+        }
+
+        fn recorded_prompt(&self) -> Option<String> {
+            self.recorded_prompt.lock().expect("prompt lock").clone()
+        }
+    }
+
+    impl InferencePort for StubInferencePort {
+        fn generate(
+            &self,
+            prompt: &str,
+            _parameters: &LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+        {
+            *self.recorded_prompt.lock().expect("prompt lock") = Some(prompt.to_string());
+            let result_text = self.result_text.clone();
+            Box::pin(async move {
+                Ok(InferenceResult {
+                    text: result_text,
+                    model: "stub-model".to_string(),
+                    usage: InferenceUsage {
+                        prompt_tokens: 1,
+                        completion_tokens: 2,
+                        total_tokens: 3,
+                    },
+                    finish_reason: "stop".to_string(),
+                    token_probabilities: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                    cost_usd: None,
+                })
+            })
+        }
+    }
+
+    /// `ToolPort` stub that records `(server, tool, args)` and returns a canned
+    /// JSON value. The OCAP token is ignored — the stub does not enforce
+    /// capabilities (that is `McpRuntime`'s job in production).
+    struct StubToolPort {
+        recorded: Mutex<Option<(String, String, serde_json::Value)>>,
+        output: serde_json::Value,
+    }
+
+    impl StubToolPort {
+        fn new(output: serde_json::Value) -> Self {
+            Self {
+                recorded: Mutex::new(None),
+                output,
+            }
+        }
+
+        fn recorded(&self) -> Option<(String, String, serde_json::Value)> {
+            self.recorded.lock().expect("tool lock").clone()
+        }
+    }
+
+    impl ToolPort for StubToolPort {
+        fn invoke<'a>(
+            &'a self,
+            server: &'a str,
+            tool: &'a str,
+            args: serde_json::Value,
+            _token: &'a DelegationToken,
+        ) -> ToolFuture<'a, Result<serde_json::Value, ToolPortError>> {
+            *self.recorded.lock().expect("tool lock") =
+                Some((server.to_string(), tool.to_string(), args));
+            let output = self.output.clone();
+            Box::pin(async move { Ok(output) })
+        }
+
+        fn discover_tools<'a>(&'a self) -> ToolFuture<'a, Vec<String>> {
+            Box::pin(async move { Vec::new() })
+        }
+
+        fn get_tool_info<'a>(&'a self, _tool_name: &'a str) -> ToolFuture<'a, Option<ToolInfo>> {
+            Box::pin(async move { None })
+        }
+    }
+
+    /// `SkillExecPort` stub that records `(name, task)` and returns canned text.
+    struct StubSkillExecPort {
+        recorded: Mutex<Option<(String, String)>>,
+        output: String,
+    }
+
+    impl StubSkillExecPort {
+        fn new(output: &str) -> Self {
+            Self {
+                recorded: Mutex::new(None),
+                output: output.to_string(),
+            }
+        }
+
+        fn recorded(&self) -> Option<(String, String)> {
+            self.recorded.lock().expect("skill lock").clone()
+        }
+    }
+
+    impl SkillExecPort for StubSkillExecPort {
+        fn execute_skill<'a>(
+            &'a self,
+            name: &'a str,
+            task: &'a str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, SkillExecError>> + Send + 'a>> {
+            *self.recorded.lock().expect("skill lock") = Some((name.to_string(), task.to_string()));
+            let output = self.output.clone();
+            Box::pin(async move { Ok(output) })
+        }
+    }
+
+    /// Build `InferenceParams` with only `prompt` set and everything else
+    /// defaulted/None. Callers override specific fields as needed.
+    fn params_with_prompt(prompt: &str) -> InferenceParams {
+        InferenceParams {
+            prompt: Some(prompt.to_string()),
+            messages: None,
+            images: None,
+            parameters: LLMParameters::default(),
+            model_override: None,
+            tools: None,
+            embed_model: None,
+            embed_texts: None,
+            media_op: None,
+            media_prompt: None,
+            media_image_url: None,
+            media_audio_url: None,
+            media_text: None,
+            media_voice: None,
+            media_size: None,
+            media_count: None,
+            media_strength: None,
+            media_scale: None,
+            media_duration: None,
+            media_object_description: None,
+            media_language: None,
+            media_workflow: None,
+            tool_server: None,
+            tool_name: None,
+            tool_args: None,
+            tool_allowlist: None,
+            skill_name: None,
+            skill_task: None,
+        }
+    }
+
+    /// Build the `list_models_tx` channel the dispatch function requires. The
+    /// receiver is dropped — only `ListModels` requests use it, and these
+    /// tests never send one.
+    fn dummy_list_models_tx() -> Arc<mpsc::UnboundedSender<(oneshot::Sender<Vec<ModelListEntry>>,)>>
+    {
+        let (tx, _rx) = mpsc::unbounded_channel::<(oneshot::Sender<Vec<ModelListEntry>>,)>();
+        Arc::new(tx)
+    }
+
+    // ── dispatch (pure function) tests ────────────────────────────────────
+
+    /// M4: a `Generate` request routes to the `InferencePort` and returns the
+    /// stub's canned `InferenceResult`, recording the prompt.
+    #[tokio::test]
+    async fn dispatch_generate_returns_canned_result() {
+        let stub = Arc::new(StubInferencePort::new("canned-output"));
+        let port: Arc<dyn InferencePort> = stub.clone();
+        let list_models_tx = dummy_list_models_tx();
+
+        let request = InferenceRequest {
+            id: 1,
+            method: InferenceMethod::Generate,
+            params: params_with_prompt("hello inference"),
+        };
+
+        let outcome = dispatch(&port, None, None, None, None, &list_models_tx, request).await;
+
+        match outcome {
+            InferenceOutcome::Result { result } => {
+                assert_eq!(result.text, "canned-output");
+                assert_eq!(result.model, "stub-model");
+            }
+            other => panic!("expected Result outcome, got {other:?}"),
+        }
+        assert_eq!(stub.recorded_prompt().as_deref(), Some("hello inference"));
+    }
+
+    /// M4: a `ToolInvoke` request routes to the `ToolPort` (after the
+    /// delegated-tool allowlist gate), recording `(server, tool, args)` and
+    /// returning a `ToolResult` outcome.
+    #[tokio::test]
+    async fn dispatch_tool_invoke_returns_canned_result() {
+        let stub = Arc::new(StubToolPort::new(
+            serde_json::json!({ "rows": 7, "result": "inner" }),
+        ));
+        let tool_port: Arc<dyn ToolPort> = stub.clone();
+        let inference_port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("unused"));
+        let list_models_tx = dummy_list_models_tx();
+
+        let mut params = params_with_prompt("");
+        params.tool_server = Some("test-server".to_string());
+        params.tool_name = Some("test-tool".to_string());
+        params.tool_args = Some(serde_json::json!({ "q": "rust" }));
+        params.tool_allowlist = Some(vec!["test-server/test-tool".to_string()]);
+
+        let request = InferenceRequest {
+            id: 2,
+            method: InferenceMethod::ToolInvoke,
+            params,
+        };
+
+        let outcome = dispatch(
+            &inference_port,
+            None,
+            None,
+            Some(&tool_port),
+            None,
+            &list_models_tx,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::ToolResult { result } => {
+                assert_eq!(result["rows"], 7);
+                assert_eq!(result["result"], "inner");
+            }
+            other => panic!("expected ToolResult outcome, got {other:?}"),
+        }
+        let recorded = stub.recorded().expect("tool port was not called");
+        assert_eq!(recorded.0, "test-server");
+        assert_eq!(recorded.1, "test-tool");
+        assert_eq!(recorded.2["q"], "rust");
+    }
+
+    /// M4: a `SkillExecute` request routes to the `SkillExecPort`, recording
+    /// `(name, task)` and returning a `SkillResult` outcome.
+    #[tokio::test]
+    async fn dispatch_skill_execute_returns_canned_result() {
+        let stub = Arc::new(StubSkillExecPort::new("cascade-output"));
+        let skill_port: Arc<dyn SkillExecPort> = stub.clone();
+        let inference_port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("unused"));
+        let list_models_tx = dummy_list_models_tx();
+
+        let mut params = params_with_prompt("");
+        params.skill_name = Some("grill-me".to_string());
+        params.skill_task = Some("audit this dispatch".to_string());
+
+        let request = InferenceRequest {
+            id: 3,
+            method: InferenceMethod::SkillExecute,
+            params,
+        };
+
+        let outcome = dispatch(
+            &inference_port,
+            None,
+            None,
+            None,
+            Some(&skill_port),
+            &list_models_tx,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::SkillResult { result } => {
+                assert_eq!(result, "cascade-output");
+            }
+            other => panic!("expected SkillResult outcome, got {other:?}"),
+        }
+        let recorded = stub.recorded().expect("skill port was not called");
+        assert_eq!(recorded.0, "grill-me");
+        assert_eq!(recorded.1, "audit this dispatch");
+    }
+
+    /// M4: a `ToolInvoke` request with no tool port configured returns an
+    /// `Error` outcome — the dispatch never panics, it fail-closes with a
+    /// diagnostic. This is the dispatch-level error-return path (the closed
+    /// `InferenceMethod` enum has no "unknown" variant, so the analogous
+    /// error path is the missing-port arm).
+    #[tokio::test]
+    async fn dispatch_tool_invoke_without_port_returns_error() {
+        let inference_port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("unused"));
+        let list_models_tx = dummy_list_models_tx();
+
+        let mut params = params_with_prompt("");
+        params.tool_server = Some("any".to_string());
+        params.tool_name = Some("any".to_string());
+        params.tool_allowlist = Some(vec!["any/any".to_string()]);
+
+        let request = InferenceRequest {
+            id: 4,
+            method: InferenceMethod::ToolInvoke,
+            params,
+        };
+
+        let outcome = dispatch(
+            &inference_port,
+            None,
+            None,
+            None,
+            None,
+            &list_models_tx,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "Connection");
+                assert!(
+                    error.message.contains("tool dispatch not configured"),
+                    "unexpected error message: {error:?}",
+                );
+            }
+            other => panic!("expected Error outcome, got {other:?}"),
+        }
+    }
+
+    /// M4: a `ToolInvoke` request whose `tool_allowlist` does not contain the
+    /// qualified `server/tool` is refused *before* the panel token is minted —
+    /// the dispatched-tool allowlist is enforced at the dispatch boundary.
+    #[tokio::test]
+    async fn dispatch_tool_invoke_rejects_unallowed_tool() {
+        let stub = Arc::new(StubToolPort::new(serde_json::json!("must-not-be-called")));
+        let tool_port: Arc<dyn ToolPort> = stub.clone();
+        let inference_port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("unused"));
+        let list_models_tx = dummy_list_models_tx();
+
+        let mut params = params_with_prompt("");
+        params.tool_server = Some("server-a".to_string());
+        params.tool_name = Some("tool-x".to_string());
+        params.tool_allowlist = Some(vec!["server-a/tool-y".to_string()]);
+
+        let request = InferenceRequest {
+            id: 5,
+            method: InferenceMethod::ToolInvoke,
+            params,
+        };
+
+        let outcome = dispatch(
+            &inference_port,
+            None,
+            None,
+            Some(&tool_port),
+            None,
+            &list_models_tx,
+            request,
+        )
+        .await;
+
+        match outcome {
+            InferenceOutcome::Error { error } => {
+                assert_eq!(error.code, "ToolPort");
+                assert!(
+                    error.message.contains("server-a/tool-x"),
+                    "error should name the refused tool, got: {error:?}",
+                );
+            }
+            other => panic!("expected Error outcome, got {other:?}"),
+        }
+        assert!(stub.recorded().is_none(), "tool port must not be invoked");
+    }
+
+    // ── CappedReader line-length enforcement ──────────────────────────────
+
+    /// M4: a line exceeding `MAX_IPC_LINE_BYTES` without a newline is rejected
+    /// with `InvalidData` / `LINE_TOO_LONG`. This is the CWE-400 unbounded
+    /// read guard; the connection is unusable afterward (the buffered
+    /// remainder cannot be re-synchronized to a message boundary).
+    #[tokio::test]
+    async fn capped_reader_rejects_oversized_line() {
+        use tokio::io::{AsyncWriteExt, duplex};
+
+        // Buffer large enough to hold the oversized payload in one write so
+        // `write_all` does not block.
+        let capacity = (MAX_IPC_LINE_BYTES as usize) + 64;
+        let (read, mut write) = duplex(capacity);
+        let oversized = vec![b'a'; (MAX_IPC_LINE_BYTES as usize) + 1];
+        write
+            .write_all(&oversized)
+            .await
+            .expect("write fits buffer");
+        write.flush().await.expect("flush");
+        drop(write); // signal EOF so the reader can drain
+
+        let mut reader = CappedReader::new(read);
+        let result = reader.read_line().await;
+        let err = result.expect_err("oversized line must error");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(err.to_string(), LINE_TOO_LONG);
+    }
+
+    /// M4: a line within the cap followed by a newline is accepted.
+    #[tokio::test]
+    async fn capped_reader_accepts_line_within_cap() {
+        use tokio::io::{AsyncWriteExt, duplex};
+
+        let capacity = 1024;
+        let (read, mut write) = duplex(capacity);
+        write.write_all(b"short line\n").await.expect("write");
+        write.flush().await.expect("flush");
+        drop(write);
+
+        let mut reader = CappedReader::new(read);
+        let line = reader
+            .read_line()
+            .await
+            .expect("read within cap")
+            .expect("some line");
+        assert_eq!(line, "short line");
+    }
+
+    // ── handle_connection (real wire format) tests ────────────────────────
+
+    /// M4: end-to-end through a Unix socket pair. A `Generate` request is
+    /// serialized to the real newline-delimited JSON wire format, written to
+    /// the client end, and the response is read back and parsed — exercising
+    /// `peer_is_owner`, `CappedReader`, `dispatch`, and the response
+    /// serialization in one pass.
+    #[tokio::test]
+    async fn handle_connection_end_to_end_generate() {
+        let (client, server) = tokio::net::UnixStream::pair().expect("socket pair");
+        let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("hello-from-bridge"));
+        let list_models_tx = dummy_list_models_tx();
+        let handle = tokio::spawn(handle_connection(
+            server,
+            port,
+            None,
+            None,
+            None,
+            None,
+            list_models_tx,
+        ));
+
+        let request = InferenceRequest {
+            id: 42,
+            method: InferenceMethod::Generate,
+            params: params_with_prompt("hi"),
+        };
+        let line = serde_json::to_string(&request).expect("serialize request") + "\n";
+
+        let (read, mut write) = tokio::io::split(client);
+        write
+            .write_all(line.as_bytes())
+            .await
+            .expect("write request");
+        write.flush().await.expect("flush request");
+
+        let mut response = String::new();
+        let mut buf_reader = BufReader::new(read);
+        buf_reader
+            .read_line(&mut response)
+            .await
+            .expect("read response");
+
+        let parsed: InferenceResponse = serde_json::from_str(&response).expect("parse response");
+        assert_eq!(parsed.id, 42);
+        match parsed.outcome {
+            InferenceOutcome::Result { result } => assert_eq!(result.text, "hello-from-bridge"),
+            other => panic!("expected Result outcome, got {other:?}"),
+        }
+
+        // Drop the client halves so the server's read loop sees EOF and exits.
+        drop(write);
+        drop(buf_reader);
+        handle.await.expect("handle join");
+    }
+
+    /// M4: a line carrying an unknown `method` variant fails to deserialize as
+    /// an `InferenceRequest` and is *skipped* (the protocol writes no response
+    /// for unparseable lines — see `handle_connection`). The connection
+    /// survives, and a subsequent valid request is answered. `InferenceMethod`
+    /// is a closed enum (no `#[serde(other)]`), so an unknown method string is
+    /// a parse failure, not a dispatchable variant; this test pins the actual
+    /// behavior rather than fabricating an error response.
+    #[tokio::test]
+    async fn handle_connection_skips_unparseable_line() {
+        let (client, server) = tokio::net::UnixStream::pair().expect("socket pair");
+        let port: Arc<dyn InferencePort> = Arc::new(StubInferencePort::new("after-skip"));
+        let list_models_tx = dummy_list_models_tx();
+        let handle = tokio::spawn(handle_connection(
+            server,
+            port,
+            None,
+            None,
+            None,
+            None,
+            list_models_tx,
+        ));
+
+        // Malformed request: unknown method variant — deserialization fails.
+        let bad = b"{\"id\":1,\"method\":\"totally_made_up\",\"params\":{}}\n";
+        // Valid request that follows it.
+        let good_request = InferenceRequest {
+            id: 2,
+            method: InferenceMethod::Generate,
+            params: params_with_prompt("second chance"),
+        };
+        let good = serde_json::to_string(&good_request).expect("serialize") + "\n";
+
+        let (read, mut write) = tokio::io::split(client);
+        write.write_all(bad).await.expect("write bad line");
+        write
+            .write_all(good.as_bytes())
+            .await
+            .expect("write good line");
+        write.flush().await.expect("flush");
+
+        // Exactly one response should arrive — for id=2 (the valid request).
+        let mut response = String::new();
+        let mut buf_reader = BufReader::new(read);
+        buf_reader
+            .read_line(&mut response)
+            .await
+            .expect("read response");
+
+        let parsed: InferenceResponse = serde_json::from_str(&response).expect("parse response");
+        assert_eq!(
+            parsed.id, 2,
+            "only the valid (id=2) request may be answered; got id={}",
+            parsed.id,
+        );
+        match parsed.outcome {
+            InferenceOutcome::Result { result } => assert_eq!(result.text, "after-skip"),
+            other => panic!("expected Result outcome, got {other:?}"),
+        }
+
+        drop(write);
+        drop(buf_reader);
+        handle.await.expect("handle join");
     }
 }

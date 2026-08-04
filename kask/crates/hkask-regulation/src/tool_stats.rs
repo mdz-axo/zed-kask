@@ -174,6 +174,15 @@ impl ToolStats {
     }
 
     /// Restore tool stats state from a previously saved JSON value.
+    ///
+    /// Missing or malformed scalar fields (`successes`, `failures`) are
+    /// tolerated by falling back to 0, but emit a `tracing::warn!` naming the
+    /// field, the expected type, and the actual value. This lets an operator
+    /// reading logs distinguish a genuinely-zero tool (no recorded outcomes)
+    /// from a corrupted state file (field present but wrong type). Without the
+    /// warning, `unwrap_or(0)` masks corruption as a measured zero — a broken
+    /// feedback loop, since the reliability layer reads these counts as
+    /// measurements.
     pub async fn load_state(&self, saved: &serde_json::Value) {
         let mut state = self.state.write().await;
         if let Some(obj) = saved.as_object() {
@@ -186,11 +195,41 @@ impl ToolStats {
                         }
                     }
                 }
-                ts.successes = val.get("successes").and_then(|s| s.as_u64()).unwrap_or(0);
-                ts.failures = val.get("failures").and_then(|f| f.as_u64()).unwrap_or(0);
+                ts.successes = read_count_field(val, name, "successes");
+                ts.failures = read_count_field(val, name, "failures");
                 state.insert(name.clone(), ts);
             }
         }
+    }
+}
+
+/// Read a `u64` outcome count (`successes`/`failures`) from a saved tool-state
+/// JSON object.
+///
+/// Tolerates a missing field (treats as 0) but emits a `tracing::warn!` when
+/// the field is present but not a `u64`, naming the tool, the field, the
+/// expected type, and the actual value. This distinguishes a measured zero
+/// (tool with no recorded outcomes) from a malformed state file (field
+/// present but wrong type) so an operator can detect corruption rather than
+/// silently masking it as `0`.
+fn read_count_field(val: &serde_json::Value, tool_name: &str, field: &str) -> u64 {
+    match val.get(field) {
+        // Missing field: a tool with no recorded outcomes legitimately has no
+        // count — no warning, fall back to 0.
+        None => 0,
+        Some(v) => match v.as_u64() {
+            Some(count) => count,
+            None => {
+                tracing::warn!(
+                    tool = tool_name,
+                    field,
+                    expected = "u64",
+                    actual = %v,
+                    "tool_stats: malformed state field, falling back to 0"
+                );
+                0
+            }
+        },
     }
 }
 
@@ -222,5 +261,64 @@ impl CostDistribution {
             n_observations: n,
             reliable: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn save_load_roundtrips_counts() {
+        let stats = ToolStats::new();
+        stats.record("t1", 10, true).await;
+        stats.record("t1", 12, false).await;
+        let saved = stats.save_state().await;
+
+        let restored = ToolStats::new();
+        restored.load_state(&saved).await;
+        // Reserve estimate round-trips (exercises the reloaded costs).
+        let est = restored.reserve_estimate("t1").await;
+        assert!(est.is_some());
+        // Reliability alert fires for the failed tool (success prob < threshold).
+        let alerts = restored.reliability_alerts().await;
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].tool_name, "t1");
+        assert_eq!(alerts[0].n_observations, 2);
+    }
+
+    // Pins the M8 degradation: a missing `successes`/`failures` field is a
+    // measured zero (no warn), while a present-but-wrong-type field falls back
+    // to 0 (with a warn) instead of `unwrap_or(0)` silently masking corruption.
+    // See .rules: "unwrap_or(0) on regulation-loop sense inputs is a broken
+    // feedback loop".
+    #[tokio::test]
+    async fn load_state_missing_field_falls_back_to_zero() {
+        let saved = serde_json::json!({
+            "t_missing": { "costs": [5.0], "successes": 3 }
+            // `failures` absent → 0
+        });
+        let stats = ToolStats::new();
+        stats.load_state(&saved).await;
+        // No alerts: 3 successes / 0 failures → prob 1.0, above threshold.
+        assert!(stats.reliability_alerts().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_state_malformed_field_falls_back_to_zero() {
+        let saved = serde_json::json!({
+            "t_bad": {
+                "costs": [5.0],
+                "successes": "not a number",
+                "failures": 4
+            }
+        });
+        let stats = ToolStats::new();
+        stats.load_state(&saved).await;
+        // `successes` malformed → 0; 0 successes / 4 failures → prob 0.2 < 0.8.
+        let alerts = stats.reliability_alerts().await;
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].tool_name, "t_bad");
+        assert_eq!(alerts[0].n_observations, 4);
     }
 }

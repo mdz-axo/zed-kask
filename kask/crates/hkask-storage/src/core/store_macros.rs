@@ -9,11 +9,19 @@
 ///
 /// Generates `from_driver(driver)` which calls `Self::init_schema(driver)` and
 /// propagates any schema-init failure. The store MUST implement
-/// `fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), InfrastructureError>`
-/// in a separate `impl` block. For stores with no tables, return `Ok(())`.
+/// `fn init_schema(driver: &Arc<dyn DatabaseDriver>) -> Result<(), E>`
+/// in a separate `impl` block, where `E` is the error type passed to the macro
+/// (defaulting to `InfrastructureError`). For stores with no tables, return `Ok(())`.
+///
+/// The optional second argument customizes the error type returned by
+/// `from_driver` and expected from `init_schema`. Stores whose domain errors are
+/// distinct from `InfrastructureError` (e.g. `Ledger` with `LedgerError`) pass
+/// their error type so the macro-generated `from_driver` returns it directly
+/// instead of forcing an `InfrastructureError` boundary.
 ///
 /// # Example
 /// ```ignore
+/// // Default error type (InfrastructureError):
 /// define_driver_store!(UserStore);
 ///
 /// impl UserStore {
@@ -22,10 +30,22 @@
 ///         Ok(())
 ///     }
 /// }
+///
+/// // Custom error type:
+/// define_driver_store!(Ledger, LedgerError);
+///
+/// impl Ledger {
+///     fn init_schema(driver: &Arc<dyn DatabaseDriverTrait>) -> Result<(), LedgerError> {
+///         schema::init_schema(driver)
+///     }
+/// }
 /// ```
 #[macro_export]
 macro_rules! define_driver_store {
     ($name:ident) => {
+        $crate::define_driver_store!($name, hkask_types::InfrastructureError);
+    };
+    ($name:ident, $error:ty) => {
         /// Store backed by a provider-agnostic DatabaseDriver.
         #[derive(Clone)]
         pub struct $name {
@@ -38,7 +58,7 @@ macro_rules! define_driver_store {
             /// with a missing table.
             pub fn from_driver(
                 driver: std::sync::Arc<dyn $crate::DatabaseDriverTrait>,
-            ) -> Result<Self, hkask_types::InfrastructureError> {
+            ) -> Result<Self, $error> {
                 $name::init_schema(&driver)?;
                 Ok(Self { driver })
             }
