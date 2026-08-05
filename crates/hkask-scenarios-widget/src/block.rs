@@ -6,6 +6,7 @@
 //! partial bodies and never fails on other-shaped JSON (which has no `viz`
 //! field matching `"scenarios"`).
 
+use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
 
 // ── FIBO / methodology anchors ────────────────────────────────────────────
@@ -30,6 +31,12 @@ pub struct ScenariosBlockBody {
     pub event_tree: Option<EventTreeSummary>,
     #[serde(default)]
     pub recent_forecasts: Vec<RecentForecast>,
+    /// Server-authoritative provenance for re-issuing the originating MCP tool
+    /// with modified args (T3/T4). `#[serde(default)]` so bodies emitted before
+    /// provenance landed parse with an empty (non-dispatchable) provenance and
+    /// the widget falls back to its hardcoded dispatch.
+    #[serde(default)]
+    pub provenance: BlockProvenance,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -183,5 +190,29 @@ mod tests {
     #[test]
     fn non_json_fails() {
         assert!(parse_scenarios_body("not json").is_err());
+    }
+
+    #[test]
+    fn provenance_defaults_empty_when_absent() {
+        // A body emitted before provenance lands has no `provenance` key.
+        // Adding the field is non-breaking: provenance defaults empty and is
+        // not dispatchable (T3 contract).
+        let body = parse_scenarios_body(r#"{"viz":"scenarios"}"#).expect("valid body");
+        assert!(!body.provenance.is_dispatchable());
+        assert!(body.provenance.tool.is_none());
+        assert!(body.provenance.server.is_none());
+    }
+
+    #[test]
+    fn provenance_parses_when_present() {
+        let json = r#"{"viz":"scenarios","provenance":{"tool":"scenario_quantify","server":"hkask-mcp-scenarios","args":{"event_id":"e1"}}}"#;
+        let body = parse_scenarios_body(json).expect("valid body");
+        assert!(body.provenance.is_dispatchable());
+        assert_eq!(body.provenance.tool.as_deref(), Some("scenario_quantify"));
+        assert_eq!(
+            body.provenance.server.as_deref(),
+            Some("hkask-mcp-scenarios")
+        );
+        assert_eq!(body.provenance.args["event_id"], "e1");
     }
 }

@@ -224,6 +224,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         config_env: Some(&["HKASK_SCENARIOS_DATA"]),
     },
     BuiltinMcpServer {
+        id: "prediction-markets",
+        binary: "hkask-mcp-prediction-markets",
+        description: "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
+        credentials: Some(&[]),
+        config_env: Some(&["HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS"]),
+    },
+    BuiltinMcpServer {
         id: "swarm",
         binary: "hkask-mcp-swarm",
         description: "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
@@ -319,6 +326,7 @@ pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
     "media",
     "research",
     "scenarios",
+    "prediction-markets",
     "swarm",
     "training",
 ];
@@ -344,6 +352,10 @@ pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
     ("media", "Media — image generation and media workflows"),
     ("research", "Research — web research and paper search"),
     ("scenarios", "Scenarios — scenario planning and forecasting"),
+    (
+        "prediction-markets",
+        "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
+    ),
     (
         "swarm",
         "Swarm — Agent Bestiary World agent swarms and Xaman Ek curator",
@@ -565,6 +577,24 @@ mod tests {
             s.config_env.unwrap().to_vec(),
             vec!["HKASK_DATA_DIR"],
             "kata-kanban config_env allowlist drifted"
+        );
+    }
+
+    #[test]
+    fn prediction_markets_allowlist_matches_actual_reads() {
+        let s = server_by_id("prediction-markets");
+        // Read sites: none — both platforms expose public market-data reads.
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            Vec::<&str>::new(),
+            "prediction-markets credentials allowlist drifted — Polymarket and              Kalshi public market data need no credentials; add one only with a              read site in hkask-mcp-prediction-markets"
+        );
+        // Read site: std::env::var("HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS")
+        // in `run()` (with a malformed-value warn, not silent fallback).
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec!["HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS"],
+            "prediction-markets config_env allowlist drifted — every entry must              have a read site in hkask-mcp-prediction-markets"
         );
     }
 

@@ -3,9 +3,9 @@
 //! with transport controls, video via FFmpeg → `RenderImage` → `img()`).
 
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
-    InteractiveElement, IntoElement, ObjectFit, ParentElement, RenderImage, SharedString, Styled,
-    StyledImage, Subscription, Task, Window, div, img, px,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, ImageSource, InteractiveElement,
+    IntoElement, ObjectFit, ParentElement, RenderImage, SharedString, Styled, StyledImage,
+    Subscription, Task, Window, div, img, px,
 };
 use smallvec::SmallVec;
 use theme::ActiveTheme;
@@ -400,8 +400,6 @@ impl Focusable for MediaWidget {
         self.focus_handle.clone()
     }
 }
-
-impl EventEmitter<TransportEvent> for MediaWidget {}
 
 impl gpui::Render for MediaWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -3,18 +3,18 @@
 Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
 
 ## Phase 0 — Spike (fail-fast gate)
-- ☐ **T0 — Live API shape spike** (`spike/api-shapes`)
-  - [ ] Live `GET gamma-api.polymarket.com/events` (+ market detail) returns ≥1 record; annotated-contract fields identified
-  - [ ] Live Kalshi `/events` + `/events/{ticker}/forecast-percentile-history` shapes recorded
-  - [ ] CMP feasibility: 2–3 base events sampled for per-tenor market density + price-history depth
-  - [ ] `docs/reports/prediction-markets/00-api-shape-spike.md` written; gaps noted
+- ☑ **T0 — Live API shape spike** (`spike/api-shapes`)
+  - [x] Live `GET gamma-api.polymarket.com/events` (+ market detail) returns ≥1 record; annotated-contract fields identified
+  - [x] Live Kalshi `/events` + `/events/{ticker}/forecast-percentile-history` shapes recorded
+  - [x] CMP feasibility: 2–3 base events sampled for per-tenor market density + price-history depth
+  - [x] `docs/reports/prediction-markets/00-api-shape-spike.md` written; gaps noted
   - Verify: contract types in T4 cite the spike note
 
 ## Phase 1 — Data-service server (primary deliverable)
-- ☐ **T1 — Prediction-markets server crate skeleton + registry entry** (`markets/crate-skeleton`)
-  - [ ] `cargo check -p hkask-mcp-prediction-markets` passes; `hkask-mcp-prediction-markets` binary builds
-  - [ ] `all_servers_have_credential_allowlist` test green (covers new `prediction-markets` entry, `credentials: Some(&[])`)
-  - [ ] Workspace `Cargo.toml` includes the crate
+- ☑ **T1 — Prediction-markets server crate skeleton + registry entry** (`markets/crate-skeleton`)
+  - [x] `cargo check -p hkask-mcp-prediction-markets` passes; `hkask-mcp-prediction-markets` binary builds
+  - [x] `all_servers_have_credential_allowlist` test green (covers new `prediction-markets` entry, `credentials: Some(&[])`)
+  - [x] Workspace `Cargo.toml` includes the crate
   - Verify: `./script/clippy -p hkask-mcp-prediction-markets` clean
 - ☐ **T2 — Polymarket Gamma provider** (`markets/polymarket-provider`)
   - [ ] `polymarket_events` parses T0 fields; read-only, no auth

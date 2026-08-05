@@ -27,8 +27,11 @@ const DEFAULT_GITHUB_REPO: &str = "mdz-axo/zed-kask";
 /// `ReleaseAsset` before passing it to `download_release`.
 #[derive(Clone, Debug)]
 pub struct ZedKaskReleaseAsset {
-    /// Semantic version string (e.g. `"0.1.0"` — the `v` prefix from the git
-    /// tag is stripped before this field is populated).
+    /// Semantic version string, normalized to canonical `MAJOR.MINOR.PATCH`
+    /// form: a git tag `v0.33` becomes `"0.33.0"`. The `v` prefix is stripped
+    /// and missing minor/patch components are padded with `.0` so the
+    /// downstream `semver::Version` parser can consume it — GitHub permits
+    /// two-component tags like `v0.33` which are not valid semver.
     pub version: String,
     /// Direct download URL for the release asset (the GitHub
     /// `browser_download_url`).
@@ -72,11 +75,7 @@ pub async fn get_zed_kask_release_asset(
         Err(e) => return Err(e),
     };
 
-    let version = release
-        .tag_name
-        .strip_prefix('v')
-        .unwrap_or(&release.tag_name)
-        .to_string();
+    let version = normalize_tag_version(&release.tag_name);
 
     // `match_asset` returns an error when no asset matches the current
     // platform's OS/ARCH/extension. We control this error message, so the
@@ -131,6 +130,35 @@ fn match_asset<'a>(
                 release.assets.iter().map(|a| &a.name).collect::<Vec<_>>()
             )
         })
+}
+
+/// Normalize a git release tag into a canonical semver string.
+///
+/// GitHub release tags are free-form; `mdz-axo/zed-kask` publishes tags like
+/// `v0.33` (two numeric components), which are not valid semver —
+/// `semver::Version` requires `MAJOR.MINOR.PATCH`. The downstream comparator
+/// (`AutoUpdater::check_if_fetched_version_is_newer`) parses this string with
+/// `Version::from_str`, so we must hand it something parseable.
+///
+/// Strips an optional leading `v` and pads missing trailing components with
+/// `.0` (`v0.33` -> `0.33.0`, `v1` -> `1.0.0`), while leaving prerelease
+/// (`-...`) and build (`+...`) metadata intact. Only the numeric core is
+/// padded; non-numeric tags fall through to the downstream parser, which
+/// errors exactly as it would have before — no behavior change for garbage.
+fn normalize_tag_version(tag: &str) -> String {
+    let stripped = tag.strip_prefix('v').unwrap_or(tag);
+    // Split off prerelease (`-`) / build (`+`) metadata so we only pad the
+    // numeric core.
+    let split_at = stripped
+        .find(|c| c == '-' || c == '+')
+        .unwrap_or(stripped.len());
+    let (core, suffix) = stripped.split_at(split_at);
+    let padded = match core.split('.').count() {
+        1 => format!("{core}.0.0"),
+        2 => format!("{core}.0"),
+        _ => core.to_string(),
+    };
+    format!("{padded}{suffix}")
 }
 
 #[cfg(test)]
@@ -229,5 +257,33 @@ mod tests {
     fn test_default_github_repo_is_kask() {
         // Pin the default repo so an upstream merge cannot silently revert it.
         assert_eq!(DEFAULT_GITHUB_REPO, "mdz-axo/zed-kask");
+    }
+
+    #[test]
+    fn test_normalize_tag_pads_two_component_tag() {
+        // The actually-published mdz-axo/zed-kask tag is `v0.33` (two
+        // components), which is not valid semver. Without padding the
+        // downstream `Version::from_str("0.33")` fails and the updater can
+        // never decide whether to update.
+        assert_eq!(normalize_tag_version("v0.33"), "0.33.0");
+        assert_eq!(normalize_tag_version("0.33"), "0.33.0");
+    }
+
+    #[test]
+    fn test_normalize_tag_pads_one_component() {
+        assert_eq!(normalize_tag_version("v1"), "1.0.0");
+    }
+
+    #[test]
+    fn test_normalize_tag_leaves_three_components_unchanged() {
+        assert_eq!(normalize_tag_version("v0.100.1"), "0.100.1");
+        assert_eq!(normalize_tag_version("0.33.0"), "0.33.0");
+    }
+
+    #[test]
+    fn test_normalize_tag_preserves_prerelease_and_build_metadata() {
+        assert_eq!(normalize_tag_version("v0.33.0-beta.1"), "0.33.0-beta.1");
+        // Two-component tag with a prerelease: pad the core, rejoin the suffix.
+        assert_eq!(normalize_tag_version("v0.33-beta"), "0.33.0-beta");
     }
 }

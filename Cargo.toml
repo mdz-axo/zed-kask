@@ -286,6 +286,7 @@ members = [
     "kask/crates/hkask-bridge-dublincore",
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
+    "crates/hkask-tool-invoker",
     "crates/hkask-media-widget",
     "crates/hkask-viz-core",
     "crates/hkask-graph-widget",
@@ -298,6 +299,7 @@ members = [
     # kask/mcp-servers/ — MCP server source crates (on-disk set)
     #
     "kask/mcp-servers/hkask-mcp-scenarios",
+    "kask/mcp-servers/hkask-mcp-prediction-markets",
     "kask/mcp-servers/hkask-mcp-research",
     "kask/mcp-servers/hkask-mcp-codegraph",
     "kask/mcp-servers/hkask-mcp-condenser",
@@ -384,6 +386,7 @@ kask_extensions_ui = { path = "crates/kask_extensions_ui" }
 swarm_panel = { path = "crates/swarm_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
+hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }
 hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-media-widget" }
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }
@@ -874,6 +877,7 @@ hkask-capability = { path = "kask/crates/hkask-capability" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
+hkask-bridge-dublincore = { path = "kask/crates/hkask-bridge-dublincore" }
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 hkask-templates = { path = "kask/crates/hkask-templates" }
 hkask-memory = { path = "kask/crates/hkask-memory" }

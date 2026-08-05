@@ -424,6 +424,14 @@ impl ScenariosServer {
 
             let tree = self.tree_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
+            // Server-authoritative provenance (T3): the widget carries this so it
+            // can re-issue the originating tool with modified args (T4). `args` is
+            // the request the tool was invoked with (StatusRequest is empty);
+            // `span_id` is the reg.tool span id if available (null here -
+            // execute_tool_semantic emits the span via tracing but does not
+            // surface the id to the tool body).
+            let provenance_args = serde_json::Value::Object(serde_json::Map::new());
+            let provenance_span_id = serde_json::Value::Null;
             let output = serde_json::json!({
                 "pipeline": {
                     "forecast_count": total,
@@ -461,7 +469,10 @@ impl ScenariosServer {
                     })).collect::<Vec<_>>()
                 })),
                 "provenance": {
+                    "tool": "scenario_status",
                     "server": "hkask-mcp-scenarios",
+                    "args": provenance_args,
+                    "span_id": provenance_span_id,
                     "version": SERVER_VERSION
                 },
                 "ontology_anchor": "dublin-core"
@@ -1896,4 +1907,49 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         )],
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    fn empty_server() -> ScenariosServer {
+        ScenariosServer::new(
+            hkask_types::WebID::default(),
+            Arc::new(Mutex::new(superforecast::ForecastStore::new(None))),
+            Mutex::new(None),
+            Mutex::new(HashSet::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn scenario_status_emits_dispatchable_provenance() {
+        let server = empty_server();
+        let response = server
+            .scenario_status(Parameters(StatusRequest {}))
+            .await;
+
+        // Unwrap the {"content": <value>} envelope via the shared seam
+        // (see the repo .rules "MCP tool responses are content envelopes" trap).
+        let content = hkask_types::tool_response::parse_tool_response(&response)
+            .expect("scenario_status returns a content envelope");
+        let provenance = content
+            .get("provenance")
+            .expect("scenario_status emits a provenance block");
+        let tool = provenance
+            .get("tool")
+            .and_then(|t| t.as_str())
+            .expect("provenance.tool is a non-empty string");
+        assert!(!tool.is_empty(), "provenance.tool must be non-empty");
+        assert_eq!(tool, "scenario_status");
+        assert_eq!(
+            provenance.get("server").and_then(|s| s.as_str()),
+            Some("hkask-mcp-scenarios")
+        );
+        // args is the (empty) StatusRequest; span_id is null (not surfaced).
+        assert!(provenance.get("args").is_some(), "provenance.args present");
+        assert!(provenance.get("span_id").is_some(), "provenance.span_id present");
+    }
 }

@@ -1,0 +1,18 @@
+[package]
+name = "hkask-tool-invoker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Governed widget→MCP dispatch: the ToolInvoker trait + global accessor, relocated to a leaf crate so GPUI widgets can dispatch MCP tools without depending on the heavy swarm_panel crate. Also hosts BlockProvenance, the payload a widget block carries so it can re-issue the originating MCP tool with modified args."
+
+[lib]
+path = "src/hkask_tool_invoker.rs"
+
+[dependencies]
+gpui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+
+[lints]
+workspace = true

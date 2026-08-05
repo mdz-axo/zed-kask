@@ -585,9 +585,16 @@ impl AutoUpdater {
                                 error: Arc::new(error),
                             }
                         }
-                        // Be quiet if the check was automated (e.g. when offline)
+                        // Keep the user-facing status quiet on automated checks
+                        // (a transient network blip shouldn't surface an error
+                        // toast), but log at warn so an operator can distinguish
+                        // a genuinely up-to-date system (`Idle` with no warn)
+                        // from a check that failed and was masked as `Idle`.
                         UpdateCheckType::Automatic => {
-                            log::info!("auto-update check failed: error:{:?}", error);
+                            log::warn!(
+                                "auto-update check failed (masked as Idle): error:{:?}",
+                                error
+                            );
                             AutoUpdateStatus::Idle
                         }
                         UpdateCheckType::Manual => {
@@ -2162,6 +2169,65 @@ mod tests {
             status,
             AutoUpdateStatus::Idle,
             "no GitHub releases should surface as Idle, not Errored"
+        );
+    }
+
+    // zed-kask: D17 — pins that a two-component GitHub tag (the format
+    // mdz-axo/zed-kask actually publishes, e.g. `v0.33`) flows through the
+    // full version-comparison pipeline without a semver parse error. Before
+    // the `normalize_tag_version` fix, `Version::from_str("0.33")` failed and
+    // a manual check surfaced `Errored` instead of correctly evaluating the
+    // version. Here the fetched tag equals the installed version, so the
+    // result must be `Idle` (up to date) — never `Errored`.
+    #[gpui::test]
+    async fn test_github_feed_two_component_tag_resolves_without_error(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+        zlog::init_test();
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.auto_update = Some(true);
+                });
+            });
+
+            cx.set_global(AppDatabase::test_new());
+
+            let current_version = semver::Version::new(0, 100, 0);
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let fake_client_http = FakeHttpClient::create(move |req| async move {
+                let path = req.uri().path();
+                if path == "/repos/mdz-axo/zed-kask/releases" {
+                    // Two-component tag (`v0.100`) — the real published format.
+                    return Ok(Response::builder().status(200).body(
+                        r#"[{"tag_name":"v0.100","prerelease":false,"assets":[{"name":"zed-kask-0.100-linux-x86_64.tar.gz","browser_download_url":"https://test.example/github-download","digest":null}],"tarball_url":"","zipball_url":""}]"#.into()
+                    ).unwrap());
+                }
+                Ok(Response::builder().status(404).body("".into()).unwrap())
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+        });
+
+        let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
+
+        cx.background_executor.run_until_parked();
+
+        auto_updater.update(cx, |updater, cx| {
+            updater.poll_zed_kask(UpdateCheckType::Manual, cx);
+        });
+
+        cx.background_executor.run_until_parked();
+
+        let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        assert!(
+            matches!(status, AutoUpdateStatus::Idle),
+            "two-component tag `v0.100` should normalize to 0.100.0 and compare \
+             equal to the installed 0.100.0, surfacing Idle — not Errored. Got: {status:?}"
         );
     }
 }

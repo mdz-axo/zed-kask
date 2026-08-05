@@ -10,6 +10,7 @@
 //! and never fails on media-shaped or graph-shaped JSON (which have no `viz`
 //! field or a different `viz` value).
 
+use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
 
 /// The discriminator-tagged body of a ```` ```kanban ```` block.
@@ -36,6 +37,12 @@ pub struct KanbanBlockBody {
     /// Multi-board shape: tasks keyed by board id.
     #[serde(default)]
     pub tasks_by_board: Vec<BoardTasksBody>,
+    /// Server-authoritative provenance for re-issuing the originating MCP tool
+    /// with modified args (T6 move affordance). `#[serde(default)]` so bodies
+    /// emitted before provenance landed parse with an empty (non-dispatchable)
+    /// provenance and the widget falls back to its read-only display.
+    #[serde(default)]
+    pub provenance: BlockProvenance,
 }
 
 /// One board in the multi-board shape.
@@ -199,5 +206,31 @@ mod tests {
     #[test]
     fn non_json_fails() {
         assert!(parse_kanban_body("not json").is_err());
+    }
+
+    #[test]
+    fn provenance_defaults_empty_when_absent() {
+        // A body emitted before provenance lands has no `provenance` key.
+        // Adding the field is non-breaking: provenance defaults empty and is
+        // not dispatchable (T6 contract).
+        let body = parse_kanban_body(r#"{"viz":"kanban"}"#).expect("valid body");
+        assert!(!body.provenance.is_dispatchable());
+        assert!(body.provenance.tool.is_none());
+        assert!(body.provenance.server.is_none());
+    }
+
+    #[test]
+    fn provenance_parses_when_present() {
+        let json = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog"}],
+            "provenance":{"tool":"kanban_task_list","server":"hkask-mcp-kata-kanban","args":{"board_id":"b1"}}}"#;
+        let body = parse_kanban_body(json).expect("valid body parses");
+        assert!(body.provenance.is_dispatchable());
+        assert_eq!(body.provenance.tool.as_deref(), Some("kanban_task_list"));
+        assert_eq!(
+            body.provenance.server.as_deref(),
+            Some("hkask-mcp-kata-kanban")
+        );
+        assert_eq!(body.provenance.args["board_id"], "b1");
     }
 }

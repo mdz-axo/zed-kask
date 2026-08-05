@@ -18,6 +18,7 @@ editor.workspace = true
 fs.workspace = true
 gpui.workspace = true
 hkask-types.workspace = true
+hkask_tool_invoker.workspace = true
 kask_bridge.workspace = true
 
 log.workspace = true

@@ -26,6 +26,16 @@ where
         .map_err(map_portfolio_error)
 }
 
+/// Parse a `YYYY-MM-DD` date argument, surfacing a malformed value as an
+/// `invalid_argument` error rather than silently substituting the epoch
+/// (the SF-4 bug: `unwrap_or_default()` produced 1970-01-01 and garbage IRR
+/// while `irr_converged` reported true).
+fn parse_date_arg(value: &str, field: &str) -> Result<chrono::NaiveDate, McpToolError> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
+        McpToolError::invalid_argument(format!("{field} must be YYYY-MM-DD (got '{value}')"))
+    })
+}
+
 #[tool_router(router = portfolio_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(description = "Delete a portfolio and all its data")]
@@ -165,6 +175,12 @@ impl CompaniesServer {
         }): Parameters<PortfolioReturnsRequest>,
     ) -> String {
         execute_tool(self, "portfolio_returns", async {
+            // SF-4: validate from/to up front — never silently epoch-substitute
+            // a malformed date (the prior `unwrap_or_default()` produced
+            // garbage IRR while `irr_converged` reported true).
+            let from_date = parse_date_arg(&from, "from")?;
+            let to_date = parse_date_arg(&to, "to")?;
+
             let transaction_portfolio = portfolio.clone();
             let txs = run_portfolio(self.portfolio.clone(), move |manager| {
                 manager.get_transactions(&transaction_portfolio, None, None, None, None)
@@ -328,21 +344,18 @@ impl CompaniesServer {
             let total_return = (total_end - total_start - net_flows) / total_start;
 
             // ── Modified Dietz (approximate TWR) ──────────────────────
-            let to_date = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d").unwrap_or_default();
-            let from_date =
-                chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d").unwrap_or_default();
+            // `from_date`/`to_date` validated up front (SF-4). Cash-flow dates
+            // parse with error propagation — a malformed stored date surfaces
+            // as invalid_argument rather than a 1970-epoch substitute.
             let period_days = (to_date - from_date).num_days().max(1) as f64;
 
-            let weighted_flows: f64 = cash_flow_events
-                .iter()
-                .map(|(date_str, amt)| {
-                    let cf_date =
-                        chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap_or_default();
-                    let days_remaining = (to_date - cf_date).num_days().max(0) as f64;
-                    let weight = days_remaining / period_days;
-                    amt * weight
-                })
-                .sum();
+            let mut weighted_flows: f64 = 0.0;
+            for (date_str, amt) in &cash_flow_events {
+                let cf_date = parse_date_arg(date_str, "cash flow date")?;
+                let days_remaining = (to_date - cf_date).num_days().max(0) as f64;
+                let weight = days_remaining / period_days;
+                weighted_flows += amt * weight;
+            }
 
             let modified_dietz = if (total_start + weighted_flows).abs() > 0.0001 {
                 (total_end - total_start - net_flows) / (total_start + weighted_flows)
@@ -357,8 +370,7 @@ impl CompaniesServer {
                 let from_days = from_date.num_days_from_ce();
                 let mut cfs: Vec<(f64, f64)> = vec![(-total_start, from_days as f64)];
                 for (date_str, amt) in &cash_flow_events {
-                    let cf_date =
-                        chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").unwrap_or_default();
+                    let cf_date = parse_date_arg(date_str, "cash flow date")?;
                     let days = (cf_date.num_days_from_ce() - from_days) as f64;
                     cfs.push((*amt, days));
                 }
@@ -404,6 +416,18 @@ impl CompaniesServer {
 
             let (irr, irr_converged) = irr;
 
+            // Server-authoritative provenance (T3): the widget carries this so it
+            // can re-issue `portfolio_returns` with a scrubbed date range (T5).
+            // `args` is the request the tool was invoked with; `span_id` is null
+            // here — `execute_tool` emits the reg.tool span via tracing but does
+            // not surface the id to the tool body.
+            let provenance_args = serde_json::json!({
+                "portfolio": portfolio.clone(),
+                "from": from.clone(),
+                "to": to.clone(),
+            });
+            let provenance_span_id = serde_json::Value::Null;
+
             Ok(serde_json::json!({
                 "portfolio": portfolio,
                 "from": from,
@@ -421,6 +445,12 @@ impl CompaniesServer {
                 "fibo": {
                     "time_weighted_return": fibo::TIME_WEIGHTED_RETURN,
                     "internal_rate_of_return": fibo::INTERNAL_RATE_OF_RETURN,
+                },
+                "provenance": {
+                    "tool": "portfolio_returns",
+                    "server": "hkask-mcp-companies",
+                    "args": provenance_args,
+                    "span_id": provenance_span_id,
                 },
             }))
         })
@@ -550,5 +580,167 @@ impl CompaniesServer {
         .await
     }
 
-    // ── Analysis tools ───────────────────────────────────────────
+    // ── Analysis tools ───────────────────────────────────────
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CompaniesServer;
+    use crate::learning::LearningState;
+    use crate::portfolio::{PortfolioManager, Transaction, TxType};
+    use crate::superforecast::FermiDefaults;
+    use hkask_types::WebID;
+    use rmcp::handler::server::wrapper::Parameters;
+
+    fn test_server(dir: &tempfile::TempDir) -> CompaniesServer {
+        let pm = PortfolioManager::with_dir(dir.path().to_path_buf());
+        CompaniesServer::new(
+            WebID::default(),
+            reqwest::Client::new(),
+            String::new(),
+            String::new(),
+            None,
+            None,
+            None,
+            pm,
+            std::sync::Arc::new(std::sync::Mutex::new(LearningState::default())),
+            FermiDefaults::default(),
+        )
+    }
+
+    fn deposit_tx(id: &str, date: &str, amount: f64) -> Transaction {
+        Transaction {
+            id: id.to_string(),
+            date: date.to_string(),
+            tx_type: TxType::Deposit,
+            symbol: None,
+            quantity: None,
+            price: None,
+            commission: None,
+            amount: Some(amount),
+            currency: "USD".to_string(),
+            notes: String::new(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    // SF-4: a malformed `from`/`to` must surface as invalid_argument, NOT a
+    // 1970-epoch result with garbage IRR. Pins the regression.
+    #[tokio::test]
+    async fn portfolio_returns_rejects_malformed_from_date()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let server = test_server(&dir);
+        let response = server
+            .portfolio_returns(Parameters(PortfolioReturnsRequest {
+                portfolio: "test".to_string(),
+                from: "not-a-date".to_string(),
+                to: "2024-12-01".to_string(),
+            }))
+            .await;
+        // Error wire format: {"error": "...", "kind": "invalid_argument"}.
+        let parsed: serde_json::Value = serde_json::from_str(&response)?;
+        assert_eq!(
+            parsed["kind"].as_str(),
+            Some("invalid_argument"),
+            "malformed `from` must surface as invalid_argument, not a 1970-epoch result (SF-4)"
+        );
+        assert!(
+            parsed["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("from"),
+            "error message names the offending field"
+        );
+        // Regression guard: the success-path keys must NOT be present.
+        assert!(
+            parsed.get("total_return").is_none(),
+            "no returns body on error"
+        );
+        assert!(parsed.get("irr").is_none(), "no IRR body on error");
+        assert!(
+            parsed.get("provenance").is_none(),
+            "no provenance body on error"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn portfolio_returns_rejects_malformed_to_date() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let server = test_server(&dir);
+        let response = server
+            .portfolio_returns(Parameters(PortfolioReturnsRequest {
+                portfolio: "test".to_string(),
+                from: "2024-01-01".to_string(),
+                to: "01/02/2024".to_string(),
+            }))
+            .await;
+        let parsed: serde_json::Value = serde_json::from_str(&response)?;
+        assert_eq!(parsed["kind"].as_str(), Some("invalid_argument"));
+        assert!(
+            parsed["error"].as_str().unwrap_or_default().contains("to"),
+            "error message names the offending field"
+        );
+        Ok(())
+    }
+
+    // The emitted portfolio block body carries a non-empty provenance.tool.
+    #[tokio::test]
+    async fn portfolio_returns_emits_dispatchable_provenance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let pm = PortfolioManager::with_dir(dir.path().to_path_buf());
+        pm.create("test")?;
+        // A deposit before `from` so total_start > 0 (no positions/prices needed).
+        pm.add_transaction("test", &deposit_tx("d1", "2024-01-02", 20000.0))?;
+        let server = CompaniesServer::new(
+            WebID::default(),
+            reqwest::Client::new(),
+            String::new(),
+            String::new(),
+            None,
+            None,
+            None,
+            pm,
+            std::sync::Arc::new(std::sync::Mutex::new(LearningState::default())),
+            FermiDefaults::default(),
+        );
+        let response = server
+            .portfolio_returns(Parameters(PortfolioReturnsRequest {
+                portfolio: "test".to_string(),
+                from: "2024-01-03".to_string(),
+                to: "2024-12-31".to_string(),
+            }))
+            .await;
+        // Success output is wrapped in the {"content": ...} envelope.
+        let content =
+            hkask_types::tool_response::parse_tool_response(&response).ok_or_else(|| {
+                "portfolio_returns should return a content envelope on success".to_string()
+            })?;
+        let provenance = content
+            .get("provenance")
+            .ok_or_else(|| "portfolio_returns emits a provenance block".to_string())?;
+        let tool = provenance
+            .get("tool")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| "provenance.tool is a non-empty string".to_string())?;
+        assert!(!tool.is_empty(), "provenance.tool must be non-empty");
+        assert_eq!(tool, "portfolio_returns");
+        assert_eq!(
+            provenance.get("server").and_then(|s| s.as_str()),
+            Some("hkask-mcp-companies")
+        );
+        // args carries the request the tool was invoked with.
+        assert_eq!(provenance["args"]["from"].as_str(), Some("2024-01-03"));
+        assert_eq!(provenance["args"]["to"].as_str(), Some("2024-12-31"));
+        assert_eq!(provenance["args"]["portfolio"].as_str(), Some("test"));
+        assert!(
+            provenance.get("span_id").is_some(),
+            "provenance.span_id present"
+        );
+        Ok(())
+    }
 }

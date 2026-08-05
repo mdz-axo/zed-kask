@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 
+use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
 
 // ── FIBO concept URIs (from `hkask-mcp-companies/src/fibo.rs`) ────────────
@@ -46,6 +47,12 @@ pub struct PortfolioBlockBody {
     /// empty when absent.
     #[serde(default)]
     pub attribution: Vec<AttributionRow>,
+    /// Server-authoritative provenance for re-issuing the originating MCP tool
+    /// with modified args (T5). `#[serde(default)]` so bodies emitted before
+    /// provenance landed parse with an empty (non-dispatchable) provenance and
+    /// the widget falls back to its read-only display.
+    #[serde(default)]
+    pub provenance: BlockProvenance,
 }
 
 /// Returns summary mirroring the `portfolio_returns` tool response. All numeric
@@ -192,5 +199,30 @@ mod tests {
         // A row without a symbol fails to deserialize.
         let body = r#"{"viz":"portfolio","attribution":[{"weight_start_pct":1.0}]}"#;
         assert!(parse_portfolio_body(body).is_err());
+    }
+
+    #[test]
+    fn provenance_defaults_empty_when_absent() {
+        // A body emitted before provenance lands has no `provenance` key.
+        // Adding the field is non-breaking: provenance defaults empty and is
+        // not dispatchable (T5 contract).
+        let body = parse_portfolio_body(r#"{"viz":"portfolio"}"#).expect("valid body");
+        assert!(!body.provenance.is_dispatchable());
+        assert!(body.provenance.tool.is_none());
+        assert!(body.provenance.server.is_none());
+    }
+
+    #[test]
+    fn provenance_parses_when_present() {
+        let json = r#"{"viz":"portfolio","provenance":{"tool":"portfolio_returns","server":"hkask-mcp-companies","args":{"portfolio":"main","from":"2020-01-01","to":"2024-12-31"}}}"#;
+        let body = parse_portfolio_body(json).expect("valid body");
+        assert!(body.provenance.is_dispatchable());
+        assert_eq!(body.provenance.tool.as_deref(), Some("portfolio_returns"));
+        assert_eq!(
+            body.provenance.server.as_deref(),
+            Some("hkask-mcp-companies")
+        );
+        assert_eq!(body.provenance.args["portfolio"], "main");
+        assert_eq!(body.provenance.args["from"], "2020-01-01");
     }
 }
