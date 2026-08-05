@@ -642,6 +642,10 @@ impl ScenarioEvent {
                 self.probability,
             ));
         }
+        // Parent IDs must be unique across the union of all dependency groups:
+        // the marginalizer treats each group as an independent channel, so a
+        // repeated parent would be double-counted with no signal to the caller.
+        let mut seen_parent_ids = std::collections::HashSet::new();
         for dep in &self.depends_on {
             // Validate parent IDs are non-empty
             if dep.parent_event_ids.is_empty() {
@@ -649,6 +653,16 @@ impl ScenarioEvent {
                     self.name.clone(),
                     "parent_event_ids must not be empty".into(),
                 ));
+            }
+            for parent_id in &dep.parent_event_ids {
+                if !seen_parent_ids.insert(parent_id.as_str()) {
+                    return Err(ScenarioError::InvalidDependency(
+                        self.name.clone(),
+                        format!(
+                            "parent '{parent_id}' appears in more than one dependency group (or twice in one group)"
+                        ),
+                    ));
+                }
             }
             // Validate conditionals length = 2^n
             let expected_len = 1usize << dep.parent_event_ids.len();

@@ -91,23 +91,23 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
 > **CHECKPOINT 3** ✅ (2026-08-05) — negative feedback loop closed (sense: market_record_resolution + journal; decide: per-bucket Brier; act: reliability-tier demotion; pinned negative-only). Streaming subscriber shipped (Polymarket public channel). Event-base decision: flat store with revisit triggers. Design note: the stream deliberately does NOT write calibration observations (no pre-resolution probability on the wire) — it notifies; `market_record_resolution` supplies the labeled pair.
 
 ## Phase 4 — Deterministic statistics + CMP
-- ☐ **T13 — Deterministic statistics expansion (`hkask-forecast`)** (`stats/deterministic-expansion`)
-  - [ ] `domain_bias_correction`: politics moves away from 0.5, sports near-identity (pinned tests)
-  - [ ] `isotonic_recalibrate` + `volatility_regime` + log-odds utilities; boundary tests pass
-  - [ ] Insufficient data ⇒ typed error variant, never a silent default
+- ☑ **T13 — Deterministic statistics expansion (`hkask-forecast`)** (`stats/deterministic-expansion`)
+  - [x] `domain_bias_correction` (wired into the T8 bridge) + `log_odds`/`from_log_odds` + `isotonic_fit`/`isotonic_apply` (PAVA) + `volatility_regime` — all pinned
+  - [x] boundary tests pass (empty fit ⇒ identity, <2 pairs ⇒ None, extremes finite)
+  - [x] insufficient data ⇒ None/typed error, never a silent default
   - Verify: `cargo test -p hkask-forecast`; clippy clean
-- ☐ **T14 — CMP construction + base-event registry** (`stats/cmp-construction`) — split T14a/T14b if >1 session
-  - [ ] Synthetic 30d/90d family ⇒ 60d CMP between endpoints in log-odds space (pinned test)
-  - [ ] Sparse coverage ⇒ `method: "bucketed_sparse"` + widened uncertainty, never a fabricated curve
-  - [ ] Base events come only from config registry (no auto-promotion) — pinned test
+- ☑ **T14 — CMP construction + base-event registry** (`stats/cmp-construction`) — split T14a/T14b if >1 session
+  - [x] log-odds midpoint pinned (0.7/0.5 ⇒ 0.608, not linear 0.60)
+  - [x] sparse ⇒ bucketed_sparse with bracket width; empty ⇒ None; extrapolation flat
+  - [x] registry via HKASK_PREDICTION_MARKETS_BASE_EVENTS (allowlist-registered); unregistered series refused
   - Verify: `cargo test -p hkask-mcp-prediction-markets cmp`
-- ☐ **T15 — Residual risk decomposition** (`stats/residual-risk`)
-  - [ ] Synthetic base+residual event recovers β ≈ 1 and injected residual (pinned test)
-  - [ ] < N overlapping observations ⇒ `insufficient_overlap` (pinned test)
-  - [ ] Output carries `observations` + `r_squared` (no bare-number returns)
+- ☑ **T15 — Residual risk decomposition** (`stats/residual-risk`)
+  - [x] β=1 and β=0.5 recovered within tolerance; r² > 0.95 on tracking series
+  - [x] thin overlap + immobile base both refuse (pinned); market_residual tool returns typed insufficient_overlap
+  - [x] output carries observations + r_squared + alpha + latest_residual
   - Verify: `cargo test -p hkask-mcp-prediction-markets residual`
 
-> **CHECKPOINT 4** — deterministic stats tested at library level; CMP + residual tools carry provenance + uncertainty; no statistical computation left to LLM prompts. Human reviews a CMP curve against a live base event.
+> **CHECKPOINT 4** ✅ (2026-08-05) — deterministic stats in hkask-forecast (domain_bias_correction, isotonic PAVA, volatility regime, log-odds); market_cmp live-verified against the real KXFEDDECISION series (12 cohorts, interpolated, p=0.084 at 365d tenor on the H0 'no change' contract); market_residual refuses thin overlap. Human review of the CMP curve pending.
 
 - ☑ **T12 — Event-base persistence decision** (`phase3/event-base-decision`)
   - [x] DECIDED: flat store. Zero demonstrated relationship queries (grep evidence); revisit triggers + pre-registered backend ranking (Grafeo > CozoDB > SurrealDB) + CRDT-layering position documented

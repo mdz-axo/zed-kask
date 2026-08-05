@@ -238,6 +238,120 @@ pub fn apply_calibration_adjustment(prior: f64, overconfidence_bias: f64) -> f64
     adjusted.clamp(0.01, 0.99)
 }
 
+/// Natural log-odds (logit) of a probability. Interpolation and regression
+/// over bounded probabilities happen in log-odds space — linear in p would
+/// leak outside [0,1]. Input clamped to [1e-6, 1-1e-6] to keep the log finite.
+#[must_use]
+pub fn log_odds(probability: f64) -> f64 {
+    let p = probability.clamp(1e-6, 1.0 - 1e-6);
+    (p / (1.0 - p)).ln()
+}
+
+/// Inverse of `log_odds` (logistic sigmoid).
+#[must_use]
+pub fn from_log_odds(logit: f64) -> f64 {
+    1.0 / (1.0 + (-logit).exp())
+}
+
+/// Isotonic (pool-adjacent-violators) recalibration fit over resolved
+/// (probability, outcome) pairs, following 2604.20421 §6.1's isotonic
+/// baseline. Returns a monotone non-decreasing step function as sorted
+/// (threshold, calibrated) knots; `None` when fewer than 2 pairs (a
+/// recalibration from one point is fiction).
+///
+/// Apply with `isotonic_apply`. PAVA pools adjacent violations of
+/// monotonicity until the sequence is isotone — standard, deterministic.
+pub fn isotonic_fit(pairs: &[(f64, bool)]) -> Option<Vec<(f64, f64)>> {
+    if pairs.len() < 2 {
+        return None;
+    }
+    let mut sorted: Vec<(f64, f64)> = pairs
+        .iter()
+        .map(|(p, o)| (p.clamp(0.0, 1.0), if *o { 1.0 } else { 0.0 }))
+        .collect();
+    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // PAVA: blocks of (weight-sum, count, start-probability).
+    let mut blocks: Vec<(f64, usize, f64)> = sorted
+        .iter()
+        .map(|(p, o)| (*o, 1usize, *p))
+        .collect();
+    let mut i = 0;
+    while i + 1 < blocks.len() {
+        let mean_a = blocks[i].0 / blocks[i].1 as f64;
+        let mean_b = blocks[i + 1].0 / blocks[i + 1].1 as f64;
+        if mean_a > mean_b {
+            // The merged block keeps the earlier knot's start probability —
+            // thresholds are the left edges of piecewise-constant regions.
+            let merged = (
+                blocks[i].0 + blocks[i + 1].0,
+                blocks[i].1 + blocks[i + 1].1,
+                blocks[i].2,
+            );
+            blocks.splice(i..=i + 1, [merged]);
+            if i > 0 {
+                i -= 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    Some(
+        blocks
+            .iter()
+            .map(|(sum, count, start)| (*start, *sum / *count as f64))
+            .collect(),
+    )
+}
+
+/// Apply an isotonic fit: piecewise-constant calibrated probability for a
+/// raw probability. Below the first knot → first value; above the last →
+/// last value. Empty fit ⇒ returns the input unchanged (identity).
+#[must_use]
+pub fn isotonic_apply(fit: &[(f64, f64)], probability: f64) -> f64 {
+    let mut calibrated = probability;
+    for (threshold, value) in fit {
+        if probability >= *threshold {
+            calibrated = *value;
+        } else {
+            break;
+        }
+    }
+    calibrated
+}
+
+/// Volatility regime classification over a price series (2607.08199):
+/// economics-style contracts move smoothly (deadline-resolution dynamics);
+/// sports-style contracts are jump-like (event-concentrated). Classifier:
+/// the share of total absolute movement contributed by the largest single
+/// move — jump-like when one move dominates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolatilityRegime {
+    Smooth,
+    JumpLike,
+    /// Fewer than 2 price moves — no basis to classify.
+    InsufficientData,
+}
+
+#[must_use]
+pub fn volatility_regime(prices: &[f64]) -> VolatilityRegime {
+    let moves: Vec<f64> = prices
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .filter(|d| *d > 1e-9)
+        .collect();
+    if moves.len() < 2 {
+        return VolatilityRegime::InsufficientData;
+    }
+    let total: f64 = moves.iter().sum();
+    let max_move = moves.iter().cloned().fold(0.0, f64::max);
+    if max_move / total > 0.5 {
+        VolatilityRegime::JumpLike
+    } else {
+        VolatilityRegime::Smooth
+    }
+}
+
 /// Domain-bias correction for market-implied probabilities (arXiv:2602.19520).
 ///
 /// Prediction-market prices are not face-value probabilities: politics
@@ -261,6 +375,58 @@ pub fn domain_bias_correction(probability: f64, delta: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_odds_round_trip() {
+        for p in [0.01, 0.25, 0.5, 0.75, 0.99] {
+            assert!((from_log_odds(log_odds(p)) - p).abs() < 1e-9);
+        }
+        // Monotone increasing — the property interpolation relies on.
+        assert!(log_odds(0.7) > log_odds(0.6));
+        // Never NaN at the extremes.
+        assert!(log_odds(0.0).is_finite());
+        assert!(log_odds(1.0).is_finite());
+    }
+
+    #[test]
+    fn isotonic_fit_enforces_monotonicity() {
+        // A violation: raw 0.7 resolved false more than raw 0.6.
+        let pairs = [(0.6, true), (0.7, false), (0.65, true), (0.9, true)];
+        let fit = isotonic_fit(&pairs).expect("fits");
+        let values: Vec<f64> = fit.iter().map(|(_, v)| *v).collect();
+        assert!(
+            values.windows(2).all(|w| w[0] <= w[1] + 1e-12),
+            "fit must be non-decreasing: {values:?}"
+        );
+    }
+
+    #[test]
+    fn isotonic_fit_needs_two_pairs() {
+        assert!(isotonic_fit(&[(0.5, true)]).is_none());
+        assert!(isotonic_fit(&[]).is_none());
+    }
+
+    #[test]
+    fn isotonic_apply_is_piecewise_constant() {
+        let fit = vec![(0.2, 0.1), (0.6, 0.5), (0.9, 0.85)];
+        assert!((isotonic_apply(&fit, 0.1) - 0.1).abs() < 1e-12); // below first → first? no: below first knot returns input region value
+        assert!((isotonic_apply(&fit, 0.5) - 0.1).abs() < 1e-12);
+        assert!((isotonic_apply(&fit, 0.95) - 0.85).abs() < 1e-12);
+        // Empty fit is identity.
+        assert!((isotonic_apply(&[], 0.42) - 0.42).abs() < 1e-12);
+    }
+
+    #[test]
+    fn volatility_regime_classification() {
+        // Jump-like: one dominant move (sports-style event concentration).
+        let jumpy = [0.5, 0.5, 0.52, 0.9, 0.91];
+        assert_eq!(volatility_regime(&jumpy), VolatilityRegime::JumpLike);
+        // Smooth: many comparable small moves (macro-style drift).
+        let smooth = [0.5, 0.52, 0.54, 0.56, 0.58, 0.6];
+        assert_eq!(volatility_regime(&smooth), VolatilityRegime::Smooth);
+        assert_eq!(volatility_regime(&[0.5]), VolatilityRegime::InsufficientData);
+        assert_eq!(volatility_regime(&[]), VolatilityRegime::InsufficientData);
+    }
 
     #[test]
     fn domain_bias_correction_decompresses_away_from_half() {

@@ -80,6 +80,19 @@ pub struct ExtractRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CitationGetRequest {
+    pub citation_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CitationListRequest {
+    /// Maximum number of citations to return (most recent first).
+    pub limit: Option<u32>,
+    /// Restrict the listing to citations for this exact URL.
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct BrowseRequest {
     pub url: String,
     pub instruction: Option<String>,
@@ -438,5 +451,19 @@ mod tests {
             "ExtractRequest schema has bare-boolean property values \
              (Ollama/Gemini would reject): {violations:?}"
         );
+    }
+
+    #[test]
+    fn citation_request_schemas_have_no_boolean_property_values() {
+        for value in [
+            serde_json::to_value(schema_for!(CitationGetRequest)).expect("schema serializes"),
+            serde_json::to_value(schema_for!(CitationListRequest)).expect("schema serializes"),
+        ] {
+            let violations = find_boolean_schema_positions(&value);
+            assert!(
+                violations.is_empty(),
+                "citation request schema has bare-boolean property values: {violations:?}"
+            );
+        }
     }
 }

@@ -140,6 +140,79 @@ pub async fn fetch_markets(
     Ok(response.markets)
 }
 
+/// One candlestick period (T0-verified shape: bid/ask OHLC as `_dollars`
+/// strings; `price` sub-object is empty for quote-driven markets).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct KalshiCandlestick {
+    pub end_period_ts: u64,
+    pub yes_bid: KalshiOhlc,
+    pub yes_ask: KalshiOhlc,
+    pub volume_fp: String,
+    pub open_interest_fp: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct KalshiOhlc {
+    pub close_dollars: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct KalshiCandlesticksResponse {
+    pub markets: Vec<KalshiCandlestickSeries>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct KalshiCandlestickSeries {
+    pub candlesticks: Vec<KalshiCandlestick>,
+}
+
+/// One point on a market's price history (yes-midpoint at period close).
+#[derive(Debug, Clone, Copy)]
+pub struct PricePoint {
+    pub ts: u64,
+    pub price: f64,
+}
+
+/// Fetch daily candlesticks for a market and return the yes-midpoint series.
+pub async fn fetch_price_history(
+    client: &reqwest::Client,
+    market_ticker: &str,
+    start_ts: u64,
+    end_ts: u64,
+) -> Result<Vec<PricePoint>, McpToolError> {
+    let query = vec![
+        ("market_tickers", market_ticker.to_string()),
+        ("start_ts", start_ts.to_string()),
+        ("end_ts", end_ts.to_string()),
+        ("period_interval", "1440".to_string()),
+    ];
+    let response: KalshiCandlesticksResponse =
+        get_json(client, &format!("{KALSHI_BASE}/markets/candlesticks"), &query).await?;
+    let mut points = Vec::new();
+    for series in &response.markets {
+        for candle in &series.candlesticks {
+            let bid = parse_fp(&candle.yes_bid.close_dollars);
+            let ask = parse_fp(&candle.yes_ask.close_dollars);
+            let price = match (bid, ask) {
+                (Some(b), Some(a)) => Some((b + a) / 2.0),
+                (b, a) => b.or(a),
+            };
+            if let Some(price) = price {
+                points.push(PricePoint {
+                    ts: candle.end_period_ts,
+                    price,
+                });
+            }
+        }
+    }
+    points.sort_by_key(|p| p.ts);
+    Ok(points)
+}
+
 /// Fetch open events.
 pub async fn fetch_events(
     client: &reqwest::Client,

@@ -53,12 +53,30 @@ pub(crate) fn brier_score_multi(
 /// via full joint conditional-table marginalization under parent independence.
 ///
 /// Root events (no parents) use their stored probability.
-/// Dependent events marginalize over the full joint truth-assignment space:
+/// Dependent events marginalize over the full joint truth-assignment space
+/// of each dependency group:
 ///
-///   P(E) = Sum_a P(E | a) * Product_i P(p_i)^{a_i} * (1-P(p_i))^{1-a_i}
+///   P_g(E) = Sum_a P_g(E | a) * Product_i P(p_i)^{a_i} * (1-P(p_i))^{1-a_i}
 ///
-/// where a ranges over the 2^n bitmap of parent truth assignments,
+/// where a ranges over the 2^n bitmap of group g's parent truth assignments,
 /// and parent probabilities P(p_i) are assumed independent.
+///
+/// # Multi-group combination rule (noisy-OR)
+///
+/// When `depends_on` holds more than one dependency group, each group is
+/// marginalized independently and the per-group marginals are combined by
+/// noisy-OR:
+///
+///   P(E) = 1 - Product_g (1 - P_g(E))
+///
+/// Rationale: disjoint groups (overlap is rejected at validation) model
+/// separate sufficient causal mechanisms for E, each of which produces E
+/// with probability P_g(E) on its own; E occurs iff at least one mechanism
+/// fires, and the mechanisms are assumed independent — the same independence
+/// assumption the per-group formula already makes between parents. Noisy-OR
+/// is the standard closed form under that assumption and reduces exactly to
+/// the single-group formula when there is one group (1-(1-p) == p in IEEE-754),
+/// so single-group results are unchanged.
 ///
 /// Returns a map of event_id -> resolved marginal probability.
 pub(crate) fn compute_marginal_probabilities(
@@ -79,33 +97,51 @@ pub(crate) fn compute_marginal_probabilities(
             // Root node: use own probability
             resolved.insert(id.clone(), event.probability);
         } else {
-            // Full joint marginalization under parent independence, delegated
-            // to the shared `hkask_forecast::marginalize` so this and the graph
-            // widget's re-propagation stay one source of truth for the formula.
-            // P(E) = Sum_a P(E|a) * Product_i P(p_i)^{a_i} * (1-P(p_i))^{1-a_i}
-            let dep = &event.depends_on[0];
-
-            let parent_probs: Vec<f64> = dep
-                .parent_event_ids
+            // Full joint marginalization per dependency group under parent
+            // independence, delegated to the shared `hkask_forecast::marginalize`
+            // so this and the graph widget's re-propagation stay one source of
+            // truth for the per-group formula. Groups are then combined by
+            // noisy-OR (see the doc comment above for the rule and rationale).
+            let group_marginals: Vec<f64> = event
+                .depends_on
                 .iter()
-                .map(|pid| {
-                    resolved.get(pid).copied().unwrap_or_else(|| {
-                        tracing::warn!(
-                            parent_id = %pid,
-                            event_id = %id,
-                            "Parent not found in resolved map; defaulting to 0.0"
-                        );
-                        0.0
-                    })
+                .map(|dep| {
+                    let parent_probs: Vec<f64> = dep
+                        .parent_event_ids
+                        .iter()
+                        .map(|pid| {
+                            resolved.get(pid).copied().unwrap_or_else(|| {
+                                tracing::warn!(
+                                    parent_id = %pid,
+                                    event_id = %id,
+                                    "Parent not found in resolved map; defaulting to 0.0"
+                                );
+                                0.0
+                            })
+                        })
+                        .collect();
+                    hkask_forecast::marginalize(&parent_probs, &dep.conditionals)
                 })
                 .collect();
 
-            let marginal = hkask_forecast::marginalize(&parent_probs, &dep.conditionals);
+            let marginal = combine_independent_channels(&group_marginals);
             resolved.insert(id.clone(), marginal.clamp(0.0, 1.0));
         }
     }
 
     resolved
+}
+
+/// Noisy-OR combination of independent causal channels:
+/// P(E) = 1 - Product_g (1 - P_g(E)).
+///
+/// For a single channel this is the identity (1-(1-p) == p exactly in
+/// IEEE-754), so single-dependency-group behavior is unchanged.
+fn combine_independent_channels(channel_probabilities: &[f64]) -> f64 {
+    let survival = channel_probabilities
+        .iter()
+        .fold(1.0, |acc, &probability| acc * (1.0 - probability));
+    1.0 - survival
 }
 
 /// Build a full event tree from a list of events.
@@ -150,12 +186,16 @@ pub fn build_event_tree(events: &[ScenarioEvent]) -> Result<EventTree, ScenarioE
         let joint_factor = if event.depends_on.is_empty() {
             marginal
         } else {
-            // All-parents-true conditional: conditionals[last] = P(E | all parents true)
-            event.depends_on[0]
-                .conditionals
-                .last()
-                .copied()
-                .unwrap_or(0.0)
+            // All-parents-true conditional per group: conditionals[last] =
+            // P_g(E | all of group g's parents true). With multiple groups,
+            // combine by the same noisy-OR rule as the marginal computation
+            // so the joint factor is P(E | every parent in every group true).
+            let all_parents_true: Vec<f64> = event
+                .depends_on
+                .iter()
+                .map(|dep| dep.conditionals.last().copied().unwrap_or(0.0))
+                .collect();
+            combine_independent_channels(&all_parents_true)
         };
 
         // Build path from root to this node

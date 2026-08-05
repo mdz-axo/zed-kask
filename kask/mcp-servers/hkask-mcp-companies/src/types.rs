@@ -251,6 +251,42 @@ pub struct DcfValuationRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EquityDurationRequest {
+    pub symbol: String,
+    /// Stage 1 years (1–3, default 3)
+    #[schemars(range(min = 1, max = 3))]
+    pub stage1_years: Option<u8>,
+    /// Stage 2 years (2–7, default 7)
+    #[schemars(range(min = 2, max = 7))]
+    pub stage2_years: Option<u8>,
+    /// Discount rate / WACC (0.05–0.30, default 0.10)
+    #[schemars(range(min = 0.05, max = 0.30))]
+    pub discount_rate: Option<f64>,
+    /// Terminal growth rate (0.00–0.10, default 0.025; must be below discount rate)
+    #[schemars(range(min = 0.0, max = 0.10))]
+    pub terminal_growth: Option<f64>,
+
+    /// Override revenue growth rate (-0.50–1.00). Calibrated from history if omitted.
+    #[schemars(range(min = -0.50, max = 1.00))]
+    pub revenue_growth: Option<f64>,
+    /// Override gross margin (0.05–0.95). Calibrated from history if omitted.
+    #[schemars(range(min = 0.05, max = 0.95))]
+    pub gross_margin: Option<f64>,
+    /// Override D&A as % of revenue (0.00–0.20). Calibrated from history if omitted.
+    #[schemars(range(min = 0.0, max = 0.20))]
+    pub da_to_revenue: Option<f64>,
+    /// Override capex as % of revenue (0.00–0.30). Calibrated from history if omitted.
+    #[schemars(range(min = 0.0, max = 0.30))]
+    pub capex_to_revenue: Option<f64>,
+    /// Override NWC as % of revenue (-0.20–0.50). Calibrated from history if omitted.
+    #[schemars(range(min = -0.20, max = 0.50))]
+    pub nwc_to_revenue: Option<f64>,
+    /// Override effective tax rate (0.00–1.00). Calibrated from history if omitted.
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub tax_rate: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReverseDcfRequest {
     pub symbol: String,
     /// Stage 1 years (1–3, default 3)

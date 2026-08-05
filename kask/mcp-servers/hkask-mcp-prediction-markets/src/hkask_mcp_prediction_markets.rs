@@ -18,9 +18,11 @@ use serde::Deserialize;
 
 pub mod matcher;
 pub mod cache;
+pub mod cmp;
 pub mod calibration;
 pub mod ontology;
 pub mod provider_kalshi;
+pub mod residual;
 mod streaming;
 pub mod provider_polymarket;
 pub mod types;
@@ -74,6 +76,28 @@ pub struct MarketSubscribeRequest {
     pub max_resolutions: Option<u32>,
 }
 
+/// Request for market_residual: niche-event exposure to a base event.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketResidualRequest {
+    /// Niche market ticker (Kalshi).
+    pub market_ticker: String,
+    /// Base-event market ticker (Kalshi) — the benchmark leg.
+    pub base_ticker: String,
+    /// Lookback window in days for the price histories (default 90).
+    pub window_days: Option<u32>,
+}
+
+/// Request for market_cmp: constant-maturity prediction for a registered
+/// base event at a fixed tenor.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpRequest {
+    /// Base-event series ticker (must be in the configured registry —
+    /// HKASK_PREDICTION_MARKETS_BASE_EVENTS, "domain:series,..." pairs).
+    pub series: String,
+    /// Tenor in days (e.g. 30, 90, 180).
+    pub tenor_days: u32,
+}
+
 /// Request for market_calibration: per-bucket Brier reading.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketCalibrationRequest {
@@ -91,6 +115,15 @@ pub struct MarketMatchRequest {
     pub limit: Option<u32>,
 }
 
+/// Request for market_ladder: the duration profile of a contract series.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketLadderRequest {
+    /// Kalshi series ticker (e.g. "KXFEDDECISION") or Polymarket event slug.
+    /// Both platforms are probed; whichever recognizes the identifier
+    /// contributes rungs, the other reports its failure in `warnings`.
+    pub series: String,
+}
+
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
@@ -100,6 +133,7 @@ hkask_mcp_server::mcp_server!(
         pub calibration_store: std::sync::Arc<std::sync::Mutex<calibration::CalibrationStore>>,
         pub response_cache: cache::TtlCache,
         pub calibration_path: Option<String>,
+        pub base_events: Vec<(String, String)>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
     }
 );
@@ -389,6 +423,164 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    /// Duration profile of a contract series (the term-structure ladder).
+    #[tool(
+        description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Accepts a Kalshi series ticker or a Polymarket event slug; both platforms are probed. Contracts with unparseable deadlines sort last with time_to_maturity null, and per-platform enumeration failures surface in the warnings array — the ladder never fabricates a maturity."
+    )]
+    pub async fn market_ladder(&self, Parameters(req): Parameters<MarketLadderRequest>) -> String {
+        execute_tool_semantic(
+            self,
+            "market_ladder",
+            Some(Self::ontology_anchor("market_ladder")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_ladder".to_string());
+                let now = chrono::Utc::now();
+                let mut rungs: Vec<serde_json::Value> = Vec::new();
+                let mut warnings: Vec<String> = Vec::new();
+
+                match provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await {
+                    Ok(markets) => {
+                        for market in &markets {
+                            if let Some(record) = types::MarketRecord::from_kalshi(
+                                market,
+                                None,
+                                types::calibration_for(None, ""),
+                                &now,
+                            ) {
+                                rungs.push(serde_json::json!({
+                                    "source": "kalshi",
+                                    "market_id": record.market_id,
+                                    "question": record.question,
+                                    "deadline": record.deadline,
+                                    "time_to_maturity": record.time_to_maturity,
+                                }));
+                            }
+                        }
+                    }
+                    Err(e) => warnings.push(format!("kalshi: {e}")),
+                }
+
+vent.
+    #[tool(
+        description = "Constant Maturity Prediction (CMP): synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns bucketed_sparse with the bracket width rather than a fabricated tight curve. Base events come only from HKASK_PREDICTION_MARKETS_BASE_EVENTS — unregistered series are refused."
+    )]
+    pub async fn market_cmp(&self, Parameters(req): Parameters<MarketCmpRequest>) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp",
+            Some(Self::ontology_anchor("market_cmp")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp".to_string());
+                if !self.base_events.iter().any(|(_, series)| series == &req.series) {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!(
+                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                            req.series
+                        ),
+                    ));
+                }
+                let markets =
+                    provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await?;
+                let now = chrono::Utc::now();
+                let points: Vec<cmp::TenorPoint> = markets
+                    .iter()
+                    .filter_map(|m| {
+                        let mid = m.yes_midpoint()?;
+                        let deadline =
+                            chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
+                        let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds()
+                            as f64
+                            / 86_400.0;
+                        (days > 0.0).then_some(cmp::TenorPoint {
+                            days_to_resolution: days,
+                            price: mid,
+                        })
+                    })
+                    .collect();
+                let value = cmp::constant_maturity(&points, req.tenor_days).ok_or_else(|| {
+                    hkask_mcp_server::server::McpToolError::not_found(format!(
+                        "no live markets with future deadlines for series '{}'",
+                        req.series
+                    ))
+                })?;
+                serde_json::to_value(&value).map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "cmp serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// Residual risk decomposition: niche exposure to a base event.
+    #[tool(
+        description = "Decompose a niche market's movement into base-event exposure (beta in log-odds space) plus an idiosyncratic residual. Refuses with insufficient_overlap below 10 shared observations — never fabricates a residual from thin data. Output carries r_squared and observations so fit quality is explicit."
+    )]
+    pub async fn market_residual(
+        &self,
+        Parameters(req): Parameters<MarketResidualRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_residual",
+            Some(Self::ontology_anchor("market_residual")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_residual".to_string());
+                let window = i64::from(req.window_days.unwrap_or(90));
+                let now = chrono::Utc::now().timestamp();
+                let start = (now - window * 86_400).max(0) as u64;
+                let end = now as u64;
+                let niche_history = provider_kalshi::fetch_price_history(
+                    &self.http,
+                    &req.market_ticker,
+                    start,
+                    end,
+                )
+                .await?;
+                let base_history = provider_kalshi::fetch_price_history(
+                    &self.http,
+                    &req.base_ticker,
+                    start,
+                    end,
+                )
+                .await?;
+                // Align on shared period timestamps.
+                let observations: Vec<(f64, f64)> = niche_history
+                    .iter()
+                    .filter_map(|n| {
+                        base_history
+                            .iter()
+                            .find(|b| b.ts == n.ts)
+                            .map(|b| (n.price, b.price))
+                    })
+                    .collect();
+                let analysis = residual::residual_analysis(&observations).ok_or_else(|| {
+                    hkask_mcp_server::server::McpToolError::failed_precondition(format!(
+                        "insufficient_overlap: {} shared observations (minimum {})",
+                        observations.len(),
+                        residual::MIN_OBSERVATIONS
+                    ))
+                })?;
+                serde_json::to_value(&analysis).map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "residual serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
@@ -536,6 +728,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         None => calibration::CalibrationStore::new(),
     };
 
+    let base_events = std::env::var("HKASK_PREDICTION_MARKETS_BASE_EVENTS")
+        .map(|raw| cmp::parse_base_events(&raw))
+        .unwrap_or_default();
+
     hkask_mcp_server::run_server(
         "hkask-mcp-prediction-markets",
         SERVER_VERSION,
@@ -547,6 +743,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 std::sync::Arc::new(std::sync::Mutex::new(store)),
                 cache::TtlCache::new(cache_ttl_secs),
                 calibration_path.clone(),
+                base_events.clone(),
                 std::sync::Mutex::new(HashSet::new()),
             ))
         },
@@ -576,6 +773,7 @@ mod tests {
             std::sync::Arc::new(std::sync::Mutex::new(calibration::CalibrationStore::new())),
             cache::TtlCache::new(60),
             None,
+            Vec::new(),
             std::sync::Mutex::new(HashSet::new()),
         )
     }

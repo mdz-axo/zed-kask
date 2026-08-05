@@ -131,6 +131,10 @@ pub struct MarketRecord {
     pub category: String,
     pub series: String,
     pub deadline: String,
+    /// Fractional years from the record's `last_update` to `deadline`
+    /// (negative when the deadline is past). None when either timestamp is
+    /// unparseable — never a fabricated number.
+    pub time_to_maturity: Option<f64>,
     pub probability: f64,
     pub probability_method: ProbabilityMethod,
     pub spread: Option<f64>,
@@ -289,9 +293,22 @@ fn make_ontology(
     }
 }
 
-fn days_between(later: &str, earlier: &chrono::DateTime<chrono::Utc>) -> Option<f64> {
-    let deadline = chrono::DateTime::parse_from_rfc3339(later).ok()?;
-    Some((deadline.with_timezone(&chrono::Utc) - *earlier).num_seconds() as f64 / 86_400.0)
+/// Days in the time-to-maturity year convention (365.25 accounts for leap
+/// years, matching common fixed-income convention).
+const DAYS_PER_YEAR: f64 = 365.25;
+
+/// Fractional years between an RFC3339 deadline and a reference instant.
+/// Deadline in the past → negative. Unparseable deadline → None (the
+/// unparseable-deadline warning is emitted once, at assembly time).
+pub fn years_between(
+    deadline: &str,
+    reference: &chrono::DateTime<chrono::Utc>,
+) -> Option<f64> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(deadline).ok()?;
+    Some(
+        (parsed.with_timezone(&chrono::Utc) - *reference).num_seconds() as f64
+            / (86_400.0 * DAYS_PER_YEAR),
+    )
 }
 
 /// Provider-specific record fields, extracted by each provider's adapter.
@@ -308,7 +325,9 @@ struct RecordParts {
     category: String,
     series: String,
     deadline: String,
-    deadline_days: Option<f64>,
+    /// The parsed reference instant the maturity is measured from — the
+    /// record's own `last_update` when parseable, assembly `now` otherwise.
+    maturity_reference: chrono::DateTime<chrono::Utc>,
     probability: f64,
     probability_method: ProbabilityMethod,
     spread: Option<f64>,
@@ -327,7 +346,19 @@ struct RecordParts {
 /// dual-axis ontology block. Both providers route through here so the
 /// annotation invariants live in exactly one place.
 fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
-    let flag = structural_flag(parts.probability, parts.deadline_days);
+    let time_to_maturity = years_between(&parts.deadline, &parts.maturity_reference);
+    if time_to_maturity.is_none() {
+        // An unparseable deadline degrades duration semantics for this
+        // record (no near-deadline vol flag, excluded from ladder tenors);
+        // the warn lets an operator tell that apart from a far deadline.
+        tracing::warn!(
+            "unparseable deadline '{}' for market {} — time_to_maturity is None",
+            parts.deadline,
+            parts.market_id,
+        );
+    }
+    let days_to_deadline = time_to_maturity.map(|years| years * DAYS_PER_YEAR);
+    let flag = structural_flag(parts.probability, days_to_deadline);
     let volume = parts.volume;
     let tier = reliability_tier(volume, parts.spread, &calibration);
     MarketRecord {
@@ -339,6 +370,7 @@ fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
         category: parts.category,
         series: parts.series,
         deadline: parts.deadline.clone(),
+        time_to_maturity,
         probability: parts.probability,
         probability_method: parts.probability_method,
         spread: parts.spread,
@@ -385,6 +417,10 @@ impl MarketRecord {
         } else {
             MarketStatus::Closed
         };
+        let maturity_reference =
+            chrono::DateTime::parse_from_rfc3339(&market.updated_time)
+                .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+                .unwrap_or(*now);
         Some(assemble(
             RecordParts {
                 source: Source::Kalshi,
@@ -396,7 +432,7 @@ impl MarketRecord {
                 category: event.map(|e| e.category.clone()).unwrap_or_default(),
                 series: event.map(|e| e.series_ticker.clone()).unwrap_or_default(),
                 deadline: market.close_time.clone(),
-                deadline_days: days_between(&market.close_time, now),
+                maturity_reference,
                 probability,
                 probability_method: ProbabilityMethod::Midpoint,
                 spread: market.spread(),
@@ -455,6 +491,10 @@ impl MarketRecord {
         } else {
             None
         };
+        let maturity_reference =
+            chrono::DateTime::parse_from_rfc3339(&market.updated_at)
+                .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+                .unwrap_or(*now);
         Some(assemble(
             RecordParts {
                 source: Source::Polymarket,
@@ -469,7 +509,7 @@ impl MarketRecord {
                 category: event_tags.first().cloned().unwrap_or_default(),
                 series: event_slug.to_string(),
                 deadline: market.end_date.clone(),
-                deadline_days: days_between(&market.end_date, now),
+                maturity_reference,
                 probability,
                 probability_method: ProbabilityMethod::LastTrade,
                 spread: market.spread,
