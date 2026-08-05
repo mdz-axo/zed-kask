@@ -41,7 +41,7 @@ hkask_mcp_server::mcp_server!(
 
 // Helper: convert any displayable error to McpToolError::internal
 fn db_err(e: impl std::fmt::Display) -> McpToolError {
-    McpToolError::internal(e.to_string())
+    McpToolError::internal(e.to_string()) // rr0044-ok: mapper-fallback
 }
 
 /// Classify a `CodeGraphError` into the MCP wire-level `McpToolError` kind.
@@ -63,7 +63,7 @@ fn map_codegraph_error(e: crate::codegraph::CodeGraphError) -> McpToolError {
         crate::codegraph::CodeGraphError::Index(IndexError::NotUtf8 { path }) => {
             McpToolError::invalid_argument(format!("file not valid UTF-8: {path}"))
         }
-        _ => McpToolError::internal(e.to_string()),
+        _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
     }
 }
 
@@ -71,7 +71,7 @@ impl CodeGraphServer {
     fn pipeline_guard(&self) -> Result<std::sync::MutexGuard<'_, IndexPipeline>, McpToolError> {
         self.pipeline
             .lock()
-            .map_err(|_| McpToolError::internal("pipeline lock poisoned"))
+            .map_err(|_| McpToolError::internal("pipeline lock poisoned")) // rr0044-ok: lock-poisoned
     }
 
     fn ensure_indexed(&self) -> Result<(), McpToolError> {

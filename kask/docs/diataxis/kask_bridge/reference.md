@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [domain, composition, trust]
@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust]
 
 `kask_bridge` is the D8 composition root adapter — the sole bidirectional seam
 between zed-kask and hKask. It connects zed's internal types to hKask's port
-traits. Every integration seam (D1 through D10) passes through this crate. It
+traits. Every integration seam (D1 through D20) passes through this crate. It
 defines `KaskSettings`, `BridgeManifestExecutor`, `BridgeMemoryPort`,
 `LanguageModelInferencePort`, and the settings structs that configure the kask
 subsystem. `McpRuntime` is passed directly as the

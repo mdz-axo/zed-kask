@@ -339,7 +339,7 @@ impl SwarmServer {
                         agent = %req.agent_name,
                         "swarm_hire_cost: ABW response missing total_hire_cost field — cost unknown"
                     );
-                    return Err(McpToolError::internal(
+                    return Err(McpToolError::unavailable(
                         "hire cost unknown — ABW response missing total_hire_cost field"
                             .to_string(),
                     ));
@@ -868,7 +868,18 @@ impl SwarmServer {
                     "tags": req.tags.unwrap_or_default(),
                     "sample_queries": req.sample_queries.unwrap_or_default(),
                 },
+                "visibility": req.visibility.unwrap_or_else(|| "private".to_string()),
             });
+            // Valence (personality encoding) goes under metadata.valence,
+            // matching the ABW agent card shape (verified live 2026-08-04).
+            if let Some(valence) = req.valence {
+                card["metadata"]["valence"] = serde_json::json!({
+                    "arousal": valence.arousal,
+                    "valence": valence.valence,
+                    "primary_affect": valence.primary_affect,
+                    "personality_traits": valence.personality_traits.unwrap_or_default(),
+                });
+            }
             // Compound agents declare their dependency team.
             if req.dependencies_required.is_some() || req.dependencies_optional.is_some() {
                 card["dependencies"] = serde_json::json!({

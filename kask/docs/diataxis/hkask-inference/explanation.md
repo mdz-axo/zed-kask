@@ -1,8 +1,8 @@
 ---
 title: "hkask-inference — Explanation: Provider Selection Rationale"
 audience: [architects, developers]
-last_updated: 2026-08-03
-version: "0.3.0"
+last_updated: 2026-08-04
+version: "0.3.1"
 status: "Active"
 domain: "Inference"
 mds_categories: [trust, curation]

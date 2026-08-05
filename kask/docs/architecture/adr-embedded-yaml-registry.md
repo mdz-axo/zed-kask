@@ -1,8 +1,8 @@
 ---
 title: "ADR: Build-time embedded YAML/Jinja2 registry — dev-scoped evolution, user-scoped freeze"
 audience: [architects, developers, agents]
-last_updated: 2026-08-03
-version: "0.31.0"
+last_updated: 2026-08-04
+version: "0.31.1"
 status: "Active"
 domain: "architecture"
 mds_categories: [composition, lifecycle, trust]

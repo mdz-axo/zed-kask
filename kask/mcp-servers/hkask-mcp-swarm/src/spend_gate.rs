@@ -229,7 +229,7 @@ pub(crate) async fn authorize_hire(
             "spend_gate::authorize_hire: ABW re-verify response missing total_hire_cost — cost unknown"
         );
         settlement.refund_if_singleuse(consent);
-        return Err(McpToolError::internal(
+        return Err(McpToolError::unavailable(
             "hire cost unknown — ABW re-verify response missing total_hire_cost field".to_string(),
         ));
     }
@@ -264,7 +264,7 @@ pub(crate) async fn authorize_hire(
         }
         Settlement::Session { token, .. } => {
             let remaining = consent.session_balance(token).ok_or_else(|| {
-                McpToolError::internal(
+                McpToolError::unavailable(
                     "session balance query failed — cannot verify hire budget".to_string(),
                 )
             })?;
@@ -423,6 +423,7 @@ pub(crate) fn authorize_delegate(
     if let Settlement::Session { token, cost } = &settlement {
         let remaining = consent.session_balance(token).ok_or_else(|| {
             McpToolError::internal(
+                // rr0044-ok: session-balance-query
                 "session balance query failed — cannot verify delegate budget".to_string(),
             )
         })?;

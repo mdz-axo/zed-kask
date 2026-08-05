@@ -1,8 +1,8 @@
 ---
 title: "hkask-storage — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Persistence"
 mds_categories: [domain, lifecycle]
@@ -117,9 +117,9 @@ erDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-STOR-001
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: kask/crates/hkask-storage/src/core/sql/schema.sql:1,2,4,5,8,11,12,13,15,17,22; kask/crates/hkask-storage/src/regulation_store.rs; kask/crates/hkask-storage/src/escalation.rs
-status: STALE — diagram path corrected from the abandoned src/sql/schema.sql to the loaded src/core/sql/schema.sql (2026-08-03); the wallet tables, goals/consent/quarantined_goals tables, and the delegation_tokens table (token_registry.rs deleted 2026-08-02) were removed. Per-symbol line numbers in the store modules pending re-verification.
+status: VERIFIED
 -->
 
 ## Schema clusters

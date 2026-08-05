@@ -94,7 +94,7 @@ pub fn map_media_error(e: MediaError) -> McpToolError {
         | MediaError::Template(_)
         | MediaError::SidecarNotFound(_)
         | MediaError::SidecarInvalid(_)
-        | MediaError::FaceRegistration(_) => McpToolError::internal(e.to_string()),
+        | MediaError::FaceRegistration(_) => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-internal-arm
     }
 }
 
@@ -126,8 +126,8 @@ pub fn map_image_open_error(path: &std::path::Path, e: image::ImageError) -> Mcp
         image::ImageError::IoError(io) => match io.kind() {
             std::io::ErrorKind::NotFound => McpToolError::not_found(message),
             std::io::ErrorKind::PermissionDenied => McpToolError::permission_denied(message),
-            _ => McpToolError::internal(message),
+            _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
         },
-        _ => McpToolError::internal(message),
+        _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }
 }

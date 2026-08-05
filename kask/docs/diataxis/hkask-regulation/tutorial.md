@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Tutorial: Reading a Regulation Span"
 audience: [operators, developers]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.2.1"
 status: "Active"
 domain: "Regulation"
 mds_categories: [lifecycle]

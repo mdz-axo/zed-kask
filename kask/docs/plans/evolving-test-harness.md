@@ -1,6 +1,26 @@
 # Evolving Test Harness for zed-kask — Design Document
 
-**Status:** Implemented (all 6 slices + TDD orchestration). **All 4th + 5th critic fixes applied** (F1–F10 + B1/B5/B6/B7 + code gap #1 branching enforcement). The design-as-implemented survived the 5th decoupled critic. The only residual: the bridge must wire `ManifestExecutor::with_terminal_check` for production profile enforcement (the callback mechanism exists but is not yet wired). F5 (classifier EIR) is a documented placeholder — deterministic EIR works.
+**Status:** Partially implemented; CI surface not wired (2026-08-04 revision). The
+`hkask-test-harness` crate and `kask/scripts/stability-gate.sh` survive and are
+functional. The `kask/scripts/test` runner was deleted in `009b04066a` ("Remove
+dead kask scripts, SQL, and docs"), which broke the `harness-evolve-cycle.sh`
+runner (it calls `./scripts/test --trace` at L52) and the
+`harness-evolve-cycle` skill manifest (its step 1 `command` is
+`./scripts/test --trace`). The CI trace/mutation steps that referenced
+`scripts/test` were removed as dead in pass 2 (they had been silently no-op'ing
+behind `|| true` since the deletion). The original "Implemented (all 6 slices)"
+claim below was accurate at authoring time (2026-08-03) but did not survive the
+subsequent cleanup; it is retained as the design record. To revive: rebuild
+`kask/scripts/test` per §2.2, re-add the CI trace/mutation steps per §3.7, and
+re-verify the cycle script end-to-end.
+
+**Original status (2026-08-03, design record):** Implemented (all 6 slices +
+TDD orchestration). **All 4th + 5th critic fixes applied** (F1–F10 + B1/B5/B6/B7
++ code gap #1 branching enforcement). The design-as-implemented survived the 5th
+decoupled critic. The only residual: the bridge must wire
+`ManifestExecutor::with_terminal_check` for production profile enforcement (the
+callback mechanism exists but is not yet wired). F5 (classifier EIR) is a
+documented placeholder — deterministic EIR works.
 **Date:** 2026-08-03 (design + 4th/5th critics + all fixes applied)
 **Scope:** `hkask-test-harness`, `kask/scripts/test`, `kask/scripts/stability-gate.sh`, `kask/scripts/harness-evolve-cycle.sh`, `kask-ci.yml`, `qa-triage-cycle`, `proptest` skill, `harness-optimize` skill, `harness-evolve-cycle` manifest, `hkask-regulation` `SensorBus`/`SetPoints`, `self-improvement` skill
 

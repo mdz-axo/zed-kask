@@ -102,10 +102,10 @@ pub(crate) fn map_db_error(e: anyhow::Error) -> McpToolError {
             | rusqlite::ErrorCode::DatabaseLocked
             | rusqlite::ErrorCode::DiskFull
             | rusqlite::ErrorCode::SystemIoFailure => McpToolError::unavailable(message),
-            _ => McpToolError::internal(message),
+            _ => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
         };
     }
-    McpToolError::internal(message)
+    McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
 }
 
 /// Require RSS database, returning an Err if not configured.

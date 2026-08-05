@@ -69,7 +69,7 @@
     },
     "hkask-inference": {
       "lib_root": "src/hkask_inference.rs",
-      "description": "Multi-provider inference router for hKask — DeepInfra, Together AI, fal.ai, OpenRouter, KiloCode",
+      "description": "Multi-provider inference router for hKask — DeepInfra, fal.ai, OpenRouter, KiloCode"
       "public_items": 0,
       "covered": 0,
       "uncovered": 0

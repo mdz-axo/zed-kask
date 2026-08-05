@@ -1,8 +1,8 @@
 ---
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
-last_updated: 2026-08-01
-version: "0.31.2"
+last_updated: 2026-08-04
+version: "0.31.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -423,7 +423,7 @@ The Magna Carta is not aspirational. It is enforced:
 2. **Sovereignty Checks** — Every invocation checked
 3. **Consent Verification** — Scoped, versioned, expiring consent
 4. **Regulation Alerts** — Violations trigger immediate alerts
-5. **Magna Carta Verifier** — YAML manifests and Jinja2 templates verify each principle. Invoked via the `magna-carta-verifier` skill through the agent panel or kask panel (D10). (The deleted `kask sovereignty verify` CLI and the deleted `reg_verify_magna_carta` MCP tool from `hkask-mcp-regulation` are both gone — the skill is the sole entry point.)
+5. **Magna Carta Verifier** — YAML manifests and Jinja2 templates verify each principle. Invoked via the `magna-carta-verifier` skill through the agent panel. (The deleted `kask sovereignty verify` CLI and the deleted `reg_verify_magna_carta` MCP tool from `hkask-mcp-regulation` are both gone — the skill is the sole entry point. The former kask panel (D10) surface was also deleted; the skill is invoked via the agent panel only.)
 6. **Audit Trail** — All decisions recorded
 
 ---

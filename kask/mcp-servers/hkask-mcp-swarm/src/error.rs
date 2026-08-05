@@ -55,7 +55,7 @@ impl SwarmError {
             Self::UpstreamModelError { .. } => McpToolError::unavailable(self.to_string()),
             Self::RateLimited(m) => McpToolError::rate_limited(m),
             Self::CuratorUnavailable(m) => McpToolError::unavailable(m),
-            Self::ApiVersionMismatch(m) => McpToolError::internal(m),
+            Self::ApiVersionMismatch(m) => McpToolError::internal(m), // rr0044-ok: mapper-internal-arm
             Self::ConsentDenied(m) => McpToolError::permission_denied(m),
             Self::Unavailable(m) => McpToolError::unavailable(m),
         }
@@ -138,7 +138,7 @@ impl From<SwarmError> for LocalSwarmError {
 pub fn map_local_swarm_error(e: LocalSwarmError) -> McpToolError {
     match e {
         LocalSwarmError::Io(m) | LocalSwarmError::Database(m) | LocalSwarmError::Ledger(m) => {
-            McpToolError::internal(m)
+            McpToolError::internal(m) // rr0044-ok: mapper-internal-arm
         }
         LocalSwarmError::InvalidInput(m) | LocalSwarmError::Sanitize(m) => {
             McpToolError::invalid_argument(m)

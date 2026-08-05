@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [trust, curation]
@@ -136,7 +136,7 @@ on each `tick`. These are the five cybernetic feedback-loop properties:
 ## See also
 
 - [hkask-regulation Reference](./reference.md): class diagram of the ledger,
-  cybernetics loop, metacognition loop, wallet, and alert types.
+  cybernetics loop, metacognition loop, call cap, and alert types.
 - [hkask-types Explanation](../hkask-types/explanation.md): how the guard
   layer wraps the inference port, which the Regulation loop monitors.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):

@@ -71,7 +71,7 @@ fn map_inference_error(e: InferenceError) -> McpToolError {
         InferenceError::Model(_) | InferenceError::VisionUnsupported(_) => {
             McpToolError::invalid_argument(message)
         }
-        InferenceError::Generation(_) | InferenceError::Json(_) => McpToolError::internal(message),
+        InferenceError::Generation(_) | InferenceError::Json(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }
 }
 
@@ -84,7 +84,7 @@ fn map_episodic_error(e: EpisodicMemoryError) -> McpToolError {
     let message = e.to_string();
     match e {
         EpisodicMemoryError::HMem(HMemError::NotFound(_)) => McpToolError::not_found(message),
-        EpisodicMemoryError::HMem(HMemError::Infra(_)) => McpToolError::internal(message),
+        EpisodicMemoryError::HMem(HMemError::Infra(_)) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
         EpisodicMemoryError::InvalidVisibility(_) => McpToolError::invalid_argument(message),
         EpisodicMemoryError::MissingPerspective => McpToolError::failed_precondition(message),
     }
@@ -173,7 +173,7 @@ impl CondenserServer {
             let engine = self
                 .engine
                 .lock()
-                .map_err(|_| McpToolError::internal("engine lock poisoned"))?;
+                .map_err(|_| McpToolError::internal("engine lock poisoned"))?; // rr0044-ok: lock-poisoned
             let mode = if self.capability_tier.embedded {
                 "embedded"
             } else {
@@ -316,7 +316,7 @@ impl CondenserServer {
 
             let summary = result.text;
             if summary.trim().is_empty() {
-                return Err(McpToolError::internal("Inference engine returned an empty summary"));
+                return Err(McpToolError::internal("Inference engine returned an empty summary")); // rr0044-ok: inference-empty-summary
             }
             let summary_len = summary.len();
 

@@ -642,7 +642,7 @@ impl MediaServer {
                 .map_err(map_media_error)?;
 
             if frames.is_empty() {
-                return Err(McpToolError::internal(
+                return Err(McpToolError::internal( // rr0044-ok: keyframe-extraction-empty
                     "No keyframes extracted from video.",
                 ));
             }

@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Tutorial: Understanding the Port Traits"
 audience: [developers new to hKask]
-last_updated: 2026-08-01
-version: "0.1.2"
+last_updated: 2026-08-04
+version: "0.1.3"
 status: "Active"
 domain: "Foundation"
 mds_categories: [lifecycle]

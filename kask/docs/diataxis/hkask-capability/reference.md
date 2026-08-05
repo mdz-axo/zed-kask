@@ -1,3 +1,13 @@
+---
+title: "hkask-capability — Reference"
+audience: [developers, architects, agents]
+last_updated: 2026-08-04
+version: "0.1.0"
+status: "Active"
+domain: "Sovereignty"
+mds_categories: [domain, trust]
+---
+
 # hkask-capability — Reference
 
 `hkask-capability` defines the in-process capability layer for hKask:
@@ -81,6 +91,13 @@ classDiagram
     DelegationToken --> DelegationAction
     ToolPort --> DelegationToken : requires
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-DIA-CAP-002
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-capability/src/tool_port.rs:47; kask/crates/hkask-capability/src/resources.rs; kask/crates/hkask-mcp/src/runtime.rs (invoke)
+status: VERIFIED
+-->
 
 ## The enforced gate
 

@@ -184,7 +184,7 @@ hkask_mcp_server::mcp_server!(
 fn map_portfolio_error(e: PortfolioError) -> McpToolError {
     match &e {
         PortfolioError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
-        _ => McpToolError::internal(e.to_string()),
+        _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
     }
 }
 

@@ -1,8 +1,8 @@
 ---
 title: "hkask-templates — How-to: Add a PDCA Step to a Manifest"
 audience: [developers]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.2.1"
 status: "Active"
 domain: "Skills"
 mds_categories: [composition]

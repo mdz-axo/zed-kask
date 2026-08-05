@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [trust, curation]
@@ -32,7 +32,7 @@ scattered across the codebase.
 | Deferred-task panel tool invoker | `crates/zed/src/main.rs:1621` |
 | Deferred-task thread condenser | `crates/zed/src/main.rs:1635` |
 | Deferred-task manifest executor | `crates/zed/src/main.rs:1778` |
-| `set_tool_invoker` (panel) | `crates/kask_panel/src/kask_panel.rs:109` |
+| `set_tool_invoker` (panel) | `crates/swarm_panel/src/tool_invoker.rs:33` |
 | `BridgeManifestExecutor` | `kask/crates/kask_bridge/src/skill_executor.rs:30` |
 | `BridgeMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:1615` |
 | `RealMemoryPort` | `kask/crates/kask_bridge/src/memory.rs:42` |
@@ -51,7 +51,7 @@ sequenceDiagram
     participant Main as main.rs
     participant Bridge as kask_bridge
     participant Agent as agent.rs
-    participant Panel as kask_panel
+    participant Panel as swarm_panel
 
     Note over Main: Early block (startup)
     Main->>Bridge: construct McpRuntime + CyberneticsLoop
@@ -79,7 +79,7 @@ sequenceDiagram
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-002
 verified_date: 2026-08-01
-verified_against: crates/zed/src/main.rs:672 (McpRuntime::with_governance), 749 (set_metacognition_provider), 1153 (set_memory_port), 1230 (set_context_injector), 1280 (set_tool_router), 1621 (set_tool_invoker), 1635 (set_thread_condenser), 1778 (set_manifest_executor); crates/kask_panel/src/kask_panel.rs:109
+verified_against: crates/zed/src/main.rs:672 (McpRuntime::with_governance), 749 (set_metacognition_provider), 1153 (set_memory_port), 1230 (set_context_injector), 1280 (set_tool_router), 1621 (set_tool_invoker), 1635 (set_thread_condenser), 1778 (set_manifest_executor); crates/swarm_panel/src/tool_invoker.rs:33
 status: VERIFIED
 -->
 
@@ -146,7 +146,7 @@ no reactor running."
 - [hkask-types Explanation](../hkask-types/explanation.md): the port trait
   mediation that this crate implements.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  the D1–D14 integration seams.
+  the D1–D20 integration seams.
 
 ---
 

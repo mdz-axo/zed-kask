@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Tutorial: Your First MCP Server"
 audience: [developers new to hKask MCP servers]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.2.1"
 status: "Active"
 domain: "MCP"
 mds_categories: [lifecycle]

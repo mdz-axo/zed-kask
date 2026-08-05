@@ -8,7 +8,7 @@ infrastructure:
   version: "0.31.0"
   description: >
     Inference engine selector configuration. Routes inference requests to the
-    appropriate engine (DeepInfra, Together AI, fal.ai, OpenRouter) based on model
+    appropriate engine (DeepInfra, fal.ai, OpenRouter) based on model
     constraints and energy budgets.
   role: config
   contains:

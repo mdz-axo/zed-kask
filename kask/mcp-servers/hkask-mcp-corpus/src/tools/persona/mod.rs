@@ -15,6 +15,7 @@ use crate::{
     CorpusServer, McpToolError, Parameters, cosine_distance, default_embedding_model,
     embedding_dim, execute_tool, json, tool, tool_router,
 };
+use hkask_mcp_server::server::map_infra_error;
 use hkask_services_core::HkaskSettings;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};
@@ -323,7 +324,7 @@ impl CorpusServer {
                 triples_stored: result.triples_stored,
                 embedding_only: result.embedding_only,
             })
-            .map_err(|e| McpToolError::internal(e.to_string()))?;
+            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
             let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
             Ok(parsed)
@@ -376,7 +377,7 @@ impl CorpusServer {
                 centroid_distance: result.validation.as_ref().map(|v| v.distance),
                 style_passed: result.validation.map(|v| v.passed),
             })
-            .map_err(|e| McpToolError::internal(e.to_string()))?;
+            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
             let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
             Ok(parsed)
@@ -463,7 +464,7 @@ impl CorpusServer {
                 "centroid_distance": result.validation.as_ref().map(|v| v.distance),
                 "style_passed": result.validation.map(|v| v.passed),
             }))
-            .map_err(|e| McpToolError::internal(e.to_string()))?;
+            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
             let parsed: Value =
                 serde_json::from_str(&json_str).unwrap_or(json!({"error": "serialization failed"}));
@@ -503,7 +504,7 @@ impl CorpusServer {
                     })?;
                 let doc_vec = vectors
                     .first()
-                    .ok_or_else(|| McpToolError::internal("Embedding returned empty result"))?;
+                    .ok_or_else(|| McpToolError::internal("Embedding returned empty result"))?; // rr0044-ok: embedding-empty-result
 
                 let prefix = format!("style:{}:", persona.as_deref().unwrap_or(""));
                 let all_refs = store
@@ -580,7 +581,7 @@ impl CorpusServer {
                 };
 
                 return serde_json::to_value(&result)
-                    .map_err(|e| McpToolError::internal(e.to_string()));
+                    .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
             }
 
             // ── Pairwise author comparison path (backward compat) ─────
@@ -636,7 +637,7 @@ impl CorpusServer {
                 authors: author_info,
                 distances,
             })
-            .map_err(|e| McpToolError::internal(e.to_string()))
+            .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
         })
         .await
     }
@@ -733,7 +734,7 @@ impl CorpusServer {
                 distance_a: dist_a,
                 distance_b: dist_b,
             })
-            .map_err(|e| McpToolError::internal(e.to_string()))?;
+            .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: serialize-own-struct
 
             let parsed: Value = serde_json::from_str(&json_str).unwrap_or(json!({}));
             Ok(parsed)
@@ -782,7 +783,7 @@ impl CorpusServer {
                         message: format!("{} author replicas registered", entries.len()),
                         entries,
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?
+                    .map_err(|e| McpToolError::internal(e.to_string()))? // rr0044-ok: serialize-own-struct
                 }
                 RegistryAction::Remove { author } => {
                     let prefix = format!("style:{}:", author);
@@ -797,8 +798,10 @@ impl CorpusServer {
                         .sqlite_pool()
                         .map_err(|e| map_database_error(e, "sqlite pool"))?;
                     let driver = Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
-                    let h_mem_store = hkask_storage::HMemStore::from_driver(driver)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?;
+                    let h_mem_store =
+                        hkask_storage::HMemStore::from_driver(driver).map_err(|e| {
+                            hkask_mcp_server::server::map_infra_error(&e, "HMemStore::from_driver")
+                        })?;
                     let mut triple_count = 0usize;
                     for entity_ref in refs {
                         if let Ok(h_mems) = h_mem_store.query_by_entity(&entity_ref) {
@@ -815,7 +818,7 @@ impl CorpusServer {
                         ),
                         entries: vec![],
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?
+                    .map_err(|e| McpToolError::internal(e.to_string()))? // rr0044-ok: serialize-own-struct
                 }
             };
 

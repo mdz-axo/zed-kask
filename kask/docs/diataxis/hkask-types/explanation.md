@@ -1,8 +1,8 @@
 ---
 title: "hkask-types — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-01
-version: "0.1.2"
+last_updated: 2026-08-04
+version: "0.2.0"
 status: "Active"
 domain: "Foundation"
 mds_categories: [trust, curation]
@@ -159,10 +159,10 @@ skill output.
 
 - [hkask-types Reference](./reference.md): class diagram of all 10 port
   traits and their implementors.
-- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D14
+- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D20
   composition root wiring.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  the D1–D14 integration seams.
+  the D1–D20 integration seams.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P4 (clear boundaries) and P9 (feedback loops) that the guard layer enforces.
 

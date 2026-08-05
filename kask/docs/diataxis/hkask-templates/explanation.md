@@ -1,8 +1,8 @@
 ---
 title: "hkask-templates — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Skills"
 mds_categories: [trust, curation]
@@ -117,7 +117,7 @@ distinguish "not configured" from "configured but broken".
 
 - [hkask-templates Reference](./reference.md): class diagram of the manifest
   schema and registry.
-- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D14
+- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D20
   composition root wiring.
 - [`kask/docs/explanation/skills-and-composition.md`](../../explanation/skills-and-composition.md):
   cross-cutting skill anatomy and composition.

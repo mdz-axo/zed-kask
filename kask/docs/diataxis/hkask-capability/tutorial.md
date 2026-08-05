@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Tutorial: Your First Capability Token"
 audience: [developers]
-last_updated: 2026-08-03
-version: "0.3.1"
+last_updated: 2026-08-04
+version: "0.4.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [lifecycle]
@@ -22,6 +22,13 @@ flowchart TD
     A[Step 1: Mint a token] --> B[Step 2: Invoke through the membrane]
     B --> C[Step 3: Attempt a mismatched call]
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-DIA-CAP-003
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-capability/src/token_types.rs (DelegationToken::new, is_valid_for); kask/crates/hkask-capability/src/resources.rs (DelegationResource, DelegationAction); kask/crates/hkask-mcp/src/runtime.rs (invoke)
+status: VERIFIED
+-->
 
 ## Steps 1-2: Mint a token and invoke
 

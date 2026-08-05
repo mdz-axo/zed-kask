@@ -1,8 +1,8 @@
 ---
 title: "hkask-inference — Tutorial: Routing Your First Inference Request"
 audience: [developers new to hkask-inference]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.2.2"
 status: "Active"
 domain: "Inference"
 mds_categories: [lifecycle]

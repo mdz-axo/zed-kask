@@ -34,6 +34,30 @@ pub struct LocalAgentCard {
     /// local changes to ABW or pull ABW changes to local.
     #[serde(default)]
     pub cloud_id: Option<String>,
+    /// Tags for local catalogue discovery. `#[serde(default)]` so existing
+    /// cards without this field still deserialize.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Visibility level ("public", "private", "unlisted"). Default "private".
+    #[serde(default)]
+    pub visibility: String,
+    /// Valence / personality encoding. Optional — not all local agents need it.
+    #[serde(default)]
+    pub valence: Option<LocalAgentValence>,
+}
+
+/// Valence parameters mirroring the ABW `metadata.valence` object, for local
+/// agent cards. Stored as a struct so local cards round-trip through JSON.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LocalAgentValence {
+    #[serde(default)]
+    pub arousal: Option<f64>,
+    #[serde(default)]
+    pub valence: Option<f64>,
+    #[serde(default)]
+    pub primary_affect: Option<String>,
+    #[serde(default)]
+    pub personality_traits: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

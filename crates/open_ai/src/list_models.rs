@@ -1,6 +1,6 @@
 //! Generic OpenAI-compatible model discovery via the standard `/v1/models` endpoint.
 //!
-//! Most OpenAI-compatible providers (DeepInfra, Together AI, OpenRouter, Cline,
+//! Most OpenAI-compatible providers (DeepInfra, OpenRouter, Cline,
 //! KiloCode, etc.) expose a `/v1/models` endpoint that returns a list of
 //! available models in the standard OpenAI shape:
 //!
@@ -46,7 +46,7 @@ pub enum ListModelsError {
 ///
 /// Mirrors the standard OpenAI model object plus the most common provider
 /// extensions. Fields beyond the standard `id` are optional so this parses
-/// cleanly across DeepInfra, Together AI, Cline, KiloCode, and OpenRouter
+/// cleanly across DeepInfra, Cline, KiloCode, and OpenRouter
 /// (which extends the shape with `context_length` and capability hints).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiscoveredModel {

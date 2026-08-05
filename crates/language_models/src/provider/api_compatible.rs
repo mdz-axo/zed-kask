@@ -15,10 +15,10 @@ pub trait ApiCompatibleProviderSettings: Clone + Default + PartialEq + 'static {
 
 /// zed-kask (D12): compute the API-key env var name for an OpenAI/Anthropic-compatible
 /// provider ID. The kask contract is `<ID uppercased, non-alphanumeric stripped>_API_KEY`
-/// (e.g. `DeepInfra` → `DEEPINFRA_API_KEY`, `fal.ai` → `FALAI_API_KEY`,
-/// `Together AI` → `TOGETHERAI_API_KEY`). Upstream uses `convert_case::Case::UpperSnake`,
-/// which splits `DeepInfra` → `DEEP_INFRA_API_KEY` and leaves `fal.ai`/`Together AI` as
-/// invalid env var names. The entire kask ecosystem (`.env` template, MCP servers,
+/// (e.g. `DeepInfra` → `DEEPINFRA_API_KEY`, `fal.ai` → `FALAI_API_KEY`).
+/// Upstream uses `convert_case::Case::UpperSnake`,
+/// which splits `DeepInfra` → `DEEP_INFRA_API_KEY` and leaves `fal.ai` as
+/// an invalid env var name. The entire kask ecosystem (`.env` template, MCP servers,
 /// keystore, UI text, docs) uses the concatenated form, so the upstream computation
 /// never matches the env vars kask users set. See DIVERGENCE.md D12.
 pub fn api_key_env_var_name_for(id: &str) -> String {

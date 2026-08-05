@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — How-to: Wire a New Kask Hook"
 audience: [developers]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Integration"
 mds_categories: [composition, lifecycle]
@@ -12,7 +12,7 @@ mds_categories: [composition, lifecycle]
 
 This guide shows how to add a new process-global hook using the `set_*`
 OnceLock pattern. The pattern is used by `set_manifest_executor`,
-`set_memory_port`, `set_thread_condenser`, and the kask_panel
+`set_memory_port`, `set_thread_condenser`, and the swarm_panel
 `set_tool_invoker` hook. A new hook follows the same structure: define the
 trait, add the `OnceLock`, add the `set_*` and getter functions, and wire in
 the deferred task.
@@ -24,7 +24,7 @@ the deferred task.
 | `set_manifest_executor` | `crates/agent/src/agent.rs:2829` |
 | `set_memory_port` | `crates/agent/src/agent.rs:2908` |
 | `set_thread_condenser` | `crates/agent/src/agent.rs:3070` |
-| `set_tool_invoker` (panel) | `crates/kask_panel/src/kask_panel.rs:109` |
+| `set_tool_invoker` (panel) | `crates/swarm_panel/src/tool_invoker.rs:33` |
 | Deferred-task wiring | `crates/zed/src/main.rs:1778` |
 | `.rules` hook trap | `zed-kask/.rules` (zed-kask integration traps) |
 
@@ -43,7 +43,7 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-BRIDGE-003
 verified_date: 2026-07-29
-verified_against: crates/agent/src/agent.rs:2829,2908,3070; crates/kask_panel/src/kask_panel.rs:109; crates/zed/src/main.rs:1778
+verified_against: crates/agent/src/agent.rs:2829,2908,3070; crates/swarm_panel/src/tool_invoker.rs:33; crates/zed/src/main.rs:1778
 status: VERIFIED
 -->
 

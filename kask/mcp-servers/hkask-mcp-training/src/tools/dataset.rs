@@ -52,7 +52,7 @@ impl TrainingServer {
             if errors.is_empty() {
                 Ok(json!({ "stored": stored, "source": source, "dataset": ds }))
             } else {
-                Err(McpToolError::internal(json!({ "stored": stored, "errors": errors, "source": source, "dataset": ds }).to_string()))
+                Err(McpToolError::internal(json!({ "stored": stored, "errors": errors, "source": source, "dataset": ds }).to_string())) // rr0044-ok: partial-store-failure-aggregate
             }
         })
         .await

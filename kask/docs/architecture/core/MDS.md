@@ -1,8 +1,8 @@
 ---
 title: "MDS — Minimal Domain Specification"
 audience: [architects, developers, agents]
-last_updated: 2026-08-01
-version: "0.31.4"
+last_updated: 2026-08-04
+version: "0.31.5"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -347,7 +347,7 @@ category: lifecycle
 domain_anchor: hkask
 
 bootstrap:
-  sequence: [resolve_secrets, open_databases, build_kask_core, start_loops]
+  sequence: [resolve_secrets, open_databases, wire_composition_root, start_loops]
 
 evolution:
   versioning: git_sha_only
@@ -382,7 +382,7 @@ persistence:
       visibility: public
 ```
 
-> **Note:** The bootstrap sequence's `build_service_context` step is renamed `build_kask_core` to reflect the in-process `KaskCore` composition root (replacing the deleted `AgentService` orchestration layer). No daemon, no Matrix transport, no HTTP server in the bootstrap path.
+> **Note:** The bootstrap sequence no longer uses a `build_service_context` or `build_kask_core` step — `KaskCore` was never implemented. The zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters (see Composition Root section below). No daemon, no Matrix transport, no HTTP server in the bootstrap path.
 
 ### 7.5 Curation Spec Template
 
@@ -483,7 +483,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 ---
 
-*MDS v0.31.4 — five categories. Re-anchored to the 19 surviving hKask crates (18 `hkask-*` + `kask_bridge`) and 11 MCP servers compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
+*MDS v0.31.5 — five categories. Re-anchored to the 20 surviving hKask crates (19 `hkask-*` + `kask_bridge`) and 11 MCP servers compiled in-process inside zed-kask; standalone `hkask-api` / `hkask-cli` / deleted `hkask-services-*` subcrates removed from the ontology; `hkask-goal` deleted (`GoalState` retained in `hkask-types`). The SpecStore/QA surface (§4, §6) is not yet implemented.*
 
 ---
 
@@ -497,7 +497,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 | Crate | MDS Category | Key Entities |
 |-------|-------------|-------------|
-| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign` (moved from deleted `hkask-pods`), `HMemEntry` (moved from deleted `hkask-git-cas`), `ExpectProposal` (moved from deleted `hkask-test-harness`) |
+| `hkask-types` | Domain | IDs, `InferencePort` trait, `RegulationSpan`, vocab, `VoiceDesign` (moved from deleted `hkask-pods`), `HMemEntry` (moved from deleted `hkask-git-cas`), `ExpectProposal` (moved from `hkask-test-harness`) |
 | `hkask-storage` | Domain, Lifecycle | `hMem`, per-user SQLCipher private sphere. (`SpecStore` is planned, not yet implemented — see §4 note.) The crypto `wallet` module and `WalletStore` were deleted 2026-08-03 (dead-in-production). |
 | `hkask-memory` | Domain, Curation | Semantic/episodic memory, consolidation, hMem coherence |
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling, replaces deleted `GasBudget` hold-settle), `CyberneticsLoop`, variety/algedonic |
@@ -514,7 +514,9 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-condenser` | Curation | Context condensation |
 | ~~`hkask-git-cas`~~ (deleted) | Lifecycle | Content-addressed storage over git — deleted in 2026-07-25 cleanup; `GitCASPort` trait deleted from `hkask-types`; `HMemEntry` moved to `hkask-types` |
 | `hkask-bridge-dublincore` | Curation | Dublin Core metadata bridging |
-| ~~`hkask-test-harness`~~ (deleted) | (test infra) | Test infrastructure — deleted in 2026-07-25 cleanup; `ExpectProposal` moved to `hkask-types` |
+| `hkask-email` | Lifecycle | Curator email — outbound via MXroute SMTP API (alerts, notifications, test) |
+| `hkask-lisp` | Composition | Sandboxed Lisp interpreter for deterministic manifest compute steps (bounded recursion, JSON-native, no I/O) |
+| `hkask-test-harness` | (test infra) | Shared test fixtures, property-test generators, oracle taxonomy (`Oracle` trait), trace persistence (`write_trace`/`TraceEntry`). `ExpectProposal` was moved to `hkask-types`; the crate itself survives. |
 | `hkask-mcp` | Composition | MCP governance |
 | `hkask-services-core` | Domain | Foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Kept (genuinely shared by 6 crates); the other `hkask-services-*` crates were folded into their MCP server consumers |
 | ~~`hkask-services-self-heal`~~ (deleted) | Lifecycle | Cross-domain self-healing coordination — deleted in 2026-07-25 cleanup |
@@ -527,7 +529,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `kask_bridge` | Composition | D8 — the bidirectional seam: in-process bridge exposing hKask port traits (InferencePort, ToolPort, MemoryPort, etc.) to MCP servers and zed-kask surfaces (no `KaskCore` singleton — composition root wires components directly) |
 | 11 MCP servers | Composition | The tools — hosted in-process: codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training |
 
-> **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (→ in-process wallet primitives), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
+> **Deleted crates (not mapped):** `hkask-identity` (→ zed account), `hkask-communication` (→ zed voip), `hkask-mcp-cloud-gateway`, `hkask-acp`, `hkask-api`, `hkask-cli`, `hkask-repl`, `hkask-services-chat` (→ zed agent panel), `hkask-services-onboarding` (→ zed first-launch), `hkask-services-skill` (→ `hkask-templates`/`ManifestExecutor`), `hkask-services-wallet` (deleted outright — residual wallet primitives removed 2026-08-03), `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`.
 
 ### Dependency Direction
 

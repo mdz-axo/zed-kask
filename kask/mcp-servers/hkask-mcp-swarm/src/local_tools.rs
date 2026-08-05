@@ -6,7 +6,9 @@
 use crate::SwarmServer;
 use crate::abw_util::url_encode_segment;
 use crate::error::{SwarmError, map_local_swarm_error};
-use crate::local_registry::{LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies};
+use crate::local_registry::{
+    LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
+};
 use crate::local_runtime::MAX_FANOUT;
 use crate::request_types::*;
 use crate::sanitize::{
@@ -690,6 +692,18 @@ impl SwarmServer {
                     skills: filter_declared_skills(req.skills),
                 },
                 cloud_id: None,
+                tags: req.tags,
+                visibility: if req.visibility.trim().is_empty() {
+                    "private".to_string()
+                } else {
+                    req.visibility
+                },
+                valence: req.valence.map(|v| LocalAgentValence {
+                    arousal: v.arousal,
+                    valence: v.valence,
+                    primary_affect: v.primary_affect,
+                    personality_traits: v.personality_traits.unwrap_or_default(),
+                }),
             };
             let dir = self.client.config().local_agents_dir.clone();
             let registry_root = std::fs::canonicalize(&dir).map_err(|e| {

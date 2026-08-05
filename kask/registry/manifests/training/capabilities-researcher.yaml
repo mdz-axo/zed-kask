@@ -27,7 +27,6 @@ dataset:
 
 # ── Base model ───────────────────────────────────────────────────────────
 base_model: unsloth/Qwen3.6-27B
-# Together AI may require: Qwen/Qwen3.6-27B (official namespace)
 
 # ── LoRA config ──────────────────────────────────────────────────────────
 lora:

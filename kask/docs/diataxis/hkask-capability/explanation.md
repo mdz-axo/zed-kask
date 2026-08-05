@@ -1,8 +1,8 @@
 ---
 title: "hkask-capability — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-03
-version: "0.3.1"
+last_updated: 2026-08-04
+version: "0.4.0"
 status: "Active"
 domain: "Sovereignty"
 mds_categories: [trust, curation]
@@ -59,3 +59,10 @@ stateDiagram-v2
     Denied --> [*]: CapabilityDenied
     BudgetExceeded --> [*]: EnergyBudgetExceeded
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-DIA-CAP-001
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-capability/src/resources.rs; kask/crates/hkask-mcp/src/runtime.rs (invoke, verify_capability_domain); kask/crates/hkask-regulation/src/energy.rs (CallCapManager, CallCap)
+status: VERIFIED
+-->

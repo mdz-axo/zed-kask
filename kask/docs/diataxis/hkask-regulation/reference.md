@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Regulation"
 mds_categories: [domain, lifecycle]
@@ -129,9 +129,9 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-001
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-regulation/src/metacognition.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs; kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-regulation/src/algedonic.rs; kask/crates/hkask-regulation/src/runtime_policy.rs; kask/crates/hkask-regulation/src/tool_stats.rs; kask/crates/hkask-types/src/curator.rs
-status: STALE — diagram updated for the call-cap refactor (2026-08-03); the WalletManager/Well/GasBudget classes and the deleted wallet_manager.rs/well.rs files were removed. Per-symbol line numbers pending re-verification.
+status: VERIFIED
 -->
 
 ## Ledger and event sink
@@ -218,7 +218,7 @@ root seeds a cap for every agent that makes governed tool calls (e.g. the
 - [hkask-regulation Explanation](./explanation.md): state diagram of the
   homeostatic loop.
 - [hkask-types Reference](../hkask-types/reference.md): the
-  `LedgerObserver` type this crate consumes, and the `EscalationSeverity` type from `hkask-storage`.
+  `LedgerObserver` type this crate consumes, and the `EscalationSeverity` type from `hkask-types`.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P9 (feedback loops) and P12 (authenticated host mandate).
 

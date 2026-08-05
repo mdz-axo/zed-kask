@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — Tutorial: Operate Your First Swarm"
 audience: [operators, developers new to zed-kask swarms]
-last_updated: 2026-08-03
-version: "0.1.0"
+last_updated: 2026-08-04
+version: "0.1.1"
 status: "Active"
 domain: "Swarm"
 mds_categories: [lifecycle]

@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — Explanation: Why the Loops Are Shaped This Way"
 audience: [architects, developers]
-last_updated: 2026-08-03
-version: "0.1.0"
+last_updated: 2026-08-04
+version: "0.1.1"
 status: "Active"
 domain: "Swarm"
 mds_categories: [trust, curation]

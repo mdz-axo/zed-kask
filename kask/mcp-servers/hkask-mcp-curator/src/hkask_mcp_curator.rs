@@ -603,7 +603,7 @@ impl CuratorServer {
 fn to_tool_error(e: ServiceError) -> McpToolError {
     match e.kind() {
         ErrorKind::NotFound => McpToolError::not_found(e.to_string()),
-        _ => McpToolError::internal(e.to_string()),
+        _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
     }
 }
 

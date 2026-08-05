@@ -137,7 +137,7 @@ impl KanbanServer {
                             .collect(),
                         pko: kanban_type_to_pko("Board").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -167,7 +167,7 @@ impl KanbanServer {
                             })
                             .collect(),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -223,7 +223,7 @@ impl KanbanServer {
                         status: task.status.to_string(),
                         pko: kanban_type_to_pko("Task").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -277,7 +277,7 @@ impl KanbanServer {
                             })
                             .collect(),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -332,7 +332,7 @@ impl KanbanServer {
                         new_status: task.status.to_string(),
                         pko: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -364,7 +364,7 @@ impl KanbanServer {
                         assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
                         pko: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -403,7 +403,7 @@ impl KanbanServer {
                         new_status: task.status.to_string(),
                         pko: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -440,7 +440,7 @@ impl KanbanServer {
                         new_gas_remaining: task.gas_remaining.unwrap_or(0),
                         pko: kanban_type_to_pko("kanban_task_add_gas").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -475,7 +475,7 @@ impl KanbanServer {
                         new_rjoule_remaining: task.rjoule_remaining.unwrap_or(0),
                         pko: kanban_type_to_pko("kanban_task_add_rjoules").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -517,7 +517,7 @@ impl KanbanServer {
                         created_at: comment.created_at.to_rfc3339(),
                         pko: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -567,7 +567,7 @@ impl KanbanServer {
                             comments: mapped,
                             total_count: total,
                         })
-                        .map_err(|e| McpToolError::internal(e.to_string()))?)
+                        .map_err(|e| McpToolError::internal(e.to_string()))?) // rr0044-ok: serialize-own-struct
                     }
                     Err(e) => Err(map_kanban_error(e)),
                 }
@@ -606,7 +606,7 @@ impl KanbanServer {
                         pko: kanban_type_to_pko("kanban_task_add_deliverable")
                             .map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -665,7 +665,7 @@ impl KanbanServer {
                     rjoule_remaining: task.rjoule_remaining,
                     pko: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
                 })
-                .map_err(|e| McpToolError::internal(e.to_string()))
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },
         )
         .await
@@ -697,7 +697,7 @@ impl KanbanServer {
                         prompt,
                         pko: kanban_type_to_pko("kanban_task_kata_coaching").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -730,7 +730,7 @@ impl KanbanServer {
                         pko: kanban_type_to_pko("kanban_task_kata_improvement")
                             .map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -765,7 +765,7 @@ impl KanbanServer {
                         prompt,
                         pko: kanban_type_to_pko("kanban_task_kata_practice").map(|s| s.to_string()),
                     })
-                    .map_err(|e| McpToolError::internal(e.to_string()))?),
+                    .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
             },
@@ -932,7 +932,7 @@ impl KanbanServer {
                     ),
                     pko: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
                 })
-                .map_err(|e| McpToolError::internal(e.to_string()))
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },
         )
         .await
@@ -1031,7 +1031,7 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
         KanbanError::InvalidTransition { .. } => McpToolError::failed_precondition(e.to_string()),
         KanbanError::PermissionDenied(msg) => McpToolError::permission_denied(msg),
         KanbanError::WipLimitExceeded { .. } => McpToolError::failed_precondition(e.to_string()),
-        KanbanError::Internal(msg) => McpToolError::internal(msg),
+        KanbanError::Internal(msg) => McpToolError::internal(msg), // rr0044-ok: kanban internal-error arm
     }
 }
 

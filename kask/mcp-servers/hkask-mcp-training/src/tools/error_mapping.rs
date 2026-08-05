@@ -24,7 +24,7 @@ pub fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
         AdapterStoreError::ChecksumMismatch { .. }
         | AdapterStoreError::Database(_)
         | AdapterStoreError::Infra(_)
-        | AdapterStoreError::Serialization(_) => McpToolError::internal(message),
+        | AdapterStoreError::Serialization(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }
 }
 
@@ -37,7 +37,7 @@ pub fn map_host_provider_error(e: HostProviderError) -> McpToolError {
             McpToolError::invalid_argument(message)
         }
         HostProviderError::JobFailed(_) | HostProviderError::Backend(_) => {
-            McpToolError::internal(message)
+            McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
         }
     }
 }
@@ -51,7 +51,7 @@ pub fn map_training_artifact_error(e: TrainingArtifactError) -> McpToolError {
         }
         TrainingArtifactError::Upload(_)
         | TrainingArtifactError::Retrieval(_)
-        | TrainingArtifactError::InvalidManifest(_) => McpToolError::internal(message),
+        | TrainingArtifactError::InvalidManifest(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }
 }
 
@@ -65,7 +65,7 @@ pub fn map_dataset_error(e: DatasetError) -> McpToolError {
         DatasetError::UnsupportedFormat(_)
         | DatasetError::Validation { .. }
         | DatasetError::Empty => McpToolError::invalid_argument(message),
-        DatasetError::Io(_) | DatasetError::Cache(_) => McpToolError::internal(message),
+        DatasetError::Io(_) | DatasetError::Cache(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }
 }
 
@@ -78,7 +78,7 @@ pub fn map_job_store_error(e: JobStoreError) -> McpToolError {
     let message = e.to_string();
     match e {
         JobStoreError::Storage(_) | JobStoreError::Serialization(_) => {
-            McpToolError::internal(message)
+            McpToolError::internal(message) // rr0044-ok: mapper-internal-arm
         }
     }
 }

@@ -3,6 +3,12 @@ manifest:
   category: qa-script
   name: Harness Evolve Cycle
   version: 0.31.0
+  # BROKEN since 009b04066a (2026-08-04): step 1 `command` references
+  # `./scripts/test --trace`, but `kask/scripts/test` was deleted in that
+  # commit. The cycle will fail at step 1 until `scripts/test` is rebuilt
+  # per kask/docs/plans/evolving-test-harness.md §2.2. The
+  # `hkask-test-harness` crate and `stability-gate.sh` survive. See the plan
+  # doc's 2026-08-04 status revision for the revival path.
   description: >
     Orchestrates the test harness self-improvement loop. Runs tests with
     trace collection, splits failures and classifies them via qa-triage,

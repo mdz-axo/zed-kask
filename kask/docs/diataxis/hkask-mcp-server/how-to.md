@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — How-to: Register a New Tool"
 audience: [developers]
-last_updated: 2026-07-29
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.2.1"
 status: "Active"
 domain: "MCP"
 mds_categories: [composition]

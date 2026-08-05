@@ -1,6 +1,6 @@
 # hkask-inference
 
-Multi-provider inference router for hKask — DeepInfra, Together AI, fal.ai, OpenRouter, KiloCode, Ollama, Cline, RunPod.
+Multi-provider inference router for hKask — DeepInfra, fal.ai, OpenRouter, KiloCode, Ollama, Cline, RunPod.
 
 ## Features
 

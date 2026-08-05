@@ -1,8 +1,8 @@
 ---
 title: "hkask-templates — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-02
-version: "0.2.0"
+last_updated: 2026-08-04
+version: "0.2.1"
 status: "Active"
 domain: "Skills"
 mds_categories: [domain, composition]

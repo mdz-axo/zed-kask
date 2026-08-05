@@ -132,6 +132,22 @@ pub struct GenerateOntologyRequest {
     pub domain_description: String,
 }
 
+/// Valence parameters for agent personality encoding. Mirrors the ABW
+/// `metadata.valence` object: arousal (0–1), valence (0–1), primary_affect
+/// (a word like "curiosity" or "precision"), and personality_traits (free-form
+/// descriptors). All fields optional — the caller fills in what they have.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ValenceInput {
+    /// Arousal level (0.0 = calm, 1.0 = highly activated).
+    pub arousal: Option<f64>,
+    /// Valence polarity (0.0 = negative/serious, 1.0 = positive/enthusiastic).
+    pub valence: Option<f64>,
+    /// One-word primary affect label (e.g. "curiosity", "precision", "vigilance").
+    pub primary_affect: Option<String>,
+    /// Personality trait descriptors (e.g. ["analytical", "cautious", "pragmatic"]).
+    pub personality_traits: Option<Vec<String>>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateAgentRequest {
     /// Agent name (lowercase_with_underscores) — becomes the system identifier.
@@ -163,6 +179,14 @@ pub struct CreateAgentRequest {
     /// Skill ids the agent declares (ABW-side capabilities). Passed through
     /// to the ABW card's `capabilities.skills`.
     pub skills: Option<Vec<String>>,
+    /// Visibility level for the agent card: "public", "private", or "unlisted".
+    /// Default: "private" (draft — not visible in the public catalogue until
+    /// published via `swarm_publish_agent`).
+    pub visibility: Option<String>,
+    /// Valence / personality parameters stored under `metadata.valence` on the
+    /// ABW agent card. Drives valence-homophily detection in Xaman Ek
+    /// composition sessions.
+    pub valence: Option<ValenceInput>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -302,6 +326,14 @@ pub struct CreateLocalAgentRequest {
     pub mcp_tools: Vec<String>,
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Tags for local catalogue discovery. Optional.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Visibility level ("public", "private", "unlisted"). Default "private".
+    #[serde(default)]
+    pub visibility: String,
+    /// Valence / personality parameters. Optional.
+    pub valence: Option<ValenceInput>,
 }
 
 /// Parallel multi-agent fan-out (Cybernetic Swarm Plan — PSO social term).

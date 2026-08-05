@@ -1,8 +1,8 @@
 ---
 title: "hkask-mcp-server — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.2.2"
 status: "Active"
 domain: "MCP"
 mds_categories: [domain, composition]

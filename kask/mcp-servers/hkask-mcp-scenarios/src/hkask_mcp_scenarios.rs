@@ -56,7 +56,7 @@ fn map_scenario_error(error: ScenarioError) -> McpToolError {
             McpToolError::not_found(format!("event '{id}' not found"))
         }
         ScenarioError::NoForecastData => {
-            McpToolError::internal("no stored forecasts found for calibration")
+            McpToolError::internal("no stored forecasts found for calibration") // rr0044-ok: mapper-internal-arm
         }
         ScenarioError::Forecast(forecast_error) => match forecast_error {
             hkask_forecast::ForecastError::InvalidProbability(..)

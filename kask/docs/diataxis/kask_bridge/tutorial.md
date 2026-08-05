@@ -1,8 +1,8 @@
 ---
 title: "kask_bridge — Tutorial: Your First Kask Hook"
 audience: [developers new to zed-kask]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.2.2"
 status: "Active"
 domain: "Integration"
 mds_categories: [lifecycle]

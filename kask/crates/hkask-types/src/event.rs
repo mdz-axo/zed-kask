@@ -192,6 +192,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.guard.canary",
     "reg.guard.input",
     "reg.guard.output",
+    "reg.guard.redact",
     "reg.guard.runtime_policy",
     "reg.guard.violation",
     // ── Healing ──

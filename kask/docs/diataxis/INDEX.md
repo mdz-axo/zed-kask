@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Diataxis Documentation Index"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-03
-version: "0.2.2"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -24,7 +24,7 @@ Every artifact cites concrete file:line references in the current tree.
 | Reference | Look up a fact | Domain | ERD or class diagram |
 | Explanation | Understand why | Trust + Curation | State or sequence diagram |
 
-## Major crates (11 cross-cutting sets, 43 artifacts)
+## Major crates (10 cross-cutting sets, 39 artifacts)
 
 | Crate | Tutorial | How-to | Reference | Explanation |
 |-------|----------|--------|-----------|-------------|
@@ -38,7 +38,6 @@ Every artifact cites concrete file:line references in the current tree.
 | [hkask-condenser](./hkask-condenser/) | [Tutorial](./hkask-condenser/tutorial.md) | [How-to](./hkask-condenser/how-to.md) | [Reference](./hkask-condenser/reference.md) | [Explanation](./hkask-condenser/explanation.md) |
 | [hkask-mcp-server](./hkask-mcp-server/) | [Tutorial](./hkask-mcp-server/tutorial.md) | [How-to](./hkask-mcp-server/how-to.md) | [Reference](./hkask-mcp-server/reference.md) | [Explanation](./hkask-mcp-server/explanation.md) |
 | [kask_bridge](./kask_bridge/) | [Tutorial](./kask_bridge/tutorial.md) | [How-to](./kask_bridge/how-to.md) | [Reference](./kask_bridge/reference.md) | [Explanation](./kask_bridge/explanation.md) |
-| [kask_panel](./kask_panel/) | [Tutorial](./kask_panel/tutorial.md) | [How-to](./kask_panel/how-to.md) | [Reference](./kask_panel/reference.md) | [Explanation](./kask_panel/explanation.md) |
 
 ## Out-of-scope crates (N/A)
 
@@ -46,8 +45,8 @@ Every artifact cites concrete file:line references in the current tree.
 |----------|--------|------------------------|
 | `hkask-mcp-companies`, `hkask-mcp-corpus`, `hkask-mcp-scenarios`, `hkask-mcp-condenser`, `hkask-mcp-curator`, `hkask-mcp-kata-kanban`, `hkask-mcp-media`, `hkask-mcp-research`, `hkask-mcp-codegraph`, `hkask-mcp-swarm`, `hkask-mcp-training` | Already documented cross-cuttingly in `kask/docs/reference/mcp-servers/` | [`reference/mcp-servers/README.md`](../reference/mcp-servers/README.md) |
 | `hkask-forecast`, `hkask-email`, `hkask-ledger`, `hkask-guard`, `hkask-keystore`, `hkask-memory`, `hkask-bridge-dublincore`, `hkask-services-core`, `hkask-mcp`, `hkask-lisp` | Small support crates (<3000 LOC); documented via crate READMEs and cross-cutting docs. Note: the other `hkask-services-*` crates were folded into their MCP server consumers (F6 refactor). | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
-| `crates/kask_extensions_ui` | zed-kask-side skill marketplace UI (center-pane `Item`, sibling of `kask_panel`); publish/install/vote pipelines documented in the signing plan (which superseded the deleted `kask-extensions-panel-and-skill-sharing.md`) | [`plans/kask-skill-signing-and-trust.md`](../plans/kask-skill-signing-and-trust.md) |
-| `crates/agent`, `crates/agent_ui`, `crates/zed`, etc. | Upstream zed crates, not zed-kask code; only `// zed-kask:` deviations documented under `kask_bridge` and `kask_panel` | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
+| `crates/kask_extensions_ui` | zed-kask-side skill marketplace UI (center-pane `Item`); publish/install/vote pipelines documented in the signing plan (which superseded the deleted `kask-extensions-panel-and-skill-sharing.md`) | [`plans/kask-skill-signing-and-trust.md`](../plans/kask-skill-signing-and-trust.md) |
+| `crates/agent`, `crates/agent_ui`, `crates/zed`, etc. | Upstream zed crates, not zed-kask code; only `// zed-kask:` deviations documented under `kask_bridge` and `swarm_panel` | [`architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md) |
 
 ## Governing specifications
 
@@ -58,5 +57,5 @@ Every artifact cites concrete file:line references in the current tree.
 ## See also
 
 - [`kask/docs/README.md`](../README.md): the kask docs portal.
-- [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D14 integration seams.
+- [`kask/docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md): D1–D20 integration seams.
 - [`kask/docs/DIAGRAMS_INDEX.md`](../DIAGRAMS_INDEX.md): cross-cutting diagram registry.

@@ -777,7 +777,7 @@ impl CompaniesServer {
                 }
                 Some(
                     StoredForecast::from_snapshot(&persisted.snapshot)
-                        .map_err(|e| McpToolError::internal(e.to_string()))?,
+                        .map_err(|e| McpToolError::internal(e.to_string()))?, // rr0044-ok: own-struct-deserialize
                 )
             } else {
                 None
