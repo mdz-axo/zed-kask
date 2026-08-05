@@ -25,6 +25,7 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 hkask-forecast.workspace = true
+hkask-mcp-prediction-markets.workspace = true
 
 [lints]
 workspace = true

@@ -138,6 +138,17 @@ pub struct CompaniesBridgeRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketsBridgeRequest {
+    /// JSON of an annotated MarketRecord from hkask-mcp-prediction-markets
+    /// (market_lookup or market_match output; for market_match, pass the
+    /// nested `market` object and set match_confidence).
+    pub market_record: String,
+    /// Match confidence from market_match ("high"/"medium"/"low") — omit when
+    /// the caller resolved the market unambiguously (e.g. direct lookup).
+    pub match_confidence: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct FullPipelineRequest {
     /// Subject: company ticker, industry, country, or technology domain
     pub subject: String,
@@ -600,6 +611,57 @@ impl ScenariosServer {
             });
 
             self.record_experience("scenario_full", &format!("subject={}", req.subject), "success", output.clone());
+            Ok(output)
+        })
+        .await
+    }
+
+    /// Bridge: convert a prediction-market record into a scenario event.
+    /// Caller-mediated (like scenario_from_companies): the agent pastes the
+    /// annotated MarketRecord JSON from hkask-mcp-prediction-markets. The
+    /// domain-bias correction is applied deterministically here; low
+    /// reliability or weak match confidence withholds the base rate.
+    #[tool(
+        description = "Convert a prediction-market record (from hkask-mcp-prediction-markets market_lookup/market_match) into a ScenarioEvent anchored on the market-implied base rate. Applies the domain-bias correction deterministically; withholds base_rate on low reliability or weak match confidence."
+    )]
+    pub async fn scenario_from_markets(
+        &self,
+        Parameters(req): Parameters<MarketsBridgeRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "scenario_from_markets", Some(Self::ontology_anchor("scenario_from_markets")), async {
+            let record: hkask_mcp_prediction_markets::types::MarketRecord =
+                serde_json::from_str(&req.market_record)
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON: {e}")))?;
+
+            let (event, warnings) = superforecast::convert_market_record(
+                &record,
+                req.match_confidence.as_deref(),
+            )
+            .map_err(map_scenario_error)?;
+
+            let output = serde_json::json!({
+                "event": {
+                    "id": event.id,
+                    "name": event.name,
+                    "question": event.question,
+                    "deadline": event.deadline.to_string(),
+                    "probability": event.probability,
+                    "base_rate": event.base_rate,
+                    "basis": event.basis,
+                    "reference_class": event.reference_class,
+                },
+                "warnings": warnings,
+                "provenance": {
+                    "tool": "scenario_from_markets",
+                    "server": "hkask-mcp-scenarios",
+                    "version": SERVER_VERSION,
+                    "source": format!("{:?}:{}", record.source, record.market_id),
+                    "ontology_identifier": record.ontology.state.identifier,
+                },
+                "bridge_note": "The prediction-markets server supplies annotated market-implied probabilities; this bridge anchors a trackable ScenarioEvent on them. base_rate is None when the reliability/match gates refuse the anchor — do not substitute the raw price.",
+                "ontology_anchor": "dublin-core"
+            });
+
             Ok(output)
         })
         .await

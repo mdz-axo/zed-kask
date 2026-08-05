@@ -39,11 +39,23 @@ Companion to `plan.md`. Grouped by phase. Check a box only when its acceptance c
   - [x] **SF-4 fixed:** `parse_date_arg` returns `invalid_argument` on malformed dates; all `unwrap_or_default()` on dates removed (`tools/portfolio.rs:181,346,371`)
   - [x] `cargo test -p hkask-portfolio-widget -p hkask-mcp-companies` passes (167 + 25)
 - [x] **T6 — Kanban fan-out: provenance + card affordance → `kanban_task_move`** (M)  ✅
-  - [x] `provenance` on `KanbanBlockBody`; `build_kanban_block_body` bakes it in
+  - [x] `provenance` on `KanbanBlockBody` (additive, `#[serde(default)]`); per-card move affordance → dispatch `kanban_task_move` via the empty-provenance fallback (`DEFAULT_SERVER`)
   - [x] Per-card cycling status-chip move affordance → dispatch `kanban_task_move` (confirmed arg shape `{task_id, target_status}`)
   - [x] Missing invoker → warning banner; partial provenance → "provenance incomplete" hint; single-flight guard
-  - [x] `cargo test -p hkask-kanban-widget -p hkask-mcp-kata-kanban` passes (25 + 46/43/22)
-- [x] **CHECKPOINT C3** — three widgets dispatch through the governed path  ✅
+  - [x] `cargo test -p hkask-kanban-widget -p hkask-mcp-kata-kanban` passes (25 + 44/43/22)
+  - [x] **D2 fix (adversarial review):** deleted dead `build_kanban_block_body` + constants + tests (0 production call sites; the fallback is the real path)
+- [x] **CHECKPOINT C3** — three widgets dispatch through the governed path (scenarios D1-fixed: rung tool authoritative, provenance server-only)  ✅
+
+## Phase 2.6 — Adversarial-review fixes  ✅
+
+- [x] **D1 (critical): scenarios rung dispatch** — deleted the `provenance_tool == rung_tool` mismatch guard; rung tool authoritative, provenance contributes only `server`; removed `merge_args` + `PROVENANCE_MISMATCH_MSG`; added production-shape regression tests (`dispatch_args_status_block_rung_dispatches_not_mismatch`, GPUI `dispatch_rung_routes_rung_for_server_produced_block`)  ✅
+- [x] **Reask "gate" → "tap" relabel** (honesty) — doc comments + dropped the `let _reask` binding in `kask_bridge`  ✅
+- [x] **M1:** dropped unused `log` dep from `hkask-tool-invoker`  ✅
+- [x] **M2:** `record_render`/`correlate_reask` emit `tracing::warn!` on mutex poison (no silent telemetry loss)  ✅
+- [x] **M3:** `audio_load_task: Option<Task<()>>` single-flight guard on `load_audio_file_async` (cancels stale reads + drop-mid-read I/O waste)  ✅
+- [x] **M6:** deduped `is_empty_provenance` → `BlockProvenance::is_empty()` in the leaf  ✅
+- [x] **M5:** inlined the `swarm_panel/src/tool_invoker.rs` 1-line `pub use` shim into `swarm_panel.rs`; deleted the dead-weight file (essentialist)  ✅
+- [x] **M7:** scenarios `dispatch_result` now unwraps the `{"content":…}` envelope via `hkask_types::tool_response::parse_tool_response` (the `.rules` single seam) before display  ✅
 
 ## Phase 2.5 — Media playback hygiene (SF-2/SF-3)  ✅
 

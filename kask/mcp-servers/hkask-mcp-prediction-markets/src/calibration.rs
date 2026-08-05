@@ -14,10 +14,18 @@ use hkask_forecast::brier_score_multi;
 
 /// One resolved observation: the market-implied probability at observation
 /// time and the realized outcome.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ResolvedObservation {
     pub probability: f64,
     pub outcome: bool,
+}
+
+/// Journal row for persistence (bucket + observation per line).
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct JournalRow {
+    bucket: String,
+    probability: f64,
+    outcome: bool,
 }
 
 /// In-memory calibration store keyed by domain/series bucket.
@@ -51,6 +59,67 @@ impl CalibrationStore {
 
     pub fn sample_size(&self, bucket: &str) -> u64 {
         self.buckets.get(bucket).map_or(0, |v| v.len() as u64)
+    }
+
+    /// Load a journal (JSONL, one {bucket, probability, outcome} per line).
+    /// A missing file is a fresh store (not an error); a malformed line is
+    /// skipped with a warning — the calibration signal degrades to `stale`
+    /// for that bucket rather than fabricating data.
+    pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
+        let mut store = Self::new();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(store),
+            Err(e) => return Err(e),
+        };
+        for (line_no, line) in contents.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<JournalRow>(line) {
+                Ok(row) => store.record(
+                    &row.bucket,
+                    ResolvedObservation {
+                        probability: row.probability,
+                        outcome: row.outcome,
+                    },
+                ),
+                Err(e) => {
+                    tracing::warn!(
+                        "calibration journal {} line {} malformed ({e}); skipping",
+                        path.display(),
+                        line_no + 1
+                    );
+                }
+            }
+        }
+        Ok(store)
+    }
+
+    /// Persist the journal (JSONL). Atomic-ish: write to a temp file then
+    /// rename, so a crash mid-write cannot truncate the existing journal.
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = String::new();
+        for (bucket, observations) in &self.buckets {
+            for o in observations {
+                let row = JournalRow {
+                    bucket: bucket.clone(),
+                    probability: o.probability,
+                    outcome: o.outcome,
+                };
+                out.push_str(&serde_json::to_string(&row).map_err(|e| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+                })?);
+                out.push('\n');
+            }
+        }
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, out)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
     }
 }
 

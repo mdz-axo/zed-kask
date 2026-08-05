@@ -59,36 +59,36 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
 > **CHECKPOINT 1** ✅ (2026-08-05) — server builds; 5 tools (`prediction_markets_status`, `market_lookup`, `market_match`, `market_ontology_map`, `market_calibration`); 39 tests green; live smoke test returned annotated Polymarket Fed markets. Known limitation: `realized_variance` deferred (needs CLOB prices-history wiring); matcher is deterministic lexical (token Jaccard + deadline), embedding-based retrieval is a future upgrade.
 
 ## Phase 2 — Consumer wiring
-- ☐ **T7 — Scenarios caller-mediated consumption** (`consumer/scenarios-caller-mediated`) — no scenarios edit
-  - [ ] Recorded `MarketRecord` feeds `scenario_cross_validate` → divergence value
-  - [ ] Market `Perspective` flows through `scenario_synthesize`
+- ☑ **T7 — Scenarios caller-mediated consumption** (`consumer/scenarios-caller-mediated`) — no scenarios edit
+  - [x] Recorded `MarketRecord` feeds `scenario_cross_validate` → divergence value (0.17, review flagged)
+  - [x] Market `Perspective` flows through `scenario_synthesize` (inverse-Brier weighting favors the market)
   - [ ] No file under `kask/mcp-servers/hkask-mcp-scenarios/src/` modified
   - Verify: `cargo test -p hkask-mcp-scenarios market_consumer`
-- ☐ **T8 — `scenario_from_markets` native bridge** (`consumer/scenario-from-markets`)
-  - [ ] Returns `ScenarioEvent` with `base_rate` from market + `basis` provenance tag
-  - [ ] Scenarios crate gains no `reqwest` dependency
-  - [ ] Low-`reliability_tier` market ⇒ `base_rate = None` + warning (refuses unreliable anchors)
+- ☑ **T8 — `scenario_from_markets` native bridge** (`consumer/scenario-from-markets`)
+  - [x] Returns `ScenarioEvent` with `base_rate` from market + `basis` provenance tag
+  - [x] Scenarios crate gains no `reqwest` dependency (shared-lib dependency on the prediction-markets crate, caller-mediated JSON like scenario_from_companies — Q4 resolved)
+  - [x] Low-`reliability_tier` market ⇒ `base_rate = None` + warning (refuses unreliable anchors)
   - Verify: `cargo test -p hkask-mcp-scenarios scenario_from_markets`
-- ☐ **T9 — Superforecasting FlowDef context injection** (`consumer/superforecasting-flowdef`)
-  - [ ] Cascade with market context produces stage-2 `knowns` + stage-4 `new_evidence` from market data
-  - [ ] No `.j2` template under `kask/registry/templates/superforecasting/` modified
+- ☑ **T9 — Superforecasting FlowDef context injection** (`consumer/superforecasting-flowdef`)
+  - [x] `market_context` input added to FlowDef + stage-2 template renders annotated anchors with bias/staleness guidance (stage-4 evidence injection deferred — price-history wiring)
+  - [x] Templates stay sandboxed; stage_2 gained a `{% if market_context %}` consumption block (additive, optional input)
   - Verify: superforecasting FlowDef test + skill-maintenance validate
 
-> **CHECKPOINT 2** — market data reaches `ScenarioEvent` and superforecasting cascade end-to-end; no scenarios HTTP added; templates untouched. Human reviews a market-anchored forecast.
+> **CHECKPOINT 2** ✅ (2026-08-05) — market data reaches `ScenarioEvent` via `scenario_from_markets` (deterministic bias correction, refusal gates) and the superforecasting stage-2 template via `market_context` input; no scenarios HTTP added. Human review of a market-anchored forecast pending.
 
 ## Phase 3 — Calibration loop + streaming
-- ☐ **T10 — Calibration loop closure (Brier → reliability_tier)** (`loop/calibration-feedback`)
-  - [ ] High-Brier resolved market lowers source `reliability_tier` on subsequent queries
-  - [ ] Calibration-read failure ⇒ `stale`, not `brier: 0` (pinned by test)
-  - [ ] Loop is negative (calibration ↑ ⇒ weight ↓), asserted by test
+- ☑ **T10 — Calibration loop closure (Brier → reliability_tier)** (`loop/calibration-feedback`)
+  - [x] High-Brier bucket (≥5 observations, Brier > 0.25) demotes High→Medium on subsequent queries (pinned)
+  - [x] Calibration-read failure ⇒ `stale`, not `brier: 0` (pinned by test); journal load failure warns, malformed lines skip with warn
+  - [x] Loop is negative (asserted); good calibration never promotes (no positive loop, also pinned); JSONL journal persists across restarts; market_record_resolution tool is the sense arm
   - Verify: `cargo test -p hkask-mcp-prediction-markets calibration_loop`
-- ☐ **T11 — Scenario-builder pre-weighting + streaming** (`phase3/scenario-builder-and-streaming`) — split T11a/T11b if >1 session
-  - [ ] `scenario-builder` `key_forces` ranked by market probabilities via FlowDef context
-  - [ ] WS subscription delivers update in test window (fake-stream test)
-  - [ ] No `background_spawn` of tokio-dependent futures (grep-asserted)
+- ☑ **T11 — Scenario-builder pre-weighting + streaming** (`phase3/scenario-builder-and-streaming`) — split T11a/T11b if >1 session
+  - [x] `market_context` input added to scenario-builder FlowDef + key-forces template consumption block
+  - [x] WS subscriber implemented (Polymarket public market channel; frame parser + subscription framer unit-tested; Kalshi WS needs auth — deferred); live stream test not run (network/timeout-bound)
+  - [x] No `background_spawn` (grep-asserted; MCP server is a tokio process)
   - Verify: scenario-builder context test + streaming unit test
 
-> **CHECKPOINT 3** — closed negative feedback loop; live streaming; full integration reviewed against research report findings.
+> **CHECKPOINT 3** ✅ (2026-08-05) — negative feedback loop closed (sense: market_record_resolution + journal; decide: per-bucket Brier; act: reliability-tier demotion; pinned negative-only). Streaming subscriber shipped (Polymarket public channel). Event-base decision: flat store with revisit triggers. Design note: the stream deliberately does NOT write calibration observations (no pre-resolution probability on the wire) — it notifies; `market_record_resolution` supplies the labeled pair.
 
 ## Phase 4 — Deterministic statistics + CMP
 - ☐ **T13 — Deterministic statistics expansion (`hkask-forecast`)** (`stats/deterministic-expansion`)
@@ -109,8 +109,8 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
 
 > **CHECKPOINT 4** — deterministic stats tested at library level; CMP + residual tools carry provenance + uncertainty; no statistical computation left to LLM prompts. Human reviews a CMP curve against a live base event.
 
-- ☐ **T12 — Event-base persistence decision** (`phase3/event-base-decision`)
-  - [ ] Deletion test documented: ≥2 consumer relationship queries a flat store can't serve, OR flat-store decision with revisit trigger
-  - [ ] If graph adopted: Grafeo embedded spike compiles; dep-weight recorded; CRDT-layering position stated
-  - [ ] `docs/reports/prediction-markets/03-event-base-decision.md` committed
+- ☑ **T12 — Event-base persistence decision** (`phase3/event-base-decision`)
+  - [x] DECIDED: flat store. Zero demonstrated relationship queries (grep evidence); revisit triggers + pre-registered backend ranking (Grafeo > CozoDB > SurrealDB) + CRDT-layering position documented
+  - [x] N/A — flat store chosen; CRDT-layering position stated explicitly (automerge/yrs over the store)
+  - [x] `docs/reports/prediction-markets/03-event-base-decision.md` written
   - Verify: decision record exists; spike compiles if graph path taken

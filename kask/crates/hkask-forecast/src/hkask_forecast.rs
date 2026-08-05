@@ -238,9 +238,54 @@ pub fn apply_calibration_adjustment(prior: f64, overconfidence_bias: f64) -> f64
     adjusted.clamp(0.01, 0.99)
 }
 
+/// Domain-bias correction for market-implied probabilities (arXiv:2602.19520).
+///
+/// Prediction-market prices are not face-value probabilities: politics
+/// markets on both Kalshi and Polymarket are chronically *underconfident* —
+/// prices compressed toward 0.5, so extreme outcomes are underpriced. The
+/// correction de-compresses: `p' = 0.5 + (p - 0.5)(1 + δ)`, clamped to
+/// [0.01, 0.99]. A δ of 0 applies to already-calibrated domains (sports —
+/// arXiv:2604.20421 §6.1 found isotonic recalibration adds nothing on NBA
+/// markets).
+///
+/// `delta` is the signed de-compression strength in [0, 0.5]; values beyond
+/// are clamped (a correction must never invert or saturate a probability).
+/// Callers source δ from measured per-domain calibration (seeded from the
+/// paper until the calibration loop accumulates resolved outcomes).
+#[must_use = "corrected probability should replace the face-value price"]
+pub fn domain_bias_correction(probability: f64, delta: f64) -> f64 {
+    let delta = delta.clamp(0.0, 0.5);
+    (0.5 + (probability - 0.5) * (1.0 + delta)).clamp(0.01, 0.99)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn domain_bias_correction_decompresses_away_from_half() {
+        // Politics market at 0.62 with δ=0.3 must move toward the extreme.
+        let corrected = domain_bias_correction(0.62, 0.3);
+        assert!(corrected > 0.62, "de-compression: {corrected}");
+        assert!((corrected - 0.656).abs() < 1e-9);
+        // Symmetric below 0.5.
+        let low = domain_bias_correction(0.38, 0.3);
+        assert!(low < 0.38);
+    }
+
+    #[test]
+    fn domain_bias_correction_zero_delta_is_identity() {
+        // Already-calibrated domains (sports, 2604.20421 §6.1) pass through.
+        assert!((domain_bias_correction(0.7, 0.0) - 0.7).abs() < 1e-12);
+    }
+
+    #[test]
+    fn domain_bias_correction_clamps() {
+        // Extreme inputs stay in [0.01, 0.99]; delta never exceeds 0.5.
+        assert!((domain_bias_correction(0.999, 0.5) - 0.99).abs() < 1e-9);
+        assert!(domain_bias_correction(0.5, 1.0).abs() - 0.5 < 1e-12);
+        assert!((domain_bias_correction(0.001, 2.0) - 0.01).abs() < 1e-9);
+    }
 
     #[test]
     fn fermi_simple() {

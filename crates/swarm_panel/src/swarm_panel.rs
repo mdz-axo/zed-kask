@@ -30,13 +30,16 @@ mod compose;
 mod detail;
 pub mod panel_button;
 mod parse;
-mod tool_invoker;
 
 use author::AuthorForm;
 use compose::ComposeForm;
 
 pub use panel_button::SwarmPanelButton;
-pub use tool_invoker::{ToolInvoker, set_tool_invoker, shared_tool_invoker};
+// The `ToolInvoker` trait + global accessor live in the `hkask-tool-invoker` leaf
+// crate (relocated so the kask GPUI widgets can dispatch without depending on
+// this heavy panel crate). Re-exported here so existing `swarm_panel::ToolInvoker`
+// / `set_tool_invoker` / `shared_tool_invoker` call sites compile unchanged.
+pub use hkask_tool_invoker::{ToolInvoker, set_tool_invoker, shared_tool_invoker};
 
 use parse::{
     AgentCard, AgentListResponse, AgentSource, LocalAgentListResponse, LocalSwarmListResponse,

@@ -187,17 +187,39 @@ pub fn domain_bias_for(category: &str) -> Option<&'static str> {
     }
 }
 
-/// Reliability gate from observable covariates. Thresholds are initial
+/// Reliability gate from observable covariates, modulated by the bucket's
+/// measured calibration (T10 loop closure). Thresholds are initial
 /// placeholders (Q3 in the plan — recalibrate per-domain after data accrues).
-pub fn reliability_tier(volume: f64, spread: Option<f64>) -> ReliabilityTier {
+///
+/// The feedback is negative (corrective): a poorly-calibrated bucket
+/// (Brier > 0.25 over ≥5 resolved markets — worse than a well-informed
+/// forecaster's baseline) demotes the covariate-derived tier by one step.
+/// A stale/unmeasured calibration signal changes nothing — absence of
+/// evidence never demotes (and never promotes either).
+pub fn reliability_tier(
+    volume: f64,
+    spread: Option<f64>,
+    calibration: &Calibration,
+) -> ReliabilityTier {
     let wide_spread = spread.is_some_and(|s| s > 0.10);
     let thin_volume = volume < 1_000.0;
-    if thin_volume || wide_spread {
+    let base = if thin_volume || wide_spread {
         ReliabilityTier::Low
     } else if volume < 50_000.0 || spread.is_none_or(|s| s > 0.04) {
         ReliabilityTier::Medium
     } else {
         ReliabilityTier::High
+    };
+    let poorly_calibrated = !calibration.stale
+        && calibration.sample_size >= 5
+        && calibration.brier.is_some_and(|b| b > 0.25);
+    if poorly_calibrated {
+        match base {
+            ReliabilityTier::High => ReliabilityTier::Medium,
+            lower => lower,
+        }
+    } else {
+        base
     }
 }
 
@@ -272,6 +294,81 @@ fn days_between(later: &str, earlier: &chrono::DateTime<chrono::Utc>) -> Option<
     Some((deadline.with_timezone(&chrono::Utc) - *earlier).num_seconds() as f64 / 86_400.0)
 }
 
+/// Provider-specific record fields, extracted by each provider's adapter.
+/// The shared assembly (annotation, ontology, tier, volatility) lives in
+/// `assemble` — providers differ only in this extraction.
+struct RecordParts {
+    source: Source,
+    event_id: String,
+    /// ID used in `dcterms:identifier` (Kalshi ticker / Polymarket condition id).
+    ontology_id: String,
+    market_id: String,
+    question: String,
+    description: String,
+    category: String,
+    series: String,
+    deadline: String,
+    deadline_days: Option<f64>,
+    probability: f64,
+    probability_method: ProbabilityMethod,
+    spread: Option<f64>,
+    volume: f64,
+    volume_grain: VolumeGrain,
+    liquidity: Option<f64>,
+    open_interest: Option<f64>,
+    last_update: String,
+    status: MarketStatus,
+    resolved_outcome: Option<bool>,
+    lifecycle_stage: &'static str,
+    resolution_source: &'static str,
+}
+
+/// Shared record assembly: volatility annotation, reliability tier, and the
+/// dual-axis ontology block. Both providers route through here so the
+/// annotation invariants live in exactly one place.
+fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
+    let flag = structural_flag(parts.probability, parts.deadline_days);
+    let volume = parts.volume;
+    let tier = reliability_tier(volume, parts.spread, &calibration);
+    MarketRecord {
+        source: parts.source,
+        event_id: parts.event_id,
+        market_id: parts.market_id,
+        question: parts.question.clone(),
+        description: parts.description.clone(),
+        category: parts.category,
+        series: parts.series,
+        deadline: parts.deadline.clone(),
+        probability: parts.probability,
+        probability_method: parts.probability_method,
+        spread: parts.spread,
+        volume,
+        volume_grain: parts.volume_grain,
+        liquidity: parts.liquidity,
+        open_interest: parts.open_interest,
+        last_update: parts.last_update,
+        volatility: Volatility {
+            realized_variance: None,
+            structural_flag: flag,
+            interpretation: interpretation_for(flag),
+        },
+        status: parts.status,
+        resolved_outcome: parts.resolved_outcome,
+        resolution_source: Cow::Borrowed(parts.resolution_source),
+        calibration,
+        reliability_tier: tier,
+        ontology: make_ontology(
+            parts.source,
+            &parts.ontology_id,
+            &parts.question,
+            &parts.description,
+            &parts.deadline,
+            parts.lifecycle_stage,
+            parts.resolution_source,
+        ),
+    }
+}
+
 impl MarketRecord {
     /// Build a record from a Kalshi market + its parent event.
     pub fn from_kalshi(
@@ -281,9 +378,6 @@ impl MarketRecord {
         now: &chrono::DateTime<chrono::Utc>,
     ) -> Option<Self> {
         let probability = market.yes_midpoint()?;
-        let spread = market.spread();
-        let volume = parse_fp(&market.volume_fp).unwrap_or(0.0);
-        let category = event.map(|e| e.category.clone()).unwrap_or_default();
         let status = if !market.result.is_empty() {
             MarketStatus::Resolved
         } else if market.status == "active" {
@@ -291,49 +385,37 @@ impl MarketRecord {
         } else {
             MarketStatus::Closed
         };
-        let resolved_outcome = match market.result.as_str() {
-            "yes" => Some(true),
-            "no" => Some(false),
-            _ => None,
-        };
-        let flag = structural_flag(probability, days_between(&market.close_time, now));
-        Some(Self {
-            source: Source::Kalshi,
-            event_id: market.event_ticker.clone(),
-            market_id: market.ticker.clone(),
-            question: market.title.clone(),
-            description: market.rules_primary.clone(),
-            category,
-            series: event.map(|e| e.series_ticker.clone()).unwrap_or_default(),
-            deadline: market.close_time.clone(),
-            probability,
-            probability_method: ProbabilityMethod::Midpoint,
-            spread,
-            volume,
-            volume_grain: VolumeGrain::Market,
-            liquidity: parse_fp(&market.liquidity_dollars),
-            open_interest: parse_fp(&market.open_interest_fp),
-            last_update: market.updated_time.clone(),
-            volatility: Volatility {
-                realized_variance: None,
-                structural_flag: flag,
-                interpretation: interpretation_for(flag),
+        Some(assemble(
+            RecordParts {
+                source: Source::Kalshi,
+                event_id: market.event_ticker.clone(),
+                ontology_id: market.ticker.clone(),
+                market_id: market.ticker.clone(),
+                question: market.title.clone(),
+                description: market.rules_primary.clone(),
+                category: event.map(|e| e.category.clone()).unwrap_or_default(),
+                series: event.map(|e| e.series_ticker.clone()).unwrap_or_default(),
+                deadline: market.close_time.clone(),
+                deadline_days: days_between(&market.close_time, now),
+                probability,
+                probability_method: ProbabilityMethod::Midpoint,
+                spread: market.spread(),
+                volume: parse_fp(&market.volume_fp).unwrap_or(0.0),
+                volume_grain: VolumeGrain::Market,
+                liquidity: parse_fp(&market.liquidity_dollars),
+                open_interest: parse_fp(&market.open_interest_fp),
+                last_update: market.updated_time.clone(),
+                status,
+                resolved_outcome: match market.result.as_str() {
+                    "yes" => Some(true),
+                    "no" => Some(false),
+                    _ => None,
+                },
+                lifecycle_stage: lifecycle_stage(status, None),
+                resolution_source: "kalshi_exchange",
             },
-            status,
-            resolved_outcome,
-            resolution_source: Cow::Borrowed("kalshi_exchange"),
             calibration,
-            reliability_tier: reliability_tier(volume, spread),
-            ontology: make_ontology(
-                Source::Kalshi,
-                &market.ticker,
-                &market.title,
-                &market.rules_primary,
-                &market.close_time,
-                lifecycle_stage(status, None),
-                "kalshi_exchange",
-            ),
-        })
+        ))
     }
 
     /// Build a record from a Polymarket Gamma market + parent event context.
@@ -348,7 +430,6 @@ impl MarketRecord {
         now: &chrono::DateTime<chrono::Utc>,
     ) -> Option<Self> {
         let probability = market.yes_probability()?;
-        let spread = market.spread;
         let status = if market.uma_resolution_status == "resolved" {
             MarketStatus::Resolved
         } else if market.closed {
@@ -357,67 +438,52 @@ impl MarketRecord {
             MarketStatus::Open
         };
         // Resolved outcome requires definitive evidence: the Yes leg priced
-        // at (approximately) 1 post-resolution. arXiv:2604.20421 documents
-        // "Unknown/50-50" resolutions where both legs settle at 0.50 — a
-        // >= 0.5 threshold would fabricate an outcome for those, poisoning
-        // the T10 Brier loop with a false label. Ambiguous ⇒ None.
+        // at (approximately) 1 or 0 post-resolution. arXiv:2604.20421
+        // documents "Unknown/50-50" resolutions where both legs settle at
+        // 0.50 — a looser threshold would fabricate an outcome for those,
+        // poisoning the T10 Brier loop with a false label. Ambiguous ⇒ None.
         let resolved_outcome = if matches!(status, MarketStatus::Resolved) {
-            market
-                .prices()
-                .first()
-                .and_then(|p| {
-                    if *p >= 0.99 {
-                        Some(true)
-                    } else if *p <= 0.01 {
-                        Some(false)
-                    } else {
-                        None
-                    }
-                })
+            market.prices().first().and_then(|p| {
+                if *p >= 0.99 {
+                    Some(true)
+                } else if *p <= 0.01 {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
         } else {
             None
         };
-        // Gamma has no category field; derive from event tags (verified
-        // present in the T0 fixture: "Crypto", "Finance", "IPOs", ...).
-        // Without this the politics-bias guardrail never fires on Polymarket.
-        let category = event_tags.first().cloned().unwrap_or_default();
-        let flag = structural_flag(probability, days_between(&market.end_date, now));
-        Some(Self {
-            source: Source::Polymarket,
-            event_id: event_id.to_string(),
-            market_id: market.id.clone(),
-            question: market.question.clone(),
-            description: market.description.clone(),
-            category,
-            series: event_slug.to_string(),
-            deadline: market.end_date.clone(),
-            probability,
-            probability_method: ProbabilityMethod::LastTrade,
-            spread,
-            volume: event_volume,
-            volume_grain: VolumeGrain::Event,
-            liquidity: Some(event_liquidity),
-            open_interest: None,
-            last_update: market.updated_at.clone(),
-            volatility: Volatility {
-                realized_variance: None,
-                structural_flag: flag,
-                interpretation: interpretation_for(flag),
+        Some(assemble(
+            RecordParts {
+                source: Source::Polymarket,
+                event_id: event_id.to_string(),
+                ontology_id: market.condition_id.clone(),
+                market_id: market.id.clone(),
+                question: market.question.clone(),
+                description: market.description.clone(),
+                // Gamma has no category field; derive from event tags
+                // (T0-verified). Without this the politics-bias guardrail
+                // never fires on Polymarket.
+                category: event_tags.first().cloned().unwrap_or_default(),
+                series: event_slug.to_string(),
+                deadline: market.end_date.clone(),
+                deadline_days: days_between(&market.end_date, now),
+                probability,
+                probability_method: ProbabilityMethod::LastTrade,
+                spread: market.spread,
+                volume: event_volume,
+                volume_grain: VolumeGrain::Event,
+                liquidity: Some(event_liquidity),
+                open_interest: None,
+                last_update: market.updated_at.clone(),
+                status,
+                resolved_outcome,
+                lifecycle_stage: lifecycle_stage(status, Some(&market.uma_resolution_status)),
+                resolution_source: "uma_oracle",
             },
-            status,
-            resolved_outcome,
-            resolution_source: Cow::Borrowed("uma_oracle"),
             calibration,
-            reliability_tier: reliability_tier(event_volume, spread),
-            ontology: make_ontology(
-                Source::Polymarket,
-                &market.condition_id,
-                &market.question,
-                &market.description,
-                &market.end_date,
-                lifecycle_stage(status, Some(&market.uma_resolution_status)),
-                "uma_oracle",
-            ),
-        })
+        ))
     }
 }

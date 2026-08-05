@@ -49,6 +49,16 @@ inputs:
     type: number
     required: false
     description: Prior iteration's convergence metric for stall detection
+  - name: market_context
+    type: array
+    required: false
+    description: >
+      Annotated prediction-market records relevant to the focal question,
+      fetched by the invoking agent from hkask-mcp-prediction-markets
+      (`market_match`) before cascade invocation. Used to pre-weight key
+      forces by market-implied likelihood (a Kalshi recession market
+      informs the "Economy" STEEP force's uncertainty). Absent = forces
+      ranked on qualitative judgment only.
 
 ledger:
   span_namespace: reg.skill.scenario-builder
@@ -77,6 +87,7 @@ steps:
       refined_question: "{{ step_1_result.refined_question | default(focal_question) }}"
       planning_horizon: "{{ planning_horizon | default('5 years') }}"
       domain: "{{ domain | default('general') }}"
+      market_context: "{{ market_context | default([]) }}"
 
   - ordinal: 3
     action: select

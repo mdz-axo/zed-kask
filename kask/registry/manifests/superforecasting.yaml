@@ -67,6 +67,17 @@ inputs:
     type: number
     required: false
     description: Signed calibration bias from a Brier-scored calibration curve (positive = overconfident). Fed to the step-13 compute to close the learning loop. Defaults to 0.0 (no adjustment).
+  - name: market_context
+    type: array
+    required: false
+    description: >
+      Annotated prediction-market records for the forecasting question,
+      fetched by the invoking agent from hkask-mcp-prediction-markets
+      (`market_match`) before cascade invocation. Each element is a
+      MarketRecord carrying probability + reliability_tier + calibration +
+      ontology mapping. Merged into stage 2's outside-view `knowns` so a
+      market-implied base rate anchors the reference class. Absent = no
+      market anchor (cascade runs on LLM reference classes only).
 
 ledger:
   span_namespace: reg.skill.superforecasting
@@ -120,6 +131,7 @@ steps:
       forecasting_question: "{{ forecasting_question }}"
       sub_questions: "{{ step_2_result.sub_questions | default([]) }}"
       knowns: "{{ step_2_result.knowns | default([]) }}"
+      market_context: "{{ market_context | default([]) }}"
 
   - ordinal: 5
     action: compute

@@ -228,7 +228,10 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-prediction-markets",
         description: "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
         credentials: Some(&[]),
-        config_env: Some(&["HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS"]),
+        config_env: Some(&[
+            "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+            "HKASK_PREDICTION_MARKETS_DATA",
+        ]),
     },
     BuiltinMcpServer {
         id: "swarm",
@@ -593,7 +596,10 @@ mod tests {
         // in `run()` (with a malformed-value warn, not silent fallback).
         assert_eq!(
             s.config_env.unwrap().to_vec(),
-            vec!["HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS"],
+            vec![
+                "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+                "HKASK_PREDICTION_MARKETS_DATA",
+            ],
             "prediction-markets config_env allowlist drifted — every entry must              have a read site in hkask-mcp-prediction-markets"
         );
     }

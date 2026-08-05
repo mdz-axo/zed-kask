@@ -5,6 +5,7 @@ contract:
     forecasting_question: string
     sub_questions: array
     knowns: array
+    market_context: array
   output:
     reference_classes: array
     base_rates: array
@@ -28,6 +29,20 @@ You are an outside view analyst. Your task is to establish base rates by identif
 {% for known in knowns %}
 - {{ known }}
 {% endfor %}
+
+{% if market_context %}
+## Prediction-Market Anchors
+The following annotated market records were resolved for this question. Each
+carries a market-implied probability with reliability metadata — treat a
+`high` reliability tier with tight spread as a strong base-rate candidate;
+treat `low` reliability, wide spread, or `stale` calibration as weak evidence
+and say so. If `calibration.domain_bias` is set (e.g. politics markets are
+chronically compressed toward 0.5 per arXiv:2602.19520), adjust the anchor
+accordingly rather than taking the price at face value.
+{% for m in market_context %}
+- [{{ m.source }}] {{ m.question }} — p={{ m.probability }} (tier: {{ m.reliability_tier }}, spread: {{ m.spread }}, bias: {{ m.calibration.domain_bias | default("none") }}, deadline: {{ m.deadline }})
+{% endfor %}
+{% endif %}
 
 ## Outside View Methodology
 

@@ -1437,10 +1437,231 @@ pub fn convert_companies_output(
     Ok(events)
 }
 
+/// Static per-domain de-compression strength δ (seeded from arXiv:2602.19520:
+/// politics markets are chronically underconfident — prices compressed
+/// toward 0.5). Domains measured as already-calibrated (sports, per
+/// 2604.20421 §6.1) get δ = 0 — correction is identity. Replaced by
+/// data-derived estimates when the calibration loop accrues outcomes.
+fn domain_bias_delta(category: &str) -> f64 {
+    let normalized = category.to_ascii_lowercase();
+    if normalized.contains("politic") || normalized.contains("election") {
+        0.3
+    } else {
+        0.0
+    }
+}
+
+/// Convert an annotated prediction-market record (from
+/// hkask-mcp-prediction-markets `market_lookup`/`market_match`, pasted by
+/// the caller — the same caller-mediated bridge pattern as
+/// `scenario_from_companies`) into a ScenarioEvent anchored on the
+/// market-implied base rate.
+///
+/// Gates (deliberate refusals, mirroring the contract's epistemic posture):
+/// - `reliability_tier` low ⇒ no anchor (`base_rate: None` + warning)
+/// - `match_confidence` below high/medium ⇒ no anchor (wrong-event risk)
+/// - resolved/closed markets ⇒ rejected (a resolved market is not a forecast)
+///
+/// The domain-bias correction (hkask_forecast::domain_bias_correction) is
+/// applied deterministically here — the LLM consumer never sees an
+/// uncorrected politics price as the default anchor.
+pub fn convert_market_record(
+    record: &hkask_mcp_prediction_markets::types::MarketRecord,
+    match_confidence: Option<&str>,
+) -> Result<(ScenarioEvent, Vec<String>), ScenarioError> {
+    let mut warnings = Vec::new();
+
+    if !matches!(
+        record.status,
+        hkask_mcp_prediction_markets::types::MarketStatus::Open
+    ) {
+        return Err(ScenarioError::EmptyInput(format!(
+            "market '{}' is not open (status: {:?}) — a resolved or closed market is not a forecast",
+            record.market_id, record.status
+        )));
+    }
+
+    let raw = record.probability;
+    let delta = domain_bias_delta(&record.category);
+    let corrected = hkask_forecast::domain_bias_correction(raw, delta);
+    if delta > 0.0 {
+        warnings.push(format!(
+            "domain-bias correction applied ({}, δ={delta}): {raw:.3} → {corrected:.3}",
+            record.category
+        ));
+    }
+
+    let low_reliability = matches!(
+        record.reliability_tier,
+        hkask_mcp_prediction_markets::types::ReliabilityTier::Low
+    );
+    let weak_match = match match_confidence {
+        Some("high") | Some("medium") | None => false,
+        Some(_) => true,
+    };
+
+    let base_rate = if low_reliability || weak_match {
+        if low_reliability {
+            warnings.push(format!(
+                "low reliability tier (volume={:.0}, spread={:?}) — base_rate withheld",
+                record.volume, record.spread
+            ));
+        }
+        if weak_match {
+            warnings.push(format!(
+                "match confidence {:?} below threshold — base_rate withheld (wrong-event risk)",
+                match_confidence
+            ));
+        }
+        None
+    } else {
+        Some(corrected)
+    };
+
+    let deadline = chrono::NaiveDate::parse_from_str(
+        &record.deadline.chars().take(10).collect::<String>(),
+        "%Y-%m-%d",
+    )
+    .unwrap_or_else(|_| chrono::Utc::now().date_naive() + chrono::TimeDelta::days(365));
+
+    let event = ScenarioEvent {
+        id: format!("mkt-{}", record.market_id),
+        name: record.question.chars().take(80).collect(),
+        question: record.question.clone(),
+        deadline,
+        time_horizon: TimeHorizon::Strategic,
+        scenario_type: ScenarioType::EmergingEconomic,
+        subject: record.series.clone(),
+        probability: base_rate.unwrap_or(0.5),
+        basis: Some(format!("prediction_market:{:?}", record.source).to_lowercase()),
+        depends_on: vec![],
+        sub_questions: vec![],
+        base_rate,
+        reference_class: Some(format!(
+            "{} market-implied probability (tier: {:?}, method: {:?})",
+            record.series, record.reliability_tier, record.probability_method
+        )),
+        brier_score: None,
+        update_count: 0,
+    };
+    Ok((event, warnings))
+}
+
+#[cfg(test)]
+fn test_market_record(
+    category: &str,
+    probability: f64,
+    tier: hkask_mcp_prediction_markets::types::ReliabilityTier,
+) -> hkask_mcp_prediction_markets::types::MarketRecord {
+    use hkask_mcp_prediction_markets::types::*;
+    use std::borrow::Cow;
+    MarketRecord {
+        source: Source::Kalshi,
+        event_id: "KXFED-27DEC".into(),
+        market_id: "KXFED-27DEC-H0".into(),
+        question: "Will the Fed hold rates in December 2027?".into(),
+        description: "Resolves per the Federal Reserve statement.".into(),
+        category: category.into(),
+        series: "KXFEDDECISION".into(),
+        deadline: "2027-12-08T18:59:00Z".into(),
+        probability,
+        probability_method: ProbabilityMethod::Midpoint,
+        spread: Some(0.02),
+        volume: 250_000.0,
+        volume_grain: VolumeGrain::Market,
+        liquidity: Some(10_000.0),
+        open_interest: Some(1_500.0),
+        last_update: "2026-08-05T00:00:00Z".into(),
+        volatility: Volatility {
+            realized_variance: None,
+            structural_flag: StructuralFlag::None,
+            interpretation: Cow::Borrowed("low"),
+        },
+        status: MarketStatus::Open,
+        resolved_outcome: None,
+        resolution_source: Cow::Borrowed("kalshi_exchange"),
+        calibration: Calibration {
+            brier: None,
+            domain_bias: None,
+            sample_size: 0,
+            stale: true,
+        },
+        reliability_tier: tier,
+        ontology: OntologyBlock {
+            process: ProcessAxis {
+                r#type: Cow::Borrowed("pko:ProcedureExecution"),
+                stage: Cow::Borrowed("trading"),
+                probability_role: Cow::Borrowed("pko:StepExecution.output"),
+            },
+            state: StateAxis {
+                identifier: "kalshi:KXFED-27DEC-H0".into(),
+                title: "t".into(),
+                description: "d".into(),
+                temporal: "2027-12-08T18:59:00Z".into(),
+                provenance: Cow::Borrowed("kalshi_exchange"),
+            },
+            mapping_version: 1,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::CertaintyTier;
+    use hkask_mcp_prediction_markets::types::ReliabilityTier;
+
+    #[test]
+    fn politics_record_is_decompressed_away_from_half() {
+        // 2602.19520: politics δ=0.3 → 0.62 becomes 0.656, applied in the
+        // bridge, never left to the LLM consumer.
+        let record = test_market_record("Elections", 0.62, ReliabilityTier::High);
+        let (event, warnings) = convert_market_record(&record, Some("high")).expect("converts");
+        let base = event.base_rate.expect("high reliability anchors");
+        assert!(base > 0.62, "correction must move the anchor: {base}");
+        assert!((base - 0.656).abs() < 1e-9);
+        assert!(warnings.iter().any(|w| w.contains("domain-bias correction")));
+    }
+
+    #[test]
+    fn economics_record_passes_through_uncorrected() {
+        let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
+        let (event, _) = convert_market_record(&record, Some("high")).expect("converts");
+        let base = event.base_rate.expect("anchors");
+        assert!((base - 0.62).abs() < 1e-12, "δ=0 is identity");
+    }
+
+    #[test]
+    fn low_reliability_withholds_base_rate() {
+        let record = test_market_record("Economics", 0.62, ReliabilityTier::Low);
+        let (event, warnings) = convert_market_record(&record, Some("high")).expect("converts");
+        assert_eq!(event.base_rate, None);
+        assert!(warnings.iter().any(|w| w.contains("reliability")));
+    }
+
+    #[test]
+    fn low_match_confidence_withholds_base_rate() {
+        let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
+        let (event, warnings) = convert_market_record(&record, Some("low")).expect("converts");
+        assert_eq!(event.base_rate, None);
+        assert!(warnings.iter().any(|w| w.contains("match confidence")));
+    }
+
+    #[test]
+    fn resolved_market_is_rejected() {
+        let mut record = test_market_record("Economics", 0.62, ReliabilityTier::High);
+        record.status = hkask_mcp_prediction_markets::types::MarketStatus::Resolved;
+        assert!(convert_market_record(&record, Some("high")).is_err());
+    }
+
+    #[test]
+    fn event_carries_market_provenance() {
+        let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
+        let (event, _) = convert_market_record(&record, None).expect("converts");
+        assert!(event.basis.as_deref().unwrap_or("").contains("prediction_market"));
+        assert!(event.reference_class.as_deref().unwrap_or("").contains("KXFEDDECISION"));
+        assert_eq!(event.deadline, chrono::NaiveDate::from_ymd_opt(2027, 12, 8).unwrap());
+    }
     use crate::types::EventDependency;
 
     fn make_event(id: &str, prob: f64, deps: Vec<EventDependency>) -> ScenarioEvent {

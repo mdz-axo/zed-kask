@@ -113,17 +113,53 @@ fn near_deadline_coinflip_flags() {
 
 #[test]
 fn thin_volume_is_low_reliability() {
+    let stale = stale_calibration_for("");
     assert_eq!(
-        types::reliability_tier(500.0, Some(0.02)),
+        types::reliability_tier(500.0, Some(0.02), &stale),
         ReliabilityTier::Low
     );
     assert_eq!(
-        types::reliability_tier(2_000_000.0, Some(0.01)),
+        types::reliability_tier(2_000_000.0, Some(0.01), &stale),
         ReliabilityTier::High
     );
     assert_eq!(
-        types::reliability_tier(100_000.0, Some(0.20)),
+        types::reliability_tier(100_000.0, Some(0.20), &stale),
         ReliabilityTier::Low
+    );
+}
+
+#[test]
+fn t10_poor_calibration_demotes_tier() {
+    // The loop is negative: measured high-Brier bucket demotes High → Medium.
+    let mut poorly = stale_calibration_for("");
+    poorly.stale = false;
+    poorly.sample_size = 10;
+    poorly.brier = Some(0.30);
+    assert_eq!(
+        types::reliability_tier(2_000_000.0, Some(0.01), &poorly),
+        ReliabilityTier::Medium,
+        "poorly-calibrated bucket demotes"
+    );
+    // Low stays Low (no further to fall); Medium stays Medium.
+    assert_eq!(
+        types::reliability_tier(500.0, Some(0.02), &poorly),
+        ReliabilityTier::Low
+    );
+    // A *stale* (unmeasured) signal never demotes — absence is not evidence.
+    let stale = stale_calibration_for("");
+    assert_eq!(
+        types::reliability_tier(2_000_000.0, Some(0.01), &stale),
+        ReliabilityTier::High
+    );
+    // A *good* calibration record does not promote either (no positive loop).
+    let mut good = stale_calibration_for("");
+    good.stale = false;
+    good.sample_size = 50;
+    good.brier = Some(0.05);
+    assert_eq!(
+        types::reliability_tier(500.0, Some(0.02), &good),
+        ReliabilityTier::Low,
+        "good calibration must not rescue thin volume"
     );
 }
 

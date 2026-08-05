@@ -26,6 +26,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 reqwest.workspace = true
+async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots", "tokio-runtime"] }
+futures.workspace = true
 thiserror = { workspace = true }
 
 [lints]

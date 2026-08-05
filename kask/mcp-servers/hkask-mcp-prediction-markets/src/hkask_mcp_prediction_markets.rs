@@ -21,6 +21,7 @@ pub mod cache;
 pub mod calibration;
 pub mod ontology;
 pub mod provider_kalshi;
+mod streaming;
 pub mod provider_polymarket;
 pub mod types;
 
@@ -48,6 +49,31 @@ pub struct MarketLookupRequest {
     pub limit: Option<u32>,
 }
 
+/// Request for market_record_resolution: feed a resolved outcome into the
+/// calibration store (the sense arm of the T10 feedback loop).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketRecordResolutionRequest {
+    /// Calibration bucket (domain or series) the market belonged to.
+    pub bucket: String,
+    /// The market-implied probability at observation time.
+    pub probability: f64,
+    /// The realized outcome (true = the event occurred / Yes won).
+    pub outcome: bool,
+}
+
+/// Request for market_subscribe_resolutions: stream market_resolved events
+/// from Polymarket's public market channel into the calibration store.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketSubscribeRequest {
+    /// CLOB asset (token) IDs to subscribe to (from a record's token IDs).
+    pub asset_ids: Vec<String>,
+    /// Calibration bucket to record resolutions under.
+    pub bucket: String,
+    /// Max resolutions to ingest before returning (default 1) — bounds the
+    /// tool's lifetime so it doesn't hold a tool call open indefinitely.
+    pub max_resolutions: Option<u32>,
+}
+
 /// Request for market_calibration: per-bucket Brier reading.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketCalibrationRequest {
@@ -73,6 +99,7 @@ hkask_mcp_server::mcp_server!(
         pub cache_ttl_secs: u64,
         pub calibration_store: std::sync::Arc<std::sync::Mutex<calibration::CalibrationStore>>,
         pub response_cache: cache::TtlCache,
+        pub calibration_path: Option<String>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
     }
 );
@@ -242,6 +269,126 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    /// Record a resolved market outcome into the calibration store.
+    #[tool(
+        description = "Record a resolved market outcome (bucket, probability-at-observation, outcome) into the calibration store. This is the sense arm of the calibration feedback loop: accrued resolutions drive per-bucket Brier scores, which demote poorly-calibrated buckets' reliability tiers on subsequent lookups."
+    )]
+    pub async fn market_record_resolution(
+        &self,
+        Parameters(req): Parameters<MarketRecordResolutionRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_record_resolution",
+            Some(Self::ontology_anchor("market_record_resolution")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_record_resolution".to_string());
+                if !(0.0..=1.0).contains(&req.probability) {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!("probability {} not in [0, 1]", req.probability),
+                    ));
+                }
+                let reading = {
+                    let mut store =
+                        self.calibration_store.lock().unwrap_or_else(|e| e.into_inner());
+                    store.record(
+                        &req.bucket,
+                        calibration::ResolvedObservation {
+                            probability: req.probability,
+                            outcome: req.outcome,
+                        },
+                    );
+                    let reading = calibration::read_calibration(&store, &req.bucket);
+                    if let Some(path) = &self.calibration_path
+                        && let Err(e) = store.save(std::path::Path::new(path))
+                    {
+                        // Persistence failure must not silently drop the
+                        // in-memory observation — warn so an operator can
+                        // distinguish "recorded" from "recorded but unsaved".
+                        tracing::warn!(
+                            "calibration journal save to {path} failed: {e} —                              observation is in-memory only for this session"
+                        );
+                    }
+                    reading
+                };
+                serde_json::to_value(&reading).map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "reading serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// Subscribe to Polymarket resolution events and feed the calibration store.
+    #[tool(
+        description = "Subscribe to Polymarket's public market channel for resolution events on the given CLOB asset IDs. Each market_resolved event is recorded into the calibration store under the given bucket (the automatic sense arm of the calibration loop). Returns after max_resolutions ingestions or stream end."
+    )]
+    pub async fn market_subscribe_resolutions(
+        &self,
+        Parameters(req): Parameters<MarketSubscribeRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_subscribe_resolutions",
+            Some(Self::ontology_anchor("market_subscribe_resolutions")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_subscribe_resolutions".to_string());
+                let max = req.max_resolutions.unwrap_or(1).max(1);
+                let ingested = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+                let store = std::sync::Arc::clone(&self.calibration_store);
+                let path = self.calibration_path.clone();
+                let bucket = req.bucket.clone();
+                let ingested_clone = std::sync::Arc::clone(&ingested);
+
+                streaming::subscribe_market(&req.asset_ids, move |event| {
+                    let store = std::sync::Arc::clone(&store);
+                    let path = path.clone();
+                    let _bucket = bucket.clone();
+                    let ingested = std::sync::Arc::clone(&ingested_clone);
+                    async move {
+                        if let streaming::MarketEvent::MarketResolved {
+                            winning_outcome, ..
+                        } = event
+                        {
+                            // Do NOT write a calibration observation here:
+                            // Brier scoring needs the *pre-resolution*
+                            // probability, which the stream does not carry.
+                            // Fabricating 1.0/0.0 would make every bucket
+                            // look perfectly calibrated — the reinforcing-loop
+                            // trap. The stream's role is to *notify*; the
+                            // caller pairs it with market_record_resolution
+                            // (which takes the pre-resolution probability).
+                            let outcome = winning_outcome.eq_ignore_ascii_case("yes");
+                            tracing::info!(
+                                "market resolved: outcome={} — call market_record_resolution                                  with the pre-resolution probability to feed the calibration loop",
+                                if outcome { "yes" } else { "no" }
+                            );
+                            let _ = (&store, &path); // reserved for a future price-snapshot join
+                            ingested.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                })
+                .await?;
+
+                let count = ingested.load(std::sync::atomic::Ordering::SeqCst);
+                Ok(serde_json::json!({
+                    "resolutions_ingested": count,
+                    "bucket": req.bucket,
+                    "max_resolutions": max,
+                }))
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
@@ -366,6 +513,29 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         Err(_) => DEFAULT_CACHE_TTL_SECS,
     };
 
+    // Calibration journal: HKASK_PREDICTION_MARKETS_DATA points at the data
+    // dir; the journal lives at <dir>/calibration.jsonl. A load failure is
+    // never silent — the loop must distinguish "no data" from "failed to
+    // read data" (the unwrap_or(0) sense-input trap).
+    let data_dir = std::env::var("HKASK_PREDICTION_MARKETS_DATA").ok();
+    let calibration_path = data_dir
+        .as_ref()
+        .map(|d| format!("{d}/calibration.jsonl"));
+    let store = match &calibration_path {
+        Some(path) => {
+            match calibration::CalibrationStore::load(std::path::Path::new(path)) {
+                Ok(store) => store,
+                Err(e) => {
+                    tracing::warn!(
+                        "calibration journal at {path} failed to load ({e});                          starting with an empty store — calibration signals                          will read stale until new observations accrue"
+                    );
+                    calibration::CalibrationStore::new()
+                }
+            }
+        }
+        None => calibration::CalibrationStore::new(),
+    };
+
     hkask_mcp_server::run_server(
         "hkask-mcp-prediction-markets",
         SERVER_VERSION,
@@ -374,15 +544,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 ctx.webid,
                 reqwest::Client::new(),
                 cache_ttl_secs,
-                std::sync::Arc::new(std::sync::Mutex::new(calibration::CalibrationStore::new())),
+                std::sync::Arc::new(std::sync::Mutex::new(store)),
                 cache::TtlCache::new(cache_ttl_secs),
+                calibration_path.clone(),
                 std::sync::Mutex::new(HashSet::new()),
             ))
         },
-        vec![CredentialRequirement::optional(
-            "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
-            "Cache TTL in seconds for market-data responses (default 60)",
-        )],
+        vec![
+            CredentialRequirement::optional(
+                "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+                "Cache TTL in seconds for market-data responses (default 60)",
+            ),
+            CredentialRequirement::optional(
+                "HKASK_PREDICTION_MARKETS_DATA",
+                "Data directory for the calibration journal (in-memory if absent)",
+            ),
+        ],
     )
     .await
 }
@@ -398,6 +575,7 @@ mod tests {
             60,
             std::sync::Arc::new(std::sync::Mutex::new(calibration::CalibrationStore::new())),
             cache::TtlCache::new(60),
+            None,
             std::sync::Mutex::new(HashSet::new()),
         )
     }

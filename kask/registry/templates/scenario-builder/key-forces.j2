@@ -40,6 +40,18 @@ You are a scenario planning specialist enumerating key forces in the microenviro
 {{ domain }}
 {% endif %}
 
+{% if market_context %}
+## Prediction-Market Signals
+The following annotated market records bear on this question. Where a market
+implies a high-confidence probability about a force's trajectory (and its
+reliability_tier is not `low`), rank that force's importance/uncertainty
+accordingly — a market-priced near-certainty lowers a force's *uncertainty*
+(it is still high-*importance*). Cite the market when it shaped a ranking.
+{% for m in market_context %}
+- [{{ m.source }}] {{ m.question }} — p={{ m.probability }} (tier: {{ m.reliability_tier }}, deadline: {{ m.deadline }})
+{% endfor %}
+{% endif %}
+
 ## Key Forces Framework
 
 Enumerate the key forces in the **microenvironment** — the proximate factors that directly affect the focal question. Consider these dimensions:

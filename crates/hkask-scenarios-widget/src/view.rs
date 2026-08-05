@@ -516,12 +516,17 @@ impl ScenariosWidget {
             );
         }
         if let Some(result) = &self.dispatch_result {
+            // Unwrap the MCP `{"content": …}` envelope (repo `.rules` single
+            // seam) so the user sees the payload, not the wrapper.
+            let payload = hkask_types::tool_response::parse_tool_response(result)
+                .and_then(|value| serde_json::to_string_pretty(&value).ok())
+                .unwrap_or_else(|| result.clone());
             // Truncate long tool output so the conversation remains the durable record.
-            let preview = if result.chars().count() > 120 {
-                let truncated: String = result.chars().take(120).collect();
+            let preview = if payload.chars().count() > 120 {
+                let truncated: String = payload.chars().take(120).collect();
                 format!("{truncated}…")
             } else {
-                result.clone()
+                payload
             };
             return Some(
                 Label::new(format!("Dispatched: {preview}"))

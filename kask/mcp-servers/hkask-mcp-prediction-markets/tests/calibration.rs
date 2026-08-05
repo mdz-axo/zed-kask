@@ -47,3 +47,80 @@ fn calibration_request_schema_has_no_boolean_positions() {
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");
 }
+
+// ── T10: loop closure ──────────────────────────────────────────────────────
+
+#[test]
+fn loop_closure_persistence_round_trip() {
+    // Observations survive a save/load cycle (the journal is the loop's
+    // memory across restarts).
+    let dir = std::env::temp_dir().join(format!("pm-cal-{}", std::process::id()));
+    let path = dir.join("calibration.jsonl");
+    let mut store = CalibrationStore::new();
+    for i in 0..6 {
+        store.record(
+            "politics",
+            ResolvedObservation {
+                probability: 0.55,
+                outcome: i % 2 == 0,
+            },
+        );
+    }
+    store.save(&path).expect("saves");
+    let loaded = CalibrationStore::load(&path).expect("loads");
+    let reading = read_calibration(&loaded, "politics");
+    assert_eq!(reading.sample_size, 6);
+    assert!(!reading.stale);
+    let brier = reading.brier.expect("computed");
+    assert!(brier > 0.2, "coin-flip guesses score poorly: {brier}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn loop_closure_malformed_journal_line_degrades_to_stale_not_panic() {
+    let dir = std::env::temp_dir().join(format!("pm-cal-bad-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = dir.join("calibration.jsonl");
+    std::fs::write(&path, "{\"bucket\":\"x\",\"probability\":0.9,\"outcome\":true}\nNOT-JSON\n")
+        .expect("write");
+    let loaded = CalibrationStore::load(&path).expect("loads despite bad line");
+    assert_eq!(loaded.sample_size("x"), 1, "good lines survive");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn loop_closure_is_negative_via_tier_demotion() {
+    // End-to-end at the library level: 6 resolved markets with terrible
+    // calibration (confidently wrong) in a bucket ⇒ that bucket's records
+    // demote from High to Medium on the next lookup. This is the corrective
+    // polarity assertion from the plan.
+    use hkask_mcp_prediction_markets::types;
+    let mut store = CalibrationStore::new();
+    for _ in 0..6 {
+        store.record(
+            "Elections",
+            ResolvedObservation {
+                probability: 0.9,
+                outcome: false, // confidently wrong, repeatedly
+            },
+        );
+    }
+    let reading = read_calibration(&store, "Elections");
+    let block = types::calibration_for(Some(&reading), "Elections");
+    let tier = types::reliability_tier(2_000_000.0, Some(0.01), &block);
+    assert_eq!(
+        tier,
+        types::ReliabilityTier::Medium,
+        "repeated confidently-wrong resolutions must demote the bucket"
+    );
+}
+
+#[test]
+fn record_resolution_request_schema_has_no_boolean_positions() {
+    let schema = schemars::schema_for!(
+        hkask_mcp_prediction_markets::MarketRecordResolutionRequest
+    );
+    let value = serde_json::to_value(&schema).expect("serializes");
+    let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+    assert!(positions.is_empty(), "bare booleans: {positions:?}");
+}
