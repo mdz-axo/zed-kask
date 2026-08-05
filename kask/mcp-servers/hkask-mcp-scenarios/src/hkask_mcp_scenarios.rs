@@ -148,6 +148,45 @@ pub struct MarketsBridgeRequest {
     pub match_confidence: Option<String>,
 }
 
+/// One dependency edge for `scenario_from_markets_set`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DependencySpecRequest {
+    /// Child market id (the `market_id` of the conditioned market).
+    pub child_market_id: String,
+    /// Parent market ids (the conditioning markets).
+    pub parent_market_ids: Vec<String>,
+    /// P(child | parent truth assignment), bitmap-ordered; length must be
+    /// 2^parent_market_ids.len(). Caller-authored — the server computes
+    /// marginals but never invents conditional probabilities.
+    pub conditionals: Vec<f64>,
+}
+
+/// Request for `scenario_propagate`: update one event's prior and recompute
+/// the whole tree (T5).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PropagateRequest {
+    /// JSON array of ScenarioEvents (the current tree's events, e.g. from a
+    /// prior scenario_from_markets_set / scenario_quantify output).
+    pub events: String,
+    /// ID of the event whose prior is being revised.
+    pub event_id: String,
+    /// The new prior probability in [0, 1].
+    pub new_prior: f64,
+}
+
+/// Request for `scenario_from_markets_set`: compose N market records into a
+/// dependent event tree.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketsSetBridgeRequest {
+    /// JSON array of annotated MarketRecords from hkask-mcp-prediction-markets.
+    pub market_records: String,
+    /// Optional per-record match confidences ("high"/"medium"/"low" or null),
+    /// parallel to the records array. Omit for direct lookups.
+    pub match_confidences: Option<Vec<Option<String>>>,
+    /// Caller-authored dependency edges. Omit for a flat (independent) tree.
+    pub dependency_specs: Option<Vec<DependencySpecRequest>>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FullPipelineRequest {
     /// Subject: company ticker, industry, country, or technology domain
@@ -659,6 +698,78 @@ impl ScenariosServer {
                     "ontology_identifier": record.ontology.state.identifier,
                 },
                 "bridge_note": "The prediction-markets server supplies annotated market-implied probabilities; this bridge anchors a trackable ScenarioEvent on them. base_rate is None when the reliability/match gates refuse the anchor — do not substitute the raw price.",
+                "ontology_anchor": "dublin-core"
+            });
+
+            Ok(output)
+        })
+        .await
+    }
+
+    /// Bridge: compose a SET of prediction-market records into a dependent
+    /// event tree (T4a). Per-record gates from `scenario_from_markets` apply;
+    /// dependency edges are caller-authored (the server computes marginals
+    /// but never invents conditional probabilities).
+    #[tool(
+        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the scenario_from_markets gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings."
+    )]
+    pub async fn scenario_from_markets_set(
+        &self,
+        Parameters(req): Parameters<MarketsSetBridgeRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "scenario_from_markets_set", Some(Self::ontology_anchor("scenario_from_markets_set")), async {
+            let records: Vec<hkask_mcp_prediction_markets::types::MarketRecord> =
+                serde_json::from_str(&req.market_records)
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid market records JSON array: {e}")))?;
+
+            let confidences = req.match_confidences.unwrap_or_else(|| vec![None; records.len()]);
+            let specs: Vec<superforecast::DependencySpec> = req
+                .dependency_specs
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| superforecast::DependencySpec {
+                    child_market_id: s.child_market_id,
+                    parent_market_ids: s.parent_market_ids,
+                    conditionals: s.conditionals,
+                })
+                .collect();
+
+            let (tree, warnings) = superforecast::compose_market_tree(&records, &confidences, &specs)
+                .map_err(map_scenario_error)?;
+
+            let nodes: Vec<serde_json::Value> = tree
+                .nodes
+                .iter()
+                .map(|n| serde_json::json!({
+                    "id": n.event.id,
+                    "question": n.event.question,
+                    "marginal_probability": n.marginal_probability,
+                    "depends_on": n.event.depends_on.iter().map(|d| serde_json::json!({
+                        "parent_event_ids": d.parent_event_ids,
+                        "conditionals": d.conditionals,
+                    })).collect::<Vec<_>>(),
+                    "base_rate": n.event.base_rate,
+                    "variance_contribution": n.variance_contribution,
+                }))
+                .collect();
+
+            let output = serde_json::json!({
+                "tree": {
+                    "subject": tree.subject,
+                    "root_ids": tree.root_ids,
+                    "topo_order": tree.topo_order,
+                    "joint_probability": tree.joint_probability,
+                    "nodes": nodes,
+                },
+                "warnings": warnings,
+                "provenance": {
+                    "tool": "scenario_from_markets_set",
+                    "server": "hkask-mcp-scenarios",
+                    "version": SERVER_VERSION,
+                    "market_count": records.len(),
+                    "dependency_edge_count": specs.len(),
+                },
+                "bridge_note": "Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities. base_rate is None on records refused by the per-market gates.",
                 "ontology_anchor": "dublin-core"
             });
 
@@ -1335,6 +1446,60 @@ impl ScenariosServer {
         .await
     }
 
+    /// Tree-level Bayesian propagation (T5): update one event's prior and
+    /// recompute every descendant marginal and the joint. The propagation
+    /// journal is the tâtonnement record (Bhattacharya Prop. 6).
+    #[tool(
+        description = "Update one event's prior probability and propagate through the event tree: all descendant marginals and the joint probability are recomputed. Returns the updated tree plus a propagation journal (per-node before/after deltas) — the tâtonnement record of the update round. CPTs are untouched; only the named event's prior changes."
+    )]
+    pub async fn scenario_propagate(
+        &self,
+        Parameters(req): Parameters<PropagateRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "scenario_propagate", Some(Self::ontology_anchor("scenario_propagate")), async {
+            let events: Vec<ScenarioEvent> = serde_json::from_str(&req.events)
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON array: {e}")))?;
+
+            let result = superforecast::propagate_prior_update(&events, &req.event_id, req.new_prior)
+                .map_err(map_scenario_error)?;
+
+            let nodes: Vec<serde_json::Value> = result
+                .tree
+                .nodes
+                .iter()
+                .map(|n| serde_json::json!({
+                    "id": n.event.id,
+                    "marginal_probability": n.marginal_probability,
+                    "update_count": n.event.update_count,
+                }))
+                .collect();
+
+            let output = serde_json::json!({
+                "tree": {
+                    "subject": result.tree.subject,
+                    "topo_order": result.tree.topo_order,
+                    "joint_probability": result.tree.joint_probability,
+                    "nodes": nodes,
+                },
+                "journal": result.journal,
+                "joint_before": result.joint_before,
+                "joint_after": result.joint_after,
+                "provenance": {
+                    "tool": "scenario_propagate",
+                    "server": "hkask-mcp-scenarios",
+                    "version": SERVER_VERSION,
+                    "updated_event": req.event_id,
+                    "changed_nodes": result.journal.len(),
+                },
+                "framework": "Tree-level Bayesian propagation: the named event's prior is revised; every descendant marginal is recomputed via CPT marginalization under parent independence; the journal records each changed node (one tâtonnement round, Bhattacharya Prop. 6, arXiv:2211.03244).",
+                "ontology_anchor": "dublin-core"
+            });
+
+            Ok(output)
+        })
+        .await
+    }
+
     /// Bayesian update: revise a probability with new evidence.
     #[tool(
         description = "Bayesian update for a scenario event. Apply Bayes' theorem: P(H|E) = P(E|H) × P(H) / P(E). Provide prior probability, evidence likelihood (how likely is the evidence if the hypothesis is true?), and evidence base rate (how common is this evidence in general?). Returns the posterior probability and the magnitude of the update."
@@ -1989,9 +2154,7 @@ mod tests {
     #[tokio::test]
     async fn scenario_status_emits_dispatchable_provenance() {
         let server = empty_server();
-        let response = server
-            .scenario_status(Parameters(StatusRequest {}))
-            .await;
+        let response = server.scenario_status(Parameters(StatusRequest {})).await;
 
         // Unwrap the {"content": <value>} envelope via the shared seam
         // (see the repo .rules "MCP tool responses are content envelopes" trap).
@@ -2012,6 +2175,9 @@ mod tests {
         );
         // args is the (empty) StatusRequest; span_id is null (not surfaced).
         assert!(provenance.get("args").is_some(), "provenance.args present");
-        assert!(provenance.get("span_id").is_some(), "provenance.span_id present");
+        assert!(
+            provenance.get("span_id").is_some(),
+            "provenance.span_id present"
+        );
     }
 }

@@ -14,10 +14,12 @@
 - [ ] **CP1** tests pass; duration face-validity review
 
 ## Phase 2 — Core (Q2–Q3)
-- [ ] **T4a** Markets→tree composition algebra (`scenario_from_markets_set`)
-  - [ ] N markets → validated EventTree w/ per-branch joints; tree-time refusal gates
-  - [ ] Dependency inference via matcher.rs question overlap
-  - [ ] CPT-size caps + independence diagnostics; cycle rejection
+- [x] **T4a** Markets→tree composition algebra (`scenario_from_markets_set`) — landed 2026-08-05
+  - [x] N markets → validated EventTree; per-record bridge gates preserved; tree-time validation
+  - [x] Dependency edges caller-authored (never-fabricate at the composition layer); overlap duplicates flagged via matcher.rs Jaccard
+  - [x] CPT-size cap (4 parents/group) + cycle/unknown-parent/duplicate-id rejection
+  - [x] 8 composition tests + 2 schema-compliance tests pass; full crate suite green
+  - [ ] Per-branch `branches: Vec<Branch>` extension (deferred — see note below)
 - [ ] **T4b** Tree-time challenge gates w/ provenance classes
 - [ ] **T5** Tree-level Bayesian propagation + journal
 - [ ] **T7** Tree-weighted valuation path in companies

@@ -74,20 +74,23 @@ pub fn constant_maturity(points: &[TenorPoint], tenor_days: u32) -> Option<CmpVa
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     // Cohorts: distinct tenors (same-deadline markets share a cohort; their
-    // mean log-odds is the cohort value).
-    let mut cohorts: Vec<(f64, f64)> = Vec::new(); // (tenor, mean log-odds)
+    // mean log-odds is the cohort value). (sum, count) accumulation — a
+    // running mean-of-2 would bias toward later points for cohorts >2.
+    let mut cohorts: Vec<(f64, f64, usize)> = Vec::new(); // (tenor, log-odds sum, count)
     for point in &sorted {
         if let Some(last) = cohorts.last_mut()
             && (last.0 - point.days_to_resolution).abs() < 1.0
         {
-            // Same cohort: average in log-odds space (running mean of 2 for
-            // simplicity — cohorts with >2 same-tenor markets are rare in
-            // the base families sampled at T0).
-            last.1 = (last.1 + log_odds(point.price)) / 2.0;
+            last.1 += log_odds(point.price);
+            last.2 += 1;
             continue;
         }
-        cohorts.push((point.days_to_resolution, log_odds(point.price)));
+        cohorts.push((point.days_to_resolution, log_odds(point.price), 1));
     }
+    let cohorts: Vec<(f64, f64)> = cohorts
+        .into_iter()
+        .map(|(tenor, sum, count)| (tenor, sum / count as f64))
+        .collect();
 
     if cohorts.len() == 1 {
         let (cohort_tenor, value) = cohorts[0];

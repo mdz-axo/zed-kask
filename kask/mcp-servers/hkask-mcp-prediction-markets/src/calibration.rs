@@ -57,6 +57,17 @@ impl CalibrationStore {
         brier_score_multi(&probabilities, &outcomes).map_err(|_| ())
     }
 
+    /// Whether an identical observation already exists in the bucket —
+    /// idempotent ingest guard for the resolution scanner.
+    pub fn contains(&self, bucket: &str, observation: &ResolvedObservation) -> bool {
+        self.buckets.get(bucket).is_some_and(|v| {
+            v.iter().any(|o| {
+                (o.probability - observation.probability).abs() < 1e-9
+                    && o.outcome == observation.outcome
+            })
+        })
+    }
+
     pub fn sample_size(&self, bucket: &str) -> u64 {
         self.buckets.get(bucket).map_or(0, |v| v.len() as u64)
     }

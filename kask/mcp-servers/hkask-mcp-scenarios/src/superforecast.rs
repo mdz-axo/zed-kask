@@ -1562,7 +1562,15 @@ pub fn convert_market_record(
         &record.deadline.chars().take(10).collect::<String>(),
         "%Y-%m-%d",
     )
-    .unwrap_or_else(|_| chrono::Utc::now().date_naive() + chrono::TimeDelta::days(365));
+    .map_err(|e| {
+        // A forecasting artifact with a fabricated deadline is worse than an
+        // error (same no-fabrication posture as the contract's
+        // resolved_outcome gate).
+        ScenarioError::EmptyInput(format!(
+            "market '{}' has unparseable deadline '{}' ({e}) — refusing to fabricate one",
+            record.market_id, record.deadline
+        ))
+    })?;
 
     let event = ScenarioEvent {
         id: format!("mkt-{}", record.market_id),
@@ -1585,6 +1593,250 @@ pub fn convert_market_record(
         update_count: 0,
     };
     Ok((event, warnings))
+}
+
+// ── Markets-set composition (T4a) ───────────────────────────────────────────
+
+/// One caller-specified dependency edge for `compose_market_tree`.
+///
+/// The conditionals are caller-authored: the platform computes marginals and
+/// joints but never invents the conditional probabilities themselves (the
+/// never-fabricate rule applied to the composition layer).
+#[derive(Debug, Clone)]
+pub struct DependencySpec {
+    /// Child event id (must match a converted event's `mkt-{market_id}`).
+    pub child_market_id: String,
+    /// Parent event ids (market ids of the conditioning markets).
+    pub parent_market_ids: Vec<String>,
+    /// P(child | parent truth assignment), bitmap-ordered, length
+    /// 2^parent_market_ids.len().
+    pub conditionals: Vec<f64>,
+}
+
+/// Maximum parents per dependency group (CPT size cap — variety amplifier iv).
+/// 2^4 = 16 conditional entries per group; deeper conditioning belongs in
+/// multiple groups (noisy-OR channels) or signals a misspecified tree.
+pub const MAX_PARENTS_PER_GROUP: usize = 4;
+
+/// Jaccard token-overlap threshold above which two market questions are
+/// flagged as potential duplicates (same underlying event, not a dependency).
+const DUPLICATE_OVERLAP_THRESHOLD: f64 = 0.65;
+
+/// A warning emitted during composition — surfaced to the caller, never
+/// silently dropped.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompositionWarning {
+    pub kind: &'static str,
+    pub detail: String,
+}
+
+/// Compose a set of prediction-market records into a validated `EventTree`.
+///
+/// Pipeline: per-record conversion (the existing `convert_market_record`
+/// gates apply to each market) → caller-specified dependency wiring →
+/// overlap diagnostics → `build_event_tree` (validation, cycle detection,
+/// marginalization).
+///
+/// Dependency inference is deliberately NOT automatic: question overlap can
+/// suggest *relatedness* but cannot determine the direction or strength of
+/// causation, so `depends_on` edges come from the caller's `dependency_specs`.
+/// Overlap above `DUPLICATE_OVERLAP_THRESHOLD` is flagged as a likely
+/// duplicate (wiring two records of the same event into a tree double-counts
+/// the signal).
+pub fn compose_market_tree(
+    records: &[hkask_mcp_prediction_markets::types::MarketRecord],
+    match_confidences: &[Option<String>],
+    dependency_specs: &[DependencySpec],
+) -> Result<(EventTree, Vec<CompositionWarning>), ScenarioError> {
+    if records.is_empty() {
+        return Err(ScenarioError::EmptyInput(
+            "compose_market_tree requires at least one market record".into(),
+        ));
+    }
+    if match_confidences.len() != records.len() {
+        return Err(ScenarioError::EmptyInput(format!(
+            "match_confidences length {} must equal records length {} (use None per entry for direct lookups)",
+            match_confidences.len(),
+            records.len()
+        )));
+    }
+
+    let mut warnings: Vec<CompositionWarning> = Vec::new();
+
+    // 1. Convert each record through the existing gated bridge.
+    let mut events: Vec<ScenarioEvent> = Vec::with_capacity(records.len());
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    for (record, confidence) in records.iter().zip(match_confidences.iter()) {
+        let (event, record_warnings) = convert_market_record(record, confidence.as_deref())?;
+        for warning in record_warnings {
+            warnings.push(CompositionWarning {
+                kind: "bridge_gate",
+                detail: format!("{}: {warning}", record.market_id),
+            });
+        }
+        if !seen_ids.insert(event.id.clone()) {
+            return Err(ScenarioError::InvalidDependency(
+                event.id,
+                "duplicate market_id in record set — each market may appear once".into(),
+            ));
+        }
+        events.push(event);
+    }
+
+    // 2. Wire caller-specified dependencies.
+    for spec in dependency_specs {
+        if spec.parent_market_ids.len() > MAX_PARENTS_PER_GROUP {
+            return Err(ScenarioError::InvalidDependency(
+                spec.child_market_id.clone(),
+                format!(
+                    "{} parents exceeds the CPT size cap of {MAX_PARENTS_PER_GROUP} — split into multiple groups or respecify the tree",
+                    spec.parent_market_ids.len()
+                ),
+            ));
+        }
+        let child_id = format!("mkt-{}", spec.child_market_id);
+        let parent_ids: Vec<String> = spec
+            .parent_market_ids
+            .iter()
+            .map(|id| format!("mkt-{id}"))
+            .collect();
+        for parent_id in &parent_ids {
+            if !seen_ids.contains(parent_id) {
+                #[allow(clippy::redundant_clone)]
+                // child_id is used after the loop; the clone is only redundant on this exit path
+                return Err(ScenarioError::UnknownParent(
+                    child_id.clone(),
+                    parent_id.clone(),
+                ));
+            }
+        }
+        let child = events
+            .iter_mut()
+            .find(|e| e.id == child_id)
+            .ok_or_else(|| ScenarioError::EventNotFound(child_id.clone()))?;
+        child.depends_on.push(crate::types::EventDependency {
+            parent_event_ids: parent_ids,
+            conditionals: spec.conditionals.clone(),
+        });
+    }
+
+    // 3. Overlap diagnostics (deterministic, matcher.rs machinery).
+    for (i, a) in records.iter().enumerate() {
+        for b in records.iter().skip(i + 1) {
+            let overlap =
+                hkask_mcp_prediction_markets::matcher::token_overlap(&a.question, &b.question);
+            if overlap >= DUPLICATE_OVERLAP_THRESHOLD {
+                warnings.push(CompositionWarning {
+                    kind: "possible_duplicate",
+                    detail: format!(
+                        "questions of {} and {} overlap at {overlap:.2} — likely the same underlying event; wiring both double-counts the signal",
+                        a.market_id, b.market_id
+                    ),
+                });
+            }
+        }
+    }
+
+    // 4. Build the tree (validation, cycle detection, marginalization).
+    let tree = build_event_tree(&events)?;
+    Ok((tree, warnings))
+}
+
+// ── Tree-level Bayesian propagation (T5) ────────────────────────────────────
+
+/// One step in a propagation journal: a node's marginal before and after a
+/// prior update elsewhere in the tree. The journal is the tâtonnement record
+/// (T10): each entry is one round of the market's one-step-ahead adjustment
+/// (Bhattacharya Prop. 6, arXiv:2211.03244 — see t0-keystone-mapping.md §3).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PropagationEntry {
+    pub event_id: String,
+    pub marginal_before: f64,
+    pub marginal_after: f64,
+    pub delta: f64,
+}
+
+/// Result of updating one node's prior and propagating through the tree.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PropagationResult {
+    /// The updated tree (all marginals recomputed).
+    pub tree: EventTree,
+    /// Every node whose marginal changed (including the updated node itself),
+    /// in topological order.
+    pub journal: Vec<PropagationEntry>,
+    /// Joint probability before and after.
+    pub joint_before: f64,
+    pub joint_after: f64,
+}
+
+/// Update one event's prior probability and propagate the change through the
+/// tree: every descendant marginal and the joint are recomputed.
+///
+/// This closes the gap identified at territory-map C30 (scalar Bayes only):
+/// `scenario_update` revises a probability in isolation; this function
+/// recomputes the whole tree so downstream consumers (scenario-weighted
+/// valuation, factor loadings) always read a coherent joint.
+///
+/// The update sets the node's *prior* (its stored `probability`); CPTs are
+/// untouched — conditioning structure is caller-authored and stable under
+/// evidence revision. Nodes not reachable from the updated node are
+/// unaffected but are re-validated with the tree (cheap, and keeps one
+/// validation path).
+pub fn propagate_prior_update(
+    events: &[ScenarioEvent],
+    updated_event_id: &str,
+    new_prior: f64,
+) -> Result<PropagationResult, ScenarioError> {
+    if !new_prior.is_finite() || !(0.0..=1.0).contains(&new_prior) {
+        return Err(ScenarioError::InvalidProbability(
+            updated_event_id.to_string(),
+            new_prior,
+        ));
+    }
+
+    // Baseline tree (before).
+    let tree_before = build_event_tree(events)?;
+    let marginal_before: HashMap<String, f64> = tree_before
+        .nodes
+        .iter()
+        .map(|n| (n.event.id.clone(), n.marginal_probability))
+        .collect();
+
+    // Apply the prior update.
+    let mut updated_events = events.to_vec();
+    let target = updated_events
+        .iter_mut()
+        .find(|e| e.id == updated_event_id)
+        .ok_or_else(|| ScenarioError::EventNotFound(updated_event_id.to_string()))?;
+    target.probability = new_prior;
+    target.update_count += 1;
+
+    // Rebuilt tree (after).
+    let tree_after = build_event_tree(&updated_events)?;
+
+    let mut journal: Vec<PropagationEntry> = Vec::new();
+    for node in &tree_after.nodes {
+        let before = marginal_before
+            .get(&node.event.id)
+            .copied()
+            .unwrap_or(node.marginal_probability);
+        let delta = node.marginal_probability - before;
+        if delta.abs() > 1e-12 {
+            journal.push(PropagationEntry {
+                event_id: node.event.id.clone(),
+                marginal_before: before,
+                marginal_after: node.marginal_probability,
+                delta,
+            });
+        }
+    }
+
+    Ok(PropagationResult {
+        joint_before: tree_before.joint_probability,
+        joint_after: tree_after.joint_probability,
+        tree: tree_after,
+        journal,
+    })
 }
 
 #[cfg(test)]
@@ -1624,6 +1876,7 @@ fn test_market_record(
         calibration: Calibration {
             brier: None,
             domain_bias: None,
+            bias_source: std::borrow::Cow::Borrowed("none"),
             sample_size: 0,
             stale: true,
         },
@@ -1661,7 +1914,11 @@ mod tests {
         let base = event.base_rate.expect("high reliability anchors");
         assert!(base > 0.62, "correction must move the anchor: {base}");
         assert!((base - 0.656).abs() < 1e-9);
-        assert!(warnings.iter().any(|w| w.contains("domain-bias correction")));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("domain-bias correction"))
+        );
     }
 
     #[test]
@@ -1699,11 +1956,266 @@ mod tests {
     fn event_carries_market_provenance() {
         let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
         let (event, _) = convert_market_record(&record, None).expect("converts");
-        assert!(event.basis.as_deref().unwrap_or("").contains("prediction_market"));
-        assert!(event.reference_class.as_deref().unwrap_or("").contains("KXFEDDECISION"));
-        assert_eq!(event.deadline, chrono::NaiveDate::from_ymd_opt(2027, 12, 8).unwrap());
+        assert!(
+            event
+                .basis
+                .as_deref()
+                .unwrap_or("")
+                .contains("prediction_market")
+        );
+        assert!(
+            event
+                .reference_class
+                .as_deref()
+                .unwrap_or("")
+                .contains("KXFEDDECISION")
+        );
+        assert_eq!(
+            event.deadline,
+            chrono::NaiveDate::from_ymd_opt(2027, 12, 8).unwrap()
+        );
     }
     use crate::types::EventDependency;
+
+    // ── T4a composition tests ────────────────────────────────────────────
+
+    fn record_with(
+        id: &str,
+        question: &str,
+        probability: f64,
+    ) -> hkask_mcp_prediction_markets::types::MarketRecord {
+        let mut record = test_market_record("Economics", probability, ReliabilityTier::High);
+        record.market_id = id.into();
+        record.question = question.into();
+        record
+    }
+
+    #[test]
+    fn compose_flat_tree_matches_independent_marginals() {
+        // No dependency specs: every event is a root; marginals equal the
+        // (gated) record probabilities; joint = product of roots.
+        let records = vec![
+            record_with("M1", "Will the Fed cut rates in January 2027?", 0.60),
+            record_with("M2", "Will CPI exceed 3 percent in 2027?", 0.40),
+        ];
+        let (tree, warnings) = compose_market_tree(&records, &[None, None], &[]).expect("composes");
+        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(tree.root_ids.len(), 2);
+        for node in &tree.nodes {
+            let expected = if node.event.id == "mkt-M1" {
+                0.60
+            } else {
+                0.40
+            };
+            assert!(
+                (node.marginal_probability - expected).abs() < 1e-12,
+                "root marginal must equal the record probability"
+            );
+        }
+        assert!((tree.joint_probability - 0.24).abs() < 1e-12);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn compose_dependent_tree_marginalizes_like_compute_marginal_probabilities() {
+        // M2 conditioned on M1: P(M2|M1)=0.9, P(M2|¬M1)=0.2.
+        // Marginal: 0.9·0.6 + 0.2·0.4 = 0.62. Joint factor: 0.6 · 0.9.
+        let records = vec![
+            record_with("M1", "Will the Fed cut rates in January 2027?", 0.60),
+            record_with("M2", "Will bank stocks rally in 2027?", 0.50),
+        ];
+        let specs = vec![DependencySpec {
+            child_market_id: "M2".into(),
+            parent_market_ids: vec!["M1".into()],
+            conditionals: vec![0.2, 0.9],
+        }];
+        let (tree, _) = compose_market_tree(&records, &[None, None], &specs).expect("composes");
+        let child = tree
+            .nodes
+            .iter()
+            .find(|n| n.event.id == "mkt-M2")
+            .expect("child present");
+        assert!((child.marginal_probability - 0.62).abs() < 1e-12);
+        assert_eq!(tree.root_ids, vec!["mkt-M1".to_string()]);
+        assert!((tree.joint_probability - 0.54).abs() < 1e-12);
+    }
+
+    #[test]
+    fn compose_rejects_cycle() {
+        let records = vec![
+            record_with("M1", "Will the Fed cut rates in January 2027?", 0.60),
+            record_with("M2", "Will bank stocks rally in 2027?", 0.50),
+        ];
+        let specs = vec![
+            DependencySpec {
+                child_market_id: "M2".into(),
+                parent_market_ids: vec!["M1".into()],
+                conditionals: vec![0.2, 0.9],
+            },
+            DependencySpec {
+                child_market_id: "M1".into(),
+                parent_market_ids: vec!["M2".into()],
+                conditionals: vec![0.3, 0.8],
+            },
+        ];
+        let result = compose_market_tree(&records, &[None, None], &specs);
+        assert!(matches!(result, Err(ScenarioError::CycleDetected)));
+    }
+
+    #[test]
+    fn compose_rejects_oversized_cpt() {
+        let records = vec![record_with("M1", "Will the Fed cut rates in 2027?", 0.5)];
+        let specs = vec![DependencySpec {
+            child_market_id: "M1".into(),
+            parent_market_ids: (0..5).map(|i| format!("P{i}")).collect(),
+            conditionals: vec![0.5; 32],
+        }];
+        let result = compose_market_tree(&records, &[None], &specs);
+        assert!(matches!(result, Err(ScenarioError::InvalidDependency(..))));
+    }
+
+    #[test]
+    fn compose_rejects_unknown_parent() {
+        let records = vec![record_with("M1", "Will the Fed cut rates in 2027?", 0.5)];
+        let specs = vec![DependencySpec {
+            child_market_id: "M1".into(),
+            parent_market_ids: vec!["GHOST".into()],
+            conditionals: vec![0.4, 0.7],
+        }];
+        let result = compose_market_tree(&records, &[None], &specs);
+        assert!(matches!(result, Err(ScenarioError::UnknownParent(..))));
+    }
+
+    #[test]
+    fn compose_flags_duplicate_questions() {
+        let records = vec![
+            record_with("M1", "Will the Fed hold rates in December 2027?", 0.60),
+            record_with("M2", "Will the Fed hold rates in December 2027?", 0.62),
+        ];
+        let (_, warnings) = compose_market_tree(&records, &[None, None], &[]).expect("composes");
+        assert!(
+            warnings.iter().any(|w| w.kind == "possible_duplicate"),
+            "identical questions must be flagged: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn compose_applies_per_record_gates() {
+        // Low-reliability record: base_rate withheld, warning surfaced, but
+        // the record still converts (probability falls back to 0.5).
+        let mut low = record_with("M2", "Will oil exceed 100 dollars in 2027?", 0.70);
+        low.reliability_tier = ReliabilityTier::Low;
+        let records = vec![
+            record_with("M1", "Will the Fed cut rates in 2027?", 0.60),
+            low,
+        ];
+        let (tree, warnings) = compose_market_tree(&records, &[None, None], &[]).expect("composes");
+        let gated = tree
+            .nodes
+            .iter()
+            .find(|n| n.event.id == "mkt-M2")
+            .expect("present");
+        assert_eq!(gated.event.base_rate, None);
+        assert!(warnings.iter().any(|w| w.kind == "bridge_gate"));
+    }
+
+    // ── T5 propagation tests ─────────────────────────────────────────────
+
+    #[test]
+    fn propagation_recomputes_descendants_and_joint() {
+        // M1 (root, 0.6) → M2 conditioned [0.2, 0.9]. Update M1's prior to
+        // 0.9: M2's marginal must move from 0.62 to 0.9·0.9 + 0.1·0.2 = 0.83,
+        // and the joint from 0.54 to 0.81.
+        let root = make_event("E1", 0.6, vec![]);
+        let child = make_event(
+            "E2",
+            0.5,
+            vec![EventDependency {
+                parent_event_ids: vec!["E1".into()],
+                conditionals: vec![0.2, 0.9],
+            }],
+        );
+        let events = vec![root, child];
+
+        let result = propagate_prior_update(&events, "E1", 0.9).expect("propagates");
+
+        let child_after = result
+            .tree
+            .nodes
+            .iter()
+            .find(|n| n.event.id == "E2")
+            .expect("child present");
+        assert!((child_after.marginal_probability - 0.83).abs() < 1e-12);
+        assert!((result.joint_before - 0.54).abs() < 1e-12);
+        assert!((result.joint_after - 0.81).abs() < 1e-12);
+
+        // Journal: both nodes changed, in topo order.
+        assert_eq!(result.journal.len(), 2);
+        assert_eq!(result.journal[0].event_id, "E1");
+        assert!((result.journal[0].marginal_before - 0.6).abs() < 1e-12);
+        assert!((result.journal[0].marginal_after - 0.9).abs() < 1e-12);
+        assert_eq!(result.journal[1].event_id, "E2");
+        assert!((result.journal[1].delta - 0.21).abs() < 1e-12);
+    }
+
+    #[test]
+    fn propagation_leaves_unrelated_nodes_untouched() {
+        let root = make_event("E1", 0.6, vec![]);
+        let child = make_event(
+            "E2",
+            0.5,
+            vec![EventDependency {
+                parent_event_ids: vec!["E1".into()],
+                conditionals: vec![0.2, 0.9],
+            }],
+        );
+        let independent = make_event("E3", 0.7, vec![]);
+        let events = vec![root, child, independent];
+
+        let result = propagate_prior_update(&events, "E1", 0.9).expect("propagates");
+        assert!(
+            result.journal.iter().all(|e| e.event_id != "E3"),
+            "independent root must not appear in the journal"
+        );
+        let e3 = result
+            .tree
+            .nodes
+            .iter()
+            .find(|n| n.event.id == "E3")
+            .expect("present");
+        assert!((e3.marginal_probability - 0.7).abs() < 1e-12);
+    }
+
+    #[test]
+    fn propagation_rejects_invalid_prior_and_unknown_event() {
+        let events = vec![make_event("E1", 0.6, vec![])];
+        assert!(matches!(
+            propagate_prior_update(&events, "E1", 1.5),
+            Err(ScenarioError::InvalidProbability(..))
+        ));
+        assert!(matches!(
+            propagate_prior_update(&events, "GHOST", 0.5),
+            Err(ScenarioError::EventNotFound(..))
+        ));
+    }
+
+    #[test]
+    fn propagation_noop_update_yields_empty_journal() {
+        let events = vec![make_event("E1", 0.6, vec![])];
+        let result = propagate_prior_update(&events, "E1", 0.6).expect("propagates");
+        assert!(result.journal.is_empty());
+        assert!((result.joint_before - result.joint_after).abs() < 1e-12);
+    }
+
+    #[test]
+    fn compose_rejects_duplicate_market_ids() {
+        let records = vec![
+            record_with("M1", "Will the Fed cut rates in 2027?", 0.60),
+            record_with("M1", "Will something else happen in 2027?", 0.40),
+        ];
+        let result = compose_market_tree(&records, &[None, None], &[]);
+        assert!(matches!(result, Err(ScenarioError::InvalidDependency(..))));
+    }
 
     fn make_event(id: &str, prob: f64, deps: Vec<EventDependency>) -> ScenarioEvent {
         ScenarioEvent {

@@ -122,6 +122,25 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
         .map_err(|e| McpToolError::internal(format!("Kalshi parse failed: {e}")))
 }
 
+/// Fetch markets by status, optionally scoped to a series.
+pub async fn fetch_markets_by_status(
+    client: &reqwest::Client,
+    series_ticker: Option<&str>,
+    status: &str,
+    limit: u32,
+) -> Result<Vec<KalshiMarket>, McpToolError> {
+    let mut query = vec![
+        ("limit", limit.to_string()),
+        ("status", status.to_string()),
+    ];
+    if let Some(series) = series_ticker {
+        query.push(("series_ticker", series.to_string()));
+    }
+    let response: KalshiMarketsResponse =
+        get_json(client, &format!("{KALSHI_BASE}/markets"), &query).await?;
+    Ok(response.markets)
+}
+
 /// Fetch open markets, optionally scoped to a series (e.g. "KXFEDDECISION").
 pub async fn fetch_markets(
     client: &reqwest::Client,

@@ -67,6 +67,10 @@ pub enum ReliabilityTier {
 pub struct Calibration {
     pub brier: Option<f64>,
     pub domain_bias: Option<Cow<'static, str>>,
+    /// Provenance of the bias estimate: seeded from arXiv:2602.19520 until
+    /// the calibration loop measures it from resolved outcomes. Consumers
+    /// must be able to distinguish a paper-seeded prior from a measurement.
+    pub bias_source: Cow<'static, str>,
     pub sample_size: u64,
     /// True when the calibration signal is unavailable (not measured, read
     /// failure, thin sample). Distinct from brier: 0 — a 0 would read as
@@ -163,19 +167,50 @@ pub fn calibration_for(
     store_reading: Option<&CalibrationReading>,
     category: &str,
 ) -> Calibration {
+    let bias = domain_bias_for(category);
+    let bias_source = if bias.is_some() {
+        Cow::Borrowed("static_2602_19520")
+    } else {
+        Cow::Borrowed("none")
+    };
     match store_reading {
         Some(reading) if !reading.stale => Calibration {
             brier: reading.brier,
-            domain_bias: domain_bias_for(category).map(Cow::Borrowed),
+            domain_bias: bias.map(Cow::Borrowed),
+            bias_source,
             sample_size: reading.sample_size,
             stale: false,
         },
         _ => Calibration {
             brier: None,
-            domain_bias: domain_bias_for(category).map(Cow::Borrowed),
+            domain_bias: bias.map(Cow::Borrowed),
+            bias_source,
             sample_size: store_reading.map_or(0, |r| r.sample_size),
             stale: true,
         },
+    }
+}
+
+/// Canonical calibration bucket for a category/tag. The T10 loop closes
+/// through this key — if Kalshi's "Elections" and Polymarket's "Politics"
+/// accrue under different buckets, the same domain never reaches the
+/// demotion threshold on either side. Normalization is lowercase synonym
+/// mapping; unknown categories pass through lowercased (deterministic, no
+/// fabrication — an unmapped category still forms a coherent bucket).
+pub fn canonical_bucket(category: &str) -> String {
+    let normalized = category.trim().to_lowercase();
+    match normalized.as_str() {
+        "politics" | "elections" | "election" => "politics".to_string(),
+        "economics" | "economy" | "macro" | "finance" | "financials" => {
+            "economics".to_string()
+        }
+        "sports" | "sport" => "sports".to_string(),
+        "crypto" | "cryptocurrency" => "crypto".to_string(),
+        "climate" | "weather" => "climate".to_string(),
+        "tech" | "technology" => "technology".to_string(),
+        "entertainment" | "culture" => "culture".to_string(),
+        "world" | "geopolitics" => "world".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -183,8 +218,7 @@ pub fn calibration_for(
 /// chronically underconfident on both exchanges). T5/T10 replace this with
 /// data-derived estimates.
 pub fn domain_bias_for(category: &str) -> Option<&'static str> {
-    let normalized = category.to_ascii_lowercase();
-    if normalized.contains("politic") || normalized.contains("election") {
+    if canonical_bucket(category) == "politics" {
         Some("underconfident")
     } else {
         None

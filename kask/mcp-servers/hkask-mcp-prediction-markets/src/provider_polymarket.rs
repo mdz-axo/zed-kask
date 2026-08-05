@@ -151,6 +151,35 @@ impl GammaMarket {
     }
 }
 
+/// Fetch markets directly (not via events). `closed=true` returns
+/// resolved/closed markets — the resolution-check feed.
+pub async fn fetch_markets(
+    client: &reqwest::Client,
+    limit: u32,
+    closed: bool,
+) -> Result<Vec<GammaMarket>, McpToolError> {
+    let url = format!("{GAMMA_BASE}/markets");
+    let response = client
+        .get(&url)
+        .query(&[
+            ("limit", limit.to_string()),
+            ("closed", closed.to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("Gamma request failed: {e}")))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("Gamma body read failed: {e}")))?;
+    if !status.is_success() {
+        return Err(classify_http_error("Polymarket Gamma", status, &body));
+    }
+    serde_json::from_str(&body)
+        .map_err(|e| McpToolError::internal(format!("Gamma markets parse failed: {e}")))
+}
+
 /// Fetch active, open events from Gamma.
 pub async fn fetch_events(client: &reqwest::Client, limit: u32) -> Result<Vec<GammaEvent>, McpToolError> {
     let url = format!("{GAMMA_BASE}/events");

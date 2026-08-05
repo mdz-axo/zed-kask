@@ -124,3 +124,45 @@ fn record_resolution_request_schema_has_no_boolean_positions() {
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");
 }
+
+// ── C1: bucket normalization ───────────────────────────────────────────────
+
+#[test]
+fn canonical_bucket_unifies_platform_dialects() {
+    use hkask_mcp_prediction_markets::types::canonical_bucket;
+    // The loop-closure invariant: Kalshi's "Elections" and Polymarket's
+    // "Politics" tag accrue calibration under ONE bucket.
+    assert_eq!(canonical_bucket("Elections"), canonical_bucket("Politics"));
+    assert_eq!(canonical_bucket("Economics"), canonical_bucket("finance"));
+    assert_eq!(canonical_bucket("Sports"), "sports");
+    // Unknown categories pass through lowercased — coherent, not fabricated.
+    assert_eq!(canonical_bucket("Esports"), "esports");
+}
+
+#[test]
+fn loop_closes_across_platform_dialects() {
+    // The C1 scenario end-to-end: observations recorded under the Kalshi
+    // dialect inform records bucketed under the Polymarket dialect.
+    use hkask_mcp_prediction_markets::types::{calibration_for, canonical_bucket};
+    let mut store = CalibrationStore::new();
+    for _ in 0..6 {
+        store.record(
+            &canonical_bucket("Elections"), // Kalshi dialect
+            ResolvedObservation { probability: 0.9, outcome: false },
+        );
+    }
+    let reading = read_calibration(&store, &canonical_bucket("Politics")); // Polymarket dialect
+    assert!(!reading.stale, "cross-dialect bucket must close the loop");
+    assert_eq!(reading.sample_size, 6);
+    let block = calibration_for(Some(&reading), "Politics");
+    assert!(!block.stale);
+}
+
+#[test]
+fn bias_source_is_serialized_provenance() {
+    use hkask_mcp_prediction_markets::types::calibration_for;
+    let block = calibration_for(None, "Elections");
+    assert_eq!(block.bias_source.as_ref(), "static_2602_19520");
+    let block = calibration_for(None, "Sports");
+    assert_eq!(block.bias_source.as_ref(), "none");
+}

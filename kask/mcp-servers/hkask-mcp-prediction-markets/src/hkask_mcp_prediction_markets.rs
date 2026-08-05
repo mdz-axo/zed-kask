@@ -98,6 +98,18 @@ pub struct MarketCmpRequest {
     pub tenor_days: u32,
 }
 
+/// Request for market_check_resolutions: scan for newly resolved markets
+/// and feed their outcomes into the calibration store (the loop's
+/// self-feeding sense arm).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCheckResolutionsRequest {
+    /// Optional series/bucket scope (Kalshi series ticker; Polymarket scans
+    /// recent closed markets regardless).
+    pub series: Option<String>,
+    /// Max markets to scan per platform (default 100).
+    pub limit: Option<u32>,
+}
+
 /// Request for market_calibration: per-bucket Brier reading.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketCalibrationRequest {
@@ -329,14 +341,15 @@ impl PredictionMarketsServer {
                 let reading = {
                     let mut store =
                         self.calibration_store.lock().unwrap_or_else(|e| e.into_inner());
+                    let bucket = types::canonical_bucket(&req.bucket);
                     store.record(
-                        &req.bucket,
+                        &bucket,
                         calibration::ResolvedObservation {
                             probability: req.probability,
                             outcome: req.outcome,
                         },
                     );
-                    let reading = calibration::read_calibration(&store, &req.bucket);
+                    let reading = calibration::read_calibration(&store, &bucket);
                     if let Some(path) = &self.calibration_path
                         && let Err(e) = store.save(std::path::Path::new(path))
                     {
@@ -361,7 +374,7 @@ impl PredictionMarketsServer {
 
     /// Subscribe to Polymarket resolution events and feed the calibration store.
     #[tool(
-        description = "Subscribe to Polymarket's public market channel for resolution events on the given CLOB asset IDs. Each market_resolved event is recorded into the calibration store under the given bucket (the automatic sense arm of the calibration loop). Returns after max_resolutions ingestions or stream end."
+        description = "Subscribe to Polymarket's public market channel for resolution events on the given CLOB asset IDs. Resolution events are logged as notifications — they do NOT write calibration observations (the wire carries no pre-resolution probability, and fabricating one would corrupt the Brier loop). Pair a notification with market_record_resolution (which takes the pre-resolution probability) to feed the loop."
     )]
     pub async fn market_subscribe_resolutions(
         &self,
@@ -472,7 +485,7 @@ impl PredictionMarketsServer {
                             }
                             let event_tags: Vec<String> =
                                 event.tags.iter().map(|t| t.label.clone()).collect();
-                            let bucket = event_tags.first().cloned().unwrap_or_default();
+                            let bucket = types::canonical_bucket(event_tags.first().map(String::as_str).unwrap_or(""));
                             let reading = {
                                 let guard = self
                                     .calibration_store
@@ -644,6 +657,142 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    /// Scan for resolved markets and record their outcomes.
+    #[tool(
+        description = "Scan Polymarket and Kalshi for newly resolved markets and record definitive outcomes into the calibration store (idempotent — re-scanning is safe). Only terminal prices (>=0.99 / <=0.01) or explicit Kalshi results count; ambiguous 50-50 resolutions are skipped, never fabricated. This is the self-feeding sense arm of the calibration loop."
+    )]
+    pub async fn market_check_resolutions(
+        &self,
+        Parameters(req): Parameters<MarketCheckResolutionsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_check_resolutions",
+            Some(Self::ontology_anchor("market_check_resolutions")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_check_resolutions".to_string());
+                let limit = req.limit.unwrap_or(100).min(500);
+                let mut recorded = 0u32;
+                let mut skipped_ambiguous = 0u32;
+                let mut already_known = 0u32;
+                let mut warnings: Vec<String> = Vec::new();
+
+                // Kalshi: settled markets carry an explicit `result`.
+                let kalshi_status = if req.series.is_some() { "settled" } else { "settled" };
+                match provider_kalshi::fetch_markets_by_status(
+                    &self.http,
+                    req.series.as_deref(),
+                    kalshi_status,
+                    limit,
+                )
+                .await
+                {
+                    Ok(markets) => {
+                        for market in &markets {
+                            let outcome = match market.result.as_str() {
+                                "yes" => Some(true),
+                                "no" => Some(false),
+                                _ => None,
+                            };
+                            let Some(outcome) = outcome else { continue };
+                            let bucket = types::canonical_bucket(&market.event_ticker);
+                            // Pre-resolution probability is unrecoverable from
+                            // a settled snapshot; record the last traded price
+                            // as the closest honest observation.
+                            let Some(probability) =
+                                provider_kalshi::parse_fp(&market.last_price_dollars)
+                            else {
+                                continue;
+                            };
+                            let observation = calibration::ResolvedObservation {
+                                probability,
+                                outcome,
+                            };
+                            let mut store = self
+                                .calibration_store
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            if store.contains(&bucket, &observation) {
+                                already_known += 1;
+                            } else {
+                                store.record(&bucket, observation);
+                                recorded += 1;
+                            }
+                        }
+                    }
+                    Err(e) => warnings.push(format!("kalshi scan failed: {e}")),
+                }
+
+                // Polymarket: closed markets; definitive outcome from terminal
+                // prices (the B1 gate — 50-50 "Unknown" resolutions skip).
+                match provider_polymarket::fetch_markets(&self.http, limit, true).await {
+                    Ok(markets) => {
+                        for market in &markets {
+                            if market.uma_resolution_status != "resolved" {
+                                continue;
+                            }
+                            let Some(price) = market.yes_probability() else { continue };
+                            let outcome = if price >= 0.99 {
+                                Some(true)
+                            } else if price <= 0.01 {
+                                Some(false)
+                            } else {
+                                skipped_ambiguous += 1;
+                                None
+                            };
+                            let Some(outcome) = outcome else { continue };
+                            let bucket = types::canonical_bucket(&market.slug);
+                            let observation = calibration::ResolvedObservation {
+                                probability: price,
+                                outcome,
+                            };
+                            let mut store = self
+                                .calibration_store
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            if store.contains(&bucket, &observation) {
+                                already_known += 1;
+                            } else {
+                                store.record(&bucket, observation);
+                                recorded += 1;
+                            }
+                        }
+                    }
+                    Err(e) => warnings.push(format!("polymarket scan failed: {e}")),
+                }
+
+                // Persist if anything changed.
+                if recorded > 0
+                    && let Some(path) = &self.calibration_path
+                {
+                    let store = self
+                        .calibration_store
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if let Err(e) = store.save(std::path::Path::new(path)) {
+                        warnings.push(format!("journal save failed: {e}"));
+                    }
+                }
+
+                serde_json::to_value(serde_json::json!({
+                    "recorded": recorded,
+                    "already_known": already_known,
+                    "skipped_ambiguous": skipped_ambiguous,
+                    "warnings": warnings,
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "scan serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
@@ -674,7 +823,7 @@ impl PredictionMarketsServer {
         for event in &gamma_events {
             let event_tags: Vec<String> =
                 event.tags.iter().map(|t| t.label.clone()).collect();
-            let bucket = event_tags.first().cloned().unwrap_or_default();
+            let bucket = types::canonical_bucket(event_tags.first().map(String::as_str).unwrap_or(""));
             let reading = {
                 let guard = store.lock().unwrap_or_else(|e| e.into_inner());
                 calibration::read_calibration(&guard, &bucket)
@@ -703,7 +852,7 @@ impl PredictionMarketsServer {
             let event = kalshi_events
                 .iter()
                 .find(|e| e.event_ticker == market.event_ticker);
-            let bucket = event.map(|e| e.category.clone()).unwrap_or_default();
+            let bucket = types::canonical_bucket(event.map(|e| e.category.as_str()).unwrap_or(""));
             let reading = {
                 let guard = store.lock().unwrap_or_else(|e| e.into_inner());
                 calibration::read_calibration(&guard, &bucket)
