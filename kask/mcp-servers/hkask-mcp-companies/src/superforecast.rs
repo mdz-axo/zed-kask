@@ -191,12 +191,13 @@ pub fn expected_intrinsic(weighted: &[WeightedScenario]) -> f64 {
 /// Weighting mode of a scenario analysis — the maturity label downstream
 /// consumers use to tell how the quadrant probabilities were derived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum WeightingMode {
     /// Simple mode: 2×2 range without probabilities (the default on-ramp).
+    #[serde(rename = "schwartz_2x2")]
     Schwartz2x2,
     /// Detailed mode: quadrant probabilities derived from a validated event
     /// tree's root marginals (the earned upgrade).
+    #[serde(rename = "event_tree")]
     EventTree,
 }
 

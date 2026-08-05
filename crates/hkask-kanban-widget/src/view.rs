@@ -102,6 +102,12 @@ pub struct KanbanWidget {
     /// all move chips are non-interactive and the dispatch-status banner
     /// shows a Confirm/Cancel pair instead of the in-flight/error state.
     pending_move: Option<PendingMove>,
+    /// Composed revision request surfaced as a copyable draft when the
+    /// conversation injector is absent (no active conversation). Lets the user
+    /// still use the "I disagree" body even when it can't be injected. Cleared
+    /// when a successful inject fires (repo `.rules`: visible, not a silent
+    /// no-op).
+    disagree_draft: Option<String>,
 }
 
 impl KanbanWidget {
@@ -138,14 +144,31 @@ impl KanbanWidget {
             dispatch_in_flight: None,
             dispatch_error: None,
             pending_move: None,
+            disagree_draft: None,
         }
     }
 
-    fn render_header(&self) -> impl IntoElement {
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .gap_2()
             .items_center()
             .child(Label::new(self.board_name.clone()).size(LabelSize::Large))
+            // C: "I disagree" affordance — composes a provenance-scoped revision
+            // request back into the active conversation (D21). Board-level (one
+            // chip in the board header), not per-card.
+            .child(
+                div()
+                    .id("kanban-disagree")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.on_disagree_click(window, cx);
+                    }))
+                    .child(
+                        Label::new("I disagree")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Accent),
+                    ),
+            )
     }
 
     fn render_dispatch_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -506,6 +529,73 @@ impl KanbanWidget {
             None
         }
     }
+
+    /// Compose the provenance-scoped "I disagree" body. References the board's
+    /// name and the tool that produced the block so the agent can correlate the
+    /// revision request to the exact `kanban_task_list` result the widget
+    /// rendered. Falls back to a generic "the kanban board" framing when the
+    /// board name is empty (grill-me edge case c).
+    fn compose_disagree_body(&self) -> String {
+        let board_clause = if self.board_name.is_empty() {
+            String::new()
+        } else {
+            format!(" '{}'", self.board_name)
+        };
+        let tool = self
+            .provenance
+            .tool
+            .as_deref()
+            .unwrap_or("kanban_task_list");
+        format!(
+            "Re: the kanban board{board_clause} (via {tool}).\n\
+             I believe a task's status or the board setup is incorrect. Please re-check the task states and ordering.\n\n\
+             My concern: "
+        )
+    }
+
+    /// The "I disagree" affordance handler (C). Composes the provenance-scoped
+    /// revision request and injects it back into the active conversation via
+    /// the kask `shared_injector()` (D21 widget→agent seam). When no
+    /// conversation is active, surfaces the composed body as a copyable draft
+    /// instead of a silent no-op (repo `.rules`). Never auto-sends when the
+    /// injector is absent — the production injector only pre-fills the
+    /// composer; the user reviews and submits.
+    fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let body = self.compose_disagree_body();
+        tracing::info!(target: "reg.widget.disagree", "REG");
+        if let Some(injector) = hkask_conversation_injector::shared_injector() {
+            // The production injector pre-fills the editor synchronously and
+            // returns a `Task::ready(Ok(()))`; the returned `Result` is always
+            // `Ok` (a strong `Entity<ThreadView>::update` returns `R`, not a
+            // `Result`). Await in a detached task so a hypothetical async impl's
+            // error path is surfaced (not silently dropped — repo `.rules`),
+            // and so `clippy::let_underscore_future` is not triggered.
+            let draft = body.clone();
+            let task = injector.inject(body, window, cx);
+            cx.spawn(async move |this, cx| {
+                if let Err(error) = task.await {
+                    tracing::warn!(
+                        target: "reg.widget.disagree",
+                        error = %error,
+                        "conversation inject failed; surfacing draft"
+                    );
+                    this.update(cx, |this, cx| {
+                        this.disagree_draft = Some(draft);
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+            })
+            .detach();
+            self.disagree_draft = None;
+        } else {
+            // No active conversation: surface the composed body as a draft so
+            // the user can still copy it into chat (visible, not a silent
+            // no-op — repo `.rules`).
+            self.disagree_draft = Some(body);
+        }
+        cx.notify();
+    }
 }
 
 /// Group tasks into columns by status, preserving the standard order and
@@ -562,12 +652,31 @@ impl Focusable for KanbanWidget {
 
 impl Render for KanbanWidget {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = cx.theme().colors().border;
+
         v_flex()
             .size_full()
             .p_4()
             .gap_3()
             .track_focus(&self.focus_handle)
-            .child(self.render_header())
+            .child(self.render_header(cx))
+            // Fallback draft (no active conversation): surface the composed body
+            // so the user can copy it into chat — visible, not a silent no-op
+            // (repo `.rules`).
+            .when_some(self.disagree_draft.clone(), |this, draft| {
+                this.child(
+                    div()
+                        .p_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(border_color)
+                        .child(
+                            Label::new(draft)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Warning),
+                        ),
+                )
+            })
             .children(self.render_dispatch_status(cx))
             .children(self.render_empty_state())
             .child(self.render_columns(cx))
@@ -1173,5 +1282,157 @@ mod tests {
             "the second stage_move replaces the first"
         );
         assert_eq!(pending.to_status, "in_progress");
+    }
+
+    // ── "I disagree" compose-back affordance (C, D21) ──────────────────────
+    //
+    // Mirrors `hkask-portfolio-widget`'s disagree tests. These mutate the
+    // process-global `ConversationInjector` (a separate global from
+    // `TOOL_INVOKER`), so they take `GLOBAL_TEST_LOCK` too and use an RAII
+    // `ConversationInjectorGuard` to reset the global on drop.
+
+    /// Records the body of every `inject` call. `Send + Sync` for the
+    /// `Arc<dyn ConversationInjector>` global.
+    #[derive(Default)]
+    struct MockConversationInjector {
+        bodies: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl hkask_conversation_injector::ConversationInjector for MockConversationInjector {
+        fn inject(
+            &self,
+            body: String,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::App,
+        ) -> gpui::Task<Result<(), String>> {
+            self.bodies
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(body);
+            gpui::Task::ready(Ok(()))
+        }
+    }
+
+    /// RAII guard that restores the conversation-injector global to `None` on
+    /// drop so a test failure cannot leak a mock into sibling tests.
+    struct ConversationInjectorGuard;
+    impl Drop for ConversationInjectorGuard {
+        fn drop(&mut self) {
+            hkask_conversation_injector::set_active_injector(None);
+        }
+    }
+
+    /// Trivial root view for `add_window_view` so the test can obtain a `Window`
+    /// for `on_disagree_click` without rendering `KanbanWidget` (which would
+    /// need a theme global this leaf crate's tests don't initialise). Renders a
+    /// bare `div()`.
+    struct DummyView;
+    impl Render for DummyView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    /// Single-board `KanbanBlockBody` named "Test" with dispatchable provenance
+    /// so `compose_disagree_body` references both the board name and the tool.
+    fn body_with_board_and_provenance() -> KanbanBlockBody {
+        let mut body = kanban_body(Vec::new());
+        body.provenance = dispatchable_provenance();
+        body
+    }
+
+    #[gpui::test]
+    async fn disagree_routes_through_injector(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        let mock = std::sync::Arc::new(MockConversationInjector::default());
+        hkask_conversation_injector::set_active_injector(Some(mock.clone()));
+
+        let body = body_with_board_and_provenance();
+        // Use a throwaway window root so we get a `Window` for `on_disagree_click`
+        // without rendering `KanbanWidget` (no theme global in these tests).
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+        widget.update_in(cx, |widget, window, cx| {
+            widget.on_disagree_click(window, cx);
+        });
+        cx.run_until_parked();
+
+        let bodies = mock
+            .bodies
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert_eq!(bodies.len(), 1, "exactly one inject");
+        assert!(bodies[0].contains("Re:"), "body references the revision");
+        assert!(
+            bodies[0].contains("Test"),
+            "body references the board name from the block"
+        );
+        assert!(
+            bodies[0].contains("kanban_task_list"),
+            "body references the provenance tool"
+        );
+
+        // A successful inject clears the fallback draft.
+        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
+        assert!(draft.is_none(), "draft cleared after a successful inject");
+    }
+
+    #[gpui::test]
+    async fn disagree_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        hkask_conversation_injector::set_active_injector(None);
+
+        let body = body_with_board_and_provenance();
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+        widget.update_in(cx, |widget, window, cx| {
+            widget.on_disagree_click(window, cx);
+        });
+        cx.run_until_parked();
+
+        // No injector: the composed body is surfaced as a copyable draft
+        // (visible, not a silent no-op — repo `.rules`), and no panic.
+        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
+        let draft = draft.expect("draft surfaced when no injector is active");
+        assert!(draft.contains("Re:"), "draft carries the revision prefix");
+        assert!(draft.contains("Test"), "draft carries the board name");
+    }
+
+    #[gpui::test]
+    async fn disagree_body_falls_back_when_board_name_empty(cx: &mut gpui::TestAppContext) {
+        // grill-me edge case (c): empty board name → generic "the kanban board"
+        // framing (no empty quotes, no panic). `compose_disagree_body` is pure,
+        // so no window is needed.
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+
+        let empty = KanbanBlockBody {
+            viz: Some("kanban".into()),
+            board_id: Some("b1".into()),
+            board_name: Some(String::new()),
+            tasks: Vec::new(),
+            boards: Vec::new(),
+            tasks_by_board: Vec::new(),
+            provenance: BlockProvenance::default(),
+        };
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(empty, cx)));
+        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
+        assert!(
+            body.contains("Re: the kanban board (via"),
+            "empty board name falls back to the generic framing"
+        );
+        assert!(
+            !body.contains("''"),
+            "no empty-quoted board name in the fallback framing"
+        );
     }
 }

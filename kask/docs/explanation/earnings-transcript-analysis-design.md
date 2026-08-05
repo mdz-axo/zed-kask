@@ -137,16 +137,16 @@ Every recommendation cites its Phase A dependency.
 One new tool on the **companies** server, plus reuse of corpus tools — no new server.
 
 ```
-earnings_transcript(symbol, year?, quarter?, quarters_back=1, mode=fetch|analyze)
+earnings_transcript(symbol, year?, quarter?, quarters_back=1, mode=fetch|segment)
   → { transcripts: [{symbol, year, quarter, date, content, source_endpoint}],
-      segments?: [{section: prepared_remarks|qa, speaker?, text}],   // analyze mode
+      segments?: [{section: prepared_remarks|qa, speaker?, text}],   // segment mode
       coverage: {requested_quarters, retrieved_quarters, missing: [..]} }
 ```
 
 - Fetch: FMP `/stable/...` (or legacy v3) `earning_call_transcript` per (year, quarter);
   `quarters_back=20` iterates the last 20 quarters; `coverage` reports gaps honestly.
   *Depends on A2 (FMP-only source), A3 (iteration for 20 quarters), A4 (plan probe).*
-- Analyze mode: rule-based segmentation of `content` into `prepared_remarks` vs `qa` and
+- Segment mode: rule-based segmentation of `content` into `prepared_remarks` vs `qa` and
   per-speaker turns via the stable textual conventions in transcripts ("Operator:",
   "Question-and-Answer Session", "Executives:", "Analysts:" headers).
   *Depends on A2 (content is a single unstructured blob — segmentation must be built
@@ -317,12 +317,17 @@ sections:
                unexplained_actions: [{action, why_opaque}] }
     maps_to_tool: (cross-transcript diff — new, see slice 4)
 output:
-  per_section: { verdict: corroborates|neutral|contradicts, evidence: [quotes], confidence: 1|2|3 }
-  # confidence uses the MAIA three-level certainty tier (hkask_forecast.rs:158)
+  per_section: { verdict: corroborates|neutral|contradicts, evidence: [quotes],
+                 certainty: proximate|probable|possible }
+  # ONE certainty vocabulary everywhere: the guidebook tier (verbatim, 137682783),
+  # matching hkask_forecast.rs:158 certainty_tier (proximate ≥67% / probable 33–66% /
+  # possible <33%). The earlier 1|2|3 scale is removed — two scales would drift.
   horizon_summary:               # seam-model top-level shape — THE central output is the
                                  # checkpoint map: events placed on the tactical→strategic path
-    checkpoint_map: [{checkpoint, window_months, strategic_goal_link, certainty,
+    checkpoint_map: [{checkpoint, deadline_or_window, strategic_goal_link, certainty,
                       status: on_track|slipped|new|dropped, evidence}]
+    # deadline_or_window is the single date field (mirrors the extraction schema);
+    # a derived months-out value, if needed, is computed from it — never stored twice.
     strategic_goals: [{goal, horizon_years, moved_this_call: none|raised|lowered|new|withdrawn}]
     ignored_short_term: [{claim, reason: no_strategic_path_linkage}]
     speculative_far: [{claim, role: context_only}]
@@ -332,9 +337,9 @@ output:
 ```
 
 Every extracted claim must carry a verbatim quote + location; the template output never
-contains a verdict without evidence. *Depends on A5 (factor list is exactly the MAIA
-fragments in the repo; if the operator's external guidebook is later supplied, the
-template gains sections — the schema must tolerate extension).*
+contains a verdict without evidence. *Depends on A5 (factor list = guidebook extraction
++ in-code fragments + operator seam clarification, all recorded in A5; the schema is
+extension-tolerant if further guidebook posts surface new factors).*
 
 ### (c) Verdict: **a bit of each** — thin MCP tool (fetch + mechanical segmentation) on the
 companies server; the listening template and its evaluation live in a **skill**.
@@ -387,7 +392,11 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
    strategic_goal_link populated; a checkpoint emitted without a linkage fails.
 6. **Corpus integration**: transcript cached via `corpus_cache`, analysis note attached
    via `note_add`. Accept: round-trip queryable through existing corpus tools; no new
-   storage code.
+   storage code. Negative accept: corpus content-size/length limits were never probed
+   in A5 — slice 6 must first cache a full-length real transcript (FMP blobs run long)
+   and record the actual limit behavior; if `corpus_cache` rejects or truncates, the
+   accept criterion is a documented fallback (chunk-then-cache via `corpus_chunk`), not
+   silent truncation.
 
 ---
 
@@ -421,7 +430,9 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
   owns FMP credentials and routing.
 - **falsifiability** — each design hypothesis carries its refuter: template-wrong
   evidence = a MAIA-anchored section whose extracted claims never change any
-  `forecast_record`/decision over 4 consecutive quarters (delete the section);
+  `forecast_record`/decision over 4 consecutive quarters (delete the section) — note
+  the two windows differ deliberately: section-deletion is cheap to test (4 quarters),
+  the seam premise is a calibration claim needing ≥8 to Brier-compare meaningfully;
   **seam-model-wrong evidence** = over ≥8 quarters, `ignored_short_term` claims that
   were excluded would have produced better-calibrated `forecast_record` priors than
   the admissible checkpoint/strategic claims (Brier comparison of the two populations
@@ -446,9 +457,11 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
   the membrane hosts what must be governed and stable; the skill hosts what must evolve.
   The verdict survived with refuters attached rather than weakened.
 - **sequential-inquiry** — drove Phase A→B ordering: probe providers → probe codebase →
-  fix factor source (guidebook absent → in-code fragments) → design. Iterates stabilized
-  after one refinement (template factors re-anchored from "guidebook" to code fragments
-  once absence was established); a second pass changed no design element → stop.
+  fix factor source → design. Three refinement passes ran: (1) factors anchored to
+  in-code fragments when the guidebook appeared absent; (2) operator horizon overlay
+  hard-coded as a stance block; (3) guidebook located and extracted, operator seam
+  clarification unified the two horizon models into the flow/checkpoint model (v3).
+  A fourth pass over the v3 diff changed no design element → stop.
 - **idiomatic-rust** — applied to §(a) (verdict includes a Rust tool): type-driven
   request/response, per-variant error mapping, `?` propagation, no panics, `AnyJsonValue`
   for free-form JSON per repo schema rules.
@@ -460,8 +473,9 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
 
 1. Live FMP probe for plan gating, current `/stable/` path, and real `content` shape
    (slice 1).
-2. Whether the external MAIA guidebook exists outside this repo; if supplied, template
-   §(b) gains sections (schema is extension-tolerant).
+2. Whether additional MAIA guidebook posts beyond the extracted set contain further
+   transcript-relevant factors (the 55-post corpus was searched; priority files fully
+   extracted; remaining posts were grep-covered but not all read end-to-end).
 3. Corpus breakdown capability: **verified negative** — `corpus_chunk` is token-based
    only; no speaker/section segmentation exists. The design builds segmentation in the
    companies tool rather than around the corpus server.
@@ -472,5 +486,5 @@ All four deliverables produced; every Phase B recommendation carries a `depends 
 clause; the §(c) verdict carries four stated refuting observations. Refuting evidence
 for the whole design: slice-1 probe showing FMP transcripts unavailable on the current
 plan (design collapses to template-only skill over pasted transcripts), or the external
-MAIA guidebook surfacing with materially different factors (template §(b) re-derived,
-tool unchanged).
+MAIA guidebook revision surfacing materially different factors (template §(b) re-derived,
+tool unchanged — the guidebook extraction of 2026-08-05 is the current anchor).

@@ -3,7 +3,7 @@ use super::portfolio::run_portfolio;
 use crate::{
     CompaniesServer, StoredForecast, fibo, financial_model,
     portfolio::{PersistedForecast, TxType},
-    scenarios,
+    scenarios, superforecast,
     types::{self, AttributionRequest, CharacteristicsRequest},
     validate_symbol,
 };
