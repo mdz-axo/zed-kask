@@ -18,11 +18,11 @@ use chrono::{Datelike, Timelike};
 use std::path::{Path, PathBuf};
 
 use agent_skills::Skill;
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::{GzipDecoder, GzipEncoder};
 use async_tar::Builder;
 use bytes::Bytes;
-use cloud_api_types::KaskSkillManifest;
+use cloud_api_types::{KaskSkillManifest, KaskSkillMetadata, KaskSkillRef};
 use fs::{Fs, read_dir_items};
 use hkask_keystore::{
     KEY_MAX_AGE_DAYS, derive_public_key, generate_signing_keypair, load_signing_key, sign,
@@ -386,7 +386,90 @@ mod gather_package_tests {
     }
 }
 
-/// zed-kask: Resolve the kask marketplace base URL.
+/// zed-kask: Scan a block of text — a multiplayer channel message, a
+/// notification body, a contact-share note — for `kask-skill://` references
+/// and return the parsed refs. This is the multiplayer→skill bridge: the
+/// discreet-piggyback design carries skill refs as ordinary message text,
+/// so discovering a shared skill = scanning the message body for the URI.
+/// Trailing punctuation is trimmed so a ref at end-of-sentence still parses.
+/// Deduplicates while preserving first-seen order.
+pub fn scan_for_skill_refs(text: &str) -> Vec<KaskSkillRef> {
+    let needle = format!("{}://", KaskSkillRef::SCHEME);
+    let mut refs = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(needle.as_str()) {
+        let after_scheme = start + needle.len();
+        let tail = &rest[after_scheme..];
+        let end = tail.find(|c: char| c.is_whitespace()).unwrap_or(tail.len());
+        let raw = &rest[start..after_scheme + end];
+        let trimmed = raw.trim_end_matches(|c: char| {
+            matches!(
+                c,
+                '.' | ',' | ';' | '!' | '?' | ')' | ']' | '`' | '\'' | '"'
+            )
+        });
+        if let Some(reff) = KaskSkillRef::parse(trimmed) {
+            if !refs.contains(&reff) {
+                refs.push(reff);
+            }
+        }
+        rest = &rest[after_scheme + end..];
+    }
+    refs
+}
+
+#[cfg(test)]
+mod skill_ref_scan_tests {
+    use super::scan_for_skill_refs;
+
+    #[test]
+    fn finds_bare_ref_in_message() {
+        let msg = "check out kask-skill://alice/essentialist/2026-08-02.1 — it's great";
+        let refs = scan_for_skill_refs(msg);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].source_user, "alice");
+        assert_eq!(refs[0].skill_name, "essentialist");
+        assert_eq!(refs[0].version, "2026-08-02.1");
+    }
+
+    #[test]
+    fn trims_trailing_punctuation() {
+        let msg = "I use kask-skill://alice/essentialist/1.0.";
+        let refs = scan_for_skill_refs(msg);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].version, "1.0");
+    }
+
+    #[test]
+    fn deduplicates_and_preserves_order() {
+        let msg = "kask-skill://alice/a/1 kask-skill://bob/b/2 kask-skill://alice/a/1";
+        let refs = scan_for_skill_refs(msg);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].skill_name, "a");
+        assert_eq!(refs[1].skill_name, "b");
+    }
+
+    #[test]
+    fn ignores_non_skill_uris() {
+        let msg = "see https://example.com/foo and http://alice/essentialist/1";
+        assert!(scan_for_skill_refs(msg).is_empty());
+    }
+
+    #[test]
+    fn no_refs_in_plain_text() {
+        assert!(scan_for_skill_refs("just a normal channel message").is_empty());
+    }
+
+    #[test]
+    fn ref_in_markdown_link_target_is_found() {
+        // A ref may appear as a markdown link target: [label](kask-skill://...).
+        // The scanner finds the scheme prefix wherever it occurs.
+        let msg = "shared [essentialist](kask-skill://alice/essentialist/1) in the channel";
+        let refs = scan_for_skill_refs(msg);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].skill_name, "essentialist");
+    }
+}
 ///
 /// Decoupled from `server_url` (which points at Zed's cloud for login,
 /// telemetry, collab) so the marketplace can target a kask-aware collab
@@ -953,6 +1036,67 @@ pub async fn install_skill(
     );
 
     Ok(install_dir)
+}
+
+/// zed-kask: Fetch a single skill's catalog metadata by id via
+/// `GET /api/kask-skills/:id`. The metadata carries the signed manifest
+/// (`public_key`, `signature`, `expires_at`, `tarball_sha256`) — the trust
+/// anchor for install. Used by the piggyback install-from-reference path: a
+/// `kask-skill://` ref resolves to its id, this fetches the metadata, and
+/// [`install_skill`] verifies + downloads + extracts.
+pub async fn fetch_skill_metadata(
+    http_client: &HttpClientWithUrl,
+    skill_id: &str,
+) -> Result<KaskSkillMetadata> {
+    let encoded_id = urlencoding::encode(skill_id);
+    let url = crate::publish::kask_marketplace_url(
+        http_client,
+        &format!("/api/kask-skills/{}", encoded_id),
+        &[],
+    )?;
+    let mut response = http_client
+        .get(&url, AsyncBody::empty(), true)
+        .await
+        .context("fetching kask skill metadata")?;
+    let mut body = Vec::new();
+    futures::AsyncReadExt::read_to_end(response.body_mut(), &mut body)
+        .await
+        .context("reading kask skill metadata response")?;
+    if response.status().is_client_error() || response.status().is_server_error() {
+        let text = String::from_utf8_lossy(&body);
+        bail!(
+            "kask skill metadata fetch failed (status {}): {text}",
+            response.status().as_u16()
+        );
+    }
+    let metadata: Option<KaskSkillMetadata> =
+        serde_json::from_slice(&body).context("parsing kask skill metadata")?;
+    metadata.ok_or_else(|| anyhow!("kask skill '{}' not found in catalog", skill_id))
+}
+
+/// zed-kask: Install a kask skill from a `kask-skill://` reference — the
+/// discreet-piggyback consumer. Resolves the ref to its marketplace id,
+/// fetches the signed metadata ([`fetch_skill_metadata`]), then reuses
+/// [`install_skill`] (signature + expiry + SHA256 verification, presigned-S3
+/// download, extract). The ref's `version` is informational in v1 (the
+/// catalog serves the latest version); a future revision can pin the
+/// version via a per-version route.
+pub async fn install_skill_from_ref(
+    fs: &dyn Fs,
+    http_client: &HttpClientWithUrl,
+    reff: &KaskSkillRef,
+    marketplace_dir: &Path,
+) -> Result<PathBuf> {
+    let skill_id = reff.id();
+    let metadata = fetch_skill_metadata(http_client, &skill_id).await?;
+    install_skill(
+        fs,
+        http_client,
+        &skill_id,
+        &metadata.manifest,
+        marketplace_dir,
+    )
+    .await
 }
 
 /// Vote on a kask skill (+1 or -1).

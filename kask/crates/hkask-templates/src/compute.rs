@@ -478,6 +478,11 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
         // through the loop step's input_mapping so the next iteration (and
         // DECIDE) can read them.
         "swarm.converge_accumulate" => {
+            // ACO pheromone evaporation factor for C7 influence_scores. Applied
+            // per iteration before adding the fresh d_delta, so stale negative
+            // influence decays and previously-poisoned agent types become
+            // re-eligible for re-hire. 0.8 gives a ~3-iteration half-life.
+            const INFLUENCE_DECAY_FACTOR: f64 = 0.8;
             let d = get_f64("d")?;
             let task_success = input.get("task_success").cloned();
             let deficit_class = input
@@ -564,9 +569,19 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                 }));
             }
             // Influence-weighted rejection (C7): per-agent_type running sum of
-            // d_delta after the move. DECIDE rejects re-hire of a type whose
-            // sum is <= 0 over the recent window.
+            // d_delta after the move, with ACO pheromone evaporation. DECIDE
+            // rejects re-hire of a type whose sum is <= 0. Without decay, a
+            // single bad delegation permanently poisons an agent type — the
+            // non-decaying sum is the premature-convergence failure mode ACO
+            // evaporation prevents. The 0.8 decay factor gives a ~3-iteration
+            // half-life, aligning with the Cauchy convergence window of 3.
             let mut new_influence = influence_scores.as_object().cloned().unwrap_or_default();
+            // Evaporate: decay all existing scores before adding the fresh delta.
+            for (_, v) in new_influence.iter_mut() {
+                if let Some(n) = v.as_f64() {
+                    *v = serde_json::json!(n * INFLUENCE_DECAY_FACTOR);
+                }
+            }
             if !agent_type.is_empty() {
                 let cur = new_influence
                     .get(&agent_type)
@@ -1509,6 +1524,33 @@ mod tests {
             .and_then(|v| v.as_object())
             .unwrap();
         assert_eq!(influence["dev"], -0.3);
+    }
+
+    #[test]
+    fn swarm_converge_accumulate_evaporates_stale_influence() {
+        // ACO pheromone evaporation (C7): an existing influence score decays
+        // by 0.8 per iteration before the fresh d_delta is added. After 5
+        // neutral iterations (d_delta = 0), a score of -0.5 should decay to
+        // -0.5 * 0.8^5 ≈ -0.164, allowing re-exploration. We test one
+        // iteration here: -0.5 * 0.8 = -0.4, then + 0.0 (neutral) = -0.4.
+        let input = serde_json::json!({
+            "iteration_log": [{"d": 0.5, "s": null, "deficit_class": "x", "decision_action": "hire"}],
+            "failed_edits": [],
+            "influence_scores": {"researcher": -0.5},
+            "d": 0.5,
+            "task_success": null,
+            "deficit_class": "x",
+            "decisions": {"proposed_moves": [{"move_type": "hire", "agent_id_or_type": "researcher"}]},
+            "swarm_state": {"workspace_roster": {"agents": [{"agent_type": "researcher"}]}}
+        });
+        let result = dispatch_compute("swarm.converge_accumulate", &input).unwrap();
+        let inf = result
+            .get("influence_scores")
+            .and_then(|v| v.as_object())
+            .unwrap();
+        // -0.5 * 0.8 (decay) + 0.0 (d_delta = 0.5 - 0.5 = 0) = -0.4
+        let score = inf["researcher"].as_f64().unwrap();
+        assert!((score - (-0.4)).abs() < 1e-9, "decayed influence = {score}");
     }
 
     // ── swarm.converge_accumulate fault_count (C5 promotion) ──

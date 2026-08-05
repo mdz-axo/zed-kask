@@ -19,6 +19,8 @@
 //! unseeded (memory is an enhancement, not a dependency).
 
 use hkask_memory::SemanticMemory;
+use hkask_storage::HMem;
+use hkask_types::{Visibility, WebID};
 use std::sync::Arc;
 
 use crate::error::LocalSwarmError;
@@ -165,6 +167,73 @@ pub(crate) async fn agent_memory_seed(
             )
         }
         _ => String::new(),
+    }
+}
+
+/// Record a delegation performance annotation to the agent's prefix-scoped
+/// semantic memory — the ACO stigmergic pheromone trail. After each
+/// `swarm_delegate_local`, the latency and task-success verdict are written as
+/// `HMem` triples under `agent:<agent_id>:delegation`. The SENSE phase (or any
+/// caller) can then query these via `swarm_search_knowledge_local` to assess
+/// agent fitness across cascade invocations.
+///
+/// Failures are logged with `tracing::warn!`, not swallowed (the `.rules` trap
+/// on silent error discarding — a failed stigmergy write must be visible in
+/// logs, not silently dropped). The delegation result is still returned to the
+/// caller regardless of whether the annotation was written.
+pub(crate) async fn record_delegation(
+    memory: &LazyLocalMemory,
+    agent_id: &str,
+    latency_ms: u64,
+    task_success_pass: Option<bool>,
+) {
+    let store = match memory.get_or_init().await {
+        Ok(s) => s,
+        Err(reason) => {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %reason,
+                "stigmergy write skipped — swarm memory unavailable (non-fatal)"
+            );
+            return;
+        }
+    };
+    let owner = WebID::for_agent_name("swarm_delegate_local");
+    let entity = format!("{AGENT_PREFIX}{agent_id}:delegation");
+
+    // Write the latency annotation.
+    let mut h_mem = HMem::new(
+        &entity,
+        "latency_ms",
+        serde_json::json!(latency_ms),
+        owner,
+    );
+    h_mem.access.visibility = Visibility::Shared;
+    if let Err(e) = store.store(h_mem) {
+        tracing::warn!(
+            target: "hkask.mcp.swarm",
+            error = %e,
+            "stigmergy latency write failed (non-fatal)"
+        );
+    }
+
+    // Write the task-success annotation only when a verdict was supplied
+    // (null task_success = open task, no oracle — do not fabricate).
+    if let Some(pass) = task_success_pass {
+        let mut h_mem = HMem::new(
+            &entity,
+            "task_success",
+            serde_json::json!(pass),
+            owner,
+        );
+        h_mem.access.visibility = Visibility::Shared;
+        if let Err(e) = store.store(h_mem) {
+            tracing::warn!(
+                target: "hkask.mcp.swarm",
+                error = %e,
+                "stigmergy task_success write failed (non-fatal)"
+            );
+        }
     }
 }
 

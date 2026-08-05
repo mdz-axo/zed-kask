@@ -14,6 +14,14 @@ workspace = true
 name = "collab"
 
 [features]
+# zed-kask: `sqlite` is a default feature so `cargo build -p collab` (and a
+# workspace `cargo build`) produces a binary the editor's local auto-launch
+# can use. Without this, a plain `cargo build` yields a no-sqlite binary that
+# crashes opening the local marketplace DB, and only the specific
+# `cargo build -p collab --features sqlite` invocation works — too fragile
+# for a dev fallback. Postgres deployments are unaffected (sqlite is an
+# additional driver, selected by the DATABASE_URL scheme).
+default = ["sqlite"]
 sqlite = ["sea-orm/sqlx-sqlite", "sqlx/sqlite"]
 test-support = ["sqlite"]
 

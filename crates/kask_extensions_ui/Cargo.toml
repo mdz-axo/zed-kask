@@ -44,6 +44,9 @@ hkask-types = { path = "../../kask/crates/hkask-types" }
 # of bundled skills (the "Modified" badge compares the on-disk package to
 # the shipped embedded package).
 hkask-templates = { path = "../../kask/crates/hkask-templates" }
+# Multiplayer channel access for discreet-piggyback skill discovery: the
+# panel scans opened channel buffers' text for `kask-skill://` references.
+channel.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

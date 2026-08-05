@@ -6,6 +6,7 @@
 use crate::SwarmServer;
 use crate::abw_util::url_encode_segment;
 use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
+use crate::local_knowledge;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
 };
@@ -62,6 +63,19 @@ impl SwarmServer {
                 .delegate(&agent, &req.task, req.credits_authorized, ceiling)
                 .await
                 .map_err(SwarmError::into_tool_error)?;
+            // Stigmergy (ACO pheromone trail): record the delegation's
+            // performance annotation to the agent's prefix-scoped semantic
+            // memory. The SENSE phase can read these via
+            // `swarm_search_knowledge_local` to assess agent fitness across
+            // cascade invocations. Failures are logged (non-fatal) — the
+            // delegation result is returned regardless.
+            local_knowledge::record_delegation(
+                &self.local_memory,
+                &req.agent_name,
+                result.latency_ms,
+                result.task_success.as_ref().map(|t| t.pass),
+            )
+            .await;
             Ok(serde_json::to_value(&result).unwrap_or_else(|_| {
                 serde_json::json!({ "error": "failed to serialize result" })
             }))

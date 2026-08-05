@@ -63,6 +63,78 @@ impl KaskSkillManifest {
     }
 }
 
+/// A reference to a kask skill package, serialized as a
+/// `kask-skill://{source_user}/{skill_name}/{version}` URI.
+///
+/// This is the discreet-piggyback contract: the URI is carried as ordinary
+/// text in a multiplayer channel message / notification / contact share, so
+/// Zed's multiplayer infra transports it with **no special message type** —
+/// kask sharing surfaces as normal-looking channel activity. The kask
+/// extensions surface resolves the URI to a content-addressed download
+/// (reusing the `/api/kask-skills/:id/download` presigned-S3 redirect) and
+/// installs, reusing the existing signed-package + `kask_skill_package_hash`
+/// content layer.
+///
+/// Components are constrained (github login, skill name `[a-z0-9-]`, semver-
+/// ish version), so v1 does not percent-encode; the parser rejects anything
+/// that is not a clean `scheme://user/name/version` split with non-empty
+/// parts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KaskSkillRef {
+    /// Publisher's GitHub login.
+    pub source_user: String,
+    /// Skill name (matches the SKILL.md `name`).
+    pub skill_name: String,
+    /// Package version (e.g. "2026-07-27.1").
+    pub version: String,
+}
+
+impl KaskSkillRef {
+    /// The URI scheme. Exported so consumers can scan message text for it.
+    pub const SCHEME: &'static str = "kask-skill";
+
+    /// The marketplace id `{source_user}/{skill_name}` — the path segment the
+    /// `/api/kask-skills/:id/download` route expects.
+    pub fn id(&self) -> String {
+        format!("{}/{}", self.source_user, self.skill_name)
+    }
+
+    /// Serialize to `kask-skill://{source_user}/{skill_name}/{version}`.
+    pub fn to_uri(&self) -> String {
+        format!(
+            "{}://{}/{}/{}",
+            Self::SCHEME,
+            self.source_user,
+            self.skill_name,
+            self.version
+        )
+    }
+
+    /// Parse a `kask-skill://...` URI. Returns `None` for any malformed
+    /// input (wrong scheme, missing/empty parts, or extra path segments).
+    /// Deliberately strict — a channel message may contain arbitrary text,
+    /// and a false positive would install the wrong skill.
+    pub fn parse(uri: &str) -> Option<Self> {
+        let prefix = format!("{}://", Self::SCHEME);
+        let rest = uri.strip_prefix(&prefix)?;
+        let mut parts = rest.splitn(3, '/');
+        let source_user = parts.next().filter(|s: &&str| !s.is_empty())?;
+        let skill_name = parts.next().filter(|s: &&str| !s.is_empty())?;
+        let version = parts
+            .next()
+            .filter(|s: &&str| !s.is_empty() && !s.contains('/'))?;
+        // Reject anything after the version (e.g. a trailing slash or path).
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            source_user: source_user.to_string(),
+            skill_name: skill_name.to_string(),
+            version: version.to_string(),
+        })
+    }
+}
+
 /// Catalog metadata for a kask skill, returned by `GET /api/kask-skills`.
 ///
 /// Mirrors `ExtensionMetadata` — the manifest plus server-side aggregate
@@ -156,6 +228,45 @@ mod tests {
             result.is_err(),
             "unsigned manifest must fail to deserialize"
         );
+    }
+
+    // ── KaskSkillRef: the discreet-piggyback URI contract ──
+
+    #[test]
+    fn skill_ref_round_trips_through_uri() {
+        let reff = KaskSkillRef {
+            source_user: "alice".into(),
+            skill_name: "essentialist".into(),
+            version: "2026-08-02.1".into(),
+        };
+        let uri = reff.to_uri();
+        assert_eq!(uri, "kask-skill://alice/essentialist/2026-08-02.1");
+        assert_eq!(KaskSkillRef::parse(&uri), Some(reff.clone()));
+        assert_eq!(reff.id(), "alice/essentialist");
+    }
+
+    #[test]
+    fn skill_ref_parse_rejects_malformed() {
+        // Wrong scheme.
+        assert!(KaskSkillRef::parse("https://alice/essentialist/1").is_none());
+        // Missing version.
+        assert!(KaskSkillRef::parse("kask-skill://alice/essentialist").is_none());
+        // Empty parts.
+        assert!(KaskSkillRef::parse("kask-skill:///essentialist/1").is_none());
+        assert!(KaskSkillRef::parse("kask-skill://alice//1").is_none());
+        // Trailing slash / extra path.
+        assert!(KaskSkillRef::parse("kask-skill://alice/essentialist/1/").is_none());
+        // No scheme.
+        assert!(KaskSkillRef::parse("alice/essentialist/1").is_none());
+    }
+
+    #[test]
+    fn skill_ref_version_may_contain_dots_but_not_slashes() {
+        // Semver-ish versions are allowed.
+        assert!(KaskSkillRef::parse("kask-skill://alice/essentialist/1.2.3").is_some());
+        // A slash inside what should be the version is not a 4th segment —
+        // splitn(3) puts it in the version, which we reject via contains('/').
+        assert!(KaskSkillRef::parse("kask-skill://alice/essentialist/1/2").is_none());
     }
 }
 

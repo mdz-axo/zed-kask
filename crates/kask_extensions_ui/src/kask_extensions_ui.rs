@@ -3,17 +3,20 @@ pub mod panel_button;
 mod publish;
 
 pub use panel_button::KaskExtensionsButton;
-pub use publish::{generate_version, install_skill, publish_skill, unpublish_skill, vote_skill};
+pub use publish::{
+    generate_version, install_skill, publish_skill, scan_for_skill_refs, unpublish_skill,
+    vote_skill,
+};
 
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Context as _;
-use cloud_api_types::{GetKaskSkillsResponse, KaskSkillMetadata};
+use cloud_api_types::{GetKaskSkillsResponse, KaskSkillMetadata, KaskSkillRef};
 use editor::Editor;
 use gpui::{
-    App, Context, Entity, EventEmitter, Focusable, ParentElement, Render, Styled, Task,
-    UniformListScrollHandle, Window, actions, point, uniform_list,
+    App, ClipboardItem, Context, Entity, EventEmitter, Focusable, ParentElement, Render, Styled,
+    Task, UniformListScrollHandle, Window, actions, point, uniform_list,
 };
 use marketplace_ui_common::{MarketplaceCard, marketplace_empty_state, marketplace_search_bar};
 use ui::{
@@ -159,6 +162,14 @@ pub struct KaskExtensionsPage {
     bundled_entries: Vec<BundledSkillEntry>,
     filtered_bundled_indices: Vec<usize>,
     bundled_fetch_task: Option<Task<()>>,
+    // zed-kask: discreet-piggyback status feedback for share / install-from-ref
+    // actions (clipboard-based in v1; the page holds no workspace handle for
+    // toasts, so feedback is rendered inline).
+    status_message: Option<SharedString>,
+    // zed-kask: skill refs discovered in the user's opened channel buffers
+    // (discreet piggyback — `kask-skill://` URIs carried as ordinary channel
+    // message text). Populated by `scan_open_channels_for_refs`.
+    shared_in_channels: Vec<KaskSkillRef>,
 }
 
 impl KaskExtensionsPage {
@@ -210,6 +221,8 @@ impl KaskExtensionsPage {
                 bundled_entries: Vec::new(),
                 filtered_bundled_indices: Vec::new(),
                 bundled_fetch_task: None,
+                status_message: None,
+                shared_in_channels: Vec::new(),
                 query_editor,
             };
             this.fetch_kask_skills(cx);
@@ -474,6 +487,156 @@ impl KaskExtensionsPage {
         self.bundled_fetch_task = Some(task);
     }
 
+    /// zed-kask: Install a kask skill from a `kask-skill://` reference on the
+    /// clipboard — the discreet-piggyback consumer (manual paste path). Reads
+    /// the clipboard, parses the URI, and delegates to
+    /// [`install_kask_skill_from_ref`].
+    fn install_from_clipboard_ref(&mut self, cx: &mut Context<Self>) {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            self.status_message = Some("No clipboard content available.".into());
+            cx.notify();
+            return;
+        };
+        let Some(text) = clipboard.text() else {
+            self.status_message = Some("Clipboard has no text.".into());
+            cx.notify();
+            return;
+        };
+        let Some(reff) = KaskSkillRef::parse(text.trim()) else {
+            self.status_message = Some("Clipboard is not a kask-skill:// reference.".into());
+            cx.notify();
+            return;
+        };
+        self.install_kask_skill_from_ref(reff, cx);
+    }
+
+    /// zed-kask: Install a kask skill from a parsed `KaskSkillRef` — the
+    /// shared backend for the clipboard paste path and the auto-discovered
+    /// "shared in channels" cards. Fetches the signed metadata and installs
+    /// via the existing verified path; feedback → `status_message`.
+    fn install_kask_skill_from_ref(&mut self, reff: KaskSkillRef, cx: &mut Context<Self>) {
+        let Some(http_client) = self.http_client.clone() else {
+            self.status_message =
+                Some("No HTTP client available; ensure you are logged in.".into());
+            cx.notify();
+            return;
+        };
+        let Some(fs) = self.fs.clone() else {
+            self.status_message = Some("No filesystem available.".into());
+            cx.notify();
+            return;
+        };
+        let skill_id: Arc<str> = Arc::from(reff.id().as_str());
+        self.outstanding_operations
+            .insert(skill_id.clone(), KaskSkillStatus::Installing);
+        self.status_message = Some(format!("Installing {}…", skill_id).into());
+        cx.notify();
+
+        let marketplace_dir = agent_skills::global_skills_dir().join("_marketplace");
+        let skill_id_for_status = skill_id;
+        cx.spawn(async move |this, cx| {
+            let result = crate::publish::install_skill_from_ref(
+                fs.as_ref(),
+                &http_client,
+                &reff,
+                &marketplace_dir,
+            )
+            .await;
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => {
+                        this.outstanding_operations.remove(&skill_id_for_status);
+                        this.status_message =
+                            Some(format!("Installed {}.", skill_id_for_status).into());
+                        this.filter_extension_entries(cx);
+                    }
+                    Err(error) => {
+                        this.outstanding_operations.remove(&skill_id_for_status);
+                        this.status_message = Some(format!("Install failed: {error:#}").into());
+                        log::warn!("kask-extensions: install-from-ref failed: {error:#}");
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// zed-kask: Scan the user's opened channel buffers for `kask-skill://`
+    /// references — the discreet-piggyback auto-discovery. Channel messages
+    /// are collaborative text buffers; a skill shared in a channel appears as
+    /// ordinary message text containing the URI. This reads the text of every
+    /// currently-open channel buffer (read-only — `open_channel_buffer`
+    /// dedupes to the existing buffer for already-open channels, no re-join),
+    /// scans for refs, and stores them in `shared_in_channels` for rendering.
+    fn scan_open_channels_for_refs(&mut self, cx: &mut Context<Self>) {
+        let Some(channel_store) = channel::ChannelStore::try_global(cx) else {
+            self.status_message = Some("Channel store not available.".into());
+            cx.notify();
+            return;
+        };
+        // Collect ids of channels with an opened buffer (read-only check).
+        let open_ids: Vec<client::ChannelId> = channel_store.read_with(cx, |store, cx| {
+            store
+                .channels()
+                .filter(|ch| store.has_open_channel_buffer(ch.id, cx))
+                .map(|ch| ch.id)
+                .collect()
+        });
+        // For each opened channel, `open_channel_buffer` returns the existing
+        // buffer as a ready Task (dedup — no re-join side effect).
+        let tasks: Vec<Task<anyhow::Result<gpui::Entity<channel::ChannelBuffer>>>> = channel_store
+            .update(cx, |store, cx| {
+                open_ids
+                    .iter()
+                    .map(|id| store.open_channel_buffer(*id, cx))
+                    .collect()
+            });
+        self.status_message = Some("Scanning open channels…".into());
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let mut refs: Vec<KaskSkillRef> = Vec::new();
+            for task in tasks {
+                if let Ok(buffer) = task.await {
+                    let text =
+                        buffer.read_with(cx, |b, cx| b.buffer().read(cx).text_snapshot().text());
+                    for reff in crate::publish::scan_for_skill_refs(&text) {
+                        if !refs.contains(&reff) {
+                            refs.push(reff);
+                        }
+                    }
+                }
+            }
+            this.update(cx, |this, cx| {
+                let count = refs.len();
+                this.shared_in_channels = refs;
+                this.status_message =
+                    Some(format!("Found {count} skill reference(s) in your open channels.").into());
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// zed-kask: Copy a `kask-skill://` share link for a marketplace skill to
+    /// the clipboard — the discreet-piggyback producer. The user pastes it
+    /// into a channel (or any multiplayer text surface); recipients install
+    /// via "Install from reference".
+    fn copy_share_link(&mut self, skill: &KaskSkillMetadata, cx: &mut Context<Self>) {
+        let reff = KaskSkillRef {
+            source_user: skill.manifest.source_user.clone(),
+            skill_name: skill.manifest.skill_name.clone(),
+            version: skill.manifest.version.clone(),
+        };
+        let uri = reff.to_uri();
+        cx.write_to_clipboard(ClipboardItem::new_string(uri.clone()));
+        self.status_message = Some(format!("Copied share link: {uri}").into());
+        cx.notify();
+    }
+
     /// zed-kask: Check the install status of a kask skill. Mirrors
     /// `extension_status` but checks the `SkillIndex` for installed
     /// marketplace skills and the `outstanding_operations` map for in-flight
@@ -502,17 +665,21 @@ impl KaskExtensionsPage {
         cx: &mut Context<Self>,
     ) -> Vec<MarketplaceCard> {
         let mut cards = Vec::new();
-        // zed-kask: bundled skills render first (indices [0, bundled_count)),
-        // then marketplace skills. The combined count sizes `uniform_list` in
-        // `render`.
+        // zed-kask: three sections, in order: skill refs discovered in the
+        // user's open channels (discreet piggyback), bundled skills, then the
+        // marketplace catalog. The combined count sizes `uniform_list`.
+        let shared_count = self.shared_in_channels.len();
         let bundled_count = self.filtered_bundled_indices.len();
         for ix in range {
-            if ix < bundled_count {
-                let bi = self.filtered_bundled_indices[ix];
+            if ix < shared_count {
+                cards
+                    .push(self.render_shared_channel_card(self.shared_in_channels[ix].clone(), cx));
+            } else if ix < shared_count + bundled_count {
+                let bi = self.filtered_bundled_indices[ix - shared_count];
                 let entry = self.bundled_entries[bi].clone();
                 cards.push(self.render_bundled_card(entry));
             } else {
-                let market_ix = ix - bundled_count;
+                let market_ix = ix - shared_count - bundled_count;
                 if market_ix >= self.filtered_remote_skill_indices.len() {
                     break;
                 }
@@ -522,6 +689,45 @@ impl KaskExtensionsPage {
             }
         }
         cards
+    }
+
+    /// zed-kask: Render a skill reference discovered in a channel as an
+    /// installable card (discreet piggyback). A "Shared in channel" badge +
+    /// an Install button that resolves the ref via the verified install path.
+    fn render_shared_channel_card(
+        &mut self,
+        reff: KaskSkillRef,
+        cx: &mut Context<Self>,
+    ) -> MarketplaceCard {
+        let uri = reff.to_uri();
+        MarketplaceCard::new().child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Label::new(reff.id()).color(Color::Default))
+                                .child(Label::new("Shared in channel").color(Color::Muted)),
+                        )
+                        .child(Label::new(uri).color(Color::Muted)),
+                )
+                .child(
+                    Button::new(
+                        SharedString::from(format!("install-shared-{}", reff.id())),
+                        "Install",
+                    )
+                    .style(ButtonStyle::Filled)
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.install_kask_skill_from_ref(reff.clone(), cx);
+                    })),
+                ),
+        )
     }
 
     /// zed-kask: Render a kask skill card with install/uninstall/vote buttons.
@@ -535,9 +741,11 @@ impl KaskExtensionsPage {
         let skill_id_for_uninstall = skill.id.clone();
         let skill_id_for_vote_up = skill.id.clone();
         let skill_id_for_vote_down = skill.id.clone();
+        let skill_id_for_share = skill.id.clone();
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();
         let marketplace_dir = agent_skills::global_skills_dir().join("_marketplace");
+        let skill_for_share = skill.clone();
 
         MarketplaceCard::new().child(
             h_flex()
@@ -639,6 +847,18 @@ impl KaskExtensionsPage {
                             .on_click(cx.listener(
                                 move |this, _event, _window, cx| {
                                     this.vote_kask_skill(skill_id_for_vote_down.clone(), -1, cx);
+                                },
+                            )),
+                        )
+                        .child(
+                            Button::new(
+                                SharedString::from(format!("share-{}", skill_id_for_share)),
+                                "Share",
+                            )
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(
+                                move |this, _event, _window, cx| {
+                                    this.copy_share_link(&skill_for_share, cx);
                                 },
                             )),
                         ),
@@ -1027,6 +1247,11 @@ impl Render for KaskExtensionsPage {
                             .justify_between()
                             .child(Headline::new("Kask Extensions").size(HeadlineSize::Large)),
                     )
+                    // zed-kask: inline status feedback for share / install-from-ref
+                    // actions (clipboard-based piggyback in v1).
+                    .when_some(self.status_message.clone(), |this, msg| {
+                        this.child(Label::new(msg).color(Color::Muted))
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -1061,6 +1286,26 @@ impl Render for KaskExtensionsPage {
                                         this.scroll_to_top(cx);
                                     },
                                 )),
+                            )
+                            // zed-kask: discreet-piggyback consumer — install a skill
+                            // from a `kask-skill://` reference on the clipboard
+                            // (copied from a channel message or a Share button).
+                            .child(
+                                Button::new("install-from-ref", "Install from reference")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.install_from_clipboard_ref(cx);
+                                    })),
+                            )
+                            // zed-kask: discreet-piggyback auto-discovery — scan
+                            // the user's opened channel buffers for `kask-skill://`
+                            // references and surface them as installable cards.
+                            .child(
+                                Button::new("scan-channels", "Scan channels")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.scan_open_channels_for_refs(cx);
+                                    })),
                             )
                             .child(
                                 div().child(
@@ -1111,9 +1356,10 @@ impl Render for KaskExtensionsPage {
             // provides concept (v1 is skills-only per plan §0). Extension
             // upsell banners are also irrelevant to kask skills and removed.
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                // zed-kask: count is the filtered bundled + marketplace entries.
-                let count =
-                    self.filtered_bundled_indices.len() + self.filtered_remote_skill_indices.len();
+                // zed-kask: count is shared-in-channels + filtered bundled + marketplace.
+                let count = self.shared_in_channels.len()
+                    + self.filtered_bundled_indices.len()
+                    + self.filtered_remote_skill_indices.len();
 
                 if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()

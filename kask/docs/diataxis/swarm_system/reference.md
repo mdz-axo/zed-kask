@@ -198,7 +198,7 @@ See the [panel modes state diagram](../../diagrams/state-swarm-panel-modes.md).
 | C1 | second-order monitor (reasoning loop + sensor-truth divergence) | `swarm.second_order_monitor` compute (step 9) |
 | C2 | Go See cadence (every N convergences) | `cadence_every` param; SENSE surfaces `go_see` |
 | C3 | failed-edit memory (anti-loop set) | `swarm.filter_proposed_moves` (step 4) |
-| C4 | delegation latency `T_q` | `LocalDelegateResult.latency_ms` — **sensed, not regulated** (audit C4) |
+| C4 | delegation latency `T_q` | `LocalDelegateResult.latency_ms` — sensed and regulated: ORIENT computes `latency_outliers`, DECIDE proposes `reconfigure_agent` (local) or fire+hire (abw) |
 | C5 | fault attribution (priority rule over delegate trace) | ORIENT + `fault_count` accumulate |
 | C6 | `swarm_reconfigure_local_agent` (re-prompt blamed agent) | DECIDE move type; active only with C5 telemetry |
 | C7 | influence-weighted rejection | `swarm.filter_proposed_moves` (step 4) |

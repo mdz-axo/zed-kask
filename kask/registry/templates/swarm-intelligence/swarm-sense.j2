@@ -126,6 +126,16 @@ workspace_roster should be pre-populated):
   whether it covers a required transform, probe its prefix-scoped semantic
   memory via `swarm_search_knowledge_local` with `{ agent_name, query }` →
   `{ fragments[], source, agent_name, note }` to assess actual capability.
+- **Stigmergy (ACO pheromone trail):** for each agent in the filtered roster,
+  optionally query prior delegation performance via
+  `swarm_search_knowledge_local` with `{ agent_name, query: "delegation" }`.
+  The response includes `latency_ms` and `task_success` annotations written by
+  prior `swarm_delegate_local` calls. Use these to inform the per-agent metrics
+  (Step 5b): an agent with consistently high `latency_ms` or repeated
+  `task_success: false` is a fitness risk even if its `accepts[]`/`produces[]`
+  covers the required transform. Absent annotations (first invocation or memory
+  unconfigured) → the agent has no prior delegation history (not a negative
+  signal — unknown, not bad).
 
 Record the raw workspace_roster (the filtered team) and wallet_state.
 {% else %}
@@ -208,6 +218,29 @@ diversity = |distinct (agent_type, model) tuples| / |agents|
 Vacuous-truth default: if `agents = []`, `diversity = 0.0` (an empty swarm
 has zero diversity — it fails the floor by definition, driving the first hire).
 
+## Step 5b — Compute per-agent Onto4MAT Agent properties (energy + distanceToGoal)
+
+For each agent in the filtered roster that has a matching entry in
+`delegate_results` (from the prior iteration's execution telemetry), compute
+two per-agent metrics. These complement the Team-level properties (alignment,
+cohesion, separation) with Agent-level fitness, enabling DECIDE to make
+per-agent decisions (route around a depleted agent, reconfigure a stuck one).
+
+- **energy** = `delegate_results[].balance` (the post-debit ledger balance
+  after that agent's last delegation). An agent with `energy = 0` is depleted —
+  DECIDE should route around it (delegate to a different agent or fund the
+  ledger). `null` when no prior delegation exists (first iteration or the agent
+  was hired but not yet delegated to).
+- **distanceToGoal** = `delegate_results[].task_success.score` when
+  `task_success` is present and `provenance == "deterministic"`. `null` when
+  `task_success` is absent (open task, no oracle) or `provenance == "llm_judged"`
+  (downgraded per C0 — an LLM-judged score is not trusted as a distance metric).
+  Never fabricated — `null` means "not measured."
+
+Output: `per_agent_metrics: [{ agent_id, energy, distanceToGoal }, ...]` — one
+entry per agent that has delegation telemetry. Agents without telemetry are
+omitted (not fabricated with zeros).
+
 ## Step 6 — Record next_focus_hint
 
 If prior_iteration.next_focus is present, echo it. Otherwise, if any axis is
@@ -217,5 +250,5 @@ below target, name the axis with the largest deficit as the hint.
 
 Produce a JSON object with: workspace_roster, wallet_state,
 required_transforms, covered_transforms, variety_coverage, diversity,
-alignment, cohesion, separation, trivial_task, next_focus_hint,
+alignment, cohesion, separation, per_agent_metrics, trivial_task, next_focus_hint,
 delegate_notes.

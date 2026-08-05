@@ -184,6 +184,23 @@ agents cannot fix it.
 Propose no moves. Set proposed_moves = [] and note that the swarm is
 on-target.
 
+### If swarm_state.per_agent_metrics contains a depleted agent (energy = 0)
+
+An agent with `energy = 0` has exhausted its ledger allocation — delegating to
+it again will fail the balance gate. This is the Onto4MAT Agent-level `energy`
+property (Step 5b of SENSE), distinct from C4 (latency) and C5 (fault): it is
+proactive (before failure) rather than reactive (after failure).
+
+For each depleted agent:
+- If the agent covers a required transform, propose a `delegate` move to a
+  *different* agent that also covers that transform (route around the depleted
+  one). If no alternative exists, the operator must fund the ledger via
+  `swarm_fund_local` — note this in `delegate_notes`.
+- If the agent is structurally redundant, propose a `remove` move (local:
+  `swarm_remove_local`; abw: `swarm_fire`).
+- Do NOT propose a `delegate` move to the depleted agent itself — the ledger
+  debit will fail.
+
 ### If orientation.latency_outliers is non-empty (Cybernetic Swarm Plan C4, regulated)
 
 ORIENT surfaced agents whose `latency_ms` exceeded `2 * median` (and the 1000 ms
