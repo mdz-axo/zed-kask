@@ -38,7 +38,10 @@ pub use manifest_loader::{
 pub use ports::{FsSkillReader, ManifestResolveError, Result, SkillFinding, TemplateError};
 pub use prompt_strategy::PromptStrategy;
 
-pub use registry::{Registry, process_manifest_yaml, template_file, template_yaml_file};
+pub use registry::{
+    Registry, process_manifest_seed, process_manifest_yaml, template_file, template_file_seed,
+    template_manifest_seed, template_yaml_file, template_yaml_file_seed,
+};
 pub use registry_sqlite::SqliteRegistry;
 pub use skill_loader::{SkillFrontMatter, SkillLoadResult, SkillLoader};
 

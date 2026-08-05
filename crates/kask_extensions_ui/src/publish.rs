@@ -33,6 +33,63 @@ use sha2::{Digest, Sha256};
 /// The S3 key prefix for kask skills. Mirrors `extensions/` for extensions.
 pub const KASK_SKILLS_S3_PREFIX: &str = "kask-skills";
 
+/// zed-kask: the content hash of a kask skill package.
+///
+/// A kask skill package is the triple `(SKILL.md, manifest.yaml, *.j2
+/// templates)`. "Modified" = this hash differs from the shipped hash. The
+/// hash is order-independent (files are sorted by name) and length-prefixed
+/// per file so adjacent file boundaries can't collide. Used by the kask
+/// extensions panel to badge bundled skills the user has changed; the same
+/// function will identify package revisions on the extension-toml publish
+/// path.
+pub fn kask_skill_package_hash(files: &[(&str, &[u8])]) -> String {
+    let mut sorted: Vec<(&str, &[u8])> = files.iter().copied().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    let mut hasher = Sha256::new();
+    for (name, bytes) in &sorted {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    }
+    hex::encode(hasher.finalize())
+}
+
+#[cfg(test)]
+mod package_hash_tests {
+    use super::kask_skill_package_hash;
+
+    #[test]
+    fn order_independent_and_stable() {
+        let a = kask_skill_package_hash(&[("SKILL.md", b"body"), ("manifest.yaml", b"m")]);
+        let b = kask_skill_package_hash(&[("manifest.yaml", b"m"), ("SKILL.md", b"body")]);
+        assert_eq!(a, b, "hash must be order-independent");
+    }
+
+    #[test]
+    fn content_change_detected() {
+        let a = kask_skill_package_hash(&[("SKILL.md", b"body")]);
+        let b = kask_skill_package_hash(&[("SKILL.md", b"body2")]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn empty_vs_nonempty_differ() {
+        let empty = kask_skill_package_hash(&[]);
+        let one = kask_skill_package_hash(&[("SKILL.md", b"x")]);
+        assert_ne!(empty, one);
+        assert_eq!(empty, kask_skill_package_hash(&[]));
+    }
+
+    #[test]
+    fn boundary_safety_no_collision() {
+        // `f` + "abc" must not collide with `f1` + "a" and `f2` + "bc".
+        let a = kask_skill_package_hash(&[("f", b"abc")]);
+        let b = kask_skill_package_hash(&[("f1", b"a"), ("f2", b"bc")]);
+        assert_ne!(a, b);
+    }
+}
+
 /// zed-kask: Resolve the kask marketplace base URL.
 ///
 /// Decoupled from `server_url` (which points at Zed's cloud for login,

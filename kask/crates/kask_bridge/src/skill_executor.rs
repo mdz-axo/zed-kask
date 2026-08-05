@@ -18,11 +18,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hkask_templates::{
-    ManifestExecutor, load_manifest_from_yaml, process_manifest_yaml, validate_inputs,
-};
+use fs::Fs;
+use hkask_templates::{ManifestExecutor, load_manifest_from_yaml, validate_inputs};
 use hkask_types::InferencePort;
 use serde_json::Value;
+use std::path::Path;
 
 /// Context keys the runtime injects itself (not user-supplied params), excluded
 /// from the unknown-key check in `validate_inputs`. `task` is injected by the
@@ -151,24 +151,21 @@ impl BridgeManifestExecutor {
         self
     }
 
-    /// Resolve a skill's manifest YAML, preferring the filesystem copy and
-    /// falling back to the embedded (build-time) copy. The filesystem copy is
-    /// authoritative during development — YAML/J2 edits take effect immediately
-    /// without recompilation. The embedded copy is a fallback for production
-    /// deployments where the registry directory may not exist on disk.
+    /// Resolve a skill's manifest YAML from the filesystem. Disk is the
+    /// single runtime source — there is no compiled-in fallback. The shipped
+    /// manifests are seeded to disk at startup by the registry seeding path,
+    /// so a fresh install has the full manifest set on disk and YAML edits
+    /// take effect immediately without recompilation.
     ///
     /// Returns the YAML content and its trust provenance. Filesystem manifests
-    /// are the primary source (trusted in dev, untrusted in production per
-    /// provenance signal). Embedded manifests are trusted by construction
-    /// (compiled into the binary). The caller emits a provenance signal so an
-    /// operator reading logs can distinguish "built-in skill executed" from
-    /// "filesystem skill executed". Gating high-risk actions on provenance is a
+    /// are untrusted (operator-editable). The caller emits a provenance signal
+    /// so an operator reading logs can distinguish "shipped skill executed"
+    /// from a manually-added one. Gating high-risk actions on provenance is a
     /// future-wiring target; currently the executor logs but does not restrict.
     fn manifest_yaml(
         &self,
         skill_name: &str,
     ) -> Option<(std::borrow::Cow<'static, str>, ManifestProvenance)> {
-        // Filesystem first — allows YAML/J2 edits without recompilation.
         let path = self.manifest_path(skill_name);
         if path.is_file() {
             match std::fs::read_to_string(&path) {
@@ -187,14 +184,85 @@ impl BridgeManifestExecutor {
                 }
             }
         }
-        // Embedded fallback — for production where registry dir is absent.
-        if let Some(yaml) = process_manifest_yaml(skill_name) {
-            return Some((
-                std::borrow::Cow::Borrowed(yaml),
-                ManifestProvenance::Embedded,
-            ));
-        }
         None
+    }
+}
+
+/// Materialise the shipped hKask registry (process manifests + Jinja2/YAML
+/// templates) onto the user's disk if missing. The disk copy is the single
+/// runtime source of truth — `BridgeManifestExecutor::manifest_yaml` and
+/// `TemplateRenderer::load` read exclusively from disk, so YAML/J2 edits take
+/// effect immediately without recompilation. The compiled seed payload exists
+/// solely so a self-contained binary can populate the registry on a fresh
+/// install with no source tree.
+///
+/// Existing files are **never overwritten** — user edits are sovereign. A
+/// user who deletes a shipped manifest/template will see it re-seeded on the
+/// next startup.
+///
+/// `registry_root` is the on-disk registry root (e.g.
+/// `data_dir()/agents/registry/`). Writes:
+/// - `registry_root/manifests/<skill>.yaml` (process manifests)
+/// - `registry_root/templates/<skill>/manifest.yaml` (per-skill template manifests)
+/// - `registry_root/templates/<skill>/<file>.j2` (Jinja2 templates)
+/// - `registry_root/templates/<skill>/<file>.yaml` (YAML sub-manifests / reference docs)
+pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
+    let manifests_dir = registry_root.join("manifests");
+    for (name, content) in hkask_templates::process_manifest_seed() {
+        let path = manifests_dir.join(format!("{name}.yaml"));
+        if fs.is_file(&path).await {
+            continue;
+        }
+        if let Err(e) = fs.create_dir(&manifests_dir).await {
+            tracing::warn!(
+                "Failed to create manifests dir '{}': {e}",
+                manifests_dir.display()
+            );
+            break;
+        }
+        if let Err(e) = fs.write(&path, content.as_bytes()).await {
+            tracing::warn!("Failed to seed process manifest '{name}': {e}");
+        }
+    }
+
+    let templates_dir = registry_root.join("templates");
+    // Per-skill template manifests.
+    for (skill, content) in hkask_templates::template_manifest_seed() {
+        let skill_dir = templates_dir.join(skill);
+        let path = skill_dir.join("manifest.yaml");
+        if fs.is_file(&path).await {
+            continue;
+        }
+        let _ = fs.create_dir(&skill_dir).await;
+        if let Err(e) = fs.write(&path, content.as_bytes()).await {
+            tracing::warn!("Failed to seed template manifest for '{skill}': {e}");
+        }
+    }
+    // Jinja2 templates (key is `<skill>/<file>.j2`).
+    for (key, content) in hkask_templates::template_file_seed() {
+        let path = templates_dir.join(key);
+        if fs.is_file(&path).await {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            let _ = fs.create_dir(parent).await;
+        }
+        if let Err(e) = fs.write(&path, content.as_bytes()).await {
+            tracing::warn!("Failed to seed template '{key}': {e}");
+        }
+    }
+    // YAML template files (key is `<skill>/<file>.yaml`, excluding manifest.yaml).
+    for (key, content) in hkask_templates::template_yaml_file_seed() {
+        let path = templates_dir.join(key);
+        if fs.is_file(&path).await {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            let _ = fs.create_dir(parent).await;
+        }
+        if let Err(e) = fs.write(&path, content.as_bytes()).await {
+            tracing::warn!("Failed to seed YAML template '{key}': {e}");
+        }
     }
 }
 
@@ -216,7 +284,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // runtime-injected system keys (listed in SKILL_CONTEXT_SYSTEM_KEYS).
         let (manifest_yaml, provenance) = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
-                "No manifest found for skill '{skill_name}' (checked embedded registry and {})",
+                "No manifest found for skill '{skill_name}' on disk at {}",
                 self.manifest_path(skill_name).display()
             )
         })?;

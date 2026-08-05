@@ -38,9 +38,9 @@ use acp_thread::{
 use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
     AGENTS_DIR_NAME, ProjectSkillGroup, SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, builtin_skills, embedded_global_skills,
-    global_skills_dir, load_marketplace_skills, load_skills_from_directory,
-    parse_skill_frontmatter, project_skills_relative_path,
+    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
+    load_marketplace_skills, load_skills_from_directory, parse_skill_frontmatter,
+    project_skills_relative_path, seed_shipped_skills,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -724,6 +724,19 @@ impl NativeAgent {
             let _ = fs.create_file(&migration_marker, Default::default()).await;
         }
 
+        // zed-kask: Materialise the shipped kask skills onto the user's disk
+        // if missing. The disk copy is the single runtime source of truth —
+        // the compiled seed payload exists only so a self-contained binary
+        // can populate the catalog on a fresh install. Existing files are
+        // never overwritten (user edits are sovereign). Must run before the
+        // disk load below so freshly-seeded skills appear in the catalog.
+        // Skipped on the fake filesystem used in tests so skill-count
+        // assertions aren't polluted by the 42 shipped skills; seeding is
+        // unit-tested directly in `agent_skills`.
+        if !fs.is_fake() {
+            seed_shipped_skills(fs.as_ref(), &skills_dir).await;
+        }
+
         if !fs.is_dir(&skills_dir).await {
             // Skills directory doesn't exist; revert state so the next
             // user trigger retries.
@@ -1242,9 +1255,6 @@ impl NativeAgent {
                 // Disk globals first so they win ties in `apply_skill_overrides`.
                 let mut all_globals = disk_globals;
                 all_globals.extend(marketplace_skills);
-                for skill in embedded_global_skills() {
-                    all_globals.push(Ok(skill));
-                }
                 all_globals
             })
         };

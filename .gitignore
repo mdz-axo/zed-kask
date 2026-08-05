@@ -1,4 +1,5 @@
 **/*.db
+**/*.salt
 **/*.proptest-regressions
 **/cargo-target
 **/target

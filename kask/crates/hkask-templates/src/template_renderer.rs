@@ -14,7 +14,6 @@
 //! from reading files outside the base path (CWE-22).
 
 use crate::ports::{Result, TemplateError};
-use crate::{template_file, template_yaml_file};
 use hkask_types::NotFound;
 use minijinja::UndefinedBehavior;
 use serde_json::Value;
@@ -63,44 +62,17 @@ impl TemplateRenderer {
         &self.base_path
     }
 
-    /// Load a template by ref, preferring the filesystem copy and falling
-    /// back to the embedded (build-time) copy.
+    /// Load a template by ref from the filesystem. Disk is the single
+    /// runtime source — there is no compiled-in fallback. The shipped
+    /// templates are seeded to disk at startup by the registry seeding path,
+    /// so a fresh install has the full template tree on disk and edits take
+    /// effect immediately without recompilation.
     ///
-    /// Resolution order: filesystem as-is → filesystem `.j2` → filesystem `.yaml`
-    /// → embedded `.j2` → embedded `.yaml`. The filesystem is primary so YAML/J2
-    /// edits take effect immediately without recompilation. Embedded copies are
-    /// a fallback for production deployments where the registry directory may
-    /// not exist on disk.
+    /// Resolution order on disk: ref as-is → ref `.j2` → ref `.yaml`.
     ///
-    /// `step_ordinal` is used for error messages and heal callbacks.
+    /// `step_ordinal` is used for error messages.
     pub fn load(&self, template_ref: &str, step_ordinal: u32) -> Result<String> {
-        // Filesystem first — allows J2/YAML edits without recompilation.
-        match self.load_from_disk(template_ref, step_ordinal) {
-            Ok(content) => return Ok(content),
-            Err(TemplateError::NotFound(_)) => {
-                // Not on disk — fall through to embedded fallback.
-            }
-            Err(e) => {
-                // Non-NotFound error (e.g., PathTraversal) — log and fall
-                // through to embedded. The embedded copy is safe by construction.
-                tracing::warn!(
-                    "Filesystem template load failed for '{template_ref}' (step {step_ordinal}): {e}; falling back to embedded"
-                );
-            }
-        }
-        // Embedded fallback — for production where registry dir is absent.
-        if let Some(content) = template_file(template_ref) {
-            return Ok(content.to_string());
-        }
-        if let Some(content) = template_yaml_file(template_ref) {
-            return Ok(content.to_string());
-        }
-        Err(TemplateError::NotFound(NotFound {
-            entity_type: "template".to_string(),
-            id: format!(
-                "step {step_ordinal}: template '{template_ref}' not found on filesystem or in embedded registry"
-            ),
-        }))
+        self.load_from_disk(template_ref, step_ordinal)
     }
 
     /// Load a template from the filesystem, trying the ref as-is, then with
@@ -249,13 +221,8 @@ pub fn render_minijinja(
                     return Ok(Some(content));
                 }
             }
-            // Embedded fallback — for production where registry dir is absent.
-            if let Some(content) = template_file(name) {
-                return Ok(Some(content.to_string()));
-            }
-            if let Some(content) = template_yaml_file(name) {
-                return Ok(Some(content.to_string()));
-            }
+            // Disk-only — no compiled-in fallback. The shipped templates are
+            // seeded to disk at startup; edits take effect immediately.
             Ok(None)
         },
     );

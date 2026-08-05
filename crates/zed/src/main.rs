@@ -1589,10 +1589,59 @@ fn main() {
                                         );
                                         // Await the child so it doesn't get
                                         // reaped prematurely. The process runs
-                                        // for the lifetime of the app; when the
-                                        // app exits, the tokio runtime drops and
-                                        // the child is killed.
-                                        let _ = child.wait_with_output().await;
+                                        // for the lifetime of the app; when
+                                        // the app exits, the tokio runtime
+                                        // drops and the child is killed.
+                                        // Surface the exit status and stderr
+                                        // so a server that crashes at startup
+                                        // (a schema re-apply conflict, a bound
+                                        // port, or a binary built with the
+                                        // `test-support` feature, which panics
+                                        // on DB ops) is diagnosable instead of
+                                        // silently leaving nothing on the port
+                                        // for the kask extensions panel to
+                                        // discover as "Connection refused".
+                                        match child.wait_with_output().await {
+                                            Ok(output) if output.status.success() => {
+                                                log::warn!(
+                                                    "hKask local collab server exited \
+                                                     cleanly (status {}). The kask \
+                                                     extensions panel will no longer \
+                                                     be able to fetch skills from \
+                                                     http://localhost:{http_port}/api/kask-skills.",
+                                                    output.status
+                                                );
+                                            }
+                                            Ok(output) => {
+                                                let stderr =
+                                                    String::from_utf8_lossy(&output.stderr);
+                                                log::warn!(
+                                                    "hKask local collab server exited \
+                                                     with status {status}. The kask \
+                                                     extensions panel will not be able \
+                                                     to fetch skills from \
+                                                     http://localhost:{http_port}/api/kask-skills. \
+                                                     Remediation: rebuild with \
+                                                     `cargo build -p collab --features \
+                                                     sqlite` (a `cargo test` build \
+                                                     poisons the bin with the \
+                                                     `test-support` feature, which \
+                                                     panics on DB ops), or set \
+                                                     kask.collab.enabled = false in \
+                                                     settings. stderr: {stderr}",
+                                                    status = output.status,
+                                                );
+                                            }
+                                            Err(e) => {
+                                                log::warn!(
+                                                    "hKask local collab server wait \
+                                                     failed: {e}. The kask extensions \
+                                                     panel will not be able to fetch \
+                                                     skills from \
+                                                     http://localhost:{http_port}/api/kask-skills."
+                                                );
+                                            }
+                                        }
                                     }
                                     Err(e) => {
                                         log::warn!(
@@ -1632,6 +1681,46 @@ fn main() {
                          HKASK_MARKETPLACE_URL / server_url / localhost:3000"
                     );
                 }
+
+                // zed-kask: Resolve the on-disk registry paths and seed if needed.
+               // This runs in the async block (before cx.update) because seeding
+               // requires .await on the Fs trait. Disk is the single runtime
+               // source — there is no compiled-in fallback. In dev (CWD = repo
+               // root) we point at the live repo source tree so edits to
+                // `kask/registry/` take effect without recompilation. In
+                // production (no source tree) we seed the compiled payload to
+                // `data_dir()/agents/registry/` and point there. User/operator
+                // edits to the on-disk files are sovereign.
+                let dev_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
+                let dev_templates_dir = std::path::PathBuf::from("kask/registry/templates");
+                let seeded_registry_root =
+                    paths::data_dir().join("agents").join("registry");
+                let using_dev_source =
+                    dev_manifests_dir.is_dir() && dev_templates_dir.is_dir();
+                let (registry_manifests_dir, registry_templates_dir) = if using_dev_source {
+                    log::info!(
+                        "hKask registry: using live repo source (dev) at {}",
+                        dev_manifests_dir.display()
+                    );
+                    (dev_manifests_dir, dev_templates_dir)
+                } else {
+                    let seeded_manifests = seeded_registry_root.join("manifests");
+                    let seeded_templates = seeded_registry_root.join("templates");
+                    let fs = app_state_for_deferred.fs.clone();
+                    if !fs.is_fake() {
+                        if let Some(parent) = seeded_registry_root.parent() {
+                            let _ = fs.create_dir(parent).await;
+                        }
+                        let _ = fs.create_dir(&seeded_registry_root).await;
+                        kask_bridge::seed_registry_to_disk(fs.as_ref(), &seeded_registry_root)
+                            .await;
+                    }
+                    log::info!(
+                        "hKask registry: using seeded on-disk registry at {}",
+                        seeded_registry_root.display()
+                    );
+                    (seeded_manifests, seeded_templates)
+                };
 
                 // Sync model-dependent wiring (inside cx.update).
                 cx.update(|cx| {
@@ -1684,31 +1773,10 @@ fn main() {
 
                     if let Some(configured) = model_registry.default_model() {
                         let async_cx = cx.to_async();
-                        // Manifest registry paths. These are the *primary*
-                        // source at runtime — YAML/J2 edits take effect
-                        // immediately without recompilation. The embedded
-                        // copies (via `hkask-templates/build.rs` and
-                        // `process_manifest_yaml()`) are fallbacks for
-                        // production deployments where the registry directory
-                        // may not exist on disk.
-                        // For installed binaries without the source tree, these
-                        // may not resolve, and that's fine — the embedded
-                        // registry handles it.
-                        let registry_manifests_dir = std::path::PathBuf::from("kask/registry/manifests");
-                        let registry_templates_dir = std::path::PathBuf::from("kask/registry/templates");
-                        if !registry_manifests_dir.is_dir() {
-                            log::debug!(
-                                "hKask manifest dir '{}' not found — relying on embedded registry",
-                                registry_manifests_dir.display()
-                            );
-                        }
-                        if !registry_templates_dir.is_dir() {
-                            log::debug!(
-                                "hKask templates dir '{}' not found — relying on embedded templates",
-                                registry_templates_dir.display()
-                            );
-                        }
-
+                        // Registry paths were resolved and seeded in the async
+                        // block above (dev repo source or seeded data_dir).
+                        // Disk is the single runtime source — no compiled-in
+                        // fallback.
                         let inference_model: Arc<dyn language_model::LanguageModel> = {
                             let kask_default = kask_settings.models.effective_default_model();
                             if kask_default != kask_bridge::KaskModelsSettings::DEFAULT_INFERENCE_MODEL {

@@ -107,6 +107,27 @@ enum ExtensionFilter {
     NotInstalled,
 }
 
+// zed-kask: the source of a skill that ships with the install. Shown in the
+// panel when the "Bundled skills" toggle is on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BundledSource {
+    BuiltIn,
+    Shipped,
+}
+
+// zed-kask: a skill that ships with the install. `modified` is true when an
+// on-disk override at `global_skills_dir()/<name>/SKILL.md` hashes differently
+// from the shipped SKILL.md. v1 compares over the SKILL.md file (the file a
+// user override contains); the full-package hash (manifest.yaml + j2) is the
+// next slice, pending a public accessor for the embedded manifest/templates.
+#[derive(Clone, Debug)]
+struct BundledSkillEntry {
+    name: SharedString,
+    description: SharedString,
+    source: BundledSource,
+    modified: bool,
+}
+
 pub struct KaskExtensionsPage {
     list: UniformListScrollHandle,
     is_fetching_skills: bool,
@@ -129,6 +150,15 @@ pub struct KaskExtensionsPage {
     fs: Option<Arc<dyn fs::Fs>>,
     // zed-kask: track the client for credentials (auth headers)
     client: Option<Arc<client::Client>>,
+    // zed-kask: bundled-skills toggle + inventory. "Bundled skills" are the
+    // skills that ship with the install (embedded global + built-in). When
+    // `show_bundled` is on they're listed alongside the marketplace catalog;
+    // each is badged "Modified" when an on-disk override hashes differently
+    // from the shipped SKILL.md.
+    show_bundled: bool,
+    bundled_entries: Vec<BundledSkillEntry>,
+    filtered_bundled_indices: Vec<usize>,
+    bundled_fetch_task: Option<Task<()>>,
 }
 
 impl KaskExtensionsPage {
@@ -176,6 +206,10 @@ impl KaskExtensionsPage {
                 http_client: Some(http_client),
                 fs: Some(fs),
                 client: Some(app_state.client.clone()),
+                show_bundled: false,
+                bundled_entries: Vec::new(),
+                filtered_bundled_indices: Vec::new(),
+                bundled_fetch_task: None,
                 query_editor,
             };
             this.fetch_kask_skills(cx);
@@ -211,8 +245,30 @@ impl KaskExtensionsPage {
             .map(|(ix, _)| ix)
             .collect();
         self.filtered_remote_skill_indices = indices;
-
+        self.filter_bundled_entries(cx);
         cx.notify();
+    }
+
+    /// zed-kask: compute the filtered bundled-skill indices. Bundled skills
+    /// are filtered by the search query only; the install-status filter does
+    /// not apply (they ship with the app and are always present). Hidden
+    /// entirely when the toggle is off.
+    fn filter_bundled_entries(&mut self, cx: &mut Context<Self>) {
+        let query = self.search_query(cx).map(|q| q.to_lowercase());
+        self.filtered_bundled_indices = if self.show_bundled {
+            (0..self.bundled_entries.len())
+                .filter(|&i| match &query {
+                    None => true,
+                    Some(query) => {
+                        let entry = &self.bundled_entries[i];
+                        entry.name.to_lowercase().contains(query)
+                            || entry.description.to_lowercase().contains(query)
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
     }
 
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
@@ -292,6 +348,110 @@ impl KaskExtensionsPage {
         .detach();
     }
 
+    /// zed-kask: Load the skills that ship with the install (shipped + built-in)
+    /// and detect on-disk modifications. Shipped skills are seeded to disk at
+    /// startup from the compiled seed payload; a bundled skill is "Modified"
+    /// when its on-disk SKILL.md content hash differs from the shipped
+    /// original. v1 compares over the SKILL.md file; the full-package hash
+    /// (manifest.yaml + j2) comparison is the next slice.
+    fn fetch_bundled_skills(&mut self, cx: &mut Context<Self>) {
+        let Some(fs) = self.fs.clone() else {
+            log::warn!("kask-extensions: no filesystem available; cannot load bundled skills.");
+            return;
+        };
+        let task = cx.spawn(async move |this, cx| {
+            let result = async {
+                use std::collections::HashMap;
+
+                let seed = agent_skills::shipped_skill_seed();
+                let mut entries: Vec<BundledSkillEntry> = Vec::with_capacity(seed.len() + 4);
+                let mut seed_content: HashMap<String, &'static str> = HashMap::new();
+                for (name, content) in seed {
+                    let description = match agent_skills::parse_skill_metadata(content) {
+                        Ok(meta) => meta.description,
+                        Err(error) => {
+                            log::warn!(
+                                "kask-extensions: shipped skill '{name}' failed to parse: {error}"
+                            );
+                            continue;
+                        }
+                    };
+                    entries.push(BundledSkillEntry {
+                        name: (*name).into(),
+                        description: description.into(),
+                        source: BundledSource::Shipped,
+                        modified: false,
+                    });
+                    seed_content.insert((*name).to_string(), *content);
+                }
+                for skill in agent_skills::builtin_skills() {
+                    entries.push(BundledSkillEntry {
+                        name: skill.name.clone().into(),
+                        description: skill.description.clone().into(),
+                        source: BundledSource::BuiltIn,
+                        modified: false,
+                    });
+                    if let Some(content) =
+                        agent_skills::builtin_skill_content(&skill.skill_file_path)
+                    {
+                        seed_content.insert(skill.name.clone(), content);
+                    }
+                }
+                entries.sort_by(|a, b| a.name.cmp(&b.name));
+                entries.dedup_by(|a, b| a.name == b.name);
+
+                let globals_dir = agent_skills::global_skills_dir();
+                for entry in entries.iter_mut() {
+                    let disk_skill_md = globals_dir.join(&*entry.name).join("SKILL.md");
+                    if !fs.is_file(&disk_skill_md).await {
+                        continue;
+                    }
+                    let Some(seed_bytes) = seed_content.get(&*entry.name) else {
+                        // Override exists with no shipped reference: a
+                        // user-added skill, not a modification of a bundled
+                        // one. Don't badge it (no original to diff).
+                        continue;
+                    };
+                    match fs.load(&disk_skill_md).await {
+                        Ok(disk_content) => {
+                            let seed_hash = crate::publish::kask_skill_package_hash(&[(
+                                "SKILL.md",
+                                seed_bytes.as_bytes(),
+                            )]);
+                            let disk_hash = crate::publish::kask_skill_package_hash(&[(
+                                "SKILL.md",
+                                disk_content.as_bytes(),
+                            )]);
+                            entry.modified = seed_hash != disk_hash;
+                        }
+                        Err(error) => log::warn!(
+                            "kask-extensions: failed to read on-disk override for '{}': {}",
+                            entry.name,
+                            error
+                        ),
+                    }
+                }
+                Ok::<_, anyhow::Error>(entries)
+            }
+            .await;
+
+            this.update(cx, |this, cx| {
+                match result {
+                    Ok(entries) => {
+                        this.bundled_entries = entries;
+                        this.filter_extension_entries(cx);
+                    }
+                    Err(error) => {
+                        log::warn!("kask-extensions: failed to load bundled skills: {error:#}")
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        self.bundled_fetch_task = Some(task);
+    }
+
     /// zed-kask: Check the install status of a kask skill. Mirrors
     /// `extension_status` but checks the `SkillIndex` for installed
     /// marketplace skills and the `outstanding_operations` map for in-flight
@@ -320,14 +480,24 @@ impl KaskExtensionsPage {
         cx: &mut Context<Self>,
     ) -> Vec<MarketplaceCard> {
         let mut cards = Vec::new();
+        // zed-kask: bundled skills render first (indices [0, bundled_count)),
+        // then marketplace skills. The combined count sizes `uniform_list` in
+        // `render`.
+        let bundled_count = self.filtered_bundled_indices.len();
         for ix in range {
-            if ix >= self.filtered_remote_skill_indices.len() {
-                break;
+            if ix < bundled_count {
+                let bi = self.filtered_bundled_indices[ix];
+                let entry = self.bundled_entries[bi].clone();
+                cards.push(self.render_bundled_card(entry));
+            } else {
+                let market_ix = ix - bundled_count;
+                if market_ix >= self.filtered_remote_skill_indices.len() {
+                    break;
+                }
+                let skill_ix = self.filtered_remote_skill_indices[market_ix];
+                let skill = self.remote_skill_entries[skill_ix].clone();
+                cards.push(self.render_skill_card(skill, cx));
             }
-            let skill_ix = self.filtered_remote_skill_indices[ix];
-            let skill = self.remote_skill_entries[skill_ix].clone();
-            let card = self.render_skill_card(skill, cx);
-            cards.push(card);
         }
         cards
     }
@@ -451,6 +621,34 @@ impl KaskExtensionsPage {
                             )),
                         ),
                 ),
+        )
+    }
+
+    /// zed-kask: Render a bundled-skill card (shipped with the install).
+    /// Simpler than a marketplace card: no install/vote buttons, since the
+    /// skill ships with the app. A "Modified" badge marks on-disk overrides
+    /// whose package hash differs from the shipped original.
+    fn render_bundled_card(&self, entry: BundledSkillEntry) -> MarketplaceCard {
+        let source_label: &'static str = match entry.source {
+            BundledSource::BuiltIn => "Built-in",
+            BundledSource::Shipped => "Bundled",
+        };
+        let mut header = h_flex()
+            .gap_2()
+            .child(Label::new(entry.name).color(Color::Default))
+            .child(Label::new(source_label).color(Color::Muted));
+        if entry.modified {
+            header = header.child(Label::new("Modified").color(Color::Modified));
+        }
+        MarketplaceCard::new().child(
+            h_flex().w_full().gap_2().child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1()
+                    .child(header)
+                    .child(Label::new(entry.description).color(Color::Muted)),
+            ),
         )
     }
 
@@ -813,6 +1011,35 @@ impl Render for KaskExtensionsPage {
                             .flex_wrap()
                             .gap_2()
                             .child(self.render_search(cx))
+                            // zed-kask: toggle to include the skills that ship with the install
+                            // (embedded global + built-in) in the list. When on, on-disk
+                            // overrides that hash differently from the shipped package are
+                            // badged "Modified".
+                            .child(
+                                Button::new(
+                                    "bundled-skills-toggle",
+                                    if self.show_bundled {
+                                        "Bundled skills: On"
+                                    } else {
+                                        "Bundled skills: Off"
+                                    },
+                                )
+                                .style(if self.show_bundled {
+                                    ButtonStyle::Filled
+                                } else {
+                                    ButtonStyle::Subtle
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _event, _window, cx| {
+                                        this.show_bundled = !this.show_bundled;
+                                        if this.show_bundled && this.bundled_entries.is_empty() {
+                                            this.fetch_bundled_skills(cx);
+                                        }
+                                        this.filter_extension_entries(cx);
+                                        this.scroll_to_top(cx);
+                                    },
+                                )),
+                            )
                             .child(
                                 div().child(
                                     ToggleButtonGroup::single_row(
@@ -862,8 +1089,9 @@ impl Render for KaskExtensionsPage {
             // provides concept (v1 is skills-only per plan §0). Extension
             // upsell banners are also irrelevant to kask skills and removed.
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                // zed-kask: count is just the filtered skill entries.
-                let count = self.filtered_remote_skill_indices.len();
+                // zed-kask: count is the filtered bundled + marketplace entries.
+                let count =
+                    self.filtered_bundled_indices.len() + self.filtered_remote_skill_indices.len();
 
                 if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()

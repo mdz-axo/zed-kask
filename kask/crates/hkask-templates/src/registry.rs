@@ -22,23 +22,49 @@ use std::collections::HashMap;
 // Auto-generated per-skill template manifests (from build.rs).
 include!(concat!(env!("OUT_DIR"), "/manifest_skills.rs"));
 
-/// Look up an embedded process manifest (FlowDef cascade) by skill name.
+/// Look up the compiled-in process manifest (FlowDef cascade) for a skill.
 ///
-/// Process manifests live at `registry/manifests/<skill>.yaml` and are
-/// embedded at build time via `include_str!`. This is the fallback lookup
-/// path for `SkillManifestExecutor::has_manifest` and `execute_skill` —
-/// the filesystem is checked first so YAML edits take effect without
-/// recompilation. The embedded copies are used when the registry directory
-/// is not present on disk (production deployments).
+/// Process manifests are authored at `registry/manifests/<skill>.yaml` and
+/// compiled in via `include_str!` as a **seed payload**. At startup
+/// [`process_manifest_seed`] materialises them to disk; the runtime reads
+/// exclusively from disk (via `BridgeManifestExecutor::manifest_yaml`). This
+/// accessor remains available for tests and the seeding path.
 ///
-/// Returns the raw YAML content for the skill, or `None` if no embedded
-/// manifest exists for that name. Callers that need a parsed manifest
-/// should pass the returned string to `load_manifest_from_yaml`.
+/// Returns the raw YAML content for the skill, or `None` if no manifest
+/// exists for that name.
 pub fn process_manifest_yaml(skill_name: &str) -> Option<&'static str> {
     PROCESS_MANIFEST_YAMLS
         .iter()
         .find(|(name, _)| *name == skill_name)
         .map(|(_, yaml)| *yaml)
+}
+
+/// The full compiled-in process-manifest seed payload as `(skill_name, yaml)`
+/// pairs. Seed-only: used by the registry seeding path to write the shipped
+/// manifests to disk. Not read at runtime — the runtime resolves manifests
+/// from disk.
+pub fn process_manifest_seed() -> &'static [(&'static str, &'static str)] {
+    PROCESS_MANIFEST_YAMLS
+}
+
+/// The full compiled-in Jinja2 template seed payload as `(rel_path, content)`
+/// pairs, where `rel_path` is `<skill>/<file>.j2`. Seed-only.
+pub fn template_file_seed() -> &'static [(&'static str, &'static str)] {
+    TEMPLATE_FILES
+}
+
+/// The full compiled-in YAML template seed payload as `(rel_path, content)`
+/// pairs, where `rel_path` is `<skill>/<file>.yaml` (excluding `manifest.yaml`).
+/// Seed-only.
+pub fn template_yaml_file_seed() -> &'static [(&'static str, &'static str)] {
+    TEMPLATE_YAML_FILES
+}
+
+/// The full compiled-in per-skill template-manifest seed payload as
+/// `(skill_name, manifest_yaml)` pairs (`registry/templates/<skill>/manifest.yaml`).
+/// Seed-only.
+pub fn template_manifest_seed() -> &'static [(&'static str, &'static str)] {
+    MANIFEST_YAMLS
 }
 
 /// Look up an embedded Jinja2 template file by its `template_ref`.

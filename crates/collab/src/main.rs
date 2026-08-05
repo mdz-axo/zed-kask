@@ -196,16 +196,37 @@ async fn setup_app_database(config: &Config) -> Result<()> {
     // (Postgres), the schema is applied out-of-band and the migration SQL
     // is Postgres-specific, so this only runs for SQLite backends.
     if db.pool.get_database_backend() == sea_orm::DatabaseBackend::Sqlite {
-        let migration_sql = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/migrations.sqlite/20221109000000_test_schema.sql"
-        ));
-        db.pool
-            .execute(sea_orm::Statement::from_string(
+        // zed-kask: only apply the bootstrap schema when the local SQLite
+        // database is empty. The migration SQL uses `CREATE TABLE "users"`
+        // (not `IF NOT EXISTS`), so re-applying it on every startup crashes
+        // the second run with "table users already exists". That silently
+        // kills the auto-launched local collab server and surfaces in the
+        // kask extensions panel as "Connection refused" on
+        // /api/kask-skills with no bridging log. `users` is the first table
+        // the bootstrap SQL creates, so its presence indicates the schema
+        // was already bootstrapped on a prior run and the re-apply can be
+        // skipped. (A partial-bootstrap crash mid-apply is a pre-existing
+        // edge case this sentinel does not handle.)
+        let already_bootstrapped = db
+            .pool
+            .query_one(sea_orm::Statement::from_string(
                 sea_orm::DatabaseBackend::Sqlite,
-                migration_sql,
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users' LIMIT 1",
             ))
-            .await?;
+            .await?
+            .is_some();
+        if !already_bootstrapped {
+            let migration_sql = include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/migrations.sqlite/20221109000000_test_schema.sql"
+            ));
+            db.pool
+                .execute(sea_orm::Statement::from_string(
+                    sea_orm::DatabaseBackend::Sqlite,
+                    migration_sql,
+                ))
+                .await?;
+        }
     }
 
     db.initialize_notification_kinds().await?;
