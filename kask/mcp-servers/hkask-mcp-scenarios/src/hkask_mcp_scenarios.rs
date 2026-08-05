@@ -370,6 +370,15 @@ impl ScenariosServer {
 
     /// Expected predecessor for each pipeline-stage tool.
     /// Returns None for tools that can be called independently.
+    ///
+    /// The chain encodes the analyst maturity ladder: frame → brainstorm →
+    /// build → quantify → calibrate → synthesize → score → calibration.
+    /// The tree-based tools (`scenario_from_markets_set`, `scenario_propagate`)
+    /// sit at the *top* of this ladder — an analyst earns the full event tree
+    /// by working through the simpler modes first (2x2 matrix, single-market
+    /// bridges, research-grounded framing). They have no predecessor enforced
+    /// here (they are entry points for already-mature analyses), but the
+    /// maturity note in their descriptions points at the ladder.
     fn expected_predecessor(tool: &str) -> Option<&'static str> {
         match tool {
             "scenario_frame_document" => Some("scenario_frame"),
@@ -710,8 +719,17 @@ impl ScenariosServer {
     /// event tree (T4a). Per-record gates from `scenario_from_markets` apply;
     /// dependency edges are caller-authored (the server computes marginals
     /// but never invents conditional probabilities).
+    ///
+    /// MATURITY NOTE: this is the detailed end of the scenario-modeling
+    /// ladder. The simple path — companies `scenario_analysis` (Schwartz 2x2)
+    /// → `scenario_from_companies` → single-market `scenario_from_markets` —
+    /// is the intended on-ramp; an analyst typically arrives at a full tree
+    /// only after research (company, industry, economy, technology,
+    /// management, domain experts) reveals which events actually condition
+    /// each other. The 2x2 mode is retained as a first-class citizen, not a
+    /// legacy path.
     #[tool(
-        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the scenario_from_markets gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings."
+        description = "Compose a set of prediction-market records (from hkask-mcp-prediction-markets) into a validated EventTree with caller-authored dependency edges. Each record passes the scenario_from_markets gates; question-overlap duplicates are flagged; cycles and CPT-size violations are rejected. Returns the resolved tree (marginals, joint probability) plus composition warnings. Detailed-mode tool: the simpler 2x2 path (companies scenario_analysis → scenario_from_companies) is the intended on-ramp before wiring full trees."
     )]
     pub async fn scenario_from_markets_set(
         &self,

@@ -65,6 +65,12 @@ pub struct PortfolioWidget {
     /// provenance incomplete, malformed date, tool error). Never silently
     /// dropped (repo `.rules`).
     dispatch_error: Option<String>,
+    /// Composed revision request surfaced as a copyable draft when the
+    /// conversation injector is absent (no active conversation). Lets the user
+    /// still use the "I disagree" body even when it can't be injected. Cleared
+    /// when a successful inject fires (repo `.rules`: visible, not a silent
+    /// no-op).
+    disagree_draft: Option<String>,
 }
 
 impl PortfolioWidget {
@@ -99,6 +105,7 @@ impl PortfolioWidget {
             to_input,
             dispatch_in_flight: None,
             dispatch_error: None,
+            disagree_draft: None,
         }
     }
 
@@ -478,6 +485,83 @@ impl PortfolioWidget {
         })
         .detach();
     }
+
+    /// Compose the provenance-scoped "I disagree" body. References the artifact's
+    /// provenance (portfolio name + the displayed date range) so the agent can
+    /// correlate the revision request to the exact `portfolio_returns` result
+    /// the widget rendered. Falls back to a generic "the portfolio dashboard"
+    /// framing when provenance or the returns range is absent (grill-me edge
+    /// case b).
+    fn compose_disagree_body(&self) -> String {
+        let portfolio_name = self
+            .body
+            .provenance
+            .args
+            .get("portfolio")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.body.portfolio.clone());
+        let from = self
+            .body
+            .returns
+            .as_ref()
+            .and_then(|returns| returns.from.clone());
+        let to = self
+            .body
+            .returns
+            .as_ref()
+            .and_then(|returns| returns.to.clone());
+        match (portfolio_name, from, to) {
+            (Some(name), Some(from), Some(to)) => format!(
+                "Re: the portfolio_returns result for portfolio '{name}' over {from} to {to}. I believe a displayed figure is wrong: "
+            ),
+            _ => "Re: the portfolio dashboard. I believe a displayed figure is wrong: ".to_string(),
+        }
+    }
+
+    /// The "I disagree" affordance handler (C). Composes the provenance-scoped
+    /// revision request and injects it back into the active conversation via
+    /// the kask `shared_injector()` (D21 widget→agent seam). When no
+    /// conversation is active, surfaces the composed body as a copyable draft
+    /// instead of a silent no-op (repo `.rules`). Never auto-sends when the
+    /// injector is absent — the production injector only pre-fills the
+    /// composer; the user reviews and submits.
+    fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let body = self.compose_disagree_body();
+        tracing::info!(target: "reg.widget.disagree", "REG");
+        if let Some(injector) = hkask_conversation_injector::shared_injector() {
+            // The production injector pre-fills the editor synchronously and
+            // returns a `Task::ready(Ok(()))`; the returned `Result` is always
+            // `Ok` (a strong `Entity<ThreadView>::update` returns `R`, not a
+            // `Result`). Await in a detached task so a hypothetical async impl's
+            // error path is surfaced (not silently dropped — repo `.rules`),
+            // and so `clippy::let_underscore_future` is not triggered.
+            let draft = body.clone();
+            let task = injector.inject(body, window, cx);
+            cx.spawn(async move |this, cx| {
+                if let Err(error) = task.await {
+                    tracing::warn!(
+                        target: "reg.widget.disagree",
+                        error = %error,
+                        "conversation inject failed; surfacing draft"
+                    );
+                    this.update(cx, |this, cx| {
+                        this.disagree_draft = Some(draft);
+                        cx.notify();
+                    })
+                    .log_err();
+                }
+            })
+            .detach();
+            self.disagree_draft = None;
+        } else {
+            // No active conversation: surface the composed body as a draft so
+            // the user can still copy it into chat (visible, not a silent
+            // no-op — repo `.rules`).
+            self.disagree_draft = Some(body);
+        }
+        cx.notify();
+    }
 }
 
 fn attribution_row_element(row: &AttributionRow) -> AnyElement {
@@ -538,8 +622,39 @@ impl Render for PortfolioWidget {
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
-                    }),
+                    })
+                    // C: "I disagree" affordance — composes a provenance-scoped
+                    // revision request back into the active conversation (D21).
+                    .child(
+                        div()
+                            .id("portfolio-disagree")
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.on_disagree_click(window, cx);
+                            }))
+                            .child(
+                                Label::new("I disagree")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Accent),
+                            ),
+                    ),
             )
+            // Fallback draft (no active conversation): surface the composed
+            // body so the user can copy it into chat — visible, not a silent
+            // no-op (repo `.rules`).
+            .when_some(self.disagree_draft.clone(), |this, draft| {
+                this.child(
+                    div()
+                        .p_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(border_color)
+                        .child(
+                            Label::new(draft)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Warning),
+                        ),
+                )
+            })
             // Summary tiles
             .child(
                 h_flex()
@@ -1044,6 +1159,175 @@ mod tests {
                 .unwrap_or_else(|error| error.into_inner())
                 .is_empty(),
             "no dispatch on non-dispatchable provenance"
+        );
+    }
+}
+    // ── "I disagree" affordance tests (C, D21 widget→agent seam) ──────────────
+    //
+    // These mutate the process-global `ConversationInjector` (a separate global
+    // from `TOOL_INVOKER`), so they take `GLOBAL_TEST_LOCK` too and use an RAII
+    // `ConversationInjectorGuard` to reset the global on drop.
+
+    /// Records the body of every `inject` call. `Send + Sync` for the
+    /// `Arc<dyn ConversationInjector>` global.
+    #[derive(Default)]
+    struct MockConversationInjector {
+        bodies: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl hkask_conversation_injector::ConversationInjector for MockConversationInjector {
+        fn inject(
+            &self,
+            body: String,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::App,
+        ) -> gpui::Task<Result<(), String>> {
+            self.bodies
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(body);
+            gpui::Task::ready(Ok(()))
+        }
+    }
+
+    /// RAII guard that restores the conversation-injector global to `None` on
+    /// drop so a test failure cannot leak a mock into sibling tests.
+    struct ConversationInjectorGuard;
+    impl Drop for ConversationInjectorGuard {
+        fn drop(&mut self) {
+            hkask_conversation_injector::set_active_injector(None);
+        }
+    }
+
+    /// Trivial root view for `add_window_view` so the test can obtain a `Window`
+    /// for `on_disagree_click` without rendering `PortfolioWidget` (which would
+    /// need a theme global this leaf crate's tests don't initialise). Renders a
+    /// bare `div()`.
+    struct DummyView;
+    impl Render for DummyView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    fn body_with_returns_and_provenance() -> PortfolioBlockBody {
+        let provenance = BlockProvenance {
+            tool: Some("portfolio_returns".into()),
+            server: Some("hkask-mcp-companies".into()),
+            args: serde_json::json!({ "portfolio": "main" }),
+            span_id: None,
+        };
+        let returns = crate::block::ReturnsBody {
+            portfolio: Some("main".into()),
+            from: Some("2020-01-01".into()),
+            to: Some("2024-12-01".into()),
+            total_return: 0.0,
+            modified_dietz: 0.0,
+            irr: 0.0,
+            irr_converged: false,
+            start_value: 0.0,
+            end_value: 0.0,
+            net_cash_flows: 0.0,
+            cash_flow_count: 0,
+            positions_at_start: 0,
+            positions_at_end: 0,
+        };
+        PortfolioBlockBody {
+            viz: Some("portfolio".into()),
+            portfolio: Some("main".into()),
+            returns: Some(returns),
+            characteristics: std::collections::HashMap::new(),
+            attribution: Vec::new(),
+            provenance,
+        }
+    }
+
+    #[gpui::test]
+    async fn disagree_routes_through_injector(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        let mock = std::sync::Arc::new(MockConversationInjector::default());
+        hkask_conversation_injector::set_active_injector(Some(mock.clone()));
+
+        let body = body_with_returns_and_provenance();
+        // Use a throwaway window root so we get a `Window` for `on_disagree_click`
+        // without rendering `PortfolioWidget` (no theme global in these tests).
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        widget.update_in(cx, |widget, window, cx| {
+            widget.on_disagree_click(window, cx);
+        });
+        cx.run_until_parked();
+
+        let bodies = mock
+            .bodies
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert_eq!(bodies.len(), 1, "exactly one inject");
+        assert!(bodies[0].contains("Re:"), "body references the revision");
+        assert!(
+            bodies[0].contains("main"),
+            "body references the portfolio name from provenance"
+        );
+
+        // A successful inject clears the fallback draft.
+        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
+        assert!(draft.is_none(), "draft cleared after a successful inject");
+    }
+
+    #[gpui::test]
+    async fn disagree_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        hkask_conversation_injector::set_active_injector(None);
+
+        let body = body_with_returns_and_provenance();
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        widget.update_in(cx, |widget, window, cx| {
+            widget.on_disagree_click(window, cx);
+        });
+        cx.run_until_parked();
+
+        // No injector: the composed body is surfaced as a copyable draft
+        // (visible, not a silent no-op — repo `.rules`), and no panic.
+        let draft = widget.read_with(cx, |widget, _cx| widget.disagree_draft.clone());
+        let draft = draft.expect("draft surfaced when no injector is active");
+        assert!(draft.contains("Re:"), "draft carries the revision prefix");
+    }
+
+    #[gpui::test]
+    async fn disagree_body_falls_back_when_provenance_absent(cx: &mut gpui::TestAppContext) {
+        // grill-me edge case (b): absent provenance → generic "the portfolio
+        // dashboard" framing. `compose_disagree_body` is pure, so no window is
+        // needed.
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+
+        let empty = PortfolioBlockBody {
+            viz: Some("portfolio".into()),
+            portfolio: None,
+            returns: None,
+            characteristics: std::collections::HashMap::new(),
+            attribution: Vec::new(),
+            provenance: BlockProvenance::default(),
+        };
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(empty, cx)));
+        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
+        assert!(
+            body.contains("the portfolio dashboard"),
+            "absent provenance falls back to the generic framing"
+        );
+        assert!(
+            !body.contains("over"),
+            "no date range in the fallback framing"
         );
     }
 }

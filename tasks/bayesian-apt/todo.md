@@ -21,7 +21,11 @@
   - [x] 8 composition tests + 2 schema-compliance tests pass; full crate suite green
   - [ ] Per-branch `branches: Vec<Branch>` extension (deferred — see note below)
 - [ ] **T4b** Tree-time challenge gates w/ provenance classes
-- [ ] **T5** Tree-level Bayesian propagation + journal
+- [x] **T5** Tree-level Bayesian propagation + journal — landed 2026-08-05
+  - [x] `propagate_prior_update` + `scenario_propagate` tool; descendants + joint recomputed
+  - [x] Propagation journal (per-node before/after deltas) — the tâtonnement record
+  - [x] 4 propagation tests + schema test pass
+- [x] **T6b** DCF-stream equity duration wired — `equity_duration` tool in companies (was dead code from 76bdf3e74b; now exposed with schema test)
 - [ ] **T7** Tree-weighted valuation path in companies
 - [ ] **CP2** vertical slice: markets→tree→propagation→tree-weighted DCF
 - [ ] **T8a** Factor-mapping prototype (5 companies) — **kill gate on H3**

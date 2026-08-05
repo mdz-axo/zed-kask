@@ -16,6 +16,7 @@ serde.workspace = true
 serde_json.workspace = true
 ui.workspace = true
 hkask_tool_invoker.workspace = true
+hkask_conversation_injector.workspace = true
 gpui_util.workspace = true
 tracing.workspace = true
 
