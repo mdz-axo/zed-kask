@@ -30,3 +30,34 @@ pub const LIFECYCLE_STAGES: [&str; 6] = [
     "dispute",
     "settlement",
 ];
+
+/// The mapping document returned by the `market_ontology_map` tool (T4b).
+/// Built from the same constants that populate per-record `ontology` blocks
+/// so the two cannot drift (pinned by test).
+pub fn mapping_document() -> serde_json::Value {
+    serde_json::json!({
+        "mapping_version": MAPPING_VERSION,
+        "process_axis": {
+            "ontology": "PKO (Procedural Knowledge Ontology)",
+            "vocabulary_crate": "hkask-bridge-dublincore",
+            "record_type": "pko:ProcedureExecution",
+            "probability_role": "pko:StepExecution.output",
+            "lifecycle_stages": LIFECYCLE_STAGES,
+            "stage_note": "distrust prices in the `dispute` stage (arXiv:2604.20421 oracle-risk finding: markets trade within 24h of a dispute anchor)"
+        },
+        "state_axis": {
+            "ontology": "Dublin Core (dcterms)",
+            "vocabulary_crate": "hkask-bridge-dublincore",
+            "fields": {
+                "identifier": "dcterms:identifier = {source}:{market_id}",
+                "title": "dcterms:title ← market question",
+                "description": "dcterms:description ← market description (500-char cap)",
+                "temporal": "dcterms:temporal ← deadline (drives horizon effects)",
+                "provenance": "dcterms:provenance ← resolution_source (uma_oracle | kalshi_exchange)"
+            }
+        },
+        "domain_supplement": {
+            "note": "calibration vocabulary (brier, domain_bias, reliability_tier) is kask domain-supplement tier — no standard ontology covers forecast scoring (Q-O2 resolution 2026-08-05)"
+        }
+    })
+}

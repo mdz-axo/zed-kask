@@ -29,8 +29,43 @@ pub struct MediaWidget {
     transport: Option<Entity<TransportBar>>,
     current_frame: Option<Arc<RenderImage>>,
     playback_task: Option<Task<()>>,
+    /// Transport state snapshot from the last tick. Used to suppress re-renders
+    /// when nothing changed (paused/stopped/finished) so a visible media widget
+    /// does not re-render at 30 fps forever. See `tick_playback`.
+    last_transport: Option<TransportState>,
+    // True while an audio file is being read off the foreground thread
+    // (load_audio_file_async). Flows into the transport bar is_loading.
+    audio_loading: bool,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
+}
+
+// Stat + read an audio file with the 256 MiB size guard. Pure (no `self`), so it
+// is safe to move into a background task; the bytes are handed back to the
+// foreground thread where `play_bytes` (rodio device + decode) runs. See SF-1.
+fn read_audio_file(path: &std::path::Path) -> Result<Vec<u8>, SharedString> {
+    const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return Err(SharedString::from(format!(
+                "failed to stat audio file: {error}"
+            )));
+        }
+    };
+    if metadata.len() > MAX_AUDIO_FILE_SIZE {
+        return Err(SharedString::from(format!(
+            "audio file too large ({} bytes, max {}); refusing to read",
+            metadata.len(),
+            MAX_AUDIO_FILE_SIZE
+        )));
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) => Err(SharedString::from(format!(
+            "failed to read audio file: {error}"
+        ))),
+    }
 }
 
 impl MediaWidget {
@@ -53,6 +88,8 @@ impl MediaWidget {
             transport: None,
             current_frame: None,
             playback_task: None,
+            last_transport: None,
+            audio_loading: false,
             error: None,
             _subscriptions: Vec::new(),
         };
@@ -123,15 +160,16 @@ impl MediaWidget {
     fn load_resolved(&mut self, resolved: ResolvedMedia, cx: &mut Context<Self>) {
         match resolved.kind {
             MediaKind::Audio => {
-                if let Some(player) = &self.audio_player {
-                    if let Some(bytes) = resolved.bytes {
+                if let Some(bytes) = resolved.bytes {
+                    if let Some(player) = &self.audio_player {
                         if let Err(error) = player.play_bytes(bytes) {
                             self.error = Some(SharedString::from(error.to_string()));
                         }
-                    } else if let Some(path) = resolved.path {
-                        let player = player.clone();
-                        self.load_audio_file(&player, &path);
-                    } else if let Some(url) = &resolved.url {
+                    }
+                } else if let Some(path) = resolved.path {
+                    self.load_audio_file_async(path, cx);
+                } else if let Some(url) = &resolved.url {
+                    if let Some(player) = &self.audio_player {
                         let player = player.clone();
                         self.load_audio_data_uri(&player, url.as_str());
                     }
@@ -157,37 +195,36 @@ impl MediaWidget {
         }
     }
 
-    fn load_audio_file(&mut self, player: &Arc<AudioPlayer>, path: &std::path::Path) {
-        match std::fs::metadata(path) {
-            Ok(metadata) => {
-                const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
-                if metadata.len() > MAX_AUDIO_FILE_SIZE {
-                    self.error = Some(SharedString::from(format!(
-                        "audio file too large ({} bytes, max {}); refusing to read",
-                        metadata.len(),
-                        MAX_AUDIO_FILE_SIZE
-                    )));
-                } else {
-                    match std::fs::read(path) {
-                        Ok(bytes) => {
+    // Read + stat an audio file off the foreground thread. The blocking I/O
+    // (stat + read up to 256 MiB) runs on a background worker; `play_bytes`
+    // (rodio device + decode) stays on the foreground thread where the
+    // AudioPlayer was constructed. See SF-1 in tasks/widget-interactivity/plan.md.
+    fn load_audio_file_async(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
+        self.audio_loading = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { read_audio_file(&path) })
+                .await;
+            this.update(cx, |widget, cx| {
+                widget.audio_loading = false;
+                match result {
+                    Ok(bytes) => {
+                        if let Some(player) = &widget.audio_player {
                             if let Err(error) = player.play_bytes(bytes) {
-                                self.error = Some(SharedString::from(error.to_string()));
+                                widget.error = Some(SharedString::from(error.to_string()));
                             }
                         }
-                        Err(error) => {
-                            self.error = Some(SharedString::from(format!(
-                                "failed to read audio file: {error}"
-                            )));
-                        }
+                    }
+                    Err(message) => {
+                        widget.error = Some(message);
                     }
                 }
-            }
-            Err(error) => {
-                self.error = Some(SharedString::from(format!(
-                    "failed to stat audio file: {error}"
-                )));
-            }
-        }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn load_audio_data_uri(&mut self, player: &Arc<AudioPlayer>, url: &str) {
@@ -212,9 +249,10 @@ impl MediaWidget {
 
         match self.reference.kind() {
             Some(MediaKind::Audio) => {
-                if let Some(player) = &self.audio_player {
-                    if let Some(encoded) = src.strip_prefix("data:audio/") {
-                        if let Some((_, data)) = encoded.split_once(',') {
+                if let Some(encoded) = src.strip_prefix("data:audio/") {
+                    // Data URI — in-memory base64 + decode on the foreground thread.
+                    if let Some((_, data)) = encoded.split_once(',') {
+                        if let Some(player) = &self.audio_player {
                             match base64::Engine::decode(
                                 &base64::engine::general_purpose::STANDARD,
                                 data,
@@ -231,39 +269,10 @@ impl MediaWidget {
                                 }
                             }
                         }
-                    } else {
-                        match std::fs::metadata(&src) {
-                            Ok(metadata) => {
-                                const MAX_AUDIO_FILE_SIZE: u64 = 256 * 1024 * 1024;
-                                if metadata.len() > MAX_AUDIO_FILE_SIZE {
-                                    self.error = Some(SharedString::from(format!(
-                                        "audio file too large ({} bytes, max {}); refusing to read",
-                                        metadata.len(),
-                                        MAX_AUDIO_FILE_SIZE
-                                    )));
-                                } else {
-                                    match std::fs::read(&src) {
-                                        Ok(bytes) => {
-                                            if let Err(error) = player.play_bytes(bytes) {
-                                                self.error =
-                                                    Some(SharedString::from(error.to_string()));
-                                            }
-                                        }
-                                        Err(error) => {
-                                            self.error = Some(SharedString::from(format!(
-                                                "failed to read audio file: {error}"
-                                            )));
-                                        }
-                                    }
-                                }
-                            }
-                            Err(error) => {
-                                self.error = Some(SharedString::from(format!(
-                                    "failed to stat audio file: {error}"
-                                )));
-                            }
-                        }
                     }
+                } else {
+                    // Filesystem path — offload the read off the foreground thread.
+                    self.load_audio_file_async(std::path::PathBuf::from(&src), cx);
                 }
                 self.start_playback_loop(cx);
             }
@@ -289,24 +298,40 @@ impl MediaWidget {
                     .timer(Duration::from_millis(33))
                     .await;
 
-                let Ok(()) = entity.update(cx, |widget, cx| {
-                    widget.tick_playback(last_tick.elapsed(), cx);
+                let keep_going = match entity.update(cx, |widget, cx| {
+                    let keep_going = widget.tick_playback(last_tick.elapsed(), cx);
                     last_tick = Instant::now();
-                }) else {
-                    break;
+                    keep_going
+                }) {
+                    Ok(keep_going) => keep_going,
+                    Err(_) => break,
                 };
+                if !keep_going {
+                    break;
+                }
             }
         }));
     }
 
-    fn tick_playback(&mut self, delta: Duration, cx: &mut Context<Self>) {
+    /// Advance playback one tick. Returns `false` when there is no loaded
+    /// player to keep alive (both `audio_player` and `video_player` are
+    /// `None`); the caller stops the loop in that case.
+    ///
+    /// To avoid re-rendering every visible media widget at 30 fps forever —
+    /// even when paused, stopped, or finished — the transport state is
+    /// compared against the last tick: `set_state` and `cx.notify()` fire
+    /// only when the state changed or a new video frame was decoded. While
+    /// idle the loop stays alive (so pause/resume/seek keep working) but
+    /// performs no re-render.
+    fn tick_playback(&mut self, delta: Duration, cx: &mut Context<Self>) -> bool {
         let mut transport_state = TransportState {
             is_playing: false,
             position: Duration::ZERO,
             duration: Duration::ZERO,
             volume: 1.0,
-            is_loading: false,
+            is_loading: self.audio_loading,
         };
+        let mut frame_decoded = false;
 
         if let Some(player) = &self.audio_player {
             transport_state.is_playing = player.is_playing();
@@ -328,6 +353,7 @@ impl MediaWidget {
                         let render_image =
                             Arc::new(RenderImage::new(SmallVec::from_elem(image_frame, 1)));
                         self.current_frame = Some(render_image);
+                        frame_decoded = true;
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -341,13 +367,25 @@ impl MediaWidget {
             transport_state.volume = player.volume();
         }
 
-        if let Some(transport) = &self.transport {
-            transport.update(cx, |transport, cx| {
-                transport.set_state(transport_state, cx);
-            });
+        // No loaded player → nothing to play or poll; stop the loop.
+        if self.audio_player.is_none() && self.video_player.is_none() {
+            return false;
         }
 
-        cx.notify();
+        // Re-render only when something visible changed: a new video frame,
+        // or a transport state transition (play/pause/seek/finish/volume).
+        let changed = frame_decoded || self.last_transport.as_ref() != Some(&transport_state);
+        self.last_transport = Some(transport_state);
+        if changed {
+            if let Some(transport) = &self.transport {
+                transport.update(cx, |transport, cx| {
+                    transport.set_state(transport_state, cx);
+                });
+            }
+            cx.notify();
+        }
+
+        true
     }
 
     fn handle_transport_event(&mut self, event: &TransportEvent, cx: &mut Context<Self>) {

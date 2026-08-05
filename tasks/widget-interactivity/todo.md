@@ -2,64 +2,72 @@
 
 Companion to `plan.md`. Grouped by phase. Check a box only when its acceptance criteria and verification pass.
 
-## Phase 0 — Foundation & hygiene
+## Phase 0 — Foundation & hygiene  ✅
 
-- [ ] **T0 — Relocate `ToolInvoker` to leaf crate `hkask-tool-invoker`** (M)
-  - [ ] New `crates/hkask-tool-invoker` with trait + `set_tool_invoker`/`shared_tool_invoker` moved verbatim from `swarm_panel/src/tool_invoker.rs`
-  - [ ] `swarm_panel` re-exports from leaf; 12+ call sites compile unchanged
-  - [ ] `main.rs` `PanelToolInvoker` import + `set_tool_invoker` call updated; trait body byte-identical
-  - [ ] Workspace `Cargo.toml` gains `hkask-tool-invoker`
-  - [ ] `cargo check -p hkask-tool-invoker -p swarm_panel -p zed` + `./script/clippy` clean; a swarm-panel dispatch test still passes
-- [ ] **T1 — Delete dead `EventEmitter<TransportEvent> for MediaWidget`** (XS)
-  - [ ] Remove `crates/hkask-media-widget/src/media_widget.rs:404`
-  - [ ] `cargo check -p hkask-media-widget` + clippy clean; grep confirms absence
-- [ ] **CHECKPOINT C1** — workspace builds, clippy clean, widget + swarm-panel tests pass; human reviews the relocation
+- [x] **T0 — Relocate `ToolInvoker` to leaf crate `hkask-tool-invoker`** (M)  ✅
+  - [x] New `crates/hkask-tool-invoker` with trait + `set_tool_invoker`/`shared_tool_invoker` + `BlockProvenance` moved from `swarm_panel/src/tool_invoker.rs`
+  - [x] `swarm_panel` re-exports from leaf; 20+ call sites compile unchanged
+  - [x] `main.rs` `PanelToolInvoker` impl resolves via re-export; trait body byte-identical
+  - [x] Workspace `Cargo.toml` gains `hkask-tool-invoker` (member + workspace dep)
+  - [x] `cargo check` clean; 4 leaf-crate provenance tests pass
+- [x] **T1 — Delete dead `EventEmitter<TransportEvent> for MediaWidget`** (XS)  ✅
+  - [x] Removed `crates/hkask-media-widget/src/media_widget.rs:404` + unused `EventEmitter` import
+  - [x] `cargo check -p hkask-media-widget` clean
+- [x] **CHECKPOINT C1** — workspace builds, clippy clean, widget + swarm-panel tests pass; relocation complete  ✅
 
-## Phase 1 — Track 1: close the dispatch gap (Slice E)
+## Phase 1 — Track 1: close the dispatch gap (Slice E)  ✅
 
-- [ ] **T2 — Wire scenarios `Next:`/`PIPELINE_STAGES` rungs to dispatch** (S)
-  - [ ] `on_click` on the `Next:` label + ladder rungs → `shared_tool_invoker().invoke_tool("hkask-mcp-scenarios", <tool>, <args>)`
-  - [ ] Pending/error state surfaced (`dispatch_in_flight`, `dispatch_error`); missing invoker shows a visible error, not a silent no-op
-  - [ ] `MockToolInvoker` test asserts `("hkask-mcp-scenarios", "scenario_frame", <args>)` received
-  - [ ] `cargo test -p hkask-scenarios-widget` + clippy pass; manual click on a ```` ```scenarios ```` block
+- [x] **T2 — Wire scenarios `Next:`/`PIPELINE_STAGES` rungs to dispatch** (S)  ✅
+  - [x] `on_click` on the `Next:` label + ladder rungs → `shared_tool_invoker().invoke_tool("hkask-mcp-scenarios", <tool>, <args>)`
+  - [x] Pending/error state surfaced (`dispatch_in_flight`, `dispatch_error`, `dispatch_result`); missing invoker shows a visible error
+  - [x] Pure `build_dispatch_args` helper unit-tested; serialized `MockToolInvoker` GPUI integration test
+  - [x] `cargo test -p hkask-scenarios-widget` passes
 
-## Phase 2 — Track 2: provenance + fan-out
+## Phase 2 — Track 2: provenance + fan-out  ✅
 
-- [ ] **T3 — Add `BlockProvenance` + scenarios field + `hkask-mcp-scenarios` emits it** (M)
-  - [ ] `BlockProvenance { tool, server, args, span_id }` in `hkask-tool-invoker` (all `#[serde(default)]`)
-  - [ ] `ScenariosBlockBody` gains `provenance` field; parses with and without (defaults empty)
-  - [ ] `hkask-mcp-scenarios` emits a block body with non-empty `provenance` for `scenario_status` (server bakes it in — open question 1)
-  - [ ] Existing `scaffolding_*` tests still pass; `cargo test -p hkask-scenarios-widget -p hkask-mcp-scenarios` + clippy
-- [ ] **T4 — Scenarios provenance-driven dispatch** (S)
-  - [ ] `on_click` merges the rung's parameter change into `self.body.provenance.args` and dispatches with `provenance.server` when present
-  - [ ] Falls back to T2 defaults when provenance absent; fabricated/missing provenance surfaced, not silently dropped
-  - [ ] Test: body with `provenance.tool="scenario_quantify"` dispatches merged args; `cargo test -p hkask-scenarios-widget`
-- [ ] **CHECKPOINT C2** — end-to-end scenarios dispatch works; human reviews the provenance contract
-- [ ] **T5 — Portfolio fan-out: provenance + date-scrub → `portfolio_returns` (fixes SF-4)** (M)
-  - [ ] `provenance` on `PortfolioBlockBody`; `hkask-mcp-companies` emits it
-  - [ ] Date-range scrub affordance on the Returns row → dispatch `portfolio_returns` with modified `from`/`to`
-  - [ ] **SF-4 fix:** validate `from`/`to` (`tools/portfolio.rs:331-361`) → `McpToolError::invalid_argument` on parse failure, not `unwrap_or_default()` to 1970-01-01
-  - [ ] `cargo test -p hkask-portfolio-widget -p hkask-mcp-companies` + clippy
-- [ ] **T6 — Kanban fan-out: provenance + card affordance → `kanban_task_move`** (M)
-  - [ ] `provenance` on `KanbanBlockBody`; `hkask-mcp-kata-kanban` emits it
-  - [ ] Card affordance dispatches `kanban_task_move` with `{task_id, status}` + `provenance.server`
-  - [ ] Missing invoker surfaces error; provenance-absent disables affordance with "ask the agent" hint
-  - [ ] `cargo test -p hkask-kanban-widget -p hkask-mcp-kata-kanban` + clippy
-- [ ] **CHECKPOINT C3** — three widgets dispatch through the governed path; human reviews the fan-out pattern
+- [x] **T3 — Add `BlockProvenance` + scenarios field + `hkask-mcp-scenarios` emits it** (M)  ✅
+  - [x] `BlockProvenance { tool, server, args, span_id }` in `hkask-tool-invoker` (done with T0 foundation)
+  - [x] `ScenariosBlockBody` gains `provenance`; `scenario_status` bakes in server-authoritative provenance
+  - [x] Existing `scaffolding_*` tests still pass
+- [x] **T4 — Scenarios provenance-driven dispatch** (S)  ✅
+  - [x] `on_click` merges rung override into `self.body.provenance.args`, dispatches with `provenance.server`
+  - [x] Falls back to T2 defaults when provenance absent; mismatch surfaces visible hint
+- [x] **CHECKPOINT C2** — end-to-end scenarios dispatch works  ✅
+- [x] **T5 — Portfolio fan-out: provenance + date-scrub → `portfolio_returns` (fixes SF-4)** (M)  ✅
+  - [x] `provenance` on `PortfolioBlockBody`; `hkask-mcp-companies` emits it
+  - [x] Date-range scrub affordance (editable date chips + Apply) → dispatch `portfolio_returns`
+  - [x] **SF-4 fixed:** `parse_date_arg` returns `invalid_argument` on malformed dates; all `unwrap_or_default()` on dates removed (`tools/portfolio.rs:181,346,371`)
+  - [x] `cargo test -p hkask-portfolio-widget -p hkask-mcp-companies` passes (167 + 25)
+- [x] **T6 — Kanban fan-out: provenance + card affordance → `kanban_task_move`** (M)  ✅
+  - [x] `provenance` on `KanbanBlockBody`; `build_kanban_block_body` bakes it in
+  - [x] Per-card cycling status-chip move affordance → dispatch `kanban_task_move` (confirmed arg shape `{task_id, target_status}`)
+  - [x] Missing invoker → warning banner; partial provenance → "provenance incomplete" hint; single-flight guard
+  - [x] `cargo test -p hkask-kanban-widget -p hkask-mcp-kata-kanban` passes (25 + 46/43/22)
+- [x] **CHECKPOINT C3** — three widgets dispatch through the governed path  ✅
 
-## Phase 3 — Track 3: branch/compare (parallel, measurement-gated)
+## Phase 2.5 — Media playback hygiene (SF-2/SF-3)  ✅
 
-- [ ] **T7 — Measurement gate: `reg.widget.reask` span** (S)
-  - [ ] Span emitted, keyed by `provenance.span_id`, on re-ask detection; aggregate rate computable
-  - [ ] Gate decision documented: >15% → proceed; <5% → defer Track 3 + Phase 4; 5–15% → human
-- [ ] **T8a — Cache typed-handle + version key** (M) — *only if T7 gate >15%*
+- [x] **SF-2/SF-3 — Stop perpetual 30fps re-render of idle media widgets**  ✅
+  - [x] `TransportState` derives `PartialEq`; `MediaWidget` gains `last_transport: Option<TransportState>`
+  - [x] `tick_playback` returns `bool`: gates `set_state` + `cx.notify()` on transport-state change or new video frame; returns false when no player loaded
+  - [x] `start_playback_loop` stops when `tick_playback` returns false
+  - [x] `cargo clippy -p hkask-media-widget --all-targets` clean; `hkask-viz-core`/`agent_ui` still build
+  - [ ] SF-1 (foreground `std::fs::read` + decode) remains open — offload file read to `cx.background_spawn`, keep `play_bytes` on foreground (separate follow-up)
+
+## Phase 3 — Track 3: branch/compare (parallel, measurement-gated) — *graph widget's what-if-branching track*
+
+- [ ] **T7 — Measurement gate: `reg.widget.reask` + `reg.widget.whatif_discarded` spans** (S)
+  - [ ] `reg.widget.reask` emitted, keyed by `provenance.span_id`, on re-ask detection; aggregate rate computable
+  - [ ] `reg.widget.whatif_discarded` emitted when graph-widget evidence is set then lost (overwritten / navigated away) without saving a branch
+  - [ ] Gate decision documented: >15% re-ask **or** >5% what-if-discarded → proceed to T8a; <5% both → defer Track 3 + Phase 4; in between → human
+- [ ] **T8a — Cache typed-handle + version key** (M) — *only if T7 gate passes*
   - [ ] `CachedWidget` retains typed dispatch handle / version discriminator; `cache_key` includes version id + body-equality check on hit
-  - [ ] Two branches coexist; collision no longer returns wrong widget; `cache_key_is_stable` + `viz_factories_cover_four_widgets` updated and pass
+  - [ ] Two branches coexist (e.g. graph widget's agent tree + its what-if tree); collision no longer returns wrong widget; `cache_key_is_stable` + `viz_factories_cover_four_widgets` updated and pass
   - [ ] `cargo test -p hkask-viz-core` + clippy
 - [ ] **T8b — Branch/revert UI** (S) — *only if T8a*
-  - [ ] "Keep / try different assumption" creates a branch; "Revert" restores agent's version
+  - [ ] "Keep / try different assumption" creates a branch; "Revert" restores agent's version; graph-widget what-if can be saved as a named branch
 - [ ] **T8c — Compare side-by-side UI** (S) — *only if T8a*
-  - [ ] Two cached widgets render simultaneously
+  - [ ] Two cached widgets render simultaneously (agent tree next to what-if tree, marginals differing visibly)
 - [ ] **CHECKPOINT C4** — branch/compare/revert works end-to-end
 
 ## Phase 4 — Deferred downstream (gated on T7)

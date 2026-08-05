@@ -761,36 +761,29 @@ mod tests {
     }
 
     #[test]
-    fn apply_optimistic_move_regroups_columns() {
-        // The optimistic move mutates the local cached view: the moved task
-        // lands in the target column. The next agent-emitted block is
-        // authoritative; this only updates the local cache.
-        let columns =
-            group_tasks_into_columns(vec![task("t1", "A", "backlog"), task("t2", "B", "backlog")]);
-        let mut widget = KanbanWidget {
-            board_name: "B".into(),
-            columns,
-            provenance: BlockProvenance::default(),
-            focus_handle: FocusHandle::deferred(),
-            dispatch_in_flight: None,
-            dispatch_error: None,
-        };
-        widget.apply_optimistic_move("t1", "ready");
-        // Backlog column now has one task (t2); ready column has t1.
-        let backlog = widget
-            .columns
-            .iter()
-            .find(|column| column.status == "backlog")
-            .expect("backlog column exists");
-        assert_eq!(backlog.tasks.len(), 1);
-        assert_eq!(backlog.tasks[0].task_id, "t2");
-        let ready = widget
-            .columns
+    fn apply_move_to_tasks_updates_matching_task_status() {
+        // Pure optimistic-update logic: the matching task's status changes,
+        // others are untouched. The next agent-emitted block is authoritative;
+        // this only drives the local cache mutation.
+        let tasks = vec![task("t1", "A", "backlog"), task("t2", "B", "backlog")];
+        let moved = apply_move_to_tasks(tasks, "t1", "ready");
+        assert_eq!(moved[0].task_id, "t1");
+        assert_eq!(moved[0].status, "ready");
+        assert_eq!(moved[1].task_id, "t2");
+        assert_eq!(moved[1].status, "backlog");
+        // Re-grouping lands the moved task in the target column.
+        let columns = group_tasks_into_columns(moved);
+        let ready = columns
             .iter()
             .find(|column| column.status == "ready")
             .expect("ready column exists");
         assert_eq!(ready.tasks.len(), 1);
         assert_eq!(ready.tasks[0].task_id, "t1");
-        assert_eq!(ready.tasks[0].status, "ready");
+        let backlog = columns
+            .iter()
+            .find(|column| column.status == "backlog")
+            .expect("backlog column exists");
+        assert_eq!(backlog.tasks.len(), 1);
+        assert_eq!(backlog.tasks[0].task_id, "t2");
     }
 }

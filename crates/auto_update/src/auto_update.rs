@@ -141,6 +141,14 @@ pub enum AutoUpdateStatus {
     Updated {
         version: Version,
     },
+    /// zed-kask: D18 — a manual check completed and the installed version is
+    /// already the latest. Distinct from `Idle` (the quiet / no-check state)
+    /// so the UI can surface positive feedback instead of silently reverting
+    /// to `Idle`, which looked like "nothing happened". Only set for manual
+    /// checks; automatic polls that find no update stay `Idle`.
+    UpToDate {
+        version: Version,
+    },
     Errored {
         error: Arc<anyhow::Error>,
     },
@@ -164,6 +172,10 @@ impl PartialEq for AutoUpdateStatus {
             (
                 AutoUpdateStatus::Updated { version: v1 },
                 AutoUpdateStatus::Updated { version: v2 },
+            ) => v1 == v2,
+            (
+                AutoUpdateStatus::UpToDate { version: v1 },
+                AutoUpdateStatus::UpToDate { version: v2 },
             ) => v1 == v2,
             (AutoUpdateStatus::Errored { error: e1 }, AutoUpdateStatus::Errored { error: e2 }) => {
                 e1.to_string() == e2.to_string()
@@ -783,13 +795,14 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, feed: UpdateFeed, cx: &mut AsyncApp) -> Result<()> {
-        let (client, installed_version, previous_status, release_channel) =
-            this.read_with(cx, |this, cx| {
+        let (client, installed_version, previous_status, release_channel, check_type) = this
+            .read_with(cx, |this, cx| {
                 (
                     this.client.http_client(),
                     this.current_version.clone(),
                     this.status.clone(),
                     ReleaseChannel::try_global(cx).unwrap_or(ReleaseChannel::Stable),
+                    this.update_check_type,
                 )
             });
 
@@ -832,6 +845,9 @@ impl AutoUpdater {
                         this.update(cx, |this, cx| {
                             let status = match previous_status {
                                 AutoUpdateStatus::Updated { .. } => previous_status,
+                                _ if check_type.is_manual() => AutoUpdateStatus::UpToDate {
+                                    version: this.current_version.clone(),
+                                },
                                 _ => AutoUpdateStatus::Idle,
                             };
                             this.status = status;
@@ -859,6 +875,9 @@ impl AutoUpdater {
             this.update(cx, |this, cx| {
                 let status = match previous_status {
                     AutoUpdateStatus::Updated { .. } => previous_status,
+                    _ if check_type.is_manual() => AutoUpdateStatus::UpToDate {
+                        version: this.current_version.clone(),
+                    },
                     _ => AutoUpdateStatus::Idle,
                 };
                 this.status = status;
@@ -2077,6 +2096,7 @@ mod tests {
             }
         }
 
+        // Should be Downloading: `v0.101` normalizes to 0.101.0 > 0.100.0.
         // Should be Downloading (version 0.100.1 > 0.100.0).
         let status = auto_updater.read_with(cx, |updater, _| updater.status());
         assert_eq!(
@@ -2228,6 +2248,88 @@ mod tests {
             matches!(status, AutoUpdateStatus::Idle),
             "two-component tag `v0.100` should normalize to 0.100.0 and compare \
              equal to the installed 0.100.0, surfacing Idle — not Errored. Got: {status:?}"
+        );
+    }
+
+    // zed-kask: D17 — the companion to the test above. That test pins the
+    // equal-version / no-error path for a two-component tag; this one pins
+    // the *newer-than* path: a two-component tag that is higher than the
+    // installed version must normalize correctly AND trigger a download —
+    // proving the normalizer handles the update-available case too, not just
+    // the equal case. Before `normalize_tag_version`, `Version::from_str(
+    // "0.101")` would have errored before the comparison ever ran.
+    #[gpui::test]
+    async fn test_github_feed_two_component_tag_triggers_update_when_newer(
+        cx: &mut TestAppContext,
+    ) {
+        cx.background_executor.allow_parking();
+        zlog::init_test();
+
+        cx.update(|cx| {
+            settings::init(cx);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.auto_update = Some(true);
+                });
+            });
+
+            cx.set_global(AppDatabase::test_new());
+
+            let current_version = semver::Version::new(0, 100, 0);
+            release_channel::init_test(current_version, ReleaseChannel::Stable, cx);
+
+            let clock = Arc::new(FakeSystemClock::new());
+            let fake_client_http = FakeHttpClient::create(move |req| async move {
+                let path = req.uri().path();
+                if path == "/repos/mdz-axo/zed-kask/releases" {
+                    // Two-component tag (`v0.101`) — newer than the installed 0.100.0.
+                    return Ok(Response::builder().status(200).body(
+                        r#"[{"tag_name":"v0.101","prerelease":false,"assets":[{"name":"zed-kask-0.101-linux-x86_64.tar.gz","browser_download_url":"https://test.example/github-download","digest":null}],"tarball_url":"","zipball_url":""}]"#.into()
+                    ).unwrap());
+                }
+                // Asset download — block on a never-sent channel so the
+                // status stays Downloading for the assertion below.
+                if path == "/github-download" {
+                    let (_tx, rx) = oneshot::channel::<String>();
+                    return Ok(Response::builder().status(200).body(
+                        rx.await.unwrap_err().to_string().into(),
+                    ).unwrap());
+                }
+                Ok(Response::builder().status(404).body("".into()).unwrap())
+            });
+            let client = Client::new(clock, fake_client_http, cx);
+            crate::init(client, cx);
+        });
+
+        let auto_updater = cx.update(|cx| AutoUpdater::get(cx).expect("auto updater should exist"));
+
+        cx.background_executor.run_until_parked();
+
+        auto_updater.update(cx, |updater, cx| {
+            updater.poll_zed_kask(UpdateCheckType::Manual, cx);
+        });
+
+        // Wait for the status to leave Idle.
+        loop {
+            cx.background_executor.timer(Duration::from_millis(0)).await;
+            cx.run_until_parked();
+            let status = auto_updater.read_with(cx, |updater, _| updater.status());
+            if !matches!(status, AutoUpdateStatus::Idle) {
+                break;
+            }
+        }
+
+        // Should be Downloading: `v0.101` normalizes to 0.101.0 > 0.100.0.
+        let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        assert_eq!(
+            status,
+            AutoUpdateStatus::Downloading {
+                version: semver::Version::new(0, 101, 0),
+                progress: None,
+            },
+            "two-component tag `v0.101` should normalize to 0.101.0 and trigger a \
+             download since it is newer than the installed 0.100.0"
         );
     }
 }

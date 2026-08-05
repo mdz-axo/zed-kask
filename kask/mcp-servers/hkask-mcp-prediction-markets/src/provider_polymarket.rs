@@ -112,20 +112,11 @@ impl Default for GammaEvent {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct GammaTag {
     pub label: String,
     pub slug: String,
-}
-
-impl Default for GammaTag {
-    fn default() -> Self {
-        Self {
-            label: String::new(),
-            slug: String::new(),
-        }
-    }
 }
 
 impl GammaMarket {

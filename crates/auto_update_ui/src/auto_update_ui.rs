@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use agent_skills::GLOBAL_SKILLS_DIR_DISPLAY;
 use auto_update::{AutoUpdateStatus, AutoUpdater, release_notes_url};
@@ -553,6 +554,19 @@ impl Render for UpdateProgressNotification {
                         })),
                 );
             }
+            // zed-kask: D18 — positive feedback for a manual check that found no
+            // update. Without this the popup flashed "Checking…" then vanished,
+            // looking like nothing happened. Auto-dismissed after a few seconds
+            // (see `manage_update_progress_notification`) since it's
+            // informational, not actionable.
+            AutoUpdateStatus::UpToDate { version } => {
+                title = "zed-kask is up to date".into();
+                body = Label::new(format!("zed-kask {version} is the latest version."))
+                    .color(Color::Muted)
+                    .size(LabelSize::Small)
+                    .into_any_element();
+                show_close = true;
+            }
             AutoUpdateStatus::Errored { error } => {
                 title = "Update failed".into();
                 body = Label::new(error.to_string())
@@ -630,14 +644,33 @@ fn manage_update_progress_notification(cx: &mut App) {
 
     let was_active = PROGRESS_NOTIFICATION_ACTIVE.swap(should_show, Ordering::SeqCst);
     if should_show && !was_active {
+        let updater_for_notification = updater.clone();
         show_app_notification(
             NotificationId::unique::<UpdateProgressNotificationId>(),
             cx,
-            move |cx| {
-                let updater = updater.clone();
-                cx.new(|cx| UpdateProgressNotification::new(updater, cx))
-            },
+            move |cx| cx.new(|cx| UpdateProgressNotification::new(updater_for_notification, cx)),
         );
+
+        // zed-kask: D18 — the "up to date" popup is informational, not
+        // actionable, so auto-dismiss it after a short delay rather than
+        // leaving it for the user to close. The guard re-checks the status
+        // after the timer fires so a state change (e.g. a new manual check)
+        // isn't dismissed out from under the user.
+        if matches!(status, AutoUpdateStatus::UpToDate { .. }) {
+            let updater = updater.clone();
+            let executor = cx.background_executor().clone();
+            cx.spawn(async move |cx| {
+                executor.timer(Duration::from_secs(6)).await;
+                let _ = cx.update(|cx| {
+                    if matches!(updater.read(cx).status(), AutoUpdateStatus::UpToDate { .. }) {
+                        updater.update(cx, |updater, cx| {
+                            updater.dismiss_status(updater.status(), cx);
+                        });
+                    }
+                });
+            })
+            .detach();
+        }
     } else if !should_show && was_active {
         dismiss_app_notification(
             &NotificationId::unique::<UpdateProgressNotificationId>(),
@@ -665,6 +698,7 @@ fn should_show_progress(
             | AutoUpdateStatus::Downloading { .. }
             | AutoUpdateStatus::Installing { .. }
             | AutoUpdateStatus::Updated { .. }
+            | AutoUpdateStatus::UpToDate { .. }
             | AutoUpdateStatus::Errored { .. } => true,
         }
 }
@@ -717,6 +751,19 @@ mod tests {
         ));
         assert!(should_show_progress(
             &AutoUpdateStatus::Updated { version: version() },
+            false,
+            None
+        ));
+        // zed-kask: D18 — a manual check that found no update surfaces a
+        // positive "up to date" popup, for any check type (only manual checks
+        // ever set this status in production).
+        assert!(should_show_progress(
+            &AutoUpdateStatus::UpToDate { version: version() },
+            true,
+            None
+        ));
+        assert!(should_show_progress(
+            &AutoUpdateStatus::UpToDate { version: version() },
             false,
             None
         ));

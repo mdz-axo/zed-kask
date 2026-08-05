@@ -54,6 +54,7 @@ impl UpdateVersion {
                 error: Arc::new(anyhow!("Network timeout")),
             },
             AutoUpdateStatus::Errored { .. } => AutoUpdateStatus::Idle,
+            AutoUpdateStatus::UpToDate { .. } => AutoUpdateStatus::Idle,
         };
 
         self.status = next_state;
@@ -133,7 +134,9 @@ impl Render for UpdateVersion {
                     .on_dismiss(cx.listener(|this, _, _window, cx| this.dismiss(cx)))
                     .into_any_element()
             }
-            AutoUpdateStatus::Idle | AutoUpdateStatus::Checking { .. } => Empty.into_any_element(),
+            AutoUpdateStatus::Idle
+            | AutoUpdateStatus::Checking { .. }
+            | AutoUpdateStatus::UpToDate { .. } => Empty.into_any_element(),
         }
     }
 }

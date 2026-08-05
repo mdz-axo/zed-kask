@@ -65,3 +65,16 @@ fn http_error_classification_is_per_variant() {
     let not_found = classify_http_error("Kalshi", reqwest::StatusCode::NOT_FOUND, "nope");
     assert!(not_found.to_string().contains("not_found"));
 }
+
+#[test]
+fn market_parses_when_optional_fields_absent() {
+    // Live regression (2026-08-05): production Kalshi markets omit `subtitle`
+    // and other optional fields; the struct must tolerate absence.
+    let raw = r#"{"ticker":"KXFED-27APR-T4.25","event_ticker":"KXFED-27APR","title":"Fed above 4.25?","status":"active","yes_bid_dollars":"0.3000","yes_ask_dollars":"0.3400","volume_fp":"10197.97","close_time":"2027-04-28T17:55:00Z"}"#;
+    let market: hkask_mcp_prediction_markets::provider_kalshi::KalshiMarket =
+        serde_json::from_str(raw).expect("parses with absent optional fields");
+    assert_eq!(market.ticker, "KXFED-27APR-T4.25");
+    assert!(market.subtitle.is_empty());
+    let mid = market.yes_midpoint().expect("midpoint");
+    assert!((mid - 0.32).abs() < 1e-9);
+}

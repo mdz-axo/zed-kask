@@ -21,7 +21,7 @@ pub enum TransportEvent {
     Stop,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransportState {
     pub is_playing: bool,
     pub position: Duration,

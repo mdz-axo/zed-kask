@@ -16,16 +16,21 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-mod ontology;
+pub mod matcher;
+pub mod ontology;
 pub mod provider_kalshi;
 pub mod provider_polymarket;
-mod types;
+pub mod types;
 
 // ── Request/response types ─────────────────────────────────────────────────
 
 /// Empty request for prediction_markets_status (no parameters needed).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct StatusRequest {}
+
+/// Empty request for market_ontology_map.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketOntologyMapRequest {}
 
 /// Request for market_lookup: free-text query with optional filters.
 ///
@@ -116,69 +121,129 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("market_lookup".to_string());
-                let now = chrono::Utc::now();
-                let limit = req.limit.unwrap_or(10).min(50);
-                let query_lower = req.query.to_lowercase();
-                let mut records = Vec::new();
-
-                // Polymarket: fetch active events, filter client-side.
-                let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
-                for event in &gamma_events {
-                    let haystack = format!(
-                        "{} {} {}",
-                        event.title.to_lowercase(),
-                        event.slug.to_lowercase(),
-                        event.description.to_lowercase()
-                    );
-                    if !haystack.contains(&query_lower) {
-                        continue;
-                    }
-                    for market in &event.markets {
-                        if let Some(record) = types::MarketRecord::from_polymarket(
-                            market,
-                            &event.id,
-                            &event.slug,
-                            event.volume,
-                            event.liquidity,
-                            &now,
-                        ) {
-                            records.push(record);
-                        }
-                    }
-                }
-
-                // Kalshi: fetch open markets, filter client-side, pair with
-                // parent events for category/series.
-                let kalshi_markets = provider_kalshi::fetch_markets(&self.http, None, 200).await?;
-                let kalshi_events = provider_kalshi::fetch_events(&self.http, 200).await?;
-                for market in &kalshi_markets {
-                    let haystack = format!(
-                        "{} {} {}",
-                        market.title.to_lowercase(),
-                        market.ticker.to_lowercase(),
-                        market.rules_primary.to_lowercase()
-                    );
-                    if !haystack.contains(&query_lower) {
-                        continue;
-                    }
-                    let event = kalshi_events
-                        .iter()
-                        .find(|e| e.event_ticker == market.event_ticker);
-                    if let Some(record) = types::MarketRecord::from_kalshi(market, event, &now) {
-                        records.push(record);
-                    }
-                }
-
+                let mut records = self.gather_candidates(&req.query).await?;
                 if let Some(category) = &req.category {
                     let cat = category.to_lowercase();
                     records.retain(|r| r.category.to_lowercase().contains(&cat));
                 }
-                records.truncate(limit as usize);
-                Ok(serde_json::to_value(&records).map_err(|e| {
+                records.truncate(req.limit.unwrap_or(10).min(50) as usize);
+                serde_json::to_value(&records).map_err(|e| {
                     hkask_mcp_server::server::McpToolError::internal(format!(
                         "record serialization failed: {e}"
                     ))
-                })?)
+                })
+            },
+        )
+        .await
+    }
+
+    /// Resolve a scenario/forecast question to candidate markets about the
+    /// same underlying event.
+    #[tool(
+        description = "Resolve a scenario or forecasting question to candidate prediction markets about the same underlying event. Returns confidence-tiered candidates with deterministic match basis (token overlap + deadline alignment). Refuse low-confidence matches rather than anchoring on a wrong-event market."
+    )]
+    pub async fn market_match(&self, Parameters(req): Parameters<MarketMatchRequest>) -> String {
+        execute_tool_semantic(
+            self,
+            "market_match",
+            Some(Self::ontology_anchor("market_match")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_match".to_string());
+                let records = self.gather_candidates(&req.question).await?;
+                let mut matches = matcher::rank_matches(&req.question, &records);
+                matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
+                serde_json::to_value(&matches).map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "match serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+}
+
+impl PredictionMarketsServer {
+    /// Fetch and annotate candidate markets from both platforms, prefiltered
+    /// by substring match on the query. Shared by market_lookup and
+    /// market_match.
+    async fn gather_candidates(
+        &self,
+        query: &str,
+    ) -> Result<Vec<types::MarketRecord>, hkask_mcp_server::server::McpToolError> {
+        let now = chrono::Utc::now();
+        let query_lower = query.to_lowercase();
+        let mut records = Vec::new();
+
+        let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
+        for event in &gamma_events {
+            let haystack = format!(
+                "{} {} {}",
+                event.title.to_lowercase(),
+                event.slug.to_lowercase(),
+                event.description.to_lowercase()
+            );
+            if !haystack.contains(&query_lower) {
+                continue;
+            }
+            for market in &event.markets {
+                if let Some(record) = types::MarketRecord::from_polymarket(
+                    market,
+                    &event.id,
+                    &event.slug,
+                    event.volume,
+                    event.liquidity,
+                    &now,
+                ) {
+                    records.push(record);
+                }
+            }
+        }
+
+        let kalshi_markets = provider_kalshi::fetch_markets(&self.http, None, 200).await?;
+        let kalshi_events = provider_kalshi::fetch_events(&self.http, 200).await?;
+        for market in &kalshi_markets {
+            let haystack = format!(
+                "{} {} {}",
+                market.title.to_lowercase(),
+                market.ticker.to_lowercase(),
+                market.rules_primary.to_lowercase()
+            );
+            if !haystack.contains(&query_lower) {
+                continue;
+            }
+            let event = kalshi_events
+                .iter()
+                .find(|e| e.event_ticker == market.event_ticker);
+            if let Some(record) = types::MarketRecord::from_kalshi(market, event, &now) {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+}
+
+    /// Return the dual-axis ontology mapping document.
+    #[tool(
+        description = "Return the dual-axis (PKO process + Dublin Core state) ontology mapping document that annotates every MarketRecord, including the market lifecycle stages and field-level mappings. Fetch this before interpreting market records."
+    )]
+    pub async fn market_ontology_map(
+        &self,
+        Parameters(_req): Parameters<MarketOntologyMapRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_ontology_map",
+            Some(Self::ontology_anchor("market_ontology_map")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_ontology_map".to_string());
+                Ok(ontology::mapping_document())
             },
         )
         .await

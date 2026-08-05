@@ -16,28 +16,28 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
   - [x] `all_servers_have_credential_allowlist` test green (covers new `prediction-markets` entry, `credentials: Some(&[])`)
   - [x] Workspace `Cargo.toml` includes the crate
   - Verify: `./script/clippy -p hkask-mcp-prediction-markets` clean
-- ☐ **T2 — Polymarket Gamma provider** (`markets/polymarket-provider`)
-  - [ ] `polymarket_events` parses T0 fields; read-only, no auth
-  - [ ] HTTP 404/429/503 classify to `not_found`/`rate_limited`/`unavailable` (not blanket `internal`)
-  - [ ] Fixture unit test passes
+- ☑ **T2 — Polymarket Gamma provider** (`markets/polymarket-provider`)
+  - [x] `polymarket_events` parses T0 fields; read-only, no auth
+  - [x] HTTP 404/429/503 classify to `not_found`/`rate_limited`/`unavailable` (not blanket `internal`)
+  - [x] Fixture unit test passes
   - Verify: `cargo test -p hkask-mcp-prediction-markets provider_polymarket`
-- ☐ **T3 — Kalshi REST provider** (`markets/kalshi-provider`) — parallel with T2
-  - [ ] `kalshi_events`/`kalshi_market`/`kalshi_forecast_history` parse T0 shapes
-  - [ ] `forecast-percentile-history` preferred as probability source
-  - [ ] Errors classify per-variant; fixture test passes
+- ☑ **T3 — Kalshi REST provider** (`markets/kalshi-provider`) — parallel with T2
+  - [x] `kalshi_events`/`kalshi_market` parse T0 shapes (percentile-history dropped — 404 live, candlesticks instead)
+  - [x] ~~forecast-percentile-history~~ endpoint 404'd live; midpoint + candlesticks used
+  - [x] Errors classify per-variant; fixture test passes (+ missing-field regression test)
   - Verify: `cargo test -p hkask-mcp-prediction-markets provider_kalshi`
-- ☐ **T4 — Unified annotated contract + `market_lookup` tool** (`markets/annotated-contract`)
-  - [ ] `market_lookup` returns full annotated `MarketRecord` (probability + spread + volume + last_update + calibration + reliability_tier)
-  - [ ] Politics-category record carries `domain_bias: "underconfident"` (pinned by test)
-  - [ ] Every record carries populated `ontology.process` (PKO) + `ontology.state` (Dublin Core) blocks (pinned by test)
-  - [ ] Record carries `volatility.realized_variance` + `structural_flag`; near-deadline ~0.50 market flags `near_deadline_and_coinflip` (pinned by test)
-  - [ ] Q-O1/Q-O2 resolved: existing PKO/DC annotation precedent + `hkask:` namespace greped; resolution recorded
-  - [ ] `schema_for!(MarketLookupRequest)` has no bare-boolean positions (AnyJsonValue)
+- ☑ **T4 — Unified annotated contract + `market_lookup` tool** (`markets/annotated-contract`)
+  - [x] `market_lookup` returns full annotated `MarketRecord` (live-verified: Polymarket Fed markets) (probability + spread + volume + last_update + calibration + reliability_tier)
+  - [x] Politics-category record carries `domain_bias: "underconfident"` (pinned by test)
+  - [x] Every record carries populated `ontology.process` (PKO) + `ontology.state` (Dublin Core) blocks (pinned by test)
+  - [x] Record carries `volatility` block with `structural_flag` (realized_variance pending price-history wiring) + `structural_flag`; near-deadline ~0.50 market flags `near_deadline_and_coinflip` (pinned by test)
+  - [x] Q-O1/Q-O2 resolved: hkask-bridge-dublincore is canonical vocabulary; no hkask: forecasting namespace (domain-supplement tier): existing PKO/DC annotation precedent + `hkask:` namespace greped; resolution recorded
+  - [x] `schema_for!(MarketLookupRequest)` has no bare-boolean positions (AnyJsonValue)
   - Verify: `cargo test -p hkask-mcp-prediction-markets market_lookup` + boolean-schema test
-- ☐ **T4b — Ontology-mapping tool (`market_ontology_map`)** (`markets/ontology-map-tool`)
-  - [ ] Tool returns full dual-axis mapping document with `mapping_version` matching per-record blocks
-  - [ ] Test asserts tool output and `MarketRecord.ontology` share the same constants (no drift)
-  - [ ] `schema_for!(MarketOntologyMapRequest)` has no bare-boolean positions
+- ☑ **T4b — Ontology-mapping tool (`market_ontology_map`)** (`markets/ontology-map-tool`)
+  - [x] Tool returns full dual-axis mapping document (live-verified over stdio) with `mapping_version` matching per-record blocks
+  - [x] Test asserts tool output and `MarketRecord.ontology` share the same constants (no drift)
+  - [x] `schema_for!(MarketOntologyMapRequest)` has no bare-boolean positions
   - Verify: `cargo test -p hkask-mcp-prediction-markets ontology_map`
 - ☐ **T4c — Event ↔ market matcher (`market_match`)** (`markets/market-match`)
   - [ ] Query for a known market's own question returns it at high confidence (fixture test)

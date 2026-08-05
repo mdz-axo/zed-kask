@@ -23,6 +23,7 @@ pub fn parse_fp(raw: &str) -> Option<f64> {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct KalshiMarket {
     pub ticker: String,
     pub event_ticker: String,
@@ -66,6 +67,7 @@ impl KalshiMarket {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct KalshiMarketsResponse {
     pub cursor: String,
     pub markets: Vec<KalshiMarket>,
@@ -78,6 +80,7 @@ pub struct KalshiSettlementSource {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct KalshiEvent {
     pub event_ticker: String,
     pub series_ticker: String,
@@ -90,6 +93,7 @@ pub struct KalshiEvent {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
 pub struct KalshiEventsResponse {
     pub cursor: String,
     pub events: Vec<KalshiEvent>,
