@@ -17,6 +17,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 pub mod matcher;
+pub mod cache;
+pub mod calibration;
 pub mod ontology;
 pub mod provider_kalshi;
 pub mod provider_polymarket;
@@ -46,6 +48,13 @@ pub struct MarketLookupRequest {
     pub limit: Option<u32>,
 }
 
+/// Request for market_calibration: per-bucket Brier reading.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCalibrationRequest {
+    /// Calibration bucket: a domain ("politics", "economics") or series ticker.
+    pub bucket: String,
+}
+
 /// Request for market_match: entity resolution from a scenario/forecast
 /// question to candidate markets about the same underlying event (T4c).
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -62,6 +71,8 @@ hkask_mcp_server::mcp_server!(
     pub struct PredictionMarketsServer {
         pub http: reqwest::Client,
         pub cache_ttl_secs: u64,
+        pub calibration_store: std::sync::Arc<std::sync::Mutex<calibration::CalibrationStore>>,
+        pub response_cache: cache::TtlCache,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
     }
 );
@@ -132,7 +143,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("market_lookup".to_string());
-                let mut records = self.gather_candidates(&req.query).await?;
+                let mut records = self.gather_candidates().await?;
+                Self::substring_filter(&mut records, &req.query);
                 if let Some(category) = &req.category {
                     let cat = category.to_lowercase();
                     records.retain(|r| r.category.to_lowercase().contains(&cat));
@@ -163,7 +175,7 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("market_match".to_string());
-                let records = self.gather_candidates(&req.question).await?;
+                let records = self.gather_candidates().await?;
                 let mut matches = matcher::rank_matches(&req.question, &records);
                 matches.truncate(req.limit.unwrap_or(5).min(20) as usize);
                 serde_json::to_value(&matches).map_err(|e| {
@@ -198,31 +210,64 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    /// Return the calibration reading for a domain/series bucket.
+    #[tool(
+        description = "Return the calibration reading (Brier score, sample size, staleness) for a domain or series bucket, computed from resolved market observations via hkask-forecast. A bucket with no resolved data returns stale: true — never a synthetic brier of 0."
+    )]
+    pub async fn market_calibration(
+        &self,
+        Parameters(req): Parameters<MarketCalibrationRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_calibration",
+            Some(Self::ontology_anchor("market_calibration")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_calibration".to_string());
+                let store = self
+                    .calibration_store
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let reading = calibration::read_calibration(&store, &req.bucket);
+                serde_json::to_value(&reading).map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "calibration serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
-    /// Fetch and annotate candidate markets from both platforms, prefiltered
-    /// by substring match on the query. Shared by market_lookup and
-    /// market_match.
+    /// Fetch and annotate all candidate markets from both platforms.
+    /// Retrieval is deliberately broad (no query filtering): the caller —
+    /// `market_lookup`'s substring filter or `market_match`'s deterministic
+    /// scorer — applies its own relevance gate. A substring prefilter here
+    /// silently dropped every natural-language question from market_match
+    /// (no haystack contains a full NL question), so filtering must live in
+    /// the consumers where its semantics are explicit.
     async fn gather_candidates(
         &self,
-        query: &str,
     ) -> Result<Vec<types::MarketRecord>, hkask_mcp_server::server::McpToolError> {
+        let cache_key = "candidates:all";
+        if let Some(cached) = self.response_cache.get(cache_key)
+            && let Ok(records) = serde_json::from_value::<Vec<types::MarketRecord>>(cached)
+        {
+            return Ok(records);
+        }
         let now = chrono::Utc::now();
-        let query_lower = query.to_lowercase();
         let mut records = Vec::new();
 
         let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
         for event in &gamma_events {
-            let haystack = format!(
-                "{} {} {}",
-                event.title.to_lowercase(),
-                event.slug.to_lowercase(),
-                event.description.to_lowercase()
-            );
-            if !haystack.contains(&query_lower) {
-                continue;
-            }
+            let event_tags: Vec<String> =
+                event.tags.iter().map(|t| t.label.clone()).collect();
             for market in &event.markets {
                 if let Some(record) = types::MarketRecord::from_polymarket(
                     market,
@@ -230,6 +275,7 @@ impl PredictionMarketsServer {
                     &event.slug,
                     event.volume,
                     event.liquidity,
+                    &event_tags,
                     &now,
                 ) {
                     records.push(record);
@@ -240,15 +286,6 @@ impl PredictionMarketsServer {
         let kalshi_markets = provider_kalshi::fetch_markets(&self.http, None, 200).await?;
         let kalshi_events = provider_kalshi::fetch_events(&self.http, 200).await?;
         for market in &kalshi_markets {
-            let haystack = format!(
-                "{} {} {}",
-                market.title.to_lowercase(),
-                market.ticker.to_lowercase(),
-                market.rules_primary.to_lowercase()
-            );
-            if !haystack.contains(&query_lower) {
-                continue;
-            }
             let event = kalshi_events
                 .iter()
                 .find(|e| e.event_ticker == market.event_ticker);
@@ -256,7 +293,28 @@ impl PredictionMarketsServer {
                 records.push(record);
             }
         }
+        if let Ok(value) = serde_json::to_value(&records) {
+            self.response_cache.put(cache_key, value);
+        }
         Ok(records)
+    }
+}
+
+impl PredictionMarketsServer {
+    /// Substring filter used by market_lookup (explicit lookup semantics:
+    /// the caller typed a string to find, not a question to resolve).
+    fn substring_filter(records: &mut Vec<types::MarketRecord>, query: &str) {
+        let query_lower = query.to_lowercase();
+        records.retain(|r| {
+            format!(
+                "{} {} {} {}",
+                r.question.to_lowercase(),
+                r.description.to_lowercase(),
+                r.series.to_lowercase(),
+                r.market_id.to_lowercase()
+            )
+            .contains(&query_lower)
+        });
     }
 }
 
@@ -296,6 +354,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 ctx.webid,
                 reqwest::Client::new(),
                 cache_ttl_secs,
+                std::sync::Arc::new(std::sync::Mutex::new(calibration::CalibrationStore::new())),
+                cache::TtlCache::new(cache_ttl_secs),
                 std::sync::Mutex::new(HashSet::new()),
             ))
         },
@@ -316,6 +376,8 @@ mod tests {
             hkask_types::WebID::default(),
             reqwest::Client::new(),
             60,
+            std::sync::Arc::new(std::sync::Mutex::new(calibration::CalibrationStore::new())),
+            cache::TtlCache::new(60),
             std::sync::Mutex::new(HashSet::new()),
         )
     }

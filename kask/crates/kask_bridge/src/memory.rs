@@ -1644,6 +1644,13 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
         record: agent::ThreadTurnRecord,
     ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
         let inner = self.inner.clone();
+        // Capture user-message non-emptiness before `record` is moved into the
+        // TurnRecord below. The reask correlator (T7b) emits a
+        // `reg.widget.reask` Regulation span when a user-message turn follows a
+        // turn that rendered a provenance-carrying widget. Returns a bool that
+        // is pure telemetry — not a fallible op — so `let _reask =` is safe.
+        let user_message = !record.user_input.trim().is_empty();
+        let _reask = hkask_tool_invoker::correlate_reask(user_message);
         Box::pin(async move {
             inner
                 .ingest_turn(TurnRecord {
@@ -2607,5 +2614,41 @@ mod tests {
             .query_for_deduped_untouched("chat:thread:post-heal-test", port.curator_webid)
             .expect("curator query");
         assert_eq!(curator_record.len(), 1, "curator record written after heal");
+    }
+
+    /// T7b wiring pin: `BridgeMemoryPort::ingest_turn` must call the reask
+    /// correlator (`hkask_tool_invoker::correlate_reask`) without panicking.
+    /// The correlator drains the process-global render buffer that
+    /// provenance-carrying widgets populate via `record_render`. We cannot
+    /// easily assert the `reg.widget.reask` tracing span fired without a
+    /// capture subscriber (the repo has none); the leaf's unit tests cover the
+    /// correlator state machine. This test pins the call path is wired: record
+    /// a render, then ingest a user-message turn, and assert no error.
+    #[tokio::test]
+    async fn bridge_ingest_turn_calls_reask_correlator() {
+        use agent::ThreadMemoryPort as _;
+
+        // Record a widget render so the correlator has state to drain.
+        hkask_tool_invoker::record_render(Some("portfolio_returns".into()), None);
+
+        // Construct a BridgeMemoryPort over the in-memory RealMemoryPort.
+        let inner: std::sync::Arc<dyn MemoryPort> = std::sync::Arc::new(in_memory_port());
+        let bridge = BridgeMemoryPort::new(inner);
+
+        // Ingest a user-message turn (non-empty user_input). The correlator
+        // fires inside ingest_turn before the inner call.
+        let record = agent::ThreadTurnRecord {
+            thread_id: "reask-wiring-test".to_string(),
+            user_input: "now show me the portfolio returns".to_string(),
+            agent_response: "here are the returns".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        let result = bridge.ingest_turn(record).await;
+        assert!(
+            result.is_ok(),
+            "ingest_turn with correlator wired should succeed: {result:?}"
+        );
     }
 }

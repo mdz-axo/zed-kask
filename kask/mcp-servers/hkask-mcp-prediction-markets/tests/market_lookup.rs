@@ -134,12 +134,14 @@ fn polymarket_record_builds_with_uma_provenance() {
     let events: Vec<GammaEvent> = serde_json::from_str(POLY_FIXTURE).expect("parses");
     let event = &events[0];
     let market = &event.markets[0];
+    let event_tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
     let record = MarketRecord::from_polymarket(
         market,
         &event.id,
         &event.slug,
         event.volume,
         event.liquidity,
+        &event_tags,
         &now(),
     )
     .expect("record builds");
@@ -200,7 +202,7 @@ fn ontology_map_document_matches_per_record_block() {
     assert!(
         stages
             .iter()
-            .any(|s| s.as_str() == Some(record.ontology.process.stage)),
+            .any(|s| s.as_str() == Some(record.ontology.process.stage.as_ref())),
         "record stage {} not in documented lifecycle stages",
         record.ontology.process.stage
     );

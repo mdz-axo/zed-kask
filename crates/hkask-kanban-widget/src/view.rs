@@ -91,6 +91,16 @@ impl KanbanWidget {
     /// boards, the first one is rendered (the agent can emit multiple blocks
     /// for multiple boards).
     pub fn new(body: KanbanBlockBody, cx: &mut Context<Self>) -> Self {
+        hkask_tool_invoker::record_render(
+            body.provenance.tool.clone(),
+            body.provenance.span_id.clone(),
+        );
+        tracing::info!(
+            target: "reg.widget.render",
+            tool = body.provenance.tool.as_deref().unwrap_or(""),
+            span_id = body.provenance.span_id.as_deref().unwrap_or(""),
+            "REG",
+        );
         let boards = body.boards_with_tasks();
         let (board_name, tasks) = if let Some((_, name, tasks)) = boards.first() {
             (name.clone(), tasks.to_vec())

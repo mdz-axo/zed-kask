@@ -68,8 +68,10 @@ pub fn token_overlap(a: &str, b: &str) -> f64 {
 }
 
 /// Extract a deadline signal from the query: prefer an explicit RFC3339/ISO
-/// date; otherwise a bare 4-digit year → end of that year (conservative —
-/// a "…in 2028?" query means "by end of 2028").
+/// date; otherwise a bare 4-digit year → the *midpoint* of that year (Jul 1).
+/// End-of-year is wrong: "the January 2028 meeting" means Jan 2028, and a
+/// Dec-31 pivot would put it ~340 days from the market's actual deadline for
+/// the *same* event. Mid-year minimizes worst-case error for coarse queries.
 pub fn extract_deadline(query: &str) -> Option<chrono::NaiveDate> {
     // ISO date token, e.g. 2027-04-28.
     for token in query.split(|c: char| !c.is_alphanumeric() && c != '-') {
@@ -77,13 +79,13 @@ pub fn extract_deadline(query: &str) -> Option<chrono::NaiveDate> {
             return Some(date);
         }
     }
-    // Bare year token, e.g. "2028".
+    // Bare year token, e.g. "2028" → mid-year pivot.
     for token in query.split(|c: char| !c.is_alphanumeric()) {
         if token.len() == 4
             && let Ok(year) = token.parse::<i32>()
             && (2020..=2100).contains(&year)
         {
-            return chrono::NaiveDate::from_ymd_opt(year, 12, 31);
+            return chrono::NaiveDate::from_ymd_opt(year, 7, 1);
         }
     }
     None
@@ -99,11 +101,14 @@ fn deadline_delta_days(
 }
 
 /// Score a candidate market against a query. Deterministic:
-/// `score = token_overlap * deadline_factor`, where deadline_factor is 1.0
-/// when the query carries no deadline signal or the deadlines align, and
-/// decays to 0.25 at ≥30 days of mismatch. Deadline only *penalizes*
-/// mismatches — a market's own question (which may not name a date) must
-/// score 1.0, and absence of a date signal is not evidence against a match.
+/// `score = token_overlap * deadline_factor`. The deadline factor only
+/// discriminates between *competing* candidates when the query explicitly
+/// names a date/year that differs from the market's deadline — a market's
+/// own question (which embeds its date) must score a perfect match against
+/// itself, and a query with no date signal is never penalized. So:
+/// factor = 1.0 when no explicit query date, or the dates align (<=45 days,
+/// generous because "December meeting" vs "Dec 8" are the same cycle);
+/// decays to 0.1 beyond that.
 pub fn score_match(
     query: &str,
     query_deadline: Option<chrono::NaiveDate>,
@@ -111,9 +116,17 @@ pub fn score_match(
 ) -> MatchCandidate {
     let overlap = token_overlap(query, &market.question);
     let delta = query_deadline.and_then(|d| deadline_delta_days(d, &market.deadline));
+    // Tolerance tracks the query's own extraction precision: an ISO-date
+    // query (day precision) penalizes mismatches past 45 days; a year-only
+    // query (±6-month precision) only penalizes different *cycles* (>1 year).
+    let day_precision = query_deadline.is_some()
+        && query.split(|c: char| !c.is_alphanumeric() && c != '-').any(|t| {
+            chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok()
+        });
+    let tolerance = if day_precision { 45.0 } else { 366.0 };
     let deadline_factor = match delta {
-        Some(d) if d <= 3.0 => 1.0,
-        Some(d) => (1.0 - (d - 3.0) / 27.0 * 0.75).max(0.25),
+        Some(d) if d <= tolerance => 1.0,
+        Some(d) => (1.0 - (d - tolerance) / 300.0).max(0.1),
         None => 1.0,
     };
     let score = overlap * deadline_factor;

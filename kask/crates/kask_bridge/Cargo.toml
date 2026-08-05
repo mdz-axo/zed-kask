@@ -22,6 +22,7 @@ hkask-regulation.workspace = true
 hkask-email.workspace = true
 hkask-services-core = { path = "../hkask-services-core" }
 hkask-condenser = { path = "../hkask-condenser" }
+hkask_tool_invoker.workspace = true
 
 # zed-kask side — the facilities the bridge adapts over
 language_model.workspace = true

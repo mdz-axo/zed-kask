@@ -52,6 +52,16 @@ pub struct ScenariosWidget {
 impl ScenariosWidget {
     /// Create a new scenarios widget for the parsed block body.
     pub fn new(body: ScenariosBlockBody, cx: &mut Context<Self>) -> Self {
+        hkask_tool_invoker::record_render(
+            body.provenance.tool.clone(),
+            body.provenance.span_id.clone(),
+        );
+        tracing::info!(
+            target: "reg.widget.render",
+            tool = body.provenance.tool.as_deref().unwrap_or(""),
+            span_id = body.provenance.span_id.as_deref().unwrap_or(""),
+            "REG",
+        );
         Self {
             body,
             focus_handle: cx.focus_handle(),
@@ -985,7 +995,10 @@ mod tests {
     #[test]
     fn merge_args_treats_null_base_as_empty_object() {
         // A block produced before args were recorded re-issues with just the override.
-        let merged = merge_args(&serde_json::Value::Null, &serde_json::json!({"event_id": "e1"}));
+        let merged = merge_args(
+            &serde_json::Value::Null,
+            &serde_json::json!({"event_id": "e1"}),
+        );
         assert_eq!(merged, serde_json::json!({"event_id": "e1"}));
     }
 
@@ -1048,7 +1061,8 @@ mod tests {
         hkask_tool_invoker::set_tool_invoker(Some(mock.clone()));
 
         // Empty body → empty (non-dispatchable) provenance → T2 hardcoded fallback.
-        let widget = cx.update(|cx| cx.new(|cx| ScenariosWidget::new(ScenariosBlockBody::default(), cx)));
+        let widget =
+            cx.update(|cx| cx.new(|cx| ScenariosWidget::new(ScenariosBlockBody::default(), cx)));
         cx.update(|cx| {
             widget.update(cx, |widget, cx| widget.dispatch_rung("scenario_frame", cx));
         });
@@ -1063,7 +1077,10 @@ mod tests {
         // The widget cleared in-flight and recorded the canned result.
         let (in_flight, has_result) = cx.update(|cx| {
             widget.read_with(cx, |widget, _cx| {
-                (widget.dispatch_in_flight.clone(), widget.dispatch_result.is_some())
+                (
+                    widget.dispatch_in_flight.clone(),
+                    widget.dispatch_result.is_some(),
+                )
             })
         });
         assert!(in_flight.is_none(), "in-flight cleared after completion");
@@ -1078,7 +1095,8 @@ mod tests {
         let _restore = InvokerGuard;
         hkask_tool_invoker::set_tool_invoker(None);
 
-        let widget = cx.update(|cx| cx.new(|cx| ScenariosWidget::new(ScenariosBlockBody::default(), cx)));
+        let widget =
+            cx.update(|cx| cx.new(|cx| ScenariosWidget::new(ScenariosBlockBody::default(), cx)));
         cx.update(|cx| {
             widget.update(cx, |widget, cx| widget.dispatch_rung("scenario_frame", cx));
         });
@@ -1086,7 +1104,10 @@ mod tests {
 
         let (error, in_flight) = cx.update(|cx| {
             widget.read_with(cx, |widget, _cx| {
-                (widget.dispatch_error.clone(), widget.dispatch_in_flight.clone())
+                (
+                    widget.dispatch_error.clone(),
+                    widget.dispatch_in_flight.clone(),
+                )
             })
         });
         assert_eq!(error.as_deref(), Some(INVOKER_NOT_WIRED_MSG));
@@ -1119,11 +1140,17 @@ mod tests {
 
         let (error, in_flight) = cx.update(|cx| {
             widget.read_with(cx, |widget, _cx| {
-                (widget.dispatch_error.clone(), widget.dispatch_in_flight.clone())
+                (
+                    widget.dispatch_error.clone(),
+                    widget.dispatch_in_flight.clone(),
+                )
             })
         });
         assert_eq!(error.as_deref(), Some(PROVENANCE_MISMATCH_MSG));
         assert!(in_flight.is_none());
-        assert!(mock.calls.lock().expect("calls poisoned").is_empty(), "no dispatch on mismatch");
+        assert!(
+            mock.calls.lock().expect("calls poisoned").is_empty(),
+            "no dispatch on mismatch"
+        );
     }
 }

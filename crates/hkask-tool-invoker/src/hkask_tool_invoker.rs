@@ -33,6 +33,7 @@
 //! depends only on `gpui` (`Task`), `serde`, and `serde_json`.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui::Task;
 use serde::Deserialize;
@@ -110,6 +111,91 @@ impl BlockProvenance {
     }
 }
 
+// ── reask correlator (T7b) ──────────────────────────────────────────────────
+//
+// A coarse measurement proxy for "the user re-asked after a widget rendered".
+// Provenance-carrying widgets (scenarios, portfolio, kanban) call `record_render`
+// on construction; the memory port calls `correlate_reask` at turn completion.
+// When a user-message turn follows a turn that rendered at least one widget,
+// the correlator emits a `reg.widget.reask` Regulation span. This is an
+// upper-bound proxy — it counts any user message after a render turn as a
+// re-ask, regardless of intent matching (open question #3 in the plan). The
+// flag is global, so multi-conversation interleaving adds noise — acceptable
+// for the aggregate measurement gate.
+
+/// One widget render event, for the reask correlator. Recorded by
+/// provenance-carrying widgets on construction; drained by the memory port
+/// at turn completion.
+#[derive(Debug, Clone)]
+pub struct RenderRecord {
+    pub tool: Option<String>,
+    pub span_id: Option<String>,
+    pub at: Instant,
+}
+
+static RENDERS: std::sync::Mutex<Vec<RenderRecord>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether the turn preceding the current `correlate_reask` call rendered any
+/// widget. Global (not per-thread) — multi-conversation interleaving adds noise
+/// to this measurement proxy; acceptable for the aggregate gate (see plan).
+static PREV_HAD_RENDER: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+
+const MAX_RENDER_HISTORY: usize = 64;
+
+/// Record that a provenance-carrying widget rendered. Called from widget
+/// `new`/`new_widget`. Bounded to `MAX_RENDER_HISTORY` (oldest dropped).
+pub fn record_render(tool: Option<String>, span_id: Option<String>) {
+    if let Ok(mut renders) = RENDERS.lock() {
+        renders.push(RenderRecord {
+            tool,
+            span_id,
+            at: Instant::now(),
+        });
+        if renders.len() > MAX_RENDER_HISTORY {
+            renders.remove(0);
+        }
+    }
+}
+
+/// Correlate a completed turn against recent widget renders and emit a
+/// `reg.widget.reask` Regulation span when a user message followed a turn
+/// that rendered a widget. Coarse upper-bound proxy: it counts ANY user
+/// message after a render turn as a re-ask, regardless of intent matching
+/// (the intent-matching heuristic is open question #3 in the plan). The flag
+/// is global, so multi-conversation interleaving adds noise — acceptable for
+/// the aggregate measurement gate.
+///
+/// Returns `true` when a reask was emitted this turn. Called from
+/// `BridgeMemoryPort::ingest_turn` with `!user_input.trim().is_empty()`.
+pub fn correlate_reask(user_message: bool) -> bool {
+    // Drain this turn's renders (renders happen during the turn, before
+    // ingest_turn fires; prior turns were already drained).
+    let this_turn_count = if let Ok(mut renders) = RENDERS.lock() {
+        let count = renders.len();
+        renders.clear();
+        count
+    } else {
+        0
+    };
+    let prev_had_render = if let Ok(mut flag) = PREV_HAD_RENDER.lock() {
+        let old = *flag;
+        *flag = this_turn_count > 0;
+        old
+    } else {
+        false
+    };
+    if user_message && prev_had_render {
+        tracing::info!(
+            target: "reg.widget.reask",
+            this_turn_renders = this_turn_count,
+            "REG",
+        );
+        true
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +240,99 @@ mod tests {
             .map(|v| serde_json::from_value(v).unwrap_or_default())
             .unwrap_or_default();
         assert!(!p.is_dispatchable());
+    }
+
+    // ── reask correlator tests (T7b) ────────────────────────────────────────
+    //
+    // `record_render` and `correlate_reask` share process-global statics
+    // (`RENDERS`, `PREV_HAD_RENDER`). Tests that mutate them must serialize so
+    // parallel test threads never observe each other's state. `TEST_LOCK`
+    // serializes the three correlator tests within this binary; each test
+    // resets the global state at start (drain renders, clear the flag).
+    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Reset the correlator global state. Called at the start of each test
+    /// under `TEST_LOCK` so prior test state never leaks in.
+    fn reset_correlator_state() {
+        if let Ok(mut renders) = RENDERS.lock() {
+            renders.clear();
+        }
+        if let Ok(mut flag) = PREV_HAD_RENDER.lock() {
+            *flag = false;
+        }
+    }
+
+    #[test]
+    fn record_render_then_drain() {
+        let _guard = TEST_LOCK.lock().expect("correlator test lock poisoned");
+        reset_correlator_state();
+        record_render(Some("portfolio_returns".into()), None);
+        record_render(Some("scenario_quantify".into()), Some("span-1".into()));
+        record_render(None, None);
+        // Three renders buffered before the drain.
+        let len_before = RENDERS.lock().map(|renders| renders.len()).unwrap_or(0);
+        assert_eq!(len_before, 3, "three renders should be buffered");
+        // A user-message turn with no prior render: drains the 3 records, but
+        // prev_had_render was false so no reask. The drain clears the buffer.
+        let emitted = correlate_reask(true);
+        assert!(!emitted, "first turn after reset has no prior render");
+        let len_after = RENDERS.lock().map(|renders| renders.len()).unwrap_or(0);
+        assert_eq!(len_after, 0, "correlate_reask must drain the buffer");
+        // Second drain (next turn) returns 0 — the prior drain cleared the buffer.
+        let emitted_again = correlate_reask(false);
+        assert!(!emitted_again, "no renders this turn");
+    }
+
+    #[test]
+    fn record_render_bounds_history() {
+        let _guard = TEST_LOCK.lock().expect("correlator test lock poisoned");
+        reset_correlator_state();
+        for _ in 0..(MAX_RENDER_HISTORY + 5) {
+            record_render(Some("kanban_task_move".into()), None);
+        }
+        // The buffer is bounded to MAX_RENDER_HISTORY — the oldest 5 were
+        // dropped. Inspect the static directly (in-crate test) since
+        // `correlate_reask` returns a bool, not the count.
+        let len = RENDERS.lock().map(|renders| renders.len()).unwrap_or(0);
+        assert_eq!(
+            len, MAX_RENDER_HISTORY,
+            "render history must be bounded to MAX_RENDER_HISTORY"
+        );
+        // Drain via correlate_reask to leave clean state.
+        let emitted = correlate_reask(false);
+        assert!(!emitted, "non-user-message turn never emits reask");
+    }
+
+    #[test]
+    fn correlate_reask_emits_only_when_user_message_follows_render() {
+        let _guard = TEST_LOCK.lock().expect("correlator test lock poisoned");
+        reset_correlator_state();
+
+        // Turn A: render turn. record_render pushes 2 renders; ingest_turn
+        // fires correlate_reask(user_message=false) — drains the 2, sets
+        // prev_had_render=true, no reask (not a user message).
+        record_render(Some("portfolio_returns".into()), None);
+        record_render(Some("scenario_quantify".into()), None);
+        let emitted_a = correlate_reask(false);
+        assert!(
+            !emitted_a,
+            "render turn (no user message) must not emit reask"
+        );
+
+        // Turn B: user-message turn, no new renders. Drains 0, prev_had_render
+        // is true (from turn A), user_message=true → reask emitted.
+        let emitted_b = correlate_reask(true);
+        assert!(
+            emitted_b,
+            "user message following a render turn must emit reask"
+        );
+
+        // Turn C: another user-message turn with no prior render. Drains 0,
+        // prev_had_render is now false (turn B had 0 renders) → no reask.
+        let emitted_c = correlate_reask(true);
+        assert!(
+            !emitted_c,
+            "user message after a non-render turn must not emit reask"
+        );
     }
 }

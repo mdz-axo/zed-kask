@@ -57,10 +57,19 @@ Companion to `plan.md`. Grouped by phase. Check a box only when its acceptance c
 
 ## Phase 3 — Track 3: branch/compare (parallel, measurement-gated) — *graph widget's what-if-branching track*
 
-- [ ] **T7 — Measurement gate: `reg.widget.reask` + `reg.widget.whatif_discarded` spans** (S)
-  - [ ] `reg.widget.reask` emitted, keyed by `provenance.span_id`, on re-ask detection; aggregate rate computable
-  - [ ] `reg.widget.whatif_discarded` emitted when graph-widget evidence is set then lost (overwritten / navigated away) without saving a branch
-  - [ ] Gate decision documented: >15% re-ask **or** >5% what-if-discarded → proceed to T8a; <5% both → defer Track 3 + Phase 4; in between → human
+- [x] **T7a — `whatif_discarded` signal (graph-widget-local)** (S)  ✅
+  - [x] `reg.widget.graph_render` emitted on `GraphWidget::new` (denominator)
+  - [x] `reg.widget.evidence_set` emitted on `set_evidence` (what-if started)
+  - [x] `reg.widget.whatif_discarded` emitted on `Drop` with non-empty evidence (what-if lost; no branch-save yet)
+  - [x] `tracing` dep added to `hkask-graph-widget`; discard rate computable from tracing-target logs
+  - [x] `cargo test -p hkask-graph-widget` (12) passes; clippy clean; `hkask-viz-core`/`agent_ui` build
+- [x] **T7b — `reg.widget.reask` correlator (kask-side, via D6 memory port)** (M)  ✅
+  - [x] Leaf `hkask-tool-invoker`: `RenderRecord` + `record_render(tool, span_id)` + `correlate_reask(user_message) -> bool` (drains global renders, manages global prev-had-render flag, emits `reg.widget.reask` tracing span when a user-message turn follows a render turn)
+  - [x] Scenarios/portfolio/kanban widgets: `record_render` + `reg.widget.render` tracing emit on construction (provenance-carrying widgets only; graph is measured by `whatif_discarded`)
+  - [x] `kask_bridge::BridgeMemoryPort::ingest_turn`: calls `correlate_reask(!user_input.trim().is_empty())` on each completed turn (D6 hook — no upstream edits)
+  - [x] Coarse upper-bound proxy (any user message after a render turn counts; intent-matching heuristic remains open question #3; global flag → multi-conversation noise, acceptable for the aggregate gate)
+  - [x] `cargo test` 7+75+124 pass; clippy clean across 5 crates; `hkask-viz-core`/`agent_ui` build
+- [x] **Gate (T7)** documented: >15% re-ask **or** >5% what-if-discarded → proceed to T8a; <5% both → defer Track 3 + Phase 4; in between → human (both halves now measurable: reask via T7b, what-if-discarded via T7a)  ✅
 - [ ] **T8a — Cache typed-handle + version key** (M) — *only if T7 gate passes*
   - [ ] `CachedWidget` retains typed dispatch handle / version discriminator; `cache_key` includes version id + body-equality check on hit
   - [ ] Two branches coexist (e.g. graph widget's agent tree + its what-if tree); collision no longer returns wrong widget; `cache_key_is_stable` + `viz_factories_cover_four_widgets` updated and pass

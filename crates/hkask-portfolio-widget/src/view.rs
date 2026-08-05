@@ -70,6 +70,16 @@ pub struct PortfolioWidget {
 impl PortfolioWidget {
     /// Create a new portfolio widget for the parsed block body.
     pub fn new(body: PortfolioBlockBody, cx: &mut Context<Self>) -> Self {
+        hkask_tool_invoker::record_render(
+            body.provenance.tool.clone(),
+            body.provenance.span_id.clone(),
+        );
+        tracing::info!(
+            target: "reg.widget.render",
+            tool = body.provenance.tool.as_deref().unwrap_or(""),
+            span_id = body.provenance.span_id.as_deref().unwrap_or(""),
+            "REG",
+        );
         let from_input = body
             .returns
             .as_ref()

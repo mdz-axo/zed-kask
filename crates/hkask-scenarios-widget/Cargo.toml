@@ -18,6 +18,7 @@ serde_json.workspace = true
 ui.workspace = true
 hkask_tool_invoker.workspace = true
 gpui_util.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

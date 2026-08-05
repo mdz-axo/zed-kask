@@ -9203,6 +9203,7 @@ dependencies = [
  "serde",
  "serde_json",
  "theme",
+ "tracing",
  "ui",
 ]
 
@@ -9646,6 +9647,7 @@ dependencies = [
  "hkask-tool-invoker",
  "serde",
  "serde_json",
+ "tracing",
  "ui",
 ]
 
@@ -9679,6 +9681,7 @@ dependencies = [
  "serde",
  "serde_json",
  "theme",
+ "tracing",
  "ui",
 ]
 
@@ -9768,6 +9771,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -11040,6 +11044,7 @@ dependencies = [
  "hkask-storage",
  "hkask-templates",
  "hkask-test-harness",
+ "hkask-tool-invoker",
  "hkask-types",
  "http_client",
  "language_model",

@@ -47,7 +47,7 @@ fn deadline_extraction_prefers_iso_then_year() {
     );
     assert_eq!(
         extract_deadline("Who wins in 2028?"),
-        chrono::NaiveDate::from_ymd_opt(2028, 12, 31)
+        chrono::NaiveDate::from_ymd_opt(2028, 7, 1)
     );
     assert_eq!(extract_deadline("no date here"), None);
 }

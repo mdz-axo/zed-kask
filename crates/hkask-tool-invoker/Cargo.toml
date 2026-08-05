@@ -13,6 +13,7 @@ gpui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
