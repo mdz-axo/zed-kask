@@ -9,6 +9,7 @@ use std::borrow::Cow;
 
 use serde::{Deserialize, Serialize};
 
+use crate::calibration::CalibrationReading;
 use crate::ontology;
 use crate::provider_kalshi::{KalshiEvent, KalshiMarket, parse_fp};
 use crate::provider_polymarket::GammaMarket;
@@ -151,6 +152,29 @@ pub struct MarketRecord {
     pub ontology: OntologyBlock,
 }
 
+/// Build the calibration block for a record: store reading (Brier, sample
+/// size, staleness) + the static-or-measured domain bias for the category.
+/// The server (which owns the store) calls this; the builders stay pure.
+pub fn calibration_for(
+    store_reading: Option<&CalibrationReading>,
+    category: &str,
+) -> Calibration {
+    match store_reading {
+        Some(reading) if !reading.stale => Calibration {
+            brier: reading.brier,
+            domain_bias: domain_bias_for(category).map(Cow::Borrowed),
+            sample_size: reading.sample_size,
+            stale: false,
+        },
+        _ => Calibration {
+            brier: None,
+            domain_bias: domain_bias_for(category).map(Cow::Borrowed),
+            sample_size: store_reading.map_or(0, |r| r.sample_size),
+            stale: true,
+        },
+    }
+}
+
 /// Static per-domain bias table seeded from arXiv:2602.19520 (politics
 /// chronically underconfident on both exchanges). T5/T10 replace this with
 /// data-derived estimates.
@@ -188,6 +212,16 @@ pub fn structural_flag(probability: f64, days_to_deadline: Option<f64>) -> Struc
         (true, false) => StructuralFlag::NearDeadline,
         (false, true) => StructuralFlag::NearCoinflip,
         (false, false) => StructuralFlag::None,
+    }
+}
+
+/// Interpretation derived from the structural flag (2607.08199): elevated
+/// expected instability near deadlines and coin-flip prices.
+fn interpretation_for(flag: StructuralFlag) -> Cow<'static, str> {
+    match flag {
+        StructuralFlag::None => Cow::Borrowed("low"),
+        StructuralFlag::NearCoinflip | StructuralFlag::NearDeadline => Cow::Borrowed("medium"),
+        StructuralFlag::NearDeadlineAndCoinflip => Cow::Borrowed("high"),
     }
 }
 
@@ -243,6 +277,7 @@ impl MarketRecord {
     pub fn from_kalshi(
         market: &KalshiMarket,
         event: Option<&KalshiEvent>,
+        calibration: Calibration,
         now: &chrono::DateTime<chrono::Utc>,
     ) -> Option<Self> {
         let probability = market.yes_midpoint()?;
@@ -268,7 +303,7 @@ impl MarketRecord {
             market_id: market.ticker.clone(),
             question: market.title.clone(),
             description: market.rules_primary.clone(),
-            category: category.clone(),
+            category,
             series: event.map(|e| e.series_ticker.clone()).unwrap_or_default(),
             deadline: market.close_time.clone(),
             probability,
@@ -282,17 +317,12 @@ impl MarketRecord {
             volatility: Volatility {
                 realized_variance: None,
                 structural_flag: flag,
-                interpretation: Cow::Borrowed("low"),
+                interpretation: interpretation_for(flag),
             },
             status,
             resolved_outcome,
             resolution_source: Cow::Borrowed("kalshi_exchange"),
-            calibration: Calibration {
-                brier: None,
-                domain_bias: domain_bias_for(&category).map(Cow::Borrowed),
-                sample_size: 0,
-                stale: true,
-            },
+            calibration,
             reliability_tier: reliability_tier(volume, spread),
             ontology: make_ontology(
                 Source::Kalshi,
@@ -314,6 +344,7 @@ impl MarketRecord {
         event_volume: f64,
         event_liquidity: f64,
         event_tags: &[String],
+        calibration: Calibration,
         now: &chrono::DateTime<chrono::Utc>,
     ) -> Option<Self> {
         let probability = market.yes_probability()?;
@@ -357,7 +388,7 @@ impl MarketRecord {
             market_id: market.id.clone(),
             question: market.question.clone(),
             description: market.description.clone(),
-            category: category.clone(),
+            category,
             series: event_slug.to_string(),
             deadline: market.end_date.clone(),
             probability,
@@ -371,17 +402,12 @@ impl MarketRecord {
             volatility: Volatility {
                 realized_variance: None,
                 structural_flag: flag,
-                interpretation: Cow::Borrowed("low"),
+                interpretation: interpretation_for(flag),
             },
             status,
             resolved_outcome,
             resolution_source: Cow::Borrowed("uma_oracle"),
-            calibration: Calibration {
-                brier: None,
-                domain_bias: domain_bias_for(&category).map(Cow::Borrowed),
-                sample_size: 0,
-                stale: true,
-            },
+            calibration,
             reliability_tier: reliability_tier(event_volume, spread),
             ontology: make_ontology(
                 Source::Polymarket,

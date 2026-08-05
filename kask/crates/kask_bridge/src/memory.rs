@@ -1647,10 +1647,11 @@ impl agent::ThreadMemoryPort for BridgeMemoryPort {
         // Capture user-message non-emptiness before `record` is moved into the
         // TurnRecord below. The reask correlator (T7b) emits a
         // `reg.widget.reask` Regulation span when a user-message turn follows a
-        // turn that rendered a provenance-carrying widget. Returns a bool that
-        // is pure telemetry — not a fallible op — so `let _reask =` is safe.
+        // turn that rendered a provenance-carrying widget. The return is pure
+        // telemetry (a test seam, not a production consumer) — discarded here;
+        // the leaf unit tests assert the bool.
         let user_message = !record.user_input.trim().is_empty();
-        let _reask = hkask_tool_invoker::correlate_reask(user_message);
+        hkask_tool_invoker::correlate_reask(user_message);
         Box::pin(async move {
             inner
                 .ingest_turn(TurnRecord {

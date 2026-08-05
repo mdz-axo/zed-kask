@@ -14,13 +14,17 @@ fn now() -> chrono::DateTime<chrono::Utc> {
         .with_timezone(&chrono::Utc)
 }
 
+fn stale_calibration() -> hkask_mcp_prediction_markets::types::Calibration {
+    hkask_mcp_prediction_markets::types::calibration_for(None, "")
+}
+
 fn kalshi_records() -> Vec<MarketRecord> {
     let markets: KalshiMarketsResponse =
         serde_json::from_str(KALSHI_FIXTURE).expect("parses");
     markets
         .markets
         .iter()
-        .filter_map(|m| MarketRecord::from_kalshi(m, None, &now()))
+        .filter_map(|m| MarketRecord::from_kalshi(m, None, stale_calibration(), &now()))
         .collect()
 }
 

@@ -36,6 +36,11 @@ pub struct MediaWidget {
     // True while an audio file is being read off the foreground thread
     // (load_audio_file_async). Flows into the transport bar is_loading.
     audio_loading: bool,
+    // Single-flight guard for `load_audio_file_async`: storing the latest spawn
+    // here drops (cancels) any prior in-flight read, so a stale larger read
+    // cannot overwrite a newer smaller one, and dropping the widget cancels the
+    // outstanding read (no wasteful I/O after drop). See M3.
+    audio_load_task: Option<Task<()>>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -90,6 +95,7 @@ impl MediaWidget {
             playback_task: None,
             last_transport: None,
             audio_loading: false,
+            audio_load_task: None,
             error: None,
             _subscriptions: Vec::new(),
         };
@@ -202,7 +208,7 @@ impl MediaWidget {
     fn load_audio_file_async(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         self.audio_loading = true;
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        self.audio_load_task = Some(cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn(async move { read_audio_file(&path) })
                 .await;
@@ -223,8 +229,7 @@ impl MediaWidget {
                 cx.notify();
             })
             .ok();
-        })
-        .detach();
+        }));
     }
 
     fn load_audio_data_uri(&mut self, player: &Arc<AudioPlayer>, url: &str) {

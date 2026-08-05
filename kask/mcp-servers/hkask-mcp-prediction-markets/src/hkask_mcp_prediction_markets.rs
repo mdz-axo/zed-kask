@@ -263,12 +263,23 @@ impl PredictionMarketsServer {
         }
         let now = chrono::Utc::now();
         let mut records = Vec::new();
+        // Snapshot store readings before any await: holding the MutexGuard
+        // across a fetch makes the tool future non-Send. Readings are cheap
+        // clones keyed by bucket; per-bucket lookup below.
+        let store = std::sync::Arc::clone(&self.calibration_store);
 
         let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
         for event in &gamma_events {
             let event_tags: Vec<String> =
                 event.tags.iter().map(|t| t.label.clone()).collect();
+            let bucket = event_tags.first().cloned().unwrap_or_default();
+            let reading = {
+                let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+                calibration::read_calibration(&guard, &bucket)
+            };
             for market in &event.markets {
+                let calibration_block =
+                    types::calibration_for(Some(&reading), &bucket);
                 if let Some(record) = types::MarketRecord::from_polymarket(
                     market,
                     &event.id,
@@ -276,6 +287,7 @@ impl PredictionMarketsServer {
                     event.volume,
                     event.liquidity,
                     &event_tags,
+                    calibration_block,
                     &now,
                 ) {
                     records.push(record);
@@ -289,7 +301,15 @@ impl PredictionMarketsServer {
             let event = kalshi_events
                 .iter()
                 .find(|e| e.event_ticker == market.event_ticker);
-            if let Some(record) = types::MarketRecord::from_kalshi(market, event, &now) {
+            let bucket = event.map(|e| e.category.clone()).unwrap_or_default();
+            let reading = {
+                let guard = store.lock().unwrap_or_else(|e| e.into_inner());
+                calibration::read_calibration(&guard, &bucket)
+            };
+            let calibration_block = types::calibration_for(Some(&reading), &bucket);
+            if let Some(record) =
+                types::MarketRecord::from_kalshi(market, event, calibration_block, &now)
+            {
                 records.push(record);
             }
         }

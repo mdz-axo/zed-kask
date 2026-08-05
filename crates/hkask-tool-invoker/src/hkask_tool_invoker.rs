@@ -109,6 +109,22 @@ impl BlockProvenance {
     pub fn is_dispatchable(&self) -> bool {
         self.tool.is_some() && self.server.is_some()
     }
+
+    /// Whether provenance carries no dispatchable signal (no tool, no server,
+    /// null/absent args) — the shape a block body emitted before provenance
+    /// landed has. Widgets use this to decide between a provenance-driven
+    /// dispatch and the hardcoded fallback; any other non-dispatchable shape is
+    /// treated as a partial/incomplete provenance and disabled.
+    pub fn is_empty(&self) -> bool {
+        self.tool.is_none()
+            && self.server.is_none()
+            && (self.args.is_null()
+                || self
+                    .args
+                    .as_object()
+                    .map(serde_json::Map::is_empty)
+                    .unwrap_or(false))
+    }
 }
 
 // ── reask correlator (T7b) ──────────────────────────────────────────────────
@@ -121,7 +137,7 @@ impl BlockProvenance {
 // upper-bound proxy — it counts any user message after a render turn as a
 // re-ask, regardless of intent matching (open question #3 in the plan). The
 // flag is global, so multi-conversation interleaving adds noise — acceptable
-// for the aggregate measurement gate.
+// for the aggregate measurement tap.
 
 /// One widget render event, for the reask correlator. Recorded by
 /// provenance-carrying widgets on construction; drained by the memory port
@@ -137,7 +153,8 @@ static RENDERS: std::sync::Mutex<Vec<RenderRecord>> = std::sync::Mutex::new(Vec:
 
 /// Whether the turn preceding the current `correlate_reask` call rendered any
 /// widget. Global (not per-thread) — multi-conversation interleaving adds noise
-/// to this measurement proxy; acceptable for the aggregate gate (see plan).
+/// to this measurement proxy; acceptable for the aggregate measurement tap
+/// (see plan).
 static PREV_HAD_RENDER: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
 
 const MAX_RENDER_HISTORY: usize = 64;
@@ -154,6 +171,11 @@ pub fn record_render(tool: Option<String>, span_id: Option<String>) {
         if renders.len() > MAX_RENDER_HISTORY {
             renders.remove(0);
         }
+    } else {
+        tracing::warn!(
+            target: "reg.widget",
+            "RENDERS mutex poisoned — widget render telemetry degraded"
+        );
     }
 }
 
@@ -163,7 +185,7 @@ pub fn record_render(tool: Option<String>, span_id: Option<String>) {
 /// message after a render turn as a re-ask, regardless of intent matching
 /// (the intent-matching heuristic is open question #3 in the plan). The flag
 /// is global, so multi-conversation interleaving adds noise — acceptable for
-/// the aggregate measurement gate.
+/// the aggregate measurement tap.
 ///
 /// Returns `true` when a reask was emitted this turn. Called from
 /// `BridgeMemoryPort::ingest_turn` with `!user_input.trim().is_empty()`.
@@ -175,6 +197,10 @@ pub fn correlate_reask(user_message: bool) -> bool {
         renders.clear();
         count
     } else {
+        tracing::warn!(
+            target: "reg.widget",
+            "RENDERS mutex poisoned — widget render telemetry degraded"
+        );
         0
     };
     let prev_had_render = if let Ok(mut flag) = PREV_HAD_RENDER.lock() {
@@ -182,6 +208,10 @@ pub fn correlate_reask(user_message: bool) -> bool {
         *flag = this_turn_count > 0;
         old
     } else {
+        tracing::warn!(
+            target: "reg.widget",
+            "PREV_HAD_RENDER mutex poisoned — widget render telemetry degraded"
+        );
         false
     };
     if user_message && prev_had_render {

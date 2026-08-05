@@ -24,11 +24,6 @@ use crate::block::{
 /// target when a block carries no dispatchable provenance (T2 hardcoded path).
 const DEFAULT_SERVER: &str = "hkask-mcp-scenarios";
 
-/// Visible hint surfaced when provenance is present but its `tool` does not
-/// match the clicked rung — the widget refuses to re-issue the wrong tool and
-/// asks the user to route through the agent instead.
-const PROVENANCE_MISMATCH_MSG: &str = "provenance mismatch — ask the agent";
-
 /// Visible hint surfaced when the process-global `ToolInvoker` has not been
 /// wired (e.g. before the post-login deferred task runs). Per the repo `.rules`
 /// startup-failure-signal trap, this is a visible state, not a silent no-op.
@@ -546,25 +541,13 @@ impl ScenariosWidget {
     ///
     /// Surfaced states (never silent per repo `.rules`):
     /// - `INVOKER_NOT_WIRED_MSG` when `shared_tool_invoker()` returns `None`.
-    /// - `PROVENANCE_MISMATCH_MSG` when provenance is dispatchable but its
-    ///   `tool` differs from the rung's tool.
     pub(crate) fn dispatch_rung(&mut self, rung_tool: &str, cx: &mut Context<Self>) {
-        let plan = build_dispatch_args(
+        let (server, tool, args) = build_dispatch_args(
             &self.body.provenance,
             rung_tool,
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &serde_json::Value::Null,
         );
-        let (server, tool, args) = match plan {
-            Ok(tuple) => tuple,
-            Err(message) => {
-                self.dispatch_error = Some(message.to_string());
-                self.dispatch_in_flight = None;
-                cx.notify();
-                return;
-            }
-        };
 
         let invoker = match shared_tool_invoker() {
             None => {
@@ -737,60 +720,24 @@ const PIPELINE_STAGES: &[(&str, &str, &str)] = &[
 // mutating `set_tool_invoker`). The `on_click` handler in `dispatch_rung`
 // composes this pure function with `shared_tool_invoker()`.
 
-/// Merge `rung_override` (an object) into `base` (an object). Non-object inputs
-/// are treated as empty objects so a `null`/absent `args` still merges cleanly —
-/// a block produced before args were recorded re-issues with just the override.
-fn merge_args(base: &serde_json::Value, rung_override: &serde_json::Value) -> serde_json::Value {
-    let mut merged = serde_json::Map::new();
-    if let serde_json::Value::Object(map) = base {
-        for (key, value) in map {
-            merged.insert(key.clone(), value.clone());
-        }
-    }
-    if let serde_json::Value::Object(overrides) = rung_override {
-        for (key, value) in overrides {
-            merged.insert(key.clone(), value.clone());
-        }
-    }
-    serde_json::Value::Object(merged)
-}
-
-/// Pure: decide the `(server, tool, args)` dispatch tuple for a rung click,
-/// given the block's provenance and the rung's tool name.
+/// Build the dispatch tuple for a pipeline-rung click.
 ///
-/// - provenance dispatchable AND `provenance.tool` matches `rung_tool` →
-///   re-issue the originating `provenance.server` / `rung_tool` with
-///   `rung_override` merged into a clone of `provenance.args` (object merge).
-/// - provenance absent / not dispatchable → fall back to the T2 hardcoded
-///   dispatch: `(default_server, rung_tool, default_args)`.
-/// - provenance dispatchable but `provenance.tool` differs from `rung_tool` →
-///   `Err(PROVENANCE_MISMATCH_MSG)`: the widget refuses to re-issue the wrong
-///   tool and surfaces an "ask the agent" hint instead.
+/// Rungs *advance* to a different pipeline tool than the one that produced
+/// the block (a `scenario_status` block's "Frame" rung dispatches
+/// `scenario_frame`), so `provenance.tool` is NOT a dispatch guard — the
+/// rung's own tool is authoritative. Provenance contributes only its `server`
+/// (for alias dispatch); the args come from the rung, not the producer.
 fn build_dispatch_args(
     provenance: &BlockProvenance,
     rung_tool: &str,
     default_server: &str,
     default_args: serde_json::Value,
-    rung_override: &serde_json::Value,
-) -> Result<(String, String, serde_json::Value), &'static str> {
-    if provenance.is_dispatchable() {
-        // `is_dispatchable()` guarantees `tool` is `Some`; `.unwrap_or_default()` keeps
-        // this panic-free (returns an empty string only if the invariant were violated).
-        let provenance_tool = provenance.tool.as_deref().unwrap_or_default();
-        if provenance_tool == rung_tool {
-            let server = provenance.server.clone().unwrap_or_default();
-            let merged = merge_args(&provenance.args, rung_override);
-            Ok((server, rung_tool.to_string(), merged))
-        } else {
-            Err(PROVENANCE_MISMATCH_MSG)
-        }
-    } else {
-        Ok((
-            default_server.to_string(),
-            rung_tool.to_string(),
-            default_args,
-        ))
-    }
+) -> (String, String, serde_json::Value) {
+    let server = provenance
+        .server
+        .clone()
+        .unwrap_or_else(|| default_server.to_string());
+    (server, rung_tool.to_string(), default_args)
 }
 
 #[cfg(test)]
@@ -870,14 +817,12 @@ mod tests {
         let provenance = BlockProvenance::default();
         assert!(!provenance.is_dispatchable());
 
-        let result = build_dispatch_args(
+        let (server, tool, args) = build_dispatch_args(
             &provenance,
             "scenario_frame",
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &serde_json::Value::Null,
         );
-        let (server, tool, args) = result.expect("empty provenance falls back");
         assert_eq!(server, "hkask-mcp-scenarios");
         assert_eq!(tool, "scenario_frame");
         assert_eq!(args, serde_json::json!({}));
@@ -893,18 +838,18 @@ mod tests {
             "scenario_frame",
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &serde_json::Value::Null,
-        )
-        .expect("fallback dispatch");
+        );
         assert_eq!(server, "hkask-mcp-scenarios");
         assert_eq!(tool, "scenario_frame");
         assert_eq!(args, serde_json::json!({}));
     }
 
     #[test]
-    fn dispatch_args_dispatchable_match_merges_override_into_provenance_args() {
-        // T4: provenance.tool matches the rung → re-issue the originating
-        // server/tool with the rung override merged into provenance.args.
+    fn dispatch_args_dispatchable_uses_provenance_server_and_rung_args() {
+        // Provenance is now server-only: provenance.tool is NOT a dispatch
+        // guard (rungs advance to a different tool than the producer), and
+        // provenance.args is ignored for rungs — the rung's own tool and the
+        // default args are authoritative.
         let provenance = provenance_with(
             Some("scenario_quantify"),
             Some("hkask-mcp-scenarios"),
@@ -912,27 +857,22 @@ mod tests {
         );
         assert!(provenance.is_dispatchable());
 
-        let override_args = serde_json::json!({"event_id": "e2"});
         let (server, tool, args) = build_dispatch_args(
             &provenance,
             "scenario_quantify",
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &override_args,
-        )
-        .expect("dispatchable + match merges");
+        );
         assert_eq!(server, "hkask-mcp-scenarios");
         assert_eq!(tool, "scenario_quantify");
-        // Override wins for `event_id`; untouched provenance keys survive.
-        assert_eq!(args["event_id"], "e2");
-        assert_eq!(args["subject"], "AAPL");
+        // provenance.args is NOT merged into the rung dispatch — rung args win.
+        assert_eq!(args, serde_json::json!({}));
     }
 
     #[test]
     fn dispatch_args_dispatchable_match_uses_provenance_server_not_default() {
-        // The merge case dispatches against provenance.server, not the default
-        // server — a block produced by a different (aliased) server re-issues
-        // through that server.
+        // Provenance.server is used for alias dispatch; the default server is
+        // only the fallback when provenance.server is absent.
         let provenance = provenance_with(
             Some("scenario_quantify"),
             Some("hkask-mcp-scenarios-staging"),
@@ -943,17 +883,18 @@ mod tests {
             "scenario_quantify",
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &serde_json::Value::Null,
-        )
-        .expect("dispatchable + match");
+        );
         assert_eq!(server, "hkask-mcp-scenarios-staging");
         assert_eq!(tool, "scenario_quantify");
     }
 
     #[test]
-    fn dispatch_args_mismatch_surfaces_error_not_wrong_dispatch() {
-        // T4: provenance.tool is Some but differs from the rung's tool → the
-        // widget refuses to dispatch the wrong tool and surfaces an error.
+    fn dispatch_args_status_block_rung_dispatches_not_mismatch() {
+        // D1 regression: a `scenario_status`-produced block (provenance.tool
+        // = "scenario_status", server = "hkask-mcp-scenarios") + a
+        // `scenario_frame` rung must DISPATCH, not surface a mismatch error.
+        // Rungs advance to a different tool than the producer; provenance.tool
+        // is NOT a guard. Provenance contributes only its server.
         let provenance = provenance_with(
             Some("scenario_status"),
             Some("hkask-mcp-scenarios"),
@@ -961,21 +902,22 @@ mod tests {
         );
         assert!(provenance.is_dispatchable());
 
-        let result = build_dispatch_args(
+        let (server, tool, args) = build_dispatch_args(
             &provenance,
             "scenario_frame",
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &serde_json::Value::Null,
         );
-        let error = result.expect_err("mismatch must error");
-        assert_eq!(error, PROVENANCE_MISMATCH_MSG);
+        assert_eq!(server, "hkask-mcp-scenarios");
+        assert_eq!(tool, "scenario_frame");
+        assert_eq!(args, serde_json::json!({}));
     }
 
     #[test]
     fn dispatch_args_non_dispatchable_with_tool_some_falls_back() {
-        // tool is Some but server is None → not dispatchable → fallback (the
-        // "not dispatchable" gate takes precedence over the mismatch rule).
+        // tool is Some but server is None → provenance.server is None →
+        // fallback to default server. The rung's own tool + args are still
+        // authoritative.
         let provenance = provenance_with(Some("scenario_status"), None, serde_json::json!({}));
         assert!(!provenance.is_dispatchable());
 
@@ -984,33 +926,10 @@ mod tests {
             "scenario_frame",
             DEFAULT_SERVER,
             serde_json::json!({}),
-            &serde_json::Value::Null,
-        )
-        .expect("not dispatchable falls back");
+        );
         assert_eq!(server, "hkask-mcp-scenarios");
         assert_eq!(tool, "scenario_frame");
         assert_eq!(args, serde_json::json!({}));
-    }
-
-    #[test]
-    fn merge_args_treats_null_base_as_empty_object() {
-        // A block produced before args were recorded re-issues with just the override.
-        let merged = merge_args(
-            &serde_json::Value::Null,
-            &serde_json::json!({"event_id": "e1"}),
-        );
-        assert_eq!(merged, serde_json::json!({"event_id": "e1"}));
-    }
-
-    #[test]
-    fn merge_args_override_overrides_base_keys() {
-        let merged = merge_args(
-            &serde_json::json!({"event_id": "e1", "keep": true}),
-            &serde_json::json!({"event_id": "e2", "added": 1}),
-        );
-        assert_eq!(merged["event_id"], "e2");
-        assert_eq!(merged["keep"], true);
-        assert_eq!(merged["added"], 1);
     }
 
     // ── GPUI integration tests via the governed `shared_tool_invoker()` ──────
@@ -1115,11 +1034,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn dispatch_rung_surfaces_provenance_mismatch(cx: &mut gpui::TestAppContext) {
+    async fn dispatch_rung_routes_rung_for_server_produced_block(cx: &mut gpui::TestAppContext) {
+        // D1 GPUI regression: a `scenario_status`-produced block + a
+        // `scenario_frame` rung click must dispatch through the invoker
+        // against the provenance server with the rung's tool and empty args —
+        // NOT surface a provenance-mismatch error and dispatch nothing.
         let _guard = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
         let _restore = InvokerGuard;
-        // A mock is wired so the mismatch is detected *before* the invoker is
-        // consulted — no call should be recorded.
         let mock = std::sync::Arc::new(MockToolInvoker::default());
         hkask_tool_invoker::set_tool_invoker(Some(mock.clone()));
 
@@ -1146,11 +1067,15 @@ mod tests {
                 )
             })
         });
-        assert_eq!(error.as_deref(), Some(PROVENANCE_MISMATCH_MSG));
-        assert!(in_flight.is_none());
         assert!(
-            mock.calls.lock().expect("calls poisoned").is_empty(),
-            "no dispatch on mismatch"
+            error.is_none(),
+            "no dispatch error for rung on produced block"
         );
+        assert!(in_flight.is_none(), "in-flight cleared after completion");
+        let calls = mock.calls.lock().expect("calls poisoned").clone();
+        assert_eq!(calls.len(), 1, "exactly one dispatch for the rung");
+        assert_eq!(calls[0].0, "hkask-mcp-scenarios");
+        assert_eq!(calls[0].1, "scenario_frame");
+        assert_eq!(calls[0].2, serde_json::json!({}));
     }
 }

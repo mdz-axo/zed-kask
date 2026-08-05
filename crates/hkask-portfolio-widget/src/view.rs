@@ -607,22 +607,7 @@ fn format_currency(value: f64) -> String {
 /// the originating tool; empty provenance falls back to the hardcoded default.
 /// Partial (non-dispatchable, non-empty) provenance is disabled with a hint.
 fn scrub_enabled(provenance: &BlockProvenance) -> bool {
-    provenance.is_dispatchable() || is_empty_provenance(provenance)
-}
-
-/// Provenance with no tool, no server, and null/absent args — the shape a body
-/// emitted before provenance landed has. The widget falls back to its hardcoded
-/// dispatch for this shape; any other non-dispatchable shape is treated as a
-/// partial/incomplete provenance and disabled.
-fn is_empty_provenance(provenance: &BlockProvenance) -> bool {
-    provenance.tool.is_none()
-        && provenance.server.is_none()
-        && (provenance.args.is_null()
-            || provenance
-                .args
-                .as_object()
-                .map(serde_json::Map::is_empty)
-                .unwrap_or(false))
+    provenance.is_dispatchable() || provenance.is_empty()
 }
 
 /// Structural `YYYY-MM-DD` check (4-2-2 digits, dash-separated). The MCP server
@@ -684,7 +669,7 @@ fn build_returns_dispatch_args(
         let server = provenance.server.as_deref().unwrap_or_default().to_string();
         let merged = merge_args(&provenance.args, &override_obj);
         Ok((server, tool, merged))
-    } else if is_empty_provenance(provenance) {
+    } else if provenance.is_empty() {
         Ok((
             DEFAULT_SERVER.to_string(),
             DEFAULT_TOOL.to_string(),

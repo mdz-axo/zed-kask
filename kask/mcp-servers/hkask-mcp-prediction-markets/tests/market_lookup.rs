@@ -17,6 +17,10 @@ fn now() -> chrono::DateTime<chrono::Utc> {
         .with_timezone(&chrono::Utc)
 }
 
+fn stale_calibration_for(category: &str) -> types::Calibration {
+    types::calibration_for(None, category)
+}
+
 fn kalshi_record() -> MarketRecord {
     let markets: KalshiMarketsResponse =
         serde_json::from_str(KALSHI_FIXTURE).expect("parses");
@@ -27,7 +31,9 @@ fn kalshi_record() -> MarketRecord {
         .events
         .iter()
         .find(|e| e.event_ticker == market.event_ticker);
-    MarketRecord::from_kalshi(market, event, &now()).expect("record builds")
+    let category = event.map(|e| e.category.clone()).unwrap_or_default();
+    MarketRecord::from_kalshi(market, event, stale_calibration_for(&category), &now())
+        .expect("record builds")
 }
 
 #[test]
@@ -135,6 +141,7 @@ fn polymarket_record_builds_with_uma_provenance() {
     let event = &events[0];
     let market = &event.markets[0];
     let event_tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
+    let bucket = event_tags.first().cloned().unwrap_or_default();
     let record = MarketRecord::from_polymarket(
         market,
         &event.id,
@@ -142,6 +149,7 @@ fn polymarket_record_builds_with_uma_provenance() {
         event.volume,
         event.liquidity,
         &event_tags,
+        stale_calibration_for(&bucket),
         &now(),
     )
     .expect("record builds");
@@ -171,7 +179,9 @@ fn kalshi_event_type_used() {
         serde_json::from_str(KALSHI_FIXTURE).expect("parses");
     let market = &markets.markets[0];
     let no_event: Option<&KalshiEvent> = None;
-    let record = MarketRecord::from_kalshi(market, no_event, &now()).expect("builds");
+    let record =
+        MarketRecord::from_kalshi(market, no_event, stale_calibration_for(""), &now())
+            .expect("builds");
     assert!(record.category.is_empty());
 }
 
@@ -215,4 +225,93 @@ fn ontology_map_request_schema_has_no_boolean_positions() {
     let value = serde_json::to_value(&schema).expect("serializes");
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");
+}
+
+// ── Bug-fix regression tests (review 2026-08-05) ──────────────────────────
+
+#[test]
+fn b1_fifty_fifty_resolution_never_fabricates_outcome() {
+    // arXiv:2604.20421 "Unknown/50-50" resolutions settle both legs at 0.50;
+    // the old >= 0.5 threshold reported a fabricated outcome.
+    let mut market = polymarket_fixture_market();
+    market.uma_resolution_status = "resolved".to_string();
+    market.closed = true;
+    market.outcome_prices = "[\"0.5\", \"0.5\"]".to_string();
+    let record = MarketRecord::from_polymarket(
+        &market, "e", "s", 1e6, 1e5, &[],
+        stale_calibration_for(""), &now(),
+    )
+    .expect("builds");
+    assert!(matches!(record.status, MarketStatus::Resolved));
+    assert_eq!(record.resolved_outcome, None, "50-50 must not fabricate");
+}
+
+#[test]
+fn b1_definitive_resolution_records_outcome() {
+    let mut market = polymarket_fixture_market();
+    market.uma_resolution_status = "resolved".to_string();
+    market.closed = true;
+    market.outcome_prices = "[\"1\", \"0\"]".to_string();
+    let record = MarketRecord::from_polymarket(
+        &market, "e", "s", 1e6, 1e5, &[],
+        stale_calibration_for(""), &now(),
+    )
+    .expect("builds");
+    assert_eq!(record.resolved_outcome, Some(true));
+}
+
+fn polymarket_fixture_market() -> hkask_mcp_prediction_markets::provider_polymarket::GammaMarket {
+    let events: Vec<GammaEvent> = serde_json::from_str(POLY_FIXTURE).expect("parses");
+    events[0].markets[0].clone()
+}
+
+#[test]
+fn b4_polymarket_category_derived_from_tags_fires_bias_guardrail() {
+    let events: Vec<GammaEvent> = serde_json::from_str(POLY_FIXTURE).expect("parses");
+    let event = &events[0];
+    let market = polymarket_fixture_market();
+    let tags = vec!["Politics".to_string(), "Elections".to_string()];
+    let record = MarketRecord::from_polymarket(
+        &market, &event.id, &event.slug, event.volume, event.liquidity, &tags,
+        stale_calibration_for("Politics"), &now(),
+    )
+    .expect("builds");
+    assert_eq!(record.category, "Politics");
+    assert_eq!(
+        record.calibration.domain_bias.as_deref(),
+        Some("underconfident"),
+        "politics guardrail must fire for Polymarket records"
+    );
+}
+
+#[test]
+fn b3_volume_grain_is_explicit() {
+    let kalshi = kalshi_record();
+    assert!(matches!(kalshi.volume_grain, types::VolumeGrain::Market));
+    let record = MarketRecord::from_polymarket(
+        &polymarket_fixture_market(), "e", "s", 1e6, 1e5, &[],
+        stale_calibration_for(""), &now(),
+    )
+    .expect("builds");
+    assert!(matches!(record.volume_grain, types::VolumeGrain::Event));
+}
+
+#[test]
+fn b2_calibration_reading_reaches_record() {
+    // The loop-closure invariant: a populated store's reading must appear on
+    // the record (not the hardcoded stale block).
+    use hkask_mcp_prediction_markets::calibration::{
+        CalibrationStore, ResolvedObservation, read_calibration,
+    };
+    let mut store = CalibrationStore::new();
+    store.record("Elections", ResolvedObservation { probability: 0.9, outcome: true });
+    let reading = read_calibration(&store, "Elections");
+    let block = types::calibration_for(Some(&reading), "Elections");
+    assert!(!block.stale, "measured bucket must not be stale");
+    assert!(block.brier.is_some());
+    assert_eq!(block.sample_size, 1);
+    // And the empty-bucket path stays honest.
+    let stale_block = types::calibration_for(None, "Elections");
+    assert!(stale_block.stale);
+    assert_eq!(stale_block.brier, None);
 }
