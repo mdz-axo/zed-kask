@@ -150,7 +150,7 @@ impl CorpusServer {
                         &levels,
                         is_cross_ref.then(|| _texts.as_ref().map_or(0, Vec::len)),
                     )
-                    .map_err(|e| McpToolError::internal(e.to_string()))?;
+                    .map_err(|e| McpToolError::internal(e.to_string()))?; // rr0044-ok: parse-llm-output
                     let result = json!({
                         "chunk_id": chunk_id,
                         "bloom_levels": levels,

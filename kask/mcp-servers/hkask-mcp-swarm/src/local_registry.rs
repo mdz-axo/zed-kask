@@ -400,6 +400,9 @@ mod tests {
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities::default(),
             cloud_id: None,
+            tags: vec![],
+            visibility: String::new(),
+            valence: None,
         };
         assert!(
             registry.write_card(&card).is_err(),
@@ -503,6 +506,9 @@ mod tests {
                             skills: vec![],
                         },
                         cloud_id,
+                        tags: vec![],
+                        visibility: String::new(),
+                        valence: None,
                     }
                 },
             )

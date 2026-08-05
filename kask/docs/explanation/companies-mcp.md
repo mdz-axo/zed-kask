@@ -1,8 +1,8 @@
 ---
 title: "Companies MCP Server — User Guide"
 audience: [analysts, developers, agents]
-last_updated: 2026-07-29
-version: "0.33.0"
+last_updated: 2026-08-04
+version: "0.34.0"
 status: "Active"
 domain: "Companies"
 mds_categories: [domain, lifecycle]
@@ -35,7 +35,7 @@ HKASK_TAVILY_API_KEY=your_tavily_key
 HKASK_BRAVE_API_KEY=your_brave_key
 ```
 
-5. Open the zed-kask agent panel and invoke the companies tools from a native agent or via the kask panel (D10). The server is already running in-process; there is no `kask mcp start` step.
+5. Open the zed-kask agent panel and invoke the companies tools from a native agent. The server is already running in-process; there is no `kask mcp start` step.
 
 Tools are invoked by an agent holding a companies capability token. The examples below show the tool name and the arguments to supply.
 
@@ -274,7 +274,7 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `permission_denied` | No `DelegationToken` for the companies capability | Invoke the companies tools from an agent session that holds a companies capability token; see [Sovereignty and Observability](sovereignty-and-observability.md) |
+| `permission_denied` | No `DelegationToken` for the companies capability | Invoke the companies tools from an agent session that holds a companies capability token; see [Capability Tokens](../diataxis/hkask-capability/explanation.md) |
 | `invalid_argument: symbol must be ...` | Symbol exceeds 32 chars or contains invalid characters | Use a valid exchange symbol; international symbols are supported (e.g. `VOD.L`) |
 | Provider returns stale data | Provider flagged chronically stale (>90 days) | Call `result_feedback` with a low score to update the `LearningState`; the flaky override reroutes future calls |
 | `forecast task failed` | Portfolio SQLite error or owner mismatch | Verify the `forecast_id` belongs to the authenticated owner; forecasts are owner-scoped |
@@ -284,6 +284,6 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 
 - [Companies MCP Server Reference](../reference/mcp-servers/companies.md) — full tool catalog, configuration, and behavioral boundaries
 - [Tool Routing and Dispatch Flow](../reference/mcp-servers/companies.md) — DIAG-RF-004 dispatch diagram (inline)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams
-- [Sovereignty and Observability](sovereignty-and-observability.md) — capability tokens and Regulation alerts
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams
+- [Sovereignty and Observability](../diataxis/hkask-capability/explanation.md) — capability tokens and Regulation alerts
 - [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture

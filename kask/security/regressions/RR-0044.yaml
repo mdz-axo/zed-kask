@@ -13,13 +13,18 @@ detection:
   kind: grep
   # Sites that are GENUINELY internal (serialize-own-struct failures,
   # template-render failures of the server's own engine, fallback arms of
-  # per-variant mappers) carry an `rr0044-ok:` marker comment on the same
-  # line documenting the classification decision; the negative lookahead
-  # skips them. Every unmarked blanket internal(format! is a violation.
-  # NOTE: `internal(e.to_string())` is an evasion spelling of the same
-  # class — audit those sites when touching them (82 sites as of
-  # 2026-08-04; widening this pattern requires triaging each first).
-  pattern: '^(?!.*rr0044-ok).*McpToolError::internal\(format!'
+  # per-variant mappers, mapper-internal variants) carry an `rr0044-ok:` marker
+  # comment on the same line documenting the classification decision; the
+  # negative lookahead skips them. Every unmarked blanket internal(...) is a
+  # violation. The pattern catches ALL spellings: internal(format!(...),
+  # internal(e.to_string()), internal("..."), internal(m), internal(msg),
+  # internal(message), internal(json!(...)). Pass 3 (2026-08-04) triaged all
+  # 69 sites: genuine internal sites annotated with rr0044-ok, mis-classified
+  # sites reclassified (ABW malformed responses → unavailable, session
+  # balance query failures → unavailable, HMemStore::from_driver →
+  # map_infra_error). The evasion spelling internal(e.to_string()) is now
+  # covered.
+  pattern: '^(?!.*rr0044-ok).*McpToolError::internal\('
   include: "mcp-servers/"
 mitigation: "Inline McpToolError::internal(format!(\"...: {e}\")) over every variant of a domain error mis-classifies NotFound/PermissionDenied/auth variants as Internal. Use a map_<domain>_error(e) -> McpToolError fn that classifies per variant. See map_media_error (hkask-mcp-media/src/error.rs), map_kanban_error (hkask-mcp-kata-kanban), and tools/error_mapping.rs (hkask-mcp-training) for the clean pattern. See .rules: MCP tool error classification — classify per variant, not blanket internal."
 source: ".rules: MCP tool error classification — classify per variant, not blanket internal"

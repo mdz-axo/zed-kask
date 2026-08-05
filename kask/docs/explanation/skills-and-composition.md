@@ -1,8 +1,8 @@
 ---
 title: "Skills and Composition"
 audience: [developers, operators, users]
-last_updated: 2026-08-01
-version: "0.33.0"
+last_updated: 2026-08-04
+version: "0.34.0"
 status: "Active"
 domain: "Skill System"
 mds_categories: [domain, composition, lifecycle, trust]
@@ -85,11 +85,11 @@ Domain inference rules:
 
 ## Listing and Checking Skills
 
-Skill listing, status, and auditing are performed in-process through the zed-kask agent panel, the kask panel (D10), or the skill maintenance tooling. The former `kask skill list`, `kask skill status`, and `kask skill audit` standalone CLI commands have been removed.
+Skill listing, status, and auditing are performed in-process through the zed-kask agent panel or the skill maintenance tooling. The former `kask skill list`, `kask skill status`, and `kask skill audit` standalone CLI commands have been removed.
 
 ### List Available Skills
 
-Invoke the skill-listing surface from the agent panel or kask panel. The output shows the two-zone layout (private `.agents/skills/` and public `skills/`) with visibility, namespace, and content hash per skill:
+Invoke the skill-listing surface from the agent panel. The output shows the two-zone layout (private `.agents/skills/` and public `skills/`) with visibility, namespace, and content hash per skill:
 
 ```
   private zone (.agents/skills/):
@@ -312,7 +312,7 @@ The skill-maintenance tooling reverse-translates the SKILL.md companion from the
 
 ### Step 1: Verify Discovery
 
-List skills through the agent panel or kask panel (D10). Your skill should appear in the private zone.
+List skills through the agent panel. Your skill should appear in the private zone.
 
 ### Step 2: Check Status
 
@@ -373,7 +373,7 @@ The agent panel routes this through the `skill_tool`, which calls the `BridgeMan
 
 ### Via the Kask Panel
 
-In the kask panel (D10), navigate to the skills surface, select a skill, and invoke it with context. The kask panel routes through the same in-process `BridgeManifestExecutor` (D1) as the agent panel.
+The kask panel (D10) was removed — the chat panel was redundant with the agent panel. Skill invocation is now exclusively through the agent panel, which routes through the same in-process `BridgeManifestExecutor` (D1).
 
 ### What Happens During Execution
 
@@ -422,7 +422,7 @@ Skill execution is bounded by **two independent budgets**:
    Hitting a hard limit finalizes the cascade `MaxedOut` (`energy_spent`).
 
 Gas/cost consumption is observable via Regulation spans. Query the in-process
-Regulation span surface (kask panel or agent panel) and look for `reg.tool.invoked`
+Regulation span surface (agent panel) and look for `reg.tool.invoked`
 (pre-invocation) and `reg.tool.completed` (post-invocation). The former
 `kask regulation alerts` CLI has been removed.
 
@@ -497,7 +497,7 @@ The resulting manifest's `steps` array carries `phase` (Pre/Core/Post), `ordinal
 
 ### Bundle Management
 
-Bundle management (list, show, apply, evolve) is performed in-process through the agent panel or kask panel (D10). The former `kask bundle list/show/apply/evolve/skills/off` CLI commands have been removed. Bundles are session-scoped: applying a bundle activates its cascade for the current agent session; deactivating is a no-op since bundles do not persist beyond the session.
+Bundle management (list, show, apply, evolve) is performed in-process through the agent panel. The former `kask bundle list/show/apply/evolve/skills/off` CLI commands have been removed. Bundles are session-scoped: applying a bundle activates its cascade for the current agent session; deactivating is a no-op since bundles do not persist beyond the session.
 
 ### Bundle Manifest Structure
 
@@ -783,7 +783,7 @@ cargo build -p <your-mcp-package>
 HKASK_WEBID=<webid-uuid> cargo run -p <your-mcp-package>
 ```
 
-In-process test (production path): launch zed-kask and verify the server appears in the kask panel (D10) or agent panel tool list. The former `kask daemon start` standalone daemon mode has been removed.
+In-process test (production path): launch zed-kask and verify the server appears in the agent panel tool list. The former `kask daemon start` standalone daemon mode has been removed.
 
 ### Common Pitfalls
 
@@ -834,8 +834,8 @@ In-process test (production path): launch zed-kask and verify the server appears
 
 ## Related
 
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1 (skill execution), D2 (Curator agent), D3 (in-process MCP transport), D10 (kask panel)
-- [Sovereignty and Observability](sovereignty-and-observability.md) — Regulation spans emitted by skill execution
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1 (skill execution), D2 (Curator agent), D3 (in-process MCP transport)
+- [Regulation Explanation](../diataxis/hkask-regulation/explanation.md) — Regulation spans emitted by skill execution
 - [Magna Carta Reference](../reference/magna-carta.md) — P5.1 registry canonical source rule
 ---
 
@@ -984,7 +984,7 @@ stateDiagram-v2
 
 | PDCA Phase | Kanban `TaskStatus` | Regulation Event | Trigger |
 |------------|---------------------|-----------|---------|
-| **Plan** | `Backlog` | `reg.tool.kanban` (task created) | Kata-kanban MCP server `kanban_task_kata_improvement` (in-process, via Agent Panel or kask panel) |
+| **Plan** | `Backlog` | `reg.tool.kanban` (task created) | Kata-kanban MCP server `kanban_task_kata_improvement` (in-process, via Agent Panel) |
 | **Do** | `InProgress` | `reg.tool.kanban` (task moved) | Coaching Q4: "What is your next step?" |
 | **Check** | `Review` | `reg.tool.kanban` (task verified) | Coaching Q5: task transitions to Review |
 | **Act** | `Done` | `reg.tool.kanban` (task completed) | Verification passes |
@@ -1021,8 +1021,8 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 ## Cross-Reference
 
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams (skill execution, Curator agent, in-process MCP transport)
-- [`PRINCIPLES.md` § P6 — Space for UserPods](../architecture/core/PRINCIPLES.md#p6--space-for-userpods)
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams (skill execution, Curator agent, in-process MCP transport)
+- [`PRINCIPLES.md` § P6 — Space for Per-User Data Directories](../architecture/core/PRINCIPLES.md#p6--space-for-per-user-data-directories)
 - [`kata.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata.rs) — `KataEngine::execute()` dispatch (L333-486)
 - [`kata/improvement.rs`](mcp-servers/hkask-mcp-kata-kanban/src/kata/improvement.rs) — `run_improvement_from()` single-pass step loop (L20-121)
 - [`executor.rs`](crates/hkask-templates/src/executor.rs) — `ManifestExecutor::execute_manifest()` convergence loop (L209-686), `check_convergence()` (L746-799)
@@ -1040,7 +1040,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process; c
 
 This reference sequence separates the two Kata paths. The Kanban MCP exposes task-scoped **prompt generation**. Full Kata execution is available in-process through the kata-kanban MCP server, which constructs `KataEngine` directly and calls `execute()`. The MCP prompt tools do not invoke the engine; the distinction is operationally important because prompt generation does not execute the manifest's convergence, budget, or capability declarations.
 
-> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked in-process — the kata-kanban MCP server (one of the 11 in-process MCP servers) constructs `KataEngine` and runs `execute()` within the zed-kask process. The Agent Panel and the kask panel (D10) are the user-facing entry points.
+> **Note:** The deleted `kask kata start` CLI is gone. Kata execution is invoked in-process — the kata-kanban MCP server (one of the 11 in-process MCP servers) constructs `KataEngine` and runs `execute()` within the zed-kask process. The Agent Panel is the user-facing entry point.
 
 ```mermaid
 sequenceDiagram
@@ -1079,7 +1079,7 @@ status: VERIFIED (v3 — hkask-cli deleted; kata engine is invoked in-process vi
 
 
 - [Kata PDCA lifecycle state machine](#kata-pdca-lifecycle-state-machine)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams
 
 ### Kanban Task Lifecycle State Machine
 

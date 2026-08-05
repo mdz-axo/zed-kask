@@ -18,6 +18,18 @@ pub(crate) struct AuthorForm {
     pub(crate) description: Entity<Editor>,
     pub(crate) system_prompt: Entity<Editor>,
     pub(crate) agent_type: String,
+    /// Comma-separated tags for catalogue discovery.
+    pub(crate) tags: Entity<Editor>,
+    /// Visibility level: "public", "private", or "unlisted".
+    pub(crate) visibility: String,
+    /// Valence arousal (0.0–1.0). Parsed from the editor text at create time.
+    pub(crate) valence_arousal: Entity<Editor>,
+    /// Valence polarity (0.0–1.0). Parsed from the editor text at create time.
+    pub(crate) valence_valence: Entity<Editor>,
+    /// One-word primary affect label (e.g. "curiosity", "precision").
+    pub(crate) valence_primary_affect: Entity<Editor>,
+    /// Comma-separated personality trait descriptors.
+    pub(crate) valence_personality_traits: Entity<Editor>,
     /// Result of the last create attempt (success id or error).
     pub(crate) status: Option<SharedString>,
     pub(crate) busy: bool,
@@ -32,14 +44,21 @@ impl AuthorForm {
                 e
             }),
             description: cx.new(|cx| {
-                let mut e = Editor::single_line(window, cx);
-                e.set_placeholder_text("One-sentence description", window, cx);
+                // Multi-line auto-height: descriptions can be a full
+                // paragraph. Grows 2–6 lines with content.
+                let mut e = Editor::auto_height(2, 6, window, cx);
+                e.set_placeholder_text(
+                    "One-sentence description shown on the agent card",
+                    window,
+                    cx,
+                );
                 e
             }),
             system_prompt: cx.new(|cx| {
                 // Multi-line auto-height: system prompts are multi-paragraph
-                // by nature (the L3 finding). Grows 4–16 lines with content.
-                let mut e = Editor::auto_height(4, 16, window, cx);
+                // by nature (the L3 finding). Grows 8–40 lines with content —
+                // enlarged from the prior 4–16 to give operators more space.
+                let mut e = Editor::auto_height(8, 40, window, cx);
                 e.set_placeholder_text(
                     "System prompt — the agent's instructions (multiple lines supported)",
                     window,
@@ -48,6 +67,36 @@ impl AuthorForm {
                 e
             }),
             agent_type: "research".to_string(),
+            tags: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("tag1, tag2, tag3 (comma-separated)", window, cx);
+                e
+            }),
+            visibility: "private".to_string(),
+            valence_arousal: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("0.0–1.0 (e.g. 0.6)", window, cx);
+                e
+            }),
+            valence_valence: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("0.0–1.0 (e.g. 0.8)", window, cx);
+                e
+            }),
+            valence_primary_affect: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text("curiosity, precision, vigilance…", window, cx);
+                e
+            }),
+            valence_personality_traits: cx.new(|cx| {
+                let mut e = Editor::single_line(window, cx);
+                e.set_placeholder_text(
+                    "analytical, cautious, pragmatic (comma-separated)",
+                    window,
+                    cx,
+                );
+                e
+            }),
             status: None,
             busy: false,
         }
@@ -193,6 +242,182 @@ impl SwarmPanel {
                                  supported. Required.",
                             ))
                             .child(self.author.system_prompt.clone()),
+                    ),
+            )
+            // Tags — comma-separated discovery tags.
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Tags")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id("author-tags")
+                            .border_1()
+                            .border_color(border)
+                            .rounded_sm()
+                            .tooltip(Tooltip::text(
+                                "Comma-separated tags for catalogue discovery \
+                                 (e.g. \"research, analysis, forecasting\"). Optional.",
+                            ))
+                            .child(self.author.tags.clone()),
+                    ),
+            )
+            // Visibility — public / private / unlisted toggle.
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Visibility")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        div()
+                            .id("author-visibility-group")
+                            .tooltip(Tooltip::text(
+                                "Public agents appear in the catalogue browse list. \
+                                 Private agents are visible only to the owner. Unlisted \
+                                 agents are accessible by URL but not listed.",
+                            ))
+                            .child(
+                                ToggleButtonGroup::single_row(
+                                    "author-visibility",
+                                    [
+                                        ToggleButtonSimple::new(
+                                            "private",
+                                            cx.listener(|this, _event, _, cx| {
+                                                this.author.visibility = "private".to_string();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                        ToggleButtonSimple::new(
+                                            "unlisted",
+                                            cx.listener(|this, _event, _, cx| {
+                                                this.author.visibility = "unlisted".to_string();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                        ToggleButtonSimple::new(
+                                            "public",
+                                            cx.listener(|this, _event, _, cx| {
+                                                this.author.visibility = "public".to_string();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ],
+                                )
+                                .style(ToggleButtonGroupStyle::Outlined)
+                                .size(ToggleButtonGroupSize::Custom(rems_from_px(28.)))
+                                .label_size(LabelSize::Small)
+                                .auto_width()
+                                .selected_index(match self.author.visibility.as_str() {
+                                    "unlisted" => 1,
+                                    "public" => 2,
+                                    _ => 0,
+                                })
+                                .into_any_element(),
+                            ),
+                    ),
+            )
+            // Valence — personality encoding fields.
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Valence — personality encoding")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .flex_1()
+                                    .child(
+                                        Label::new("Arousal (0–1)")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("author-valence-arousal")
+                                            .border_1()
+                                            .border_color(border)
+                                            .rounded_sm()
+                                            .tooltip(Tooltip::text(
+                                                "Arousal level: 0.0 = calm, 1.0 = highly activated.",
+                                            ))
+                                            .child(self.author.valence_arousal.clone()),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .flex_1()
+                                    .child(
+                                        Label::new("Valence (0–1)")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("author-valence-valence")
+                                            .border_1()
+                                            .border_color(border)
+                                            .rounded_sm()
+                                            .tooltip(Tooltip::text(
+                                                "Valence polarity: 0.0 = serious, 1.0 = enthusiastic.",
+                                            ))
+                                            .child(self.author.valence_valence.clone()),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Primary affect")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("author-valence-affect")
+                                    .border_1()
+                                    .border_color(border)
+                                    .rounded_sm()
+                                    .tooltip(Tooltip::text(
+                                        "One-word affect label (e.g. curiosity, precision, vigilance). Optional.",
+                                    ))
+                                    .child(self.author.valence_primary_affect.clone()),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Label::new("Personality traits")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                div()
+                                    .id("author-valence-traits")
+                                    .border_1()
+                                    .border_color(border)
+                                    .rounded_sm()
+                                    .tooltip(Tooltip::text(
+                                        "Comma-separated trait descriptors \
+                                         (e.g. analytical, cautious, pragmatic). Optional.",
+                                    ))
+                                    .child(self.author.valence_personality_traits.clone()),
+                            ),
                     ),
             )
             .child(

@@ -15,7 +15,6 @@ use crate::{
     CorpusServer, McpToolError, Parameters, cosine_distance, default_embedding_model,
     embedding_dim, execute_tool, json, tool, tool_router,
 };
-use hkask_mcp_server::server::map_infra_error;
 use hkask_services_core::HkaskSettings;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore};

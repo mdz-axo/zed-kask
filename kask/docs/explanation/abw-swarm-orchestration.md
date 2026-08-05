@@ -1,8 +1,8 @@
 ---
 title: "Agent Bestiary World — Swarm Interaction and Agentic Orchestration"
 audience: [developers, architects, operators]
-last_updated: 2026-08-01
-version: "0.31.1"
+last_updated: 2026-08-04
+version: "0.31.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]

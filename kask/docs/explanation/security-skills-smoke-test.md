@@ -1,8 +1,8 @@
 ---
 title: "Security Skills — Execution Smoke Test Procedure"
 audience: [operators, developers, security-engineers]
-last_updated: 2026-07-29
-version: "0.33.0"
+last_updated: 2026-08-04
+version: "0.34.0"
 status: "Active"
 domain: "Security"
 mds_categories: [domain, trust, lifecycle, curation]
@@ -38,7 +38,7 @@ gates.
 **Procedure:**
 
 Invoke the `supply-chain-sentinel` skill from the zed-kask agent panel
-(native agent, D2) or via the kask panel (D10). The skill executes
+(native agent, D2). The skill executes
 in-process through the `ManifestExecutor` (D1); there is no `kask skill
 run` CLI. Supply the surface and target path as context:
 
@@ -57,7 +57,7 @@ manifest_path: <path-to-Cargo.toml-or-workspace-root>
 1. The skill produces JSON output (not an error)
 2. `manifest_paths` includes `Cargo.toml` and `Cargo.lock`
 3. `defense_layers_present` includes at least `dependency_pinning` and `sbom_presence`
-4. `reg.skill.supply-chain-sentinel` spans are emitted (query via the in-process `reg_query_spans` tool exposed through the kask panel or agent panel)
+4. `reg.skill.supply-chain-sentinel` spans are emitted (query via the in-process `reg_query_spans` tool exposed through the agent panel)
 5. No synthetic findings — every finding references a real `Cargo.toml` line
 
 ### Fixture 2: Runtime Posture Monitor (runtime-posture-monitor)
@@ -134,7 +134,7 @@ verify it matches the contract.
 ## Running the Smoke Tests
 
 To run all smoke tests, invoke each skill from the zed-kask agent panel
-or kask panel (D10) with the context below. There is no standalone `kask
+with the context below. There is no standalone `kask
 skill run` CLI — skills execute in-process through the `ManifestExecutor`
 (D1).
 
@@ -154,7 +154,7 @@ target_path: <workspace-root>
 ```
 
 Check Regulation span emissions by querying the in-process
-`reg_query_spans` tool (exposed through the kask panel or agent panel):
+`reg_query_spans` tool (exposed through the agent panel):
 
 ```
 tool: reg_query_spans

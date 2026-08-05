@@ -1,8 +1,8 @@
 ---
 title: "Training and Adapters"
 audience: [operators, developers, ml-engineers]
-last_updated: 2026-07-29
-version: "0.33.0"
+last_updated: 2026-08-04
+version: "0.34.0"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, lifecycle]
@@ -275,7 +275,7 @@ verified_against: corpus/chunks/chunks.jsonl; corpus/chunks/tagged_chunks.jsonl;
 status: VERIFIED
 -->
 
-The operational assessment and remediation sequence is documented in the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (D1–D14 integration seams).
+The operational assessment and remediation sequence is documented in the [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (D1–D20 integration seams).
 
 
 ### Replica Pipeline Dispatch
@@ -285,7 +285,7 @@ The operational assessment and remediation sequence is documented in the [zed-ka
 
 # Corpus Pipeline Dispatch Flowchart
 
-> **Note:** `corpus_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via the in-process corpus MCP server (D1–D3), invoked from the agent panel or kask panel (D10). The former `kask mcp invoke` CLI has been removed.
+> **Note:** `corpus_pipeline_run` was removed when the replica and docproc servers merged into `hkask-mcp-corpus`. The unified corpus server makes the manifest executor unnecessary — all corpus tools (`docproc_*` and `replica_*`) are now in-process. Pipeline manifests are orchestrated via the in-process corpus MCP server (D1–D3), invoked from the agent panel. The former `kask mcp invoke` CLI has been removed.
 
 The historical flowchart below is retained for reference. It shows the former executable boundary of `corpus_pipeline_run`.
 

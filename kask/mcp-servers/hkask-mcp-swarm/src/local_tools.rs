@@ -437,6 +437,9 @@ impl SwarmServer {
                     skills,
                 },
                 cloud_id: Some(req.agent_name.clone()),
+                tags: Vec::new(),
+                visibility: String::new(),
+                valence: None,
             };
             // Write the card to the local registry directory.
             let dir = self.client.config().local_agents_dir.clone();

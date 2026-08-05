@@ -31,7 +31,7 @@ pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToo
         TriageError::PdftotextFailed(_) | TriageError::PdfimagesFailed(_) => {
             McpToolError::unavailable(message)
         }
-        TriageError::PageCountMismatch { .. } => McpToolError::internal(message),
+        TriageError::PageCountMismatch { .. } => McpToolError::internal(message), // rr0044-ok: mapper-fallback-arm
     }
 }
 
@@ -52,9 +52,9 @@ pub(crate) fn map_database_error(
         DatabaseError::Sqlite(_)
         | DatabaseError::SqlCipher(_)
         | DatabaseError::KeyDerivation(_)
-        | DatabaseError::Postgres(_) => McpToolError::internal(message),
+        | DatabaseError::Postgres(_) => McpToolError::internal(message), // rr0044-ok: infra-db-failure
         // Non-exhaustive enum: future variants stay internal (conservative).
-        _ => McpToolError::internal(message),
+        _ => McpToolError::internal(message), // rr0044-ok: non-exhaustive-fallback
     }
 }
 
@@ -75,7 +75,7 @@ pub(crate) fn map_embedding_error(
         EmbeddingError::Infrastructure(ref infra) => {
             hkask_mcp_server::server::map_infra_error(infra, context)
         }
-        EmbeddingError::Storage(_) | EmbeddingError::Decode(_) => McpToolError::internal(message),
+        EmbeddingError::Storage(_) | EmbeddingError::Decode(_) => McpToolError::internal(message), // rr0044-ok: storage-decode-failure
     }
 }
 

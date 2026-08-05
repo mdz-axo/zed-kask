@@ -1,6 +1,6 @@
 //! Inference Providers sub-page — API key entry + enable toggles for
-//! OpenAI-compatible providers (DeepInfra, fal.ai, Together, OpenRouter,
-//! KiloCode, Cline, Z.ai). When enabled, an `openai_compatible.<provider_id>` entry
+//! OpenAI-compatible providers (DeepInfra, fal.ai, OpenRouter,
+//! KiloCode, Cline, AtlasCloud). When enabled, an `openai_compatible.<provider_id>` entry
 //! is written to settings.json so the provider appears in the LLM provider
 //! picker. The API key is stored in the keychain under the provider's
 //! `api_url` (so zed's OpenAI-compatible provider finds it) and mirrored to

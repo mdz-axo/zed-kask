@@ -422,8 +422,7 @@ pub(crate) fn authorize_delegate(
     // Session: verify the session has enough remaining for the authorized cost.
     if let Settlement::Session { token, cost } = &settlement {
         let remaining = consent.session_balance(token).ok_or_else(|| {
-            McpToolError::internal(
-                // rr0044-ok: session-balance-query
+            McpToolError::unavailable(
                 "session balance query failed — cannot verify delegate budget".to_string(),
             )
         })?;

@@ -1,8 +1,8 @@
 ---
 title: "RunPod LoRA Training Guide"
 audience: [ml-engineers, developers]
-last_updated: 2026-07-29
-version: "0.33.0"
+last_updated: 2026-08-04
+version: "0.33.1"
 status: "Active"
 domain: "Training"
 mds_categories: [domain, lifecycle]
@@ -415,6 +415,13 @@ sequenceDiagram
     Pod->>Pod: exec sleep infinity (SSH debugging)
     Rust->>Pod: cancel() via GraphQL when done
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-TRAIN-001
+verified_date: 2026-08-04
+verified_against: mcp-servers/hkask-mcp-training/src/providers/runpod.rs (RunpodHost::submit, generate_install_script), mcp-servers/hkask-mcp-training/src/providers/harness.rs (AxolotlHarness config generation), mcp-servers/hkask-mcp-training/src/providers/trl_harness.rs (TrlHarness script generation)
+status: VERIFIED
+-->
 
 ---
 

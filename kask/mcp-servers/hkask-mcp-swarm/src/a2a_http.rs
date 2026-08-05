@@ -480,6 +480,9 @@ mod tests {
                 dependencies: Default::default(),
                 capabilities: LocalAgentCapabilities::default(),
                 cloud_id: None,
+                tags: vec![],
+                visibility: String::new(),
+                valence: None,
             })
             .unwrap();
         Arc::new(registry)
