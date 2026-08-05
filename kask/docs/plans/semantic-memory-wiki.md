@@ -16,7 +16,7 @@ the wiki is itself the act of consolidating, correcting, and augmenting the
 agent's semantic memory** — and the markdown page is the human-facing artifact
 that *aligns* with that memory.
 
-**Status:** Proposed. No code exists yet. This document is the review artifact.
+**Status:** Draft. No code exists yet. This document is the review artifact.
 
 **One-line pitch:** the wiki entry is the *organizing mechanism* for a
 memory-augmentation loop. The agent reasons over recalled semantic h_mems,

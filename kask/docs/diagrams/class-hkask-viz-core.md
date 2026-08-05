@@ -1,3 +1,13 @@
+---
+title: "hKask Viz-Core — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition]
+---
+
 # hKask Viz-Core — Class Diagram
 
 `hkask-viz-core` is the D18 composition root for the viz widgets. It composes every
@@ -66,7 +76,7 @@ The upstream D18 field/builder/dispatch in `markdown` stay unchanged (see
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-CORE
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/hkask-viz-core/src/hkask_viz_core.rs; crates/hkask-media-widget/src/media_widget.rs; crates/hkask-graph-widget/src/view.rs; crates/hkask-kanban-widget/src/view.rs; crates/hkask-portfolio-widget/src/view.rs; crates/hkask-scenarios-widget/src/view.rs; crates/agent_ui/src/conversation_view.rs
-status: VERIFIED 2026-08-03
+status: VERIFIED
 -->

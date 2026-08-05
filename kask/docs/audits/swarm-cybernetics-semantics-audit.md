@@ -1,8 +1,8 @@
 ---
 title: "Swarm System — Pragmatic-Semantics + Pragmatic-Cybernetics Audit"
 audience: [architects, developers, operators]
-last_updated: 2026-08-03
-version: "0.1.0"
+last_updated: 2026-08-04
+version: "0.1.1"
 status: "Active"
 domain: "Swarm"
 mds_categories: [trust, composition, lifecycle]

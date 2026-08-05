@@ -1,8 +1,8 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-03
-version: "0.31.1"
+last_updated: 2026-08-04
+version: "0.32.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, trust, lifecycle, curation]
@@ -196,6 +196,13 @@ sequenceDiagram
         Srv-->>Op: PaymentRequired (re-request consent)
     end
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-SWARM-001
+verified_date: 2026-08-04
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs; kask/mcp-servers/hkask-mcp-swarm/src/tools/swarm_hire.rs
+status: VERIFIED
+-->
 
 **Properties (all pinned by tests):**
 - **Single-use** — a consumed token cannot be replayed.
@@ -417,6 +424,5 @@ design with documented re-entry conditions — see the plan's §14.
 - [Architecture diagram](../../diagrams/flowchart-swarm-architecture.md) — the swarm server topology
 - [PDCA cascade flowchart](../../diagrams/flowchart-swarm-pdca-cascade.md) — the 10-step loop
 - [Steering loop sequence](../../diagrams/sequence-swarm-steering-loop.md) — advisory vs steering execution
-- [PDCA cascade flowchart](../../diagrams/flowchart-swarm-pdca-cascade.md) — the 10-step loop
 - [Kali security audit](../../audits/abw-swarm-kali-audit.md) — 7-layer defense map
 - [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog

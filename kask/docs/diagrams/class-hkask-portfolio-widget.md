@@ -1,3 +1,13 @@
+---
+title: "hKask Portfolio Widget — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition]
+---
+
 # hKask Portfolio Widget — Class Diagram
 
 `hkask-portfolio-widget` renders ```` ```portfolio ```` fenced blocks as a
@@ -82,7 +92,7 @@ constants (`FIBO_TIME_WEIGHTED_RETURN`, `FIBO_INTERNAL_RATE_OF_RETURN`,
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-PORTFOLIO
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/hkask-portfolio-widget/src/block.rs; crates/hkask-portfolio-widget/src/view.rs
-status: VERIFIED 2026-08-03
+status: VERIFIED
 -->

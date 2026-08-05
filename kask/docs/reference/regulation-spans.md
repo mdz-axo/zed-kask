@@ -1,8 +1,8 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-01
-version: "0.32.2"
+last_updated: 2026-08-04
+version: "0.32.3"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, curation]
@@ -14,8 +14,8 @@ Regulation spans are the observability substrate of hKask's Cybernetic Nervous S
 
 > **Hosting note (v0.32.0):** hKask runs in-process inside zed-kask. The standalone `kask` CLI and
 > `hkask-api` HTTP server have been **deleted**. Span query/subscribe commands previously exposed
-> via `kask regulation ...` are now available through the in-process kask panel (D10) and
-> programmatic `RegulationLedger` calls. Skill spans (§3.9) are now emitted by `hkask-templates`
+> via `kask regulation ...` are now available through programmatic `RegulationLedger` calls
+> (the former kask panel D10 was deleted; no UI surface remains). Skill spans (§3.9) are now emitted by `hkask-templates`
 > (which owns `ManifestExecutor` and skill execution via D1), replacing the deleted
 > `hkask-services-skill`.
 
@@ -38,7 +38,7 @@ Spans describe *what* happened; RegulationRecords describe *who observed it, whe
 
 ### Span validation
 
-All namespace strings are registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`) — a 243-entry array that is the single source of truth. `SpanNamespace::new()` returns `None` on unknown namespaces; `SpanNamespace::parse()` returns `None`. Domain span enums construct namespaces via `SpanNamespace::from_observable()` which also validates. Hierarchical validation: a sub-namespace like `reg.pipeline.decimation.binarize` is valid if any prefix segment is registered.
+All namespace strings are registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`) — a 262-entry array that is the single source of truth. `SpanNamespace::new()` returns `None` on unknown namespaces; `SpanNamespace::parse()` returns `None`. Domain span enums construct namespaces via `SpanNamespace::from_observable()` which also validates. Hierarchical validation: a sub-namespace like `reg.pipeline.decimation.binarize` is valid if any prefix segment is registered.
 
 ---
 
@@ -267,7 +267,7 @@ The following namespace groups are registered in `CANONICAL_NAMESPACES` and emit
 flowchart TD
     Emit["Emission\ntracing::info! + RegulationRecord::new"]
     Store["Storage\nRegulationArchive (SQLite)"]
-    Query["Query\nRegulationLedger / kask panel (D10)"]
+    Query["Query\nRegulationLedger (programmatic only)"]
     Decay["Decay\nWeightedEvent (EMA)"]
 
     Emit --> Store
@@ -275,6 +275,13 @@ flowchart TD
     Store --> Decay
     Decay --> Query
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RF-SPANS-001
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-types/src/curator.rs
+status: VERIFIED
+-->
 
 ### 4.1 Emission
 
@@ -292,11 +299,11 @@ RegulationRecords are persisted to a `RegulationArchive` (SQLite-backed, used di
 
 ### 4.3 Query
 
-The deleted `kask regulation` CLI has been replaced by the in-process kask panel (D10) and programmatic `RegulationLedger` queries:
+The deleted `kask regulation` CLI was replaced by the kask panel (D10), which has since been deleted. Regulation surfaces are now programmatic only:
 
-- **kask panel (D10) → Regulation tab** — displays overall health (variety deficit, critical/warning counts), variety counter summary, active algedonic alerts, and energy budget status.
-- **kask panel (D10) → Regulation tab → Alerts** — lists only active algedonic alerts.
-- **kask panel (D10) → Regulation tab → Variety** — prints per-namespace variety counters.
+- **Programmatic** `RegulationLedger::health()` — displays overall health (variety deficit, critical/warning counts), variety counter summary, active algedonic alerts, and energy budget status.
+- **Programmatic** `RegulationLedger::alerts()` — lists only active algedonic alerts.
+- **Programmatic** `RegulationLedger::variety()` — prints per-namespace variety counters.
 - **Live event stream** — in-process subscribers register via `RegulationLedger::subscribe()` filtered to specific span namespaces.
 - `RegulationLedger::variety()` — programmatic `HashMap<SpanNamespace, u64>`.
 - `RegulationLedger::health()` — `LedgerHealth` struct with aggregate deficit and alert counts.
@@ -331,22 +338,22 @@ The default threshold is `DEFAULT_VARIETY_MAX_DEFICIT`. Per-domain expected vari
 
 ## 5. How to Read Spans
 
-### In-process (kask panel D10)
+### Programmatic only (kask panel D10 deleted)
 
-The deleted `kask regulation` CLI has been replaced by the in-process kask panel (D10). The
-equivalent panel surfaces are:
+The deleted `kask regulation` CLI was replaced by the kask panel (D10), which has since been deleted. The
+equivalent surfaces are now programmatic only:
 
 ```text
 # Overall Regulation health with span count summary
-#   kask panel (D10) → Regulation tab → Health
+#   Programmatic: RegulationLedger → Health
 #   Equivalent in-process call: RegulationLedger::health().await
 
 # Active algedonic alerts
-#   kask panel (D10) → Regulation tab → Alerts
+#   Programmatic: RegulationLedger → Alerts
 #   Equivalent in-process call: RegulationLedger::alerts().await
 
 # Per-namespace variety counters
-#   kask panel (D10) → Regulation tab → Variety
+#   Programmatic: RegulationLedger → Variety
 #   Equivalent in-process call: RegulationLedger::variety().await
 
 # Subscribe to live events for specific spans

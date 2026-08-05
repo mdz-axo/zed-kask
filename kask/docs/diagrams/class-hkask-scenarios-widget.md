@@ -1,3 +1,13 @@
+---
+title: "hKask Scenarios Widget — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition]
+---
+
 # hKask Scenarios Widget — Class Diagram
 
 `hkask-scenarios-widget` renders ```` ```scenarios ```` fenced blocks as a
@@ -101,7 +111,7 @@ resolved forecasts with a calibration suggest `scenario_assess`.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-SCENARIOS
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/hkask-scenarios-widget/src/block.rs; crates/hkask-scenarios-widget/src/view.rs
-status: VERIFIED 2026-08-03
+status: VERIFIED
 -->

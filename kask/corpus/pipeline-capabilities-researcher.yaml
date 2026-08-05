@@ -27,7 +27,7 @@
 #
 # Models (approved, in .env):
 #   Classifier/Tagging/Triples: OR/deepseek/deepseek-v4-flash (HKASK_CLASSIFIER_MODEL)
-#   QA generation:              DI/zai-org/GLM-5.2 (HKASK_QA_MODEL)
+#   QA generation:              OpenRouter/z-ai/glm-5.2 (HKASK_DEFAULT_MODEL — hkask default)
 #   Embedding:                  DI/Qwen/Qwen3-Embedding-0.6B (HKASK_EMBEDDING_MODEL)
 #
 # Lessons learned (v6.0 → v7.0):
@@ -63,7 +63,6 @@ env:
   HKASK_DB_POOL_SIZE: "64"
   HKASK_HTTP_POOL_MAX_IDLE: "256"
   HKASK_CLASSIFIER_MODEL: "{{ classifier_model }}"
-  HKASK_QA_MODEL: "{{ qa_model }}"
   HKASK_EMBEDDING_MODEL: "{{ embedding_model }}"
 
 steps:
@@ -252,7 +251,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 6: Generate QAs (GLM-5.2, per-Bloom sampling, thinking-mode)
   #
-  # GLM-5.2 (HKASK_QA_MODEL). Uses generate-qa.j2 template. Thinking-mode JSON
+  # GLM-5.2 (HKASK_DEFAULT_MODEL — hkask default). Uses generate-qa.j2 template. Thinking-mode JSON
   # extraction via extract_json_from_response. ContentGuard on input + output.
   # Provenance attached (chunk_ref, source, concepts, evidence_quotes).
   # ═══════════════════════════════════════════════════════════════════════

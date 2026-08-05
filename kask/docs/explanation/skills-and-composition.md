@@ -836,7 +836,7 @@ In-process test (production path): launch zed-kask and verify the server appears
 
 - [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1 (skill execution), D2 (Curator agent), D3 (in-process MCP transport)
 - [Regulation Explanation](../diataxis/hkask-regulation/explanation.md) — Regulation spans emitted by skill execution
-- [Magna Carta Reference](../reference/magna-carta.md) — P5.1 registry canonical source rule
+- [Magna Carta Reference](../architecture/core/magna-carta.md) — P5.1 registry canonical source rule
 ---
 
 ## Inlined Diagrams

@@ -1,8 +1,8 @@
 ---
 title: "Skill, Template, and Bundle Registry — Reference"
 audience: [developers, skill-authors, agents]
-last_updated: 2026-08-01
-version: "0.32.2"
+last_updated: 2026-08-04
+version: "0.32.3"
 status: "Active"
 domain: "Core"
 mds_categories: [domain, composition]

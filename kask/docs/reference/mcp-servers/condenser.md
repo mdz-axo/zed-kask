@@ -1,8 +1,8 @@
 ---
 title: "Condenser MCP Server Reference"
 audience: [developers, architects]
-last_updated: 2026-08-02
-version: "0.32.1"
+last_updated: 2026-08-04
+version: "0.32.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, lifecycle]
@@ -121,4 +121,4 @@ status: VERIFIED (v6 — learning subsystem + 4 MCP tools removed; BridgeThreadC
 
 - [MCP Server Registry](README.md) — all 11 on-disk MCP servers
 - [MCP Server Explanation](../../diataxis/hkask-mcp-server/explanation.md) — MCP bootstrap and tool dispatch sequence
-- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D14 integration seams
+- [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams

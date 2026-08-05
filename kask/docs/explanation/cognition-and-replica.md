@@ -160,7 +160,7 @@ This distinction is crucial. `ObservableSpan` (at `crates/hkask-types/src/observ
 
 A `RegulationRecord` contains a `Span`, but it adds: who, when, what, which phase, and what was the regulatory outcome. A span says "tool invoked"; a ν-event says "Agent A invoked the web_search tool in the Sense phase, observing {server, tool, estimated_cost}, with no regulation applied, at recursion depth 0."
 
-The bridging function is `SpanNamespace::from_observable()` — it takes any `impl ObservableSpan`, validates against the canonical namespace set in `CANONICAL_NAMESPACES` (248 entries at v0.32.0), and produces a validated `SpanNamespace` for `RegulationRecord` construction. This design decouples domain span definitions from namespace validation: domain crates define their spans; the event system validates.
+The bridging function is `SpanNamespace::from_observable()` — it takes any `impl ObservableSpan`, validates against the canonical namespace set in `CANONICAL_NAMESPACES` (262 entries at v0.32.0), and produces a validated `SpanNamespace` for `RegulationRecord` construction. This design decouples domain span definitions from namespace validation: domain crates define their spans; the event system validates.
 
 #### The Emission Contract
 
@@ -187,7 +187,7 @@ The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the 
 
 The `SpanKind` enum at `event.rs` provides typed construction for common spans, eliminating string typos: `ToolInvoked`, `ToolCompleted`, `ToolError`, `GasReserved`, `GasSettled`, `GasDepleted`, `CurationDirectiveAcknowledged`, `CurationEscalation`, `VarietyAlgedonicAlert`, `DepositCredited`, and the v0.31.0 regulation spans (`ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`).
 
-Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 248 namespace strings spanning architecture seams, chat, CI, classification, condenser, consent, consolidation, contracts, curation, cybernetics, deploy, gas, guard, healing, inference, kata, MCP media, memory, multi-agent, platform metrics (11 spans for PaaP/DORA/SPACE/Loyalty), QA, regulation, semantic, skills, SLOs, sovereignty, specs, storage, tools, variety, wallet, well, pipeline, supply chain, runtime posture, attack taxonomy, LoRA training, template, and training providers.
+Beyond `RegulationSpan`, the `CANONICAL_NAMESPACES` array registers 262 namespace strings spanning architecture seams, chat, CI, classification, condenser, consent, consolidation, contracts, curation, cybernetics, deploy, gas, guard, healing, inference, kata, MCP media, memory, multi-agent, platform metrics (11 spans for PaaP/DORA/SPACE/Loyalty), QA, regulation, semantic, skills, SLOs, sovereignty, specs, storage, tools, variety, wallet, well, pipeline, supply chain, runtime posture, attack taxonomy, LoRA training, template, and training providers.
 
 #### How ν-Events Feed the Regulation Homeostatic Loop
 
@@ -226,13 +226,13 @@ flowchart TD
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-003
 verified_date: 2026-07-29
-verified_against: crates/hkask-types/src/event.rs (RegulationRecord, Span, SpanNamespace, CANONICAL_NAMESPACES — 243 entries), crates/hkask-types/src/regulation.rs (RegulationSpan enum), crates/hkask-types/src/observable_span.rs (ObservableSpan trait), crates/hkask-regulation/src/cybernetics_loop.rs (CyberneticsLoop::sense, Sensor implementations)
-status: VERIFIED (v3 — corrected CANONICAL_NAMESPACES count to 243 per 2026-08-01 audit; fixed WeightedEvent/DecayConfig file path to ports/regulation.rs; removed stale hkask-memory/src/lib.rs reference)
+verified_against: crates/hkask-types/src/event.rs (RegulationRecord, Span, SpanNamespace, CANONICAL_NAMESPACES — 262 entries), crates/hkask-types/src/regulation.rs (RegulationSpan enum), crates/hkask-types/src/observable_span.rs (ObservableSpan trait), crates/hkask-regulation/src/cybernetics_loop.rs (CyberneticsLoop::sense, Sensor implementations)
+status: VERIFIED (v3 — corrected CANONICAL_NAMESPACES count to 262 per 2026-08-04 audit; fixed WeightedEvent/DecayConfig file path to ports/regulation.rs; removed stale hkask-memory/src/lib.rs reference)
 -->
 
 ### Implications
 
-The ν-event design is the Good Regulator theorem applied to observability: the Regulation's internal model of the system is built from ν-events, and the model's fidelity depends on the events' structure. A raw log line ("tool invoked at 14:32") is a poor model — it lacks who, what phase, what outcome, and what regulation was applied. A ν-event is a rich model — it carries all of these in a typed, queryable, replayable format. The 243-entry `CANONICAL_NAMESPACES` registry ensures that every namespace is validated against a known set — a typo in a span namespace is caught at construction time, not discovered during debugging. The decay-weighted replay is the least-action principle in action: the Regulation does not need to load the entire event store to regulate the system; it needs only the recent, salient events. This is what makes cybernetic regulation computationally feasible — the regulator's model is bounded by decay, not by the full history of the system.
+The ν-event design is the Good Regulator theorem applied to observability: the Regulation's internal model of the system is built from ν-events, and the model's fidelity depends on the events' structure. A raw log line ("tool invoked at 14:32") is a poor model — it lacks who, what phase, what outcome, and what regulation was applied. A ν-event is a rich model — it carries all of these in a typed, queryable, replayable format. The 262-entry `CANONICAL_NAMESPACES` registry ensures that every namespace is validated against a known set — a typo in a span namespace is caught at construction time, not discovered during debugging. The decay-weighted replay is the least-action principle in action: the Regulation does not need to load the entire event store to regulate the system; it needs only the recent, salient events. This is what makes cybernetic regulation computationally feasible — the regulator's model is bounded by decay, not by the full history of the system.
 
 ---
 

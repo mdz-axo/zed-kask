@@ -1,3 +1,13 @@
+---
+title: "Swarm Panel Modes (State)"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [composition, lifecycle]
+---
+
 # Swarm Panel Modes (State)
 
 The `SwarmPanel` (`crates/swarm_panel/src/swarm_panel.rs:574`) has four
@@ -47,7 +57,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-007
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/swarm_panel/src/swarm_panel.rs:230,261,289,1798,1834,1870; crates/swarm_panel/src/panel_button.rs:13
 status: VERIFIED
 -->

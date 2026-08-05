@@ -1,8 +1,8 @@
 ---
 title: "Media Server Design Schema"
 audience: [developers, architects]
-last_updated: 2026-07-29
-version: "0.31.0"
+last_updated: 2026-08-04
+version: "0.31.1"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition]
@@ -91,6 +91,13 @@ erDiagram
         string created_at "ISO 8601"
     }
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RS-MEDIA-002
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-storage/src/gallery.rs
+status: VERIFIED
+-->
 
 ### POLICY State Machine
 

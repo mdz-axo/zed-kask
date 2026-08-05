@@ -1,3 +1,13 @@
+---
+title: "hKask Kanban Widget — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition]
+---
+
 # hKask Kanban Widget — Class Diagram
 
 `hkask-kanban-widget` renders ```` ```kanban ```` fenced blocks as a horizontal
@@ -71,7 +81,7 @@ non-standard statuses sorted alphabetically (title-cased).
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-KANBAN
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/hkask-kanban-widget/src/block.rs; crates/hkask-kanban-widget/src/view.rs
-status: VERIFIED 2026-08-03
+status: VERIFIED
 -->

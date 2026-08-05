@@ -1,3 +1,13 @@
+---
+title: "Swarm Feedback Loops — Cybernetic Map"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, trust]
+---
+
 # Swarm Feedback Loops — Cybernetic Map
 
 The swarm system runs four coupled feedback loops. **Loop A** (PDCA
@@ -80,7 +90,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-008
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: .agents/skills/swarm-intelligence/SKILL.md:62,96,104,105,122,124,182; .agents/skills/swarm-steering/SKILL.md:59; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:77,184; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83; crates/swarm_panel/src/swarm_panel.rs:191
 status: VERIFIED
 -->

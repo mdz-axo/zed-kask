@@ -1,8 +1,8 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-01
-version: "0.32.1"
+last_updated: 2026-08-04
+version: "0.32.2"
 status: "Active"
 domain: "Composition"
 mds_categories: [composition, domain]
@@ -11,7 +11,7 @@ mds_categories: [composition, domain]
 # MCP Server Registry
 
 **Diataxis type:** Reference
-**Status:** Current (v0.31.0)
+**Status:** Active (v0.32.2)
 
 Built-in MCP servers shipped with hKask and hosted in-process by zed-kask's `context_server`
 infrastructure. Each server is a thin surface over domain crates. The binary entrypoint
@@ -20,7 +20,7 @@ root exposes `pub async fn run()` that calls `hkask_mcp_server::run_server(name,
 factory, credentials)`, where `factory` receives a `ServerContext` and constructs the server
 struct.
 
-> **Hosting note (v0.31.0):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
+> **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are loaded by zed's
 > `context_server` host; the `BUILT_IN_MCP_SERVERS` constant in
 > `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 11 on-disk servers. Five servers from
@@ -39,9 +39,9 @@ struct.
 | Server | Crate | Domain | Tools | Math Engine |
 |--------|-------|--------|-------|-------------|
 | CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 8 | `hkask-mcp-codegraph` |
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting | 40 | `hkask-forecast` |
-| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 6 | — |
-| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 26 | — |
+| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting | 41 | `hkask-forecast` |
+| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 4 | — |
+| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | — |
 | Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | 11 | — |
 | Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 18 | — |
 | Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 37 | — |
@@ -70,8 +70,8 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 40 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
-- [Condenser MCP Server Reference](condenser.md) — 6 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
+- [Companies MCP Server Reference](companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Condenser MCP Server Reference](condenser.md) — 4 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
 - [Corpus MCP Server Reference](corpus.md) — corpus gathering, document processing, QA generation, style replicas
 - [Scenario Forecasting Pipeline Diagram](scenarios.md) — scenarios tool flow (DIAG-RF-005 inline)
 - [Swarm MCP Server Reference](swarm.md) — 31 tools (20 ABW + 11 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
@@ -86,7 +86,7 @@ Every MCP server MUST include **tool-behavior contract tests** that invoke tools
 
 ## Kata-Kanban Server Architecture (DIAG-IC-017)
 
-The `hkask-mcp-kata-kanban` MCP server (`KanbanServer`) is a thin tri-surface wrapper that delegates every tool call to `KanbanService`. The service owns an `HMemStore` (board/task persistence). Full kata execution is available through the in-process `KataEngine` (constructed directly by the agent loop or the kask panel, D10), which replaces the deleted `kask kata start` CLI command. The kanban service exposes kata prompt generation (`task_coaching_prompt` / `task_improvement_prompt` / `task_practice_prompt`) for MCP and in-process surfaces.
+The `hkask-mcp-kata-kanban` MCP server (`KanbanServer`) is a thin tri-surface wrapper that delegates every tool call to `KanbanService`. The service owns an `HMemStore` (board/task persistence). Full kata execution is available through the in-process `KataEngine` (constructed directly by the agent loop; the former kask panel D10 was deleted), which replaces the deleted `kask kata start` CLI command. The kanban service exposes kata prompt generation (`task_coaching_prompt` / `task_improvement_prompt` / `task_practice_prompt`) for MCP and in-process surfaces.
 
 The `--task <id>` binding (previously a CLI flag) is now an in-process parameter that binds a `TaskGasAccountant` to the engine, closing the per-task gas feedback loop: each inference call's actual token usage is deducted from the bound kanban task's `gas_remaining` budget via `task_consume_gas`.
 

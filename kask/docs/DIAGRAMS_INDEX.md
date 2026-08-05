@@ -1,11 +1,11 @@
 ---
-title: hKask Diagram Index — Mermaid Verification Registry
-audience: Maintainers
-last_updated: 2026-08-03
-version: v0.32.0
-status: living document
-domain: documentation
-mds_categories: [Composition, Interface, Trust, Lifecycle, Curation]
+title: "hKask Diagram Index — Mermaid Verification Registry"
+audience: [maintainers, agents]
+last_updated: 2026-08-04
+version: "0.32.1"
+status: "Active"
+domain: "documentation"
+mds_categories: [composition, trust, lifecycle, curation]
 ---
 
 # hKask Diagram Index — Mermaid Verification Registry

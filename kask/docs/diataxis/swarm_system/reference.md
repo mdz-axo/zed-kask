@@ -91,7 +91,7 @@ Where ABW backs them with fermi's per-agent dreaming-memory KG + fermi's LLM
 generation, the local analogs back them with the **operator's own
 `hkask-memory`** and the **local `InferencePort`** (Ollama/cloud via the zed IPC
 bridge). They execute and resolve entirely on the kask substrate — no ABW
-round-trips, no fermi code. Design rationale: [Local Knowledge Tools design](../../plans/local-swarm-knowledge-tools.md).
+round-trips, no fermi code. Design rationale: recovered via `git log --diff-filter=D -- kask/docs/plans/local-swarm-knowledge-tools.md` (plan deleted — feature fully implemented, see swarm_system/how-to.md §8).
 
 The unifying idea: **memory IS the knowledge graph.** A local agent's
 "knowledge graph" is its prefix-scoped slice (`agent:<agent_id>:`) of the

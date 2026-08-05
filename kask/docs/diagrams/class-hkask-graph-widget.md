@@ -1,3 +1,13 @@
+---
+title: "hKask Graph Widget — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition]
+---
+
 # hKask Graph Widget — Class Diagram
 
 `hkask-graph-widget` renders ```` ```graph ```` fenced blocks as an interactive
@@ -102,7 +112,7 @@ map is treated as observed.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-GRAPH
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/hkask-graph-widget/src/block.rs; crates/hkask-graph-widget/src/layout.rs; crates/hkask-graph-widget/src/propagate.rs; crates/hkask-graph-widget/src/view.rs
-status: VERIFIED 2026-08-03
+status: VERIFIED
 -->

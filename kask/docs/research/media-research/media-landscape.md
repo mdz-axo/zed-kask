@@ -1,8 +1,8 @@
 ---
 title: "Media Landscape Research"
 audience: [developers, architects]
-last_updated: 2026-07-29
-version: "0.31.0"
+last_updated: 2026-08-04
+version: "0.31.1"
 status: "Active"
 domain: "MCP Servers"
 mds_categories: [domain, composition]
@@ -51,6 +51,13 @@ erDiagram
         string format "json_metadata|image_blob|video_url|text"
     }
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-RS-MEDIA-001
+verified_date: 2026-08-04
+verified_against: kask/mcp-servers/hkask-mcp-media/src/tools/; kask/crates/hkask-inference/src/media_router.rs
+status: VERIFIED
+-->
 
 ### Dependency Lattice
 

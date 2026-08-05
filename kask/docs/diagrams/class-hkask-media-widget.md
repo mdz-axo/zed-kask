@@ -1,3 +1,13 @@
+---
+title: "hKask Media Widget — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Composition"
+mds_categories: [composition]
+---
+
 # hKask Media Widget — Class Diagram
 
 `hkask-media-widget` renders ```` ```media ```` fenced blocks (image / SVG /
@@ -79,7 +89,7 @@ error message instead of decoding.
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-MEDIA
-verified_date: 2026-08-03
+verified_date: 2026-08-04
 verified_against: crates/hkask-media-widget/src/media_ref.rs; crates/hkask-media-widget/src/media_widget.rs; crates/hkask-media-widget/src/audio_player.rs; crates/hkask-media-widget/src/transport.rs; crates/hkask-media-widget/src/video_decoder.rs
-status: VERIFIED 2026-08-03
+status: VERIFIED
 -->

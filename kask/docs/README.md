@@ -1,8 +1,8 @@
 ---
 title: "zed-kask Documentation"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-01
-version: "0.2.1"
+last_updated: 2026-08-04
+version: "0.3.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -12,20 +12,20 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 > **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, MCP servers, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces.
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D14 integration plan, composition root, and current crate inventory.
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D20 integration plan, composition root, and current crate inventory.
 
-**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 major crates (40 artifacts).
+**Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 crate sets (39 artifacts).
 
 ## Architecture
 
 | Document | Description |
 |----------|-------------|
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D14 integration seams, composition root, crate inventory, deletion history. |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D20 integration seams, composition root, crate inventory, deletion history. |
 | [`salience-specification.md`](architecture/salience-specification.md) | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`). |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — 4 sovereignty principles (P1–P4). |
 | [`core/scenarios-companies-bridge.md`](architecture/core/scenarios-companies-bridge.md) | Bridge tool between scenarios and companies MCP servers. |
-| [`hkask-types-core-domain-split.md`](architecture/hkask-types-core-domain-split.md) | **ADR (Proposed)** — split `hkask-types` into core primitives vs domain types; options, trade-offs, audit gate. |
+| [`hkask-types-core-domain-split.md`](architecture/hkask-types-core-domain-split.md) | **ADR (Draft)** — split `hkask-types` into core primitives vs domain types; options, trade-offs, audit gate. |
 | [`adr-embedded-yaml-registry.md`](architecture/adr-embedded-yaml-registry.md) | **ADR (Active)** — build-time `include_str!` embedding of all YAML/Jinja2 artifacts; dev-scoped evolution vs user-scoped freeze; trust model interaction. |
 
 ## Reference
@@ -73,16 +73,18 @@ Historical research reports. Archived research has been removed from the active 
 
 ## Plans
 
-Build plans for major features. Plans are lifecycle-tracked: `Active` (in
-progress), `Superseded` (implemented; Diataxis docs are now canonical), or
-`Deprecated` (abandoned design). See `DOCUMENTATION_STANDARDS.md` for the
-lifecycle definition.
+Build plans for major features. All plans in the active tree have `status: Active` or `status: Draft`; `Deprecated`/`Superseded` plans are removed per `DOCUMENTATION_STANDARDS.md` §3.
 
-| Document | Status | Description |
-|----------|--------|-------------|
-| [`plans/kask-skill-signing-and-trust.md`](plans/kask-skill-signing-and-trust.md) | Active | Skill marketplace signing & trust model — Ed25519-signed manifests with `expires_at` set at signing, server verification (upload 400 / poll skip), 120-day catalog expiry + sweep, client install verification. All 5 phases complete. Supersedes the deleted `kask-extensions-panel-and-skill-sharing.md` (removed 2026-08-01). |
-| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Active | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (50 tools: 27 ABW + 23 local) + `swarm_panel`. v1 feature-complete (slices 1–7 + Xaman Ek); v2 local mode implemented (local substrate: hkask-inference + hkask-ledger + hkask-guard). |
-| [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md) | Active | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade (SENSE→ORIENT→DECIDE→FILTER→ACT→CHECK→CONVERGE), C0–C8 cybernetic components, steering modes (advisory/steering), `delegate_results` contract, the `swarm-steering` skill, Appendix C implementation record. |
+| Document | Description |
+|----------|-------------|
+| [`plans/kask-skill-signing-and-trust.md`](plans/kask-skill-signing-and-trust.md) | Skill marketplace signing & trust model — Ed25519-signed manifests with `expires_at` set at signing, server verification (upload 400 / poll skip), 120-day catalog expiry + sweep, client install verification. All 5 phases complete. |
+| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (50 tools: 27 ABW + 23 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
+| [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md) | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade, C0–C8 cybernetic components, steering modes, `delegate_results` contract. |
+| [`plans/media-system-refactor.md`](plans/media-system-refactor.md) | Media system review, architecture refactor, and multi-provider expansion plan. Forward-looking; not yet executed. |
+| [`plans/prediction-plan.md`](plans/prediction-plan.md) | Prediction markets MCP server plan — proposed `hkask-mcp-prediction-markets` crate. Forward-looking. |
+| [`plans/semantic-memory-wiki.md`](plans/semantic-memory-wiki.md) | Semantic memory wiki — proposed `hkask-mcp-wiki` MCP server. Draft; no code exists yet. |
+| [`plans/evolving-test-harness.md`](plans/evolving-test-harness.md) | Evolving test harness plan — trace filesystem, oracle taxonomy, property-based testing infrastructure. |
+| [`plans/test-harness-skill-evolution.md`](plans/test-harness-skill-evolution.md) | Test harness skill evolution — proptest/bug-hunt/tdd skill integration plan. |
 
 ## QA
 
@@ -90,10 +92,17 @@ Quality assurance strategy and artifacts for the hKask MCP server fleet.
 
 | Document | Description |
 |----------|-------------|
-| [`qa/mcp-server-qa-strategy.md`](qa/mcp-server-qa-strategy.md) | Per-tool QA routine for all 206 tools across 11 MCP servers. |
+| [`qa/mcp-server-qa-strategy.md`](qa/mcp-server-qa-strategy.md) | Per-tool QA routine for all tools across 11 MCP servers. |
 | [`qa/per-tool-contracts.md`](qa/per-tool-contracts.md) | Per-tool 7-category contract tables (input struct, output shape, LLM I/O boundary). |
 | [`qa/coverage-matrix.md`](qa/coverage-matrix.md) | Coverage matrix generated by `scripts/qa-mcp-servers.sh`. |
+| [`qa/pre-release-final-summary-pass3.md`](qa/pre-release-final-summary-pass3.md) | Final pre-release QA summary — 5 open deferred/user-decision items (D2, D3, D6, D7, D8). |
 | [`qa/skill-bundle.yaml`](qa/skill-bundle.yaml) | Skill-bundle manifest for the QA pass (consumed by `skill-bundler`). |
+
+## Audits
+
+| Document | Description |
+|----------|-------------|
+| [`audits/swarm-cybernetics-semantics-audit.md`](audits/swarm-cybernetics-semantics-audit.md) | Swarm system pragmatic-semantics + pragmatic-cybernetics audit — 4 unresolved structural findings. |
 
 ## Status
 
@@ -101,4 +110,4 @@ Structural inventories and status snapshots.
 
 | Document | Description |
 |----------|-------------|
-| [`status/public-seam-inventory.json`](status/public-seam-inventory.json) | Structural inventory of `kask/crates/` lib roots (19 crates). API-surface enumeration is a follow-up. |
+| [`status/public-seam-inventory.json`](status/public-seam-inventory.json) | Structural inventory of `kask/crates/` lib roots (20 crates). API-surface enumeration is a follow-up. |
