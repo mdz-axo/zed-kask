@@ -14,7 +14,8 @@ use settings_content::{
     KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
     KaskDataServiceSettingsContent, KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent,
     KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
+    KaskSwarmSettingsContent,
     KaskTrainingSettingsContent,
 };
 
@@ -62,6 +63,8 @@ pub struct KaskSettings {
 
     /// Scenarios MCP server configuration.
     pub scenarios: KaskScenariosSettings,
+    /// Prediction-markets data-service configuration.
+    pub prediction_markets: KaskPredictionMarketsSettings,
 
     /// Swarm (Agent Bestiary World) MCP server configuration.
     pub swarm: KaskSwarmSettings,
@@ -443,6 +446,17 @@ pub struct KaskMediaSettings {
     pub image_gen_model: String,
 }
 
+/// Prediction-markets MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskPredictionMarketsSettings {
+    /// Data directory for the calibration journal. When empty, in-memory.
+    pub data_dir: String,
+    /// Cache TTL in seconds for market-data responses (0 = server default).
+    pub cache_ttl_secs: u64,
+    /// Base-event registry: "domain:series,..." pairs for CMP construction.
+    pub base_events: String,
+}
+
 /// Scenarios MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskScenariosSettings {
@@ -812,6 +826,26 @@ impl KaskSettings {
             );
         }
 
+        // ── Prediction markets ──
+        if !self.prediction_markets.data_dir.is_empty() {
+            env.insert(
+                "HKASK_PREDICTION_MARKETS_DATA".to_string(),
+                self.prediction_markets.data_dir.clone(),
+            );
+        }
+        if self.prediction_markets.cache_ttl_secs > 0 {
+            env.insert(
+                "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS".to_string(),
+                self.prediction_markets.cache_ttl_secs.to_string(),
+            );
+        }
+        if !self.prediction_markets.base_events.is_empty() {
+            env.insert(
+                "HKASK_PREDICTION_MARKETS_BASE_EVENTS".to_string(),
+                self.prediction_markets.base_events.clone(),
+            );
+        }
+
         // ── Swarm (ABW + Local) ──
         // The API key is a credential (injected by `mcp_env_with_credentials`
         // from the keychain), not config — only non-secret fields are here.
@@ -1138,6 +1172,17 @@ impl From<KaskMediaSettingsContent> for KaskMediaSettings {
     }
 }
 
+impl From<KaskPredictionMarketsSettingsContent> for KaskPredictionMarketsSettings {
+    fn from(c: KaskPredictionMarketsSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
+            data_dir: c.data_dir.unwrap_or(default.data_dir),
+            cache_ttl_secs: c.cache_ttl_secs.unwrap_or(default.cache_ttl_secs),
+            base_events: c.base_events.unwrap_or(default.base_events),
+        }
+    }
+}
+
 impl From<KaskScenariosSettingsContent> for KaskScenariosSettings {
     fn from(c: KaskScenariosSettingsContent) -> Self {
         let default = Self::default();
@@ -1231,6 +1276,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
             media: c.media.map(Into::into).unwrap_or_default(),
             scenarios: c.scenarios.map(Into::into).unwrap_or_default(),
+            prediction_markets: c.prediction_markets.map(Into::into).unwrap_or_default(),
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),

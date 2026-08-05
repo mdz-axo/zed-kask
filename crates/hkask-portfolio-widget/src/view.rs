@@ -1161,7 +1161,6 @@ mod tests {
             "no dispatch on non-dispatchable provenance"
         );
     }
-}
     // ── "I disagree" affordance tests (C, D21 widget→agent seam) ──────────────
     //
     // These mutate the process-global `ConversationInjector` (a separate global
@@ -1255,7 +1254,7 @@ mod tests {
         // Use a throwaway window root so we get a `Window` for `on_disagree_click`
         // without rendering `PortfolioWidget` (no theme global in these tests).
         let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        let widget = cx.update(|_window, cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
         widget.update_in(cx, |widget, window, cx| {
             widget.on_disagree_click(window, cx);
         });
@@ -1288,7 +1287,7 @@ mod tests {
 
         let body = body_with_returns_and_provenance();
         let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
-        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        let widget = cx.update(|_window, cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
         widget.update_in(cx, |widget, window, cx| {
             widget.on_disagree_click(window, cx);
         });

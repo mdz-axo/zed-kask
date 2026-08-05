@@ -306,6 +306,13 @@ pub struct ScenarioAnalysisRequest {
     pub discount_rate: Option<f64>,
     /// Terminal growth rate (default 0.025)
     pub terminal_growth: Option<f64>,
+    /// Optional event tree JSON (from hkask-mcp-scenarios
+    /// `scenario_from_markets_set` / `scenario_propagate` output — the
+    /// `tree` object). When present, the four quadrant probabilities come
+    /// from the tree's root-event marginals (detailed mode); when absent,
+    /// the plain 2×2 range is returned without probabilities (simple mode,
+    /// the default on-ramp).
+    pub event_tree: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

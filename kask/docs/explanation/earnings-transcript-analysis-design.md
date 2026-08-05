@@ -63,8 +63,51 @@ tied to a Phase A finding (OUGHT). Unverified items are marked UNVERIFIED, not g
   transcript-specific code is YouTube transcript *fetch* for corpus discovery
   (`src/corpus/discover/search.rs:107-260`). `corpus_tag_chunks` can post-hoc annotate
   chunks with 5W1H/ontology tags.
-- **MAIA guidebook notes: not present in the repo.** `find -iname '*maia*'` returns zero
-  files. MAIA exists only as in-code methodology fragments:
+- **MAIA guidebook: FOUND (outside the repo)** — `/home/mdz-axolotl/Clones/Library/MAIA-Substack/posts/`
+  (55 HTML posts). Extracted 2026-08-05; substance relevant to transcript analysis:
+  - **Horizon post** (`137682783.time-horizons-expected-events-and`): sell-side consensus
+    "probably actually fairly accurate for the next 12-18 months" — use consensus for the
+    near term, don't compete there; 3-stage value model (1–2y consensus / 3–5y
+    normalization / 5y terminal multiple, 15% target return); horizon bands **Tactical
+    12–18mo / Strategic 3–5y / Long-term 7–10y**; edge quote: "We are not predicting the
+    future – but if we can more quickly see what has happened and rapidly discard things
+    that are not possible – well, that's how one gets an analytical advantage that isn't
+    based on luck." Certainty levels: **Proximate ≥67% / Probable 33–66% / Possible <32%**.
+  - **Company template** (`137738813.company-template`): BUSINESS / MANAGEMENT /
+    VALUATION / RISKS / FUTURE; "how does the company take one dollar and turn it into
+    two?"; CEO/CFO scorecards; "What expectations are in the current price?"; "Why do we
+    think it's invisible, neglected or misunderstood?"; FUTURE = "what we are watching
+    for in the next 18 months" + how expected events relate to expectations.
+  - **Company-analysis method** (`137881063.company-analysis`): start with how the
+    company describes itself (filings/presentations first, NOT sell-side); the "hole" =
+    "the gap between the expectations of the market and the potential of the business";
+    thesis arc: market expects X, we expect Y, Y > X; position-building signal = seeing
+    "what isn't on the page yet."
+  - **Financial signposts** (`137464131.financial-signposts`): market power = gross-margin
+    **stability through a cycle** ("Market power is not the ability to increase gross
+    margins") + DPO−DSO negative working capital; CEO long-term capital allocation
+    ("the no-no is increasing capital and decreasing returns"); CFO working-capital
+    consistency ("stable working capital accounts in the face of shifting market
+    environments requires exceptional discipline and skill"); caveat: watch for
+    accounting games (Schilit/Mulford/Comiskey).
+  - **Owner mindset** (`137670567.thinking-like-an-owner`): owners worry about growth
+    and profitability, not trading patterns; "part of the job is to ignore a lot of
+    noise"; if you understand the business you can predict management's reasoning —
+    unexplained actions mean you are still learning the business.
+  - Grep-verified absences across all 55 posts: "earnings call", "transcript" (finance
+    sense), "12–36", "inferential advantage", "moat" — zero hits.
+  - **Horizon model RESOLVED (operator clarification, 2026-08-05):** the 12–36mo window
+    is the **seam/transition between the guidebook's tactical (12–18mo) and strategic
+    (3–5y) bands** — the leverage zone where strategic plans must begin appearing as
+    observable intermediate events/checkpoints. The model is a **flow, not states**:
+    tactical events are waypoints on the path to strategic goals; the analyst's job at
+    the seam is to identify the key intermediate events evidencing movement toward (or
+    away from) long-term plans. Consensus-efficiency out to 12–18mo and the 12–36mo
+    edge are compatible: the edge is not predicting near-term numbers but *recognizing
+    which events are checkpoints on the strategic path* (matches the guidebook edge
+    quote). 5y+ is where terminal-multiple math lives, not the event edge — consistent
+    with both sources.
+- MAIA in-code fragments (consistent with the guidebook extraction above):
   - Gross-margin stability via coefficient of variation, score `1/(1+CV)`
     (`companies/src/analysis.rs:11-23`).
   - Working-capital spread = DPO − DSO; positive spread ⇒ market power, with signal
@@ -81,8 +124,7 @@ tied to a Phase A finding (OUGHT). Unverified items are marked UNVERIFIED, not g
     tables, joint-table marginalization (`docs/explanation/forecasting-and-scenarios.md:74-80`).
   - Three-level certainty tier (`hkask-forecast/src/hkask_forecast.rs:158`); moat→fade
     horizon (`economic_profit.rs:73-77`).
-  A richer MAIA guidebook, if it exists, lives outside this repo (operator's private
-  notes). This is a documented gap, not a fabrication point.
+
 
 ---
 
@@ -127,54 +169,74 @@ earnings_transcript(symbol, year?, quarter?, quarters_back=1, mode=fetch|analyze
 ### (b) Listening template spec
 
 A YAML/JSON schema versioned in-repo (`kask/mcp-servers/hkask-mcp-companies/listening_template.yaml`
-or a skill asset). Each factor is anchored to the MAIA fragments found in A5 plus the
-horizon doctrine supplied by the operator (below) — no invented factors.
+or a skill asset). Each factor is anchored to the guidebook extraction + in-code
+fragments in A5 plus the operator's seam clarification — no invented factors.
 
-**The horizon doctrine (operator-supplied MAIA assumption, 2026-08-05) — this is the
-set-point of the whole template and is hard-coded, not optional:**
+**The horizon model — unified (operator clarification, 2026-08-05):**
 
-> MAIA assumes the short term is efficiently covered and fairly well known — no
-> inferential advantage exists there. The advantage lives in longer-term trends in
-> growth, profitability, and investment: events and plans in the **12–36 month**
-> window are essential; events in the next **3–9 months** are not key; and the edge is
-> not 5+ years out either — it is being longer-term than most investors, not maximal.
-> Consequence for listening: a guidance change matters **iff** (i) it is a change in
-> long-term guidance, or (ii) it is a short-term change that signals/indicates a
-> long-term change in growth or profitability. Everything else discussed on the call
-> is noise unless it carries 12–36-month significance.
+> The key horizon is the **seam between tactical and strategic** — 12 to 36 months
+> out. That is the leverage point where you should see things happening that move
+> toward the strategic long-term plans: not mere short-term events, and not the
+> long-term plans themselves (not yet accomplished). The analyst's job is to identify
+> the **key intermediate events or checkpoints** on the way to the company achieving
+> its strategic goals. The guidebook's bands (tactical 12–18mo / strategic 3–5y /
+> long-term 7–10y) and the 12–36mo focus are one model read as a **flow**: the seam
+> is where the strategic becomes observable.
 
 This is implemented as a **global stance block** that every section's extraction and
-verdict passes through, plus a dedicated classification of every extracted claim by
-horizon. The template refuses to emit a verdict on a claim whose horizon class is
-`short_term_only` with no long-term signal linkage — such claims are recorded as
-`ignored_short_term` (kept for audit, excluded from verdicts), which is the concrete
-mechanism that prevents the analysis from being dragged into the efficiently-priced
-window.
+verdict passes through. The template refuses to emit a verdict on a claim whose
+horizon class is `short_term_only` with no strategic-path linkage — such claims are
+recorded as `ignored_short_term` (kept for audit, excluded from verdicts). **The
+linkage, not the calendar date, is the admissibility bar**: a 6-month event that is a
+nameable checkpoint on the path to a stated 3-year goal IS primary material; a
+14-month event with no strategic linkage is not. The central output is the
+**checkpoint map** (see output schema).
 
 ```yaml
-version: 2  # v1 → v2: horizon doctrine hard-coded (operator-supplied MAIA assumption)
+version: 3  # v1: fragments only; v2: operator horizon overlay; v3: guidebook found +
+            # seam model unification (flow, not states) + guidebook-native sections
 source_of_factors:
-  - maia-in-code-fragments      # see A5; guidebook NOT in repo
-  - operator-supplied horizon doctrine (2026-08-05)  # 12–36mo window; 3–9mo not key; not 5y+
+  - maia-guidebook: /home/mdz-axolotl/Clones/Library/MAIA-Substack (extracted 2026-08-05)
+  - maia-in-code-fragments      # see A5 (margin CV, DPO−DSO, moat, CEO/CFO scorecards)
+  - operator seam clarification (2026-08-05)  # 12–36mo = tactical→strategic transition zone
+template_sections:               # guidebook company-template structure the listening feeds
+  # BUSINESS / MANAGEMENT / VALUATION / RISKS / FUTURE (137738813.company-template)
+  # FUTURE = "what we are watching for in the next 18 months" — the checkpoint map
+  # (output below) is the transcript-derived feed into exactly this section.
+process_stance:                  # from 137881063.company-analysis — transcript is primary source
+  anchor: "how the company describes itself"   # filings/calls first, NOT sell-side — a transcript
+                                               # IS the company's self-description: highest-authority input
 stance:                          # GLOBAL FILTER — applies to every section below
-  inferential_advantage_window_months: [12, 36]
-  efficiently_priced_window_months: [3, 9]
-  far_horizon_months: 60         # beyond ~5y is also NOT the edge — treat as speculative
+  model: process_flow            # events are waypoints on a path, not independent states
+  guidebook_bands: {tactical_months: [12, 18], strategic_years: [3, 5], long_term_years: [7, 10]}
+  seam_window_months: [12, 36]   # the leverage zone — primary listening target
+  consensus_efficient_months: [0, 18]   # guidebook: use consensus here, don't compete
+  far_horizon_months: 60         # terminal-multiple math lives here, not events
   claim_horizon_classes:         # every extracted claim is classified before use
-    - short_term_only            # <12mo effect, no long-term linkage → recorded, excluded from verdicts
-    - short_term_signal          # <12mo event that indicates a 12–36mo change → admissible WITH the linkage stated
-    - long_term                  # 12–36mo effect → admissible, primary material
-    - speculative_far            # >~48–60mo → admissible only as low-weight context (confidence cap 1)
+    - short_term_only            # no strategic-path linkage → ignored_short_term (any horizon)
+    - seam_checkpoint            # event WITH named linkage to a strategic goal → PRIMARY
+    - tactical_event             # 12–18mo dated expected event → guidebook FUTURE feed
+    - strategic_context          # 3–10y plan/goal statement → the anchor checkpoints link TO
+    - speculative_far            # >5y event claims → no granularity (guidebook); context only
   admissibility_rule: >
-    A claim enters a section verdict only if horizon_class is long_term, or
-    short_term_signal with an explicit stated linkage to growth/profitability/
-    investment in the 12–36 month window. short_term_only claims are logged under
-    ignored_short_term. speculative_far claims cap confidence at level 1.
+    A claim enters a section verdict only if it is a seam_checkpoint (strategic-goal
+    linkage named), a tactical_event (dated, with feasibility/scaling basis), or a
+    strategic_context claim that anchors checkpoint linkages. short_term_only claims
+    are logged under ignored_short_term. The linkage, not the calendar date, is the
+    bar: a near-term event that is a nameable checkpoint on the path to a stated
+    strategic goal IS primary material.
+  certainty_levels:              # guidebook verbatim (137682783)
+    proximate: ">=67% — already started to happen, could stop"
+    probable: "33–66% — all elements exist for it to happen"
+    possible: "<32% — could happen but unlikely"
 sections:
-  - id: margin_trajectory          # MAIA: gross-margin stability (analysis.rs:11-23)
+  - id: margin_trajectory          # MAIA: gross-margin STABILITY through a cycle, not expansion
+                                   # (137464131: "Market power is not the ability to increase gross margins")
     listen_for:
       - management commentary on gross-margin direction, pricing, input costs
       - quantified margin guidance vs prior-quarter guidance
+      - ACCOUNTING-GAMES CHECK (137464131 caveat): margin changes achieved via cost
+        reclassification, capitalization shifts, one-time "adjustments"
     extract: { claims: [verbatim_quote + speaker + section], numbers: [margin figures] }
     maps_to_tool: key_metrics        # quantitative confirmation after the call
   - id: working_capital_power      # MAIA: DPO−DSO spread (analysis.rs:25-42)
@@ -182,52 +244,91 @@ sections:
       - receivables/payables/inventory commentary, customer payment terms, supplier pressure
     extract: { claims: [...], signals: [customer_concentration, term_changes] }
     maps_to_tool: working_capital_cycle
-  - id: moat_evidence              # MAIA: moat classification (analysis.rs:54-68)
+  - id: moat_evidence              # guidebook vocabulary: "market power" / "competitive
+                                   # advantage" / "edge" — "moat" does not appear in the corpus
     listen_for:
       - pricing power statements, churn/retention, competitive-response language in Q&A
+      - "how it takes one dollar and turns it into two" — unit-economics explanations
+      - evidence of ability to dictate price AND payment timing/terms (the two-sided test)
     extract: { claims: [...], analyst_challenges: [...] }   # Q&A pushback is the sensor
     maps_to_tool: moat_check
-  - id: capital_allocation         # MAIA: CEO rule (analysis.rs:287-318)
+  - id: capital_allocation         # MAIA CEO rule (137464131): good = decreasing capital
+                                   # w/ steady/improving returns OR increasing capital w/
+                                   # improving returns; "the no-no is increasing capital
+                                   # and decreasing returns"
     listen_for:
-      - capex/M&A/buyback/dividend announcements and their stated return expectations
+      - capex/M&A/buyback/dividend announcements AND their stated return expectations
+      - capital being drained from underperformers / added to outperformers (the actual test)
     extract: { claims: [...], numbers: [capex, buyback, acquisition spend] }
     maps_to_tool: management_scorecard
-  - id: guidance_vs_expectations   # event-tree prior input (forecasting-and-scenarios.md)
-    # HORIZON DOCTRINE APPLIED IN FULL: a guidance change matters iff (a) it is a
-    # long-term guidance change, or (b) it is a short-term change that signals a
-    # long-term improvement/deterioration in growth or profitability. A bare
-    # next-quarter raise/cut with no stated long-term linkage is recorded as
-    # ignored_short_term and must NOT move any forecast_record prior.
+  - id: expectations_gap_update    # THE core MAIA frame (137881063): "the hole is the gap
+                                   # between the expectations of the market and the
+                                   # potential of the business"; thesis arc: market expects
+                                   # X, we expect Y, Y > X
     listen_for:
-      - changes to multi-year / long-range guidance (revenue CAGR, margin targets,
-        capital-intensity plans) — primary signal
-      - short-term guidance changes WITH management's stated or clearly implied
-        linkage to long-term trajectory (e.g. "pulls forward capacity", "reflects a
-        durable demand shift", "one-time supply constraint") — admissible as signal
-      - short-term guidance changes with NO long-term linkage — record and ignore
-      - new quantified commitments with deadlines in the 12–36mo window
+      - anything that changes what Y should be (our long-term growth/profitability
+        expectation) — NOT what changes next quarter's consensus
+      - management revealing plans/capabilities "not on the page yet" (137881063:
+        the position-building signal is seeing what isn't on the page yet)
+      - evidence the market misunderstands/neglects something confirmed or denied on the call
+    extract: { y_updates: [{claim, direction: raises_y|lowers_y, evidence}],
+               x_signals: [{consensus_assumption_challenged, evidence}] }
+    maps_to_tool: expectations_gap
+  - id: guidance_vs_expectations   # event-tree prior input (forecasting-and-scenarios.md)
+    # SEAM MODEL APPLIED: a guidance change matters iff (a) it states or moves a
+    # strategic (3–5y) goal, or (b) it is a checkpoint — a shorter-horizon change
+    # whose position on the path to a stated strategic goal can be named (e.g.
+    # capacity coming online that the 3y margin plan depends on). Guidebook
+    # grounding: consensus is treated as fairly accurate for 12–18mo, so
+    # consensus-shaped short-term guidance carries no edge by MAIA's own premise.
+    # A bare next-quarter raise/cut with no nameable strategic-path linkage is
+    # recorded as ignored_short_term and must NOT move any forecast_record prior.
+    listen_for:
+      - strategic goal statements and their movement (multi-year revenue/margin/
+        capital-intensity targets) — the anchors
+      - INTERMEDIATE EVENTS / CHECKPOINTS: dated milestones in the 12–36mo seam that
+        the strategic plan depends on (capacity, product launches, regulatory
+        approvals, market entry, cost-program completion) — the primary quarry
+      - short-term guidance changes WITH a nameable checkpoint linkage — admissible
+      - short-term guidance changes with NO nameable linkage — record and ignore
     extract:
-      commitments: [{statement, deadline?, quantitative?, horizon_months_estimate}]
+      strategic_goals: [{statement, horizon_years, quantitative?, evidence}]
+      checkpoints: [{event, deadline_or_window, strategic_goal_link, certainty:
+                     proximate|probable|possible, basis: feasibility|scaling, evidence}]
       guidance_changes:
         [{statement, direction: raised|lowered|withdrawn|initiated,
-          horizon_class: long_term|short_term_signal|short_term_only,
-          long_term_linkage: verbatim_quote_or_null}]   # null linkage + short_term_only ⇒ inadmissible
+          horizon_class: seam_checkpoint|tactical_event|strategic_context|short_term_only,
+          strategic_linkage: verbatim_quote_or_null}]   # null + short_term_only ⇒ inadmissible
     maps_to_tool: expectations_gap, forecast_record
-  - id: management_consistency     # MAIA: consistency-is-skill (analysis.rs:236-243)
+  - id: management_consistency     # MAIA CFO rule (137464131): "stable working capital
+                                   # accounts in the face of shifting market environments
+                                   # requires exceptional discipline and skill"; plus
+                                   # 137670567: if you understand the business you can
+                                   # predict management's reasoning — unexplained behavior
+                                   # = you are still learning the business
     listen_for:
       - this-quarter statements vs prior-quarter transcript claims (needs quarters_back≥2)
-    extract: { contradictions: [{prior_quote, current_quote}], tone_shift: enum }
+      - CHECKPOINT DRIFT: previously stated checkpoints moved, dropped, or silently
+        missed across quarters — the flow-model failure signal (a checkpoint that
+        slips twice is evidence the strategic path itself is breaking, not the quarter)
+      - actions whose rationale is opaque given the stated strategy (analytical gap signal)
+    extract: { contradictions: [{prior_quote, current_quote}], tone_shift: enum,
+               checkpoint_drift: [{checkpoint, first_stated, slipped_to, times_moved}],
+               unexplained_actions: [{action, why_opaque}] }
     maps_to_tool: (cross-transcript diff — new, see slice 4)
 output:
   per_section: { verdict: corroborates|neutral|contradicts, evidence: [quotes], confidence: 1|2|3 }
   # confidence uses the MAIA three-level certainty tier (hkask_forecast.rs:158)
-  horizon_summary:               # doctrine-mandated top-level shape
-    long_term_findings: [{claim, section, horizon_class, evidence}]
-    ignored_short_term: [{claim, reason: no_long_term_linkage}]
-    speculative_far: [{claim, confidence_capped_at: 1}]
+  horizon_summary:               # seam-model top-level shape — THE central output is the
+                                 # checkpoint map: events placed on the tactical→strategic path
+    checkpoint_map: [{checkpoint, window_months, strategic_goal_link, certainty,
+                      status: on_track|slipped|new|dropped, evidence}]
+    strategic_goals: [{goal, horizon_years, moved_this_call: none|raised|lowered|new|withdrawn}]
+    ignored_short_term: [{claim, reason: no_strategic_path_linkage}]
+    speculative_far: [{claim, role: context_only}]
   # INVARIANT: no verdict or forecast input may be derived from ignored_short_term
-  # entries. Golden-file test asserts every forecast_record-affecting claim has
-  # horizon_class long_term or short_term_signal with non-null linkage.
+  # entries. Golden-file test asserts every forecast_record-affecting claim is a
+  # seam_checkpoint, tactical_event, or strategic_context with its linkage named.
 ```
 
 Every extracted claim must carry a verbatim quote + location; the template output never
@@ -280,7 +381,10 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
    verbatim quote; a fabricated quote fails the test (substring check against source);
    **horizon-filter test** — the fixture must contain at least one bare short-term
    guidance change, and the output must place it in `ignored_short_term` with no
-   verdict influence; a verdict derived from it fails the test.
+   verdict influence; a verdict derived from it fails the test; **checkpoint test** —
+   the fixture must contain at least one dated milestone with a nameable strategic
+   linkage, and the output must place it on the checkpoint_map with its
+   strategic_goal_link populated; a checkpoint emitted without a linkage fails.
 6. **Corpus integration**: transcript cached via `corpus_cache`, analysis note attached
    via `note_add`. Accept: round-trip queryable through existing corpus tools; no new
    storage code.
@@ -293,11 +397,12 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
   Phase A are its output. Fabricated claims flagged: none remain in this doc; the FMP
   "15+ years" marketing claim was explicitly demoted to UNVERIFIED.
 - **pragmatic-cybernetics** — the loop: **sensor** = listening template applied to the
-  transcript; **set-point** = MAIA key factors (A5 fragments) **plus the horizon
-  doctrine** — and the doctrine is what makes the set-point *discriminating*: without
-  it the sensor amplifies whatever the market already prices (3–9mo noise), i.e. zero
-  inferential variety; the stance block is the variety attenuator that filters the
-  efficiently-covered window before it reaches the actuator; **actuator** = corpus MCP
+  transcript; **set-point** = MAIA key factors + the seam model — and the seam framing
+  makes the loop *anticipatory* rather than reactive: the checkpoint map is a
+  feedforward element (expected waypoints with deadlines) against which each call is
+  measured, so deviation detection (checkpoint slipped/dropped) is automatic rather
+  than re-derived each quarter; the stance block remains the variety attenuator that
+  filters the consensus-covered window before it reaches the actuator; **actuator** = corpus MCP
   cache/tag + portfolio `note_add` (writes the analysis where decisions read it);
   **corrective action** = updated `forecast_record` / `expectations_gap` inputs when the
   transcript contradicts the prior. **Closure diagnosis**: the loop terminates per
@@ -317,12 +422,16 @@ Each slice is end-to-end testable; acceptance criteria are stated, not implied.
 - **falsifiability** — each design hypothesis carries its refuter: template-wrong
   evidence = a MAIA-anchored section whose extracted claims never change any
   `forecast_record`/decision over 4 consecutive quarters (delete the section);
-  **horizon-doctrine-wrong evidence** = over ≥8 quarters, `ignored_short_term` claims
-  that were excluded would have produced better-calibrated `forecast_record` priors
-  than the admissible long-term claims (measurable via Brier comparison of the two
-  populations — if the short-term population beats the long-term one, the doctrine's
-  core empirical premise fails in this domain and the stance block must be revised,
-  not silently loosened); template-unnecessary evidence = refuter #2 in §(c);
+  **seam-model-wrong evidence** = over ≥8 quarters, `ignored_short_term` claims that
+  were excluded would have produced better-calibrated `forecast_record` priors than
+  the admissible checkpoint/strategic claims (Brier comparison of the two populations
+  — if the short-term population beats the seam population, the seam premise fails in
+  this domain and the stance block must be revised, not silently loosened);
+  **checkpoint-map-empty evidence** = if across 4 consecutive quarters for a covered
+  company no seam_checkpoint can be extracted with a named strategic linkage, either
+  the company does not manage via articulated plans (map legitimately sparse) or the
+  extraction is under-sensitive — adjudicate with a human read of the same transcripts
+  before concluding which; template-unnecessary evidence = refuter #2 in §(c);
   tool-unnecessary = refuter #3.
 - **grill-me** — stress-test of §(c): *Recall* — the split is deterministic-fetch vs
   judgment-eval; *Mechanism* — MCP tool = governed provider call, skill = model-mediated

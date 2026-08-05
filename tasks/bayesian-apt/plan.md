@@ -85,6 +85,33 @@ universe; human reviews duration estimates for face validity.
 
 ## Phase 2 — Core (Q2–Q3)
 
+### Design constraint: the analyst maturity ladder (user directive, 2026-08-05)
+
+The simple 2×2 scenario mode is a **first-class citizen, permanently retained** — not a
+legacy path to be replaced by the tree machinery. The two modes serve different points on
+the analyst's research maturity:
+
+1. **Simple mode (entry)**: companies `scenario_analysis` (Schwartz 2×2, growth × margin)
+   → `scenario_from_companies` → single-market `scenario_from_markets`. Fast, low-data,
+   appropriate when the analyst does not yet know which events condition each other.
+2. **Detailed mode (earned)**: `scenario_from_markets_set` → `scenario_propagate` →
+   tree-weighted valuation (T7) → factor loadings (T8). Requires the analyst to have
+   done the research — company, industry, economy, technology, management, domain
+   experts — to know the tree's structure. **You don't start out knowing the full tree
+   of events; you work up to it.**
+
+Consequences:
+- T7 must **add** a tree-weighted path alongside the 2×2 path, never replace it. The
+  2×2 mode's independence-assuming weights stay as the default; tree weights are an
+  explicit opt-in upgrade when a validated tree exists.
+- The platform's existing pipeline-sequence discipline (`check_sequence`:
+  frame → brainstorm → build → quantify → …) already encodes this ladder; the new
+  tree tools are documented as the ladder's top rung (maturity note added to
+  `scenario_from_markets_set`).
+- This is also the epistemically correct order per T0: the tree's conditioning
+  structure is caller-authored knowledge, and the 2×2 mode is how an analyst
+  accumulates enough understanding to author it.
+
 ### T4 — Composition algebra (S4) — L→split into T4a/T4b
 - T4a: markets→tree wiring (M): new `scenario_from_markets_set` tool — given N matched
   `MarketRecord`s + dependency spec, construct a validated `EventTree` with CPTs; refusal
@@ -107,9 +134,19 @@ universe; human reviews duration estimates for face validity.
 
 ### T7 — Tree-weighted valuation (C2) — M
 - Slice: companies/tree-weighted-dcf
-- AC: `calibrate_forecast`/`scenario_analysis` accept tree joint probabilities in place of
-  independence-assuming 2x2 weights; gap decomposition attributes error to scenario vs
-  operating assumptions.
+- **Maturity-ladder constraint (user directive)**: the 2×2 mode stays the default,
+  first-class path. T7 ADDS a tree-weighted option alongside it — an explicit opt-in
+  upgrade for analysts who have built a validated tree — it does not replace the
+  independence-assuming 2×2 weights.
+- AC: (i) `scenario_analysis` retains its current 2×2 behavior unchanged (regression
+  test); (ii) a new tree-weighted path accepts an `EventTree` (from
+  `scenario_from_markets_set`/`scenario_propagate`) and produces a scenario-weighted
+  valuation using tree marginals/joints as the weights; (iii) the output labels which
+  mode produced it (`weighting_mode: "schwartz_2x2" | "event_tree"`) so downstream
+  consumers can tell the maturity level of the analysis; (iv) gap decomposition
+  attributes error to scenario vs operating assumptions in both modes.
+- Verification: 2×2 regression test unchanged; tree-weighted path on a hand-built tree
+  reproduces hand-computed weights; mode label present.
 - Deps: T4a. Files: hkask-mcp-companies/{scenarios.rs,superforecast.rs,valuation.rs}.
 
 **Checkpoint CP2:** end-to-end vertical slice demo — markets → tree → propagation →

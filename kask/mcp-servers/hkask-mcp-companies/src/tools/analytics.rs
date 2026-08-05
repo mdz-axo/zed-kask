@@ -816,6 +816,47 @@ impl CompaniesServer {
 
             let summary = scenarios::scenario_summary(&results);
 
+            // T7: optional tree-weighted path (detailed mode). The 2×2 range
+            // above is always computed; when the caller pastes a validated
+            // event tree, quadrant probabilities are derived from its root
+            // marginals and an expected intrinsic value is produced.
+            let mut weighting_mode = superforecast::WeightingMode::Schwartz2x2;
+            let mut weighted_output: Option<serde_json::Value> = None;
+            let mut tree_warning: Option<String> = None;
+            if let Some(tree_json) = &req.event_tree {
+                match serde_json::from_str::<superforecast::EventTreeProjection>(tree_json) {
+                    Ok(tree) => match superforecast::tree_root_probabilities(&tree) {
+                        Some((growth_p, margin_p)) => {
+                            let weighted = superforecast::distribute_scenario_probabilities(
+                                growth_p, margin_p, &results,
+                            );
+                            let expected = superforecast::expected_intrinsic(&weighted);
+                            weighting_mode = superforecast::WeightingMode::EventTree;
+                            weighted_output = Some(serde_json::json!({
+                                "growth_probability": growth_p,
+                                "margin_probability": margin_p,
+                                "expected_intrinsic_per_share": expected,
+                                "weighted_scenarios": weighted.iter().map(|w| serde_json::json!({
+                                    "name": w.name,
+                                    "intrinsic_per_share": w.intrinsic_per_share,
+                                    "probability": w.probability,
+                                })).collect::<Vec<_>>(),
+                            }));
+                        }
+                        None => {
+                            tree_warning = Some(
+                                "event tree does not have exactly two roots with valid marginals — falling back to simple 2x2 mode (no probabilities)".into()
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        tree_warning = Some(format!(
+                            "event_tree JSON did not match the scenarios-server tree projection ({e}) — falling back to simple 2x2 mode"
+                        ));
+                    }
+                }
+            }
+
             // Compute signal quality and emit Regulation span
             let signal_quality = hist.signal_quality();
             crate::data_quality::emit_data_quality_span(
@@ -836,6 +877,9 @@ impl CompaniesServer {
 
             let output = serde_json::json!({
                 "symbol": req.symbol,
+                "weighting_mode": weighting_mode,
+                "tree_weighted": weighted_output,
+                "tree_warning": tree_warning,
                 "axes": {
                     "axis1": {"name": matrix.axis1.name, "fibo": matrix.axis1.fibo_concept, "baseline": matrix.axis1.baseline},
                     "axis2": {"name": matrix.axis2.name, "fibo": matrix.axis2.fibo_concept, "baseline": matrix.axis2.baseline},
@@ -861,7 +905,7 @@ impl CompaniesServer {
                     "overall_confidence": signal_quality.overall_confidence,
                     "quality_warning": signal_quality.quality_warning,
                 },
-                "framework": "Schwartz 2x2 scenario matrix: revenue growth x gross margin. Four scenarios: Bull (high/high), Land Grab (high/low), Cash Cow (low/high), Bear (low/low). Each scenario runs through the two-stage DCF model. The range of intrinsic values represents the uncertainty around the single-point DCF estimate.",
+                "framework": "Schwartz 2x2 scenario matrix: revenue growth x gross margin. Four scenarios: Bull (high/high), Land Grab (high/low), Cash Cow (low/high), Bear (low/low). Each scenario runs through the two-stage DCF model. The range of intrinsic values represents the uncertainty around the single-point DCF estimate. Simple mode (default) returns the range without probabilities; detailed mode (event_tree supplied) derives quadrant probabilities from the tree's root marginals — the earned upgrade on the analyst maturity ladder.",
             });
 
             Ok(output)

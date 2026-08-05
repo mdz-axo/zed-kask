@@ -26,7 +26,7 @@
   - [x] Propagation journal (per-node before/after deltas) — the tâtonnement record
   - [x] 4 propagation tests + schema test pass
 - [x] **T6b** DCF-stream equity duration wired — `equity_duration` tool in companies (was dead code from 76bdf3e74b; now exposed with schema test)
-- [ ] **T7** Tree-weighted valuation path in companies
+- [ ] **T7** Tree-weighted valuation path in companies — ADD alongside 2×2 (maturity ladder: 2×2 stays default; tree mode is the earned upgrade; `weighting_mode` label on output)
 - [ ] **CP2** vertical slice: markets→tree→propagation→tree-weighted DCF
 - [ ] **T8a** Factor-mapping prototype (5 companies) — **kill gate on H3**
   - [ ] Loadings via `branch_return` revaluation (not branch-indicator covariances)

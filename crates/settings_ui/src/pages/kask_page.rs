@@ -29,13 +29,16 @@ pub(crate) use {
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, inference_providers::render_inference_providers_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
-    models::render_models_page, scenarios::render_scenarios_page, training::render_training_page,
+    models::render_models_page,
+    prediction_markets::render_prediction_markets_page, scenarios::render_scenarios_page,
+    training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
 mod media;
 mod memory;
 mod models;
+mod prediction_markets;
 mod scenarios;
 mod training;
 
@@ -320,6 +323,22 @@ pub(crate) fn kask_string_input(
                                 kask.scenarios.get_or_insert_default().data_dir =
                                     Some(parsed.clone());
                             }
+                            ("prediction_markets", "data_dir") => {
+                                kask.prediction_markets.get_or_insert_default().data_dir =
+                                    Some(parsed.clone());
+                            }
+                            ("prediction_markets", "cache_ttl_secs") => {
+                                if let Ok(v) = parsed.parse::<u64>() {
+                                    kask.prediction_markets
+                                        .get_or_insert_default()
+                                        .cache_ttl_secs = Some(v);
+                                }
+                            }
+                            ("prediction_markets", "base_events") => {
+                                kask.prediction_markets
+                                    .get_or_insert_default()
+                                    .base_events = Some(parsed.clone());
+                            }
                             ("training", "host") => {
                                 kask.training.get_or_insert_default().host = Some(parsed.clone());
                             }
@@ -565,6 +584,18 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_scenarios_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Prediction Markets".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.prediction_markets"),
+            description: Some(
+                "Configure the prediction-markets MCP server: calibration data directory, cache TTL, base-event registry.".into(),
+            ),
+            search_aliases: &["prediction", "markets", "polymarket", "kalshi", "forecasting"],
+            in_json: true,
+            files: USER,
+            render: render_prediction_markets_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Training".into(),

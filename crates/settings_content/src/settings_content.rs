@@ -1526,6 +1526,10 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub scenarios: Option<KaskScenariosSettingsContent>,
 
+    /// Prediction-markets MCP server configuration.
+    #[serde(default)]
+    pub prediction_markets: Option<KaskPredictionMarketsSettingsContent>,
+
     /// Swarm (Agent Bestiary World) MCP server configuration.
     #[serde(default)]
     pub swarm: Option<KaskSwarmSettingsContent>,
@@ -1695,6 +1699,16 @@ pub struct KaskMediaSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskScenariosSettingsContent {
     pub data_dir: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskPredictionMarketsSettingsContent {
+    /// Data directory for the calibration journal. When empty, in-memory.
+    pub data_dir: Option<String>,
+    /// Cache TTL in seconds for market-data responses.
+    pub cache_ttl_secs: Option<u64>,
+    /// Base-event registry: "domain:series,..." pairs for CMP construction.
+    pub base_events: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

@@ -55,8 +55,8 @@ pub use settings::{
     KaskCodegraphSettings, KaskCollabSettings, KaskCompaniesSettings, KaskCondenserSettings,
     KaskCorpusSettings, KaskCuratorEmailSettings, KaskCuratorSettings, KaskDataServiceSettings,
     KaskInferenceProvidersSettings, KaskMcpSettings, KaskMediaSettings, KaskMemorySettings,
-    KaskModelsSettings, KaskScenariosSettings, KaskSettings, KaskSwarmSettings,
-    KaskTrainingSettings, SwarmModeConfig,
+    KaskModelsSettings, KaskPredictionMarketsSettings, KaskScenariosSettings, KaskSettings,
+    KaskSwarmSettings, KaskTrainingSettings, SwarmModeConfig,
 };
 pub use skill_executor::{
     BridgeManifestExecutor, ProfileResolver, SnapshotProfileResolver, seed_registry_to_disk,
