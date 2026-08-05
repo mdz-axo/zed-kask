@@ -26,7 +26,7 @@ base64.workspace = true
 ffmpeg-next = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["vendored"]
 vendored = ["dep:ffmpeg-next", "ffmpeg-next/static", "ffmpeg-next/build"]
 video = ["dep:ffmpeg-next"]
 

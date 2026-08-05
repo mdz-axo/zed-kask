@@ -84,6 +84,8 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
     let deps = arb_dependencies();
     let caps = arb_capabilities();
     let cloud_id = prop::option::of(arb_short_string(24));
+    let tags = arb_string_vec(6, 24);
+    let visibility = arb_short_string(16);
 
     (
         agent_id,
@@ -94,6 +96,8 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
         deps,
         caps,
         cloud_id,
+        tags,
+        visibility,
     )
         .prop_map(
             |(
@@ -105,6 +109,8 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
                 dependencies,
                 capabilities,
                 cloud_id,
+                tags,
+                visibility,
             )| {
                 LocalAgentCard {
                     agent_id,
@@ -115,6 +121,9 @@ fn arb_local_agent_card() -> BoxedStrategy<LocalAgentCard> {
                     dependencies,
                     capabilities,
                     cloud_id,
+                    tags,
+                    visibility,
+                    ..Default::default()
                 }
             },
         )
@@ -173,6 +182,7 @@ proptest! {
             dependencies: LocalAgentDependencies::default(),
             capabilities: LocalAgentCapabilities::default(),
             cloud_id: None,
+            ..Default::default()
         };
 
         let input = serde_json::json!({

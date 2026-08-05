@@ -84,6 +84,7 @@ fn build_task_agent_card(
             ..Default::default()
         },
         cloud_id: None,
+        ..Default::default()
     }
 }
 

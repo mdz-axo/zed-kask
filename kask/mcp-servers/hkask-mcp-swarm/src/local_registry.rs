@@ -15,7 +15,7 @@ use crate::error::LocalSwarmError;
 /// the agent is `synced` (exists both locally and on ABW). When absent,
 /// the agent is `local` only. The operator sets `cloud_id` when cloning an
 /// ABW agent to local (Slice 11).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LocalAgentCard {
     pub agent_id: String,
     pub agent_type: String,
