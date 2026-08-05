@@ -1,5 +1,5 @@
 # Skill Maintenance Process Manifest
-# hKask v0.31.0 — Registry health maintenance as PDCA
+# hKask v0.33.0 — Registry health maintenance as PDCA
 #
 # Two modes:
 #   maintenance (default) — audit staleness, coverage gaps, convergence
@@ -18,7 +18,7 @@ manifest:
     .j2 templates against stated goals — load goal, critique, filter for
     soundness, compose revised artifact, drive user-review loop.
   functional_role: flowdef
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

@@ -462,7 +462,7 @@ impl ScenariosServer {
                 })),
                 "provenance": {
                     "server": "hkask-mcp-scenarios",
-                    "version": "0.32.0"
+                    "version": SERVER_VERSION
                 },
                 "ontology_anchor": "dublin-core"
             });
@@ -581,7 +581,7 @@ impl ScenariosServer {
                 "provenance": {
                     "tool": "scenario_full",
                     "server": "hkask-mcp-scenarios",
-                    "version": "0.32.0",
+                    "version": SERVER_VERSION,
                     "pipeline_steps": ["triage", "quantify", "sensitivity", "calibrate", "synthesize", "assess"],
                     "delegates_to": ["triage_question", "build_event_tree", "sensitivity_ranking", "calibrate_from_fermi", "outside_view_adjustment", "synthesize_perspectives", "assess_project"]
                 },
@@ -645,7 +645,7 @@ impl ScenariosServer {
                 "provenance": {
                     "tool": "scenario_from_companies",
                     "server": "hkask-mcp-scenarios",
-                    "version": "0.32.0",
+                    "version": SERVER_VERSION,
                     "source": "hkask-mcp-companies calibrate_forecast",
                     "ontology_anchor": "fibo-to-dublin-core"
                 },

@@ -1,5 +1,5 @@
 # Adversarial Red-Team Process Manifest
-# ℏKask v0.32.0 — Adversarial testing as convergent PDCA
+# ℏKask v0.33.0 — Adversarial testing as convergent PDCA
 
 manifest:
   id: adversarial-red-team
@@ -16,7 +16,7 @@ manifest:
     the same cycle. To test emergent categories, restart the cycle with
     updated adversarial_categories input.
   functional_role: flowdef
-  version: "0.32.0"
+  version: "0.33.0"
   editor: curator-or-human-admin
   visibility: Public
 

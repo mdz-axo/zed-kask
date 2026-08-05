@@ -1,5 +1,5 @@
 # Root Cause Analysis Process Manifest
-# ℏKask v0.32.0 — Systematic RCA with Ishikawa + 5 Whys
+# ℏKask v0.33.0 — Systematic RCA with Ishikawa + 5 Whys
 # Template type: Process (FlowDef) — multi-step root cause analysis pipeline
 
 manifest:
@@ -13,7 +13,7 @@ manifest:
     chains to validated root causes, and designs corrective actions with
     verification plans.
   functional_role: knowact
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

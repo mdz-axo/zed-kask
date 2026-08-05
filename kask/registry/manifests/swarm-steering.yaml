@@ -1,5 +1,5 @@
 # Swarm Steering Process Manifest
-# hKask v0.31.0 — Focused local-swarm steering (execute-and-feed-back loop)
+# hKask v0.33.0 — Focused local-swarm steering (execute-and-feed-back loop)
 #
 # Ontological anchors:
 #   - PKO (Carriero et al. 2025): the plan is a Procedure; this skill produces
@@ -34,7 +34,7 @@ manifest:
     Regulator (the actuator must model the swarm it steers). Pairs with
     swarm-intelligence (the planner). Emits reg.skill.swarm-steering.* spans.
   functional_role: flowdef
-  version: 0.1.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

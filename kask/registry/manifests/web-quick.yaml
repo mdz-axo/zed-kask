@@ -1,5 +1,5 @@
 # Web Quick Search Manifest
-# ℏKask v0.32.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: mcp/web-quick
@@ -8,7 +8,7 @@ manifest:
   description: >
     Fast single-provider keyword search. Returns ranked results with title, URL, description.
     Use for simple lookups where speed matters more than coverage.
-  version: 0.32.0
+  version: 0.33.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public

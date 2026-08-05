@@ -1,5 +1,5 @@
 # Coaching Kata Process Manifest
-# ℏKask v0.32.0 — Coaching dialogue as convergent PDCA
+# ℏKask v0.33.0 — Coaching dialogue as convergent PDCA
 
 manifest:
   id: kata-coaching
@@ -10,7 +10,7 @@ manifest:
     dialogue, computes coaching-cycle convergence, and iterates until
     target/current/obstacle/next-step clarity is sufficient.
   functional_role: flowdef
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

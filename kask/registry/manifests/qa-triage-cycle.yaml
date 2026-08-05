@@ -25,7 +25,7 @@ manifest:
   id: qa-triage-cycle
   category: qa-script
   name: QA Triage Cycle
-  version: 0.32.0
+  version: 0.33.0
   description: >
     QA triage cycle using only hKask infrastructure: runs contract and
     property tests, classifies failures via Gemma 4 26B, branches on confidence,

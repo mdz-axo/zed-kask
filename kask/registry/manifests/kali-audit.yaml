@@ -1,5 +1,5 @@
 # Kali Audit Process Manifest
-# ℏKask v0.32.0 — Security review as convergent PDCA
+# ℏKask v0.33.0 — Security review as convergent PDCA
 # Phased: select-surface → audit → report → convergence-check → loop
 #
 # Standards: OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A
@@ -28,7 +28,7 @@ manifest:
     defenses, and surfaces are added as regression entries and defense layers
     without template changes.
   functional_role: flowdef
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

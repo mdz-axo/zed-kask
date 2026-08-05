@@ -1,6 +1,6 @@
 # File: registry/manifests/woolf-style-synthesizer.yaml
 # Virginia Woolf Style Synthesizer Process Manifest
-# hKask v0.27.0 - A Minimal Viable Container for UserPods
+# hKask v0.33.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: woolf-style-synthesizer
@@ -14,7 +14,7 @@ manifest:
     accumulative sentences, tunneling perspective shifts, semicolons as primary connectives.
     Generative layer uses Stanley Fish form-first approach and RDF triple model.
     Embedding layer uses Qwen/Qwen3-Embedding-0.6B for exemplar retrieval and centroid validation.
-  version: 0.32.0
+  version: 0.33.0
   editor: curator
   visibility: Public
 

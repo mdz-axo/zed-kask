@@ -1,5 +1,5 @@
 # Cascade Composition Configuration
-# ℏKask v0.32.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: cascade-composition
@@ -8,7 +8,7 @@ manifest:
   description: >
     Cascade composition configuration for template execution limits,
     cycle detection, and template pre/post processing.
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

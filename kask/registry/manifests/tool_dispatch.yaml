@@ -7,7 +7,7 @@ manifest:
   name: Tool Dispatch
   description: Dispatches tool calls via ACP/MCP with capability resolution
   functional_role: flowdef
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

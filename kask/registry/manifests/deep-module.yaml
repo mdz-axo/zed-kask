@@ -1,5 +1,5 @@
 # Deep Module Process Manifest
-# ℏKask v0.32.0 — Module depth evaluation as convergent PDCA
+# ℏKask v0.33.0 — Module depth evaluation as convergent PDCA
 
 manifest:
   id: deep-module
@@ -10,7 +10,7 @@ manifest:
     deletion test in both directions, designs a deepened interface from results,
     computes convergence, and iterates until depth recommendations are stable.
   functional_role: flowdef
-  version: 0.32.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 

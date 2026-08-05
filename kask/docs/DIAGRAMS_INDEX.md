@@ -173,6 +173,6 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 
 ---
 
-*ℏKask v0.32.0 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry*
+*ℏKask v0.33.0 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry*
 *Mermaid-First Mandate: Every interaction pattern, data flow, and object model is diagrammed.*
 *2026-08-03: deleted-parent entries purged; new surviving diagrams + D18 widgets added; stale paths corrected.*
