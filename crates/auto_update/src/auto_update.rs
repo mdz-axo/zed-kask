@@ -845,9 +845,6 @@ impl AutoUpdater {
                         this.update(cx, |this, cx| {
                             let status = match previous_status {
                                 AutoUpdateStatus::Updated { .. } => previous_status,
-                                _ if check_type.is_manual() => AutoUpdateStatus::UpToDate {
-                                    version: this.current_version.clone(),
-                                },
                                 _ => AutoUpdateStatus::Idle,
                             };
                             this.status = status;
@@ -2197,8 +2194,8 @@ mod tests {
     // full version-comparison pipeline without a semver parse error. Before
     // the `normalize_tag_version` fix, `Version::from_str("0.33")` failed and
     // a manual check surfaced `Errored` instead of correctly evaluating the
-    // version. Here the fetched tag equals the installed version, so the
-    // result must be `Idle` (up to date) — never `Errored`.
+    // version. Here the fetched tag equals the installed version, so a manual
+    // check must surface `UpToDate` (positive feedback) — never `Errored`.
     #[gpui::test]
     async fn test_github_feed_two_component_tag_resolves_without_error(cx: &mut TestAppContext) {
         cx.background_executor.allow_parking();
@@ -2244,10 +2241,14 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         let status = auto_updater.read_with(cx, |updater, _| updater.status());
-        assert!(
-            matches!(status, AutoUpdateStatus::Idle),
+        assert_eq!(
+            status,
+            AutoUpdateStatus::UpToDate {
+                version: semver::Version::new(0, 100, 0),
+            },
             "two-component tag `v0.100` should normalize to 0.100.0 and compare \
-             equal to the installed 0.100.0, surfacing Idle — not Errored. Got: {status:?}"
+             equal to the installed 0.100.0, surfacing UpToDate for a manual check — \
+             not Errored."
         );
     }
 

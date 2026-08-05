@@ -99,9 +99,11 @@ fn deadline_delta_days(
 }
 
 /// Score a candidate market against a query. Deterministic:
-/// `score = 0.6 * token_overlap + 0.4 * deadline_score`, where deadline_score
-/// is 1 for aligned deadlines, 0.5 when either side has no deadline signal,
-/// and decays to 0 at ≥30 days of mismatch.
+/// `score = token_overlap * deadline_factor`, where deadline_factor is 1.0
+/// when the query carries no deadline signal or the deadlines align, and
+/// decays to 0.25 at ≥30 days of mismatch. Deadline only *penalizes*
+/// mismatches — a market's own question (which may not name a date) must
+/// score 1.0, and absence of a date signal is not evidence against a match.
 pub fn score_match(
     query: &str,
     query_deadline: Option<chrono::NaiveDate>,
@@ -109,12 +111,12 @@ pub fn score_match(
 ) -> MatchCandidate {
     let overlap = token_overlap(query, &market.question);
     let delta = query_deadline.and_then(|d| deadline_delta_days(d, &market.deadline));
-    let deadline_score = match delta {
+    let deadline_factor = match delta {
         Some(d) if d <= 3.0 => 1.0,
-        Some(d) => (1.0 - (d - 3.0) / 27.0).max(0.0),
-        None => 0.5,
+        Some(d) => (1.0 - (d - 3.0) / 27.0 * 0.75).max(0.25),
+        None => 1.0,
     };
-    let score = 0.6 * overlap + 0.4 * deadline_score;
+    let score = overlap * deadline_factor;
     let match_confidence = if score >= 0.65 {
         MatchConfidence::High
     } else if score >= 0.45 {

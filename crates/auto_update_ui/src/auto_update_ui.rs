@@ -648,7 +648,10 @@ fn manage_update_progress_notification(cx: &mut App) {
         show_app_notification(
             NotificationId::unique::<UpdateProgressNotificationId>(),
             cx,
-            move |cx| cx.new(|cx| UpdateProgressNotification::new(updater_for_notification, cx)),
+            move |cx| {
+                let updater = updater_for_notification.clone();
+                cx.new(|cx| UpdateProgressNotification::new(updater, cx))
+            },
         );
 
         // zed-kask: D18 — the "up to date" popup is informational, not

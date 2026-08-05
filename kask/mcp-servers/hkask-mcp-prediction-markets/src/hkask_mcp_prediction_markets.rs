@@ -46,6 +46,16 @@ pub struct MarketLookupRequest {
     pub limit: Option<u32>,
 }
 
+/// Request for market_match: entity resolution from a scenario/forecast
+/// question to candidate markets about the same underlying event (T4c).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketMatchRequest {
+    /// The scenario or forecasting question to resolve against markets.
+    pub question: String,
+    /// Max candidates to return (default 5, capped at 20).
+    pub limit: Option<u32>,
+}
+
 // ── Server struct ──────────────────────────────────────────────────────────
 
 hkask_mcp_server::mcp_server!(
@@ -57,6 +67,7 @@ hkask_mcp_server::mcp_server!(
 );
 
 // ── Tool router ────────────────────────────────────────────────────────────
+
 
 impl PredictionMarketsServer {
     fn combined_router() -> ToolRouter<Self> {
@@ -164,6 +175,29 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    /// Return the dual-axis ontology mapping document.
+    #[tool(
+        description = "Return the dual-axis (PKO process + Dublin Core state) ontology mapping document that annotates every MarketRecord, including the market lifecycle stages and field-level mappings. Fetch this before interpreting market records."
+    )]
+    pub async fn market_ontology_map(
+        &self,
+        Parameters(_req): Parameters<MarketOntologyMapRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_ontology_map",
+            Some(Self::ontology_anchor("market_ontology_map")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_ontology_map".to_string());
+                Ok(ontology::mapping_document())
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
@@ -226,29 +260,6 @@ impl PredictionMarketsServer {
     }
 }
 
-    /// Return the dual-axis ontology mapping document.
-    #[tool(
-        description = "Return the dual-axis (PKO process + Dublin Core state) ontology mapping document that annotates every MarketRecord, including the market lifecycle stages and field-level mappings. Fetch this before interpreting market records."
-    )]
-    pub async fn market_ontology_map(
-        &self,
-        Parameters(_req): Parameters<MarketOntologyMapRequest>,
-    ) -> String {
-        execute_tool_semantic(
-            self,
-            "market_ontology_map",
-            Some(Self::ontology_anchor("market_ontology_map")),
-            async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_ontology_map".to_string());
-                Ok(ontology::mapping_document())
-            },
-        )
-        .await
-    }
-}
 
 #[tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for PredictionMarketsServer {}

@@ -15,6 +15,7 @@ theme.workspace = true
 anyhow.workspace = true
 hkask-forecast.workspace = true
 log.workspace = true
+tracing.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

@@ -66,6 +66,17 @@ impl GraphWidget {
                 LayeredLayout::empty()
             }
         };
+        // T7: raw signal for the reask/what-if measurement gate. Counted via
+        // tracing target `reg.widget.graph_render`. See
+        // tasks/widget-interactivity/plan.md (Track 3, decision 10).
+        let node_count = body.nodes.len();
+        let subject = body.subject.clone().unwrap_or_default();
+        tracing::info!(
+            target: "reg.widget.graph_render",
+            subject = %subject,
+            node_count = node_count,
+            "REG"
+        );
         Self {
             body,
             layout,
@@ -83,6 +94,13 @@ impl GraphWidget {
     /// Set a node's probability as observed evidence and re-propagate.
     fn set_evidence(&mut self, idx: usize, value: f64, cx: &mut Context<Self>) {
         self.evidence.insert(idx, value);
+        tracing::info!(
+            target: "reg.widget.evidence_set",
+            node_idx = idx,
+            value = value,
+            evidence_count = self.evidence.len(),
+            "REG"
+        );
         self.repropagate(cx);
     }
 
@@ -267,6 +285,25 @@ impl GraphWidget {
 impl Focusable for GraphWidget {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+// T7: a what-if the user explored (evidence was set) is being lost because the
+// widget is dropped without a saved branch (branches do not exist yet — T8b).
+// Counted via tracing target `reg.widget.whatif_discarded`; paired with
+// `reg.widget.evidence_set` to form the discard rate that gates Track 3.
+// See tasks/widget-interactivity/plan.md (decision 10, T7).
+impl Drop for GraphWidget {
+    fn drop(&mut self) {
+        if !self.evidence.is_empty() {
+            tracing::info!(
+                target: "reg.widget.whatif_discarded",
+                subject = %self.body.subject.clone().unwrap_or_default(),
+                node_count = self.body.nodes.len(),
+                evidence_count = self.evidence.len(),
+                "REG",
+            );
+        }
     }
 }
 

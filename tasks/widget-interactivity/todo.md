@@ -52,7 +52,8 @@ Companion to `plan.md`. Grouped by phase. Check a box only when its acceptance c
   - [x] `tick_playback` returns `bool`: gates `set_state` + `cx.notify()` on transport-state change or new video frame; returns false when no player loaded
   - [x] `start_playback_loop` stops when `tick_playback` returns false
   - [x] `cargo clippy -p hkask-media-widget --all-targets` clean; `hkask-viz-core`/`agent_ui` still build
-  - [ ] SF-1 (foreground `std::fs::read` + decode) remains open — offload file read to `cx.background_spawn`, keep `play_bytes` on foreground (separate follow-up)
+  - [x] SF-1 (foreground `std::fs::read` + decode) fixed — file read offloaded to `cx.background_spawn` via `load_audio_file_async` + pure `read_audio_file`; `play_bytes` (rodio device + decode) stays on the foreground thread; `audio_loading` flows into the transport bar's `is_loading`  ✅
+  - [x] Data-URI path stays sync (in-memory base64 + decode, no file I/O)
 
 ## Phase 3 — Track 3: branch/compare (parallel, measurement-gated) — *graph widget's what-if-branching track*
 
