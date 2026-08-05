@@ -82,15 +82,15 @@ Companion to `plan.md`. Grouped by phase. Check a box only when its acceptance c
   - [x] Coarse upper-bound proxy (any user message after a render turn counts; intent-matching heuristic remains open question #3; global flag → multi-conversation noise, acceptable for the aggregate gate)
   - [x] `cargo test` 7+75+124 pass; clippy clean across 5 crates; `hkask-viz-core`/`agent_ui` build
 - [x] **Gate (T7)** documented: >15% re-ask **or** >5% what-if-discarded → proceed to T8a; <5% both → defer Track 3 + Phase 4; in between → human (both halves now measurable: reask via T7b, what-if-discarded via T7a)  ✅
-- [ ] **T8a — Cache typed-handle + version key** (M) — *only if T7 gate passes*
-  - [ ] `CachedWidget` retains typed dispatch handle / version discriminator; `cache_key` includes version id + body-equality check on hit
-  - [ ] Two branches coexist (e.g. graph widget's agent tree + its what-if tree); collision no longer returns wrong widget; `cache_key_is_stable` + `viz_factories_cover_four_widgets` updated and pass
-  - [ ] `cargo test -p hkask-viz-core` + clippy
-- [ ] **T8b — Branch/revert UI** (S) — *only if T8a*
-  - [ ] "Keep / try different assumption" creates a branch; "Revert" restores agent's version; graph-widget what-if can be saved as a named branch
-- [ ] **T8c — Compare side-by-side UI** (S) — *only if T8a*
-  - [ ] Two cached widgets render simultaneously (agent tree next to what-if tree, marginals differing visibly)
-- [ ] **CHECKPOINT C4** — branch/compare/revert works end-to-end
+- [x] **T8 - Graph widget what-if branch/revert/compare (widget-internal)** (M)  DONE
+  - Design decision (essentialist): the plan T8a cache typed-handle + version-key rewrite was SKIPPED as over-built. Branches are widget-local state (evidence snapshots); the cache already maps body to entity (the entity holds its branches); the cache rewrite would risk the shared cache all widgets depend on for a single consumer (.rules: do not build the abstraction before the second consumer). Cross-turn branch persistence does not make sense (a new agent tree has a different body/node-ids, so an old what-if evidence cannot apply). So Track 3 value is within-view branch/revert/compare, done widget-internally. The cache collision Nit (N-3) is left as documented (low-prob, not worth risking the shared cache).
+  - [x] WhatIfBranch { name, evidence } + branches: Vec<WhatIfBranch> + compare_branch: Option<usize> on GraphWidget (view.rs:38-69)
+  - [x] save_branch (no-op when evidence empty), revert_to_base, load_branch, delete_branch (adjusts compare_branch index), toggle_compare - all bounds-checked, no panicking indexing (view.rs:140-200)
+  - [x] Controls row: Save what-if / Revert to base (shown when evidence non-empty) + per-branch Load/Compare/delete chips (view.rs:573-639)
+  - [x] Compare diff panel: recomputes base vs branch marginals fresh each render via recompute_marginals; lists per node base pct to branch pct with delta (view.rs:641-691). The diff list IS the compare view (side-by-side canvases explicitly out of scope as gold-plating)
+  - [x] 8 new gpui::test branch tests (save/revert/load/delete-index-adjust/toggle/out-of-bounds-noop) + existing 12 = 20 pass; script/clippy clean; hkask-viz-core/agent_ui build; impl Drop (T7a) untouched
+- [x] **CHECKPOINT C4** - branch/compare/revert works end-to-end (graph widget)  DONE
+- [ ] **T8a cache rewrite - deliberately deferred** (see design decision above; revisit only if a second widget needs cross-widget branching, which would justify touching the shared cache)
 
 ## Phase 4 — Deferred downstream (gated on T7)
 

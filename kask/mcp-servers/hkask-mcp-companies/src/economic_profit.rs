@@ -158,6 +158,11 @@ pub struct EpValuation {
     pub pct_from_book_value: f64,
     /// % of intrinsic value from PV of future economic profits.
     pub pct_from_economic_profits: f64,
+    /// Equity duration in years: PV-weighted average time of the economic-
+    /// profit stream (Macaulay-style over the EP periods). None when PV(EP)
+    /// is zero or negative — a duration over a non-positive stream is not
+    /// meaningful, and None is never a fabricated number.
+    pub equity_duration_years: Option<f64>,
     /// Interpretation signal.
     pub signal: EpSignal,
 }
@@ -299,6 +304,7 @@ pub fn value_economic_profit(
     };
 
     let signal = classify_signal(ivm_ratio, roic_wacc_spread, pct_from_economic_profits);
+    let equity_duration_years = equity_duration_years(&periods);
 
     EpValuation {
         book_value: latest_book_value,
@@ -321,8 +327,29 @@ pub fn value_economic_profit(
         margin_of_safety,
         pct_from_book_value,
         pct_from_economic_profits,
+        equity_duration_years,
         signal,
     }
+}
+
+/// Macaulay-style equity duration over the EP stream: the PV-weighted
+/// average period in which economic-profit value is received.
+///
+/// D = Σ_t t·PV(EP_t) / Σ_t PV(EP_t)
+///
+/// Only the EP stream is timed (book value is a stock, not a flow, so it
+/// has no time coordinate). Returns None when total PV(EP) ≤ 0 — for a
+/// value-destroying company the weighting is not a duration.
+pub fn equity_duration_years(periods: &[EpPeriod]) -> Option<f64> {
+    let total_pv: f64 = periods.iter().map(|p| p.present_value).sum();
+    if total_pv <= 0.0 {
+        return None;
+    }
+    let weighted: f64 = periods
+        .iter()
+        .map(|p| p.period as f64 * p.present_value)
+        .sum();
+    Some(weighted / total_pv)
 }
 
 /// Adjust fade horizon for empirical decay factors (AFG, Obrycki & Resendes 2000).
@@ -624,6 +651,95 @@ mod tests {
 
         // Signal
         assert_eq!(result.signal.profitability, "value_creator");
+    }
+
+    #[test]
+    fn equity_duration_wide_moat_exceeds_no_moat() {
+        // Same economics, different moats: the 20y fade must have a longer
+        // equity duration than the 5y fade (T6 ordering test).
+        let wide = value_economic_profit(
+            10_000_000_000.0,
+            0.15,
+            10_000_000_000.0,
+            0.10,
+            1_000_000_000.0,
+            12.0,
+            FadeHorizon::Wide,
+            3,
+            0.0,
+            0.0,
+            0.1,
+        );
+        let none = value_economic_profit(
+            10_000_000_000.0,
+            0.15,
+            10_000_000_000.0,
+            0.10,
+            1_000_000_000.0,
+            12.0,
+            FadeHorizon::None,
+            3,
+            0.0,
+            0.0,
+            0.1,
+        );
+        let wide_d = wide.equity_duration_years.expect("positive PV(EP) stream");
+        let none_d = none.equity_duration_years.expect("positive PV(EP) stream");
+        assert!(
+            wide_d > none_d,
+            "wide-moat duration {wide_d} should exceed no-moat {none_d}"
+        );
+        // Sanity: duration lies inside the projection window (1..=23, 1..=8).
+        assert!(wide_d >= 1.0 && wide_d <= 23.0);
+        assert!(none_d >= 1.0 && none_d <= 8.0);
+    }
+
+    #[test]
+    fn equity_duration_none_for_value_destroyer() {
+        // PV(EP) < 0 → duration is not meaningful, must be None (never
+        // a fabricated number).
+        let result = value_economic_profit(
+            10_000_000_000.0,
+            0.05,
+            10_000_000_000.0,
+            0.10,
+            1_000_000_000.0,
+            12.0,
+            FadeHorizon::None,
+            2,
+            0.0,
+            0.0,
+            0.1,
+        );
+        assert!(result.equity_duration_years.is_none());
+    }
+
+    #[test]
+    fn equity_duration_hand_check() {
+        // Two periods, WACC 10%: PV1 = 100/1.1, PV2 = 100/1.21.
+        // D = (1·PV1 + 2·PV2) / (PV1 + PV2) ≈ 1.4762.
+        let periods = vec![
+            EpPeriod {
+                period: 1,
+                invested_capital: 0.0,
+                roic: 0.0,
+                wacc: 0.10,
+                economic_profit: 100.0,
+                discount_factor: 1.0 / 1.1,
+                present_value: 100.0 / 1.1,
+            },
+            EpPeriod {
+                period: 2,
+                invested_capital: 0.0,
+                roic: 0.0,
+                wacc: 0.10,
+                economic_profit: 100.0,
+                discount_factor: 1.0 / 1.21,
+                present_value: 100.0 / 1.21,
+            },
+        ];
+        let d = equity_duration_years(&periods).expect("positive stream");
+        assert!((d - 1.4762).abs() < 0.001, "duration {d}");
     }
 
     #[test]

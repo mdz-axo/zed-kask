@@ -35,6 +35,14 @@ const NODE_RADIUS: f32 = 12.0;
 /// nodes are still grabbable when zoomed out.
 const HIT_RADIUS: f32 = NODE_RADIUS * 1.6;
 
+/// A saved what-if: a snapshot of the evidence overrides the user explored.
+/// The base tree is empty evidence; branches capture non-empty snapshots the
+/// user can revert to, load, delete, or compare against base.
+struct WhatIfBranch {
+    name: String,
+    evidence: HashMap<usize, f64>,
+}
+
 /// The graph widget view. Renders inline in agent markdown (via the D18 seam
 /// composed by `hkask-viz-core`) or as a standalone panel item.
 pub struct GraphWidget {
@@ -53,6 +61,12 @@ pub struct GraphWidget {
     last_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     hovered: Option<usize>,
     selected: Option<usize>,
+    /// Saved what-if branches: snapshots of `evidence` the user can reload or
+    /// compare against the base (empty-evidence) tree.
+    branches: Vec<WhatIfBranch>,
+    /// Index into `branches` for the inline compare diff panel; `None` = no
+    /// panel. Cleared by `revert_to_base` and `load_branch`.
+    compare_branch: Option<usize>,
     focus_handle: FocusHandle,
 }
 
@@ -87,6 +101,8 @@ impl GraphWidget {
             last_bounds: Rc::new(Cell::new(None)),
             hovered: None,
             selected: None,
+            branches: Vec::new(),
+            compare_branch: None,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -121,6 +137,68 @@ impl GraphWidget {
                 node.certainty_tier = Some(hkask_forecast::certainty_tier(*marginal).to_string());
             }
         }
+        cx.notify();
+    }
+
+    /// Save the current evidence overrides as a named what-if branch. No-op
+    /// when evidence is empty (the base tree is not saved as a branch).
+    fn save_branch(&mut self, cx: &mut Context<Self>) {
+        if !self.evidence.is_empty() {
+            self.branches.push(WhatIfBranch {
+                name: format!("what-if {}", self.branches.len() + 1),
+                evidence: self.evidence.clone(),
+            });
+            cx.notify();
+        }
+    }
+
+    /// Discard all evidence overrides and return to the agent's base tree.
+    /// Also clears the compare panel — no comparing against a branch while at
+    /// base.
+    fn revert_to_base(&mut self, cx: &mut Context<Self>) {
+        self.evidence.clear();
+        self.compare_branch = None;
+        self.repropagate(cx);
+    }
+
+    /// Load a saved branch's evidence overrides as the live view. No-op on an
+    /// out-of-bounds index. Clears the compare panel — the loaded branch is
+    /// the live view now, not a compare target.
+    fn load_branch(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if let Some(branch) = self.branches.get(idx) {
+            self.evidence = branch.evidence.clone();
+            self.compare_branch = None;
+            self.repropagate(cx);
+        }
+    }
+
+    /// Delete a saved branch. No-op on an out-of-bounds index. Adjusts
+    /// `compare_branch` so it stays valid or clears it if it pointed at the
+    /// deleted branch.
+    fn delete_branch(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.branches.len() {
+            return;
+        }
+        self.branches.remove(idx);
+        match self.compare_branch {
+            Some(current) if current == idx => self.compare_branch = None,
+            Some(current) if current > idx => self.compare_branch = Some(current - 1),
+            _ => {}
+        }
+        cx.notify();
+    }
+
+    /// Toggle the compare diff panel for a saved branch. No-op on an
+    /// out-of-bounds index.
+    fn toggle_compare(&mut self, idx: usize, cx: &mut Context<Self>) {
+        if idx >= self.branches.len() {
+            return;
+        }
+        self.compare_branch = if self.compare_branch == Some(idx) {
+            None
+        } else {
+            Some(idx)
+        };
         cx.notify();
     }
 
@@ -492,6 +570,123 @@ impl Render for GraphWidget {
                 t.child(format!("   joint = {}%", (joint * 100.0).round() as u32))
             });
 
+        // What-if branch controls: save/revert + per-branch load/compare/delete.
+        let mut branch_chips: Vec<AnyElement> = Vec::new();
+        for (i, branch) in self.branches.iter().enumerate() {
+            let is_compare = self.compare_branch == Some(i);
+            branch_chips.push(
+                div()
+                    .id(("whatif-load", i))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.load_branch(i, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(format!("{}: Load", branch.name))
+                    .into_any_element(),
+            );
+            branch_chips.push(
+                div()
+                    .id(("whatif-compare", i))
+                    .cursor_pointer()
+                    .when(is_compare, |t| {
+                        t.text_color(cx.theme().colors().text_accent)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_compare(i, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child("Compare")
+                    .into_any_element(),
+            );
+            branch_chips.push(
+                div()
+                    .id(("whatif-delete", i))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.delete_branch(i, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child("×")
+                    .into_any_element(),
+            );
+        }
+        let controls = div()
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .text_xs()
+            .when(!self.evidence.is_empty(), |t| {
+                t.child(
+                    div()
+                        .id("whatif-save")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.save_branch(cx);
+                            cx.stop_propagation();
+                        }))
+                        .child("Save what-if"),
+                )
+                .child(
+                    div()
+                        .id("whatif-revert")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.revert_to_base(cx);
+                            cx.stop_propagation();
+                        }))
+                        .child("Revert to base"),
+                )
+            })
+            .children(branch_chips);
+
+        // Compare diff panel: recompute base vs branch marginals fresh each
+        // render (no stale snapshot) and list per-node deltas. Reads
+        // `self.branches[idx].evidence` at render time so it tracks edits.
+        let compare_panel = self
+            .compare_branch
+            .and_then(|idx| self.branches.get(idx).map(|branch| (idx, branch)))
+            .map(|(_idx, branch)| {
+                let base_marginals = propagate::recompute_marginals(
+                    &self.body,
+                    &self.layout.topo_order,
+                    &HashMap::new(),
+                );
+                let branch_marginals = propagate::recompute_marginals(
+                    &self.body,
+                    &self.layout.topo_order,
+                    &branch.evidence,
+                );
+                let pct = |m: Option<&f64>| (m.copied().unwrap_or(0.0) * 100.0).round() as i32;
+                let mut rows: Vec<AnyElement> = Vec::new();
+                for (i, node) in self.body.nodes.iter().enumerate() {
+                    let base_pct = pct(base_marginals.get(i));
+                    let branch_pct = pct(branch_marginals.get(i));
+                    let delta = branch_pct - base_pct;
+                    let name = node.name.clone().unwrap_or_else(|| node.id.clone());
+                    rows.push(
+                        div()
+                            .child(format!(
+                                "{}: {}% → {}% (Δ{:+}%)",
+                                name, base_pct, branch_pct, delta
+                            ))
+                            .into_any_element(),
+                    );
+                }
+                div()
+                    .p_2()
+                    .bg(cx.theme().colors().elevated_surface_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .text_xs()
+                    .child(
+                        div()
+                            .text_color(cx.theme().colors().text)
+                            .child(format!("Compare: {} vs base", branch.name)),
+                    )
+                    .children(rows)
+            });
+
         div()
             .id("graph-widget")
             .size_full()
@@ -500,6 +695,8 @@ impl Render for GraphWidget {
             .flex()
             .flex_col()
             .child(header)
+            .child(controls)
+            .when_some(compare_panel, |t, panel| t.child(panel))
             .child(
                 div()
                     .flex_1()
@@ -641,5 +838,134 @@ fn draw_ring(center: Point<Pixels>, radius: Pixels, color: gpui::Hsla, window: &
     builder.close();
     if let Ok(path) = builder.build() {
         window.paint_path(path, color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::{DependencyBody, GraphBlockBody, NodeBody};
+
+    /// Two-node body: `a` (root, P=0.5) → `b` (conditionals [0.1, 0.6]).
+    /// Base P(b) = 0.1*0.5 + 0.6*0.5 = 0.35.
+    fn make_body() -> GraphBlockBody {
+        let a = NodeBody {
+            id: "a".into(),
+            name: Some("a".into()),
+            question: None,
+            marginal_probability: Some(0.5),
+            depends_on: Vec::new(),
+            parents: Vec::new(),
+        };
+        let b = NodeBody {
+            id: "b".into(),
+            name: Some("b".into()),
+            question: None,
+            marginal_probability: Some(0.0),
+            depends_on: vec![DependencyBody {
+                parent_event_ids: vec!["a".into()],
+                conditionals: vec![0.1, 0.6],
+            }],
+            parents: Vec::new(),
+        };
+        GraphBlockBody {
+            viz: Some("event_tree".into()),
+            subject: None,
+            joint_probability: None,
+            nodes: vec![a, b],
+        }
+    }
+
+    #[gpui::test]
+    async fn save_branch_stores_current_evidence(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 1);
+        let evidence = widget.read_with(cx, |w, _| w.branches[0].evidence.clone());
+        let mut expected = HashMap::new();
+        expected.insert(0, 0.9);
+        assert_eq!(evidence, expected);
+    }
+
+    #[gpui::test]
+    async fn save_branch_noop_when_evidence_empty(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 0);
+    }
+
+    #[gpui::test]
+    async fn revert_to_base_clears_evidence(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        assert!(!widget.read_with(cx, |w, _| w.evidence.is_empty()));
+        widget.update(cx, |w, cx| w.revert_to_base(cx));
+        assert!(widget.read_with(cx, |w, _| w.evidence.is_empty()));
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
+    }
+
+    #[gpui::test]
+    async fn load_branch_restores_evidence(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        let saved = widget.read_with(cx, |w, _| w.branches[0].evidence.clone());
+        widget.update(cx, |w, cx| w.revert_to_base(cx));
+        assert!(widget.read_with(cx, |w, _| w.evidence.is_empty()));
+        widget.update(cx, |w, cx| w.load_branch(0, cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.evidence.clone()), saved);
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
+    }
+
+    #[gpui::test]
+    async fn delete_branch_adjusts_compare_index(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.1, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 2);
+        widget.update(cx, |w, cx| w.toggle_compare(1, cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), Some(1));
+        widget.update(cx, |w, cx| w.delete_branch(0, cx));
+        // The compared branch shifted from index 1 to index 0 after removal.
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), Some(0));
+        assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 1);
+    }
+
+    #[gpui::test]
+    async fn toggle_compare_toggles(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        widget.update(cx, |w, cx| w.toggle_compare(0, cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), Some(0));
+        widget.update(cx, |w, cx| w.toggle_compare(0, cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
+    }
+
+    #[gpui::test]
+    async fn delete_branch_clears_compare_when_pointing_at_deleted(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        widget.update(cx, |w, cx| w.save_branch(cx));
+        widget.update(cx, |w, cx| w.toggle_compare(0, cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), Some(0));
+        widget.update(cx, |w, cx| w.delete_branch(0, cx));
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
+    }
+
+    #[gpui::test]
+    async fn out_of_bounds_indices_are_noops(cx: &mut gpui::TestAppContext) {
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| {
+            w.load_branch(7, cx);
+            w.delete_branch(7, cx);
+            w.toggle_compare(7, cx);
+        });
+        assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 0);
+        assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
+        assert!(widget.read_with(cx, |w, _| w.evidence.is_empty()));
     }
 }

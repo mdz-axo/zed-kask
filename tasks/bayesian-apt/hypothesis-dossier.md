@@ -51,6 +51,11 @@ on forecast accuracy around coverage changes.
 | T3: Single-venue vs cross-venue signal strength | neutral | neutral | neutral | falsifies |
 | T4: Diff-in-diff around contract listing/delisting | corroborates | falsifies | falsifies | neutral |
 
+**Numeric falsifier threshold** (from the parallel plan's suite, adopted): out-of-sample
+ΔR² < 0.01 vs historical-volatility baseline refutes H1. *Provenance: Hypothesis-tier
+design parameter — no extracted source grounds 0.01; re-derive from baseline noise levels
+during T8a before the test runs.*
+
 **Status: open.** No test run. T1 is buildable with existing servers (markets + scenarios + companies) — schedule first.
 
 ---
@@ -119,6 +124,14 @@ with pricing errors comparable to statistical factor models.
 directly). If raw contract factors price as well as tree-composed factors, the composition
 algebra is cut.
 
+**Loading construction note** (phase2-review B2): loadings are cash-flow sensitivities
+elicited via `branch_return` revaluation, not covariances with branch indicators —
+indicators over mutually exclusive branches are collinear and mechanically determined by
+branch probabilities.
+
+**Numeric falsifier threshold** (adopted, flagged): stage-2 out-of-sample ΔR² < 0.005 on
+FF5/AMF residuals refutes H3. *Hypothesis-tier design parameter; re-derive at T8a.*
+
 **Discriminating tests**:
 | Test | H3a | H3b | H3c | H3d |
 |---|---|---|---|---|
@@ -163,6 +176,8 @@ dimensions than under the rich-time alternative.
 **Discriminating test**: build the minimal model first (uniform simplicity); instrument where
 its errors concentrate; add complexity only at the measured concentration. If errors concentrate
 in event probabilities/risk → H4 corroborated; if in timing → H4 refuted, escalate time axis.
+**Retrospective threshold** (adopted, flagged): a complex-time model (stochastic discount
+factor) improving H1's ΔR² by >0.05 refutes H4. *Hypothesis-tier design parameter.*
 
 **Status: open** (test is a plan-phase gate, cheap to run).
 
@@ -181,6 +196,10 @@ factor, at equal or better calibration."
 **H₁ (refined)**: LLM-mediated tree construction achieves equal calibration (Brier) at lower
 analyst-hours per tree than the manual baseline.
 **H₀**: No difference in calibration-adjusted cost.
+
+**Falsifier threshold** (adopted, flagged): LLM trees ≥30% more events but Brier worse by
+>0.05 → refuted in strong form; refinement path: LLM generates, human calibrates.
+*Thresholds are Hypothesis-tier design parameters, not sourced values.*
 
 **Discriminating test**: paired construction exercise — N companies, same information set,
 LLM-mediated vs manual tree construction; compare Brier on resolved events and hours logged.

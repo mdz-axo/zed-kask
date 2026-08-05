@@ -1604,6 +1604,7 @@ fn test_market_record(
         category: category.into(),
         series: "KXFEDDECISION".into(),
         deadline: "2027-12-08T18:59:00Z".into(),
+        time_to_maturity: None,
         probability,
         probability_method: ProbabilityMethod::Midpoint,
         spread: Some(0.02),

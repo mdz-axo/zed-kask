@@ -426,7 +426,7 @@ impl PredictionMarketsServer {
 
     /// Duration profile of a contract series (the term-structure ladder).
     #[tool(
-        description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Accepts a Kalshi series ticker or a Polymarket event slug; both platforms are probed. Contracts with unparseable deadlines sort last with time_to_maturity null, and per-platform enumeration failures surface in the warnings array — the ladder never fabricates a maturity."
+        description = "Return the ladder of contracts in a series ordered by deadline, each annotated with its time_to_maturity in fractional years. Kalshi series ticker or Polymarket event slug; both platforms are probed. Unparseable deadlines sort last with null maturity; per-platform failures surface in warnings — the ladder never fabricates a maturity."
     )]
     pub async fn market_ladder(&self, Parameters(req): Parameters<MarketLadderRequest>) -> String {
         execute_tool_semantic(
@@ -464,7 +464,70 @@ impl PredictionMarketsServer {
                     Err(e) => warnings.push(format!("kalshi: {e}")),
                 }
 
-vent.
+                match provider_polymarket::fetch_events(&self.http, 100).await {
+                    Ok(events) => {
+                        for event in &events {
+                            if event.slug != req.series && event.ticker != req.series {
+                                continue;
+                            }
+                            let event_tags: Vec<String> =
+                                event.tags.iter().map(|t| t.label.clone()).collect();
+                            let bucket = event_tags.first().cloned().unwrap_or_default();
+                            let reading = {
+                                let guard = self
+                                    .calibration_store
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner());
+                                calibration::read_calibration(&guard, &bucket)
+                            };
+                            for market in &event.markets {
+                                let calibration_block =
+                                    types::calibration_for(Some(&reading), &bucket);
+                                if let Some(record) = types::MarketRecord::from_polymarket(
+                                    market,
+                                    &event.id,
+                                    &event.slug,
+                                    event.volume,
+                                    event.liquidity,
+                                    &event_tags,
+                                    calibration_block,
+                                    &now,
+                                ) {
+                                    rungs.push(serde_json::json!({
+                                        "source": "polymarket",
+                                        "market_id": record.market_id,
+                                        "question": record.question,
+                                        "deadline": record.deadline,
+                                        "time_to_maturity": record.time_to_maturity,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => warnings.push(format!("polymarket: {e}")),
+                }
+
+                // Sort by maturity; unparseable deadlines (null) last.
+                rungs.sort_by(|a, b| {
+                    let ma = a["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
+                    let mb = b["time_to_maturity"].as_f64().unwrap_or(f64::MAX);
+                    ma.partial_cmp(&mb).unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                serde_json::to_value(serde_json::json!({
+                    "series": req.series,
+                    "rungs": rungs,
+                    "warnings": warnings,
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "ladder serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
     #[tool(
         description = "Constant Maturity Prediction (CMP): synthesize a fixed-tenor probability for a registered base event by interpolating its family's markets in log-odds space. Sparse coverage returns bucketed_sparse with the bracket width rather than a fabricated tight curve. Base events come only from HKASK_PREDICTION_MARKETS_BASE_EVENTS — unregistered series are refused."
     )]

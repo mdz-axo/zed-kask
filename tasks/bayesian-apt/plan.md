@@ -17,10 +17,11 @@ folds into WS7; the plan therefore runs 7 live blocks.
 ## Dependency graph (bottom-up)
 
 ```
+T0 keystone mapping verification (3-outcome gate) ──gates──> T4, T8
 T1 citations (R2/R3) ──────────────────────────────┐
 T2 time_to_maturity (P2) ──────────────────────────┤
 T3 CPT multi-group fix (S1) ──> T4 composition algebra (S4) ──> T5 tree propagation (S3)
-T6 equity duration (C3) ──> H2 tests ──────────────┤
+T6 equity duration (C3, RIM/EP-based) ──> H2 tests ┤
 T7 tree-weighted valuation (C2) <──────────────────┤
 T8 factor mapping + pricing harness (S7/C4) <──────┴── (highest risk)
 T9 H1–H5 falsification suite (runs against T1–T8 outputs)
@@ -31,11 +32,27 @@ T10 refresh/tâtonnement journal (closes stale-anchor loop)
 
 **Checkpoint CP0 (entry):** MCP gap report + territory map reviewed by human. ✅ (this package)
 
+### T0 — Keystone: verify belief-hierarchy ↔ `EventDependency` mapping — S (gates T4/T8)
+- Slice: theory/mapping-verification (adopted from the parallel plan's Task 1.3; see
+  phase2-review.md)
+- Using the already-extracted theorems (territory-map C5–C7), produce a written mapping
+  between Bhattacharya's belief-hierarchy recursion (infinite, interactive, over others'
+  *strategies*) and the CPT algebra (finite, parent-independent, over *states of nature*).
+- AC: three-outcome gate — (i) holds exactly → proceed; (ii) holds approximately → derive
+  the depth-k truncation bound, document the approximate license, proceed; (iii) fails →
+  STOP, no WS3/WS4 build until an independent anchor exists. Expected outcome per C6:
+  (ii), with the state-hierarchy vs strategy-hierarchy distinction made precise.
+- Verification: mapping document reviewed against ar5iv full text; result written back
+  into territory-map C5–C7 (confidence updated).
+- Deps: none (extraction already complete). Files: tasks/bayesian-apt/, no code.
+
 ### T1 — Citation store in research server (R2/R3) — M
 - Slice: research/citation-pinning
 - AC: (i) blake3-pinned content store with stable citation IDs; (ii) `web_extract` responses
   carry citation IDs + claim-level spans; (iii) scenarios `scenario_research` accepts citation
-  IDs in lieu of pasted text.
+  IDs in lieu of pasted text; (iv) `ScenarioEvent.basis` warn-and-label gate: basis must be a
+  citation ID or explicitly labeled `hypothesis` (warn, not reject — consistent with the
+  platform's withhold-never-reject refusal-gate semantics, phase2-review.md B4).
 - Verification: integration test — extract → cite → build event → trace event provenance to hash.
 - Deps: none. Files: hkask-mcp-research/{db.rs,types,tools}, hkask-mcp-scenarios bridge.
 
@@ -54,10 +71,14 @@ T10 refresh/tâtonnement journal (closes stale-anchor loop)
 
 ### T6 — Equity duration tool (C3) — S
 - Slice: companies/equity-duration
-- AC: `equity_duration` tool computing D_e (both variants: mechanical DCF-timing + DSS-implied
-  scaffold) from existing DCF outputs; sensitivity report across ROIC-persistence assumptions.
-- Verification: golden-file tests on 3 reference firms; H2/T1 dataset emitted.
-- Deps: none. Files: hkask-mcp-companies/{valuation.rs,financial_model.rs}.
+- AC: `equity_duration` tool computing D_e as a Macaulay-style weighted average over the
+  RIM/EP stream (`EpPeriod.present_value` per year, `economic_profit.rs` L195–269 —
+  primary, per the parallel plan's Task 2.1) **and** over the DCF stream (cross-check);
+  sensitivity report across ROIC-persistence and fade assumptions; `FadeHorizon` retained
+  as input seeding the schedule.
+- Verification: unit test wide-moat (20y fade) duration > no-moat (5y fade); golden-file
+  tests on 3 reference firms; H2/T1 dataset emitted.
+- Deps: none. Files: hkask-mcp-companies/{economic_profit.rs,valuation.rs,financial_model.rs}.
 
 **Checkpoint CP1:** all tests pass; H2/T1 (duration distribution) computed on coverage
 universe; human reviews duration estimates for face validity.
@@ -65,9 +86,14 @@ universe; human reviews duration estimates for face validity.
 ## Phase 2 — Core (Q2–Q3)
 
 ### T4 — Composition algebra (S4) — L→split into T4a/T4b
-- T4a: markets→tree wiring (M): given N matched `MarketRecord`s + dependency spec, construct
-  a validated `EventTree` with CPTs; refusal gates at tree-time. AC: round-trip test
-  markets→tree→marginals; CPT-size cap with independence diagnostics (variety amplifier iv).
+- T4a: markets→tree wiring (M): new `scenario_from_markets_set` tool — given N matched
+  `MarketRecord`s + dependency spec, construct a validated `EventTree` with CPTs; refusal
+  gates at tree-time. Dependency links inferred from market-question overlap using the
+  existing matcher.rs Jaccard machinery (parallel plan's Task 3.1 heuristic, adopted).
+  Extend `EventTree` with per-branch `branches: Vec<Branch>` (joint_probability + path).
+  AC: round-trip test markets→tree→marginals matching `compute_marginal_probabilities`;
+  CPT-size cap with independence diagnostics (variety amplifier iv); cycle rejection test;
+  branch probabilities sum to 1 within float tolerance on binary trees.
 - T4b: challenge gates at tree-time (S): provenance-carrying probabilities; gate policy
   per source class (market/Fermi/base-rate/research-citation). AC: gate audit log; a
   fabricated-probability attempt is refused in test.
@@ -90,10 +116,14 @@ universe; human reviews duration estimates for face validity.
 tree-weighted DCF for one real company; H4 error-concentration instrumentation live.
 
 ### T8 — Factor mapping + pricing harness (S7/C4) — L (highest risk, fail-fast prototype first)
-- T8a: prototype (S): hand-built tree for 5 companies; loadings = cash-flow sensitivity to
-  node outcomes; run H3/T1 cross-sectional pricing test vs FF5/AMF baseline. AC: pricing
-  errors computed; verdict on H3a/H3c recorded. **Kill gate: if prototype refutes H3, T8b
-  is re-scoped before building.**
+- T8a: prototype (S): hand-built tree for 5 companies; loadings = cash-flow sensitivity
+  of company value to branch outcomes, elicited via `branch_return` revaluation of the
+  DCF/RIM under each branch's assumptions (NOT Cov with branch indicators — indicators
+  across mutually exclusive branches are collinear; see phase2-review.md B2). Run H3/T1
+  cross-sectional pricing test vs FF5/AMF baseline. AC: pricing errors computed; verdict
+  on H3a/H3c recorded; hand-check unit tests pass (binary tree {+20%, −15%} at p=0.6 →
+  σ≈0.176; single-branch loading = 1.0). **Kill gate: if prototype refutes H3, T8b is
+  re-scoped before building.**
 - T8b: platform surface (M): `scenario_factor_exposures` tool + pricing-test harness in
   hkask-forecast; loading-stability tracking (H3/T2).
 - Deps: T5, T7. Files: hkask-forecast, hkask-mcp-scenarios, hkask-mcp-companies.
