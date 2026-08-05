@@ -211,8 +211,11 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     // ── Kata / Skill / Keystore ──
     "reg.kata",
     "reg.keystore",
+    // ── Ledger (governance/rollback failure signals — runtime-posture-monitor visible) ──
+    "reg.ledger",
     // ── MCP ──
     "reg.mcp",
+    "reg.mcp.cap",
     "reg.mcp.health",
     // ── MCP Media ──
     "reg.mcp.media.face",

@@ -81,7 +81,7 @@ inputs:
     description: >
       hKask defense-in-depth layer catalog. When provided, attacks are designed
       to bypass specific layers. When absent, the select-target template uses
-      the standard 8-layer stack.
+      the standard 7-layer stack.
 
 ledger:
   span_namespace: reg.skill.adversarial-red-team

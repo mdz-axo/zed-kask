@@ -418,5 +418,5 @@ design with documented re-entry conditions — see the plan's §14.
 - [PDCA cascade flowchart](../../diagrams/flowchart-swarm-pdca-cascade.md) — the 10-step loop
 - [Steering loop sequence](../../diagrams/sequence-swarm-steering-loop.md) — advisory vs steering execution
 - [PDCA cascade flowchart](../../diagrams/flowchart-swarm-pdca-cascade.md) — the 10-step loop
-- [Kali security audit](../../audits/abw-swarm-kali-audit.md) — 8-layer defense map
+- [Kali security audit](../../audits/abw-swarm-kali-audit.md) — 7-layer defense map
 - [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog

@@ -157,7 +157,7 @@ impl Ledger {
             Err(e) => {
                 if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
                     tracing::error!(
-                        target: "hkask.ledger",
+                        target: "reg.ledger",
                         error = %rollback_err,
                         "Failed to rollback ledger transaction"
                     );
@@ -268,7 +268,7 @@ impl Ledger {
             Err(e) => {
                 if let Err(rollback_err) = self.driver.execute_batch("ROLLBACK") {
                     tracing::error!(
-                        target: "hkask.ledger",
+                        target: "reg.ledger",
                         error = %rollback_err,
                         "Failed to rollback debit_if_funds transaction"
                     );

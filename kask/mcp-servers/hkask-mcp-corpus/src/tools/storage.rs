@@ -73,6 +73,23 @@ impl CorpusServer {
     #[tool(
         description = "Query the in-memory vector index for passages relevant to a natural language question. Embeds the query, computes cosine similarity against indexed passages, and returns top-k results. Optionally generates an LLM-augmented answer from retrieved context."
     )]
+    /// Query the in-memory vector index for top-k relevant passages.
+    ///
+    /// # Availability over consistency on poisoned lock
+    ///
+    /// If the index mutex is poisoned (a prior holder panicked), this method
+    /// recovers the inner state via `into_inner()` and serves the query
+    /// against possibly-half-mutated state rather than returning an error.
+    /// This is a deliberate availability-over-consistency choice: a poisoned
+    /// lock typically indicates a panic during a non-mutating read path, so
+    /// the index contents are likely intact, and refusing the query would
+    /// take the corpus offline for every subsequent caller until restart.
+    /// The two sibling recovery sites (`corpus_clear_index`, `corpus_purge_qa`)
+    /// immediately overwrite the index, so they are safe under the same
+    /// recovery. A panic during `corpus_chunk`'s incremental insert would
+    /// leave a partially-updated index; this method would still serve from
+    /// it — the worst case is stale or incomplete results, not corruption
+    /// (the index is rebuilt from the source JSONL on restart).
     pub async fn corpus_query(
         &self,
         Parameters(QueryRequest {

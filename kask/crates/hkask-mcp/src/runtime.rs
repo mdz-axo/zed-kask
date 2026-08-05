@@ -558,7 +558,7 @@ impl hkask_capability::ToolPort for McpRuntime {
                     // class the .rules "unwrap_or(0) on regulation sense inputs"
                     // trap generalizes).
                     tracing::warn!(
-                        target: "hkask.mcp.cap",
+                        target: "reg.mcp.cap",
                         error = %e,
                         agent = ?agent,
                         tool = %tool,
@@ -587,7 +587,7 @@ impl hkask_capability::ToolPort for McpRuntime {
                     0,
                 );
                 if let Err(e) = sink.persist(&record) {
-                    tracing::warn!(target: "hkask.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
+                    tracing::warn!(target: "reg.mcp", error = %e, "Failed to persist reg.mcp call-settled span");
                 }
 
                 result

@@ -29,7 +29,9 @@ check_regressions() {
   local include_patterns="$2"
   local deferred_kind="$3"
 
-  local REGRESSIONS_DIR="security/regressions"
+  # Overridable via environment so the self-test can point at a temp copy
+  # without touching the real security/regressions/ directory (pass-3 selftest).
+  local REGRESSIONS_DIR="${KASK_REGRESSIONS_DIR:-security/regressions}"
 
   if [ ! -d "$REGRESSIONS_DIR" ]; then
     echo "OK: no regressions directory — nothing to check."
@@ -40,6 +42,7 @@ check_regressions() {
   local pending=0
   local enforced=0
   local deferred=0
+  local retired=0
   local cargo_test_failures=0
 
   # Parse include_patterns into array for grep.
@@ -89,6 +92,9 @@ check_regressions() {
       elif [ "$rr_status" = "pending" ]; then
         pending=$((pending + 1))
         echo "ratchet: $rr_id is pending (known, not yet enforced) — $rr_title"
+      elif [ "$rr_status" = "retired" ]; then
+        retired=$((retired + 1))
+        echo "retired: $rr_id is retired (de-advertised or superseded) — $rr_title"
       fi
       continue
     fi
@@ -138,6 +144,9 @@ check_regressions() {
       elif [ "$rr_status" = "pending" ]; then
         pending=$((pending + 1))
         echo "ratchet: $rr_id is pending (known, not yet enforced) — $rr_title"
+      elif [ "$rr_status" = "retired" ]; then
+        retired=$((retired + 1))
+        echo "retired: $rr_id is retired (de-advertised or superseded) — $rr_title"
       fi
       continue
     fi
@@ -198,10 +207,13 @@ check_regressions() {
     elif [ "$rr_status" = "pending" ]; then
       pending=$((pending + 1))
       echo "ratchet: $rr_id is pending (known, not yet enforced) — $rr_title"
+    elif [ "$rr_status" = "retired" ]; then
+      retired=$((retired + 1))
+      echo "retired: $rr_id is retired (de-advertised or superseded) — $rr_title"
     fi
   done
 
-  echo "summary: $violations grep violation(s), $cargo_test_failures cargo-test failure(s), $enforced enforced, $pending pending, $deferred $deferred_kind (deferred)"
+  echo "summary: $violations grep violation(s), $cargo_test_failures cargo-test failure(s), $enforced enforced, $pending pending, $retired retired, $deferred $deferred_kind (deferred)"
 
   [ "$violations" -eq 0 ] && [ "$cargo_test_failures" -eq 0 ]
 }

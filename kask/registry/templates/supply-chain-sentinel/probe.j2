@@ -53,7 +53,7 @@ PROBE ACTIONS (concrete — must use file:read, code:search, terminal, or regist
    - Epistemic mode: `Declarative` (file content observed), `Probabilistic` (unmaintained inference from version metadata only if explicit), `Subjunctive` (potential supply chain risk — must be labeled clearly, not presented as fact).
    - Provenance: `Direct measurement` (read file), `Inference` (version analysis from manifest), `Assessment` (security taxonomy mapping) — must label each finding's provenance.
 7. Apply grill-me self-challenge (like `bug-hunt`): Could this dependency specification be intentional? Is version `*` a deliberate flexibility requirement? Would a reviewer dismiss this finding? If yes, downgrade to `OBSERVATION` or omit. Only propose `BUG` / `POTENTIAL_BUG` when evidence is concrete.
-8. Check defense-layer presence (like `kali-audit` 8-layer catalog, but for supply chain):
+8. Check defense-layer presence (like `kali-audit` 7-layer catalog, but for supply chain):
    - Dependency pinning (exact version + lockfile presence)
    - Registry verification (official registry, not arbitrary git/path)
    - SBOM / deny.toml tracking (license/advisory policy present)

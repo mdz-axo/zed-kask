@@ -114,7 +114,7 @@ target_path: <crate-or-workspace-path>
 
 **Validation:**
 1. The skill produces JSON output (not an error)
-2. `defense_layers` includes at least 4 of the 8 layers
+2. `defense_layers` includes at least 4 of the 7 layers
 3. Every finding includes concrete evidence (file path, line number, code snippet)
 4. No fabricated findings — every finding is verifiable by reading the cited file
 5. `reg.skill.kali-audit` spans are emitted (query via the in-process `reg_query_spans` tool). The `taxonomy-map` step emits its own sub-span when `target_surface == 'supply-chain'`.

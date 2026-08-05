@@ -140,6 +140,16 @@ jobs:
       - name: "Enforce security regression library (status: enforced entries)"
         run: cd kask && bash scripts/check-kali-regressions.sh
 
+  kali-regressions-selftest:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Self-test injects synthetic grep-kind violations only — no cargo-test
+      # entries, so no toolchain/cache is needed. If the self-test ever grows
+      # a cargo-test case, add the toolchain + cache steps here.
+      - name: "Verify the kali-regressions gate can actually fail"
+        run: cd kask && bash scripts/check-kali-regressions-selftest.sh
+
   unsafe-forbid:
     runs-on: ubuntu-24.04
     steps:
