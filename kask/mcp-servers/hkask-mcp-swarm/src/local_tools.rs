@@ -5,8 +5,7 @@
 //! ABW round-trips except `swarm_clone_to_local`/`swarm_push_to_cloud`.
 use crate::SwarmServer;
 use crate::abw_util::url_encode_segment;
-use crate::error::{SwarmError, map_local_swarm_error};
-use crate::local_knowledge;
+use crate::error::{LocalSwarmError, SwarmError, map_local_swarm_error};
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
 };
@@ -968,12 +967,15 @@ impl SwarmServer {
 
     /// AI assist for the swarm panel authoring forms — suggests completions for
     /// partial inputs or validates well-formedness. Authoring aid — read-only,
-    /// spends nothing. Uses the local `InferencePort` (one-shot LLM generate,
-    /// guard-scanned). The `mode` field only tailors the guidance text; no ABW
-    /// calls in either mode. The guidance mirrors the `swarm-compose-guide.j2`
-    /// template in the swarm-intelligence skill — keep them in sync.
+    /// spends nothing. Runs the on-disk `swarm-compose-guide` skill cascade
+    /// (rendering the `swarm-compose-guide.j2` Jinja2 guidance template) via the
+    /// resolved `SkillExecPort` — the template is the single source of truth for
+    /// field definitions and ABW/Local composition considerations, not hardcoded
+    /// Rust. The form fields are serialized as a JSON object string and passed
+    /// as the `task`; `AgentSkillExec` merges JSON-object tasks into the cascade
+    /// context as top-level template variables.
     #[tool(
-        description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the local InferencePort (one-shot LLM generate, guard-scanned). The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
+        description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Runs the swarm-compose-guide skill cascade (Jinja2 guidance template) via the SkillExecPort — the template is the source of truth, not hardcoded Rust. The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
     )]
     pub(crate) async fn swarm_ai_assist(&self, parameters: Parameters<AiAssistRequest>) -> String {
         execute_tool_semantic(self, "swarm_ai_assist", Some("pko"), async {
@@ -1003,69 +1005,50 @@ impl SwarmServer {
                 }
             }
 
-            let field_block = if req.surface == "agent" {
-                "Field definitions (agent surface):\n\
-                 - name: The agent's system identifier. ABW mode: lowercase letters, digits, underscores only; 3-64 chars. Local mode: filesystem-safe slug (alphanumeric, dash, underscore, dot).\n\
-                 - agent_type: The role category — one of \"research\", \"creative\", \"meta\".\n\
-                 - description: One-sentence summary of what the agent does.\n\
-                 - system_prompt: The agent's instructions — role, inputs, outputs, constraints. Should be focused (single responsibility), name the tools/skills it may use, and state success criteria. Avoid over-broad prompts that try to do everything."
-            } else {
-                "Field definitions (swarm surface):\n\
-                 - name: The swarm (workspace) name.\n\
-                 - mission: The swarm's goal / description.\n\
-                 - agents: Comma-separated agent ids to include. ABW: each hire is consent-gated and costs credits. Local: roster is ids (resolution at delegation time); no cost."
-            };
+            // Serialize the form fields as a JSON object string. The
+            // `AgentSkillExec` wrapper (zed side) detects JSON-object tasks and
+            // merges their fields into the cascade context as top-level template
+            // variables, so the `swarm-compose-guide.j2` template sees
+            // `{{ surface }}`, `{{ mode }}`, `{{ action }}`, `{{ name }}`, etc.
+            // directly. The raw JSON string is also carried as `{{ task }}`.
+            let json_task = serde_json::to_string(&serde_json::json!({
+                "action": req.action,
+                "surface": req.surface,
+                "mode": req.mode,
+                "name": req.name,
+                "agent_type": req.agent_type,
+                "description": req.description,
+                "system_prompt": req.system_prompt,
+                "mission": req.mission,
+                "agents": req.agents,
+            }))
+            .map_err(|e| {
+                map_local_swarm_error(LocalSwarmError::Unavailable(format!(
+                    "failed to serialize ai-assist task: {e}"
+                )))
+            })?;
 
-            let mode_block = if req.mode == "abw" {
-                "ABW considerations: agents live in the cloud catalogue, execution costs credits (consent-gated), publishing requires preflight checks, agent names are strict slugs."
-            } else {
-                "Local considerations: agents live on the local filesystem, execution uses the local ledger (operator-funded), no consent gate, system prompts can be memory-seeded, agent ids are filesystem-safe."
-            };
-
-            let composition_block = "Composition guidance (both): favor single-responsibility agents; a swarm should have variety (distinct roles, not duplicates); state clear inputs/outputs per agent; name constraints explicitly; prefer a few focused agents over one omniscient one.";
-
-            let action_instruction = if req.action == "suggest" {
-                "Return ONLY a JSON object with keys name, agent_type, description, system_prompt, mission, agents. For each field, provide a suggested completion; if the field is already well-filled, return an empty string for that key."
-            } else {
-                "Return ONLY a JSON object {valid: bool, issues: [string], suggestions: [string]}. `valid` is true iff the inputs are well-formed. `issues` lists specific problems. `suggestions` lists one-line fixes."
-            };
-
-            let prompt = format!(
-                "You are an authoring assistant for the hKask swarm panel.\n\
-                 Surface: {surface} ({mode} mode)\n\n\
-                 {field_block}\n\n{mode_block}\n\n{composition_block}\n\n\
-                 Operator's partial inputs:\n\
-                 name: {name}\n\
-                 agent_type: {agent_type}\n\
-                 description: {description}\n\
-                 system_prompt: {system_prompt}\n\
-                 mission: {mission}\n\
-                 agents: {agents}\n\n\
-                 {action_instruction}",
-                surface = req.surface,
-                mode = req.mode,
-                field_block = field_block,
-                mode_block = mode_block,
-                composition_block = composition_block,
-                name = req.name,
-                agent_type = req.agent_type,
-                description = req.description,
-                system_prompt = req.system_prompt,
-                mission = req.mission,
-                agents = req.agents,
-                action_instruction = action_instruction,
-            );
-
+            // Run the on-disk `swarm-compose-guide` skill cascade. The cascade
+            // renders the Jinja2 guidance template (the single source of truth
+            // for composition guidance) and returns the LLM's JSON output as
+            // text. The skill exec port routes through the zed IPC bridge to the
+            // `BridgeManifestExecutor`, which loads the manifest + template from
+            // `data_dir()/agents/registry/` — edits to the on-disk template take
+            // effect without recompiling.
             let runtime = self
                 .local_runtime
                 .get_or_init()
                 .await
                 .map_err(map_local_swarm_error)?;
-            let inference = runtime.inference();
-            let guard = runtime.guard();
-            let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.4)
+            let skill_exec = runtime.skill_exec();
+            let text = skill_exec
+                .execute_skill("swarm-compose-guide", &json_task)
                 .await
-                .map_err(map_local_swarm_error)?;
+                .map_err(|e| {
+                    map_local_swarm_error(LocalSwarmError::Unavailable(format!(
+                        "swarm-compose-guide skill execution failed: {e}"
+                    )))
+                })?;
 
             let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
             let result = if req.action == "suggest" {
@@ -1092,7 +1075,7 @@ impl SwarmServer {
                     None => {
                         tracing::warn!(
                             target: "hkask.mcp.swarm",
-                            "swarm_ai_assist (suggest) LLM output was not valid JSON — returning raw text in notes"
+                            "swarm_ai_assist (suggest) cascade output was not valid JSON — returning raw text in notes"
                         );
                         serde_json::json!({
                             "action": req.action,
@@ -1129,7 +1112,7 @@ impl SwarmServer {
                     None => {
                         tracing::warn!(
                             target: "hkask.mcp.swarm",
-                            "swarm_ai_assist (validate) LLM output was not valid JSON — returning raw text in notes"
+                            "swarm_ai_assist (validate) cascade output was not valid JSON — returning raw text in notes"
                         );
                         serde_json::json!({
                             "action": req.action,

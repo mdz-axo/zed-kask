@@ -88,6 +88,15 @@ impl AgentExecutor {
         Arc::clone(&self.guard)
     }
 
+    /// The resolved skill-execution port. Exposed so `swarm_ai_assist` can run
+    /// the on-disk `swarm-compose-guide` skill cascade (rendering the Jinja2
+    /// guidance template) rather than building the prompt from hardcoded Rust
+    /// strings — the template is the single source of truth for composition
+    /// guidance.
+    pub(crate) fn skill_exec(&self) -> Arc<dyn hkask_types::SkillExecPort> {
+        Arc::clone(&self.skill_exec)
+    }
+
     /// Test-only constructor with injected dependencies (mirrors the
     /// `StubInferencePort` pattern). Accepts a pre-built guard so tests can
     /// use `ContentGuard::mandatory(&default)`.

@@ -1,0 +1,160 @@
+# Swarm Compose Guide Process Manifest
+# hKask v0.32.0 — Agent/swarm composition authoring + validation
+#
+# Ontological anchors:
+#   - PKO (Carriero et al. 2025): the composition request is a Procedure input;
+#     the output is a structured suggestion/validation artifact.
+#   - Conant-Ashby Good Regulator (1970): the guidance template must model the
+#     field constraints (ABW slug rules, Local filesystem-safe ids, agent_type
+#     enum) it validates against.
+#
+# PDCA shape (one-shot): Receive (partial form fields + surface + mode) ->
+# Render (the swarm-compose-guide.j2 guidance template) -> Return (JSON
+# suggestions or a validation verdict). Single-step — no convergence loop
+# needed; the template is a focused authoring aid, not an iterative cascade.
+#
+# The Jinja2 template `swarm-intelligence/swarm-compose-guide.j2` is the
+# canonical source for composition guidance (field definitions, ABW/Local
+# considerations, composition principles). It is shared with the
+# swarm-intelligence skill's template set. This manifest makes it invocable as
+# a standalone skill from the MCP server (`swarm_ai_assist`) via the
+# `SkillExecPort` path.
+#
+# Conciseness: the caveman skill is declared as a conceptual dependency for
+# conciseness composition. Caveman is NOT run as a post-process step here —
+# it takes `draft_response` (prose) and returns compressed prose, which would
+# corrupt the JSON suggestions object. Instead, conciseness is folded into the
+# template's own instructions (focused, single-responsibility output). A
+# per-field caveman pass (e.g. on `system_prompt`) is a future refinement.
+
+manifest:
+  id: swarm-compose-guide
+  category: skill
+  name: Swarm Compose Guide
+  description: >
+    Agent/swarm composition authoring and validation aid. Given partial form
+    inputs (surface, mode, action, and the author/compose fields), renders the
+    swarm-compose-guide Jinja2 guidance template and returns either suggested
+    completions for unfilled fields (action=suggest) or a validation verdict
+    over the supplied fields (action=validate). Read-only authoring aid — no
+    ledger debit, no consent. The template is the single source of truth for
+    field definitions and ABW/Local composition considerations. Used by the
+    swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool.
+  functional_role: flowdef
+  version: 0.32.0
+  editor: curator-or-human-admin
+  visibility: Public
+  enforce_inputs: true
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: escalate
+
+gas:
+  cap: 20000
+  cost_per_iteration: 150
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 2
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: action
+    type: string
+    required: true
+    description: >
+      "suggest" (complete empty/partial fields) or "validate" (check
+      well-formedness and return a verdict).
+  - name: surface
+    type: string
+    required: true
+    description: >
+      "agent" (the author form: name, agent_type, description, system_prompt)
+      or "swarm" (the compose form: name, mission, agents).
+  - name: mode
+    type: string
+    required: true
+    description: >
+      "abw" or "local" — selects the backend whose constraints the guidance
+      encodes (ABW slug rules + consent-gated hires; Local filesystem-safe ids
+      + operator-funded ledger).
+  - name: name
+    type: string
+    required: false
+    description: The agent name / swarm name (partial input).
+  - name: agent_type
+    type: string
+    required: false
+    description: "The agent type (agent surface only): research/creative/meta."
+  - name: description
+    type: string
+    required: false
+    description: The agent description (agent surface only).
+  - name: system_prompt
+    type: string
+    required: false
+    description: The agent system prompt (agent surface only).
+  - name: mission
+    type: string
+    required: false
+    description: The swarm mission (swarm surface only).
+  - name: agents
+    type: string
+    required: false
+    description: >
+      Comma-separated agent ids for the swarm roster (swarm surface only). May
+      be an array or a CSV string — the template handles both.
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Render the swarm-compose-guide Jinja2 guidance template with the operator's
+      partial inputs and the surface/mode/action selectors. The template encodes
+      field definitions, ABW/Local backend considerations, and composition
+      principles, then returns a JSON object — suggestions (action=suggest) or a
+      validation verdict (action=validate).
+    renderer: minijinja
+    template_ref: swarm-intelligence/swarm-compose-guide
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      action: "{{ action }}"
+      surface: "{{ surface }}"
+      mode: "{{ mode }}"
+      name: "{{ name | default('') }}"
+      agent_type: "{{ agent_type | default('') }}"
+      description: "{{ description | default('') }}"
+      system_prompt: "{{ system_prompt | default('') }}"
+      mission: "{{ mission | default('') }}"
+      agents: "{{ agents | default('') }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 2
+  on_validation_failure: abort
+
+ledger:
+  emit_spans: true
+  span_namespace: reg.skill.swarm-compose-guide
+  telemetry_namespace: hkask.template.swarm-compose-guide
+  variety_monitoring: false
+  algedonic_threshold: 0
+  escalation_target: Curator
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

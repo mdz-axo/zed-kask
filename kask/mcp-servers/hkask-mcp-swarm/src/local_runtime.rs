@@ -202,6 +202,14 @@ impl LocalSwarmRuntime {
         self.executor.guard()
     }
 
+    /// The resolved skill-execution port. Exposed so `swarm_ai_assist` can run
+    /// the on-disk `swarm-compose-guide` skill cascade — the Jinja2 template is
+    /// the single source of truth for composition guidance, not hardcoded Rust.
+    /// Mirrors the `inference()`/`guard()` accessor pattern.
+    pub(crate) fn skill_exec(&self) -> std::sync::Arc<dyn hkask_types::SkillExecPort> {
+        self.executor.skill_exec()
+    }
+
     /// Recent ledger transactions for the operator account, newest first,
     /// capped at `limit`. Each entry carries the operator-relevant signed
     /// amount (fund = +, debit = −) and the metadata `action` ("fund" |

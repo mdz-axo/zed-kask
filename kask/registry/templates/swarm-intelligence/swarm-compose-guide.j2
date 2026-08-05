@@ -10,7 +10,7 @@ contract:
     description: string|null
     system_prompt: string|null
     mission: string|null
-    agents: array|null
+    agents: string|null
   output:
     suggestions: object
     valid: boolean
@@ -22,8 +22,10 @@ visibility: Public
 {# Template: swarm-intelligence/swarm-compose-guide.j2 #}
 {# Functional Role: KnowAct — Agent/swarm composition authoring + validation guide #}
 {# Produces: suggestions (suggest) | valid + issues (validate) #}
-{# Reference/authoring template — canonical source for the swarm_ai_assist inline prompt #}
-{# hKask v0.31.0 — Swarm Intelligence (mode-aware v2 §15) #}
+{# Canonical source for composition guidance — consumed by the swarm-compose-guide #}
+{# skill cascade (invoked from the swarm_ai_assist MCP tool via SkillExecPort) #}
+{# and referenceable by the swarm-intelligence DECIDE phase. #}
+{# hKask v0.32.0 — Swarm Intelligence (mode-aware v2 §15) #}
 {#
   Composition authoring and validation guidance for the hKask swarm system.
   Given a composition request (surface, mode, partial fields), this template
@@ -32,10 +34,10 @@ visibility: Public
 
   The DECIDE phase (swarm-decide.j2) may propose an `author_agent` move when
   no catalogue agent covers a required transform; this template is the
-  canonical authoring guidance that move can reference. The MCP
-  `swarm_ai_assist` tool's inline prompt mirrors this body verbatim so the
-  panel and the cascade share one source of truth for field definitions and
-  backend considerations.
+  canonical authoring guidance that move can reference. The `swarm_ai_assist`
+  MCP tool runs the `swarm-compose-guide` skill cascade, which renders this
+  template — the panel and the cascade share this single source of truth for
+  field definitions and backend considerations.
 #}
 
 [inference]
@@ -110,7 +112,7 @@ The operator has supplied the following partial fields. Use these as the startin
 - **description**: {{ description | default("(unset)") }}
 - **system_prompt**: {{ system_prompt | default("(unset)") }}
 - **mission**: {{ mission | default("(unset)") }}
-- **agents**: {{ agents | default([]) | join(", ") }}
+- **agents**: {{ agents | default("") }}
 - **surface**: {{ surface | default("(unset)") }}
 - **mode**: {{ mode | default("(unset)") }}
 

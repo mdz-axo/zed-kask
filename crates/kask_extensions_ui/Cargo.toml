@@ -40,6 +40,10 @@ chrono.workspace = true
 # manifests with the publisher's Ed25519 keypair stored in the OS keychain.
 hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
 hkask-types = { path = "../../kask/crates/hkask-types" }
+# Embedded registry content (manifest.yaml + *.j2) for full-package hashing
+# of bundled skills (the "Modified" badge compares the on-disk package to
+# the shipped embedded package).
+hkask-templates = { path = "../../kask/crates/hkask-templates" }
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

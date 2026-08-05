@@ -100,19 +100,34 @@ No prior iteration — this is a first pass. Measure all axes uniformly.
 ## Step 1 — Fetch Swarm State
 
 {% if mode == "local" %}
-Via the hkask-mcp-swarm local tools:
+Via the hkask-mcp-swarm local tools (the agent orchestrates these calls
+between template invocations; in pure FlowDef execution the
+workspace_roster should be pre-populated):
 
-- `swarm_list_local_agents` → local agent registry: `agents[]` each with
-  `{ agent_id, agent_type, accepts[], produces[], capabilities { model,
-  min_provider_class, system_prompt, mcp_tools[], skills[] }, dependencies {
-  required[], optional[] } }`.
+- `swarm_get_local_swarm` with swarm_id → the swarm's member roster:
+  `{ swarm_id, name, mission, members[] }` where `members[]` is a list of
+  agent id strings. This is the local analog of ABW's `swarm_get_swarm` —
+  it scopes the team to the specific swarm, not the entire local registry.
+- `swarm_list_local_agents` → the full local agent registry: `agents[]`
+  each with `{ agent_id, agent_type, accepts[], produces[], capabilities
+  { model, min_provider_class, system_prompt, mcp_tools[], skills[] },
+  dependencies { required[], optional[] } }`. **Filter this list to just
+  the agents whose `agent_id` appears in the swarm's `members[]`** — the
+  team properties (Step 3) must be computed over the swarm's roster, not
+  the entire local registry. Agents in `members[]` that have no matching
+  card are roster gaps (the id was added but no card exists yet —
+  resolution happens at delegation time, mirroring ABW workspaces).
 - `swarm_balance_local` → the local ledger balance: `{ balance, asset }`.
   An unfunded ledger reads 0. If the call fails, set
   `wallet_state = { balance: null, source: "local_ledger" }` — do NOT
   fabricate a zero balance (the `.rules` trap on `unwrap_or(0)` for
   regulation signals — a null balance means "not yet measured", not "zero").
+- Optionally, when an agent's `accepts[]`/`produces[]` is ambiguous about
+  whether it covers a required transform, probe its prefix-scoped semantic
+  memory via `swarm_search_knowledge_local` with `{ agent_name, query }` →
+  `{ fragments[], source, agent_name, note }` to assess actual capability.
 
-Record the raw workspace_roster and wallet_state.
+Record the raw workspace_roster (the filtered team) and wallet_state.
 {% else %}
 Via the hkask-mcp-swarm tools (the agent orchestrates these calls between
 template invocations in a Zed session; in pure FlowDef execution the

@@ -56,9 +56,11 @@ pub(crate) struct AgentCard {
     pub(crate) agent_type: String,
     pub(crate) description: String,
     pub(crate) author: String,
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) executions: u64,
     /// ISO-8601 timestamp of the agent's last update (fermi v0.10.27
     /// `agents.updated_at`). `None` for local cards (no ABW freshness signal).
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) updated_at: Option<String>,
     /// Where this agent card lives: cloud (ABW only), local (local registry
     /// only), or synced (both, linked by `cloud_id`).
@@ -73,8 +75,11 @@ pub(crate) struct SwarmCard {
     /// Number of hired agents. `None` when ABW's workspace payload omits the
     /// field (the field name is NOT part of the verified API surface) — the
     /// card renders "-" then, never a fabricated "0 agents".
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) agent_count: Option<u64>,
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) budget: Option<u64>,
+    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) remaining: Option<u64>,
     /// Where this swarm lives: `Cloud` (an ABW workspace) or `Local` (a
     /// `LocalSwarmRegistry` entry). The backend mode toggle filters the
@@ -373,6 +378,7 @@ pub(crate) fn extract_agent_mentions(content: &serde_json::Value) -> Vec<String>
 /// timestamp) or when the timestamp can't be parsed — never fabricates an
 /// age. Cloud agents render the age muted, switching to Warning past 30 days
 /// (the same heuristic window kask uses for chronic staleness).
+#[allow(dead_code)] // retained for future detail-view enrichment; tested
 pub(crate) fn staleness_chip(updated_at: &Option<String>) -> Option<(SharedString, Color)> {
     let ts = updated_at.as_ref()?;
     let dt = chrono::DateTime::parse_from_rfc3339(ts.trim()).ok()?;

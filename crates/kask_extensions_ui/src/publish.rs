@@ -90,6 +90,302 @@ mod package_hash_tests {
     }
 }
 
+/// zed-kask: Gather the shipped (embedded) package files for a skill.
+///
+/// A kask skill package is `(SKILL.md, manifest.yaml, *.j2 templates)` plus
+/// the process manifest (`registry/manifests/<name>.yaml`) and any template
+/// YAML sub-manifests. "A change is a change in any of those" — the panel
+/// badges a bundled skill "Modified" when [`kask_skill_package_hash`] over
+/// these files differs from the on-disk copy ([`gather_disk_skill_package`]).
+///
+/// `skill_md` is the shipped SKILL.md content (from `shipped_skill_seed` or
+/// `builtin_skill_content`); the registry files come from the
+/// `hkask-templates` embedded seed. Canonical names (`SKILL.md`,
+/// `process.yaml`, `manifest.yaml`, `templates/<file>`) match
+/// [`gather_disk_skill_package`] so the two hashes are comparable. Missing
+/// files are skipped — an unmodified install has every file embedded.
+pub fn gather_shipped_skill_package(name: &str, skill_md: Option<&str>) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    if let Some(content) = skill_md {
+        files.push(("SKILL.md".to_string(), content.as_bytes().to_vec()));
+    }
+    // Process manifest (registry/manifests/<name>.yaml).
+    if let Some((_, yaml)) = hkask_templates::process_manifest_seed()
+        .iter()
+        .find(|(n, _)| *n == name)
+    {
+        files.push(("process.yaml".to_string(), yaml.as_bytes().to_vec()));
+    }
+    // Template manifest (registry/templates/<name>/manifest.yaml).
+    if let Some((_, yaml)) = hkask_templates::template_manifest_seed()
+        .iter()
+        .find(|(n, _)| *n == name)
+    {
+        files.push(("manifest.yaml".to_string(), yaml.as_bytes().to_vec()));
+    }
+    let prefix = format!("{name}/");
+    // Jinja2 templates (registry/templates/<name>/*.j2).
+    for (key, content) in hkask_templates::template_file_seed() {
+        if let Some(basename) = key.strip_prefix(&prefix) {
+            files.push((format!("templates/{basename}"), content.as_bytes().to_vec()));
+        }
+    }
+    // Template YAML sub-manifests (registry/templates/<name>/*.yaml, excl manifest.yaml).
+    for (key, content) in hkask_templates::template_yaml_file_seed() {
+        if let Some(basename) = key.strip_prefix(&prefix) {
+            files.push((format!("templates/{basename}"), content.as_bytes().to_vec()));
+        }
+    }
+    files
+}
+
+/// zed-kask: Gather the on-disk package files for a skill. Mirrors
+/// [`gather_shipped_skill_package`]'s canonical names so the two hashes are
+/// comparable. SKILL.md is read from the global skills directory; the
+/// registry files are read from `registry_root` (dev: `kask/registry/`,
+/// prod: `data_dir()/agents/registry/`). Missing files are skipped — an
+/// unmodified install has every file seeded to disk, so a missing file is
+/// itself a modification signal (or not-yet-seeded, which resolves after
+/// startup; the panel fetches on user toggle, post-startup).
+pub async fn gather_disk_skill_package(
+    fs: &dyn Fs,
+    name: &str,
+    registry_root: &Path,
+) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let skill_md = agent_skills::global_skills_dir()
+        .join(name)
+        .join("SKILL.md");
+    if fs.is_file(&skill_md).await {
+        if let Ok(content) = fs.load(&skill_md).await {
+            files.push(("SKILL.md".to_string(), content.into_bytes()));
+        }
+    }
+    let process_yaml = registry_root.join("manifests").join(format!("{name}.yaml"));
+    if fs.is_file(&process_yaml).await {
+        if let Ok(content) = fs.load(&process_yaml).await {
+            files.push(("process.yaml".to_string(), content.into_bytes()));
+        }
+    }
+    let template_manifest = registry_root
+        .join("templates")
+        .join(name)
+        .join("manifest.yaml");
+    if fs.is_file(&template_manifest).await {
+        if let Ok(content) = fs.load(&template_manifest).await {
+            files.push(("manifest.yaml".to_string(), content.into_bytes()));
+        }
+    }
+    // Template dir: *.j2 and *.yaml (excl manifest.yaml).
+    let template_dir = registry_root.join("templates").join(name);
+    if fs.is_dir(&template_dir).await {
+        if let Ok(entries) = read_dir_items(fs, &template_dir).await {
+            for (path, is_dir) in entries {
+                if is_dir {
+                    continue;
+                }
+                let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+                    continue;
+                };
+                if file_name == "manifest.yaml" {
+                    continue;
+                }
+                let is_skill_artifact = matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("j2") | Some("yaml")
+                );
+                if is_skill_artifact {
+                    if let Ok(content) = fs.load(&path).await {
+                        files.push((format!("templates/{file_name}"), content.into_bytes()));
+                    }
+                }
+            }
+        }
+    }
+    files
+}
+
+/// zed-kask: Decide the on-disk registry root for bundled-skill package
+/// hashing. Dev (source tree present): `kask/registry/`. Prod (seeded):
+/// `data_dir()/agents/registry/` — the global skills dir's sibling `registry/`.
+/// Pure decision behind the async `fs.is_dir` check in `fetch_bundled_skills`,
+/// extracted so the dev/prod branch + the no-parent fallback are testable
+/// without a GPUI executor. Mirrors the resolution in `main.rs`.
+pub fn resolve_registry_root(dev_manifests_exist: bool, globals_dir: &Path) -> PathBuf {
+    if dev_manifests_exist {
+        return PathBuf::from("kask/registry");
+    }
+    // Fall back to the dev root when the globals dir has no usable parent
+    // (None, or an empty path — `Path::new("skills").parent()` is `Some("")`,
+    // not `None`), so the panel never produces a bare relative `registry`
+    // that resolves against CWD.
+    match globals_dir.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.join("registry"),
+        _ => PathBuf::from("kask/registry"),
+    }
+}
+
+#[cfg(test)]
+mod resolve_registry_root_tests {
+    use super::resolve_registry_root;
+    use std::path::Path;
+
+    #[test]
+    fn dev_source_tree_present_uses_kask_registry() {
+        let root = resolve_registry_root(true, Path::new("/data/agents/skills"));
+        assert_eq!(root, Path::new("kask/registry"));
+    }
+
+    #[test]
+    fn prod_uses_seeded_registry_sibling_of_globals_dir() {
+        let root = resolve_registry_root(false, Path::new("/data/agents/skills"));
+        assert_eq!(root, Path::new("/data/agents/registry"));
+    }
+
+    #[test]
+    fn globals_dir_without_parent_falls_back_to_dev_root() {
+        // A one-component path has no parent; fall back to the dev root so the
+        // panel never produces an empty registry path (which would make every
+        // bundled skill hash-miss and falsely badge, or no-op, depending on
+        // seeding). This pins the `unwrap_or_else` fallback.
+        let root = resolve_registry_root(false, Path::new("skills"));
+        assert_eq!(root, Path::new("kask/registry"));
+    }
+}
+
+#[cfg(test)]
+mod gather_package_tests {
+    use super::{gather_shipped_skill_package, kask_skill_package_hash};
+
+    /// A known shipped skill (metacognition) must produce a package that
+    /// includes the SKILL.md, the process manifest, and the template
+    /// manifest — i.e. the full triple, not just SKILL.md. Pins that the
+    /// embedded registry content is reachable from this crate.
+    #[test]
+    fn shipped_package_covers_full_triple() {
+        let skill_md = agent_skills::shipped_skill_seed()
+            .iter()
+            .find(|(name, _)| *name == "metacognition")
+            .map(|(_, content)| *content)
+            .expect("metacognition is a shipped skill");
+        let pkg = gather_shipped_skill_package("metacognition", Some(skill_md));
+        let names: Vec<&str> = pkg.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(
+            names.contains(&"SKILL.md"),
+            "package must include SKILL.md: {names:?}"
+        );
+        assert!(
+            names.contains(&"process.yaml"),
+            "package must include the process manifest: {names:?}"
+        );
+        assert!(
+            names.contains(&"manifest.yaml"),
+            "package must include the template manifest: {names:?}"
+        );
+        // And at least one Jinja2 template under templates/.
+        assert!(
+            names.iter().any(|n| n.starts_with("templates/")),
+            "package must include at least one template: {names:?}"
+        );
+    }
+
+    /// A nonexistent skill yields an empty package (no SKILL.md, no registry
+    /// files) — the panel skips empty packages rather than badging them.
+    #[test]
+    fn unknown_skill_yields_empty_package() {
+        let pkg = gather_shipped_skill_package("does-not-exist", None);
+        assert!(
+            pkg.is_empty(),
+            "unknown skill must produce an empty package"
+        );
+    }
+
+    /// The core correctness property of the "Modified" badge: an unmodified
+    /// skill's on-disk source must hash-identically to the shipped (embedded)
+    /// package. If this ever breaks, every bundled skill would falsely badge
+    /// "Modified". Reads the real source files (the same files `build.rs`
+    /// embeds via `include_str!`) with `std::fs` and compares against the
+    /// embedded gather, pinning the canonical-name alignment between the two
+    /// gather paths.
+    #[test]
+    fn unmodified_skill_on_disk_source_matches_shipped_package() {
+        let name = "metacognition";
+        let skill_md = agent_skills::shipped_skill_seed()
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, content)| *content)
+            .expect("metacognition is a shipped skill");
+        let shipped = gather_shipped_skill_package(name, Some(skill_md));
+
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(|p| p.parent())
+            .expect("repo root from crate manifest dir");
+        let mut disk: Vec<(String, Vec<u8>)> = Vec::new();
+        disk.push((
+            "SKILL.md".to_string(),
+            std::fs::read(repo_root.join(".agents/skills").join(name).join("SKILL.md"))
+                .expect("read source SKILL.md"),
+        ));
+        let process_yaml = repo_root
+            .join("kask/registry/manifests")
+            .join(format!("{name}.yaml"));
+        if process_yaml.is_file() {
+            disk.push((
+                "process.yaml".to_string(),
+                std::fs::read(&process_yaml).unwrap(),
+            ));
+        }
+        let template_manifest = repo_root
+            .join("kask/registry/templates")
+            .join(name)
+            .join("manifest.yaml");
+        if template_manifest.is_file() {
+            disk.push((
+                "manifest.yaml".to_string(),
+                std::fs::read(&template_manifest).unwrap(),
+            ));
+        }
+        let template_dir = repo_root.join("kask/registry/templates").join(name);
+        for entry in std::fs::read_dir(&template_dir).expect("read template dir") {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                continue;
+            }
+            let file_name = path.file_name().unwrap().to_str().unwrap();
+            if file_name == "manifest.yaml" {
+                continue;
+            }
+            let is_skill_artifact = matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("j2") | Some("yaml")
+            );
+            if is_skill_artifact {
+                disk.push((
+                    format!("templates/{file_name}"),
+                    std::fs::read(&path).unwrap(),
+                ));
+            }
+        }
+
+        let shipped_files: Vec<(&str, &[u8])> = shipped
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let disk_files: Vec<(&str, &[u8])> = disk
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let shipped_hash = kask_skill_package_hash(&shipped_files);
+        let disk_hash = kask_skill_package_hash(&disk_files);
+        assert_eq!(
+            shipped_hash, disk_hash,
+            "an unmodified skill's on-disk source must hash-match the shipped package \
+             or every bundled skill would falsely badge Modified"
+        );
+    }
+}
+
 /// zed-kask: Resolve the kask marketplace base URL.
 ///
 /// Decoupled from `server_url` (which points at Zed's cloud for login,

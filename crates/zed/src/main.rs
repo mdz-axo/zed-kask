@@ -2793,6 +2793,22 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
                 ));
             };
             let mut context = std::collections::HashMap::new();
+            // Structured-context bridge: when `task` is a JSON object, merge its
+            // fields into the context map as top-level keys so templates see
+            // `{{ surface }}`, `{{ mode }}`, etc. directly. Non-JSON tasks keep
+            // the existing single-`task`-string behavior. This lets MCP-server
+            // callers (e.g. `swarm_ai_assist`) pass structured fields through the
+            // `SkillExecPort::execute_skill(name, task: &str)` seam without a
+            // trait/IPC change — the JSON string IS the task, and its fields
+            // become template variables.
+            if let Ok(obj) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&task)
+            {
+                for (key, value) in obj {
+                    context.insert(key, value);
+                }
+            }
+            // Always carry the raw task string too — templates that reference
+            // `{{ task }}` still resolve, and non-JSON callers are unaffected.
             context.insert("task".to_string(), serde_json::Value::String(task));
             // `executor` is the upstream `agent::SkillManifestExecutor` (D1 seam),
             // whose `execute_skill` returns `Result<String, String>`. The

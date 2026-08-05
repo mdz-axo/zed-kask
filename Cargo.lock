@@ -11040,6 +11040,7 @@ dependencies = [
  "gpui",
  "hex",
  "hkask-keystore",
+ "hkask-templates",
  "hkask-types",
  "http_client",
  "log",

@@ -1646,14 +1646,20 @@ impl SwarmPanel {
                         // If the roster drill-down is open for this workspace,
                         // re-open it so the new member appears immediately
                         // (fetch_all refreshes the card list, not the detail).
+                        // Guard against re-opening a detail for a *different*
+                        // workspace — a browse-card hire (which targets
+                        // `selected_workspace`, not necessarily the open detail)
+                        // must not refresh an unrelated roster.
                         if let Some(detail) = this.swarm_detail.clone() {
-                            this.open_swarm_detail(
-                                detail.workspace_id.clone(),
-                                detail.name,
-                                detail.source,
-                                detail.mission,
-                                cx,
-                            );
+                            if detail.workspace_id == workspace_id {
+                                this.open_swarm_detail(
+                                    detail.workspace_id.clone(),
+                                    detail.name,
+                                    detail.source,
+                                    detail.mission,
+                                    cx,
+                                );
+                            }
                         }
                     }
                     Err(err) => {

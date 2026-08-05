@@ -350,10 +350,12 @@ impl KaskExtensionsPage {
 
     /// zed-kask: Load the skills that ship with the install (shipped + built-in)
     /// and detect on-disk modifications. Shipped skills are seeded to disk at
-    /// startup from the compiled seed payload; a bundled skill is "Modified"
-    /// when its on-disk SKILL.md content hash differs from the shipped
-    /// original. v1 compares over the SKILL.md file; the full-package hash
-    /// (manifest.yaml + j2) comparison is the next slice.
+    /// startup from the compiled seed payload. A bundled skill is "Modified"
+    /// when its on-disk package hash differs from the shipped package hash.
+    /// The package is the full triple `(SKILL.md, manifest.yaml, *.j2
+    /// templates)` plus the process manifest and template YAML sub-manifests —
+    /// "a change is a change in any of those" — so editing any package file
+    /// surfaces the badge, not just SKILL.md.
     fn fetch_bundled_skills(&mut self, cx: &mut Context<Self>) {
         let Some(fs) = self.fs.clone() else {
             log::warn!("kask-extensions: no filesystem available; cannot load bundled skills.");
@@ -365,7 +367,10 @@ impl KaskExtensionsPage {
 
                 let seed = agent_skills::shipped_skill_seed();
                 let mut entries: Vec<BundledSkillEntry> = Vec::with_capacity(seed.len() + 4);
-                let mut seed_content: HashMap<String, &'static str> = HashMap::new();
+                // zed-kask: full shipped package per skill (SKILL.md +
+                // manifest.yaml + *.j2 + process manifest). "Modified" =
+                // this hash differs from the on-disk package hash.
+                let mut shipped_packages = HashMap::new();
                 for (name, content) in seed {
                     let description = match agent_skills::parse_skill_metadata(content) {
                         Ok(meta) => meta.description,
@@ -382,54 +387,71 @@ impl KaskExtensionsPage {
                         source: BundledSource::Shipped,
                         modified: false,
                     });
-                    seed_content.insert((*name).to_string(), *content);
+                    shipped_packages.insert(
+                        (*name).to_string(),
+                        crate::publish::gather_shipped_skill_package(name, Some(content)),
+                    );
                 }
                 for skill in agent_skills::builtin_skills() {
+                    let md = agent_skills::builtin_skill_content(&skill.skill_file_path);
                     entries.push(BundledSkillEntry {
                         name: skill.name.clone().into(),
                         description: skill.description.clone().into(),
                         source: BundledSource::BuiltIn,
                         modified: false,
                     });
-                    if let Some(content) =
-                        agent_skills::builtin_skill_content(&skill.skill_file_path)
-                    {
-                        seed_content.insert(skill.name.clone(), content);
-                    }
+                    shipped_packages.insert(
+                        skill.name.clone(),
+                        crate::publish::gather_shipped_skill_package(&skill.name, md),
+                    );
                 }
                 entries.sort_by(|a, b| a.name.cmp(&b.name));
                 entries.dedup_by(|a, b| a.name == b.name);
 
+                // zed-kask: resolve the on-disk registry root. Dev (source
+                // tree present): `kask/registry/`. Prod (seeded): the global
+                // skills dir's sibling `registry/` (i.e.
+                // `data_dir()/agents/registry/`). Mirrors `main.rs`; the
+                // decision is pure in [`crate::publish::resolve_registry_root`]
+                // so the dev/prod branch + no-parent fallback are tested.
                 let globals_dir = agent_skills::global_skills_dir();
+                let dev_manifests_exist = fs
+                    .is_dir(std::path::Path::new("kask/registry/manifests"))
+                    .await;
+                let registry_root =
+                    crate::publish::resolve_registry_root(dev_manifests_exist, &globals_dir);
+
                 for entry in entries.iter_mut() {
-                    let disk_skill_md = globals_dir.join(&*entry.name).join("SKILL.md");
-                    if !fs.is_file(&disk_skill_md).await {
-                        continue;
-                    }
-                    let Some(seed_bytes) = seed_content.get(&*entry.name) else {
-                        // Override exists with no shipped reference: a
-                        // user-added skill, not a modification of a bundled
-                        // one. Don't badge it (no original to diff).
+                    let Some(seed_pkg) = shipped_packages.get(&*entry.name) else {
+                        // No shipped reference: a user-added skill, not a
+                        // modification of a bundled one. Don't badge it.
                         continue;
                     };
-                    match fs.load(&disk_skill_md).await {
-                        Ok(disk_content) => {
-                            let seed_hash = crate::publish::kask_skill_package_hash(&[(
-                                "SKILL.md",
-                                seed_bytes.as_bytes(),
-                            )]);
-                            let disk_hash = crate::publish::kask_skill_package_hash(&[(
-                                "SKILL.md",
-                                disk_content.as_bytes(),
-                            )]);
-                            entry.modified = seed_hash != disk_hash;
-                        }
-                        Err(error) => log::warn!(
-                            "kask-extensions: failed to read on-disk override for '{}': {}",
-                            entry.name,
-                            error
-                        ),
+                    if seed_pkg.is_empty() {
+                        continue;
                     }
+                    let disk_pkg = crate::publish::gather_disk_skill_package(
+                        fs.as_ref(),
+                        &entry.name,
+                        &registry_root,
+                    )
+                    .await;
+                    if disk_pkg.is_empty() {
+                        // Nothing on disk to compare (not yet seeded, or the
+                        // user removed it). Don't badge.
+                        continue;
+                    }
+                    let seed_files = seed_pkg
+                        .iter()
+                        .map(|(n, b)| (n.as_str(), b.as_slice()))
+                        .collect::<Vec<_>>();
+                    let disk_files = disk_pkg
+                        .iter()
+                        .map(|(n, b)| (n.as_str(), b.as_slice()))
+                        .collect::<Vec<_>>();
+                    let seed_hash = crate::publish::kask_skill_package_hash(&seed_files);
+                    let disk_hash = crate::publish::kask_skill_package_hash(&disk_files);
+                    entry.modified = seed_hash != disk_hash;
                 }
                 Ok::<_, anyhow::Error>(entries)
             }
