@@ -116,6 +116,13 @@ jobs:
       - name: Check mcp-servers.txt matches BUILTIN_SERVERS
         run: cd kask && bash scripts/check-mcp-servers.sh
 
+  version-sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check manifests, banners, and MCP provenance match the workspace release version
+        run: cd kask && bash scripts/check-version-sync.sh
+
   hkask-no-zed-deps:
     runs-on: ubuntu-24.04
     steps:

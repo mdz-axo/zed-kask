@@ -10,7 +10,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # The Magna Carta of hKask
 
-## ℏKask v0.31.0 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
+## ℏKask v0.33.0 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
 
 **User Sovereignty is Non-Negotiable.**
 

@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
-# CI gate: assert kask registry manifests, MCP-server provenance, and the
-# canonical version banners stay in sync with the zed-kask workspace release
-# version in the root Cargo.toml `[workspace.package] version`.
+# CI gate: assert kask registry manifests, MCP-server provenance, README
+# version lines, and the canonical version banners stay in sync with the
+# zed-kask workspace release version in the root Cargo.toml
+# `[workspace.package] version`.
 #
 # Drift surface this guards:
-#   - kask/registry/manifests/*.yaml `version:` fields and `# [ℏh]Kask v<x>`
-#     header comments (96 manifests — every release bump must move all of them;
-#     a missed manifest silently ships a stale manifest version).
-#   - `# Manifest version: <x>.` trailing comments in security manifests.
+#   - kask/registry/manifests/*.yaml `version:` fields (96 manifests — every
+#     release bump must move all of them; a missed manifest silently ships a
+#     stale manifest version).
+#   - `# [ℏh]Kask v<x>` brand-header comments (when a manifest uses that
+#     convention) and `# Manifest version: <x>.` trailing comments.
 #   - Hardcoded `"version": "0.x.y"` provenance literals in MCP server .rs
 #     files — these must report `env!("CARGO_PKG_VERSION")` (which inherits the
 #     workspace version), not a literal that rots between releases.
+#   - README `**Version:**` lines across kask/ (crate READMEs, pipeline
+#     READMEs) — human-facing current-version markers that drift on missed bumps.
 #
 # Usage: cd kask && bash scripts/check-version-sync.sh
 # Exit codes: 0 = in sync, 1 = drift detected
@@ -39,7 +43,13 @@ fi
 WORKSPACE_VERSION=$(awk '
     /^\[workspace\.package\]/ { in_pkg=1; next }
     /^\[/ { in_pkg=0 }
-    in_pkg && /^version[[:space:]]*=/ { gsub(/.*"|".*/, "", $0); print; exit }
+    in_pkg && /^version[[:space:]]*=/ {
+        line=$0
+        sub(/^version[[:space:]]*=[[:space:]]*"/, "", line)
+        sub(/"[[:space:]]*$/, "", line)
+        print line
+        exit
+    }
 ' "$CARGO_TOML")
 
 if [ -z "$WORKSPACE_VERSION" ]; then
@@ -55,10 +65,15 @@ fail() {
     status=1
 }
 
-# 1. Manifest header comments: every manifest must have `# [ℏh]Kask v<ver>`.
+# 1. Manifest brand-header comments: when a manifest uses the
+#    `# [ℏh]Kask v<x>` convention, its version must match the workspace
+#    version. Manifests that use a different header style are skipped here
+#    (their `version:` field, checked next, is the authoritative version).
 while IFS= read -r manifest; do
-    if ! grep -qE "^# [ℏh]Kask v${WORKSPACE_VERSION//./\\.}\b" "$manifest"; then
-        fail "$manifest: header comment is not \`# [ℏh]Kask v${WORKSPACE_VERSION}\`"
+    header_ver=$(grep -oE '^# [ℏh]Kask v[0-9]+\.[0-9]+\.[0-9]+' "$manifest" \
+        | head -1 | sed -E 's/^.*v([0-9]+\.[0-9]+\.[0-9]+)$/\1/' || true)
+    if [ -n "$header_ver" ] && [ "$header_ver" != "$WORKSPACE_VERSION" ]; then
+        fail "$manifest: brand header is \`# [ℏh]Kask v${header_ver}\`, expected v${WORKSPACE_VERSION}"
     fi
 done < <(find "$MANIFEST_DIR" -maxdepth 1 -name '*.yaml' -type f)
 
@@ -84,8 +99,16 @@ while IFS= read -r hit; do
     fail "$hit: hardcoded provenance version literal — use env!(\"CARGO_PKG_VERSION\")"
 done < <(grep -rnE '"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' "$MCP_SERVERS_DIR" || true)
 
+# 5. README `**Version:**` lines across kask/ must match the workspace version.
+#    These are human-facing current-version markers (crate READMEs, pipeline
+#    READMEs) that drift silently when a release bump misses them.
+while IFS= read -r hit; do
+    fail "$hit: README \`**Version:**\` is not \`$WORKSPACE_VERSION\`"
+done < <(grep -rnE '\*\*Version:\*\*[[:space:]]*v?0\.[0-9]+\.[0-9]+' "$KASK_ROOT" \
+    | grep -vE "\*\*Version:\*\*[[:space:]]*v?${WORKSPACE_VERSION//./\\.}([[:space:]]|$)")
+
 if [ "$status" -eq 0 ]; then
-    echo -e "${GREEN}[OK]${NC} all manifests, banners, and MCP provenance in sync with v${WORKSPACE_VERSION}"
+    echo -e "${GREEN}[OK]${NC} all manifests, banners, READMEs, and MCP provenance in sync with v${WORKSPACE_VERSION}"
 else
     echo ""
     echo "Fix: bump the drifted fields to $WORKSPACE_VERSION (workspace version in $CARGO_TOML)."
