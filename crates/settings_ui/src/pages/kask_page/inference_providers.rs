@@ -264,6 +264,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
         "OpenRouter" => "openrouter",
         "KiloCode" => "kilocode",
         "Cline" => "cline",
+        "AtlasCloud" => "atlascloud",
         other => other,
     }
     .to_string();
@@ -276,6 +277,7 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
             "openrouter" => inference.openrouter_enabled = Some(enabled),
             "kilocode" => inference.kilocode_enabled = Some(enabled),
             "cline" => inference.cline_enabled = Some(enabled),
+            "atlascloud" => inference.atlascloud_enabled = Some(enabled),
             _ => {}
         }
     });

@@ -8,9 +8,17 @@ domain: "MCP Servers"
 mds_categories: [domain, composition]
 ---
 
-# Media Gallery Schema & Tool Design
+# Media Gallery Schema & Tool Design (Historical — Design Phase)
 
-> **Note:** `InferenceRouter` references in this research doc describe the media MCP server's internal delegation path. In zed-kask, `hkask-inference`'s `InferenceRouter` is kept for MCP-server-internal use only; the user-facing inference surface is zed's `LanguageModelRegistry` via `kask_bridge` (D4/D8).
+> **⚠ HISTORICAL DOCUMENT — NOT A CURRENT SPECIFICATION.** The tool signatures,
+request structs, and model routing table below are the **original design
+> intent** from the media MCP server planning phase. The shipped implementation
+> consolidated and renamed many tools. **Do not implement from this document.**
+> For the current tool surface, read `kask/mcp-servers/hkask-mcp-media/src/tools/*.rs`
+> directly. This document is retained as design history per `DOCUMENTATION_STANDARDS.md`
+> §3 (git history is the archive of record; this document stays in the active tree
+> because the gallery ERD in §T4 is still accurate and the tool-family taxonomy
+> informed the shipped consolidation).
 
 ## Design Phase: T4–T5
 

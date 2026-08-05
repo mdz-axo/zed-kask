@@ -28,7 +28,7 @@ mds_categories: [composition, lifecycle]
 
 The `CondenserServer` (thin MCP wrapper) delegates to `CondenserEngine` (pure domain logic) for
 compression, and to `InferencePort` for LLM summarization. The engine selects an algorithm per
-compression via the static `default_for()` mapping — no learning, no history, no stats.
+compression via the static `default_for()` mapping — no learning, no history, no stats.[^nenkova-summarization]
 
 ```mermaid
 flowchart TD
@@ -111,7 +111,7 @@ status: VERIFIED (v6 — learning subsystem + 4 MCP tools removed; BridgeThreadC
 
 ## Key paths
 
-- **Runtime compression (in-process, no MCP):** `BridgeThreadCondenser::compress_tool_result` → `CondenserEngine::compress` → `AlgorithmRegistry::select` (static `default_for`) → algorithm (`rtk_style` / `word_rank` / `flashrank`). Wired via `agent::set_thread_condenser` in `crates/zed/src/main.rs`, gated on `kask.condenser.auto_compress_tool_results` (default off). Code-reading tools bypass the condenser via `NO_COMPRESS_TOOLS` in `crates/agent/src/thread.rs`.
+- **Runtime compression (in-process, no MCP):** `BridgeThreadCondenser::compress_tool_result` → `CondenserEngine::compress` → `AlgorithmRegistry::select` (static `default_for`) → algorithm (`rtk_style` / `word_rank` / `flashrank`). Wired via `agent::set_thread_condenser` in `crates/zed/src/main.rs`, gated on `kask.condenser.auto_compress_tool_results` (default off). Code-reading tools bypass the condenser via `NO_COMPRESS_TOOLS` in `crates/agent/src/thread.rs`.[^nenkova-key-paths]
 - **Thread summary:** `condenser_thread_summary` → `inference::format_conversation_text` + `SUMMARY_SYSTEM_PROMPT` → `InferencePort::generate_with_model` → `inference::build_summary_output`.
 - **Saliency:** `condenser_score_saliency` → `saliency::score_against_persona` (persona) or `saliency::extract_query_words` + memory query + `saliency::score_memory_results` (memory).
 - **Persist:** `condenser_persist` → `EpisodicMemory::store` (requires `HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`).
@@ -122,3 +122,11 @@ status: VERIFIED (v6 — learning subsystem + 4 MCP tools removed; BridgeThreadC
 - [MCP Server Registry](README.md) — all 11 on-disk MCP servers
 - [MCP Server Explanation](../../diataxis/hkask-mcp-server/explanation.md) — MCP bootstrap and tool dispatch sequence
 - [Zed Host Architecture Plan](../../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams
+
+## Footnotes
+
+[^nenkova-summarization]: Nenkova, A., & McKeown, K. (2012). A survey of text summarization techniques. In *Mining Text Data* (pp. 43–76). Springer. https://doi.org/10.1007/978-1-4614-3223-4_3
+    Cited for the text-summarization taxonomy the CondenserEngine's algorithm registry draws from.
+
+[^nenkova-key-paths]: Nenkova, A., & McKeown, K. (2012). A survey of text summarization techniques. In *Mining Text Data* (pp. 43–76). Springer. https://doi.org/10.1007/978-1-4614-3223-4_3
+    Cited for the extractive-summarization algorithms (RTK-style, TF-IDF word-rank, flashrank marginal utility) the runtime compression path selects between.

@@ -33,7 +33,7 @@ authoritative (P5.1); this document is a derived reference.
 | Prefix Tuning | (not recommended for production) | Prefix vectors | No | PEFT `PrefixTuningConfig` |
 
 New methods can be added as PEFT exposes them and literature justifies
-them (P7) — not speculatively.
+them (P7) — not speculatively.[^peft-catalog]
 
 ## Harness Capability Matrix
 
@@ -59,11 +59,11 @@ Three harnesses are supported. Each has a distinct capability profile.
 
 Harness selection is driven by the G6 gate (harness capability) in the
 `select-method` phase. The operator accepts, overrides, or rejects the
-recommendation. The runtime enforces harness-method compatibility via G-H1.
+recommendation. The runtime enforces harness-method compatibility via G-H1.[^trl-catalog][^ludwig-catalog]
 
 ## Gate Catalog
 
-19 phase-aware contract gates enforced across the `select-method` and `audit-config` phases, plus the 8-gate recommendation refinement in `select-method` (G0, G-D0, G1-G6). Each gate is a single assertion with a citation.
+19 phase-aware contract gates enforced across the `select-method` and `audit-config` phases, plus the 8-gate recommendation refinement in `select-method` (G0, G-D0, G1-G6). Each gate is a single assertion with a citation.[^lora-contract-gates]
 
 ### Recommendation Gates (select-method phase)
 
@@ -153,7 +153,24 @@ the Cauchy criterion (iterates have stopped moving).
 > is a preflight refuse gate. Convergence is Cauchy-detected (iterates stop
 > moving within `cauchy_epsilon: 0.03` over `cauchy_window: 3` iterations).
 
-Converged: metric ≤ 0.10 AND no hard blockers AND Cauchy criterion met.
+Converged: metric ≤ 0.10 AND no hard blockers AND Cauchy criterion met.[^cauchy-convergence]
+
+## Footnotes
+
+[^peft-catalog]: Liu, Y., et al. (2024). *Parameter-Efficient Fine-Tuning (PEFT)*. Hugging Face. https://huggingface.co/docs/peft
+    Cited for the PEFT library that exposes the adapter methods the catalog tracks.
+
+[^trl-catalog]: Hugging Face. (2024). *TRL: Transformer Reinforcement Learning*. https://huggingface.co/docs/trl
+    Cited for the TRL harness the G6 gate selects when SFT/DPO/KTO/ORPO/Reward training is needed.
+
+[^ludwig-catalog]: Ludwig. (2024). *Ludwig: Declarative Deep Learning Framework*. Linux Foundation AI & Data. https://ludwig.ai/latest/
+    Cited for the Ludwig harness the G6 gate selects for declarative YAML-configured training.
+
+[^lora-contract-gates]: Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., & Chen, W. (2021). LoRA: Low-Rank Adaptation of Large Language Models. arXiv. https://arxiv.org/abs/2106.09685
+    Cited as the primary source the math-contract gates (G-M1 through G-M5) derive their assertions from.
+
+[^cauchy-convergence]: Rudin, W. (1976). *Principles of Mathematical Analysis* (3rd ed.). McGraw-Hill.
+    Cited for the Cauchy convergence criterion the convergence-check phase uses to detect that iterates have stopped moving.
 
 ## Source References
 

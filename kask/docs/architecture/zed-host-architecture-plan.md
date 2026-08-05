@@ -2,7 +2,7 @@
 title: "zed-kask — Minimal-Divergence Fork Architecture & Migration Plan"
 audience: [architects, integrators]
 last_updated: 2026-08-04
-version: "0.33.0"
+version: "0.34.0"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, trust, lifecycle]
@@ -10,26 +10,56 @@ mds_categories: [composition, trust, lifecycle]
 
 # zed-kask — Minimal-Divergence Fork Architecture & Migration Plan
 
+> **One-line frame:** `zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
 
+## Table of contents
 
-> **Build status (2026-08-04):** The kask workspace has **20 kask crates** under `kask/crates/` (19 `hkask-*` + `kask_bridge`) plus 11 MCP server crates under `kask/mcp-servers/` and 1 zed-side crate (`crates/kask_extensions_ui/`). The `crates/kask_panel/` crate (former D10) was **deleted** — its functionality moved to `crates/swarm_panel/` (ToolInvoker) + inline chat-stream widgets (D18). The `zed` binary crate parses correctly but can't fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue).
+- [§0 — Fork Location & Upstream-Sync Strategy](#0-fork-location--upstream-sync-strategy-load-bearing)
+- [§1 — The Enhanced Prompt (minimal-divergence fork)](#1-the-enhanced-prompt-minimal-divergence-fork)
+- [§2 — The Essentialist Split](#2-the-essentialist-split-what-zed-kask-owns-vs-what-hkask-keeps)
+  - [§2.1 — zed-kask owns (generic)](#21-zed-kask-owns-generic--inherited-from-upstream-not-modified-except-integration-seams)
+  - [§2.2 — hKask keeps (unique: curator + sovereignty + tools)](#22-hkask-keeps-unique-curator--sovereignty--tools--compiled-into-zed-kask)
+  - [§2.3 — Migration history (deleted crates → Appendix A)](#23-migration-history-deleted-crates--appendix-a)
+  - [§2.4 — MCP load set (11 on disk)](#24-mcp-load-set-11-on-disk)
+- [§3 — The Minimal Divergence Map (D1–D20)](#3-the-minimal-divergence-map-exact-zed-kask-touch-points)
+- [§4 — (removed — see §3 and Appendix A)](#4-removed--see-3-and-appendix-a)
+- [§5 — (removed — see §3 and Appendix A)](#5-removed--see-3-and-appendix-a)
+- [§6 — Migration Status (removed)](#6-migration-status)
+- [§7 — App-Identity Separation](#7-app-identity-separation-zed-kask--zed-coexistence)
+- [§8 — Architecture Notes (removed)](#8-architecture-notes)
+- [§9 — (removed — see §11 and Appendix A)](#9-removed--see-11-and-appendix-a)
+- [§10 — (removed — see Appendix A)](#10-removed--see-appendix-a)
+- [§11 — Kask Settings & Credentials](#11-kask-settings--credentials-data-service-keys-minimal-divergence)
+- [§12 — Kask Panel (removed — see Appendix A)](#12-kask-panel-removed--see-appendix-a)
+- [§13 — Composition & Connection Surfaces](#13-composition--connection-surfaces-zoom-out-review)
+  - [§13.1 — Governing invariant (dependency direction)](#131-governing-invariant-dependency-direction)
+  - [§13.2 — The complete port set](#132-the-complete-port-set-ports-and-adapters)
+  - [§13.3 — Composition root (startup — DI pattern)](#133-composition-root-startup--di-pattern)
+  - [§13.4 — Consolidated divergence map (D1–D20)](#134-consolidated-divergence-map-d1d20)
+- [§14 — Repository Consolidation](#14-repository-consolidation--full-merge-into-zed-kask)
+- [Appendix A — Migration history](#appendix-a--migration-history)
+- [References](#references)
+
+---
+
+> **Build status (2026-08-04):** The kask workspace has **20 kask crates** under `kask/crates/` (19 `hkask-*` + `kask_bridge`) plus 11 MCP server crates under `kask/mcp-servers/` and 1 zed-side crate (`crates/kask_extensions_ui/`). The `crates/kask_panel/` crate (former D10) was **deleted** — its functionality moved to `crates/swarm_panel/` (ToolInvoker) + inline chat-stream widgets (D18); see Appendix A. The `zed` binary crate parses correctly but can't fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue). D1–D20 are wired at the composition root (`crates/zed/src/main.rs`). Validation is via `cargo check` and `diagnostics`. Deferred items: T3.4 (double-gate reconciliation), T4.2/T4.3 (memory/thread-watcher), T6.2 (clean-machine verification). These are deferred verification and design decisions, not architecture.
 >
 > **Integration progress (D1–D20):**
 >
 > | D | Surface | Status | What's wired |
 > |---|---|---|---|
-| D1 | Skill execution | ✅ **DONE** | `SkillTool` has optional `SkillManifestExecutor`; composition root in `main.rs` constructs `BridgeManifestExecutor` with `InferencePort` + `ToolPort` + registry paths and calls `agent::set_manifest_executor()`. 48 skills linked (SKILL.md + manifest.yaml in `kask/registry/`). |
+> | D1 | Skill execution | ✅ **DONE** | `SkillTool` has optional `SkillManifestExecutor`; composition root in `main.rs` constructs `BridgeManifestExecutor` with `InferencePort` + `ToolPort` + registry paths and calls `agent::set_manifest_executor()`. 48 skills linked (SKILL.md + manifest.yaml in `kask/registry/`). |
 > | D2 | Curator agent | ✅ **DONE** | `Curator` variant in `agent_ui::Agent` enum; `CURATOR_AGENT_ID` in `agent` crate; selectable in Agent Panel. |
 > | D3 | Tools in-process | ✅ **DONE** | `McpRuntime` implements `ToolPort` directly (capability-match gate + gas budgeting + `reg.tool.*` spans) and is passed wherever a `ToolPort` is needed — no bridge adapter. MCP servers run as child processes (stdio). Daemon transport removed; identity is `ServerContext.webid` resolved from `HKASK_WEBID` (no `userpod`/`MCPBootstrap`). |
-> | D4 | Guard layer | ✅ **DONE** | `GuardedInferencePort` wraps the `InferencePort` at the composition root. `hkask-guard` crate's `ContentGuard::mandatory()` provides input scanning (prompt injection, role override, token limit) and output scanning (secret redaction). Guard wraps the skill cascade path (ManifestExecutor). Direct chat uses zed's `LanguageModel::stream_completion` with provider-side safety + refusal fallback (`cascade_only` is hardcoded — the `kask.guard.direct_chat_strategy` setting was deleted in the 2026-07-31 simplification pass; see `tasks/plan.md` C6). `hkask-guard` added as dep of `zed` crate. |
-> | D5 | Sovereignty keys | ✅ **DONE** | `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase chain, SQLCipher encryption). No `keyring`-injection seam, no `OnceLock`, no parallel zed `CredentialsProvider` path — the prior injection design was removed in the 2026-07-31 simplification pass (see `tasks/plan.md` D5 verdict). The a2a/OCAP secret threading (`resolve_a2a_secret`, `get_or_create_ocap_secret`, `resolve_secret_chain`, `resolve_treasury_key`, `resolve_wallet_seed`, `sign_wallet_bytes`, `InternalSecrets`, `derive_all_internal_secrets`) was deleted as self-referential security theater (token signature verified against the token's own embedded key — denied nothing); `panel_default_token` mints the in-process capability token with a static key. The capability-match gate in `McpRuntime::invoke` is the real authority. |
-> | D6 | Thread → memory | ✅ **DONE** | `MemoryPort` trait defined in `hkask-types` (`TurnRecord`, `MemoryError`, `MemoryFuture`). `BridgeMemoryPort` (adapts `agent::ThreadMemoryPort` → `hkask_types::MemoryPort`) in `kask_bridge`. Global hook `agent::set_memory_port()` / `agent::memory_port()` (**Mutex** pattern, not OnceLock — re-settable). Thread turn completion in `thread.rs::run_turn()` extracts last user prompt + agent response + model + title and calls `ingest_turn()` fire-and-forget via `cx.background_spawn()`. The hook is `None` at startup (no `LoggingMemoryPort` — deleted in the 2026-07-31 simplification pass, see `tasks/plan.md` C4); `thread.rs` no-ops when the hook is unset. Full hKask memory stack (SQLCipher, episodic/semantic, consolidation, WebID mapping) wired via `RealMemoryPort` in the deferred post-login task. |
+> | D4 | Guard layer | ✅ **DONE** | `GuardedInferencePort` wraps the `InferencePort` at the composition root. `hkask-guard` crate's `ContentGuard::mandatory()` provides input scanning (prompt injection, role override, token limit) and output scanning (secret redaction). Guard wraps the skill cascade path (ManifestExecutor). Direct chat uses zed's `LanguageModel::stream_completion` with provider-side safety + refusal fallback (`cascade_only` is hardcoded — the `kask.guard.direct_chat_strategy` setting was removed; see Appendix A). `hkask-guard` added as dep of `zed` crate. |
+> | D5 | Sovereignty keys | ✅ **DONE** | `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase chain, SQLCipher encryption). No `keyring`-injection seam, no `OnceLock`, no parallel zed `CredentialsProvider` path — the prior injection design was removed (see Appendix A). The a2a/OCAP secret threading (`resolve_a2a_secret`, `get_or_create_ocap_secret`, `resolve_secret_chain`, `resolve_treasury_key`, `resolve_wallet_seed`, `sign_wallet_bytes`, `InternalSecrets`, `derive_all_internal_secrets`) was removed as self-referential security theater (token signature verified against the token's own embedded key — denied nothing); `panel_default_token` mints the in-process capability token with a static key. The capability-match gate in `McpRuntime::invoke` is the real authority. |
+> | D6 | Thread → memory | ✅ **DONE** | `MemoryPort` trait defined in `hkask-types` (`TurnRecord`, `MemoryError`, `MemoryFuture`). `BridgeMemoryPort` (adapts `agent::ThreadMemoryPort` → `hkask_types::MemoryPort`) in `kask_bridge`. Global hook `agent::set_memory_port()` / `agent::memory_port()` (**Mutex** pattern, not OnceLock — re-settable). Thread turn completion in `thread.rs::run_turn()` extracts last user prompt + agent response + model + title and calls `ingest_turn()` fire-and-forget via `cx.background_spawn()`. The hook is `None` at startup (the `LoggingMemoryPort` no-op placeholder was removed; see Appendix A); `thread.rs` no-ops when the hook is unset. Full hKask memory stack (SQLCipher, episodic/semantic, consolidation, WebID mapping) wired via `RealMemoryPort` in the deferred post-login task. |
 > | D7 | App-identity | ✅ **DONE** | `APP_NAME`→`Zed-Kask`, `app_identifier`/`app_id`/`display_name` renamed, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
-| D8 | Bridge + adapters | ✅ **DONE** | `kask_bridge` crate: `LanguageModelInferencePort` (`InferencePort` over `LanguageModel`), `BridgeManifestExecutor`, `BridgeMemoryPort`, `BridgeThreadCondenser`, `BridgeContextInjector`, `BridgeCuratorContextInjector`, `BridgeMetacognitionProvider`, `KaskSettings`. `McpRuntime` is passed directly as `ToolPort` (no `BridgeToolPort` — collapsed in the 2026-07-31 simplification pass, see `tasks/plan.md` C3). Channel pattern solves GPUI/tokio `Send`+`Sync` boundary. |
-| D9a | Settings section | ✅ **DONE** | `KaskSettings` struct registered with zed's settings system; `"kask"` section in settings.json. Covers MCP, data services, curator, guard, memory. |
+> | D8 | Bridge + adapters | ✅ **DONE** | `kask_bridge` crate: `LanguageModelInferencePort` (`InferencePort` over `LanguageModel`), `BridgeManifestExecutor`, `BridgeMemoryPort`, `BridgeThreadCondenser`, `BridgeContextInjector`, `BridgeCuratorContextInjector`, `BridgeMetacognitionProvider`, `KaskSettings`. `McpRuntime` is passed directly as `ToolPort` (no `BridgeToolPort` adapter — removed; see Appendix A). Channel pattern solves GPUI/tokio `Send`+`Sync` boundary. |
+> | D9a | Settings section | ✅ **DONE** | `KaskSettings` struct registered with zed's settings system; `"kask"` section in settings.json. Covers MCP, data services, curator, guard, memory. |
 > | D9b | Credentials namespace | ✅ **DONE** | `keyring` crate directly (synchronous OS keychain) (kask namespace: `kask://credentials/<key>`). `InferenceConfig::from_secrets()` reads API keys via `keyring` crate with env var fallback. |
-| D9c | Settings UI page | ✅ **DONE** | `crates/settings_ui/src/pages/kask_page.rs` — top-level "Kask" page with sub-pages: Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles), MCP Servers (11 built-in servers + `load_default` master toggle + per-server overrides), Curator (`always_on` + `algedonic_threshold`), Memory (`consolidation_cadence_secs` + `confidence_floor` + `recall_limit` + `recall_min_confidence` + `auto_inject`), Condenser (`profile` + `auto_compress_tool_results` + `persona_keywords` + `saliency_window`), Models. The Guard sub-page was deleted in the 2026-07-31 simplification pass (`direct_chat_strategy` was the only field; see `tasks/plan.md` C6). Registered in `page_data.rs::settings_data()` after `ai_page`. `credentials_provider` added as direct dep of `settings_ui`. |
-> | D10 | ~~Kask panel~~ (removed) | ❌ **DELETED** | The `crates/kask_panel/` crate was deleted. The chat panel (tab strip over `ConversationView` per MCP server) was redundant with the agent panel + curator threads. The standalone visualization views (`KanbanBoardView`, `PortfolioDashboardView`, `ScenariosView`) were replaced by inline chat-stream widgets (`hkask-kanban-widget`, `hkask-portfolio-widget`, `hkask-scenarios-widget`) registered with `hkask-viz-core` (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs` (the only remaining consumer). The gas budget persona was renamed from `kask-panel` to `swarm-panel`. |
+> | D9c | Settings UI page | ✅ **DONE** | `crates/settings_ui/src/pages/kask_page.rs` — top-level "Kask" page with sub-pages: Data Services (API key entry → keychain via `CredentialsProvider` + enable toggles), MCP Servers (11 built-in servers + `load_default` master toggle + per-server overrides), Curator (`always_on` + `algedonic_threshold`), Memory (`consolidation_cadence_secs` + `confidence_floor` + `recall_limit` + `recall_min_confidence` + `auto_inject`), Condenser (`profile` + `auto_compress_tool_results` + `persona_keywords` + `saliency_window`), Models. The Guard sub-page was removed (`direct_chat_strategy` was the only field; see Appendix A). Registered in `page_data.rs::settings_data()` after `ai_page`. `credentials_provider` added as direct dep of `settings_ui`. |
+> | D10 | Kask panel (removed) | ❌ **REMOVED** | The `crates/kask_panel/` crate was deleted; chat panel was redundant with the agent panel + curator threads. Visualization views moved to inline chat-stream widgets (D18). `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. See Appendix A. |
 >
 > **Composition root** (`crates/zed/src/main.rs`, after `gpui_tokio::init`):
 > 1. Constructs `RegulationLedger::default()` + `CyberneticsLoop::new(ledger)` (with alert channel + event sink + optional alert email sink), seeds a per-agent `CallCap` for the `swarm-panel` persona, and calls `McpRuntime::new().with_governance(loop, sink)` — startup log: "hKask regulation system wired". `McpRuntime` is the `ToolPort` (passed directly wherever a `ToolPort` is needed — no `BridgeToolPort`).
@@ -41,21 +71,14 @@ mds_categories: [composition, trust, lifecycle]
 > 7. Re-sets `set_metacognition_provider` with the memory-health probe attached (`BridgeMetacognitionProvider::with_memory_port`).
 > 8. Wires `BridgeContextInjector` (agent context recall) and `BridgeCuratorContextInjector` (curator-scoped recall) via `set_context_injector` / `set_curator_context_injector` (OnceLock — one-shot).
 > 9. Wires `LazyToolRouter` via `set_tool_router` (Mutex — re-settable).
-> 10. Constructs `PanelToolInvoker` (holding a `gpui::BackgroundExecutor` for spawning trait-method tasks without a `cx` in scope) and calls `swarm_panel::set_tool_invoker()`. The curator turns route through `NativeAgent` — the `ConversationView` handles streaming + tool dispatch. (The former `kask_panel::set_tool_invoker()` was moved to `swarm_panel` when `kask_panel` was deleted — D10 removed; see DIVERGENCE.md D10.)
+> 10. Constructs `PanelToolInvoker` (holding a `gpui::BackgroundExecutor` for spawning trait-method tasks without a `cx` in scope) and calls `swarm_panel::set_tool_invoker()`. The curator turns route through `NativeAgent` — the `ConversationView` handles streaming + tool dispatch. (The `ToolInvoker` trait + `set_tool_invoker` hook live in `crates/swarm_panel/src/tool_invoker.rs` — the only remaining consumer; see Appendix A for the move history.)
 > 11. Wires `BridgeThreadCondenser` via `set_thread_condenser` (Mutex — re-settable) when `kask.condenser.auto_compress_tool_results` is on.
-> 12. Constructs `LanguageModelInferencePort` (InferencePort over zed's default `LanguageModel`), wraps it with `GuardedInferencePort` (D4), constructs `BridgeManifestExecutor` with guarded inference + `McpRuntime` (as `ToolPort`) + registry paths + tokio handle, and calls `agent::set_manifest_executor()` (OnceLock — one-shot). Token minting uses `panel_default_token` (static key — the a2a/OCAP secret threading was deleted as self-referential security theater).
+> 12. Constructs `LanguageModelInferencePort` (InferencePort over zed's default `LanguageModel`), wraps it with `GuardedInferencePort` (D4), constructs `BridgeManifestExecutor` with guarded inference + `McpRuntime` (as `ToolPort`) + registry paths + tokio handle, and calls `agent::set_manifest_executor()` (OnceLock — one-shot). Token minting uses `panel_default_token` (static key — the a2a/OCAP secret threading was removed as self-referential security theater; see Appendix A).
 > 13. Auto-launches the enabled MCP servers via `McpRuntime::start_server()` (stdio child processes) once the inference IPC socket is available.
 >
-> **Note:** There is no `keyring`-injection step and no `resolve_a2a_secret()` call — both were removed in the 2026-07-31 simplification pass (see `tasks/plan.md`). `hkask-keystore` uses the `keyring` crate directly. There is no `BridgeToolPort` — `McpRuntime` is passed directly as the `ToolPort`. There is no `LoggingMemoryPort` — the memory port hook is `None` until the deferred task wires `RealMemoryPort`.
+> **Note:** There is no `keyring`-injection step and no `resolve_a2a_secret()` call — both were removed (see Appendix A). `hkask-keystore` uses the `keyring` crate directly. There is no `BridgeToolPort` — `McpRuntime` is passed directly as the `ToolPort`. There is no `LoggingMemoryPort` — the memory port hook is `None` until the deferred task wires `RealMemoryPort`.
 >
 > **Revised approach for `hkask-inference`:** Kept (MCP servers use it directly). Reads API keys via `keyring` crate. Long-term: replace with `InferencePort` over zed's `LanguageModel`, but keeping it unblocks the MCP servers immediately.
->
-
-> **Build status (2026-08-04):** D1–D20 are wired at the composition root (`crates/zed/src/main.rs`). The `zed` binary cannot fully build on this machine (missing x11 system libs — a Linux GUI dependency, not a code issue); validation is via `cargo check` and `diagnostics`. Deferred items: T3.4 (double-gate reconciliation), T4.2/T4.3 (memory/thread-watcher), T6.2 (clean-machine verification). These are deferred verification and design decisions, not architecture.
->
-> **One-line frame:** `zed-kask` is a **fork of Zed** that tracks `upstream` (`zed/zed`) and diverges in **exactly three places**: (1) the **skill module** (skill execution → hKask's `ManifestExecutor`), (2) the **Curator agent** (a new native agent backed by hKask), and (3) the **hKask tool-processing code** (compiled-in hKask crates + in-process tool hosting). Everything else stays byte-identical to upstream and is re-merged regularly. hKask is trimmed to **only** the Curator + user sovereignty + the tools. **No backward compatibility.** Principle: *as simple and minimal as possible — and the fork's divergence surface is itself minimal.*
-
-
 
 ---
 
@@ -94,31 +117,26 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 | Crate | Why irreducible |
 |---|---|
-| `hkask-types` | Foundation: IDs, `InferencePort` trait, `RegulationSpan`, vocab. `VoiceDesign` and `ExpectProposal` moved here from deleted crates. `HMemEntry` moved here from deleted `hkask-git-cas`. |
-| `hkask-storage` | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). Dual-backend: SQLite (SQLCipher, default) or PostgreSQL (pgvector, for scale-up). `user_store` deleted (multi-user identity store — zed account replaces it). |
+| `hkask-types` | Foundation: IDs, `InferencePort` trait, `RegulationSpan`, vocab. `VoiceDesign`, `ExpectProposal`, and `HMemEntry` live here (consolidated from removed crates — see Appendix A). |
+| `hkask-storage` | **Sovereignty:** per-user/curator data directory encrypted private sphere (P11.1). Dual-backend: SQLite (SQLCipher, default) or PostgreSQL (pgvector, for scale-up). |
 | `hkask-memory` | Unique semantic/episodic memory + consolidation. |
-| `hkask-regulation` | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Pruned from 49 files/15,408 lines to 26 files/9,004 lines — orphaned modules deleted (see §2.3). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick) — the former `GasBudget` hold-settle, `WalletManager`/`Well`/`agent_wallet_store`, and the `gas_per_rjoule` conversion were deleted 2026-08-03 as dead-in-production. |
+| `hkask-regulation` | Cybernetic nervous system (`reg.*`, variety, algedonic, set-points). Per-agent governed tool calls are bounded by `CallCapManager` (1 call charged per `McpRuntime::invoke`, resets per tick). Pruned from 49 files/15,408 lines to 26 files/9,004 lines — orphaned modules removed (see Appendix A). |
 | `hkask-templates` | **The tools/skills:** `ManifestExecutor` + registry + cascade + PDCA. |
-| ~~`hkask-pods`~~ (deleted) | Pod abstraction (ActivePods, PodDeployment, PodFactory, PodRegistry, PodContext, PerPodLedger, LoopScheduler, AgentPod, PodKind, PodLifecycleState) deleted. Replaced by user/curator data directories. `VoiceDesign` moved to `hkask-types`. |
-| `hkask-guard` | **Magna Carta floor (P3.1)** — becomes a layer in zed-kask's inference path. |
+| `hkask-guard` | **Magna Carta floor (P3.1)** — a layer in zed-kask's inference path. |
 | `hkask-capability` | **Capability-match gate** — sovereignty enforcement. |
-| `hkask-keystore` (trimmed) | **Sovereignty crypto only:** DB passphrase, internal-secret derivation w/ versioning. Uses the `keyring` crate directly for all keychain access (no `SecretsPort` trait). Wallet-specific resolvers (`resolve_treasury_key`, `resolve_wallet_seed`, `sign_wallet_bytes`) deleted. |
-| ~~`hkask-wallet`~~ (deleted), `hkask-ledger` | hMem accounting. `hkask-wallet` deleted in 2026-07-25; the residual crypto ledger, `WalletManager`, `Well`, `wallet_types`, and `gas_per_rjoule`/`GAS_PER_RJOULE`/`WalletConfig` were also removed 2026-08-03 (dead-in-production). |
-| `hkask-inference` | **Kept (revised):** MCP servers use it directly for now (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). Reads API keys from the `keyring` crate directly. Embeddings are handled by `kask_bridge::LanguageModelEmbeddingPort` (resolves credentials from `INFERENCE_PROVIDERS` + env var, no `LanguageModelRegistry` lookup). |
-| `hkask-mcp-server` (framework) | Trim if zed-kask's context_server hosts them natively; keep the `reg.tool.*`+OCAP gating. Daemon transport (`src/daemon/`, 6 files) and `startup.rs` deleted; `bootstrap_mcp_server()` removed (replaced by `hkask_mcp_server::run_server` factory). Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to anonymous). |
-| `hkask-forecast`, ~~`hkask-goal`~~ (deleted), `hkask-condenser`, ~~`hkask-git-cas`~~ (deleted), `hkask-bridge-dublincore`, `hkask-email`, `hkask-lisp` | Domain logic used by keep-crates/MCP servers. `hkask-git-cas` deleted — `GitCASPort` trait and supporting types deleted from `hkask-types`; `HMemEntry` moved to `hkask-types/src/lib.rs`. `hkask-goal` deleted — `GoalState` retained in `hkask-types`; `Goal`/`GoalArtifact`/`GoalCriterion` removed. `hkask-email` and `hkask-lisp` are surviving domain crates. |
-| `hkask-test-harness` | Shared test infrastructure (`TraceEntry`, proptest/bug-hunt/harness-optimize support). Was previously marked deleted (`ExpectProposal` moved to `hkask-types`); the crate was retained as a surviving workspace member. |
-| `hkask-mcp` | MCP governance. OCAP + per-agent `CallCap` gate at `McpRuntime::invoke` (the former `FlatEnergyEstimator` 10-gas-per-call estimator was removed 2026-08-03). |
-| `hkask-services-core` | Shared foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Consumed by 6 crates. The other `hkask-services-*` crates were folded into their sole MCP server consumers (F6 refactor-architecture pass): `hkask-services-kata-kanban` → `hkask-mcp-kata-kanban`; `hkask-services-corpus` + `hkask-services-compose` + `hkask-services-inference` + `hkask-services-runtime` → `hkask-mcp-corpus`. `hkask-services-context` deleted (governance module moved to `hkask-mcp-curator`; `mcp_server_guard` + `storage_guard` were dead code). |
+| `hkask-keystore` | **Sovereignty crypto only:** DB passphrase, internal-secret derivation w/ versioning. Uses the `keyring` crate directly for all keychain access (no `SecretsPort` trait — removed; see Appendix A). |
+| `hkask-ledger` | hMem accounting. |
+| `hkask-inference` | **Kept (revised):** MCP servers use it directly (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). Reads API keys from the `keyring` crate directly. Embeddings are handled by `kask_bridge::LanguageModelEmbeddingPort` (resolves credentials from `INFERENCE_PROVIDERS` + env var, no `LanguageModelRegistry` lookup). |
+| `hkask-mcp-server` (framework) | MCP server framework with `reg.tool.*`+OCAP gating. Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to anonymous). The daemon transport and `bootstrap_mcp_server()` were removed (replaced by `hkask_mcp_server::run_server` factory — see Appendix A). |
+| `hkask-forecast`, `hkask-condenser`, `hkask-bridge-dublincore`, `hkask-email`, `hkask-lisp` | Domain logic used by keep-crates/MCP servers. |
+| `hkask-test-harness` | Shared test infrastructure (`TraceEntry`, proptest/bug-hunt/harness-optimize support). A surviving workspace member (briefly considered for removal — see Appendix A). |
+| `hkask-mcp` | MCP governance. OCAP + per-agent `CallCap` gate at `McpRuntime::invoke` (the `FlatEnergyEstimator` 10-gas-per-call estimator was removed — see Appendix A). |
+| `hkask-services-core` | Shared foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Consumed by 6 crates. The other `hkask-services-*` crates were folded into their sole MCP server consumers (see Appendix A). |
 | 11 MCP servers (on-disk set) | **The tools** — hosted in-process in zed-kask. |
 
-### 2.3 hKask deletes (redundant; jobs move to zed-kask)
+### 2.3 Migration history (deleted crates → Appendix A)
 
-**DELETED (confirmed on disk):** `hkask-identity` (zed account replaces it), `hkask-communication` (Matrix → zed voip), `hkask-mcp-cloud-gateway` (no cloud deployment), `hkask-acp` (cross-process seam dissolved), `hkask-api` (HTTP server — zed owns in-process paths), `hkask-cli` (slim CLI surface — to be rebuilt as `kask` CLI for backup/wallet/repair/admin only), `hkask-repl` (zed agent panel replaces it), `hkask-services-chat` (zed owns chat), `hkask-services-onboarding` (zed first-launch replaces it), `hkask-services-runtime` daemon_impl module (deleted; classify/guard/provider_intel kept), `hkask-services-skill`, `hkask-services-wallet`, `hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`, **`hkask-pods`** (pod abstraction deleted — ActivePods/PodDeployment/PodFactory/PodRegistry/PodContext/PerPodLedger/LoopScheduler/AgentPod/PodKind/PodLifecycleState gone; `VoiceDesign` moved to `hkask-types`; `GovernanceContext` `A2ARuntime`/`ConsentManager` fields removed; `KanbanService` `pod_manager` field and `activate_pod` method removed), **`hkask-wallet`** (`gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `GAS_PER_RJOULE` and `WalletConfig` were already in `hkask-types`; wallet-specific keystore resolvers deleted), **`hkask-services-self-heal`**, **`hkask-git-cas`** (`GitCASPort` trait and supporting types deleted from `hkask-types`; `HMemEntry` moved to `hkask-types/src/lib.rs`; `SnapshotLoop` deleted from `hkask-regulation`). **Note:** `hkask-test-harness` was previously listed as deleted (`ExpectProposal` moved to `hkask-types`), but the crate was retained as a surviving workspace member — it provides `TraceEntry` and test infrastructure used by `proptest`, `bug-hunt`, and `harness-optimize` skills. **`SecretsPort` trait and `CredentialsSecretsPort` adapter deleted** — keystore uses the `keyring` crate directly for all keychain access. **Regulation orphaned modules deleted** (~6,400 lines, 20 modules): `api_metering`, `seam_watcher`+`seam_types`+`seam_span`, `contract_events`+`contract_span`, `acp_span`, `classify_span`, `snapshot_loop`, `circuit_breaker`, `slo_manager`+`slo_types`+`slo_span`, `set_point_calibrator`, `wallet_gas_calibrator`+`wallet_energy_estimator`, `gas_report`, `dynamic_gas_table`, `composite_energy_estimator`, `calibrated_energy_estimator`, `calibrator`, `inference_estimator`, `table_energy_estimator`. **`fed_*` fields removed from `SetPoints`** (7 vestigial federation fields). **Dead types removed from `hkask-types`:** `git_cas` port module (5 files), `pipeline_manifest`/`pipeline_runner`/`pipeline_state`, `flowdef_validation`, dead wallet types (`ApiKeyMaterial`, `PriceFeedConfig`, `RJ_PER_USDC`, `TxHash`).
-
-**Folded into MCP server consumers (F6 refactor-architecture pass):** `hkask-services-kata-kanban` → `hkask-mcp-kata-kanban`; `hkask-services-corpus` + `hkask-services-compose` + `hkask-services-inference` + `hkask-services-runtime` → `hkask-mcp-corpus`. **`hkask-services-context` deleted** — `governance.rs` moved to `hkask-mcp-curator` (its only consumer); `mcp_server_guard.rs` + `storage_guard.rs` were dead code (zero instantiations). `hkask-services-core` kept (genuinely shared by 6 crates).
-
----
+The full deletion/migration history (deleted crates, folded services, removed modules and types, removed settings/hooks) is consolidated in **[Appendix A](#appendix-a--migration-history)**. The current-state table in §2.2 shows only what exists now.
 
 ### 2.4 MCP load set (11 on disk)
 
@@ -140,19 +158,32 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 |---|---|---|---|---|
 | D1 | Skill execution | `crates/agent/src/tools/skill_tool.rs` + `crates/agent/src/agent.rs` + `crates/zed/src/main.rs` | ✅ DONE | `SkillTool` has optional `SkillManifestExecutor`; composition root wires `BridgeManifestExecutor`. `SKILL.md` stays discovery-only; manifest YAML drives the cascade. |
 | D2 | Curator agent | `crates/agent_ui/src/agent_ui.rs` + `crates/agent/src/agent.rs` | ✅ DONE | `Agent::Curator` variant; `CURATOR_AGENT_ID`; selectable in Agent Panel. |
-| D3 | hKask tools in-process | `crates/zed/src/main.rs` (McpRuntime passed directly as `ToolPort`) | ✅ DONE | `McpRuntime` implements `ToolPort` directly (capability-match gate + gas budgeting + `reg.tool.*` spans). MCP servers run as child processes. Daemon transport removed; `bootstrap_mcp_server()` removed (replaced by `hkask_mcp_server::run_server` factory). Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to anonymous). The former `BridgeToolPort` adapter was collapsed in the 2026-07-31 simplification pass (see `tasks/plan.md` C3). |
-| D4 | Guard layer | `crates/language_model_core`/`language_model` + `kask/crates/hkask-guard` | ✅ DONE | `GuardedInferencePort` wraps `InferencePort` at composition root. Content guard scans input (injection, role override, token limit) and output (secret redaction). Guards skill cascade path; direct chat uses provider-side safety + refusal fallback (`cascade_only` hardcoded — `kask.guard.direct_chat_strategy` deleted 2026-07-31). |
-| D5 | Sovereignty keys | `kask/crates/hkask-keystore` | ✅ DONE | `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase chain, SQLCipher encryption). No `keyring`-injection seam, no `OnceLock`, no parallel zed `CredentialsProvider` path. The a2a/OCAP secret threading was deleted as self-referential security theater (see `tasks/plan.md` D5 verdict); `panel_default_token` mints the in-process capability token. |
-| D6 | Thread → memory | `crates/agent/src/thread.rs` / `thread_store.rs` + `kask/crates/hkask-types` + `kask/crates/kask_bridge` | ✅ DONE | `MemoryPort` trait in `hkask-types`. `BridgeMemoryPort` in `kask_bridge`. Global hook `agent::set_memory_port()` (Mutex — re-settable). Thread turn completion ingests via `cx.background_spawn()`. Hook is `None` at startup (no `LoggingMemoryPort` — deleted in the 2026-07-31 simplification pass, see `tasks/plan.md` C4); `RealMemoryPort` wired in the deferred post-login task. |
+| D3 | hKask tools in-process | `crates/zed/src/main.rs` (McpRuntime passed directly as `ToolPort`) | ✅ DONE | `McpRuntime` implements `ToolPort` directly (capability-match gate + gas budgeting + `reg.tool.*` spans). MCP servers run as child processes. Daemon transport removed; `bootstrap_mcp_server()` removed (replaced by `hkask_mcp_server::run_server` factory). Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to anonymous). The `BridgeToolPort` adapter was removed (see Appendix A). |
+| D4 | Guard layer | `crates/language_model_core`/`language_model` + `kask/crates/hkask-guard` | ✅ DONE | `GuardedInferencePort` wraps `InferencePort` at composition root. Content guard scans input (injection, role override, token limit) and output (secret redaction). Guards skill cascade path; direct chat uses provider-side safety + refusal fallback (`cascade_only` hardcoded — the `kask.guard.direct_chat_strategy` setting was removed; see Appendix A). |
+| D5 | Sovereignty keys | `kask/crates/hkask-keystore` | ✅ DONE | `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase chain, SQLCipher encryption). No `keyring`-injection seam, no `OnceLock`, no parallel zed `CredentialsProvider` path (the prior injection design was removed — see Appendix A). The a2a/OCAP secret threading was removed as self-referential security theater; `panel_default_token` mints the in-process capability token. |
+| D6 | Thread → memory | `crates/agent/src/thread.rs` / `thread_store.rs` + `kask/crates/hkask-types` + `kask/crates/kask_bridge` | ✅ DONE | `MemoryPort` trait in `hkask-types`. `BridgeMemoryPort` in `kask_bridge`. Global hook `agent::set_memory_port()` (Mutex — re-settable). Thread turn completion ingests via `cx.background_spawn()`. Hook is `None` at startup (the `LoggingMemoryPort` no-op placeholder was removed; see Appendix A); `RealMemoryPort` wired in the deferred post-login task. |
 | D7 | App-identity | `crates/paths/src/paths.rs`, `crates/release_channel/src/lib.rs`, `crates/zed/src/zed/mac_only_instance.rs`, `crates/zed/Cargo.toml` | ✅ DONE | `APP_NAME`→`Zed-Kask`, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`, bundle IDs `dev.zed-kask.*`. |
-| D8 | Bridge + adapters | `kask/crates/kask_bridge/` | ✅ DONE | `LanguageModelInferencePort` (`InferencePort` over `LanguageModel`, honors `model_override` via `resolve_model_names` registry resolution), `BridgeManifestExecutor`, `BridgeMemoryPort`, `BridgeThreadCondenser`, `BridgeContextInjector`, `BridgeCuratorContextInjector`, `BridgeMetacognitionProvider`, `KaskSettings`. `McpRuntime` is passed directly as `ToolPort` (no `BridgeToolPort` — collapsed in the 2026-07-31 simplification pass, see `tasks/plan.md` C3). Channel pattern solves GPUI/tokio `Send`+`Sync` boundary. |
-| D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` + `crates/settings_ui/src/pages/kask_page.rs` + `crates/settings_ui/src/page_data.rs` | ✅ DONE | `KaskSettings` struct + `"kask"` section in settings.json; `hkask-keystore` uses the `keyring` crate directly (kask namespace). Settings UI page with sub-pages (Data Services, MCP Servers, Curator, Memory, Condenser, Models) registered in `page_data.rs` after `ai_page`. The Guard sub-page was deleted in the 2026-07-31 simplification pass (`direct_chat_strategy` was the only field; see `tasks/plan.md` C6). |
-| D10 | ~~Kask panel~~ (removed) | ~~`crates/kask_panel/`~~ | ❌ **DELETED** | The `crates/kask_panel/` crate was deleted. The chat panel was redundant with the agent panel + curator threads. The standalone visualization views were replaced by inline chat-stream widgets (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. The gas budget persona was renamed from `kask-panel` to `swarm-panel`. See `DIVERGENCE.md` D10. |
+| D8 | Bridge + adapters | `kask/crates/kask_bridge/` | ✅ DONE | `LanguageModelInferencePort` (`InferencePort` over `LanguageModel`, honors `model_override` via `resolve_model_names` registry resolution), `BridgeManifestExecutor`, `BridgeMemoryPort`, `BridgeThreadCondenser`, `BridgeContextInjector`, `BridgeCuratorContextInjector`, `BridgeMetacognitionProvider`, `KaskSettings`. `McpRuntime` is passed directly as `ToolPort` (no `BridgeToolPort` adapter — removed; see Appendix A). Channel pattern solves GPUI/tokio `Send`+`Sync` boundary. |
+| D9 | Settings + credentials | `kask/crates/kask_bridge/src/settings.rs` + `crates/settings_content/src/settings_content.rs` + `crates/settings_ui/src/pages/kask_page.rs` + `crates/settings_ui/src/page_data.rs` | ✅ DONE | `KaskSettings` struct + `"kask"` section in settings.json; `hkask-keystore` uses the `keyring` crate directly (kask namespace). Settings UI page with sub-pages (Data Services, MCP Servers, Curator, Memory, Condenser, Models) registered in `page_data.rs` after `ai_page`. The Guard sub-page was removed (`direct_chat_strategy` was the only field; see Appendix A). |
+| D10 | Kask panel (removed) | `crates/kask_panel/` (deleted) | ❌ REMOVED | The `kask_panel` crate was deleted; chat panel was redundant with the agent panel + curator threads. Visualization views moved to inline chat-stream widgets (D18). `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. See Appendix A. |
 
 **Discipline:** D1–D20 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
+
+---
+
+## 4. (removed — see §3 and Appendix A)
+
+> The phased migration-plan subsection that previously occupied §4–§5 has been removed. All phases are complete: D1–D20 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
+
+## 5. (removed — see §3 and Appendix A)
+
+> Removed along with §4 — see the note above.
+
+---
+
 ## 6. Migration Status
 
-> The phased migration plan that previously occupied this section has been removed per `DOCUMENTATION_STANDARDS.md` §10. All phases are complete: D1–D20 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
+> The phased migration plan that previously occupied this section has been removed. All phases are complete: D1–D20 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
 
 ---
 
@@ -205,24 +236,34 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 
 All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME`→`Zed-Kask`, `app_identifier`→`Zed-Kask-Editor`, `app_id`→`dev.zed-kask.Zed-Kask`, port offset +500, binary `zed-kask`, remote dirs `.zed-kask_server`/`.zed-kask_wsl_server`, bundle IDs `dev.zed-kask.*`, URL scheme `zed-kask://`. See `DIVERGENCE.md` D7 for the authoritative list.
 
+---
+
 ## 8. Architecture Notes
 
-> The planning process artifacts (open questions, review findings) that previously occupied this section have been removed per `DOCUMENTATION_STANDARDS.md` §10. All review findings were resolved during implementation. The architecture is described in §0–§7, §11–§14. The `DIVERGENCE.md` at the repo root is the authoritative divergence surface record.[^fowler-strangler]
+> The planning-process artifacts (open questions, review findings) that previously occupied this section have been removed. All review findings were resolved during implementation. The architecture is described in §0–§7, §11–§14. The `DIVERGENCE.md` at the repo root is the authoritative divergence surface record.[^fowler-strangler]
 
 ---
+
+## 9. (removed — see §11 and Appendix A)
+
+> The design-detail subsection that previously occupied §9 has been folded into §11 (Kask Settings & Credentials) and Appendix A.
+
+## 10. (removed — see Appendix A)
+
+> The kask-panel design that previously occupied §10 has been removed — the panel was deleted and its functionality moved to inline chat-stream widgets (D18) + `swarm_panel`. See Appendix A.
 
 ---
 
 ## 11. Kask Settings & Credentials (data-service keys, minimal divergence)
 
-> **Correction (2026-08-01):** The D9b design below proposed routing sovereignty keys (D5) through zed's `CredentialsProvider`. The final D5 implementation does NOT do this — `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase, SQLCipher encryption), with no zed-side seam. The `CredentialsProvider` namespace (D9b) is used only for data-service API keys (companies/scenarios), not sovereignty keys. The a2a/OCAP secret threading was deleted as self-referential security theater. See DIVERGENCE.md D5 for the authoritative final state. This section is retained as the design history for D9a/D9b; treat the D5 sovereignty-key references below as superseded by DIVERGENCE.md D5.
+> **Design note:** The D9b design below proposed routing sovereignty keys (D5) through zed's `CredentialsProvider`. The final D5 implementation does NOT do this — `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase, SQLCipher encryption), with no zed-side seam. The `CredentialsProvider` namespace (D9b) is used only for data-service API keys (companies/scenarios), not sovereignty keys. The a2a/OCAP secret threading was removed as self-referential security theater (see Appendix A). See `DIVERGENCE.md` D5 for the authoritative final state. This section is retained as the design history for D9a/D9b; treat the D5 sovereignty-key references below as superseded by `DIVERGENCE.md` D5.
 
 **Goal:** load API keys for data services (EODHD, FMP, and other kask data services) and all kask-unique config via a **kask settings section** in zed-kask's settings.json + a **kask credentials namespace** in the keystore — leaving core zed settings/keystore code untouched.[^fowler-di]
 
 ### 11.1 Evidence
 - zed-kask stores provider API keys via the `CredentialsProvider` trait (`read_credentials`/`write_credentials`/`delete_credentials` keyed by URL → OS keychain); `language_models` providers use `api_key_state` + `credentials_provider` (`crates/credentials_provider`, `crates/language_models/src/provider/open_router.rs`). **Secrets live in the keychain, NOT settings.json.**
 - The settings UI is `Vec<SettingsPage>` built in `crates/settings_ui/src/page_data.rs::settings_data()`; pages live in `crates/settings_ui/src/pages/` (e.g. `mcp_servers_page.rs`, `llm_providers_page.rs`).
-- hKask today reads data-service keys from **env vars** (`HKASK_FMP_API_KEY`, `HKASK_EODHD_API_KEY`) — in `hkask-mcp-companies` (`ctx.get`). ~~in `hkask-wallet/price_feed.rs` (`std::env::var`)~~ (`hkask-wallet` deleted). They are NOT in hKask's keychain (which holds DB passphrase/OCAP signing only).
+- hKask today reads data-service keys from **env vars** (`HKASK_FMP_API_KEY`, `HKASK_EODHD_API_KEY`) — in `hkask-mcp-companies` (`ctx.get`). They are NOT in hKask's keychain (which holds DB passphrase/OCAP signing only).
 
 ### 11.2 Design (two additive seams)
 
@@ -235,7 +276,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 - `kask.memory` — consolidation cadence, confidence floor.
 Registered with zed's settings system so it appears in the `zed://schemas/settings` schema. **Minimal divergence:** one new settings struct + registration; core zed settings structs untouched.
 
-**D9b — kask credentials namespace** (via the existing `CredentialsProvider`). Data-service API keys stored in the OS keychain under kask-namespaced URLs (e.g. `kask://credentials/eodhd`, `kask://credentials/fmp`), alongside zed's provider keys (which use their own URLs). The kask MCP servers (companies/scenarios) read keys via `CredentialsProvider` at runtime — **replacing the env-var approach** (`HKASK_*`). This folds into the T3.0 in-process refactor: MCP servers take a credentials handle, not env vars. The sovereignty keys (D5: DB passphrase) also move here (kask namespace), so the trimmed `hkask-keystore` becomes a thin crypto-derivation layer over the shared `CredentialsProvider` (using the `keyring` crate directly — `SecretsPort` trait deleted).
+**D9b — kask credentials namespace** (via the existing `CredentialsProvider`). Data-service API keys stored in the OS keychain under kask-namespaced URLs (e.g. `kask://credentials/eodhd`, `kask://credentials/fmp`), alongside zed's provider keys (which use their own URLs). The kask MCP servers (companies/scenarios) read keys via `CredentialsProvider` at runtime — **replacing the env-var approach** (`HKASK_*`). This folds into the T3.0 in-process refactor: MCP servers take a credentials handle, not env vars. The sovereignty keys (D5: DB passphrase) also move here (kask namespace), so the trimmed `hkask-keystore` becomes a thin crypto-derivation layer over the shared `CredentialsProvider` (using the `keyring` crate directly — the `SecretsPort` trait was removed; see Appendix A).
 
 ### 11.3 Settings UI (additive page)
 A new **Kask** page: `crates/settings_ui/src/pages/kask_page.rs` + one entry in `page_data.rs::settings_data()`. Sub-pages mirror the settings section: **Data Services** (per-service enable + key entry → writes to keychain via `CredentialsProvider`), **MCP Servers** (the 11 on-disk servers, with load toggles — curator may be unloaded via override), **Curator**, **Sovereignty/Pod**, **Guard/Regulation**, **Memory**. Touches `page_data.rs` minimally (one `SettingsPage` push) — core zed pages untouched.
@@ -253,39 +294,14 @@ D9a/D9b/D9c are ✅ DONE. `KaskSettings` struct registered with zed's settings s
 
 ### 11.6 Design notes
 - **Secrets must NOT be in settings.json** — keys live in the keychain (matches zed's provider-key pattern). The `kask` settings section holds only toggles/refs.
-- **Dependency direction:** `hkask-keystore` uses the `keyring` crate directly for all keychain access (D5) — NOT zed's `CredentialsProvider`. The `SecretsPort` trait was deleted.
+- **Dependency direction:** `hkask-keystore` uses the `keyring` crate directly for all keychain access (D5) — NOT zed's `CredentialsProvider`. The `SecretsPort` trait was removed (see Appendix A).
 - **D9 = divergence seam** (kask settings section + credentials namespace + UI page). See §3 divergence map.
+
 ---
 
-## 12. Kask Panel (per-MCP-server one-on-one windows) — REMOVED
+## 12. Kask Panel (removed — see Appendix A)
 
-**Status (2026-08-04):** The `crates/kask_panel/` crate was **deleted**. The chat panel (tab strip over `ConversationView` per MCP server) was redundant with the agent panel + curator threads. The standalone visualization views (`KanbanBoardView`, `PortfolioDashboardView`, `ScenariosView`) were replaced by inline chat-stream widgets (`hkask-kanban-widget`, `hkask-portfolio-widget`, `hkask-scenarios-widget`) registered with `hkask-viz-core` (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs` (the only remaining consumer). The gas budget persona was renamed from `kask-panel` to `swarm-panel`. See `DIVERGENCE.md` D10 for the authoritative state.
-
-**Requirement (historical):** a "Kask" panel in zed-kask where the user can launch a window per kask MCP server and interact with it **one-on-one** to reach the server's **deeper functionality** (direct tool invocation + scoped inference), within the zed-kask app — distinct from the conversational Agent Panel (which drives tools via the agent).
-
-### 12.1 Design rationale (historical)
-
-The kask panel provided per-MCP-server one-on-one interaction (direct tool invocation + scoped inference), distinct from the conversational Agent Panel. The original implementation in the deleted `hkask-repl` crate (`McpScopedWindow`) was reimplemented natively in GPUI (option B below) — the ratatui TUI was deleted entirely. This panel has since been deleted; the functionality moved to inline chat-stream widgets (D18).
-
-### 12.2 Implementation decision (historical)
-
-**Decision: native GPUI panel (option B).** A zed-native `Item` (`crates/kask_panel`, GPUI) — a server catalog (the 11 on-disk servers, §2.4) + a per-server view with direct `:tool args` invocation and scoped-inference input, calling the in-process MCP tools and guarded inference (D8) directly. No PTY, no view socket, no daemon listener. The alternative (ratatui-in-terminal) was rejected — it would re-introduce an IPC boundary. This decision was later reversed: the panel was deleted and functionality moved to inline chat-stream widgets (D18) + `swarm_panel`.
-
-### 12.3 Design (D10 — native GPUI kask panel) — historical
-- **zed side:** `Item` impl `crates/kask_panel` (implements `pub trait Item`, `crates/workspace/src/item.rs`; opens in the center pane via `workspace.add_item_to_active_pane(...)` — NOT a dock `Panel`). Renders: a list of the 11 on-disk MCP servers (from the in-process tool registry, §2.4); selecting one opens a per-server sub-view.
-- **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the capability-gated path (same `McpRuntime::invoke` / `ToolGovernance` /gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
-- **Capability gate:** the panel invokes tools under the caller's `DelegationToken` (scoped to `webid`) exactly as the agent does — direct invocation does NOT bypass the capability-match gate. Double-gate (F10) applies: panel invokes are still `McpRuntime::invoke` / `ToolGovernance`-gated.
-
-**Note:** This design was implemented and later deleted. See DIVERGENCE.md D10 + D18.
-
-### 12.4 Implementation (removed)
-
-D10 was implemented and later **deleted**. The `crates/kask_panel/` crate is gone. The chat panel was redundant with the agent panel + curator threads. The standalone visualization views were replaced by inline chat-stream widgets (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. See `DIVERGENCE.md` D10 for the authoritative state.
-
-### 12.5 Verified facts
-
-- **Direct invocation does not bypass sovereignty** — it reuses the capability-gated `McpRuntime::invoke` / `ToolGovernance` path; only the LLM is bypassed, not the capability-match gate/gas.[^miller-capability]
-- **Variety/regulation:** direct one-on-one invokes still emit `reg.tool.*` and consume gas — the cybernetic loop sees panel activity, so regulation is not bypassed.
+**Status (2026-08-04):** The `crates/kask_panel/` crate was **deleted**. The chat panel (tab strip over `ConversationView` per MCP server) was redundant with the agent panel + curator threads. The standalone visualization views (`KanbanBoardView`, `PortfolioDashboardView`, `ScenariosView`) were replaced by inline chat-stream widgets (`hkask-kanban-widget`, `hkask-portfolio-widget`, `hkask-scenarios-widget`) registered with `hkask-viz-core` (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs` (the only remaining consumer). The gas budget persona was renamed from `kask-panel` to `swarm-panel`. See `DIVERGENCE.md` D10 for the authoritative state and **Appendix A** for the full removal history (design rationale, implementation decision, verified facts).
 
 ---
 
@@ -305,39 +321,39 @@ All zed↔kask connection surfaces are a small set of **port traits** (in `hkask
 | `ToolPort` (hkask-capability; capability-match+gas) | the in-process MCP tool registry (D3) | ManifestExecutor FlowDef `execute`, kask panel direct invoke (D10) | D3/D8 |
 | `keyring` crate (synchronous OS keychain) | `CredentialsProvider` (kask namespace) | data-service keys (companies/scenarios) + sovereignty keys (D5) | D5/D9b |
 | `CuratorTurnPort` (hkask-types; NEW) | zed native-agent turn → in-process `CuratorAgent` (tokio via bridge) | Curator as native agent (D2) | D2/D8 |
-| `MemoryPort` (hkask-types; NEW) | in-process `EpisodicMemory`/`SemanticMemory` handles. `MEMORY_PORT` global uses `Mutex` (not `OnceLock`) so the port can be replaced: logging at startup, real after agent provisioning. | thread→memory ingestion (D6) | D6 |
+| `MemoryPort` (hkask-types; NEW) | in-process `EpisodicMemory`/`SemanticMemory` handles. `MEMORY_PORT` global uses `Mutex` (not `OnceLock`) so the port can be replaced: `None` at startup, real after agent provisioning. | thread→memory ingestion (D6) | D6 |
 
 Hexagonal pattern: hKask defines the ports; the bridge crate is the adapter; the composition root wires them. **No hKask crate imports a zed-kask crate.**
 
 ### 13.3 Composition root (startup — DI pattern)
-zed-kask app startup constructs the individual hKask components directly (~~`KaskCore`~~ was never implemented as a single singleton — the composition root wires each component separately) and wires the adapters:[^seemann-di]
+zed-kask app startup constructs the individual hKask components directly (`KaskCore` was never implemented as a single singleton — the composition root wires each component separately) and wires the adapters:[^seemann-di]
 1. **Load `KaskSettings` (D9a)** → bind to component construction params (regulation set-points, gas defaults, consolidation cadence, guard strategy, MCP load set = the 11 on disk, §2.4). **Settings→config is construction-time, not a runtime port** (config-struct-validated-on-construction).
-2. **Memory port hook is `None` at startup (D6):** `set_memory_port` is not called until the deferred post-login task. `thread.rs` no-ops when the hook is unset. Uses `Mutex` (not `OnceLock`) so the port can be replaced later. (The former `LoggingMemoryPort` no-op placeholder was deleted in the 2026-07-31 simplification pass — see `tasks/plan.md` C4.)
+2. **Memory port hook is `None` at startup (D6):** `set_memory_port` is not called until the deferred post-login task. `thread.rs` no-ops when the hook is unset. Uses `Mutex` (not `OnceLock`) so the port can be replaced later. (The `LoggingMemoryPort` no-op placeholder was removed — see Appendix A.)
 3. **Construct hKask components directly:** per-user/curator data directory storage (SQLite SQLCipher or PostgreSQL via `ServiceConfig::open_driver()`), Regulation runtime, memory, the singleton Curator (`CuratorHandle` mpsc in-process), the 11 MCP servers (standalone, identity from `ServerContext.webid` resolved out of `HKASK_WEBID`), the `ManifestExecutor`.
 4. **Build the bridge:** `InferencePort`-over-`LanguageModel` (+guard), `ToolPort`-over-tool-registry, `keyring` crate-over-`CredentialsProvider`, `CuratorTurnPort`, `MemoryPort`; inject into `ManifestExecutor`/Curator/MCP servers/kask panel.
 5. **Wire the regulation system:** construct `RegulationLedger::default()` + `CyberneticsLoop::new(ledger)` + `NoopEventSink`, seed the `swarm-panel` persona `CallCap`, and call `McpRuntime::with_governance(loop, sink)`. Startup log: "hKask regulation system wired — tool invocations are governed". `hkask-regulation` and `tokio` are now dependencies of `zed`.
 6. **Spawn** the regulation + Curator metacognition tokio loops on the `gpui_tokio` runtime (R1) — the loop driver.
-7. **Register** the **user agent** + **Curator** native agents (D2). (The former `kask_panel::init(cx)` call (D10) was removed when the kask_panel crate was deleted — D10 removed; visualization views moved to D18 inline widgets.)
-8. **Deferred agent provisioning (D6 late):** after `AppState::set_global`, a spawned task watches `UserStore::current_user()`. When the Zed user resolves: `provision_agent(username)` creates the directory structure, ensures a DB passphrase (auto-generate random English word if none, via the `keyring` crate directly), and calls `set_memory_port(BridgeMemoryPort(RealMemoryPort))` to replace the logging port. MCP servers are launched without a per-user `HKASK_WEBID`; they fall back to anonymous identity unless the operator sets `HKASK_WEBID` in the environment.
+7. **Register** the **user agent** + **Curator** native agents (D2). (The `kask_panel::init(cx)` call (D10) was removed when the kask_panel crate was deleted — see Appendix A; visualization views moved to D18 inline widgets.)
+8. **Deferred agent provisioning (D6 late):** after `AppState::set_global`, a spawned task watches `UserStore::current_user()`. When the Zed user resolves: `provision_agent(username)` creates the directory structure, ensures a DB passphrase (auto-generate random English word if none, via the `keyring` crate directly), and calls `set_memory_port(BridgeMemoryPort(RealMemoryPort))` to replace the `None` port. MCP servers are launched without a per-user `HKASK_WEBID`; they fall back to anonymous identity unless the operator sets `HKASK_WEBID` in the environment.
 9. **Migrate** config (T6.3) on first launch.
 
-~~`KaskCore` is the "shared core" R4 referred to — the single owner of storage/regulation/memory the MCP servers take handles from (prevents the two-instance pitfall).~~ `KaskCore` was never implemented. The composition root constructs individual components directly. The daemon transport was deleted rather than refactored to in-process handles.
+`KaskCore` (the "shared core" R4 referred to — the single owner of storage/regulation/memory the MCP servers take handles from, to prevent the two-instance pitfall) was never implemented. The composition root constructs individual components directly. The daemon transport was removed rather than refactored to in-process handles (see Appendix A).
 
-Components construct at zed-kask startup with a logging memory port; the agent is provisioned when `UserStore::current_user()` resolves (deferred task). The `MEMORY_PORT` global uses `Mutex` (not `OnceLock`) so the port can be replaced after startup. Per-user/curator data directory storage opens at provisioning time, not at process start.
+Components construct at zed-kask startup with the memory port hook set to `None`; the agent is provisioned when `UserStore::current_user()` resolves (deferred task). The `MEMORY_PORT` global uses `Mutex` (not `OnceLock`) so the port can be replaced after startup. Per-user/curator data directory storage opens at provisioning time, not at process start.
 
 ### 13.4 Consolidated divergence map (D1–D20)
 | D | Surface | zed-kask file | Connection (port/adapter) |
 |---|---|---|---|
 | D1 | skill execution | `agent_skills` + `agent/tools/skill_tool.rs` | skill_tool → bridge.ManifestExecutor(InferencePort, ToolPort) |
 | D2 | Curator agent | `agent.rs` + `native_agent_server` + `agent_servers` | native agent → CuratorTurnPort → in-process Curator |
-| D3 | tools in-process | `crates/zed/src/main.rs` (McpRuntime passed directly as `ToolPort`) | in-process transport → ToolPort; MCP servers run standalone with identity from `ServerContext.webid` (`HKASK_WEBID`) (daemon transport deleted; the former `BridgeToolPort` adapter was collapsed in the 2026-07-31 simplification pass — see `tasks/plan.md` C3) |
+| D3 | tools in-process | `crates/zed/src/main.rs` (McpRuntime passed directly as `ToolPort`) | in-process transport → ToolPort; MCP servers run standalone with identity from `ServerContext.webid` (`HKASK_WEBID`) (daemon transport removed; the `BridgeToolPort` adapter was removed — see Appendix A) |
 | D4 | guard | `language_model_core`/`language_model` | `GuardedInferencePort` wraps `InferencePort`-over-`LanguageModel` |
-| D5 | sovereignty keys | `kask/crates/hkask-keystore` | **via the `keyring` crate directly** (no injection seam — the prior `keyring`-injection design and `SecretsPort` trait were deleted; see `tasks/plan.md` D5 verdict). DB passphrase auto-provisioned on first run (random English word, stored in keychain). The a2a/OCAP secret threading was deleted as self-referential security theater; `panel_default_token` mints the in-process capability token. |
-| D6 | thread→memory | `agent/thread.rs`/`thread_store.rs` | thread hook → `MemoryPort` → in-process memory. Hook is `None` at startup (no `LoggingMemoryPort` — deleted in the 2026-07-31 simplification pass, see `tasks/plan.md` C4); upgraded to `RealMemoryPort` when Zed user resolves (deferred provisioning via `provision_agent`). |
+| D5 | sovereignty keys | `kask/crates/hkask-keystore` | **via the `keyring` crate directly** (no injection seam — the prior `keyring`-injection design and `SecretsPort` trait were removed; see Appendix A). DB passphrase auto-provisioned on first run (random English word, stored in keychain). The a2a/OCAP secret threading was removed as self-referential security theater; `panel_default_token` mints the in-process capability token. |
+| D6 | thread→memory | `agent/thread.rs`/`thread_store.rs` | thread hook → `MemoryPort` → in-process memory. Hook is `None` at startup (the `LoggingMemoryPort` no-op placeholder was removed; see Appendix A); upgraded to `RealMemoryPort` when Zed user resolves (deferred provisioning via `provision_agent`). |
 | D7 | app-identity | `paths.rs`, `release_channel`, `mac_only_instance`, `Cargo.toml`, scripts | (zed-kask self-change; not a zed↔kask seam) |
-| D8 | bridge + adapters | new `crates/kask_bridge` + `gpui_tokio` | **THE bidirectional seam** — implements all ports (no `BridgeToolPort` — `McpRuntime` is passed directly as `ToolPort`; collapsed in the 2026-07-31 simplification pass, see `tasks/plan.md` C3) |
-| D9 | settings + credentials | new `KaskSettings` section + `CredentialsProvider` namespace + `kask_page` | `KaskSettings` → component params; `hkask-keystore` uses the `keyring` crate directly. The Guard sub-page was deleted in the 2026-07-31 simplification pass (`direct_chat_strategy` was the only field; see `tasks/plan.md` C6). |
-| D10 | ~~kask panel~~ (removed) | ~~`crates/kask_panel`~~ (deleted) | **REMOVED** — the kask_panel crate was deleted; chat panel was redundant with agent panel + curator threads. Visualization views moved to inline chat-stream widgets (D18). `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. See DIVERGENCE.md D10. |
+| D8 | bridge + adapters | new `crates/kask_bridge` + `gpui_tokio` | **THE bidirectional seam** — implements all ports (no `BridgeToolPort` — `McpRuntime` is passed directly as `ToolPort`; the adapter was removed — see Appendix A) |
+| D9 | settings + credentials | new `KaskSettings` section + `CredentialsProvider` namespace + `kask_page` | `KaskSettings` → component params; `hkask-keystore` uses the `keyring` crate directly. The Guard sub-page was removed (`direct_chat_strategy` was the only field; see Appendix A). |
+| D10 | kask panel (removed) | `crates/kask_panel` (deleted) | **REMOVED** — the kask_panel crate was deleted; chat panel was redundant with agent panel + curator threads. Visualization views moved to inline chat-stream widgets (D18). `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. See Appendix A. |
 | D11 | `time::format_description::parse` deprecation allow | `crates/git_ui/src/git_graph.rs` | Upstream `time::format_description::parse` is `#[deprecated]`; two call sites carry `#[allow(deprecated)]` with `// zed-kask:` pointer. Remove when upstream migrates to `parse_borrowed`. |
 | D12 | OpenAI/Anthropic-compatible env var name | `crates/language_models/src/provider/api_compatible.rs` | Strips non-alphanumerics + uppercases instead of `convert_case` (fixes `DEEPINFRA_API_KEY` / `FALAI_API_KEY`). Pinned by `test_api_key_env_var_name_kask_contract`. |
 | D13 | OpenRouter output budget | `crates/open_router/src/open_router.rs` + `crates/language_models/src/provider/open_router.rs` | Parses `top_provider.max_completion_tokens` into `Model::max_output_tokens`, flows into request as explicit `max_tokens`. Pinned by `test_max_completion_tokens_from_api_becomes_request_budget`. |
@@ -349,13 +365,11 @@ Components construct at zed-kask startup with a logging memory port; the agent i
 | D19 | Update-progress popup | `crates/auto_update_ui/src/auto_update_ui.rs` | New `UpdateProgressNotification` app-notification shown while a single-click `Update Zed-Kask` (D16/D17) is in flight. Drives `manage_update_progress_notification` via `cx.observe` on the shared `AutoUpdater` entity. Pinned by `tests::progress_popup_gating`. |
 | D20 | Observed per-call USD cost in `TokenUsage` | `crates/language_model_core/src/language_model_core.rs` + `crates/open_ai/src/open_ai.rs` + `kask/crates/kask_bridge/src/inference.rs` | Adds `cost: Option<f64>` field to `TokenUsage`; OpenAI-compatible provider impl parses `usage.cost`/`estimated_cost`/`market_cost`; `kask_bridge::LanguageModelInferencePort` reads `TokenUsage.cost` into `InferenceResult.cost_usd` for rJoule budget charging. Pinned by 3 tests. |
 
-
-
 ---
 
 ## 14. Repository Consolidation — full merge into zed-kask
 
-**Decision (§0):** fully merge hKask into the `zed-kask` fork. zed-kask becomes the **single source of truth** for everything hKask is becoming — code, skills, scripts, and docs. The `mdz-axo/hKask` repo is **archived** (read-only reference). This replaces the earlier path-dep/submodule wiring (T0.6), which dissolved once hKask could no longer compile or run standalone (daemon/ACP/REPL/inference deleted; keep-crates need the in-process bridge + `gpui_tokio`).[^fowler-strangler]
+**Decision (§0):** fully merge hKask into the `zed-kask` fork. zed-kask becomes the **single source of truth** for everything hKask is becoming — code, skills, scripts, and docs. The `mdz-axo/hKask` repo is **archived** (read-only reference). This replaces the earlier path-dep/submodule wiring, which dissolved once hKask could no longer compile or run standalone (daemon/ACP/REPL/inference deleted; keep-crates need the in-process bridge + `gpui_tokio`).[^fowler-strangler]
 
 ### 14.1 Why (essentialist)
 - **hKask crates are not independently shippable** after the deletions — they only compile inside zed-kask. A separate repo for non-standalone crates is friction (cross-repo path-deps, R10 hermeticity, two-clone dev, ownership ambiguity) with no value. P5: a module/repo that can't stand alone shouldn't be kept apart.[^ousterhout]
@@ -377,25 +391,13 @@ zed-kask/
     │                  # hkask-forecast, hkask-bridge-dublincore, hkask-services-core,
     │                  # hkask-email, hkask-lisp, hkask-test-harness,
     │                  # kask_bridge (D8)
-    │                  # (deleted: hkask-pods, hkask-wallet, hkask-git-cas,
-    │                  #  hkask-services-self-heal, hkask-services-context,
-    │                  #  hkask-services-corpus, hkask-services-compose,
-    │                  #  hkask-services-inference, hkask-services-runtime,
-    │                  #  hkask-services-kata-kanban, hkask-goal, hkask-identity,
-    │                  #  hkask-communication, hkask-acp, hkask-api, hkask-cli,
-    │                  #  hkask-repl, hkask-services-chat, hkask-services-onboarding,
-    │                  #  hkask-services-skill, hkask-services-wallet,
-    │                  #  hkask-mcp-communication, hkask-mcp-filesystem,
-    │                  #  hkask-mcp-memory, hkask-mcp-skill, hkask-mcp-regulation,
-    │                  #  hkask-mcp-cloud-gateway — the hkask-services-* were folded
-    │                  #  into their MCP server consumers; kask_panel (former D10)
-    │                  #  was deleted, functionality moved to swarm_panel + D18 widgets)
+    │                  # (deleted crates — see Appendix A)
     ├── mcp-servers/   # the 11 on-disk servers (curator may be unloaded via override; hkask-mcp-*)
     ├── skills/        # the skills registry (manifest.yaml + *.j2; Pattern A source of truth)
     ├── scripts/       # check-hkask-no-zed-deps.sh + hKask admin/build scripts
     └── docs/          # ← documentation home (see 14.3)
 ```
-zed-kask's `Cargo.toml` adds `kask/crates/*` + `kask/mcp-servers/*` as workspace members and merges hKask's `[workspace.dependencies]` into its own. The bridge crate `kask_bridge` (D8) lives under `kask/crates/` too — it's ours, not upstream's. (The former `kask_panel` crate under `kask/crates/` was deleted — D10 removed; its functionality moved to `crates/swarm_panel/` + D18 inline widgets.)
+zed-kask's `Cargo.toml` adds `kask/crates/*` + `kask/mcp-servers/*` as workspace members and merges hKask's `[workspace.dependencies]` into its own. The bridge crate `kask_bridge` (D8) lives under `kask/crates/` too — it's ours, not upstream's. (The former `kask_panel` crate under `kask/crates/` was deleted — see Appendix A; its functionality moved to `crates/swarm_panel/` + D18 inline widgets.)
 
 ### 14.3 Documentation home (`kask/docs/`)
 All Kask documentation lives **inside zed-kask** under `kask/docs/`:
@@ -414,11 +416,92 @@ The repository consolidation is complete: hKask keep-crates, MCP servers, skills
 ### 14.5 Connection surfaces (§13)
 - **§13.1 invariant still holds:** hKask crates (under `kask/crates/hkask-*`) still must NOT depend on zed crates (under `crates/`); `kask_bridge` (under `kask/crates/`) is still the sole bidirectional seam. One repo, same rule.
 - **CI script:** `kask/scripts/check-hkask-no-zed-deps.sh` enforces the dependency invariant (denylist-name check is the real gate).
-- **Upstream sync:** conflicts only in the D-seam files + `[workspace.members]`/`[workspace.dependencies]`. `kask/` is additive → never conflicts. DIVERGENCE.md: "everything under `kask/` is ours; everything else is upstream."
+- **Upstream sync:** conflicts only in the D-seam files + `[workspace.members]`/`[workspace.dependencies]`. `kask/` is additive → never conflicts. `DIVERGENCE.md`: "everything under `kask/` is ours; everything else is upstream."
 
 ### 14.6 Migration notes
 
 The repository consolidation is complete. `DIVERGENCE.md` lives at the repo root (the authoritative divergence surface record). The `kask/` namespace isolates hKask from upstream. The `scripts/check-hkask-no-zed-deps.sh` CI script enforces the dependency invariant.
+
+---
+
+## Appendix A — Migration history
+
+This appendix consolidates the deletion and migration narration that was previously interleaved with the current-state tables. The active tables in §2.2 and §3 show only what exists now; this appendix records what was removed and when, for traceability.
+
+### A.1 Deleted crates
+
+The following hKask crates were deleted during the consolidation (jobs moved to zed-kask or folded into surviving crates):
+
+- **`hkask-identity`** — zed account replaces it.
+- **`hkask-communication`** — Matrix → zed voip.
+- **`hkask-mcp-cloud-gateway`** — no cloud deployment.
+- **`hkask-acp`** — cross-process seam dissolved.
+- **`hkask-api`** — HTTP server; zed owns in-process paths.
+- **`hkask-cli`** — slim CLI surface (to be rebuilt as `kask` CLI for backup/wallet/repair/admin only).
+- **`hkask-repl`** — zed agent panel replaces it.
+- **`hkask-services-chat`** — zed owns chat.
+- **`hkask-services-onboarding`** — zed first-launch replaces it.
+- **`hkask-services-runtime` daemon_impl module** — deleted (classify/guard/provider_intel kept).
+- **`hkask-services-skill`, `hkask-services-wallet`** — folded or removed.
+- **`hkask-mcp-communication`, `hkask-mcp-filesystem`, `hkask-mcp-memory`, `hkask-mcp-skill`, `hkask-mcp-regulation`** — consolidated into surviving crates (see A.4).
+- **`hkask-pods`** (pod abstraction: ActivePods, PodDeployment, PodFactory, PodRegistry, PodContext, PerPodLedger, LoopScheduler, AgentPod, PodKind, PodLifecycleState) — replaced by user/curator data directories. `VoiceDesign` moved to `hkask-types`. `GovernanceContext` `A2ARuntime`/`ConsentManager` fields removed. `KanbanService` `pod_manager` field and `activate_pod` method removed.
+- **`hkask-wallet`** (deleted 2026-07-25) — `gas_per_rjoule` config lives in `hkask-types::WalletConfig`; `GAS_PER_RJOULE` and `WalletConfig` were already in `hkask-types`. Wallet-specific keystore resolvers (`resolve_treasury_key`, `resolve_wallet_seed`, `sign_wallet_bytes`) deleted. The residual crypto ledger, `WalletManager`, `Well`, `wallet_types`, and `gas_per_rjoule`/`GAS_PER_RJOULE`/`WalletConfig` were also removed (dead-in-production).
+- **`hkask-services-self-heal`** — removed.
+- **`hkask-git-cas`** — `GitCASPort` trait and supporting types deleted from `hkask-types`; `HMemEntry` moved to `hkask-types/src/lib.rs`; `SnapshotLoop` deleted from `hkask-regulation`.
+- **`hkask-goal`** — `GoalState` retained in `hkask-types`; `Goal`/`GoalArtifact`/`GoalCriterion` removed.
+
+> **Note on `hkask-test-harness`:** was previously listed as deleted (`ExpectProposal` moved to `hkask-types`), but the crate was retained as a surviving workspace member — it provides `TraceEntry` and test infrastructure used by `proptest`, `bug-hunt`, and `harness-optimize` skills.
+
+### A.2 Folded services (F6 refactor-architecture pass)
+
+- `hkask-services-kata-kanban` → `hkask-mcp-kata-kanban`.
+- `hkask-services-corpus` + `hkask-services-compose` + `hkask-services-inference` + `hkask-services-runtime` → `hkask-mcp-corpus`.
+- `hkask-services-context` — deleted; `governance.rs` moved to `hkask-mcp-curator` (its only consumer); `mcp_server_guard.rs` + `storage_guard.rs` were dead code (zero instantiations).
+- `hkask-services-core` — kept (genuinely shared by 6 crates).
+
+### A.3 Removed traits and seams
+
+- **`SecretsPort` trait and `CredentialsSecretsPort` adapter** — deleted; keystore uses the `keyring` crate directly for all keychain access.
+- **`BridgeToolPort` adapter** — removed; `McpRuntime` is passed directly as `ToolPort`.
+- **`LoggingMemoryPort` no-op placeholder** — removed; the memory port hook is `None` at startup until the deferred task wires `RealMemoryPort`.
+- **`kask.guard.direct_chat_strategy` setting + Guard settings UI sub-page** — removed; `cascade_only` is hardcoded (direct chat uses provider-side safety + refusal fallback). `direct_chat_strategy` was the only Guard sub-page field.
+- **a2a/OCAP secret threading** (`resolve_a2a_secret`, `get_or_create_ocap_secret`, `resolve_secret_chain`, `resolve_treasury_key`, `resolve_wallet_seed`, `sign_wallet_bytes`, `InternalSecrets`, `derive_all_internal_secrets`) — removed as self-referential security theater (token signature verified against the token's own embedded key — denied nothing). `panel_default_token` mints the in-process capability token with a static key.
+- **keyring-injection design** (the prior `keyring`-injection seam, `OnceLock`, parallel zed `CredentialsProvider` path) — removed; `hkask-keystore` uses the `keyring` crate directly.
+- **`FlatEnergyEstimator`** (10-gas-per-call estimator) — removed from `hkask-mcp` (2026-08-03).
+- **`GasBudget` hold-settle, `WalletManager`/`Well`/`agent_wallet_store`, `gas_per_rjoule` conversion** — removed as dead-in-production (2026-08-03).
+- **Daemon transport** (`hkask-mcp-server` `src/daemon/`, 6 files; `startup.rs`) — deleted; `bootstrap_mcp_server()` removed (replaced by `hkask_mcp_server::run_server` factory). Servers run standalone with identity from `ServerContext.webid`.
+- **`KaskCore` singleton** — was never implemented; the composition root constructs individual components directly. The daemon transport was removed rather than refactored to in-process handles.
+
+### A.4 Removed regulation modules and types
+
+**Regulation orphaned modules deleted** (~6,400 lines, 20 modules): `api_metering`, `seam_watcher`+`seam_types`+`seam_span`, `contract_events`+`contract_span`, `acp_span`, `classify_span`, `snapshot_loop`, `circuit_breaker`, `slo_manager`+`slo_types`+`slo_span`, `set_point_calibrator`, `wallet_gas_calibrator`+`wallet_energy_estimator`, `gas_report`, `dynamic_gas_table`, `composite_energy_estimator`, `calibrated_energy_estimator`, `calibrator`, `inference_estimator`, `table_energy_estimator`. `hkask-regulation` was pruned from 49 files/15,408 lines to 26 files/9,004 lines.
+
+**`fed_*` fields removed from `SetPoints`** (7 vestigial federation fields).
+
+**Dead types removed from `hkask-types`:** `git_cas` port module (5 files), `pipeline_manifest`/`pipeline_runner`/`pipeline_state`, `flowdef_validation`, dead wallet types (`ApiKeyMaterial`, `PriceFeedConfig`, `RJ_PER_USDC`, `TxHash`). `user_store` (multi-user identity store) deleted — zed account replaces it.
+
+### A.5 Kask panel removal (D10)
+
+**Requirement (historical):** a "Kask" panel in zed-kask where the user could launch a window per kask MCP server and interact with it **one-on-one** to reach the server's **deeper functionality** (direct tool invocation + scoped inference), within the zed-kask app — distinct from the conversational Agent Panel (which drives tools via the agent).
+
+**Design rationale (historical):** the kask panel provided per-MCP-server one-on-one interaction (direct tool invocation + scoped inference), distinct from the conversational Agent Panel. The original implementation in the deleted `hkask-repl` crate (`McpScopedWindow`) was reimplemented natively in GPUI (option B below) — the ratatui TUI was deleted entirely. This panel has since been deleted; the functionality moved to inline chat-stream widgets (D18).
+
+**Implementation decision (historical):** native GPUI panel (option B). A zed-native `Item` (`crates/kask_panel`, GPUI) — a server catalog (the 11 on-disk servers, §2.4) + a per-server view with direct `:tool args` invocation and scoped-inference input, calling the in-process MCP tools and guarded inference (D8) directly. No PTY, no view socket, no daemon listener. The alternative (ratatui-in-terminal) was rejected — it would re-introduce an IPC boundary. This decision was later reversed: the panel was deleted and functionality moved to inline chat-stream widgets (D18) + `swarm_panel`.
+
+**Design (D10 — native GPUI kask panel, historical):**
+- **zed side:** `Item` impl `crates/kask_panel` (implements `pub trait Item`, `crates/workspace/src/item.rs`; opens in the center pane via `workspace.add_item_to_active_pane(...)` — NOT a dock `Panel`). Renders: a list of the 11 on-disk MCP servers (from the in-process tool registry, §2.4); selecting one opens a per-server sub-view.
+- **Per-server sub-view:** (1) the server's tool list (introspected from the in-process MCP server) + a `:tool_name args` direct-invocation input → calls the in-process tool through the capability-gated path (same `McpRuntime::invoke` / `ToolGovernance` /gas as the agent; emits `reg.tool.*`); (2) a natural-language scoped-inference input → runs guarded inference (D8) with only that server's tools in scope. Results rendered inline.
+- **Capability gate:** the panel invokes tools under the caller's `DelegationToken` (scoped to `webid`) exactly as the agent does — direct invocation does NOT bypass the capability-match gate. Double-gate (F10) applies: panel invokes are still `McpRuntime::invoke` / `ToolGovernance`-gated.
+
+**Verified facts (historical, still applicable to the capability gate):**
+- **Direct invocation does not bypass sovereignty** — it reuses the capability-gated `McpRuntime::invoke` / `ToolGovernance` path; only the LLM is bypassed, not the capability-match gate/gas.[^miller-capability]
+- **Variety/regulation:** direct one-on-one invokes still emit `reg.tool.*` and consume gas — the cybernetic loop sees panel activity, so regulation is not bypassed.
+
+**Removal:** D10 was implemented and later deleted. The `crates/kask_panel/` crate is gone. The chat panel was redundant with the agent panel + curator threads. The standalone visualization views were replaced by inline chat-stream widgets (D18). The `ToolInvoker` trait + `set_tool_invoker` hook moved to `crates/swarm_panel/src/tool_invoker.rs`. The gas budget persona was renamed from `kask-panel` to `swarm-panel`. See `DIVERGENCE.md` D10 for the authoritative state.
+
+### A.6 Deleted MCP servers (pruned from the original 16)
+
+`communication` (Matrix/TTS → zed voip), `filesystem` (zed provides fs tools), `memory` (consolidated into `hkask-memory` crate), `skill` (skill execution is native via D1), `regulation` (consolidated into `hkask-regulation` crate), `docproc`/`replica` (folded into `corpus`).
 
 ---
 
@@ -428,7 +511,7 @@ The repository consolidation is complete. `DIVERGENCE.md` lives at the repo root
     Cited for the incremental-migration pattern underlying the minimal-divergence fork strategy, the named divergence surface, and the repository consolidation.
 
 [^conway]: Conway, M. E. (1968). How do committees invent? *Datamation*, 14(4), 28–31. https://www.melconway.com/research/committees.html
-    Cited for Conway’s Law — the fork’s three divergence areas mirror the organizational boundary between the Zed and hKask development surfaces.
+    Cited for Conway's Law — the fork's three divergence areas mirror the organizational boundary between the Zed and hKask development surfaces.
 
 [^ousterhout]: Ousterhout, J. (2021). *A philosophy of software design* (2nd ed.). Yaknymer Press. https://web.stanford.edu/~ouster/cgi-bin/book.php
     Cited for the deep-module principle (high benefit/cost ratio, minimal interface) applied to the essentialist split, app-identity separation, and repository consolidation rationale.

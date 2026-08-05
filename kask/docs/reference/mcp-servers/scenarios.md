@@ -16,7 +16,7 @@ mds_categories: [composition, lifecycle]
 
 ## Pipeline Architecture (DIAG-RF-005)
 
-This diagram shows the control flow between the 18 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by `check_sequence` (warn-only, non-blocking). Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.
+This diagram shows the control flow between the 18 MCP tools in the scenarios server, grouped by pipeline phase. Solid arrows indicate the expected predecessor relationship enforced by `check_sequence` (warn-only, non-blocking). Dashed arrows indicate optional or independent paths. The `scenario_full` tool compresses the entire chain into a single call by delegating to the same engine functions.[^tetlock-scenarios-ref][^schwartz-scenarios-ref]
 
 ```mermaid
 flowchart TD
@@ -114,7 +114,7 @@ status: VERIFIED (v2 — tool count verified)
 
 ## Key paths
 
-- **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`
+- **Standard pipeline:** `scenario_frame` → `scenario_frame_document` → `scenario_brainstorm` → `scenario_build` → `scenario_quantify` → `scenario_calibrate` → `scenario_synthesize` → `scenario_score` → `scenario_assess`[^tetlock-key-paths]
 - **Research entry:** `scenario_research` → `scenario_build` (skip brainstorming if events are extracted from web text)
 - **Companies bridge:** `scenario_from_companies` → `scenario_quantify` (skip framing/brainstorming — events come from DCF model)
 - **Single-call:** `scenario_full` delegates to `triage_question`, `build_event_tree`, `sensitivity_ranking`, `calibrate_from_fermi`, `outside_view_adjustment`, `synthesize_perspectives`, `assess_project`
@@ -127,3 +127,14 @@ status: VERIFIED (v2 — tool count verified)
 - Scenarios Semantic Graph Audit — cross-skill/server dependency graph
 - [MCP Server Registry](README.md) — built-in server index
 - [Diagram Index](../../DIAGRAMS_INDEX.md) — DIAG-RF-005 registration
+
+## Footnotes
+
+[^tetlock-scenarios-ref]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
+    Cited for the calibration pipeline (Fermi decomposition, Bayesian update, Brier scoring, dragonfly-eye synthesis) the diagram traces.
+
+[^schwartz-scenarios-ref]: Schwartz, P. (1991). *The Art of the Long View*. Doubleday.
+    Cited for the scenario-framing and brainstorming phases the pipeline starts with.
+
+[^tetlock-key-paths]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
+    Cited for the record → score → assess sequence the standard pipeline follows.

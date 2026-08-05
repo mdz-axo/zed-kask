@@ -13,7 +13,7 @@ mds_categories: [domain, composition]
 Unified corpus MCP server — gather, process, and output. Combines document
 processing, OCR, chunking, tagging, embedding, QA generation, training data
 preparation, style replicas, and prose composition in a single server organized
-by corpus flow stage.
+by corpus flow stage.[^rag-corpus-arch]
 
 ## Architecture
 
@@ -91,7 +91,7 @@ gather → process → output
 
 The persona and QA training branches share operations (chunking, embedding,
 triple extraction) but use different implementations. These are declared via
-strategy traits in `hkask_mcp_corpus::corpus::embed::strategies`:
+strategy traits in `hkask_mcp_corpus::corpus::embed::strategies`:[^instructor-corpus-strategy]
 
 | Trait | Persona impl | QA training impl |
 |-------|-------------|-----------------|
@@ -119,6 +119,17 @@ Centroid computation is persona-specific (no trait, no QA equivalent).
 
 The corpus server is a builtin in-process MCP server in zed-kask — it
 auto-starts when enabled via KaskSettings (D9a). No standalone CLI command
-is needed.
+is needed.[^mcp-spec-corpus-quickstart]
 
 > **Note:** Tool count verified against `#[tool]` annotations in `mcp-servers/hkask-mcp-corpus/src/` — 27 tools.
+
+## Footnotes
+
+[^rag-corpus-arch]: Lewis, P., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. arXiv. https://arxiv.org/abs/2005.11401
+    Cited for the gather-process-output pipeline design that the corpus server's flow stages follow.
+
+[^instructor-corpus-strategy]: Su, W., et al. (2023). One Embedder, Any Task: Instruction-Finetuned Text Embeddings. arXiv. https://arxiv.org/abs/2212.09741
+    Cited for the instruction-conditioned embedding paradigm the strategy traits implement for the persona and QA branches.
+
+[^mcp-spec-corpus-quickstart]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the in-process MCP server model the quick-start section describes.

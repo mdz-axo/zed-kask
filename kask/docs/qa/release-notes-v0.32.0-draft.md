@@ -1,3 +1,13 @@
+---
+title: "Release Notes — v0.32.0 (Draft)"
+audience: [developers, operators, users]
+last_updated: 2026-08-04
+version: "0.32.0"
+status: "Draft"
+domain: "Cross-cutting"
+mds_categories: [trust, lifecycle]
+---
+
 # Release Notes — v0.32.0 (Draft)
 
 ## Security hardening

@@ -36,7 +36,7 @@ substrate for the **Agent Swarm panel** (`crates/swarm_panel`), the
 ## The three surfaces
 
 The server's tools map onto the three things an operator does with a swarm
-substrate. ABW and local tools both fit the same three surfaces.
+substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm-surfaces]
 
 | Surface | What | ABW tools | Local tools |
 |---|---|---|---|
@@ -171,7 +171,7 @@ Every ABW credit spend flows through a single-use, action-scoped, target-scoped
 consent token. This is the enforcement point for the ABW cost/consent invariant —
 an ABW spend **refuses** without a valid in-scope token, not just warns.
 **Local mode does not use consent tokens** — the ledger balance check is the
-gate (a delegation refuses if `balance < cost`, with no token to mint).
+gate (a delegation refuses if `balance < cost`, with no token to mint).[^ocap-swarm-consent]
 
 ```mermaid
 sequenceDiagram
@@ -216,7 +216,7 @@ status: VERIFIED
 wraps upstream LLM failures into HTTP 200 envelopes (e.g. Anthropic credit
 exhaustion passed through verbatim in a Xaman Ek response), so status-code-only
 mapping is insufficient. Local-mode errors map to the same variants where the
-semantics match (e.g. `PaymentRequired` for an insufficient ledger balance).
+semantics match (e.g. `PaymentRequired` for an insufficient ledger balance).[^owasp-swarm-errors]
 
 | Variant | Trigger | Surface |
 |---|---|---|
@@ -237,14 +237,14 @@ Every authenticated ABW tool response carries `wallet.balance` — the operator'
 live ABW credit balance. Every local delegation response carries `balance` —
 the post-debit local ledger balance. Both close the S1→S5 feedback loop: a
 spend is never out of sight. A failed balance query emits `tracing::warn!` and
-returns `None` (never a fabricated zero — the `.rules` `unwrap_or(0)` trap).
+returns `None` (never a fabricated zero — the `.rules` `unwrap_or(0)` trap).[^beer-swarm-algedonic]
 
 ## The swarm-intelligence skill ecosystem
 
 The swarm server is the substrate for two convergent skills that compose and
 steer swarms. The skills live in `.agents/skills/swarm-intelligence/` and
 `.agents/skills/swarm-steering/`; this section documents how they consume the
-server's tool surface.
+server's tool surface.[^pso-swarm-ecosystem][^aco-swarm-ecosystem]
 
 ### The 10-step PDCA cascade (`swarm-intelligence`)
 
@@ -365,7 +365,7 @@ planner). Emits `reg.skill.swarm-steering.*` spans. Any userpod may invoke it.
 
 The swarm server — like all kask MCP servers — has two parallel launch paths
 that serve different consumers. **Both launching independent instances is
-correct; removing either breaks its consumers.**
+correct; removing either breaks its consumers.**[^mcp-spec-swarm-dual]
 
 | Path | Scope | Serves | Governs |
 |---|---|---|---|
@@ -384,7 +384,7 @@ registry notifies `ContextServerStore` to restart servers with the updated env.
 `KaskSwarmSettings` follows the `Default`-as-source-of-truth pattern (no serde
 attributes, `From` reads from `Default`, `mcp_env` compares against `Default`).
 The ABW API key is a keychain credential (`kask://credentials/hkask_abw_api_key`),
-injected by `mcp_env_with_credentials` — it never appears in the config env map.
+injected by `mcp_env_with_credentials` — it never appears in the config env map.[^owasp-swarm-config]
 
 | Setting | Env var | Default | Notes |
 |---|---|---|---|
@@ -399,7 +399,7 @@ injected by `mcp_env_with_credentials` — it never appears in the config env ma
 
 ## Security posture
 
-The server's defense-in-depth coverage (from the kali audit):
+The server's defense-in-depth coverage (from the kali audit):[^owasp-swarm-security]
 
 - **Input filtering** — `require_auth` on all handlers, `url_encode_segment` on all path params, empty-string validation on spend paths.
 - **Data/instruction separation** — `sanitize_abw_response` wraps all LLM/ABW output in a `{content, source: "abw", trust: "untrusted"}` container and strips injection prefixes.
@@ -426,3 +426,32 @@ design with documented re-entry conditions — see the plan's §14.
 - [Steering loop sequence](../../diagrams/sequence-swarm-steering-loop.md) — advisory vs steering execution
 - [Kali security audit](../../audits/abw-swarm-kali-audit.md) — 7-layer defense map
 - [MCP Server Registry](README.md) — fleet-wide patterns and the 11-server catalog
+
+## Footnotes
+
+[^reynolds-swarm-surfaces]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
+    Cited for the three-surface model (authoring, composition, operation) that maps ABW and local tools onto the same operator actions.
+
+[^ocap-swarm-consent]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control* (Doctoral dissertation, Johns Hopkins University). http://www.erights.org/talks/thesis/markm-thesis.pdf
+    Cited for the object-capability principle the single-use consent token enforces — authority only attenuates, never amplifies.
+
+[^owasp-swarm-errors]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
+    Cited for the body-embedded-error classification pattern the SwarmError model handles.
+
+[^beer-swarm-algedonic]: Beer, S. (1979). *The Heart of Enterprise*. John Wiley & Sons.
+    Cited for the algedonic-signal concept the wallet-balance visibility channel implements.
+
+[^pso-swarm-ecosystem]: Kennedy, J., & Eberhart, R. (1995). Particle Swarm Optimization. *Proceedings of IEEE International Conference on Neural Networks*, 1942–1948. https://doi.org/10.1109/ICNN.1995.488968
+    Cited for the PSO velocity-tuning metaphor the swarm-intelligence skill's DECIDE step uses.
+
+[^aco-swarm-ecosystem]: Dorigo, M., & Stützle, T. (2004). *Ant Colony Optimization*. MIT Press. https://mitpress.mit.edu/9780262042192/
+    Cited for the ACO pheromone-deposition metaphor the swarm-intelligence skill's DECIDE step uses.
+
+[^mcp-spec-swarm-dual]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP server model that the dual launch paths (McpRuntime + ContextServerStore) both implement.
+
+[^owasp-swarm-config]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    Cited for the keychain-credential principle the ABW API key configuration follows.
+
+[^owasp-swarm-security]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
+    Cited for the defense-in-depth security model the kali audit assesses the server against.

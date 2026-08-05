@@ -100,7 +100,7 @@ steps:
       entity_ref_prefix: "corpus:researcher"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 0a: Purge existing data (pipeline recovery — clean slate)
+  # Phase 1b: Purge existing data (pipeline recovery — clean slate)
   #
   # Deletes old embeddings and QA h_mems from the DB. Keeps chunks.jsonl intact.
   # This ensures a clean run even if a previous pipeline failed mid-way.
@@ -184,6 +184,7 @@ steps:
     tool: corpus_extract_triples
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
+      tagged_jsonl: "corpus/chunks/tagged_ontology.jsonl"
       db_path: "corpus/memory/john-brooks.db"
       owner: "john-brooks"
       max_triples: 15
@@ -260,7 +261,7 @@ steps:
   # ═══════════════════════════════════════════════════════════════════════
   - id: generate_qas
     description: >
-      Generate QA pairs via GLM-5.2 on DeepInfra. Per-Bloom sampling parameters.
+      Generate QA pairs via GLM-5.2 (hkask default, OpenRouter). Per-Bloom sampling parameters.
       Thinking-mode JSON extraction. ContentGuard. Provenance-enriched output.
     tool: corpus_generate_qa_batch
     params:
@@ -273,31 +274,26 @@ steps:
       min: 1
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 7: Ingest QAs (SemDeDup + h_mem storage + QA embeddings)
+  # Phase 7: Ingest QAs (exact-match dedup + h_mem storage)
   #
-  # SemDeDup (Abbas et al., 2023): K-means cluster, within-cluster cosine dedup.
-  # K = 2.5% of N. Threshold 0.89 (moderate). Stores QA h_mems with 5W1H
-  # dimension (What), Dublin Core + PKO metadata. Optionally embeds QAs for KNN.
-  #
-  # Note: 0.89 diverges from the corpus_dedup_chunks Rust default (0.85) —
-  # deliberate tightening for QA dedup (more conservative: fewer near-duplicate
-  # QAs merged). Do not revert to 0.85 without validating QA yield.
+  # corpus_ingest_qa parses generated QAs, quality-filters, applies exact-match
+  # dedup (case-insensitive on instruction), writes training JSONL, and stores QA
+  # h_mems with 5W1H dimension (What) + Dublin Core / PKO metadata. Semantic
+  # dedup (SemDeDup K-means) was removed from the tool — see its inline rationale.
+  # QA vectors are not embedded by this step.
   # ═══════════════════════════════════════════════════════════════════════
   - id: ingest_qas
     description: >
-      SemDeDup (K-means clustering, K=2.5% of N, 10 iterations).
-      Deduplicate within clusters at 0.89 cosine threshold.
-      Store QA h_mems with 5W1H + Dublin Core + PKO provenance.
-      Embed QA vectors for KNN search.
-    tool: corpus_ingest_qa
-    params:
-      generated_jsonl: "corpus/qa_pairs/generated.jsonl"
-      output: "corpus/qa_pairs/train.jsonl"
-      db_path: "corpus/memory/john-brooks.db"
-      dedup_threshold: 0.89
-      embed_qas: true
-      dataset: "capabilities-researcher"
-      owner: "john-brooks"
+      Parse generated QAs, quality-filter, exact-match dedup (case-insensitive
+      on instruction). Store QA h_mems with 5W1H + Dublin Core + PKO provenance.
+      Write training-ready JSONL.
+      tool: corpus_ingest_qa
+      params:
+        generated_jsonl: "corpus/qa_pairs/generated.jsonl"
+        output: "corpus/qa_pairs/train.jsonl"
+        db_path: "corpus/memory/john-brooks.db"
+        dataset: "capabilities-researcher"
+        owner: "john-brooks"
     verify:
       field: stored_h_mems
       min: 1
@@ -312,7 +308,7 @@ steps:
   - id: assemble_chatml
     description: >
       Assemble stored QA h_mems into ChatML JSONL training dataset with
-      80/10/10 train/val/test split. Queries semantic memory for
+      80/20 train/test split. Queries semantic memory for
       training_qa_pair h_mems from the capabilities-researcher dataset.
     tool: training_assemble_dataset
     params:
@@ -340,6 +336,10 @@ steps:
   # The accepted operator configuration uses EVA initialization. The registered
   # lora-training skill recommends and audits the config; runtime validation
   # enforces established hard contracts without rewriting operator intent.
+  #
+  # skill_name is retrain-mode-only: it is silently ignored unless feedback_path
+  # is set. For this first-time training run (no feedback_path) the adapter is
+  # not registered under the skill name; re-run with feedback_path for A/B tracking.
   # ═══════════════════════════════════════════════════════════════════════
   - id: train_lora
     description: "Submit typed EVA LoRA training job to RunPod H100"

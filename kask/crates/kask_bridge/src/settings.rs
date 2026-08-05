@@ -1671,6 +1671,7 @@ mod tests {
         assert!(!default.openrouter_enabled);
         assert!(!default.kilocode_enabled);
         assert!(!default.cline_enabled);
+        assert!(!default.atlascloud_enabled);
     }
 
     // `KaskSettings::default()` must also have all-false inference providers,

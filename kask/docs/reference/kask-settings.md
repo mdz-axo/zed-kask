@@ -372,3 +372,32 @@ environment. Shell env vars take precedence over keychain values.
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
 | `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
+
+## Footnotes
+
+[^mcp-spec-settings]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP server model the `load_default`/`overrides` toggle controls.
+
+[^owasp-secrets-settings]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    Cited for the secrets-in-keychain-not-in-config principle the data services settings follow.
+
+[^openai-compatible-settings]: OpenAI. (2024). *OpenAI API Reference — Models*. OpenAI. https://platform.openai.com/docs/api-reference/models
+    Cited for the OpenAI-compatible provider model that the inference provider toggles configure.
+
+[^owasp-llm-guard-settings]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
+    Cited for the LLM-specific security model the guard layer (D4) wraps the skill cascade with.
+
+[^reynolds-swarm-settings]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
+    Cited for the swarm-coordination model the ABW swarm settings configure.
+
+[^ousterhout-models-settings]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the two-layer default design (empty-string fields with effective_* fallback to constants) that avoids magic-number defaults.
+
+[^owasp-keychain-settings]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    Cited for the dual-namespace keychain design that separates settings-UI credentials from MCP-server credentials.
+
+[^sqlcipher-settings]: Zetetic LLC. (2024). *SQLCipher: Full Database Encryption for SQLite*. https://www.zetetic.net/sqlcipher/
+    Cited for the SQLCipher-encrypted SQLite backend the default storage uses.
+
+[^pgvector-settings]: pgvector. (2024). *pgvector: Open-source vector similarity search for PostgreSQL*. GitHub. https://github.com/pgvector/pgvector
+    Cited for the pgvector extension the PostgreSQL storage backend uses for vector similarity search.

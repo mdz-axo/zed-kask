@@ -12,13 +12,15 @@ mds_categories: [trust, curation]
 
 The composition root is the single place where zed and hKask are wired
 together. It runs in two phases inside `crates/zed/src/main.rs`: an early
-block that wires a logging `BridgeMemoryPort` before
+block that wires the regulation system and metacognition provider before
 any thread can complete a turn, and a deferred task that runs after the zed
 user resolves and a default language model becomes available. The
 model-dependent hooks (`set_manifest_executor`, `set_thread_condenser`,
-`set_tool_invoker`) are wired in the deferred task. The design centralizes
-the integration so that the seams are visible in one file rather than
-scattered across the codebase.
+`set_tool_invoker`, `set_memory_port`) are wired in the deferred task.
+At startup, the `set_memory_port` hook is `None` — turn ingest no-ops until
+the deferred task wires `BridgeMemoryPort(RealMemoryPort)` after the zed user
+resolves. The design centralizes the integration so that the seams are
+visible in one file rather than scattered across the codebase.
 
 ## Source citations
 
@@ -104,11 +106,13 @@ The `OnceLock` ensures the hook is set exactly once per process. The
 `Option` allows the hook to be absent (fail-closed). The `Arc` allows the
 hook to be shared across threads.
 
-`set_memory_port` (`agent.rs:2860`) is the exception: it uses a `Mutex`
-rather than a `OnceLock`, because the composition root installs a
-`LoggingMemoryPort` at startup and upgrades it to a `RealMemoryPort` once
-the zed user resolves. The `Mutex` allows the second `set_memory_port`
-call to replace the value in place.
+`set_memory_port` (`agent.rs:2908`) is the exception: it uses a `Mutex`
+rather than a `OnceLock`, because the hook is `None` at startup (the
+`LoggingMemoryPort` that previously occupied this slot was deleted in the
+2026-07-31 simplification pass) and is upgraded to
+`BridgeMemoryPort(RealMemoryPort)` once the zed user resolves. The `Mutex`
+allows the `set_memory_port` call in the deferred task to replace the `None`
+value in place.
 
 This pattern has a trap: if the condition for wiring fails silently, the
 hook is left `None` with no signal. The `.rules` file documents this:

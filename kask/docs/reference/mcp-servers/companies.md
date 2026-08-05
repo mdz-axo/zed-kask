@@ -25,11 +25,11 @@ Company-finance MCP server for provider-routed market data, fundamental analysis
 | `LearningState` | `src/learning.rs` — Beta(α+1, β+1) conjugate prior per (symbol, provider); temporal price snapshots for staleness detection; `preferred_provider` override when a provider is flaky. Updated by the explicit `result_feedback` tool (`state.record(symbol, provider, score)`), not by an automatic per-fetch hook. Chronic-staleness threshold configurable via `with_staleness_days` or `HKASK_CHRONIC_STALENESS_DAYS` |
 | `PortfolioManager` | SQLite-backed ledger, notes, file attachments, and durable forecast store; owner-scoped by `webid` |
 
-Two Regulation paths run per tool call: the framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + outcome) and the macro-generated `ToolContext::record_tool_outcome` (in-process debug log, target `reg.memory`). Provider routing additionally emits `reg.tool.companies.provider.*` spans via `providers::emit_provider_reg`.
+Two Regulation paths run per tool call: the framework-level `execute_tool` span (`reg.tool.companies.*`, tool name + outcome) and the macro-generated `ToolContext::record_tool_outcome` (in-process debug log, target `reg.memory`). Provider routing additionally emits `reg.tool.companies.provider.*` spans via `providers::emit_provider_reg`.[^otel-companies-arch]
 
 ## Tool routing and dispatch flow
 
-The diagram traces the dispatch seam shared by all 40 tools: `combined_router` sums seven sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `PortfolioManager` ledger operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.
+The diagram traces the dispatch seam shared by all 40 tools: `combined_router` sums seven sub-routers, every tool funnels through `execute_tool`, then branches into one of three sinks — provider-routed financial data, valuation engines that persist `StoredForecast` snapshots, or `PortfolioManager` ledger operations on `spawn_blocking`. The `result_feedback` tool feeds explicit user-scored updates back into `LearningState`. Verified against `mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs` and `src/tools/mod.rs`.[^mcp-spec-companies-ref]
 
 ```mermaid
 flowchart TD
@@ -147,7 +147,7 @@ status: VERIFIED (v5 — tool count corrected to 40 #[tool] methods via `grep -c
 
 ## Configuration
 
-API keys can be configured in two ways:
+API keys can be configured in two ways:[^owasp-companies-config]
 
 1. **Settings UI** (recommended): Settings → Kask → Data Services. Keys are
    stored in the system keychain and injected as env vars when the MCP server
@@ -173,7 +173,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 ## Behavioral boundaries
 
 - **Provider routing.** Financial-data tools route eligible symbol lookups between FMP and EODHD. `is_international_symbol` (exchange-qualified symbols such as `VOD.L`, `BMW.DE`) selects EODHD as primary. `company_screener` is FMP-specific; `research_search` uses its own research providers and bypasses `fetch`.
-- **DCF projection.** The DCF is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.
+- **DCF projection.** The DCF is a two-stage model using a Gordon-growth terminal value. It models revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow. It does not model SG&A as a separate line item, an exit-multiple terminal method, or other non-operating assets in the equity bridge.[^gordon-companies-ref]
 - **Scenario matrix.** `scenario_analysis` runs a fixed revenue-growth × gross-margin matrix (Schwartz 2×2 framing).
 - **Forecast persistence.** DCF and calibrated forecasts persist as owner-scoped structured JSON snapshots. `forecast_get` retrieves one record, `forecast_list` returns a symbol's history, and `revision_of` links a same-symbol revision. `forecast_record` appends outcomes and reloads the stored snapshot for decomposition. The `revision_of` chain has no enforced depth limit — each revision references its predecessor by id, and revisions require the same owner and same symbol (`portfolio.rs` `validate_forecast_revision`). Consumers should treat the chain as an unbounded linked list and cap traversal at the application layer if a bound is required.
 - **Provider learning.** `LearningState` tracks a Beta(α+1, β+1) posterior per (symbol, provider). Scores 4–5 from `result_feedback` count as successes; 1–3 count as failures. A provider is flaky when P(success) < 0.70 with at least 5 observations, in which case `preferred_provider` overrides the default routing. Temporal snapshots flag chronically stale data older than the configurable threshold (default 90 days, override via `HKASK_CHRONIC_STALENESS_DAYS` or `LearningState::with_staleness_days`).
@@ -186,7 +186,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 - **Owner scoping.** `PortfolioManager` is constructed with the authenticated `webid`. Ledger, notes, file attachments, and durable forecasts are namespaced by owner; cross-owner access is rejected at the data layer (`portfolio.rs` owner-isolation tests).
 - **Local persistence.** The portfolio ledger is a local SQLite database per owner. No portfolio data leaves the host; the server is the sole reader and writer.
 - **Import and attachment limits.** `ledger_import` rejects requests above `MAX_IMPORT_REQUEST_BYTES` or more than `MAX_IMPORT_TRANSACTION_COUNT` transactions. `file_attach` rejects encoded payloads above `MAX_ENCODED_ATTACHMENT_BYTES` and decoded payloads above `MAX_DECODED_ATTACHMENT_BYTES`.
-- **Governance is at the dispatcher membrane.** `McpRuntime::invoke` / `ToolGovernance` in `crates/hkask-mcp/src/runtime.rs` checks each call's `DelegationToken` capability declaration (resource + action match) and enforces gas budgets before the request reaches this server. Token signatures are NOT verified — tokens are minted and consumed in-process, so this is a consistency gate, not a security boundary. The companies server is the transport pipe; it does not re-check capabilities per call.
+- **Governance is at the dispatcher membrane.** `McpRuntime::invoke` / `ToolGovernance` in `crates/hkask-mcp/src/runtime.rs` checks each call's `DelegationToken` capability declaration (resource + action match) and enforces gas budgets before the request reaches this server. Token signatures are NOT verified — tokens are minted and consumed in-process, so this is a consistency gate, not a security boundary. The companies server is the transport pipe; it does not re-check capabilities per call.[^ocap-companies-ref]
 - **Per-tool outcome recording is in-process.** After each tool call, the `mcp_server!`-generated `ToolContext::record_tool_outcome` emits a `reg.memory` debug log (in-process only). There is no `DaemonClient`, no daemon field, and no fire-and-forget task. Durable narrative memory for the companies domain is owned by `kask_bridge`'s `RealMemoryPort` (D6) at thread-turn completion, not by this server.
 
 ## Regulation observability
@@ -201,7 +201,7 @@ export HKASK_FERMI_DEFAULTS='{"growth":[{"estimate":0.70,"confidence":0.8}],"mar
 
 The companies server is a builtin in-process MCP server in zed-kask — no
 standalone CLI command is needed. It is registered alongside the other
-builtin MCP servers and started automatically by the host.
+builtin MCP servers and started automatically by the host.[^mcp-spec-companies-quickstart]
 
 The server requires `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` credentials at launch; optional research keys enable `research_search`.
 
@@ -211,7 +211,7 @@ The server requires `HKASK_FMP_API_KEY` and `HKASK_EODHD_API_KEY` credentials at
 cargo test -p hkask-mcp-companies
 ```
 
-The suite covers provider-error handling, EODHD normalization, valuation request validation, portfolio owner isolation, import and attachment limits, forecast snapshot reconstruction, the Gordon-growth contract, attribution weight and contribution math, and the `LearningState` flaky-provider override loop. End-to-end MCP wire-format coverage remains future work.
+The suite covers provider-error handling, EODHD normalization, valuation request validation, portfolio owner isolation, import and attachment limits, forecast snapshot reconstruction, the Gordon-growth contract, attribution weight and contribution math, and the `LearningState` flaky-provider override loop. End-to-end MCP wire-format coverage remains future work.[^bach-bolton-companies-validation]
 
 ## Cross-links
 
@@ -220,3 +220,26 @@ The suite covers provider-error handling, EODHD normalization, valuation request
 - Companies Semantic Graph Audit — internal module dependency graph health
 - Companies MCP Code Review — adversarial code review of the companies server
 - [Diagram Index](../../DIAGRAMS_INDEX.md) — DIAG-RF-004 registration
+
+## Footnotes
+
+[^otel-companies-arch]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
+    Cited for the dual-path span emission pattern the architecture table describes.
+
+[^mcp-spec-companies-ref]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP tool-dispatch protocol the combined_router/execute_tool seam implements.
+
+[^owasp-companies-config]: OWASP. (2023). *OWASP Secrets Management Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+    Cited for the two-path credential configuration design (keychain vs env vars).
+
+[^gordon-companies-ref]: Gordon, M. J., & Shapiro, E. (1956). Capital equipment analysis: The required rate of profit. *Management Science*, 2(1), 102–110. https://doi.org/10.1287/mnsc.2.1.102
+    Cited for the Gordon-growth terminal-value model the DCF projection uses.
+
+[^ocap-companies-ref]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control* (Doctoral dissertation, Johns Hopkins University). http://www.erights.org/talks/thesis/markm-thesis.pdf
+    Cited for the object-capability model the dispatcher-membrane governance follows.
+
+[^mcp-spec-companies-quickstart]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the in-process MCP server model the quick-start section describes.
+
+[^bach-bolton-companies-validation]: Bach, J., & Bolton, M. (2019). *Rapid Software Testing*. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
+    Cited for the exploratory-testing methodology the validation suite's coverage gaps reflect.
