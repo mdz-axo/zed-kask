@@ -199,12 +199,12 @@ pub(crate) async fn record_delegation(
         }
     };
     let owner = WebID::for_agent_name("swarm_delegate_local");
-    let entity = format!("{AGENT_PREFIX}{agent_id}:delegation");
+    let entity = format!("{AGENT_PREFIX}{agent_id}");
 
     // Write the latency annotation.
     let mut h_mem = HMem::new(
         &entity,
-        "latency_ms",
+        "delegation:latency_ms",
         serde_json::json!(latency_ms),
         owner,
     );
@@ -222,7 +222,7 @@ pub(crate) async fn record_delegation(
     if let Some(pass) = task_success_pass {
         let mut h_mem = HMem::new(
             &entity,
-            "task_success",
+            "delegation:task_success",
             serde_json::json!(pass),
             owner,
         );
@@ -296,5 +296,119 @@ mod tests {
         let m = LazyLocalMemory::lazy("/tmp/never.db".to_string(), "short".to_string(), 1024);
         // Construction must not touch the filesystem; the OnceCell is unset.
         assert_eq!(m.dim, 1024);
+    }
+
+    #[tokio::test]
+    async fn record_delegation_degrades_gracefully_when_memory_unavailable() {
+        // A passphrase shorter than 8 chars causes get_or_init to fail.
+        // record_delegation must log + return without panicking (the .rules
+        // trap on silent error discarding — the failure is visible in logs,
+        // not swallowed, and the delegation result is not lost).
+        let m = LazyLocalMemory::lazy(
+            "/tmp/hkask-swarm-stigmergy-degradation-test.db".to_string(),
+            "short".to_string(), // < 8 chars → get_or_init returns Err
+            1024,
+        );
+        // This must not panic.
+        record_delegation(&m, "research_agent", 4200, Some(true)).await;
+        // If we reach here, the graceful degradation path works.
+    }
+
+    #[tokio::test]
+    async fn record_delegation_writes_and_reads_back_stigmergy_trail() {
+        // Use a temp DB with a valid passphrase. Write a delegation
+        // annotation, then read it back via search_agent_knowledge to verify
+        // the stigmergic pheromone trail round-trips through semantic memory.
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-swarm-stigmergy-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("stigmergy.db");
+        let m = LazyLocalMemory::lazy(
+            db_path.to_string_lossy().to_string(),
+            "test-passphrase-123".to_string(), // >= 8 chars
+            1024,
+        );
+
+        // Write a delegation annotation.
+        record_delegation(&m, "research_agent", 4200, Some(true)).await;
+
+        // Read it back — the entity prefix is "agent:research_agent:delegation".
+        let fragments = search_agent_knowledge(&m, "research_agent", "delegation", 10)
+            .await
+            .expect("search should succeed with a valid DB");
+
+        // The latency_ms annotation should be present.
+        let has_latency = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:latency_ms" && f.value == "4200");
+        assert!(
+            has_latency,
+            "stigmergy trail must contain the latency_ms annotation; got: {fragments:?}"
+        );
+
+        // The task_success annotation should also be present.
+        let has_task_success = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:task_success" && f.value == "true");
+        assert!(
+            has_task_success,
+            "stigmergy trail must contain the task_success annotation; got: {fragments:?}"
+        );
+
+        // Cleanup.
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn record_delegation_skips_task_success_when_none() {
+        // When task_success_pass is None (open task, no oracle), only the
+        // latency annotation is written — the task_success annotation is NOT
+        // fabricated.
+        let dir = std::env::temp_dir().join(format!(
+            "hkask-swarm-stigmergy-skip-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("stigmergy_skip.db");
+        let m = LazyLocalMemory::lazy(
+            db_path.to_string_lossy().to_string(),
+            "test-passphrase-123".to_string(),
+            1024,
+        );
+
+        // Write with no task_success (None).
+        record_delegation(&m, "creative_agent", 1500, None).await;
+
+        let fragments = search_agent_knowledge(&m, "creative_agent", "delegation", 10)
+            .await
+            .expect("search should succeed");
+
+        // latency_ms should be present.
+        let has_latency = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:latency_ms" && f.value == "1500");
+        assert!(
+            has_latency,
+            "latency_ms must be written even without task_success"
+        );
+
+        // task_success should NOT be present (not fabricated).
+        let has_task_success = fragments
+            .iter()
+            .any(|f| f.attribute == "delegation:task_success");
+        assert!(
+            !has_task_success,
+            "task_success must NOT be written when None (never fabricate)"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

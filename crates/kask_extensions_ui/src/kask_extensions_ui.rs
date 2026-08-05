@@ -700,6 +700,10 @@ impl KaskExtensionsPage {
         cx: &mut Context<Self>,
     ) -> MarketplaceCard {
         let uri = reff.to_uri();
+        let installing = self
+            .outstanding_operations
+            .get(reff.id().as_str())
+            .is_some_and(|s| matches!(s, KaskSkillStatus::Installing));
         MarketplaceCard::new().child(
             h_flex()
                 .w_full()
@@ -717,7 +721,14 @@ impl KaskExtensionsPage {
                         )
                         .child(Label::new(uri).color(Color::Muted)),
                 )
-                .child(
+                .child(if installing {
+                    Button::new(
+                        SharedString::from(format!("install-shared-{}", reff.id())),
+                        "Installing…",
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .disabled(true)
+                } else {
                     Button::new(
                         SharedString::from(format!("install-shared-{}", reff.id())),
                         "Install",
@@ -725,8 +736,8 @@ impl KaskExtensionsPage {
                     .style(ButtonStyle::Filled)
                     .on_click(cx.listener(move |this, _event, _window, cx| {
                         this.install_kask_skill_from_ref(reff.clone(), cx);
-                    })),
-                ),
+                    }))
+                }),
         )
     }
 

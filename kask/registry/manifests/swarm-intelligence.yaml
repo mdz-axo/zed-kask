@@ -183,6 +183,11 @@ steps:
       mode: "{{ mode | default('abw') }}"
       target_condition: "{{ target_condition | default({}) }}"
       prior_iteration: "{{ prior_iteration | default({}) }}"
+      # delegate_results is needed for Step 5b (per-agent Onto4MAT properties:
+      # energy + distanceToGoal computed from LocalDelegateResult fields) and
+      # the stigmergy read (prior delegation performance annotations). Without
+      # this mapping, the SENSE template cannot compute per-agent metrics.
+      delegate_results: "{{ delegate_results | default(none) }}"
 
   - ordinal: 2
     action: select

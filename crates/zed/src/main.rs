@@ -2801,7 +2801,8 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
             // `SkillExecPort::execute_skill(name, task: &str)` seam without a
             // trait/IPC change — the JSON string IS the task, and its fields
             // become template variables.
-            if let Ok(obj) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&task)
+            if let Ok(obj) =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&task)
             {
                 for (key, value) in obj {
                     context.insert(key, value);

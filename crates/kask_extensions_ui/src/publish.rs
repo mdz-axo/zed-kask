@@ -930,6 +930,25 @@ fn ensure_manifest_matches_skill_id(skill_id: &str, manifest: &KaskSkillManifest
     Ok(())
 }
 
+/// zed-kask: Pure version-promise check for install-from-ref. The
+/// `kask-skill://` URI commits to a specific version; the catalog serves the
+/// latest. Refuse if they differ — a stale ref must error loudly rather than
+/// silently install a different version. Extracted for testability without
+/// fs/http types (mirrors `ensure_manifest_matches_skill_id`).
+fn verify_ref_version(reff: &KaskSkillRef, manifest: &KaskSkillManifest) -> Result<()> {
+    if manifest.version != reff.version {
+        bail!(
+            "kask skill '{}' reference is for version {}, but the catalog's latest is {}; \
+             the publisher may have released a newer version. Ask the sharer for an updated \
+             `kask-skill://` reference.",
+            reff.id(),
+            reff.version,
+            manifest.version
+        );
+    }
+    Ok(())
+}
+
 /// Install a kask skill from the marketplace.
 ///
 /// Downloads the tarball via `GET /api/kask-skills/:id/download` (which
@@ -1078,9 +1097,13 @@ pub async fn fetch_skill_metadata(
 /// discreet-piggyback consumer. Resolves the ref to its marketplace id,
 /// fetches the signed metadata ([`fetch_skill_metadata`]), then reuses
 /// [`install_skill`] (signature + expiry + SHA256 verification, presigned-S3
-/// download, extract). The ref's `version` is informational in v1 (the
-/// catalog serves the latest version); a future revision can pin the
-/// version via a per-version route.
+/// download, extract).
+///
+/// Fails closed if the catalog's latest version differs from the ref's
+/// `version`: the URI promises a specific version, and silently installing a
+/// different one would violate that promise. A per-version fetch route would
+/// let us honor the exact version; until then, a stale ref errors loudly so
+/// the sharer can re-share an updated `kask-skill://` reference.
 pub async fn install_skill_from_ref(
     fs: &dyn Fs,
     http_client: &HttpClientWithUrl,
@@ -1089,6 +1112,7 @@ pub async fn install_skill_from_ref(
 ) -> Result<PathBuf> {
     let skill_id = reff.id();
     let metadata = fetch_skill_metadata(http_client, &skill_id).await?;
+    verify_ref_version(reff, &metadata.manifest)?;
     install_skill(
         fs,
         http_client,
@@ -1324,6 +1348,46 @@ mod tests {
         assert!(
             ensure_manifest_matches_skill_id("bob/essentialist", &manifest).is_err(),
             "different source_user must be rejected"
+        );
+    }
+
+    // zed-kask: pin the install-from-ref version-promise (S1). A
+    // `kask-skill://…@version` ref must not silently install a different
+    // version; a stale ref errors loudly so the sharer can re-share.
+    #[test]
+    fn install_from_ref_refuses_stale_version() {
+        let manifest = KaskSkillManifest {
+            source_user: "alice".to_string(),
+            skill_name: "essentialist".to_string(),
+            version: "2026-08-02.1".to_string(),
+            description: "test".to_string(),
+            dependencies: vec![],
+            tarball_sha256: "abc123".to_string(),
+            public_key: "aa".repeat(32),
+            signature: "bb".repeat(64),
+            expires_at: "2999-01-01T00:00:00Z".to_string(),
+        };
+        let matching = KaskSkillRef {
+            source_user: "alice".into(),
+            skill_name: "essentialist".into(),
+            version: "2026-08-02.1".into(),
+        };
+        verify_ref_version(&matching, &manifest).expect("matching version must pass");
+        let stale = KaskSkillRef {
+            source_user: "alice".into(),
+            skill_name: "essentialist".into(),
+            version: "2026-08-01.9".into(),
+        };
+        let err =
+            verify_ref_version(&stale, &manifest).expect_err("stale version must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("reference is for version 2026-08-01.9"),
+            "error must name the ref's version: {msg}"
+        );
+        assert!(
+            msg.contains("catalog's latest is 2026-08-02.1"),
+            "error must name the catalog's version: {msg}"
         );
     }
 }

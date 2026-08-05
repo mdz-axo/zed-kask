@@ -79,7 +79,7 @@ impl KaskSkillManifest {
 /// ish version), so v1 does not percent-encode; the parser rejects anything
 /// that is not a clean `scheme://user/name/version` split with non-empty
 /// parts.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KaskSkillRef {
     /// Publisher's GitHub login.
     pub source_user: String,
