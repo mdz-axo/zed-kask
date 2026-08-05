@@ -12,12 +12,14 @@ no-default-features = false
 
 [advisories]
 ignore = [
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive dep of utoipa-axum. Reviewed 2026-07-22 — re-review 2026-10-22." },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive via pulp (← exr ← image ← gpui/hkask-media-widget) and simba (← nalgebra ← manatee git pin). The former utoipa-axum chain is gone. Reviewed 2026-08-04 — re-review 2026-11-04." },
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of aquamarine. No safe upgrade. Reviewed 2026-07-22 — re-review 2026-10-22. (hkask-communication was deleted; this advisory may be removable if no other dep pulls aquamarine.)" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained but has no safe upgrade; required transitively by current lopdf and imageproc for PDF/font processing. Reviewed 2026-07-22 — re-review 2026-10-22." },
     # Upstream-Zed transitive advisories (verified 2026-08-04: every reverse-dep
     # chain terminates in an upstream Zed crate — rpc, language_models, gpui, agent,
-    # xtask, xcb/zed-scap — none introduced by kask crates). Track upstream for fixes.
+    # xtask, xcb/zed-scap — none introduced by kask crates). Track upstream for
+    # fixes. Re-review the whole block 2026-11-04 (run: cargo deny --config
+    # kask/deny.toml check advisories; drop any `advisory-not-detected` entries).
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin Attack; transitive via upstream crates/rpc. Not kask-introduced." },
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; transitive via xtask (merge/gh-workflow). Not kask-introduced." },
     { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive via upstream workspace crates. Not kask-introduced." },
@@ -32,7 +34,6 @@ ignore = [
     { id = "RUSTSEC-2026-0195", reason = "rustls-webpki CRL parsing panic; same chain as 2026-0104. Not kask-introduced." },
     { id = "RUSTSEC-2026-0196", reason = "cgmath unmaintained; transitive via upstream mermaid_render dev-dep. Not kask-introduced." },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; transitive via resvg/gpui (upstream). Not kask-introduced." },
-    { id = "RUSTSEC-2026-0199", reason = "tokio-io unmaintained; transitive via upstream crates. Not kask-introduced." },
 ]
 
 [licenses]

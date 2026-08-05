@@ -9,7 +9,7 @@
 
 ## 1. The integration premise (one sentence)
 
-Integrate prediction-market data as a **new, dedicated, read-only MCP data-service server** (`hkask-mcp-markets`) that exposes Polymarket (Gamma/CLOB) and Kalshi (Predictions REST) as a unified `{event, market-implied probability, reliability covariates, calibration history, resolution outcome}` feed, consumed by the existing `hkask-mcp-scenarios` tools and the `superforecasting` skill cascade — *without* adding HTTP to the pure-compute scenarios server.
+Integrate prediction-market data as a **new, dedicated, read-only MCP data-service server** (`hkask-mcp-prediction-markets`) that exposes Polymarket (Gamma/CLOB) and Kalshi (Predictions REST) as a unified `{event, market-implied probability, reliability covariates, calibration history, resolution outcome}` feed, consumed by the existing `hkask-mcp-scenarios` tools and the `superforecasting` skill cascade — *without* adding HTTP to the pure-compute scenarios server.
 
 This premise is the output of the adversarial test in the research report (§4): it is a **conditional, annotated data service**, not a face-value probability injection.
 
@@ -19,7 +19,7 @@ This premise is the output of the adversarial test in the research report (§4):
 
 The scenarios server (`hkask-mcp-scenarios`) is **pure computation**: no `reqwest` dep, no HTTP client, all external data is supplied by the caller as JSON (research text, events, base rates). Its `Cargo.toml` has no network crate. Its 18 tools (`scenario_status`, `scenario_frame`, `scenario_brainstorm`, `scenario_quantify`, `scenario_calibrate`, `scenario_cross_validate`, `scenario_synthesize`, etc.) are wrapped in `execute_tool_semantic` and operate on caller-supplied inputs.
 
-**Deletion test (G1):** If we delete "a new markets server" and instead add `reqwest` + market fetching *inside* the scenarios server, complexity reappears — we couple a clean pure-compute module to network IO, credentials, caching, and rate limits, and we violate its current single-responsibility shape. The complexity does not vanish; it relocates and worsens the scenarios module's cohesion. → The separate server **earns its existence**.
+**Deletion test (G1):** If we delete "a new prediction-markets server" and instead add `reqwest` + market fetching *inside* the scenarios server, complexity reappears — we couple a clean pure-compute module to network IO, credentials, caching, and rate limits, and we violate its current single-responsibility shape. The complexity does not vanish; it relocates and worsens the scenarios module's cohesion. → The separate server **earns its existence**.
 
 **Surface test (G2):** A dedicated server exposes a small surface (≤7 tools) and is consumed through the *existing* scenarios tools' input fields (`base_rate`, `Perspective{source,probability}`, `CrossValidateRequest{source_b,estimate_b}`). The scenarios server already has a cross-server bridge precedent: `scenario_from_companies` consumes JSON from the `companies` MCP server. A `scenario_from_markets`-style consumption (or caller-mediated passing) mirrors it exactly.
 
@@ -33,9 +33,9 @@ The scenarios server (`hkask-mcp-scenarios`) is **pure computation**: no `reqwes
 
 | Seam | Location | What attaches here |
 |---|---|---|
-| New server registration | `kask/crates/kask_bridge/src/mcp_servers.rs` (`BUILT_IN_MCP_SERVERS`, scenarios entry at ~L219) | Add `BuiltinMcpServer { id: "markets", binary: "hkask-mcp-markets", credentials: Some(&[]), config_env: Some(&["HKASK_MARKETS_CACHE_TTL_SECS", ...]) }` |
+| New server registration | `kask/crates/kask_bridge/src/mcp_servers.rs` (`BUILT_IN_MCP_SERVERS`, scenarios entry at ~L219) | Add `BuiltinMcpServer { id: "prediction-markets", binary: "hkask-mcp-prediction-markets", credentials: Some(&[]), config_env: Some(&["HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS", ...]) }` |
 | HTTP client pattern | `kask/mcp-servers/hkask-mcp-research/src/research/providers/mod.rs:36` (`provider_http_client()`) + `kask/crates/hkask-mcp-server/src/server/http_helpers.rs:35,74` (`classify_http_error`, `api_get`) | Reuse shared helpers; per-provider `reqwest::Client` + key from env at construction |
-| Tool scaffolding | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:134` (`mcp_server!` macro) + `hkask_mcp_scenarios.rs:388,1843` (`#[tool]` + `Parameters<Req>` + `execute_tool_semantic`) | New `markets` server struct + `#[tool]` methods; `AnyJsonValue` for arbitrary JSON (never `serde_json::Value`) |
+| Tool scaffolding | `kask/crates/hkask-mcp-server/src/hkask_mcp_server.rs:134` (`mcp_server!` macro) + `hkask_mcp_scenarios.rs:388,1843` (`#[tool]` + `Parameters<Req>` + `execute_tool_semantic`) | New `prediction-markets` server struct + `#[tool]` methods; `AnyJsonValue` for arbitrary JSON (never `serde_json::Value`) |
 | Forecasting math reuse | `kask/crates/hkask-forecast/src/hkask_forecast.rs` (`brier_score`, `calibrate_from_fermi`, `outside_view_adjustment`, `bayesian_update`, `marginalize`, `certainty_tier`) | Compute market Brier from resolved outcome vs probability-at-horizon; reuse, do not re-implement |
 | Scenarios server consumption (zero-edit option) | `kask/mcp-servers/hkask-mcp-scenarios/src/types.rs:225` (`ScenarioEvent.basis`/`base_rate`), `:306` (`Perspective.source`/`probability`), `hkask_mcp_scenarios.rs:155` (`CrossValidateRequest.source_b`) | Caller passes market data as `base_rate` or `Perspective{source:"polymarket"|"kalshi", probability}` or `CrossValidate{source_b:"market"}` |
 | Superforecasting skill consumption | `kask/registry/templates/superforecasting/stage_2_outside_view.j2:7` (`knowns`), `stage_4_evidence_update.j2:8` (`new_evidence`) + FlowDef `kask/registry/manifests/superforecasting.yaml` | Inject market prices as `knowns` (stage 2 outside-view anchor) and `new_evidence` (stage 4 Bayesian update) via cascade context |
@@ -113,13 +113,13 @@ Every market record the server returns carries the annotation the research repor
 
 ### 5.1 `hkask-mcp-scenarios` (zero server edit, caller-mediated)
 
-The scenarios server needs **no code change** for Phase 1. The agent (or a thin orchestrator) calls the new markets server, then passes results into existing tools:
+The scenarios server needs **no code change** for Phase 1. The agent (or a thin orchestrator) calls the new prediction-markets server, then passes results into existing tools:
 
 - **Outside-view base rate:** market `probability` (gated by `reliability_tier`) → `ScenarioEvent.base_rate` (`types.rs:225`) and `Perspective { source: "polymarket"/"kalshi", probability, historical_brier }` (`types.rs:306`). The `scenario_synthesize` dragonfly-eye aggregation already supports multiple `Perspective`s — a market perspective slots in alongside an LLM-generated one.
 - **Cross-validation:** `scenario_cross_validate` with `CrossValidateRequest { source_a: "llm_forecast", source_b: "market", ... }` (`hkask_mcp_scenarios.rs:155`) computes divergence between our forecast and the market — *the* quantitative check the user asked for.
 - **Resolution tracking / Brier:** resolved market outcomes feed `StoredForecastRecord` (`types.rs:347`) and `CalibrationCurve` (`types.rs:366`) so the scenarios server's own calibration loop incorporates market-anchored forecasts.
 
-**Optional Phase-2+ server-native bridge:** a `scenario_from_markets` tool mirroring `scenario_from_companies` (`hkask_mcp_scenarios.rs:598`, request at L125). This *does* edit the scenarios server, but only to add a thin consumer that calls the markets server and returns the same `ScenarioEvent` JSON — no `reqwest` in the scenarios crate (it calls the markets MCP server over the in-process tool boundary, like `scenario_from_companies` calls companies). Defer to Phase 2 to keep Phase 1 a pure addition.
+**Optional Phase-2+ server-native bridge:** a `scenario_from_markets` tool mirroring `scenario_from_companies` (`hkask_mcp_scenarios.rs:598`, request at L125). This *does* edit the scenarios server, but only to add a thin consumer that calls the prediction-markets server and returns the same `ScenarioEvent` JSON — no `reqwest` in the scenarios crate (it calls the prediction-markets MCP server over the in-process tool boundary, like `scenario_from_companies` calls companies). Defer to Phase 2 to keep Phase 1 a pure addition.
 
 ### 5.2 `superforecasting` skill (FlowDef context injection)
 
@@ -148,13 +148,34 @@ The resolved-outcome store (T5) and the match history (T4c) both imply persisten
 
 **Research finding (2026-08-04, verified against GitHub):** no embedded/local Rust graph DB offers CRDT/multi-writer replication — Grafeo (Apache-2.0, pure-Rust embedded, GQL/Cypher/SPARQL + vector/BM25, 0.5.x, no CRDT), CozoDB (MPL-2.0, Datalog, SQLite backend, time-travel, pre-1.0 storage instability), SurrealDB (BSL 1.1 — license caution for an editor-shipped component, heavy footprint, consensus not CRDT), IndraDB (no query language), Kuzu (archived Oct 2025). **If CRDT sync is ever required, it must be layered above the store (automerge/yrs as substrate, graph as materialized view) — do not select a DB on CRDT claims none of them make.** Ranking for this use case: Grafeo > CozoDB > SurrealDB > IndraDB. This is a Phase-2 decision (T12), gated on the essentialist deletion test: adopt the graph only if flat-store relationship queries demonstrably reappear in consumers.
 
+### 5.6 Deterministic statistics and the Constant Maturity Prediction (CMP) contract
+
+**Design principle (OUGHT, elevated to Guardrail):** the data service returns *statistics*, not raw material for the LLM to derive statistics from. Any computation with a closed form or a standard algorithm must live in Rust (`hkask-forecast` or a new crate), not in a prompt. Audit of what this moves out of LLM reasoning:
+
+| Computation | Was | Now |
+|---|---|---|
+| Realized variance / structural vol flags | LLM (implicit) | Deterministic (T4) |
+| Domain-bias correction (2602.19520 politics de-compression) | LLM cascade | Deterministic: `p' = 0.5 + (p − 0.5)(1 + δ_domain,horizon)` applied in the bridge before `base_rate` is returned (T13 + T8 amendment) — closes the consumer-adherence gap mechanically for the highest-risk case |
+| Isotonic recalibration per domain/series | absent | Deterministic fit over resolved (price, outcome) pairs (T13) |
+| Volatility regime classification (smooth vs jump-like, 2607.08199) | absent | Deterministic classifier over `price_history` (T13) |
+| Match confidence scoring (T4c) | hybrid | Deterministic scoring over extracted features (entity overlap, deadline delta) |
+
+**The CMP contract (Hypothesis, design sketch).** Analogous to Constant Maturity Treasury yields (treasury.gov CMT methodology, public domain): prediction markets have constantly-shifting deadlines, so raw prices are never comparable across time. The CMP construction standardizes them:
+
+1. **Base-event registry** — widely traded benchmark events per domain (Kalshi series like `FED`, `CPI`; major Polymarket election events) function as the "risk-free rate" frame: the reference structure other events are priced against. Declared in config, not discovered (avoids auto-promoting a manipulated market to benchmark status).
+2. **Constant-tenor synthesis** — from all markets in a base-event family, bucket price histories by time-to-resolution and interpolate in **log-odds space** (standard for bounded probabilities) to produce synthetic 30d/90d/1y probability series. The 2602.19520 horizon effect becomes *measurable per tenor* instead of a qualitative caveat.
+3. **CMP-standardized volatility** — realized variance computed on the constant-tenor series, removing the mechanical deadline-driven vol inflation (2607.08199) so volatility numbers are comparable across events.
+4. **Residual risk decomposition** — a niche event's exposure to base events estimated by regressing its log-odds changes on base-event log-odds changes over overlapping windows; the residual is the event's idiosyncratic risk. Gated on overlapping-history depth (N observations) — refuses to emit a residual from thin data (same epistemic posture as `stale`).
+
+**Caveats:** (Hypothesis, unverified) CMP feasibility depends on per-base-event market density across deadlines — treasuries have dense maturity coverage; prediction markets may be sparse outside politics/macro. The T0 spike must sample this. Linear co-movement in log-odds is a first-approximation model choice, not a fact.
+
 ---
 
 ## 6. The cybernetic feedback loop (end-to-end)
 
 ```mermaid
 graph TD
-    A[Polymarket Gamma/CLOB + Kalshi REST] -->|sense| B[hkask-mcp-markets data service]
+    A[Polymarket Gamma/CLOB + Kalshi REST] -->|sense| B[hkask-mcp-prediction-markets data service]
     B -->|annotated probability + reliability| C[Scenarios tools: base_rate / Perspective / CrossValidate]
     B -->|annotated probability + reliability| D[Superforecasting FlowDef: knowns / new_evidence]
     C --> E[Recorded forecast with market provenance]
@@ -192,7 +213,7 @@ graph TD
 |---|---|---|---|
 | R1 | Polymarket Gamma exact response field names unverified (docs SPA 404'd via fetch; no live API call made this session) | High — blocks schema pinning | **Phase-0 spike:** live `GET gamma-api.polymarket.com/events` + `GET /markets` and pin fields. Do not implement before. |
 | R2 | Kalshi forecast-percentile-history response shape unverified at depth | Medium | Same spike: `GET /events/{ticker}/forecast-percentile-history` on a live ticker. |
-| R3 | Rate limits (Polymarket per-endpoint; Kalshi tiered token-buckets) | Medium | Cache with TTL (`HKASK_MARKETS_CACHE_TTL_SECS`); prefer Kalshi percentile-history (one call) over reconstructed Polymarket bucket polling. |
+| R3 | Rate limits (Polymarket per-endpoint; Kalshi tiered token-buckets) | Medium | Cache with TTL (`HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS`); prefer Kalshi percentile-history (one call) over reconstructed Polymarket bucket polling. |
 | R4 | Politics underconfidence bias (2602.19520) silently corrupting outside-view anchors | High (the central academic risk) | Encoded as `calibration.domain_bias` in the contract; `reliability_tier` gate; consumer must apply correction, not face-value. Pinned by a test asserting politics markets carry a non-empty `domain_bias`. |
 | R5 | `calibration.brier = 0` on read failure (reinforcing loop) | High (cybernetic trap) | Propagate `stale: true`; `.rules`-style warn on the failure branch. Pinned by a test: read-error returns `stale`, not 0. |
 | R6 | Thin/illiquid markets misread as informative (2607.08199) | Medium | `reliability_tier` derived from volume+spread+open-interest thresholds; test asserts a sub-threshold market is `low`. |
@@ -209,7 +230,7 @@ graph TD
 
 ## 9. Recommendation (OUGHT, labeled as such)
 
-**Adopt the dedicated `hkask-mcp-markets` data-service server**, Phase 1 = Polymarket Gamma + Kalshi read endpoints behind the annotated contract (§4), consumed caller-mediated by `hkask-mcp-scenarios` and via FlowDef context by the `superforecasting` skill. Phase 2 = server-native `scenario_from_markets` bridge + Polymarket bucket reconstruction + streaming (WebSocket) for live updates. Phase 3 = calibration loop closure (Brier feedback into `reliability_tier`) and scenario-builder pre-weighting.
+**Adopt the dedicated `hkask-mcp-prediction-markets` data-service server**, Phase 1 = Polymarket Gamma + Kalshi read endpoints behind the annotated contract (§4), consumed caller-mediated by `hkask-mcp-scenarios` and via FlowDef context by the `superforecasting` skill. Phase 2 = server-native `scenario_from_markets` bridge + Polymarket bucket reconstruction + streaming (WebSocket) for live updates. Phase 3 = calibration loop closure (Brier feedback into `reliability_tier`) and scenario-builder pre-weighting.
 
 This is **OUGHT** (a design choice), not IS (a fact). Its evidentiary basis is the research report's six findings; its correctness invariants are the four contract guardrails and the cybernetic stale-signal rule. It is corroborated, not confirmed — the Phase-0 live-API spike (R1/R2) is the falsification test that must pass before implementation proceeds.
 
