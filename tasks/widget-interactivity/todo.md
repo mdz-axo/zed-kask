@@ -92,9 +92,10 @@ Companion to `plan.md`. Grouped by phase. Check a box only when its acceptance c
 - [x] **CHECKPOINT C4** - branch/compare/revert works end-to-end (graph widget)  DONE
 - [ ] **T8a cache rewrite - deliberately deferred** (see design decision above; revisit only if a second widget needs cross-widget branching, which would justify touching the shared cache)
 
-## Phase 4 — Deferred downstream (gated on T7)
+## Phase 4 — Downstream sovereignty patterns
 
-- [ ] C — "I disagree" in-place correction gesture (downstream of T4, gated on T7)
-- [ ] F — inline drill-down "explain"/"investigate" (downstream of T4, gated on T7)
-- [ ] D / H — ghost edits / consent-gated side effects (policy on top of dispatch; not architectural)
-- [ ] I — ontology-bounded affordances (config of which buttons dispatch exposes; real seam only on 2nd ontology domain)
+- [x] **H — consent-gated side effects (kanban move)** DONE — `PendingMove` stage → Confirm/Cancel banner → `dispatch_move`; chips disabled while pending; 6 new gpui tests (31 total pass); clippy clean; kanban-widget only.
+- [ ] **C — "I disagree" in-place correction gesture** — BLOCKED on a D-seam decision (see open question 7). The widget has no kask-only path to the active conversation thread: `ConversationView::render_markdown` calls `render_agent_markdown` with `&self.workspace` but NOT the active thread (`active_thread()` lives on `ConversationView`). In-place injection requires either (a) extending the D18 `render_agent_markdown` + block-renderer signature to pass a thread-bound injector, or (b) a kask global injector that `ConversationView` sets on activation. Both touch upstream `agent_ui` — a load-bearing D-seam (needs DIVERGENCE.md entry + pinning test per .rules). The kask-side seam (leaf crate trait + accessor) is NOT built speculatively — it would have no consumer until the D-seam lands (.rules "advertised invariants need enforcement points").
+- [ ] **F — inline drill-down** — "explain" half is unblocked (pure dispatch on the existing ToolInvoker path); "investigate" half needs the same compose-back seam as C.
+- [ ] **D — ghost edits** — needs the C compose-back seam + an "evaluate, don't execute" turn framing.
+- [ ] **I — ontology-bounded affordances** — deferred until a 2nd ontology domain (per .rules, don't pre-build the catalog trait).

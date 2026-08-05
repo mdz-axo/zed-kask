@@ -635,6 +635,21 @@ impl ConversationView {
         }
     }
 
+    /// Publish the active conversation injector so kask widgets can compose a
+    /// structured message back into this conversation (the "I disagree"
+    /// gesture). Called from the active-thread-change points
+    /// (`navigate_to_thread`, `set_server_state`). When no thread is active the
+    /// global is cleared so widgets surface a visible fallback draft rather than
+    /// silently no-op'ing (repo `.rules`). zed-kask D-seam — see DIVERGENCE.md.
+    fn publish_injector(&self, cx: &App) {
+        let injector = self.active_thread().map(|thread_view| {
+            Arc::new(ThreadConversationInjector {
+                thread_view: thread_view.clone(),
+            }) as Arc<dyn hkask_conversation_injector::ConversationInjector>
+        });
+        hkask_conversation_injector::set_active_injector(injector);
+    }
+
     pub fn pending_tool_call<'a>(
         &'a self,
         cx: &'a App,
@@ -709,6 +724,7 @@ impl ConversationView {
         if let Some(view) = self.active_thread() {
             view.read(cx).activation_focus_handle(cx).focus(window, cx);
         }
+        self.publish_injector(cx);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
@@ -722,7 +738,34 @@ impl ConversationView {
     }
 }
 
-enum ServerState {
+/// Production [`hkask_conversation_injector::ConversationInjector`]: holds the
+/// active `ThreadView` and composes a message back into it by pre-filling the
+/// message editor. The user reviews the composed revision request and submits
+/// via the existing Send button — this preserves the turn-loop's checkpoints
+/// and telemetry (auto-send would bypass them), and `MessageEditor::set_text`
+/// is test-gated so `clear` + `insert_text` (both production-available) achieve
+/// the same effect. Lives in `agent_ui` (the D-seam) because it needs
+/// `ThreadView` + `MessageEditor`, which only `agent_ui` has.
+struct ThreadConversationInjector {
+    thread_view: Entity<ThreadView>,
+}
+
+impl hkask_conversation_injector::ConversationInjector for ThreadConversationInjector {
+    fn inject(
+        &self,
+        body: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<(), String>> {
+        self.thread_view.update(cx, |thread_view, cx| {
+            thread_view.message_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+                editor.insert_text(&body, window, cx);
+            });
+        });
+        Task::ready(Ok(()))
+    }
+}
     Loading {
         _loading: Entity<LoadingView>,
         connection: Option<Rc<dyn AgentConnection>>,
@@ -912,6 +955,7 @@ impl ConversationView {
         }
 
         self.server_state = state;
+        self.publish_injector(cx);
         cx.emit(StateChange);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         if matches!(&self.server_state, ServerState::Connected(_)) {

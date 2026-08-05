@@ -345,10 +345,31 @@ pub fn years_between(
     )
 }
 
+/// Realized variance of a price series: mean squared per-step log-odds
+/// change (log-odds keeps the measure bounded at the 0/1 edges where raw
+/// price deltas mechanically compress). `None` for fewer than 2 moves —
+/// a variance from one step is fiction.
+pub fn realized_variance(prices: &[f64]) -> Option<f64> {
+    let moves: Vec<f64> = prices
+        .windows(2)
+        .map(|w| hkask_forecast::log_odds(w[1]) - hkask_forecast::log_odds(w[0]))
+        .collect();
+    if moves.len() < 2 {
+        return None;
+    }
+    let mean = moves.iter().sum::<f64>() / moves.len() as f64;
+    let variance =
+        moves.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / moves.len() as f64;
+    Some(variance)
+}
+
 /// Provider-specific record fields, extracted by each provider's adapter.
 /// The shared assembly (annotation, ontology, tier, volatility) lives in
 /// `assemble` — providers differ only in this extraction.
 struct RecordParts {
+    /// Pre-computed realized variance from price history (None when history
+    /// was not fetched — the default for lookup paths).
+    realized_variance: Option<f64>,
     source: Source,
     event_id: String,
     /// ID used in `dcterms:identifier` (Kalshi ticker / Polymarket condition id).
@@ -414,7 +435,7 @@ fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
         open_interest: parts.open_interest,
         last_update: parts.last_update,
         volatility: Volatility {
-            realized_variance: None,
+            realized_variance: parts.realized_variance,
             structural_flag: flag,
             interpretation: interpretation_for(flag),
         },
@@ -457,6 +478,7 @@ impl MarketRecord {
                 .unwrap_or(*now);
         Some(assemble(
             RecordParts {
+                realized_variance: None,
                 source: Source::Kalshi,
                 event_id: market.event_ticker.clone(),
                 ontology_id: market.ticker.clone(),
@@ -531,6 +553,7 @@ impl MarketRecord {
                 .unwrap_or(*now);
         Some(assemble(
             RecordParts {
+                realized_variance: None,
                 source: Source::Polymarket,
                 event_id: event_id.to_string(),
                 ontology_id: market.condition_id.clone(),

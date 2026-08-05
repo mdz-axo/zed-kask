@@ -215,6 +215,7 @@ steps:
       prior_probability: "{{ step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5)) }}"
       hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
       new_evidence: "{{ new_evidence | default([]) }}"
+      market_context: "{{ market_context | default([]) }}"
 
   - ordinal: 10
     action: compute

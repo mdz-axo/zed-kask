@@ -166,3 +166,27 @@ fn bias_source_is_serialized_provenance() {
     let block = calibration_for(None, "Sports");
     assert_eq!(block.bias_source.as_ref(), "none");
 }
+
+#[test]
+fn contains_guards_idempotent_ingest() {
+    // The resolution scanner re-scans the same settled markets; the store
+    // must not double-count.
+    let mut store = CalibrationStore::new();
+    let observation = ResolvedObservation { probability: 0.9, outcome: true };
+    store.record("politics", observation);
+    assert!(store.contains("politics", &observation));
+    assert!(!store.contains("politics", &ResolvedObservation { probability: 0.9, outcome: false }));
+    assert!(!store.contains("economics", &observation));
+    // Second identical record would be skipped by the caller's contains check.
+    assert_eq!(store.sample_size("politics"), 1);
+}
+
+#[test]
+fn check_resolutions_request_schema_has_no_boolean_positions() {
+    let schema = schemars::schema_for!(
+        hkask_mcp_prediction_markets::MarketCheckResolutionsRequest
+    );
+    let value = serde_json::to_value(&schema).expect("serializes");
+    let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+    assert!(positions.is_empty(), "bare booleans: {positions:?}");
+}

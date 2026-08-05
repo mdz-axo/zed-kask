@@ -287,6 +287,7 @@ members = [
     "kask/crates/hkask-services-core",
     "kask/crates/hkask-email",
     "crates/hkask-tool-invoker",
+    "crates/hkask-conversation-injector",
     "crates/hkask-media-widget",
     "crates/hkask-viz-core",
     "crates/hkask-graph-widget",
@@ -387,6 +388,7 @@ swarm_panel = { path = "crates/swarm_panel" }
 marketplace_ui_common = { path = "crates/marketplace_ui_common" }
 kask_bridge = { path = "kask/crates/kask_bridge" }
 hkask_tool_invoker = { path = "crates/hkask-tool-invoker", package = "hkask-tool-invoker" }
+hkask_conversation_injector = { path = "crates/hkask-conversation-injector", package = "hkask-conversation-injector" }
 hkask_media_widget = { path = "crates/hkask-media-widget", package = "hkask-media-widget" }
 hkask_viz_core = { path = "crates/hkask-viz-core", package = "hkask-viz-core" }
 hkask_graph_widget = { path = "crates/hkask-graph-widget", package = "hkask-graph-widget" }

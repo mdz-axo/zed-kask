@@ -68,3 +68,28 @@ fn http_error_classification_is_per_variant() {
         );
     }
 }
+
+// ── Data-service boundary (structural, not conventional) ───────────────────
+
+#[test]
+fn provider_source_contains_no_write_verbs_or_credentials() {
+    // The server is a read-only data service. If anyone adds a POST/PUT or
+    // credential handling to a provider, this test fails loudly — the
+    // boundary is structural, not a comment.
+    let polymarket = include_str!("../src/provider_polymarket.rs");
+    let kalshi = include_str!("../src/provider_kalshi.rs");
+    for (name, src) in [("polymarket", polymarket), ("kalshi", kalshi)] {
+        for forbidden in [".post(", ".put(", ".delete(", ".patch("] {
+            assert!(
+                !src.contains(forbidden),
+                "{name} provider contains write verb {forbidden}"
+            );
+        }
+        for forbidden in ["api_key", "secret", "signature", "Authorization"] {
+            assert!(
+                !src.contains(forbidden),
+                "{name} provider references credential material: {forbidden}"
+            );
+        }
+    }
+}

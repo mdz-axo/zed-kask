@@ -64,6 +64,22 @@ struct KanbanColumn {
     tasks: Vec<TaskBody>,
 }
 
+/// A staged but unconfirmed move (consent gate H). The chip click stages a
+/// pending move; the banner's Confirm/Cancel pair either dispatches it (via
+/// `dispatch_move`, which surfaces `INVOKER_NOT_WIRED_MSG` when the invoker is
+/// absent — never a silent drop) or discards it without any tool call. Only one
+/// move may be pending at a time (chips are disabled while pending).
+#[derive(Clone, Debug)]
+struct PendingMove {
+    task_id: String,
+    task_title: String,
+    from_label: String,
+    /// Wire-format target status (e.g. `"review"`).
+    to_status: String,
+    /// Display label for the target status (e.g. `"Review"`).
+    to_label: String,
+}
+
 /// The kanban widget view. Renders inline in agent markdown (via the D18 seam
 /// composed by `hkask-viz-core`).
 pub struct KanbanWidget {
@@ -82,6 +98,10 @@ pub struct KanbanWidget {
     /// provenance incomplete, missing task_id, tool error). Never silently
     /// dropped (repo `.rules`).
     dispatch_error: Option<String>,
+    /// A staged move awaiting user confirmation (consent gate H). While set,
+    /// all move chips are non-interactive and the dispatch-status banner
+    /// shows a Confirm/Cancel pair instead of the in-flight/error state.
+    pending_move: Option<PendingMove>,
 }
 
 impl KanbanWidget {
@@ -117,6 +137,7 @@ impl KanbanWidget {
             focus_handle: cx.focus_handle(),
             dispatch_in_flight: None,
             dispatch_error: None,
+            pending_move: None,
         }
     }
 
@@ -128,6 +149,60 @@ impl KanbanWidget {
     }
 
     fn render_dispatch_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if let Some(pending) = &self.pending_move {
+            let border_color = cx.theme().colors().border;
+            return Some(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(border_color)
+                    .child(
+                        Label::new(format!(
+                            "Move '{}' from {} to {}?",
+                            pending.task_title, pending.from_label, pending.to_label
+                        ))
+                        .size(LabelSize::XSmall),
+                    )
+                    .child(
+                        div()
+                            .id("kanban-confirm-move")
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(border_color)
+                            .cursor_pointer()
+                            .child(
+                                Label::new("Confirm")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Accent),
+                            )
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.confirm_move(cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .id("kanban-cancel-move")
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(border_color)
+                            .cursor_pointer()
+                            .child(
+                                Label::new("Cancel")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.cancel_move(cx);
+                            })),
+                    )
+                    .into_any_element(),
+            );
+        }
         if let Some(task_id) = &self.dispatch_in_flight {
             return Some(
                 h_flex()
@@ -162,7 +237,7 @@ impl KanbanWidget {
     fn render_columns(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border;
         let card_bg = cx.theme().colors().editor_background;
-        let in_flight_any = self.dispatch_in_flight.is_some();
+        let in_flight_any = self.dispatch_in_flight.is_some() || self.pending_move.is_some();
 
         let column_elements: Vec<AnyElement> = self
             .columns
@@ -269,8 +344,15 @@ impl KanbanWidget {
         let next_status = next_status(&task.status);
         let next_label = status_label(next_status);
         let task_id = task.task_id.clone();
-        let target = next_status.to_string();
+        let task_title = task.title.clone();
+        let from_label = status_label(&task.status).to_string();
+        let to_status = next_status.to_string();
+        let to_label = next_label.to_string();
         let label_text = format!("Move → {next_label}");
+        // Pending or in-flight moves gate all chips non-interactive (single
+        // pending, single flight). Consent gate H: the click stages a
+        // `PendingMove` rather than dispatching directly — the user confirms
+        // via the banner.
         let disabled = in_flight_any || task.task_id.is_empty();
 
         let mut chip = div()
@@ -289,10 +371,59 @@ impl KanbanWidget {
             chip = chip
                 .cursor_pointer()
                 .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.dispatch_move(task_id.clone(), target.clone(), cx);
+                    this.stage_move(
+                        task_id.clone(),
+                        task_title.clone(),
+                        from_label.clone(),
+                        to_status.clone(),
+                        to_label.clone(),
+                        cx,
+                    );
                 }));
         }
         chip.into_any_element()
+    }
+
+    /// Stage a move for user confirmation (consent gate H). Replaces any
+    /// already-pending move (only one pending at a time) and clears any prior
+    /// dispatch error so the banner shows the fresh confirmation prompt.
+    fn stage_move(
+        &mut self,
+        task_id: String,
+        task_title: String,
+        from_label: String,
+        to_status: String,
+        to_label: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_move = Some(PendingMove {
+            task_id,
+            task_title,
+            from_label,
+            to_status,
+            to_label,
+        });
+        self.dispatch_error = None;
+        cx.notify();
+    }
+
+    /// Confirm the staged move: take the pending move (clearing it) and
+    /// dispatch it. If the invoker is unwired, `dispatch_move` surfaces
+    /// `INVOKER_NOT_WIRED_MSG` as usual — the pending move is already taken, so
+    /// no stale pending survives a failed dispatch. A no-op when no move is
+    /// pending.
+    fn confirm_move(&mut self, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending_move.take() {
+            let task_id = pending.task_id;
+            let to_status = pending.to_status;
+            self.dispatch_move(task_id, to_status, cx);
+        }
+    }
+
+    /// Cancel the staged move: drop it without any tool call.
+    fn cancel_move(&mut self, cx: &mut Context<Self>) {
+        self.pending_move = None;
+        cx.notify();
     }
 
     /// Build the dispatch plan from the card + provenance, then route through
@@ -559,6 +690,9 @@ fn apply_move_to_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{Task, TestAppContext};
+    use hkask_tool_invoker::{ToolInvoker, set_tool_invoker};
+    use std::sync::Arc;
 
     fn task(task_id: &str, title: &str, status: &str) -> TaskBody {
         TaskBody {
@@ -780,5 +914,264 @@ mod tests {
             .expect("backlog column exists");
         assert_eq!(backlog.tasks.len(), 1);
         assert_eq!(backlog.tasks[0].task_id, "t2");
+    }
+
+    // ── Consent gate H (stage → confirm/cancel → dispatch) ──────────────────
+    //
+    // The `ToolInvoker` is a process-global `static Mutex<Option<Arc<dyn
+    // ToolInvoker>>>`. Tests that mutate it via `set_tool_invoker` must
+    // serialize so parallel test threads never observe each other's invoker.
+    // `GLOBAL_TEST_LOCK` serializes the consent-gate tests within this binary;
+    // `InvokerGuard` restores the global invoker to `None` on drop so a later
+    // test never sees a stale mock (repo `.rules` racy-global trap).
+    static GLOBAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// RAII guard that clears the process-global `ToolInvoker` when dropped,
+    /// so a test wiring a mock invoker never leaks it into a sibling test.
+    struct InvokerGuard;
+    impl Drop for InvokerGuard {
+        fn drop(&mut self) {
+            set_tool_invoker(None);
+        }
+    }
+
+    /// Records `invoke_tool` calls and resolves them immediately with `{}`.
+    /// The `calls` buffer is an `Arc<Mutex<…>>` so the test can read the
+    /// recorded calls through a clone held outside the trait object.
+    #[derive(Default)]
+    struct MockToolInvoker {
+        calls: Arc<std::sync::Mutex<Vec<(String, String, serde_json::Value)>>>,
+    }
+
+    impl ToolInvoker for MockToolInvoker {
+        fn invoke_tool(
+            &self,
+            server: &str,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> Task<Result<String, String>> {
+            if let Ok(mut calls) = self.calls.lock() {
+                calls.push((server.to_string(), tool.to_string(), args));
+            }
+            Task::ready(Ok("{}".into()))
+        }
+    }
+
+    /// Build a single-board `KanbanBlockBody` with empty (fallback) provenance
+    /// so the move affordance dispatches against `DEFAULT_SERVER`.
+    fn kanban_body(tasks: Vec<TaskBody>) -> KanbanBlockBody {
+        KanbanBlockBody {
+            viz: Some("kanban".into()),
+            board_id: Some("b1".into()),
+            board_name: Some("Test".into()),
+            tasks,
+            boards: Vec::new(),
+            tasks_by_board: Vec::new(),
+            provenance: BlockProvenance::default(),
+        }
+    }
+
+    #[gpui::test]
+    async fn stage_move_sets_pending(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let _guard = InvokerGuard;
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+
+        let pending = widget.read_with(cx, |this, _| this.pending_move.clone());
+        let pending = pending.expect("pending move staged");
+        assert_eq!(pending.task_id, "t1");
+        assert_eq!(pending.to_status, "ready");
+        assert_eq!(pending.to_label, "Ready");
+        assert_eq!(pending.from_label, "Backlog");
+        assert_eq!(pending.task_title, "Write tests");
+    }
+
+    #[gpui::test]
+    async fn confirm_move_dispatches_and_clears_pending(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let mock = Arc::new(MockToolInvoker::default());
+        let recorded = mock.calls.clone();
+        let invoker: Arc<dyn ToolInvoker> = mock;
+        set_tool_invoker(Some(invoker));
+        let _guard = InvokerGuard;
+
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update(cx, |this, cx| this.confirm_move(cx));
+        cx.run_until_parked();
+
+        let pending_is_none = widget.read_with(cx, |this, _| this.pending_move.is_none());
+        assert!(pending_is_none, "confirm_move must clear the pending move");
+
+        let calls = recorded.lock().map(|c| c.clone()).unwrap_or_default();
+        assert_eq!(calls.len(), 1, "exactly one kanban_task_move dispatch");
+        let (server, tool, args) = calls.into_iter().next().expect("one call");
+        assert_eq!(server, "hkask-mcp-kata-kanban");
+        assert_eq!(tool, "kanban_task_move");
+        assert_eq!(args["task_id"], "t1");
+        assert_eq!(args["target_status"], "ready");
+    }
+
+    #[gpui::test]
+    async fn confirm_move_with_unwired_invoker_surfaces_error_and_clears_pending(
+        cx: &mut TestAppContext,
+    ) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        // No invoker wired — ensure clean state regardless of prior tests.
+        set_tool_invoker(None);
+        let _guard = InvokerGuard;
+
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update(cx, |this, cx| this.confirm_move(cx));
+
+        let (pending_is_none, error) = widget.read_with(cx, |this, _| {
+            (this.pending_move.is_none(), this.dispatch_error.clone())
+        });
+        assert!(
+            pending_is_none,
+            "pending move must be cleared even on dispatch failure"
+        );
+        assert_eq!(
+            error.as_deref(),
+            Some(INVOKER_NOT_WIRED_MSG),
+            "unwired invoker surfaces INVOKER_NOT_WIRED_MSG, not a silent drop"
+        );
+    }
+
+    #[gpui::test]
+    async fn cancel_move_clears_without_dispatch(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let mock = Arc::new(MockToolInvoker::default());
+        let recorded = mock.calls.clone();
+        let invoker: Arc<dyn ToolInvoker> = mock;
+        set_tool_invoker(Some(invoker));
+        let _guard = InvokerGuard;
+
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update(cx, |this, cx| this.cancel_move(cx));
+        cx.run_until_parked();
+
+        let pending_is_none = widget.read_with(cx, |this, _| this.pending_move.is_none());
+        assert!(pending_is_none, "cancel_move must clear the pending move");
+        let calls = recorded.lock().map(|c| c.len()).unwrap_or(0);
+        assert_eq!(calls, 0, "cancel_move must not dispatch kanban_task_move");
+    }
+
+    #[gpui::test]
+    async fn chips_disabled_while_pending(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let _guard = InvokerGuard;
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+
+        // The render gate disables all move chips while a move is pending or
+        // in flight (single pending, single flight). Asserting the gating
+        // condition directly is the robust check — introspecting the rendered
+        // element tree for a `disabled` flag is brittle across GPUI versions.
+        let gated = widget.read_with(cx, |this, _| {
+            this.dispatch_in_flight.is_some() || this.pending_move.is_some()
+        });
+        assert!(
+            gated,
+            "chips must be gated non-interactive while a move is pending"
+        );
+    }
+
+    #[gpui::test]
+    async fn stage_move_replaces_existing_pending(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let _guard = InvokerGuard;
+        let body = kanban_body(vec![
+            task("t1", "First", "backlog"),
+            task("t2", "Second", "backlog"),
+        ]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "First".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t2".into(),
+                "Second".into(),
+                "Backlog".into(),
+                "in_progress".into(),
+                "In Progress".into(),
+                cx,
+            );
+        });
+
+        let pending = widget.read_with(cx, |this, _| this.pending_move.clone());
+        let pending = pending.expect("a pending move remains");
+        assert_eq!(
+            pending.task_id, "t2",
+            "the second stage_move replaces the first"
+        );
+        assert_eq!(pending.to_status, "in_progress");
     }
 }

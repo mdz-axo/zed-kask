@@ -180,6 +180,45 @@ pub async fn fetch_markets(
         .map_err(|e| McpToolError::internal(format!("Gamma markets parse failed: {e}")))
 }
 
+/// One point on a CLOB price-history series.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct ClobPricePoint {
+    #[serde(rename = "t")]
+    pub ts: u64,
+    #[serde(rename = "p")]
+    pub price: f64,
+}
+
+/// Fetch price history for a CLOB token (Yes leg) — the Polymarket history
+/// source for realized-variance computation.
+pub async fn fetch_prices_history(
+    client: &reqwest::Client,
+    token_id: &str,
+) -> Result<Vec<ClobPricePoint>, McpToolError> {
+    let url = "https://clob.polymarket.com/prices-history";
+    let response = client
+        .get(url)
+        .query(&[("market", token_id), ("interval", "1d"), ("fidelity", "60")])
+        .send()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("CLOB request failed: {e}")))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| McpToolError::unavailable(format!("CLOB body read failed: {e}")))?;
+    if !status.is_success() {
+        return Err(classify_http_error("Polymarket CLOB", status, &body));
+    }
+    #[derive(serde::Deserialize)]
+    struct History {
+        history: Vec<ClobPricePoint>,
+    }
+    let parsed: History = serde_json::from_str(&body)
+        .map_err(|e| McpToolError::internal(format!("CLOB prices-history parse failed: {e}")))?;
+    Ok(parsed.history)
+}
+
 /// Fetch active, open events from Gamma.
 pub async fn fetch_events(client: &reqwest::Client, limit: u32) -> Result<Vec<GammaEvent>, McpToolError> {
     let url = format!("{GAMMA_BASE}/events");

@@ -95,3 +95,27 @@ fn unregistered_series_is_refused() {
     assert!(!registry.iter().any(|(_, s)| s == "KXRANDOM"));
     assert!(registry.iter().any(|(_, s)| s == "KXFEDDECISION"));
 }
+
+// ── realized variance (T4 follow-up) ───────────────────────────────────────
+
+#[test]
+fn realized_variance_uses_log_odds_steps() {
+    use hkask_mcp_prediction_markets::types::realized_variance;
+    // Constant series → zero variance.
+    assert_eq!(realized_variance(&[0.5, 0.5, 0.5]), Some(0.0));
+    // Moving series → positive variance.
+    let v = realized_variance(&[0.5, 0.6, 0.55, 0.65]).expect("computes");
+    assert!(v > 0.0);
+    // <2 moves → None, never a fabricated 0.
+    assert_eq!(realized_variance(&[0.5, 0.6]), None);
+    assert_eq!(realized_variance(&[]), None);
+}
+
+#[test]
+fn history_request_schema_has_no_boolean_positions() {
+    let schema =
+        schemars::schema_for!(hkask_mcp_prediction_markets::MarketHistoryRequest);
+    let value = serde_json::to_value(&schema).expect("serializes");
+    let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+    assert!(positions.is_empty(), "bare booleans: {positions:?}");
+}

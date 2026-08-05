@@ -98,6 +98,20 @@ pub struct MarketCmpRequest {
     pub tenor_days: u32,
 }
 
+/// Request for market_history: a market's record enriched with realized
+/// variance computed from its price history.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketHistoryRequest {
+    /// Kalshi market ticker (e.g. "KXFED-27DEC-H0") or Polymarket CLOB token
+    /// ID (the Yes leg).
+    pub market: String,
+    /// Platform hint: "kalshi" (default) or "polymarket".
+    pub source: Option<String>,
+    /// Lookback window in days (default 90, Kalshi only — Polymarket CLOB
+    /// history uses its own interval parameter).
+    pub window_days: Option<u32>,
+}
+
 /// Request for market_check_resolutions: scan for newly resolved markets
 /// and feed their outcomes into the calibration store (the loop's
 /// self-feeding sense arm).
@@ -682,11 +696,10 @@ impl PredictionMarketsServer {
                 let mut warnings: Vec<String> = Vec::new();
 
                 // Kalshi: settled markets carry an explicit `result`.
-                let kalshi_status = if req.series.is_some() { "settled" } else { "settled" };
                 match provider_kalshi::fetch_markets_by_status(
                     &self.http,
                     req.series.as_deref(),
-                    kalshi_status,
+                    "settled",
                     limit,
                 )
                 .await
@@ -787,6 +800,74 @@ impl PredictionMarketsServer {
                 .map_err(|e| {
                     hkask_mcp_server::server::McpToolError::internal(format!(
                         "scan serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// Market record enriched with realized variance from price history.
+    #[tool(
+        description = "Fetch a market's price history and return its record with realized_variance populated (log-odds step variance, 2607.08199-consistent) plus the volatility regime (smooth vs jump-like). Kalshi: candlesticks over the window; Polymarket: CLOB prices-history for the token."
+    )]
+    pub async fn market_history(
+        &self,
+        Parameters(req): Parameters<MarketHistoryRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_history",
+            Some(Self::ontology_anchor("market_history")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_history".to_string());
+                let source = req.source.as_deref().unwrap_or("kalshi");
+                let prices: Vec<f64> = match source {
+                    "kalshi" => {
+                        let window = i64::from(req.window_days.unwrap_or(90));
+                        let now = chrono::Utc::now().timestamp();
+                        let start = (now - window * 86_400).max(0) as u64;
+                        provider_kalshi::fetch_price_history(
+                            &self.http,
+                            &req.market,
+                            start,
+                            now as u64,
+                        )
+                        .await?
+                        .iter()
+                        .map(|p| p.price)
+                        .collect()
+                    }
+                    "polymarket" => provider_polymarket::fetch_prices_history(
+                        &self.http,
+                        &req.market,
+                    )
+                    .await?
+                    .iter()
+                    .map(|p| p.price)
+                    .collect(),
+                    other => {
+                        return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                            format!("unknown source '{other}' (expected kalshi|polymarket)"),
+                        ));
+                    }
+                };
+                let variance = types::realized_variance(&prices);
+                let regime = hkask_forecast::volatility_regime(&prices);
+                serde_json::to_value(serde_json::json!({
+                    "market": req.market,
+                    "source": source,
+                    "observations": prices.len(),
+                    "realized_variance": variance,
+                    "volatility_regime": format!("{regime:?}"),
+                    "insufficient_history": variance.is_none(),
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "history serialization failed: {e}"
                     ))
                 })
             },

@@ -1,0 +1,17 @@
+[package]
+name = "hkask-conversation-injector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Widget→agent compose-back seam: the ConversationInjector trait + global accessor, in a leaf crate so GPUI widgets can compose a structured message (a revision request / \"I disagree\") back into the active agent conversation without depending on the heavy agent_ui crate. Mirrors the hkask-tool-invoker (widget→MCP) seam, but for widget→agent."
+
+[lib]
+path = "src/hkask_conversation_injector.rs"
+
+[dependencies]
+gpui.workspace = true
+log.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

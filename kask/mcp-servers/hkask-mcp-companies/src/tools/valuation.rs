@@ -388,6 +388,102 @@ impl CompaniesServer {
     }
 
     #[tool(
+        description = "Equity duration (Macaulay-style, years) of a company's projected free cash flows: D = Σ t·PV(CF_t) / Σ PV(CF_t) over the projection plus the terminal value timed at the horizon year. Also reports terminal/stage-1/stage-2 PV shares — the maturity profile of the equity claim. Pair with prediction-market time_to_maturity (hkask-mcp-prediction-markets) for duration-matching across horizons."
+    )]
+    pub async fn equity_duration(
+        &self,
+        Parameters(req): Parameters<types::EquityDurationRequest>,
+    ) -> String {
+        execute_tool(self, "equity_duration", async {
+            validate_symbol(&req.symbol)?;
+
+            let income_result = self.fetch("income_statement", &req.symbol, &[("limit", "5")]).await;
+            let balance_result = self.fetch("balance_sheet", &req.symbol, &[("limit", "5")]).await;
+            let cf_result = self.fetch("cash_flow_statement", &req.symbol, &[("limit", "5")]).await;
+            let metrics_result = self.fetch("key_metrics", &req.symbol, &[("limit", "5")]).await;
+            let profile_result = self.fetch("company_profile", &req.symbol, &[]).await;
+
+            let (income, balance, cf, metrics, profile) =
+                match (income_result, balance_result, cf_result, metrics_result, profile_result) {
+                    (Ok(inc), Ok(bal), Ok(cf), Ok(m), Ok(p)) => (inc, bal, cf, m, p),
+                    (Err(e), _, _, _, _)
+                    | (_, Err(e), _, _, _)
+                    | (_, _, Err(e), _, _)
+                    | (_, _, _, Err(e), _)
+                    | (_, _, _, _, Err(e)) => {
+                        return Err(e);
+                    }
+                };
+
+            let income_arr = income.as_array();
+            let balance_arr = balance.as_array();
+            let cf_arr = cf.as_array();
+            let metrics_arr = metrics.as_array();
+            let profile_obj = profile.as_array().and_then(|a| a.first());
+
+            if income_arr.is_none_or(|a| a.is_empty())
+                || balance_arr.is_none_or(|a| a.is_empty())
+                || cf_arr.is_none_or(|a| a.is_empty())
+                || profile_obj.is_none()
+            {
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
+            }
+
+            let hist = financial_model::HistoricalSnapshot::from_api_json(
+                income_arr.unwrap(),
+                balance_arr.unwrap(),
+                cf_arr.unwrap(),
+                metrics_arr.map_or(&[], |v| v),
+                profile_obj.unwrap(),
+            );
+
+            if hist.revenue.len() < 2 {
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+            }
+
+            let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
+                &hist,
+                types::ProjectionAssumptionOverrides::from(&req),
+            )
+            .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
+            let current_price = profile_obj
+                .unwrap()
+                .get("price")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let model = financial_model::project_model(&hist, &assumptions, current_price);
+
+            let stage1_years = req.stage1_years.unwrap_or(3);
+            let duration = financial_model::equity_duration(&model, stage1_years);
+
+            let output = match duration {
+                Some(d) => serde_json::json!({
+                    "symbol": req.symbol,
+                    "macaulay_duration_years": d.macaulay_duration_years,
+                    "terminal_pv_share": d.terminal_pv_share,
+                    "stage1_pv_share": d.stage1_pv_share,
+                    "stage2_pv_share": d.stage2_pv_share,
+                    "total_pv": d.total_pv,
+                    "horizon_years": d.horizon_years,
+                    "interpretation": format!(
+                        "Equity duration {:.1}y — {:.0}% of value sits in the terminal value at year {}.",
+                        d.macaulay_duration_years,
+                        d.terminal_pv_share * 100.0,
+                        d.horizon_years
+                    ),
+                    "framework": "Macaulay-style equity duration over projected FCF (terminal value timed at the horizon year). Compare against prediction-market time_to_maturity for maturity-transformation analysis.",
+                }),
+                None => serde_json::json!({
+                    "symbol": req.symbol,
+                    "error": "total PV is zero — equity duration undefined (never fabricated)",
+                }),
+            };
+
+            Ok(output)
+        }).await
+    }
+
+    #[tool(
         description = "Monte Carlo DCF simulation. Runs N simulations (default 1000, clamped 100-10000) with each DCF assumption randomized uniformly within its +/- configured range. Returns intrinsic value distribution (percentiles p10/p25/median/p75/p90, histogram), probability of undervaluation, and base case comparison. Quantifies valuation uncertainty from assumption ranges."
     )]
     pub async fn monte_carlo_dcf(

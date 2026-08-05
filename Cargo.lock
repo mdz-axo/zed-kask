@@ -573,6 +573,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "heapless",
+ "hkask-conversation-injector",
  "hkask-viz-core",
  "html_to_markdown",
  "http_client",
@@ -9118,6 +9119,15 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "hkask-conversation-injector"
+version = "0.33.0"
+dependencies = [
+ "gpui",
+ "log",
  "tracing",
 ]
 

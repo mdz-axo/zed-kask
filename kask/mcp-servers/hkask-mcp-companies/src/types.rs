@@ -522,6 +522,19 @@ projection_overrides_from_request!(
     discount_rate,
     terminal_growth,
 );
+projection_overrides_from_request!(
+    EquityDurationRequest,
+    stage1_years,
+    stage2_years,
+    revenue_growth,
+    gross_margin,
+    da_to_revenue,
+    capex_to_revenue,
+    nwc_to_revenue,
+    tax_rate,
+    discount_rate,
+    terminal_growth,
+);
 impl From<&ScenarioAnalysisRequest> for ProjectionAssumptionOverrides {
     fn from(request: &ScenarioAnalysisRequest) -> Self {
         Self {
@@ -644,6 +657,17 @@ mod tests {
             violations.is_empty(),
             "ScreenerRequest schema has bare-boolean property values \
              (Ollama/Gemini would reject): {violations:?}"
+        );
+    }
+
+    #[test]
+    fn equity_duration_request_schema_has_no_boolean_property_values() {
+        let schema = schema_for!(EquityDurationRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let violations = find_boolean_schema_positions(&value);
+        assert!(
+            violations.is_empty(),
+            "EquityDurationRequest schema has bare-boolean property values: {violations:?}"
         );
     }
 }

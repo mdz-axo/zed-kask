@@ -107,6 +107,12 @@ Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
   - [x] output carries observations + r_squared + alpha + latest_residual
   - Verify: `cargo test -p hkask-mcp-prediction-markets residual`
 
+
+## Post-plan hardening (2026-08-05)
+- ☑ **market_check_resolutions** — self-feeding sense arm: scans settled Kalshi markets + resolved Polymarket markets, records definitive outcomes idempotently (contains-guard), skips ambiguous 50-50 resolutions. Live-verified: 19 recorded, re-scan idempotent.
+- ☑ **realized_variance** — log-odds step variance computed from Kalshi candlesticks / Polymarket CLOB prices-history; `market_history` tool live-verified (94 observations, Smooth regime on a FED contract). <2 moves ⇒ None.
+- ☑ **Stage-4 evidence injection** — `market_context` wired into the superforecasting stage-4 evidence-update step with volume/spread-scaled likelihood-ratio guidance.
+
 > **CHECKPOINT 4** ✅ (2026-08-05) — deterministic stats in hkask-forecast (domain_bias_correction, isotonic PAVA, volatility regime, log-odds); market_cmp live-verified against the real KXFEDDECISION series (12 cohorts, interpolated, p=0.084 at 365d tenor on the H0 'no change' contract); market_residual refuses thin overlap. Human review of the CMP curve pending.
 
 - ☑ **T12 — Event-base persistence decision** (`phase3/event-base-decision`)
