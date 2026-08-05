@@ -44,11 +44,11 @@ delegate to a specialist, but the specialist cannot delegate further). zed-kask
 does not try to map its skill cascade onto ABW workspaces — instead, each ABW
 agent/compound-agent is a single callable tool, and zed-kask's own cascade (the
 `swarm-intelligence` skill, the panel, the kask agent) does the
-meta-orchestration. This respects both systems' invariants.
+meta-orchestration. This respects both systems' invariants.[^reynolds-flocking]
 
 ## The four modes of the Agent Swarm panel
 
-The panel (View → Agent Swarm, or the status-bar button) has four modes:
+The panel (View → Agent Swarm, or the status-bar button) has four modes:[^mcp-spec]
 
 | Mode | Surface | What you do |
 |---|---|---|
@@ -59,7 +59,7 @@ The panel (View → Agent Swarm, or the status-bar button) has four modes:
 
 ## Authoring: from intent to agent
 
-Authoring an agent is a three-step pipeline, each step a tool:
+Authoring an agent is a three-step pipeline, each step a tool:[^mcp-spec]
 
 1. **`swarm_generate_prompt`** — draft a system prompt from a natural-language
    description of what the agent should do.
@@ -86,14 +86,14 @@ agents, checks I/O compatibility between them, and flags valence homophily (a
 team that all thinks alike). The panel's Compose surface calls `swarm_xaman`,
 shows the recommendation, and offers a one-click "Use team" pre-fill. A
 composition session can then be materialized into a reusable **App** via
-`swarm_create_app` — the sharing unit.
+`swarm_create_app` — the sharing unit.[^reynolds-flocking-sep]
 
 ## The cost/consent gate (why every spend needs a token)
 
 ABW charges credits for actions: hiring an agent (5 cr), a delegation (1 cr +
 tokens), execution (token fees). Because an *agent* (not just a human) can call
 these tools, zed-kask inserts a **consent gate** so an agent can't spend money
-without the operator explicitly authorizing it.
+without the operator explicitly authorizing it.[^ocap-miller]
 
 The gate is a single-use, action-scoped, target-scoped token:
 
@@ -121,13 +121,13 @@ signal that bypasses normal channels to reach the operator directly. Every
 authenticated tool response carries `wallet.balance`, so a spend is never out of
 sight. A failed balance query emits a warning and returns "unknown" — never a
 fabricated zero, because a measured-zero and a failed-to-measure are opposite
-truths.
+truths.[^beer-heart]
 
 ## The `swarm-intelligence` skill: reasoning about composition
 
 The panel and server are the *substrate*. The `swarm-intelligence` skill is the
 *decision process* that acts on it — a SENSE → ORIENT → DECIDE → ACT → CHECK →
-CONVERGE loop:
+CONVERGE loop:[^pso-kennedy][^aco-dorigo]
 
 - **SENSE** the current swarm state against the Onto4MAT multi-agent teaming
   ontology (alignment, cohesion, separation) and the ABW workspace/wallet APIs.
@@ -144,7 +144,7 @@ for X" or "rebalance this swarm toward Y," and the skill cascade runs.
 
 ## Trust boundaries
 
-Three boundaries shape the design:
+Three boundaries shape the design:[^ocap-miller-trust]
 
 - **ABW output is untrusted.** ABW agents and the curator are third-party LLMs.
   All output is sanitized (`sanitize_abw_response`) and wrapped in a
@@ -163,3 +163,29 @@ Three boundaries shape the design:
 - [Integration plan](../plans/abw-swarm-intelligence.md) — full design + API surface
 - [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md) — the swarm-intelligence skill design, C0–C8 components, steering modes
 - [Kali security audit](../audits/abw-swarm-kali-audit.md) — the 7-layer defense map
+
+## Footnotes
+
+[^reynolds-flocking]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
+    Cited for the separation/alignment/cohesion model underlying the leaf-tool architectural claim — ABW agents flock as peers, not as a recursive delegation tree.
+
+[^mcp-spec]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP tool-dispatch protocol the Agent Swarm panel modes operate over.
+
+[^reynolds-flocking-sep]: Reynolds, C. W. (1987). Flocks, herds and schools: A distributed behavioral model. *ACM SIGGRAPH Computer Graphics*, 21(4), 25–34. https://doi.org/10.1145/37402.37406
+    Cited for the valence-homophily check (separation heuristic) that flags a team where all agents think alike.
+
+[^ocap-miller]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control* (Doctoral dissertation, Johns Hopkins University). http://www.erights.org/talks/thesis/markm-thesis.pdf
+    Cited for the object-capability principle that a delegated agent must not self-authorize a spend — authority only attenuates, never amplifies.
+
+[^beer-heart]: Beer, S. (1979). *The Heart of Enterprise*. John Wiley & Sons.
+    Cited for the algedonic-signal concept (cybernetic pain channel that bypasses normal feedback loops) underlying the wallet-balance visibility design.
+
+[^pso-kennedy]: Kennedy, J., & Eberhart, R. (1995). Particle Swarm Optimization. *Proceedings of IEEE International Conference on Neural Networks*, 1942–1948. https://doi.org/10.1109/ICNN.1995.488968
+    Cited for the PSO velocity-tuning metaphor the DECIDE step uses to propose composition adjustments.
+
+[^aco-dorigo]: Dorigo, M., & Stützle, T. (2004). *Ant Colony Optimization*. MIT Press. https://mitpress.mit.edu/9780262042192/
+    Cited for the ACO pheromone-deposition metaphor the DECIDE step uses to reward successful agent compositions.
+
+[^ocap-miller-trust]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control* (Doctoral dissertation, Johns Hopkins University). http://www.erights.org/talks/thesis/markm-thesis.pdf
+    Cited for the object-capability trust-boundary design: untrusted ABW output is data, not authority, and credentials are scoped per-server.

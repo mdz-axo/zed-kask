@@ -41,7 +41,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## MCP Servers (`KaskMcpSettings`)
 
-Toggle which of the 11 built-in kask MCP servers are loaded.
+Toggle which of the 11 built-in kask MCP servers are loaded.[^mcp-spec-settings]
 
 | Field | Type | Default |
 |-------|------|---------|
@@ -56,7 +56,7 @@ take precedence. Set `load_default: false` to disable all kask MCP servers.
 API key toggles for data services. Keys are stored in the system keychain under
 `kask://credentials/<key>`, not in settings.json. When MCP servers start, the
 composition root reads keys from the keychain and injects them as environment
-variables into the MCP server child process.
+variables into the MCP server child process.[^owasp-secrets-settings]
 
 | Field | Default | Keychain key | Env var injected |
 |-------|---------|--------------|-------------------|
@@ -75,7 +75,7 @@ var and restart Zed.
 ## Inference Providers (`KaskInferenceProvidersSettings`)
 
 API key toggles for OpenAI-compatible inference providers. When a provider is
-enabled:
+enabled:[^openai-compatible-settings]
 
 1. An `openai_compatible.<provider_id>` entry is written to settings.json with
    the provider's API URL and an empty `available_models` list.
@@ -131,7 +131,7 @@ log-only sink (`LogAlertEmailSink` in `crates/zed/src/main.rs`).
 
 ## Guard
 
-There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded. See DIVERGENCE.md D4.
+There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side safety + refusal fallback); the guard only wraps the skill cascade path. There is no configurable `direct_chat_strategy` — the `cascade_only` behavior is hardcoded. See DIVERGENCE.md D4.[^owasp-llm-guard-settings]
 
 ## Memory (`KaskMemorySettings`)
 
@@ -196,7 +196,7 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 
 ## Swarm (`KaskSwarmSettings`)
 
-Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-swarm-intelligence.md`.
+Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-swarm-intelligence.md`.[^reynolds-swarm-settings]
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -217,7 +217,7 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-
 
 Kask-wide model configuration. Two-layer default design: fields default to
 empty strings; `effective_*` methods fall back to the `DEFAULT_*_MODEL`
-constants.
+constants.[^ousterhout-models-settings]
 
 | Field | Type | Default | Effective fallback |
 |-------|------|---------|-------------------|
@@ -227,7 +227,7 @@ constants.
 
 ## Keychain Architecture
 
-There are two keychain namespaces:
+There are two keychain namespaces:[^owasp-keychain-settings]
 
 1. **Zed's `CredentialsProvider`** — used by the settings UI. Keys are stored
    under `kask://credentials/<key>` (for data services) or the provider's
@@ -245,7 +245,7 @@ fallback.
 hKask supports two storage backends, selected at startup via environment
 variables. The `DatabaseDriver` trait abstracts the backend so all stores
 (consent, goals, embeddings, wallet, kata, regulation, etc.) work with
-either provider without code changes.
+either provider without code changes.[^sqlcipher-settings][^pgvector-settings]
 
 ### SQLite (default)
 

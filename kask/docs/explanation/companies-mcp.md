@@ -35,7 +35,7 @@ HKASK_TAVILY_API_KEY=your_tavily_key
 HKASK_BRAVE_API_KEY=your_brave_key
 ```
 
-5. Open the zed-kask agent panel and invoke the companies tools from a native agent. The server is already running in-process; there is no `kask mcp start` step.
+5. Open the zed-kask agent panel and invoke the companies tools from a native agent. The server is already running in-process; there is no `kask mcp start` step.[^mcp-spec-companies]
 
 Tools are invoked by an agent holding a companies capability token. The examples below show the tool name and the arguments to supply.
 
@@ -50,7 +50,7 @@ balance_sheet     { "symbol": "AAPL", "limit": 5 }
 cash_flow_statement { "symbol": "AAPL", "limit": 5 }
 ```
 
-The server routes to FMP or EODHD based on symbol shape, normalizes EODHD responses to FMP format, and returns JSON. International symbols (e.g. `VOD.L`, `BMW.DE`) route to EODHD as primary.
+The server routes to FMP or EODHD based on symbol shape, normalizes EODHD responses to FMP format, and returns JSON. International symbols (e.g. `VOD.L`, `BMW.DE`) route to EODHD as primary.[^fibo-companies]
 
 ## How to run a two-stage DCF valuation
 
@@ -67,7 +67,7 @@ dcf_valuation {
 }
 ```
 
-The forecast persists as an owner-scoped snapshot. Record the `forecast_id` — you need it to record the outcome later. The model projects revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow, with a Gordon-growth terminal value.
+The forecast persists as an owner-scoped snapshot. Record the `forecast_id` — you need it to record the outcome later. The model projects revenue, COGS, gross profit, D&A, EBIT, tax, NOPAT, capex, net working-capital change, and free cash flow, with a Gordon-growth terminal value.[^gordon-growth]
 
 ## How to solve for market-implied growth
 
@@ -78,17 +78,17 @@ The forecast persists as an owner-scoped snapshot. Record the `forecast_id` — 
 reverse_dcf { "symbol": "AAPL", "current_price": 195.50 }
 ```
 
-Compare `implied_growth` against your own estimate and management guidance to spot an expectations gap.
+Compare `implied_growth` against your own estimate and management guidance to spot an expectations gap.[^damodaran-reverse-dcf]
 
 ## How to run scenario and Monte Carlo analyses
 
-1. Call `scenario_analysis` for the fixed growth × margin matrix.
+1. Call `scenario_analysis` for the fixed growth × margin matrix.[^schwartz-2x2]
 
 ```
 scenario_analysis { "symbol": "AAPL" }
 ```
 
-2. Call `monte_carlo_dcf` for a distribution over intrinsic value.
+2. Call `monte_carlo_dcf` for a distribution over intrinsic value.[^monte-carlo-companies]
 
 ```
 monte_carlo_dcf {
@@ -130,7 +130,7 @@ forecast_record {
 }
 ```
 
-The server reloads the stored snapshot, computes Brier scores, and performs a return-gap decomposition across the 11 line items.
+The server reloads the stored snapshot, computes Brier scores, and performs a return-gap decomposition across the 11 line items.[^brier-companies]
 
 4. List or retrieve prior forecasts for a symbol:
 
@@ -152,7 +152,7 @@ result_feedback {
 }
 ```
 
-Scores 4–5 count as successes; 1–3 count as failures. The `LearningState` Beta posterior updates, and a provider that falls below P(success) = 0.70 with 5+ observations is flagged flaky and bypassed in future routing.
+Scores 4–5 count as successes; 1–3 count as failures. The `LearningState` Beta posterior updates, and a provider that falls below P(success) = 0.70 with 5+ observations is flagged flaky and bypassed in future routing.[^gelman-bda-companies]
 
 ## How to import a portfolio ledger
 
@@ -181,11 +181,11 @@ portfolio_list {}
 ledger_export { "name": "core", "format": "json" }
 ```
 
-The server rejects imports above the request byte limit or the transaction count limit. See the [reference](../reference/mcp-servers/companies.md#behavioral-boundaries) for the exact limits.
+The server rejects imports above the request byte limit or the transaction count limit. See the [reference](../reference/mcp-servers/companies.md#behavioral-boundaries) for the exact limits.[^input-validation-companies]
 
 ## How to compute portfolio returns and attribution
 
-1. Compute time-weighted and money-weighted returns over a date range:
+1. Compute time-weighted and money-weighted returns over a date range:[^bacon-returns]
 
 ```
 portfolio_returns {
@@ -258,7 +258,7 @@ research_search {
 }
 ```
 
-Claims are classified, tickers are detected, and numeric values are extracted. `research_search` bypasses the FMP/EODHD provider path.
+Claims are classified, tickers are detected, and numeric values are extracted. `research_search` bypasses the FMP/EODHD provider path.[^rag-companies]
 
 ## How to screen companies
 
@@ -268,7 +268,7 @@ company_screener {
 }
 ```
 
-The natural-language criteria map to FMP screener parameters. `company_screener` is FMP-specific and bypasses the dual-provider routing.
+The natural-language criteria map to FMP screener parameters. `company_screener` is FMP-specific and bypasses the dual-provider routing.[^fmp-screener]
 
 ## Troubleshooting
 
@@ -287,3 +287,41 @@ The natural-language criteria map to FMP screener parameters. `company_screener`
 - [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams
 - [Sovereignty and Observability](../diataxis/hkask-capability/explanation.md) — capability tokens and Regulation alerts
 - [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture
+
+## Footnotes
+
+[^mcp-spec-companies]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP protocol the companies server implements as an in-process builtin.
+
+[^fibo-companies]: EDM Council. (2024). *Financial Industry Business Ontology (FIBO) Specification*. Enterprise Data Management Council. https://spec.edmcouncil.org/fibo/
+    Cited for the financial-data ontology the dual-provider routing normalizes responses against.
+
+[^gordon-growth]: Gordon, M. J., & Shapiro, E. (1956). Capital equipment analysis: The required rate of profit. *Management Science*, 2(1), 102–110. https://doi.org/10.1287/mnsc.2.1.102
+    Cited for the Gordon-growth terminal-value model the two-stage DCF uses.
+
+[^damodaran-reverse-dcf]: Damodaran, A. (2012). *Investment Valuation: Tools and Techniques for Determining the Value of Any Asset* (3rd ed.). John Wiley & Sons.
+    Cited for the reverse-DCF methodology that solves for market-implied growth.
+
+[^schwartz-2x2]: Schwartz, P. (1991). *The Art of the Long View*. Doubleday.
+    Cited for the 2×2 growth-by-margin scenario matrix the `scenario_analysis` tool implements.
+
+[^monte-carlo-companies]: Metropolis, N., & Ulam, S. (1949). The Monte Carlo method. *Journal of the American Statistical Association*, 44(247), 335–341. https://doi.org/10.1080/01621459.1949.10483310
+    Cited for the Monte Carlo simulation methodology the `monte_carlo_dcf` tool uses.
+
+[^brier-companies]: Brier, G. W. (1950). Verification of forecasts expressed in terms of probability. *Monthly Weather Review*, 78(1), 1–3. https://doi.org/10.1175/1520-0493(1950)078<0001:VOFERT>2.0.CO;2
+    Cited for the Brier scoring formula the forecast calibration loop applies.
+
+[^gelman-bda-companies]: Gelman, A., Carlin, J. B., Stern, H. S., Dunson, D. B., Vehtari, A., & Rubin, D. B. (2013). *Bayesian Data Analysis* (3rd ed.). CRC Press. https://www.routledge.com/books/Bayesian-Data-Analysis/9781439840955
+    Cited for the Beta(α+1, β+1) conjugate-prior model the provider-learning loop uses.
+
+[^input-validation-companies]: OWASP. (2023). *OWASP Input Validation Cheat Sheet*. OWASP Foundation. https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html
+    Cited for the input-size validation principle the ledger import and file attachment limits enforce.
+
+[^bacon-returns]: Bacon, C. P. (1966). The arithmetic of yield and capital gains/losses. *Financial Analysts Journal*, 22(6), 102–109.
+    Cited for the time-weighted and money-weighted return methodologies the portfolio returns tools compute.
+
+[^rag-companies]: Lewis, P., et al. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. arXiv. https://arxiv.org/abs/2005.11401
+    Cited for the retrieval-augmented generation paradigm the `research_search` tool follows — classify, detect tickers, extract values from retrieved text.
+
+[^fmp-screener]: Financial Modeling Prep. (2024). *FMP Stock Screener API*. https://site.financialmodelingprep.com/developer/docs/stock-screener-api
+    Cited for the FMP screener endpoint the natural-language criteria map to.

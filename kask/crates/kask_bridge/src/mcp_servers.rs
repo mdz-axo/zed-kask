@@ -85,7 +85,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         description: "Corpus — document corpus and QA generation",
         credentials: Some(&[
             "FALAI_API_KEY",
-            // DB encryption passphrase — read by default_docproc_passphrase() in
+            // DB encryption passphrase — read by default_corpus_passphrase() in
             // semantic/mod.rs. Without this, the DB is silently encrypted with
             // the hardcoded dev passphrase under governed launch.
             "HKASK_DB_PASSPHRASE",

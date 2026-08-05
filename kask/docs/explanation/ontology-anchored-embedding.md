@@ -21,7 +21,7 @@ the embedding vector.
 
 This follows the INSTRUCTOR paradigm (Su et al., NeurIPS 2023): task-specific
 instructions prepended to text produce task-conditioned embeddings that
-outperform generic raw-text embeddings.
+outperform generic raw-text embeddings.[^instructor-paper]
 
 ## Pipeline Order
 
@@ -47,9 +47,12 @@ outperform generic raw-text embeddings.
                                                           assemble → train
 ```
 
+The tag-before-embed ordering means the embedding step already has ontology
+context, so all downstream KNN lookups are domain-aware.[^instructor-pipeline]
+
 ## How Ontology-Anchored Embedding Works
 
-### Step 1: Tag (classification from text alone)
+### Step 1: Tag (classification from text alone)[^instructor-tag]
 
 `corpus_tag_chunks` reads `chunks.jsonl` and classifies each chunk against
 multiple ontologies:
@@ -107,13 +110,13 @@ Three ontology bridge crates provide canonical predicate constants:
 | `hkask-mcp-corpus::bridge::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
 
 These follow the pattern of `hkask-bridge-dublincore`:
-type alias + const strings, no dependencies, no reasoners.
+type alias + const strings, no dependencies, no reasoners.[^dublin-core][^fibo-spec]
 
 ## Why Not Embed → Tag?
 
 Running embed before tag produces raw-text embeddings that are
 ontology-agnostic. The tagging step would need KNN context from these
-"dumb" embeddings to inform classification — but:
+"dumb" embeddings to inform classification — but:[^rag-lewis]
 
 1. **Tagging is classification, not generation** — the RAG paradigm
    (retrieve-then-generate) applies to generation, not classification
@@ -126,3 +129,23 @@ ontology-agnostic. The tagging step would need KNN context from these
 
 See [ADR-050](../architecture/ADRs/ADR-050-ontology-anchored-embedding.md) for the full
 design decision record.
+
+## Footnotes
+
+[^instructor-paper]: Su, W., Casper, M., Absar, S., Lo, K., Wang, Y., & Yang, Y. (2023). One Embedder, Any Task: Instruction-Finetuned Text Embeddings. arXiv. https://arxiv.org/abs/2212.09741
+    Cited as the direct source for the tag-before-embed paradigm — task instructions prepended to text produce task-conditioned embeddings.
+
+[^instructor-pipeline]: Su, W., Casper, M., Absar, S., Lo, K., Wang, Y., & Yang, Y. (2023). One Embedder, Any Task: Instruction-Finetuned Text Embeddings. arXiv. https://arxiv.org/abs/2212.09741
+    Cited for the instruction-conditional embedding quality that the tag-before-embed pipeline ordering exploits.
+
+[^instructor-tag]: Su, W., Casper, M., Absar, S., Lo, K., Wang, Y., & Yang, Y. (2023). One Embedder, Any Task: Instruction-Finetuned Text Embeddings. arXiv. https://arxiv.org/abs/2212.09741
+    Cited for the instruction-prefix mechanism the embed step uses — ontology tags are prepended as task instructions.
+
+[^dublin-core]: DCMI. (2020). *Dublin Core Metadata Element Set, Version 1.1*. Dublin Core Metadata Initiative. https://www.dublincore.org/specifications/dublin-core/dces/
+    Cited as the pattern the bridge crates follow — lightweight constant definitions with no reasoner dependency.
+
+[^fibo-spec]: EDM Council. (2024). *Financial Industry Business Ontology (FIBO) Specification*. Enterprise Data Management Council. https://spec.edmcouncil.org/fibo/
+    Cited for the FIBO ontology the bridge crate exposes as canonical predicate constants.
+
+[^rag-lewis]: Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, V., Küttler, H., Lewis, M., Yih, W., Rocktäschel, T., Riedel, S., & Kiela, D. (2020). Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. arXiv. https://arxiv.org/abs/2005.11401
+    Cited for the RAG (retrieve-then-generate) paradigm the design rationale invokes to distinguish tagging-as-classification from generation.

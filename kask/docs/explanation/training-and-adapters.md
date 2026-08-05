@@ -16,7 +16,7 @@ Fine-tune LoRA adapters for Qwen3.6-27B on RunPod with Unsloth, evaluate them, a
 
 ## Training Overview
 
-hKask's training path uses shell scripts hosted on HuggingFace (`Axolotl-Partners/rust-adapter-scripts`) that launch RunPod pods, execute Unsloth/Axolotl-based fine-tuning, and auto-upload LoRA adapters to HuggingFace. The scripts are not in the hKask repo — hKask is a Rust project and Python is not an acceptable dependency. The MCP submission path (`hkask-mcp-training`) provides job submission, status tracking, and adapter lifecycle management, but the end-to-end contract for dataset transfer, training execution, artifact recovery, and adapter registration has not been verified through an automated integration test.
+hKask's training path uses shell scripts hosted on HuggingFace (`Axolotl-Partners/rust-adapter-scripts`) that launch RunPod pods, execute Unsloth/Axolotl-based fine-tuning, and auto-upload LoRA adapters to HuggingFace. The scripts are not in the hKask repo — hKask is a Rust project and Python is not an acceptable dependency. The MCP submission path (`hkask-mcp-training`) provides job submission, status tracking, and adapter lifecycle management, but the end-to-end contract for dataset transfer, training execution, artifact recovery, and adapter registration has not been verified through an automated integration test.[^lora-paper][^peft-lib]
 
 ### Training Scripts (on HuggingFace)
 
@@ -37,7 +37,7 @@ The generic CLI commands `kask docproc ingest`, `kask training create-dataset`, 
 
 ## Train Rust Adapters on RunPod with Unsloth
 
-Train LoRA adapters for Qwen3.6-27B specialized for Rust programming:
+Train LoRA adapters for Qwen3.6-27B specialized for Rust programming:[^unsloth-lib][^axolotl-lib]
 
 | Mode | Dataset | Size | Focus | HF Repo |
 |------|---------|------|-------|---------|
@@ -172,7 +172,7 @@ On failure:
 
 ## Adapter Lifecycle via the Training MCP Server
 
-The training MCP server (`hkask-mcp-training`) exposes 8 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `mcp-servers/hkask-mcp-training/src/adapter/adapter_router/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."
+The training MCP server (`hkask-mcp-training`) exposes 8 tools for the training and adapter lifecycle. The former `kask adapter list/deploy/status/teardown` CLI commands have been removed. The `AdapterRouter` (in `mcp-servers/hkask-mcp-training/src/adapter/adapter_router/mod.rs`) implements the `AdapterPort` trait internally — endpoint deployment, status, and teardown are exposed through the `training_status` tool's auto-registration path and the `training_submit` retrain mode, not as standalone `adapter_*` MCP tools. The server's `run()` comment explicitly notes: "deployment, status, teardown — the MCP server no longer wraps these."[^mcp-spec-training]
 
 ### Training Tools
 
@@ -403,7 +403,7 @@ status: VERIFIED
 
 ## Key Decision Points
 
-| Decision | Condition | Branches |
+| Decision | Condition | Branches |[^training-decisions]
 |----------|-----------|----------|
 | Mode selection | CLI flag (`--rust-coding`, `--eval`, etc.) | 5 paths: train, eval, coding, analysis, both |
 | Pod readiness | RunPod `desiredStatus == RUNNING` | Retry loop, max 5 min |
@@ -658,6 +658,8 @@ status: VERIFIED
 
 ## Design Notes
 
+The following architectural seams define the training server's design:[^ousterhout-training]
+
 - `TrainingHost` is the seam for compute backends — three providers (Runpod, DeepInfra, Nebius) implement it
 - `PodStatus` is the rich status type — every pod returns SSH command, IP, uptime, GPU type, and failure reason
 - `HarnessAdapter` is the seam for training tooling — renders config in the harness native format (YAML for Axolotl/Ludwig, Python for TRL)
@@ -667,4 +669,27 @@ status: VERIFIED
 - `LoraParams` defaults: r=16, alpha=32, dropout=0, 7 target modules (all attention + MLP projections)
 - `TrainingParams` defaults: LR=1e-4, 3 epochs, batch_size=4
 - Every pod/VM/container MUST be debuggable via SSH — empty `ssh_command` is a red flag
+
+## Footnotes
+
+[^lora-paper]: Hu, E. J., Shen, Y., Wallis, P., Allen-Zhu, Z., Li, Y., Wang, S., Wang, L., & Chen, W. (2021). LoRA: Low-Rank Adaptation of Large Language Models. arXiv. https://arxiv.org/abs/2106.09685
+    Cited for the LoRA low-rank adaptation method the training path implements.
+
+[^peft-lib]: Liu, Y., et al. (2024). *Parameter-Efficient Fine-Tuning (PEFT)*. Hugging Face. https://huggingface.co/docs/peft
+    Cited for the PEFT library that provides the adapter serialization and merge interface the MCP lifecycle manages.
+
+[^unsloth-lib]: Unsloth. (2024). *Unsloth: Fine-tune LLMs 2x faster, use 70% less VRAM*. GitHub. https://github.com/unslothai/unsloth
+    Cited for the Unsloth optimization layer the RunPod training scripts use.
+
+[^axolotl-lib]: Axolotl. (2024). *Axolotl: A tool for fine-tuning various AI models*. GitHub. https://github.com/axolotl-ai-cloud/axolotl
+    Cited for the Axolotl fine-tuning harness the training scripts execute on the pod.
+
+[^mcp-spec-training]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP protocol the training server exposes its 8 lifecycle tools over.
+
+[^training-decisions]: Dettmers, T., Pagnoni, A., Holtzman, A., & Zettlemoyer, L. (2023). QLoRA: Efficient Finetuning of Quantized LLMs. arXiv. https://arxiv.org/abs/2305.14314
+    Cited for the dataset-size vs quality and early-stopping decision points the pipeline branches on.
+
+[^ousterhout-training]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the deep-module/seam discipline that the `TrainingHost` and `HarnessAdapter` trait boundaries follow.
 

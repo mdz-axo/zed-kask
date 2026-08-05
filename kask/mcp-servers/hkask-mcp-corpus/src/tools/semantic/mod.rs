@@ -634,7 +634,7 @@ pub struct ExtractTriplesRequest {
     /// Path to the SQLCipher memory DB for h_mem storage.
     pub db_path: String,
     /// Passphrase for the memory DB.
-    #[serde(default = "default_docproc_passphrase")]
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Maximum h_mems to extract per chunk (default 15).
     #[serde(default = "default_max_triples")]
@@ -668,7 +668,7 @@ pub struct EmbedRequest {
     /// Path to the SQLCipher memory DB for vector storage.
     pub db_path: String,
     /// Passphrase for the memory DB.
-    #[serde(default = "default_docproc_passphrase")]
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Embedding model to use. If not set, uses the configured default.
     #[serde(default)]
@@ -682,15 +682,14 @@ fn default_embed_batch_size() -> usize {
     50
 }
 
-/// Default passphrase for the docproc memory DB.
+/// Default passphrase for the corpus memory DB.
 ///
-/// `tools::storage::default_purge_passphrase` is private to that module, so this
-/// module-local default mirrors it for `ExtractTriplesRequest` and `EmbedRequest`.
-fn default_docproc_passphrase() -> String {
-    // Env-driven with a dev fallback: production sets HKASK_DB_PASSPHRASE;
-    // local dev (env unset) falls back to the shared dev passphrase so the
-    // corpus pipeline runs without extra config. The pipeline YAML no longer
-    // hardcodes the passphrase per-step (F12 — no hardcoded secrets).
+/// Shared across the corpus tool groups (semantic + corpus) so every DB-touching
+/// request struct defaults consistently. Production sets `HKASK_DB_PASSPHRASE`;
+/// local dev (env unset) falls back to the shared dev passphrase so the corpus
+/// pipeline runs without extra config. The pipeline YAML no longer hardcodes
+/// the passphrase per-step (F12 — no hardcoded secrets).
+pub(crate) fn default_corpus_passphrase() -> String {
     std::env::var("HKASK_DB_PASSPHRASE")
         .unwrap_or_else(|_| "hkask-default-passphrase-2024".to_string())
 }

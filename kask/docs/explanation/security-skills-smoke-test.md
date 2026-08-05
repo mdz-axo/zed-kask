@@ -26,9 +26,13 @@ gates.
    former `kask mcp start regulation` standalone CLI has been removed.
    Regulation spans are emitted and queried in-process.
 4. Working directory: zed-kask project root (the hKask workspace under
-   `kask/`).
+   `kask/`).[^owasp-llm][^mitre-atlas]
 
 ## Test Fixtures
+
+The fixtures below follow an exploratory security-testing approach: each skill
+is exercised against a real target with expected output contracts that the
+operator validates manually.[^nist-ssdf][^bach-bolton]
 
 ### Fixture 1: Supply Chain Audit (supply-chain-sentinel)
 
@@ -124,7 +128,7 @@ target_path: <crate-or-workspace-path>
 When skill execution supports automated invocation (rendering templates +
 calling the LLM + validating output) from a test harness, the above
 fixtures can be automated as integration tests. The validation steps
-would become assertions in a Rust test file.
+would become assertions in a Rust test file.[^hendrickson-explore]
 
 Current limitation: in-process skill execution renders templates and
 calls the LLM, but does not automatically validate output against the
@@ -136,7 +140,7 @@ verify it matches the contract.
 To run all smoke tests, invoke each skill from the zed-kask agent panel
 with the context below. There is no standalone `kask
 skill run` CLI — skills execute in-process through the `ManifestExecutor`
-(D1).
+(D1).[^mcp-spec]
 
 ```
 # 1. Supply chain audit
@@ -170,7 +174,7 @@ arguments: {"namespace": "reg.skill.kali-audit", "since_hours": 1.0, "limit": 50
 ## What the Smoke Tests Catch
 
 These smoke tests catch the issues that mechanical validation (Layers 1-4)
-cannot:
+cannot:[^bach-bolton-smoke]
 
 1. **Template rendering with real inputs** — the template might render
    differently with real data than with empty context
@@ -185,3 +189,26 @@ cannot:
 These are the most valuable tests but also the most expensive — they require
 LLM calls, a running editor session, and manual output validation. They are
 recommended as a pre-release checklist, not a CI gate.
+
+## Footnotes
+
+[^owasp-llm]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
+    Cited for the security-threat taxonomy the security skills are designed to probe.
+
+[^mitre-atlas]: MITRE. (2024). *MITRE ATLAS (Adversarial Threat Landscape for AI Systems)*. MITRE Corporation. https://atlas.mitre.org/
+    Cited for the adversarial-attack taxonomy underlying the kali-audit and runtime-posture-monitor skills.
+
+[^nist-ssdf]: NIST. (2022). *Secure Software Development Framework (SSDF) — SP 800-218A*. National Institute of Standards and Technology. https://csrc.nist.gov/pubs/sp/800/218/a/final
+    Cited as the supply-chain and secure-development framework the supply-chain-sentinel fixture validates against.
+
+[^bach-bolton]: Bach, J., & Bolton, M. (2019). *Rapid Software Testing*. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
+    Cited for the exploratory-testing methodology guiding manual smoke-test fixture validation.
+
+[^hendrickson-explore]: Hendrickson, E. (2013). *Explore It!: Reduce Risk and Increase Confidence with Exploratory Testing*. Pragmatic Bookshelf. https://pragprog.com/titles/ehxta/explore-it/
+    Cited for the automation-from-exploratory-charters design choice in the future smoke-test harness.
+
+[^mcp-spec]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+    Cited for the MCP protocol the in-process ManifestExecutor (D1) implements.
+
+[^bach-bolton-smoke]: Bach, J., & Bolton, M. (2019). *Rapid Software Testing*. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
+    Cited for the rationale that smoke testing catches integration issues mechanical layer validation cannot.

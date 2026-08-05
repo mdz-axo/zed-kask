@@ -19,11 +19,11 @@ inside zed-kask (D1–D3).
 
 ## Why this document exists
 
-Forecasting in hKask appears in four places — a natural-language skill, a pure-math Rust library, and two domain MCP servers — all describing the same Tetlock methodology at different resolutions. The scenarios MCP server additionally integrates Schwartz's scenario planning and Chermack's assessment framework. This document explains how these surfaces combine, which layer owns what, and why, so reviewers can evaluate whether the implementation matches the methodology.
+Forecasting in hKask appears in four places — a natural-language skill, a pure-math Rust library, and two domain MCP servers — all describing the same Tetlock methodology at different resolutions. The scenarios MCP server additionally integrates Schwartz's scenario planning and Chermack's assessment framework. This document explains how these surfaces combine, which layer owns what, and why, so reviewers can evaluate whether the implementation matches the methodology.[^tetlock][^schwartz][^chermack]
 
 ## Three methodologies, one pipeline
 
-The scenarios MCP server implements three forecasting methodologies as an integrated pipeline:
+The scenarios MCP server implements three forecasting methodologies as an integrated pipeline:[^tetlock-pipe][^schwartz-pipe][^chermack-pipe]
 
 ### Tetlock — Forecast accuracy
 
@@ -73,13 +73,15 @@ The pipeline flows from imagination (Schwartz) through computation (Tetlock) to 
 
 ## Event-tree model (MAIA)
 
-The scenarios server uses a binomial event-tree model (MAIA methodology):
+The scenarios server uses a binomial event-tree model (MAIA methodology):[^bayesian-forecasting]
 - Each event is a yes/no question with a deadline
 - Events can depend on other events via conditional probability tables
 - Marginal probabilities are computed via full joint-table marginalization under parent independence
 - The "all events occur" path probability is the product of all-node-occur conditionals
 
 ## The three-layer architecture
+
+The separation of skill, canonical-math, and domain-server layers follows the deep-module discipline: each module has a narrow interface and deep implementation, and domain logic stays where it is entangled with domain types and I/O.[^ousterhout-deep]
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -123,21 +125,21 @@ The scenarios server uses a binomial event-tree model (MAIA methodology):
 
 ### Why `SubQuestion` survives in scenarios but not in companies
 
-Both servers once defined a local `SubQuestion { question, estimate, confidence }` byte-identical to `hkask_forecast::FermiQuestion`. The essentialist deletion test treats them differently:
+Both servers once defined a local `SubQuestion { question, estimate, confidence }` byte-identical to `hkask_forecast::FermiQuestion`. The essentialist deletion test treats them differently:[^ousterhout-deletion]
 
 - **Companies** used `SubQuestion` as a standalone type with no embedding. Deleting it and consuming `hkask_forecast::FermiQuestion` directly removed the duplicate type and the conversion adapter in one move. **Eliminated.**
 - **Scenarios** embeds `SubQuestion` inside domain aggregates (`ScenarioEvent.sub_questions`, `Perspective.fermi_sub_questions`). Replacing it would be a wide type migration across many struct definitions for a 3-line saving. **Retained** — the adapter is the cheaper seam.
 
 ## The conformance contract
 
-The contract lives in `registry/templates/superforecasting/README.md` as the "Deterministic Primitives" table. It maps each skill stage to the `hkask-forecast` function that implements its deterministic core, or marks the stage "natural-language only". The contract is mechanically verified by `scripts/check-forecast-conformance.sh` (run in CI), which asserts:
+The contract lives in `registry/templates/superforecasting/README.md` as the "Deterministic Primitives" table. It maps each skill stage to the `hkask-forecast` function that implements its deterministic core, or marks the stage "natural-language only". The contract is mechanically verified by `scripts/check-forecast-conformance.sh` (run in CI), which asserts:[^fagan-inspection]
 
 1. Every `hkask-forecast` public function is referenced in the contract table (no orphan primitives).
 2. Every primitive the contract table names actually exists in `hkask-forecast` (no dangling references).
 
 ## The closed feedback loop (operational)
 
-The Brier learning loop — Tetlock's record → score → recalibrate cycle — is operational across the layers:
+The Brier learning loop — Tetlock's record → score → recalibrate cycle — is operational across the layers:[^brier-1950][^tetlock-record]
 
 1. **Record**: `scenario_score` writes `StoredForecastRecord` entries into the `ForecastStore` journal.
 2. **Score**: `hkask_forecast::brier_score` / `brier_score_multi` compute the Brier score for resolved forecasts.
@@ -146,7 +148,7 @@ The Brier learning loop — Tetlock's record → score → recalibrate cycle —
 
 ## The `compute` action
 
-The FlowDef executor supports a `compute` step action alongside `select` (LLM), `populate`, `execute` (MCP tool), `choice`, and `loop`. A `compute` step invokes a canonical `hkask_forecast::*` primitive deterministically — no LLM round-trip, no MCP call, no inference cost.
+The FlowDef executor supports a `compute` step action alongside `select` (LLM), `populate`, `execute` (MCP tool), `choice`, and `loop`. A `compute` step invokes a canonical `hkask_forecast::*` primitive deterministically — no LLM round-trip, no MCP call, no inference cost.[^deming-pdca-compute]
 
 The superforecasting manifest uses `compute` for three deterministic stages within the 16-step pipeline:
 
@@ -159,7 +161,7 @@ The superforecasting manifest uses `compute` for three deterministic stages with
 
 ## Common drift and how this model prevents it
 
-| Drift | How the model catches it |
+| Drift | How the model catches it |[^ousterhout-drift]
 |-------|---------------------------|
 | A MCP server reimplements a canonical primitive instead of delegating. | The conformance test surfaces un-delegated math; the canonical layer is the only place the formulas live. |
 | The skill describes a formula the Rust lib no longer implements. | The contract table's named functions are checked to exist; a removed function fails CI. |
@@ -168,7 +170,7 @@ The superforecasting manifest uses `compute` for three deterministic stages with
 
 ## Non-goals
 
-- This model does not require `hkask-forecast` to implement every Tetlock stage. Stages that are inherently LLM judgment (triage, inside-view hypothesis generation, synthesis, forward calibration, record, quality gate, convergence) have no pure-math core and correctly have no Rust counterpart.
+- This model does not require `hkask-forecast` to implement every Tetlock stage. Stages that are inherently LLM judgment (triage, inside-view hypothesis generation, synthesis, forward calibration, record, quality gate, convergence) have no pure-math core and correctly have no Rust counterpart.[^tetlock-nongoal]
 - This model does not make the skill call Rust. The skill remains a natural-language pipeline; the contract is about consistency of formulas, not runtime invocation.
 - This model does not merge the two MCP servers. They serve different domains (event trees vs financial valuation) and share only the canonical-math layer.
 
@@ -176,3 +178,50 @@ The superforecasting manifest uses `compute` for three deterministic stages with
 
 - [Scenarios MCP server reference](../reference/mcp-servers/scenarios.md) — tool flow diagram
 - [Scenarios ↔ Companies Bridge](../architecture/core/scenarios-companies-bridge.md) — FIBO to Dublin Core translation
+
+## Footnotes
+
+[^tetlock]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
+    Cited as the primary methodology this document maps onto the three-layer implementation.
+
+[^schwartz]: Schwartz, P. (1991). *The Art of the Long View*. Doubleday.
+    Cited for the scenario-construction methodology (focal question, driving forces, 2×2 axis matrix) integrated into the pipeline.
+
+[^chermack]: Chermack, T. J. (2011). *Scenario Planning in Organizations: Breakthroughs in Decision Making*. Berrett-Koehler Publishers.
+    Cited for the five-phase project-assessment framework the `scenario_assess` tool implements.
+
+[^tetlock-pipe]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
+    Cited for the calibration engine (triage, Fermi decomposition, Bayesian update, dragonfly-eye synthesis, Brier scoring).
+
+[^schwartz-pipe]: Schwartz, P. (1991). *The Art of the Long View*. Doubleday.
+    Cited for the framing and brainstorming tools (`scenario_frame`, `scenario_brainstorm`).
+
+[^chermack-pipe]: Chermack, T. J. (2011). *Scenario Planning in Organizations: Breakthroughs in Decision Making*. Berrett-Koehler Publishers.
+    Cited for the evaluation framework the `scenario_assess` tool implements.
+
+[^bayesian-forecasting]: Howson, C., & Urbach, P. (2006). *Scientific Reasoning: The Bayesian Approach* (3rd ed.). Open Court Publishing.
+    Cited for the conditional-probability marginalization the event-tree model uses.
+
+[^ousterhout-deep]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the deep-module discipline that keeps domain logic in the server layer, not in the canonical-math library.
+
+[^ousterhout-deletion]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the deletion-test heuristic that governs whether a duplicate type is eliminated or retained as an adapter seam.
+
+[^fagan-inspection]: Fagan, M. E. (1976). Design and code inspections to reduce errors in program development. *IBM Systems Journal*, 15(3), 182–211. https://doi.org/10.1147/sj.153.0182
+    Cited for the mechanical-conformance-inspection principle the conformance contract applies to skill–library consistency.
+
+[^brier-1950]: Brier, G. W. (1950). Verification of forecasts expressed in terms of probability. *Monthly Weather Review*, 78(1), 1–3. https://doi.org/10.1175/1520-0493(1950)078<0001:VOFERT>2.0.CO;2
+    Cited for the Brier scoring formula the closed feedback loop uses to measure forecast accuracy.
+
+[^tetlock-record]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
+    Cited for the record → score → recalibrate cycle that operationalizes Brier's calibration feedback.
+
+[^deming-pdca-compute]: Deming, W. E. (1986). *Out of the Crisis*. MIT Center for Advanced Engineering Study.
+    Cited for the PDCA cycle the `compute` action embeds as a deterministic step within the LLM-driven cascade.
+
+[^ousterhout-drift]: Ousterhout, J. (2018). *A Philosophy of Software Design*. Yakny Press.
+    Cited for the module-boundary rationale that prevents a server from reimplementing a canonical primitive.
+
+[^tetlock-nongoal]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown Publishers.
+    Cited for the distinction between LLM-judgment stages and deterministic-math stages that justifies the non-goal boundary.

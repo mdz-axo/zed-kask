@@ -10,7 +10,7 @@ mds_categories: [domain, curation]
 
 ## 1. Purpose
 
-Regulation spans are the observability substrate of hKask's Cybernetic Nervous System (Loop 6). Every operation that affects system state — tool invocations, inference calls, gas consumption, contract lifecycle events — emits a **span** through the Regulation tracing infrastructure.
+Regulation spans are the observability substrate of hKask's Cybernetic Nervous System (Loop 6). Every operation that affects system state — tool invocations, inference calls, gas consumption, contract lifecycle events — emits a **span** through the Regulation tracing infrastructure.[^otel-spans][^beer-cybernetics]
 
 > **Hosting note (v0.32.0):** hKask runs in-process inside zed-kask. The standalone `kask` CLI and
 > `hkask-api` HTTP server have been **deleted**. Span query/subscribe commands previously exposed
@@ -44,7 +44,7 @@ All namespace strings are registered in `CANONICAL_NAMESPACES` (`crates/hkask-ty
 
 ## 2. Span Namespace Taxonomy
 
-Namespaces form a tree rooted at `regulation`. The namespace prefix maps to a `SpanCategory` for typed dispatch (`SpanCategory::from_short_name()`):
+Namespaces form a tree rooted at `regulation`. The namespace prefix maps to a `SpanCategory` for typed dispatch (`SpanCategory::from_short_name()`):[^otel-namespaces]
 
 | Category | Prefixes | Examples |
 |---|---|---|
@@ -64,7 +64,7 @@ Namespaces form a tree rooted at `regulation`. The namespace prefix maps to a `S
 
 **File:** `crates/hkask-types/src/regulation.rs`
 
-Core spans used across 2+ crates. This is the foundational enum implementing `ObservableSpan`.
+Core spans used across 2+ crates. This is the foundational enum implementing `ObservableSpan`.[^otel-domain-spans]
 
 | Variant | Namespace | Meaning | Emitted When |
 |---|---|---|---|
@@ -299,7 +299,7 @@ RegulationRecords are persisted to a `RegulationArchive` (SQLite-backed, used di
 
 ### 4.3 Query
 
-The deleted `kask regulation` CLI was replaced by the kask panel (D10), which has since been deleted. Regulation surfaces are now programmatic only:
+The deleted `kask regulation` CLI was replaced by the kask panel (D10), which has since been deleted. Regulation surfaces are now programmatic only:[^otel-query]
 
 - **Programmatic** `RegulationLedger::health()` — displays overall health (variety deficit, critical/warning counts), variety counter summary, active algedonic alerts, and energy budget status.
 - **Programmatic** `RegulationLedger::alerts()` — lists only active algedonic alerts.
@@ -311,7 +311,7 @@ The deleted `kask regulation` CLI was replaced by the kask panel (D10), which ha
 
 ### 4.4 Decay
 
-Variety tracking uses a **sliding window with exponential moving average (EMA)**:
+Variety tracking uses a **sliding window with exponential moving average (EMA)**:[^hyndman-ema]
 
 - **Window:** 60 seconds (`DEFAULT_VARIETY_WINDOW_SECS`)
 - **EMA decay factor α:** 0.1 per window reset
@@ -395,3 +395,23 @@ let alerts = rt.alerts().await;   // Vec<RuntimeAlert>
 | **Example** | `RegulationSpan::Tool { subsystem: ToolSubsystem::WebSearch }.emit("invoked")` | `RegulationRecord::new(webid, span, CyclePhase::Act, observation, 0)` |
 
 RegulationRecords *contain* spans. The `Span` inside a RegulationRecord holds a `SpanNamespace` constructed from an `ObservableSpan` implementation via `SpanNamespace::from_observable()`. The reverse is not true — RegulationRecords are the persistent record; ObservableSpans are the typed factory for constructing them.
+
+## Footnotes
+
+[^otel-spans]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
+    Cited for the span-based observability model the Regulation tracing infrastructure follows.
+
+[^beer-cybernetics]: Beer, S. (1979). *The Heart of Enterprise*. John Wiley & Sons.
+    Cited for the cybernetic-nervous-system concept that Loop 6 operationalizes through spans.
+
+[^otel-namespaces]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
+    Cited for the hierarchical namespace-tree convention the span taxonomy follows.
+
+[^otel-domain-spans]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
+    Cited for the typed-span-enum pattern the domain-specific span enums implement.
+
+[^hyndman-ema]: Hyndman, R. J., & Athanasopoulos, G. (2018). *Forecasting: Principles and Practice* (2nd ed.). OTexts. https://otexts.com/fpp3/
+    Cited for the exponential moving average decay model the variety tracking sliding window uses.
+
+[^otel-query]: OpenTelemetry. (2024). *OpenTelemetry Specification*. Cloud Native Computing Foundation. https://opentelemetry.io/docs/specs/otel/
+    Cited for the programmatic span-query interface the RegulationLedger exposes.

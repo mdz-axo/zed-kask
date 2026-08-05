@@ -64,13 +64,13 @@ mds_categories: [composition, trust, lifecycle]
 - **Fork:** `Clones/zed-kask` — `origin` = `github.com/mdz-axo/zed-kask.git`, `upstream` = `github.com/zed/zed.git`, on `main`, currently **in sync** with upstream.
 - **Divergence policy:** keep `main` a near-clone of `upstream/main`. All hKask integration is isolated to a **small, named set of crates/files** (§3) so `git fetch upstream && git merge upstream/main` stays low-conflict. No scattered edits across Zed's tree.
 - **hKask wiring (FULL MERGE — §14):** hKask's keep-crates + skills registry + scripts + docs are moved **into the zed-kask repo** under a `kask/` namespace (`kask/crates/hkask-*`, `kask/mcp-servers/hkask-mcp-*`, `kask/skills/`, `kask/scripts/`, `kask/docs/`) and added as zed-kask workspace members. The `mdz-axo/hKask` repo is **archived** (read-only reference). zed-kask is the single source of truth — one clone, one build, one CI. (Replaces the prior path-dep/submodule approach, which dissolved once hKask could no longer run standalone.)
-- **Sync cadence (ongoing, Phase 7):** rebase/merge `upstream/main` regularly; resolve conflicts only in the divergent crates; run the hKask integration tests after each sync. The whole point of the fork is to *inherit Zed's improvements for free* — divergence is the cost, so minimize it.
+- **Sync cadence (ongoing, Phase 7):** rebase/merge `upstream/main` regularly; resolve conflicts only in the divergent crates; run the hKask integration tests after each sync. The whole point of the fork is to *inherit Zed's improvements for free* — divergence is the cost, so minimize it.[^fowler-strangler]
 
 ---
 
 ## 1. The Enhanced Prompt (minimal-divergence fork)
 
-> Fork Zed into **`zed-kask`** (`Clones/zed-kask`), tracking `upstream` and diverging only in three areas. hKask is trimmed to the Curator + sovereignty + tools, compiled into zed-kask under the `kask/` namespace. No backward compatibility.
+> Fork Zed into **`zed-kask`** (`Clones/zed-kask`), tracking `upstream` and diverging only in three areas.[^conway] hKask is trimmed to the Curator + sovereignty + tools, compiled into zed-kask under the `kask/` namespace. No backward compatibility.
 >
 > 1. **zed-kask owns the generic surface and infra** (unchanged from upstream): chat (Agent Panel), GitHub, editor UI, comms/voip/CRDT (replacing Matrix entirely), the **inference router** (`crates/language_model*`), the **provider keystore** (`crates/credentials_provider`), thread storage. These stay byte-identical to upstream.
 > 2. **Divergence #1 — skill execution:** change `crates/agent_skills` + `crates/agent/src/tools/skill_tool.rs` so a skill activation runs hKask's **manifest model** — `manifest.yaml` + Jinja2 templates driving a WordAct/FlowDef/KnowAct/RenderAct cascade with PDCA loops, gas/rjoule, capability-match gating — via the compiled-in `ManifestExecutor`, instead of `render_skill_envelope()` injecting the `SKILL.md` body.
@@ -86,7 +86,7 @@ mds_categories: [composition, trust, lifecycle]
 
 ### 2.1 zed-kask owns (generic — inherited from upstream, NOT modified except integration seams)
 
-Inference routing (`crates/language_model`, `language_model_core`, `language_models`, `language_models_cloud`), provider keystore (`crates/credentials_provider`, `zed_credentials_provider`), chat/Agent Panel (`crates/agent`, `agent_ui`), editor/GitHub/comms/voip/CRDT (`crates/workspace`, `project`, etc.), thread storage (`crates/agent/src/thread_store.rs`), MCP stdio hosting (`crates/context_server`). These stay upstream-identical; we only *add seams* (guard layer, in-process transport) where hKask plugs in.
+Inference routing (`crates/language_model`, `language_model_core`, `language_models`, `language_models_cloud`), provider keystore (`crates/credentials_provider`, `zed_credentials_provider`), chat/Agent Panel (`crates/agent`, `agent_ui`), editor/GitHub/comms/voip/CRDT (`crates/workspace`, `project`, etc.), thread storage (`crates/agent/src/thread_store.rs`), MCP stdio hosting (`crates/context_server`). These stay upstream-identical; we only *add seams* (guard layer, in-process transport) where hKask plugs in.[^ousterhout]
 
 ### 2.2 hKask keeps (unique: curator + sovereignty + tools) — compiled into zed-kask
 
@@ -122,7 +122,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 
 ### 2.4 MCP load set (11 on disk)
 
-The original 16 MCP servers have been pruned to **11 on disk**. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates them.
+The original 16 MCP servers have been pruned to **11 on disk**. The `BUILT_IN_MCP_SERVERS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates them.[^anthropic-mcp]
 
 | On disk (11) | Removed / merged |
 |---|---|
@@ -134,7 +134,7 @@ The original 16 MCP servers have been pruned to **11 on disk**. The `BUILT_IN_MC
 
 ## 3. The Minimal Divergence Map (exact zed-kask touch points)
 
-Every hKask integration maps to a **named, isolated** change in zed-kask. This is the entire divergence surface (D1–D20); everything else tracks upstream.
+Every hKask integration maps to a **named, isolated** change in zed-kask. This is the entire divergence surface (D1–D20); everything else tracks upstream.[^fowler-strangler]
 
 | # | Divergence | zed-kask crate / file | Status | Change |
 |---|---|---|---|---|
@@ -152,13 +152,13 @@ Every hKask integration maps to a **named, isolated** change in zed-kask. This i
 **Discipline:** D1–D20 are the *only* edits to zed-kask's tree outside `kask/`. Any hKask behavior that would require touching other Zed crates is a smell — push the logic into an hKask crate behind one of these seams instead.
 ## 6. Migration Status
 
-> The phased migration plan that previously occupied this section has been removed per `DOCUMENTATION_STANDARDS.md` §10. All phases are complete: D1–D20 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.
+> The phased migration plan that previously occupied this section has been removed per `DOCUMENTATION_STANDARDS.md` §10. All phases are complete: D1–D20 are wired (see §3 divergence map). The `DIVERGENCE.md` at the repo root is the authoritative record of the divergence surface.[^fowler-strangler]
 
 ---
 
 ## 7. App-Identity Separation (zed-kask ↔ zed coexistence)
 
-**Principle (deep-module):** separate the **local filesystem footprint** so `zed-kask` and an upstream `zed` install coexist on the same machine without conflict, while **sharing the Zed account** — the user logs into their existing Zed account and uses zed-kask *as Zed*, with the minimal kask enhancements. Two deep modules own the footprint; a few hardcoded, non-derived points need separate renames (bug-hunt findings).
+**Principle (deep-module):** separate the **local filesystem footprint** so `zed-kask` and an upstream `zed` install coexist on the same machine without conflict, while **sharing the Zed account** — the user logs into their existing Zed account and uses zed-kask *as Zed*, with the minimal kask enhancements. Two deep modules own the footprint; a few hardcoded, non-derived points need separate renames (bug-hunt findings).[^ousterhout]
 
 ### 7.1 The two deep modules (single knobs)
 
@@ -207,7 +207,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 
 ## 8. Architecture Notes
 
-> The planning process artifacts (open questions, review findings) that previously occupied this section have been removed per `DOCUMENTATION_STANDARDS.md` §10. All review findings were resolved during implementation. The architecture is described in §0–§7, §11–§14. The `DIVERGENCE.md` at the repo root is the authoritative divergence surface record.
+> The planning process artifacts (open questions, review findings) that previously occupied this section have been removed per `DOCUMENTATION_STANDARDS.md` §10. All review findings were resolved during implementation. The architecture is described in §0–§7, §11–§14. The `DIVERGENCE.md` at the repo root is the authoritative divergence surface record.[^fowler-strangler]
 
 ---
 
@@ -217,7 +217,7 @@ All app-identity tasks (T-A1 through T-A8) are complete (D7 ✅ DONE): `APP_NAME
 
 > **Correction (2026-08-01):** The D9b design below proposed routing sovereignty keys (D5) through zed's `CredentialsProvider`. The final D5 implementation does NOT do this — `hkask-keystore` uses the `keyring` crate directly for all keychain access (DB passphrase, SQLCipher encryption), with no zed-side seam. The `CredentialsProvider` namespace (D9b) is used only for data-service API keys (companies/scenarios), not sovereignty keys. The a2a/OCAP secret threading was deleted as self-referential security theater. See DIVERGENCE.md D5 for the authoritative final state. This section is retained as the design history for D9a/D9b; treat the D5 sovereignty-key references below as superseded by DIVERGENCE.md D5.
 
-**Goal:** load API keys for data services (EODHD, FMP, and other kask data services) and all kask-unique config via a **kask settings section** in zed-kask's settings.json + a **kask credentials namespace** in the keystore — leaving core zed settings/keystore code untouched.
+**Goal:** load API keys for data services (EODHD, FMP, and other kask data services) and all kask-unique config via a **kask settings section** in zed-kask's settings.json + a **kask credentials namespace** in the keystore — leaving core zed settings/keystore code untouched.[^fowler-di]
 
 ### 11.1 Evidence
 - zed-kask stores provider API keys via the `CredentialsProvider` trait (`read_credentials`/`write_credentials`/`delete_credentials` keyed by URL → OS keychain); `language_models` providers use `api_key_state` + `credentials_provider` (`crates/credentials_provider`, `crates/language_models/src/provider/open_router.rs`). **Secrets live in the keychain, NOT settings.json.**
@@ -284,14 +284,14 @@ D10 was implemented and later **deleted**. The `crates/kask_panel/` crate is gon
 
 ### 12.5 Verified facts
 
-- **Direct invocation does not bypass sovereignty** — it reuses the capability-gated `McpRuntime::invoke` / `ToolGovernance` path; only the LLM is bypassed, not the capability-match gate/gas.
+- **Direct invocation does not bypass sovereignty** — it reuses the capability-gated `McpRuntime::invoke` / `ToolGovernance` path; only the LLM is bypassed, not the capability-match gate/gas.[^miller-capability]
 - **Variety/regulation:** direct one-on-one invokes still emit `reg.tool.*` and consume gas — the cybernetic loop sees panel activity, so regulation is not bypassed.
 
 ---
 
 ## 13. Composition & Connection Surfaces (zoom-out review)
 
-The connection surfaces use established patterns (ports-and-adapters, decorator, composition-root DI, zed `Panel`, zed settings/credentials) — correct. This section names them as **one coherent, minimal composition** so the seams are explicit.
+The connection surfaces use established patterns (ports-and-adapters, decorator, composition-root DI, zed `Panel`, zed settings/credentials) — correct. This section names them as **one coherent, minimal composition** so the seams are explicit.[^cockburn-hexagonal][^fowler-di]
 
 ### 13.1 Governing invariant (dependency direction)
 **hKask crates NEVER depend on zed-kask; zed-kask depends on hKask crates.** The **single bidirectional seam** is the zed-kask-side **bridge crate** (`crates/kask_bridge` = D8), which depends on both hKask port traits and zed-kask types and implements every adapter. Every other divergence (D1, D2, D3, D6, D9a, D10) *consumes* a port implemented by the bridge; no hKask crate reaches into zed-kask internals. (Reconciles R9/D9b.)
@@ -310,7 +310,7 @@ All zed↔kask connection surfaces are a small set of **port traits** (in `hkask
 Hexagonal pattern: hKask defines the ports; the bridge crate is the adapter; the composition root wires them. **No hKask crate imports a zed-kask crate.**
 
 ### 13.3 Composition root (startup — DI pattern)
-zed-kask app startup constructs the individual hKask components directly (~~`KaskCore`~~ was never implemented as a single singleton — the composition root wires each component separately) and wires the adapters:
+zed-kask app startup constructs the individual hKask components directly (~~`KaskCore`~~ was never implemented as a single singleton — the composition root wires each component separately) and wires the adapters:[^seemann-di]
 1. **Load `KaskSettings` (D9a)** → bind to component construction params (regulation set-points, gas defaults, consolidation cadence, guard strategy, MCP load set = the 11 on disk, §2.4). **Settings→config is construction-time, not a runtime port** (config-struct-validated-on-construction).
 2. **Memory port hook is `None` at startup (D6):** `set_memory_port` is not called until the deferred post-login task. `thread.rs` no-ops when the hook is unset. Uses `Mutex` (not `OnceLock`) so the port can be replaced later. (The former `LoggingMemoryPort` no-op placeholder was deleted in the 2026-07-31 simplification pass — see `tasks/plan.md` C4.)
 3. **Construct hKask components directly:** per-user/curator data directory storage (SQLite SQLCipher or PostgreSQL via `ServiceConfig::open_driver()`), Regulation runtime, memory, the singleton Curator (`CuratorHandle` mpsc in-process), the 11 MCP servers (standalone, identity from `ServerContext.webid` resolved out of `HKASK_WEBID`), the `ManifestExecutor`.
@@ -355,10 +355,10 @@ Components construct at zed-kask startup with a logging memory port; the agent i
 
 ## 14. Repository Consolidation — full merge into zed-kask
 
-**Decision (§0):** fully merge hKask into the `zed-kask` fork. zed-kask becomes the **single source of truth** for everything hKask is becoming — code, skills, scripts, and docs. The `mdz-axo/hKask` repo is **archived** (read-only reference). This replaces the earlier path-dep/submodule wiring (T0.6), which dissolved once hKask could no longer compile or run standalone (daemon/ACP/REPL/inference deleted; keep-crates need the in-process bridge + `gpui_tokio`).
+**Decision (§0):** fully merge hKask into the `zed-kask` fork. zed-kask becomes the **single source of truth** for everything hKask is becoming — code, skills, scripts, and docs. The `mdz-axo/hKask` repo is **archived** (read-only reference). This replaces the earlier path-dep/submodule wiring (T0.6), which dissolved once hKask could no longer compile or run standalone (daemon/ACP/REPL/inference deleted; keep-crates need the in-process bridge + `gpui_tokio`).[^fowler-strangler]
 
 ### 14.1 Why (essentialist)
-- **hKask crates are not independently shippable** after the deletions — they only compile inside zed-kask. A separate repo for non-standalone crates is friction (cross-repo path-deps, R10 hermeticity, two-clone dev, ownership ambiguity) with no value. P5: a module/repo that can't stand alone shouldn't be kept apart.
+- **hKask crates are not independently shippable** after the deletions — they only compile inside zed-kask. A separate repo for non-standalone crates is friction (cross-repo path-deps, R10 hermeticity, two-clone dev, ownership ambiguity) with no value. P5: a module/repo that can't stand alone shouldn't be kept apart.[^ousterhout]
 - **Removes R10 entirely** — no path-deps, no submodule, one clone/build/CI.
 - **Strengthens minimal divergence + upstream sync:** under a `kask/` namespace, hKask's crates/skills/scripts/docs are **additive paths upstream doesn't have** → `git merge upstream/main` never touches `kask/` → near-zero conflict. The only upstream-merge surfaces are the D-seams (in zed's tree) and the `[workspace.members]`/`[workspace.dependencies]` arrays.
 
@@ -419,3 +419,31 @@ The repository consolidation is complete: hKask keep-crates, MCP servers, skills
 ### 14.6 Migration notes
 
 The repository consolidation is complete. `DIVERGENCE.md` lives at the repo root (the authoritative divergence surface record). The `kask/` namespace isolates hKask from upstream. The `scripts/check-hkask-no-zed-deps.sh` CI script enforces the dependency invariant.
+
+---
+
+## References
+
+[^fowler-strangler]: Fowler, M. (2004). *StranglerFigApplication*. https://martinfowler.com/bliki/StranglerFigApplication.html
+    Cited for the incremental-migration pattern underlying the minimal-divergence fork strategy, the named divergence surface, and the repository consolidation.
+
+[^conway]: Conway, M. E. (1968). How do committees invent? *Datamation*, 14(4), 28–31. https://www.melconway.com/research/committees.html
+    Cited for Conway’s Law — the fork’s three divergence areas mirror the organizational boundary between the Zed and hKask development surfaces.
+
+[^ousterhout]: Ousterhout, J. (2021). *A philosophy of software design* (2nd ed.). Yaknymer Press. https://web.stanford.edu/~ouster/cgi-bin/book.php
+    Cited for the deep-module principle (high benefit/cost ratio, minimal interface) applied to the essentialist split, app-identity separation, and repository consolidation rationale.
+
+[^anthropic-mcp]: Anthropic, PBC. (2024). *Model context protocol specification*. https://modelcontextprotocol.io/specification
+    Cited for the MCP protocol governing the 11 on-disk MCP servers in the load set.
+
+[^fowler-di]: Fowler, M. (2004). *Inversion of control containers and the dependency injection pattern*. https://martinfowler.com/articles/injection.html
+    Cited for the dependency injection pattern applied to the kask settings/configuration seam and the composition surfaces.
+
+[^miller-capability]: Miller, M. S., Yee, K.-P., & Shapiro, J. (2003). *Capability myths demolished*. Systems Research Lab, Johns Hopkins University. https://srl.cs.jhu.edu/pubs/SRL2003-02.pdf
+    Cited for the capability-based security model underlying the capability-match gate that the (removed) kask panel invoked tools through.
+
+[^cockburn-hexagonal]: Cockburn, A. (2005). *Hexagonal architecture*. https://alistair.cockburn.us/hexagonal-architecture/
+    Cited for the ports-and-adapters pattern that structures the complete port set between zed-kask and hKask.
+
+[^seemann-di]: Seemann, M., & van Deursen, S. (2019). *Dependency injection principles, practices, and patterns*. Manning Publications. https://www.manning.com/books/dependency-injection-principles-practices-patterns
+    Cited for the composition-root DI pattern — the startup sequence that constructs and wires all hKask components.

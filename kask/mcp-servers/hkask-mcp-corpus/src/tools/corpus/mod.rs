@@ -16,6 +16,7 @@ use crate::services::consolidation::{ConsolidationRequest, ConsolidationService}
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
+use crate::tools::semantic::default_corpus_passphrase;
 use crate::{
     Arc, CorpusServer, McpToolError, Parameters, SemanticMemory, default_owner, embedding_dim,
     execute_tool, json, normalize_in_place, owner_webid, tool, tool_router,
@@ -329,6 +330,7 @@ pub struct DedupChunksRequest {
     /// Path to the SQLCipher memory DB containing chunk embeddings.
     pub db_path: String,
     /// Passphrase for the memory DB.
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Entity-ref prefix for chunk embeddings in the DB (e.g. "corpus:researcher:").
     #[serde(default = "default_corpus_prefix")]
@@ -358,6 +360,7 @@ pub struct ConsolidateChunksRequest {
     /// Path to the SQLCipher memory DB.
     pub db_path: String,
     /// Passphrase for the memory DB.
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Entity-ref prefix for chunk embeddings.
     #[serde(default = "default_corpus_prefix")]
@@ -397,6 +400,7 @@ pub struct BuildPromptsRequest {
     /// Path to the SQLCipher memory DB for embedding retrieval + h_mem knowledge graph.
     pub db_path: String,
     /// Passphrase for the memory DB.
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// Number of KNN context passages to retrieve per chunk (default 3).
     #[serde(default = "default_context_k")]
@@ -446,6 +450,7 @@ pub struct IngestQaRequest {
     /// Path to the SQLCipher memory DB for h_mem + embedding storage.
     pub db_path: String,
     /// Passphrase for the memory DB.
+    #[serde(default = "default_corpus_passphrase")]
     pub passphrase: String,
     /// If true, validate and dedup without storing.
     #[serde(default)]

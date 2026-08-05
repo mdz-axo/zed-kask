@@ -159,7 +159,7 @@ same `(kind, name)` already exists, a `-N` suffix is appended (starting at 2).
 }
 ```
 
-**`kind` values:** `proptest`, `bug-hunt`, `test-run`, or custom.
+**`kind` values:** `proptest`, `bug-hunt`, `test-run`, or custom.[^claessen-quickcheck]
 **`result` values:** `pass`, `fail`, `flaky`, or custom.
 **`oracle_type` values:** `hardcoded`, `reference`, `invariant`, or empty.
 
