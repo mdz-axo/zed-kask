@@ -165,6 +165,28 @@ templates:
     generates_spans:
       - reg.skill.swarm-intelligence.check
 
+  - id: swarm-intelligence/swarm-compose-guide
+    name: "Agent/swarm composition authoring + validation guidance"
+    path: swarm-compose-guide.j2
+    type: KnowAct
+    description: >
+      Reference/authoring KnowAct for agent and swarm composition. Given a
+      composition request (surface: agent|swarm, mode: abw|local, action:
+      suggest|validate, plus partial fields), it produces either suggested
+      completions for unfilled fields (action=suggest) or a validation
+      verdict over the supplied fields (action=validate). Encodes the
+      canonical field definitions (name, agent_type, description,
+      system_prompt, mission, agents) and the ABW/local backend
+      considerations (credit-cost consent-gated catalogue vs local
+      operator-funded filesystem registry). Mirrors the inline prompt used
+      by the `swarm_ai_assist` MCP tool — this template is the single source
+      of truth the panel and the cascade share. Consumed by the DECIDE
+      phase when it proposes an `author_agent` move (no catalogue agent
+      covers a required transform); also available for standalone
+      invocation from the swarm panel.
+    generates_spans:
+      - reg.skill.swarm-intelligence.compose-guide
+
   # ── Reference documents (not executable .j2 templates) ──
   - id: swarm-intelligence/swarm-patterns
     name: "Reference: PSO/ACO/Reynolds/Onto4MAT tuning palette for ABW swarms"

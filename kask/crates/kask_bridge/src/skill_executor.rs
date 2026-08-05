@@ -41,17 +41,6 @@ const SKILL_CONTEXT_SYSTEM_KEYS: &[&str] = &[
     "image_gen_model",
 ];
 
-/// Trust provenance of a resolved manifest. Re-exported from `hkask-types`
-/// so the bridge and executor share the same type. See `hkask_types::Provenance`
-/// for the full documentation.
-///
-/// The executor logs this so an operator can distinguish "built-in skill
-/// executed" from "filesystem skill executed" in the logs, and emits
-/// `tracing::warn!` when high-risk actions (`flowdef`, `compute`) execute from
-/// filesystem-provenance manifests. Blocking these actions on provenance is a
-/// future-wiring target; currently the executor warns but does not restrict.
-use hkask_types::Provenance as ManifestProvenance;
-
 /// Resolves whether a tool is enabled in the current agent profile.
 /// Used by `BridgeManifestExecutor` to enforce proposer/evaluator separation:
 /// a step declaring `profile: ask` must not have `terminal` available.
@@ -156,25 +145,11 @@ impl BridgeManifestExecutor {
     /// manifests are seeded to disk at startup by the registry seeding path,
     /// so a fresh install has the full manifest set on disk and YAML edits
     /// take effect immediately without recompilation.
-    ///
-    /// Returns the YAML content and its trust provenance. Filesystem manifests
-    /// are untrusted (operator-editable). The caller emits a provenance signal
-    /// so an operator reading logs can distinguish "shipped skill executed"
-    /// from a manually-added one. Gating high-risk actions on provenance is a
-    /// future-wiring target; currently the executor logs but does not restrict.
-    fn manifest_yaml(
-        &self,
-        skill_name: &str,
-    ) -> Option<(std::borrow::Cow<'static, str>, ManifestProvenance)> {
+    fn manifest_yaml(&self, skill_name: &str) -> Option<std::borrow::Cow<'static, str>> {
         let path = self.manifest_path(skill_name);
         if path.is_file() {
             match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    return Some((
-                        std::borrow::Cow::Owned(content),
-                        ManifestProvenance::Filesystem,
-                    ));
-                }
+                Ok(content) => return Some(std::borrow::Cow::Owned(content)),
                 Err(e) => {
                     tracing::warn!(
                         "Failed to read manifest '{}' at {}: {e}",
@@ -282,39 +257,13 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // defaults or running the cascade. Validating before the model-default
         // injection keeps the user-supplied keys distinguishable from the
         // runtime-injected system keys (listed in SKILL_CONTEXT_SYSTEM_KEYS).
-        let (manifest_yaml, provenance) = self.manifest_yaml(skill_name).ok_or_else(|| {
+        let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
                 "No manifest found for skill '{skill_name}' on disk at {}",
                 self.manifest_path(skill_name).display()
             )
         })?;
 
-        // Emit provenance signal so an operator reading logs can distinguish
-        // "built-in skill executed" (Embedded, trusted by construction) from
-        // "filesystem skill executed" (Filesystem, untrusted). Per the .rules
-        // "Process-global hooks need a startup-failure signal" pattern, this
-        // is the effector that drives operator awareness of untrusted skill
-        // execution. Gating high-risk actions on provenance is a future-wiring
-        // target.
-        match provenance {
-            ManifestProvenance::Embedded => {
-                tracing::info!(
-                    target: "reg.skill.provenance",
-                    skill = skill_name,
-                    provenance = "embedded",
-                    "Skill manifest resolved from embedded registry (trusted)"
-                );
-            }
-            ManifestProvenance::Filesystem => {
-                tracing::warn!(
-                    target: "reg.skill.provenance",
-                    skill = skill_name,
-                    provenance = "filesystem",
-                    path = %self.manifest_path(skill_name).display(),
-                    "Skill manifest resolved from filesystem (untrusted — not build-time embedded)"
-                );
-            }
-        }
         let manifest = load_manifest_from_yaml(&manifest_yaml)
             .map_err(|e| format!("Failed to load manifest '{skill_name}': {e}"))?;
 
@@ -461,8 +410,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             self.tools.clone(),
             hkask_types::template::LLMParameters::default(),
         )
-        .with_template_base_path(self.registry_templates_dir.clone())
-        .with_provenance(provenance);
+        .with_template_base_path(self.registry_templates_dir.clone());
 
         // Wire the executor's per-step profile gate to the same resolver used by
         // the bridge-level pre-check above. When a resolver is wired, each

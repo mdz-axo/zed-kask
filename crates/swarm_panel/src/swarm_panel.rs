@@ -62,7 +62,7 @@ use settings::Settings as _;
 use settings::SettingsStore;
 use ui::{
     ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
-    ToggleButtonSimple, WithScrollbar, prelude::*,
+    ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -413,6 +413,18 @@ pub struct SwarmPanel {
     /// Per-view connection store for the Steer `ConversationView`. One store =
     /// one connection = one prompt, preventing cross-view prompt bleed.
     steer_connection_store: Option<Entity<AgentConnectionStore>>,
+    /// True while an AI Assist / validate call to `swarm_ai_assist` is in
+    /// flight. Gates the AI Assist / Validate buttons and shows a busy label.
+    ai_assist_busy: bool,
+    /// The action ("suggest" / "validate") of the in-flight AI Assist call, so
+    /// the busy label can distinguish "Assisting…" from "Validating…".
+    ai_assist_action: Option<String>,
+    /// The last AI Assist suggestion result (action: "suggest"). `Some`
+    /// renders the suggestions banner with an Apply / Dismiss pair.
+    ai_assist_suggestions: Option<AiSuggestions>,
+    /// The last AI Assist validation verdict (action: "validate"). `Some`
+    /// renders the validation banner (success or issues list) with Dismiss.
+    validation_result: Option<ValidationResult>,
 }
 
 /// A hire awaiting operator consent. The gate holds the pre-flight estimate
@@ -474,6 +486,32 @@ struct RunStatusView {
     error: Option<SharedString>,
     /// Rendered message lines (sender + content), newest first.
     messages: Vec<String>,
+}
+
+/// AI Assist suggestion result (action: "suggest"). Each field is a suggested
+/// completion for the corresponding form field; an empty string means the field
+/// was already filled or the model had no suggestion. `surface` records which
+/// form the suggestions target so the Author banner doesn't render in Compose
+/// (and vice versa).
+#[derive(Clone, Debug)]
+struct AiSuggestions {
+    surface: String,
+    name: String,
+    agent_type: String,
+    description: String,
+    system_prompt: String,
+    mission: String,
+    agents: String,
+}
+
+/// AI Assist validation verdict (action: "validate"). `valid` is the model's
+/// well-formedness check; `issues` lists the problems when `valid` is false.
+/// `surface` gates which form's banner renders.
+#[derive(Clone, Debug)]
+struct ValidationResult {
+    surface: String,
+    valid: bool,
+    issues: Vec<String>,
 }
 
 impl SwarmPanel {
@@ -559,6 +597,10 @@ impl SwarmPanel {
                 compose,
                 steer_conversation: None,
                 steer_connection_store: None,
+                ai_assist_busy: false,
+                ai_assist_action: None,
+                ai_assist_suggestions: None,
+                validation_result: None,
             };
             this.fetch_all(cx);
             this
@@ -1920,7 +1962,58 @@ impl SwarmPanel {
             cx.notify();
             return;
         }
+        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        // Mode-aware slug pre-validation. ABW requires `^[a-z0-9_]{3,64}$` —
+        // a server-side rejection after the operator has filled every field
+        // is a poor round-trip; validate up front so the error is
+        // field-specific and immediate. Local mode allows alphanumeric plus
+        // `-_.` (the local substrate sanitizes the id), but warn if the name
+        // contains chars that would be stripped.
+        let trimmed_name = name.trim();
+        if is_local {
+            if trimmed_name.is_empty() {
+                self.author.status = Some("Name is required.".into());
+                cx.notify();
+                return;
+            }
+            let has_strippable = trimmed_name
+                .chars()
+                .any(|c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'));
+            if has_strippable {
+                self.author.status = Some(
+                    "Name contains characters that will be stripped on the local \
+                     substrate (allowed: letters, digits, -, _, .)."
+                        .into(),
+                );
+                cx.notify();
+                return;
+            }
+        } else {
+            let len = trimmed_name.chars().count();
+            let valid = (3..=64).contains(&len)
+                && trimmed_name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+            if !valid {
+                self.author.status = Some(
+                    "Name must be 3-64 chars: lowercase letters, digits, underscores only \
+                     (ABW slug rule)."
+                        .into(),
+                );
+                cx.notify();
+                return;
+            }
+        }
         let agent_type = self.author.agent_type.clone();
+        // The selector enforces the agent_type, but double-check — a stale
+        // form state (e.g. a future refactor) must not silently send an
+        // invalid type to the server.
+        if !matches!(agent_type.as_str(), "research" | "creative" | "meta") {
+            self.author.status =
+                Some("Agent type must be one of: research, creative, meta.".into());
+            cx.notify();
+            return;
+        }
         let tags_raw = self.author.tags.read(cx).text(cx);
         let tags: Vec<String> = tags_raw
             .split(',')
@@ -1953,7 +2046,6 @@ impl SwarmPanel {
                 "personality_traits": personality_traits,
             }))
         };
-        let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
         self.author.busy = true;
         self.author.status = None;
         cx.notify();
@@ -2028,6 +2120,13 @@ impl SwarmPanel {
         let name = self.compose.name.read(cx).text(cx);
         if name.trim().is_empty() {
             self.compose.status = Some("Swarm name is required.".into());
+            cx.notify();
+            return;
+        }
+        // Warn on excessively long names — the server may truncate or reject,
+        // and a name over 128 chars is almost certainly a paste error.
+        if name.trim().chars().count() > 128 {
+            self.compose.status = Some("Swarm name is too long (max 128 characters).".into());
             cx.notify();
             return;
         }
@@ -2348,6 +2447,207 @@ impl SwarmPanel {
         agents_editor.update(cx, |editor, cx| {
             editor.set_text(joined, window, cx);
         });
+        cx.notify();
+    }
+
+    // ── AI Assist ─────────────────────────────────────────────────────────
+    //
+    // The Author and Compose surfaces call the `swarm_ai_assist` MCP tool for
+    // two purposes: `action: "suggest"` asks the default model to propose
+    // completions for empty or partial fields (offered as an Apply banner),
+    // and `action: "validate"` runs a well-formedness check before create
+    // (offered as a validation banner). The panel only reads editors here;
+    // `apply_ai_suggestions` (which writes editors) takes `&mut Window`.
+
+    /// Call `swarm_ai_assist` with the current form fields. `action` is either
+    /// `"suggest"` or `"validate"`. The surface ("agent" / "swarm") is derived
+    /// from `self.mode`; only Author and Compose are wired (Browse/Steer are
+    /// ignored). Stores the result in `ai_assist_suggestions` or
+    /// `validation_result` for the surface's banner to render.
+    fn ai_assist(&mut self, action: &str, cx: &mut Context<Self>) {
+        let surface = match self.mode {
+            PanelMode::Author => "agent",
+            PanelMode::Compose => "swarm",
+            // AI Assist is only wired for Author and Compose — a call from
+            // another mode is a no-op rather than a panic.
+            _ => return,
+        };
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.author.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        let mode = if Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local {
+            "local"
+        } else {
+            "abw"
+        };
+
+        let (name, agent_type, description, system_prompt, mission, agents) = if surface == "agent"
+        {
+            (
+                self.author.name.read(cx).text(cx),
+                self.author.agent_type.clone(),
+                self.author.description.read(cx).text(cx),
+                self.author.system_prompt.read(cx).text(cx),
+                String::new(),
+                String::new(),
+            )
+        } else {
+            (
+                self.compose.name.read(cx).text(cx),
+                String::new(),
+                String::new(),
+                String::new(),
+                self.compose.mission.read(cx).text(cx),
+                self.compose.agents.read(cx).text(cx),
+            )
+        };
+
+        self.ai_assist_busy = true;
+        self.ai_assist_action = Some(action.to_string());
+        // Clear stale banners so the operator doesn't see the previous result
+        // while a new call is in flight (mirrors the Xaman Ek stale-suggestion
+        // fix, L5).
+        self.ai_assist_suggestions = None;
+        self.validation_result = None;
+        cx.notify();
+
+        let surface_owned = surface.to_string();
+        let action_owned = action.to_string();
+        cx.spawn(async move |this, cx| {
+            let result = invoker
+                .invoke_tool(
+                    SWARM_SERVER,
+                    "swarm_ai_assist",
+                    json!({
+                        "action": action_owned,
+                        "surface": surface_owned,
+                        "mode": mode,
+                        "name": name,
+                        "agent_type": agent_type,
+                        "description": description,
+                        "system_prompt": system_prompt,
+                        "mission": mission,
+                        "agents": agents,
+                    }),
+                )
+                .await;
+            this.update(cx, |this, cx| {
+                this.ai_assist_busy = false;
+                this.ai_assist_action = None;
+                match result {
+                    Ok(output) => {
+                        if let Some(content) = parse_tool_response(&output) {
+                            if action_owned == "suggest" {
+                                let s = content.get("suggestions");
+                                let pick = |key: &str| {
+                                    s.and_then(|s| s.get(key))
+                                        .and_then(|v| v.as_str())
+                                        .map(str::to_string)
+                                        .unwrap_or_default()
+                                };
+                                this.ai_assist_suggestions = Some(AiSuggestions {
+                                    surface: surface_owned.clone(),
+                                    name: pick("name"),
+                                    agent_type: pick("agent_type"),
+                                    description: pick("description"),
+                                    system_prompt: pick("system_prompt"),
+                                    mission: pick("mission"),
+                                    agents: pick("agents"),
+                                });
+                            } else {
+                                let valid = content
+                                    .get("valid")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let issues = content
+                                    .get("issues")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(str::to_string))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                this.validation_result = Some(ValidationResult {
+                                    surface: surface_owned.clone(),
+                                    valid,
+                                    issues,
+                                });
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        // Surface the error on the active form's status line so
+                        // the operator gets feedback (mirrors create_agent).
+                        let msg = format!("AI Assist unavailable: {err}");
+                        if surface_owned == "agent" {
+                            this.author.status = Some(msg.into());
+                        } else {
+                            this.compose.status = Some(msg.into());
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Apply the stored AI Assist suggestions to the form editors. Each
+    /// non-empty suggestion overwrites the corresponding field. For the agent
+    /// surface, `agent_type` is only applied when it is a valid selector value
+    /// (research/creative/meta). Clears `ai_assist_suggestions` after applying.
+    /// Requires `&mut Window` because `Editor::set_text` needs it.
+    fn apply_ai_suggestions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(s) = self.ai_assist_suggestions.clone() else {
+            return;
+        };
+        if s.surface == "agent" {
+            if !s.name.is_empty() {
+                let editor = self.author.name.clone();
+                editor.update(cx, |e, cx| e.set_text(s.name, window, cx));
+            }
+            if !s.description.is_empty() {
+                let editor = self.author.description.clone();
+                editor.update(cx, |e, cx| e.set_text(s.description, window, cx));
+            }
+            if !s.system_prompt.is_empty() {
+                let editor = self.author.system_prompt.clone();
+                editor.update(cx, |e, cx| e.set_text(s.system_prompt, window, cx));
+            }
+            if matches!(s.agent_type.as_str(), "research" | "creative" | "meta") {
+                self.author.agent_type = s.agent_type;
+            }
+        } else if s.surface == "swarm" {
+            if !s.name.is_empty() {
+                let editor = self.compose.name.clone();
+                editor.update(cx, |e, cx| e.set_text(s.name, window, cx));
+            }
+            if !s.mission.is_empty() {
+                let editor = self.compose.mission.clone();
+                editor.update(cx, |e, cx| e.set_text(s.mission, window, cx));
+            }
+            if !s.agents.is_empty() {
+                let editor = self.compose.agents.clone();
+                editor.update(cx, |e, cx| e.set_text(s.agents, window, cx));
+            }
+        }
+        self.ai_assist_suggestions = None;
+        cx.notify();
+    }
+
+    /// Dismiss the AI Assist suggestions banner without applying.
+    fn dismiss_ai_suggestions(&mut self, cx: &mut Context<Self>) {
+        self.ai_assist_suggestions = None;
+        cx.notify();
+    }
+
+    /// Dismiss the validation banner.
+    fn dismiss_validation(&mut self, cx: &mut Context<Self>) {
+        self.validation_result = None;
         cx.notify();
     }
 
@@ -2685,6 +2985,255 @@ impl SwarmPanel {
                         ),
                 )
                 .when(!pending.within_budget, |this| {
+                    this.child(div().w_full().h(px(2.)).bg(warning))
+                }),
+        )
+    }
+
+    // ── AI Assist render helpers ───────────────────────────────────────────
+    //
+    // `render_ai_assist_row` is the two-button row (✨ AI Assist / ✓ Validate)
+    // shown on both the Author and Compose surfaces. `render_ai_suggestions_banner`
+    // and `render_validation_banner` mirror `render_publish_banner`: a bordered
+    // box with Apply/Dismiss (suggestions) or a success/issues list (validation).
+    // Each banner is gated by its `surface` field so the Author banner does not
+    // render in Compose and vice versa.
+
+    /// The AI Assist button row for a form surface ("agent" or "swarm"). Shown
+    /// below the fields and above the Create button. Both buttons are disabled
+    /// while the form's create is in flight or an AI Assist call is in flight.
+    fn render_ai_assist_row(
+        &self,
+        surface: &str,
+        form_busy: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let disabled = form_busy || self.ai_assist_busy;
+        let busy_label = match self.ai_assist_action.as_deref() {
+            Some("validate") => "Validating…",
+            Some("suggest") => "Assisting…",
+            _ => "",
+        };
+        h_flex()
+            .w_full()
+            .gap_2()
+            .items_center()
+            .child(
+                Button::new(format!("ai-assist-{surface}"), "✨ AI Assist")
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::XSmall)
+                    .disabled(disabled)
+                    .tooltip(Tooltip::text(
+                        "Uses the default model to suggest completions for empty or \
+                         partial fields based on ABW/Local composition guidance.",
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ai_assist("suggest", cx);
+                    })),
+            )
+            .child(
+                Button::new(format!("ai-validate-{surface}"), "✓ Validate")
+                    .style(ButtonStyle::Subtle)
+                    .label_size(LabelSize::XSmall)
+                    .disabled(disabled)
+                    .tooltip(Tooltip::text(
+                        "Runs the inputs through the default model to check \
+                         well-formedness and surface issues before creating.",
+                    ))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ai_assist("validate", cx);
+                    })),
+            )
+            .when(!busy_label.is_empty(), |this| {
+                this.child(
+                    Label::new(busy_label)
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+            })
+    }
+
+    /// The AI Assist suggestions banner for a form surface. Returns `None`
+    /// when there are no suggestions or they target a different surface.
+    fn render_ai_suggestions_banner(
+        &self,
+        surface: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let s = self.ai_assist_suggestions.clone()?;
+        if s.surface != surface {
+            return None;
+        }
+        let border = cx.theme().colors().border;
+        // Collect (label, value) pairs for the non-empty suggestions so the
+        // operator sees exactly which fields would change.
+        let fields: Vec<(&'static str, String)> = [
+            ("Name", s.name.clone()),
+            ("Agent type", s.agent_type.clone()),
+            ("Description", s.description.clone()),
+            ("System prompt", s.system_prompt.clone()),
+            ("Mission", s.mission.clone()),
+            ("Agents", s.agents),
+        ]
+        .into_iter()
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+        if fields.is_empty() {
+            // No suggestions to apply — show a note instead of an empty banner.
+            return Some(
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .p_3()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(border)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(Label::new("✨ AI Assist").color(Color::Accent))
+                            .child(
+                                Label::new("No suggestions — the fields look complete.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        h_flex().gap_2().items_center().child(div().flex_1()).child(
+                            Button::new(format!("dismiss-ai-sug-empty-{surface}"), "Dismiss")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.dismiss_ai_suggestions(cx);
+                                })),
+                        ),
+                    ),
+            );
+        }
+        Some(
+            v_flex()
+                .w_full()
+                .gap_2()
+                .p_3()
+                .rounded_sm()
+                .border_1()
+                .border_color(border)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(Label::new("✨ AI Assist").color(Color::Accent))
+                        .child(
+                            Label::new("Suggested completions:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .gap_0p5()
+                        .children(fields.into_iter().map(|(label, value)| {
+                            // Truncate long suggestion previews so a full
+                            // system-prompt draft doesn't blow out the panel height.
+                            let preview = if value.chars().count() > 120 {
+                                let truncated: String = value.chars().take(120).collect();
+                                format!("• {label}: {truncated}…")
+                            } else {
+                                format!("• {label}: {value}")
+                            };
+                            Label::new(preview)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                        })),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(div().flex_1())
+                        .child(
+                            Button::new(format!("apply-ai-sug-{surface}"), "Apply")
+                                .style(ButtonStyle::Filled)
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.apply_ai_suggestions(window, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new(format!("dismiss-ai-sug-{surface}"), "Dismiss")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.dismiss_ai_suggestions(cx);
+                                })),
+                        ),
+                ),
+        )
+    }
+
+    /// The validation banner for a form surface. Returns `None` when there is
+    /// no result or it targets a different surface. Shows a success label when
+    /// `valid`, or the issues list (Warning color) when not.
+    fn render_validation_banner(
+        &self,
+        surface: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let v = self.validation_result.clone()?;
+        if v.surface != surface {
+            return None;
+        }
+        let border = cx.theme().colors().border;
+        let warning = cx.theme().status().warning;
+        let header = if v.valid {
+            "✓ Validation passed"
+        } else {
+            "✗ Validation found issues"
+        };
+        Some(
+            v_flex()
+                .w_full()
+                .gap_2()
+                .p_3()
+                .rounded_sm()
+                .border_1()
+                .border_color(border)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(Label::new(header).color(if v.valid {
+                            Color::Accent
+                        } else {
+                            Color::Warning
+                        }))
+                        .when(v.valid, |this| {
+                            this.child(
+                                Label::new("Inputs look well-formed.")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                )
+                .when(!v.valid, |this| {
+                    this.child(v_flex().gap_0p5().children(v.issues.iter().map(|issue| {
+                        Label::new(format!("• {issue}"))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Warning)
+                    })))
+                })
+                .child(
+                    h_flex().gap_2().items_center().child(div().flex_1()).child(
+                        Button::new(format!("dismiss-validation-{surface}"), "Dismiss")
+                            .style(ButtonStyle::Subtle)
+                            .label_size(LabelSize::XSmall)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.dismiss_validation(cx);
+                            })),
+                    ),
+                )
+                .when(!v.valid, |this| {
                     this.child(div().w_full().h(px(2.)).bg(warning))
                 }),
         )
@@ -3214,7 +3763,7 @@ mod tests {
         // of importing the server's canonical list.
         assert_eq!(
             parse::SWARM_TOOLS.len(),
-            50,
+            51,
             "tool count changed — update SWARM_TOOLS to match hkask-mcp-swarm #[tool] fns"
         );
 

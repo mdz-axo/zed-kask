@@ -347,7 +347,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_surface_is_exactly_50_registered_tools() {
+    fn tool_surface_is_exactly_51_registered_tools() {
         let router = SwarmServer::combined_router();
         let mut names: Vec<String> = router
             .list_all()
@@ -384,7 +384,7 @@ mod tests {
             "swarm_publish_checks",
             "swarm_publish_agent",
             "swarm_fork_agent",
-            // Local (23).
+            // Local (24).
             "swarm_fund_local",
             "swarm_balance_local",
             "swarm_local_history",
@@ -408,6 +408,7 @@ mod tests {
             "swarm_search_knowledge_local",
             "swarm_generate_prompt_local",
             "swarm_generate_ontology_local",
+            "swarm_ai_assist",
         ]
         .into_iter()
         .map(str::to_string)
@@ -415,7 +416,7 @@ mod tests {
         expected.sort();
         assert_eq!(
             names, expected,
-            "registered tool surface drifted from the documented 50"
+            "registered tool surface drifted from the documented 51"
         );
     }
 }

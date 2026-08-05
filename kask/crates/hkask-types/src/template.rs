@@ -108,24 +108,3 @@ impl Default for LLMParameters {
         Self::edge_work()
     }
 }
-
-/// Trust provenance of a manifest being executed. Determines whether the
-/// manifest was compiled into the binary at build time (trusted by
-/// construction) or loaded from the filesystem at runtime (untrusted —
-/// could be user-authored, marketplace-installed, or locally dropped).
-///
-/// The executor uses this to emit `tracing::warn!` when high-risk actions
-/// (`flowdef` sub-cascades, `compute` primitives) execute from filesystem
-/// manifests. Blocking these actions on provenance is a future-wiring
-/// target; currently the executor warns but does not restrict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Provenance {
-    /// Compiled into the binary via `build.rs` `include_str!`. Trusted by
-    /// construction — reviewed at build time.
-    #[default]
-    Embedded,
-    /// Read from the filesystem at runtime. Untrusted — could be user-authored,
-    /// marketplace-installed (Ed25519-verified at download but not at
-    /// execution), or locally dropped.
-    Filesystem,
-}

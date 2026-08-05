@@ -62,7 +62,6 @@ pub use loops::{
 pub use observable_span::ObservableSpan;
 pub use skill::SkillPolarity;
 pub use template::LLMParameters;
-pub use template::Provenance;
 pub use template_type::TemplateType;
 pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 pub use tool_taint::ToolTaint;

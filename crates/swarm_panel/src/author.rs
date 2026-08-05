@@ -420,6 +420,13 @@ impl SwarmPanel {
                             ),
                     ),
             )
+            // AI Assist + validation — model-backed suggestions and a
+            // well-formedness check before create. Mirrors the publish banner
+            // pattern: a bordered box with Apply/Dismiss (suggestions) or a
+            // success/issues list (validation).
+            .child(self.render_ai_assist_row("agent", self.author.busy, cx))
+            .children(self.render_ai_suggestions_banner("agent", cx))
+            .children(self.render_validation_banner("agent", cx))
             .child(
                 h_flex()
                     .gap_2()

@@ -256,6 +256,12 @@ impl SwarmPanel {
                         )
                     }),
             )
+            // AI Assist + validation — model-backed suggestions and a
+            // well-formedness check before create. Same row + banner pattern
+            // as the Author surface, scoped to "swarm".
+            .child(self.render_ai_assist_row("swarm", self.compose.busy, cx))
+            .children(self.render_ai_suggestions_banner("swarm", cx))
+            .children(self.render_validation_banner("swarm", cx))
             .child(
                 h_flex()
                     .gap_2()

@@ -699,3 +699,61 @@ pub struct GenerateOntologyLocalRequest {
     #[serde(default)]
     pub agent_name: Option<String>,
 }
+
+/// AI assist for the swarm panel authoring forms — suggests completions for
+/// partial inputs or validates well-formedness. Authoring aid — read-only,
+/// spends nothing. Uses the local `InferencePort` (one-shot LLM generate,
+/// guard-scanned). The `mode` field only tailors the guidance text; no ABW
+/// calls in either mode.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AiAssistRequest {
+    /// "suggest" (complete empty/partial fields) or "validate" (check
+    /// well-formedness).
+    pub action: String,
+    /// "agent" (author form) or "swarm" (compose form).
+    pub surface: String,
+    /// "abw" or "local" — tailors the guidance to the selected backend.
+    pub mode: String,
+    /// Agent name / swarm name (the form's Name field).
+    #[serde(default)]
+    pub name: String,
+    /// Agent type (agent surface only): research/creative/meta.
+    #[serde(default)]
+    pub agent_type: String,
+    /// Agent description (agent surface) / unused for swarm.
+    #[serde(default)]
+    pub description: String,
+    /// Agent system prompt (agent surface).
+    #[serde(default)]
+    pub system_prompt: String,
+    /// Swarm mission (swarm surface).
+    #[serde(default)]
+    pub mission: String,
+    /// Swarm agents, comma-separated (swarm surface).
+    #[serde(default)]
+    pub agents: String,
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    use hkask_mcp_server::find_boolean_schema_positions;
+    use schemars::schema_for;
+
+    /// `AiAssistRequest` uses only `String` fields, so its schema should be
+    /// free of bare-boolean property values. Asserted anyway to match the
+    /// pattern every other kask MCP tool-input struct follows (the `.rules`
+    /// "AnyJsonValue" trap — Ollama/Gemini reject boolean property schemas with
+    /// `400 cannot unmarshal bool into ... api.ToolProperty`).
+    #[test]
+    fn ai_assist_request_schema_has_no_boolean_property_values() {
+        let schema = schema_for!(AiAssistRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let violations = find_boolean_schema_positions(&value);
+        assert!(
+            violations.is_empty(),
+            "AiAssistRequest schema has bare-boolean property values \
+             (Ollama/Gemini would reject): {violations:?}"
+        );
+    }
+}

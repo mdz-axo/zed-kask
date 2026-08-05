@@ -228,6 +228,9 @@ pub(crate) const SWARM_TOOLS: &[&str] = &[
     // Agent2Agent protocol.
     "swarm_a2a_send",
     "swarm_a2a_card",
+    // AI Assist — model-backed form suggestions and validation (Author +
+    // Compose surfaces). Called from the panel's `ai_assist` method.
+    "swarm_ai_assist",
 ];
 
 /// Extract the algedonic wallet balance from a tool response (the

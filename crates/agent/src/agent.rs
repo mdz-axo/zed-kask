@@ -4813,21 +4813,14 @@ mod internal_tests {
             .collect()
     }
 
-    /// Filter to only disk-loaded global skills (from the global skills dir),
-    /// excluding the embedded kask globals that are always present. Tests
-    /// that create skills on disk and assert counts use this to ignore the
-    /// 42 embedded globals baked into the binary.
+    /// Filter to only disk-loaded global skills (from the global skills dir).
+    /// Tests that create skills on disk and assert counts use this to ignore
+    /// built-in and project-local skills.
     #[allow(dead_code)]
     fn disk_global_skills(skills: &[Skill]) -> Vec<&Skill> {
         skills
             .iter()
-            .filter(|s| {
-                matches!(s.source, SkillSource::Global)
-                    && !s
-                        .skill_file_path
-                        .to_string_lossy()
-                        .starts_with("<embedded-global>")
-            })
+            .filter(|s| matches!(s.source, SkillSource::Global))
             .collect()
     }
 
@@ -5590,13 +5583,7 @@ mod internal_tests {
             let all = resolve(cx);
             let disk: Vec<_> = all
                 .iter()
-                .filter(|s| {
-                    matches!(s.source, SkillSource::Global)
-                        && !s
-                            .skill_file_path
-                            .to_string_lossy()
-                            .starts_with("<embedded-global>")
-                })
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
             assert!(disk.is_empty());
         });
@@ -5625,13 +5612,7 @@ mod internal_tests {
             let all = resolve(cx);
             let disk: Vec<_> = all
                 .iter()
-                .filter(|s| {
-                    matches!(s.source, SkillSource::Global)
-                        && !s
-                            .skill_file_path
-                            .to_string_lossy()
-                            .starts_with("<embedded-global>")
-                })
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
             assert_eq!(
                 disk.len(),
@@ -5706,13 +5687,7 @@ mod internal_tests {
             let all = parent_resolve(cx);
             let disk: Vec<_> = all
                 .iter()
-                .filter(|s| {
-                    matches!(s.source, SkillSource::Global)
-                        && !s
-                            .skill_file_path
-                            .to_string_lossy()
-                            .starts_with("<embedded-global>")
-                })
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
             assert_eq!(disk.len(), 1);
             assert_eq!(disk[0].name, "shared-skill");
@@ -5748,13 +5723,7 @@ mod internal_tests {
             let all = subagent_resolve(cx);
             let disk: Vec<_> = all
                 .iter()
-                .filter(|s| {
-                    matches!(s.source, SkillSource::Global)
-                        && !s
-                            .skill_file_path
-                            .to_string_lossy()
-                            .starts_with("<embedded-global>")
-                })
+                .filter(|s| matches!(s.source, SkillSource::Global))
                 .collect();
             assert_eq!(disk.len(), 1);
             assert_eq!(disk[0].name, "shared-skill");

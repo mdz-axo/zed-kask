@@ -6,6 +6,7 @@
 use crate::SwarmServer;
 use crate::abw_util::url_encode_segment;
 use crate::error::{SwarmError, map_local_swarm_error};
+use crate::local_knowledge;
 use crate::local_registry::{
     LocalAgentCapabilities, LocalAgentCard, LocalAgentDependencies, LocalAgentValence,
 };
@@ -961,6 +962,188 @@ impl SwarmServer {
             Ok(serde_json::to_value(&swarm).unwrap_or_else(
                 |_| serde_json::json!({ "swarm_id": swarm.swarm_id, "members": swarm.members }),
             ))
+        })
+        .await
+    }
+
+    /// AI assist for the swarm panel authoring forms — suggests completions for
+    /// partial inputs or validates well-formedness. Authoring aid — read-only,
+    /// spends nothing. Uses the local `InferencePort` (one-shot LLM generate,
+    /// guard-scanned). The `mode` field only tailors the guidance text; no ABW
+    /// calls in either mode. The guidance mirrors the `swarm-compose-guide.j2`
+    /// template in the swarm-intelligence skill — keep them in sync.
+    #[tool(
+        description = "AI assist for the swarm panel authoring forms (agent/swarm). Suggests completions for partial inputs or validates well-formedness. Authoring aid — read-only, spends nothing. Uses the local InferencePort (one-shot LLM generate, guard-scanned). The mode field (abw/local) tailors the guidance; no ABW calls in either mode."
+    )]
+    pub(crate) async fn swarm_ai_assist(&self, parameters: Parameters<AiAssistRequest>) -> String {
+        execute_tool_semantic(self, "swarm_ai_assist", Some("pko"), async {
+            let req = parameters.0;
+            match req.action.as_str() {
+                "suggest" | "validate" => {}
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "action must be 'suggest' or 'validate', got '{other}'"
+                    )));
+                }
+            }
+            match req.surface.as_str() {
+                "agent" | "swarm" => {}
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "surface must be 'agent' or 'swarm', got '{other}'"
+                    )));
+                }
+            }
+            match req.mode.as_str() {
+                "abw" | "local" => {}
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "mode must be 'abw' or 'local', got '{other}'"
+                    )));
+                }
+            }
+
+            let field_block = if req.surface == "agent" {
+                "Field definitions (agent surface):\n\
+                 - name: The agent's system identifier. ABW mode: lowercase letters, digits, underscores only; 3-64 chars. Local mode: filesystem-safe slug (alphanumeric, dash, underscore, dot).\n\
+                 - agent_type: The role category — one of \"research\", \"creative\", \"meta\".\n\
+                 - description: One-sentence summary of what the agent does.\n\
+                 - system_prompt: The agent's instructions — role, inputs, outputs, constraints. Should be focused (single responsibility), name the tools/skills it may use, and state success criteria. Avoid over-broad prompts that try to do everything."
+            } else {
+                "Field definitions (swarm surface):\n\
+                 - name: The swarm (workspace) name.\n\
+                 - mission: The swarm's goal / description.\n\
+                 - agents: Comma-separated agent ids to include. ABW: each hire is consent-gated and costs credits. Local: roster is ids (resolution at delegation time); no cost."
+            };
+
+            let mode_block = if req.mode == "abw" {
+                "ABW considerations: agents live in the cloud catalogue, execution costs credits (consent-gated), publishing requires preflight checks, agent names are strict slugs."
+            } else {
+                "Local considerations: agents live on the local filesystem, execution uses the local ledger (operator-funded), no consent gate, system prompts can be memory-seeded, agent ids are filesystem-safe."
+            };
+
+            let composition_block = "Composition guidance (both): favor single-responsibility agents; a swarm should have variety (distinct roles, not duplicates); state clear inputs/outputs per agent; name constraints explicitly; prefer a few focused agents over one omniscient one.";
+
+            let action_instruction = if req.action == "suggest" {
+                "Return ONLY a JSON object with keys name, agent_type, description, system_prompt, mission, agents. For each field, provide a suggested completion; if the field is already well-filled, return an empty string for that key."
+            } else {
+                "Return ONLY a JSON object {valid: bool, issues: [string], suggestions: [string]}. `valid` is true iff the inputs are well-formed. `issues` lists specific problems. `suggestions` lists one-line fixes."
+            };
+
+            let prompt = format!(
+                "You are an authoring assistant for the hKask swarm panel.\n\
+                 Surface: {surface} ({mode} mode)\n\n\
+                 {field_block}\n\n{mode_block}\n\n{composition_block}\n\n\
+                 Operator's partial inputs:\n\
+                 name: {name}\n\
+                 agent_type: {agent_type}\n\
+                 description: {description}\n\
+                 system_prompt: {system_prompt}\n\
+                 mission: {mission}\n\
+                 agents: {agents}\n\n\
+                 {action_instruction}",
+                surface = req.surface,
+                mode = req.mode,
+                field_block = field_block,
+                mode_block = mode_block,
+                composition_block = composition_block,
+                name = req.name,
+                agent_type = req.agent_type,
+                description = req.description,
+                system_prompt = req.system_prompt,
+                mission = req.mission,
+                agents = req.agents,
+                action_instruction = action_instruction,
+            );
+
+            let runtime = self
+                .local_runtime
+                .get_or_init()
+                .await
+                .map_err(map_local_swarm_error)?;
+            let inference = runtime.inference();
+            let guard = runtime.guard();
+            let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.4)
+                .await
+                .map_err(map_local_swarm_error)?;
+
+            let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
+            let result = if req.action == "suggest" {
+                match parsed {
+                    Some(v) => {
+                        let suggestions = serde_json::json!({
+                            "name": v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
+                            "agent_type": v.get("agent_type").and_then(|x| x.as_str()).unwrap_or(""),
+                            "description": v.get("description").and_then(|x| x.as_str()).unwrap_or(""),
+                            "system_prompt": v.get("system_prompt").and_then(|x| x.as_str()).unwrap_or(""),
+                            "mission": v.get("mission").and_then(|x| x.as_str()).unwrap_or(""),
+                            "agents": v.get("agents").and_then(|x| x.as_str()).unwrap_or(""),
+                        });
+                        serde_json::json!({
+                            "action": req.action,
+                            "surface": req.surface,
+                            "mode": req.mode,
+                            "suggestions": suggestions,
+                            "valid": serde_json::Value::Null,
+                            "issues": serde_json::json!([]),
+                            "notes": "",
+                        })
+                    }
+                    None => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            "swarm_ai_assist (suggest) LLM output was not valid JSON — returning raw text in notes"
+                        );
+                        serde_json::json!({
+                            "action": req.action,
+                            "surface": req.surface,
+                            "mode": req.mode,
+                            "suggestions": serde_json::json!({
+                                "name": "", "agent_type": "", "description": "",
+                                "system_prompt": "", "mission": "", "agents": "",
+                            }),
+                            "valid": false,
+                            "issues": serde_json::json!([]),
+                            "notes": text,
+                        })
+                    }
+                }
+            } else {
+                match parsed {
+                    Some(v) => {
+                        let valid = v
+                            .get("valid")
+                            .and_then(|x| x.as_bool())
+                            .unwrap_or(false);
+                        let issues = v.get("issues").cloned().unwrap_or(serde_json::json!([]));
+                        serde_json::json!({
+                            "action": req.action,
+                            "surface": req.surface,
+                            "mode": req.mode,
+                            "suggestions": serde_json::Value::Null,
+                            "valid": valid,
+                            "issues": issues,
+                            "notes": "",
+                        })
+                    }
+                    None => {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            "swarm_ai_assist (validate) LLM output was not valid JSON — returning raw text in notes"
+                        );
+                        serde_json::json!({
+                            "action": req.action,
+                            "surface": req.surface,
+                            "mode": req.mode,
+                            "suggestions": serde_json::Value::Null,
+                            "valid": false,
+                            "issues": serde_json::json!([]),
+                            "notes": text,
+                        })
+                    }
+                }
+            };
+            Ok(result)
         })
         .await
     }
