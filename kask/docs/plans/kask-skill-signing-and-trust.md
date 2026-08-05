@@ -1,8 +1,8 @@
 ---
 title: "Kask Skill Signing & Trust Model"
 audience: [developers, operators, agents]
-last_updated: 2026-08-02
-version: "0.3.0"
+last_updated: 2026-08-04
+version: "0.3.1"
 status: "Active"
 domain: "Trust"
 mds_categories: [composition, trust, lifecycle, curation]

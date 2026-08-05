@@ -1,8 +1,8 @@
 ---
 title: "Per-Tool QA Contracts"
 audience: [QA engineers, agents]
-last_updated: 2026-08-02
-version: "0.3.0"
+last_updated: 2026-08-04
+version: "0.3.1"
 status: "Active"
 domain: "trust"
 mds_categories: [trust, composition, lifecycle]

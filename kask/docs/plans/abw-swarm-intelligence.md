@@ -1,3 +1,13 @@
+---
+title: "ABW Swarm Intelligence — Design & Current State"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Swarm"
+mds_categories: [domain, composition, trust]
+---
+
 # Agent Bestiary World (ABW) Swarm Intelligence — Design & Current State
 
 > Supersedes the original 2026-08-01 integration plan (removed 2026-08-01 as

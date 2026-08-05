@@ -1,3 +1,13 @@
+---
+title: "Swarm Steering Loop"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Cross-cutting"
+mds_categories: [domain, trust]
+---
+
 # Swarm Steering Loop
 
 The steering loop closes the C5/C6 feedback boundary. The swarm-intelligence cascade plans (emits `emitted_calls`); the executor (the Kask Curator in steering mode, or the operator in advisory mode) runs the delegations via `swarm_delegate_local`, collects `LocalDelegateResult` objects, and feeds them back as `delegate_results` on the next swarm-intelligence invocation — activating C5 (fault attribution from `tool_calls[].ok`/`executed_skills[].ok`) and C6 (reconfigure the most-blamed agent). The `swarm-steering` skill codifies the execute-and-feed-back directive. See the [Cybernetic Swarm Plan](../plans/cybernetic-swarm-plan.md) and the [swarm-steering SKILL.md](../../.agents/skills/swarm-steering/SKILL.md).
@@ -31,3 +41,10 @@ sequenceDiagram
         Note over Curator: operator feeds delegate_results back on next invocation
     end
 ```
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-DIA-SWARM-010
+verified_date: 2026-08-04
+verified_against: .agents/skills/swarm-steering/SKILL.md:60,64; .agents/skills/swarm-intelligence/SKILL.md:147,156,184; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73
+status: VERIFIED
+-->

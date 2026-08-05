@@ -1,3 +1,13 @@
+---
+title: "Cybernetic Swarm Plan — Reference Model, Map, and Findings"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Swarm"
+mds_categories: [composition, trust]
+---
+
 # Cybernetic Swarm Plan — Reference Model, Map, and Findings
 
 > Companion to `abw-swarm-intelligence.md`. That document is the

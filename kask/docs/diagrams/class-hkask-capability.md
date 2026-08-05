@@ -1,3 +1,13 @@
+---
+title: "hKask Capability — Class Diagram"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Trust"
+mds_categories: [trust]
+---
+
 # hKask Capability — Class Diagram
 
 Simplified type system after the 2026-08-02 OCAP removal. The `DelegationToken` carries 6 fields (no expiry, no signature, no attenuation). The `McpRuntime::invoke` gate does a pure capability-match + gas gate — no token expiry, no signature verification.
@@ -98,3 +108,10 @@ classDiagram
 - [MCP Runtime Invoke Flow](./flowchart-mcp-runtime-invoke.md) — the simplified gate
 - [Architecture Principles](../architecture/core/PRINCIPLES.md) — P4 Clear Boundaries
 - [MDS](../architecture/core/MDS.md) — Trust category
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-CAP-001
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-capability/src/token_types.rs; kask/crates/hkask-capability/src/resources.rs; kask/crates/hkask-capability/src/tool_port.rs; kask/crates/hkask-mcp/src/runtime.rs
+status: VERIFIED
+-->

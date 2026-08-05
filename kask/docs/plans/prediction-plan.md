@@ -1,3 +1,13 @@
+---
+title: "Prediction Markets → zed-kask: Implementation Plan"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "0.1.0"
+status: "Active"
+domain: "Forecasting"
+mds_categories: [domain, composition]
+---
+
 # Prediction Markets → zed-kask: Implementation Plan
 
 **Companion to:** `docs/reports/prediction-markets/01-prediction-markets-research.md`, `02-zed-kask-integration.md`

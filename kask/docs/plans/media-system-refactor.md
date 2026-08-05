@@ -1,3 +1,13 @@
+---
+title: "Media System Review, Architecture Refactor, and Multi-Provider Expansion"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "0.1.0"
+status: "Active"
+domain: "Media"
+mds_categories: [domain, composition]
+---
+
 # Media System Review, Architecture Refactor, and Multi-Provider Expansion
 
 **Status:** Design / planning document (read-only analysis; no production code changed in this pass).

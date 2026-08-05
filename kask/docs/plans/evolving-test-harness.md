@@ -1,3 +1,13 @@
+---
+title: "Evolving Test Harness for zed-kask — Design Document"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "0.1.0"
+status: "Active"
+domain: "Testing"
+mds_categories: [composition, lifecycle, curation]
+---
+
 # Evolving Test Harness for zed-kask — Design Document
 
 **Status:** Partially implemented; CI surface not wired (2026-08-04 revision). The

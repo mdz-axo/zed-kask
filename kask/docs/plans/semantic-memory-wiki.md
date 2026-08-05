@@ -1,9 +1,9 @@
 ---
 title: "Semantic Memory Wiki — hkask-mcp-wiki"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-08-02
-version: "0.2.0"
-status: "Proposed — pending review (revised: augmentation-loop model)"
+last_updated: 2026-08-04
+version: "0.2.1"
+status: "Draft"
 domain: "Knowledge"
 mds_categories: [domain, composition, curation, lifecycle]
 ---

@@ -1,3 +1,13 @@
+---
+title: "Test Harness Skill Evolution — Implementation Plan"
+audience: [developers, agents]
+last_updated: 2026-08-04
+version: "0.1.0"
+status: "Active"
+domain: "Testing"
+mds_categories: [composition, lifecycle]
+---
+
 # Test Harness Skill Evolution — Implementation Plan
 
 **Status:** Implemented (Slices 1–6 complete)

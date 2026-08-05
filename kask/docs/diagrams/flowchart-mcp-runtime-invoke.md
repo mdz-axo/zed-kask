@@ -1,3 +1,13 @@
+---
+title: "MCP Runtime Invoke — Simplified Gate Flow"
+audience: [architects, developers]
+last_updated: 2026-08-04
+version: "1.0.0"
+status: "Active"
+domain: "Trust"
+mds_categories: [trust]
+---
+
 # MCP Runtime Invoke — Simplified Gate Flow
 
 Flowchart of the `McpRuntime::invoke` tool-governance gate after the 2026-08-02 OCAP removal and the 2026-08-03 gas-to-call-cap refactor. The gate is a pure capability-match + per-agent call cap — no token expiry, no signature verification, no attenuation, no gas hold-settle. Tokens are minted in-process and never expire.
@@ -27,3 +37,10 @@ flowchart TD
 - [hKask Capability Class Diagram](./class-hkask-capability.md) — the type system
 - [Architecture Principles](../architecture/core/PRINCIPLES.md) — P4 Clear Boundaries
 - [MDS](../architecture/core/MDS.md) — Trust category
+
+<!-- DIAGRAM_ALIGNMENT
+id: DIAG-CAP-002
+verified_date: 2026-08-04
+verified_against: kask/crates/hkask-mcp/src/runtime.rs:507
+status: VERIFIED
+-->
