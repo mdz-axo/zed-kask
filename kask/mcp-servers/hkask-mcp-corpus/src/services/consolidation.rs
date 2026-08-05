@@ -441,7 +441,7 @@ impl ConsolidationService {
         for chunk in &consolidated {
             out.push_str(
                 &serde_json::to_string(chunk)
-                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?,
+                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?, // rr0044-ok: serde serialization of own struct
             );
             out.push('\n');
         }

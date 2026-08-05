@@ -128,6 +128,43 @@ pub fn map_infra_error(error: &hkask_types::InfrastructureError, context: &str) 
     }
 }
 
+/// Classify a `SemanticMemoryError` from a memory-DB operation into the
+/// appropriate `McpToolError` kind. Infrastructure variants (HMem/Embedding
+/// wrapping an `InfrastructureError`) route through [`map_infra_error`];
+/// domain contract violations (`InvalidVisibility`, `HasPerspective`) are
+/// caller-fixable (`invalid_argument`); missing entities and centroid
+/// embeddings are `not_found`; remaining embedding failures are `internal`.
+/// Canonical mapper shared by the corpus and training servers — reuse it
+/// instead of re-implementing per-crate copies.
+#[must_use = "result must be used"]
+pub fn map_semantic_memory_error(
+    error: hkask_memory::SemanticMemoryError,
+    context: &str,
+) -> McpToolError {
+    use hkask_memory::SemanticMemoryError;
+    match error {
+        SemanticMemoryError::HMem(hkask_storage::HMemError::NotFound(_)) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::HMem(hkask_storage::HMemError::Infra(ref infra)) => {
+            map_infra_error(infra, context)
+        }
+        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::Infrastructure(
+            ref infra,
+        )) => map_infra_error(infra, context),
+        SemanticMemoryError::InvalidVisibility(_) | SemanticMemoryError::HasPerspective => {
+            McpToolError::invalid_argument(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::NoEmbeddingsForCentroid(_) => {
+            McpToolError::not_found(format!("{context}: {error}"))
+        }
+        SemanticMemoryError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
+    }
+}
+
 /// Default read size cap for [`read_capped`] (32 MiB). Bounds a hostile or
 /// mistaken path from exhausting memory (CWE-400).
 pub const MAX_READ_BYTES: u64 = 32 * 1024 * 1024;

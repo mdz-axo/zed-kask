@@ -3,11 +3,11 @@ use crate::huggingface::HuggingFaceTraining;
 use crate::lora_validation;
 use crate::providers::{TrainingHostId, TrainingJob, TrainingJobStatus};
 use crate::tools::error_mapping::{
-    map_adapter_store_error, map_fs_error, map_host_provider_error, map_job_store_error,
+    map_adapter_store_error, map_host_provider_error, map_job_store_error,
     map_training_artifact_error,
 };
 use crate::types::TrainSubmitRequest;
-use hkask_mcp_server::server::{McpToolError, execute_tool};
+use hkask_mcp_server::server::{McpToolError, execute_tool, map_io_error};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 use serde_json::json;
@@ -144,7 +144,7 @@ impl TrainingServer {
                         .cache_dir()
                         .join(format!("hkask-retrain-{skill}.jsonl")),
                 };
-                std::fs::write(&merged_path, &merged).map_err(|e| map_fs_error("Failed to write merged dataset", e))?;
+                std::fs::write(&merged_path, &merged).map_err(|e| map_io_error(e, "Failed to write merged dataset"))?;
 
                 let previous_adapter_exists: bool;
                 match self.adapter_store.get_by_skill_name(&skill) {
@@ -283,7 +283,7 @@ impl TrainingServer {
             };
 
             if self.host_id == TrainingHostId::Runpod {
-                let bytes = std::fs::read(&normalized_path).map_err(|error| map_fs_error("Read normalized dataset for publication", error))?;
+                let bytes = std::fs::read(&normalized_path).map_err(|error| map_io_error(error, "Read normalized dataset for publication"))?;
                 let dataset_sha256 = format!("{:x}", sha2::Sha256::digest(&bytes));
                 let training = HuggingFaceTraining::from_env().map_err(|error| McpToolError::failed_precondition(format!("Configure Hugging Face training artifacts: {error}")))?;
                 let dataset = training.publish_dataset(&job.id, bytes, &dataset_sha256).await.map_err(map_training_artifact_error)?;

@@ -124,7 +124,7 @@ impl CorpusServer {
             let cfg = crate::ocr::TriageConfig::from_env();
             let mut verdicts = crate::ocr::triage::triage_pdf(&resolved, &cfg)
                 .await
-                .map_err(|e| McpToolError::invalid_argument(format!("triage failed: {e}")))?;
+                .map_err(crate::helpers::map_triage_error)?;
 
             if let Some(spec) = target_pages.as_deref().filter(|s| !s.trim().is_empty()) {
                 let target: std::collections::HashSet<usize> =

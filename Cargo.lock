@@ -9505,6 +9505,7 @@ name = "hkask-mcp-server"
 version = "0.31.2"
 dependencies = [
  "hkask-keystore",
+ "hkask-memory",
  "hkask-storage",
  "hkask-types",
  "rmcp",

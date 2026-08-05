@@ -24,7 +24,7 @@ impl MediaServer {
             vars.insert("character_description", character_description.as_str());
             let prompt = self
                 .render_prompt("voice_design", &vars)
-                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?; // rr0044-ok: own template engine render failure
 
             let params = hkask_types::template::LLMParameters::default();
             let r = self

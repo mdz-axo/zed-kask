@@ -100,11 +100,18 @@ pub(crate) fn read_ontology_namespaces(
 mod tests {
     use super::*;
 
+    // Temp dirs are created inside the cwd (not /tmp): the readers enforce
+    // path containment under the working directory, so a /tmp fixture is
+    // rejected as an escaping path.
+    fn tempdir_in_cwd() -> tempfile::TempDir {
+        tempfile::TempDir::new_in(std::env::current_dir().expect("cwd")).expect("temp dir")
+    }
+
     #[test]
     fn read_ontology_namespaces_extracts_normalized_keys() {
         // M4 fix: namespace keys must be normalized (lowercase + trim) so they
         // match the form produced by validate_ontology_tags in the tagging phase.
-        let dir = tempfile::TempDir::new().expect("temp dir");
+        let dir = tempdir_in_cwd();
         let path = dir.path().join("tagged.jsonl");
         let content = r#"{"entity_ref":"corpus:researcher:doc:1","ontology_tags":{"FIBO":["ROIC"],"golem":["metaphor"]}}
 {"entity_ref":"corpus:researcher:doc:2","ontology_tags":{"pko":["analysis"]}}
@@ -132,7 +139,7 @@ mod tests {
 
     #[test]
     fn read_ontology_namespaces_empty_file_returns_empty_map() {
-        let dir = tempfile::TempDir::new().expect("temp dir");
+        let dir = tempdir_in_cwd();
         let path = dir.path().join("empty.jsonl");
         std::fs::write(&path, "").expect("write");
         let map = read_ontology_namespaces(path.to_str().unwrap()).expect("read");
@@ -141,7 +148,7 @@ mod tests {
 
     #[test]
     fn read_ontology_namespaces_skips_malformed_lines() {
-        let dir = tempfile::TempDir::new().expect("temp dir");
+        let dir = tempdir_in_cwd();
         let path = dir.path().join("mixed.jsonl");
         let content = "not json at all\n{\"entity_ref\":\"ok\",\"ontology_tags\":{\"fibo\":[\"roic\"]}}\n{\"entity_ref\":\"\",\"ontology_tags\":{}}\n";
         std::fs::write(&path, content).expect("write");

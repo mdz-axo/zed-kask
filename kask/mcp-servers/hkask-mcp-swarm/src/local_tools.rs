@@ -447,7 +447,7 @@ impl SwarmServer {
             })?;
             let card_path = card_dir.join("agent_card.json");
             let json = serde_json::to_string_pretty(&local_card).map_err(|e| {
-                McpToolError::internal(format!("failed to serialize local card: {e}"))
+                McpToolError::internal(format!("failed to serialize local card: {e}")) // rr0044-ok: serde serialization of own struct
             })?;
             std::fs::write(&card_path, json).map_err(|e| {
                 hkask_mcp_server::map_io_error(
@@ -539,7 +539,7 @@ impl SwarmServer {
                 .join(&safe_id)
                 .join("agent_card.json");
             let json = serde_json::to_string_pretty(&updated_card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("failed to serialize: {e}")))?; // rr0044-ok: serde serialization of own struct
             std::fs::write(&card_path, json).map_err(|e| {
                 hkask_mcp_server::map_io_error(
                     e,
@@ -711,7 +711,7 @@ impl SwarmServer {
                 .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to create agent dir"))?;
             let card_path = card_dir.join("agent_card.json");
             let json = serde_json::to_string_pretty(&card)
-                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?;
+                .map_err(|e| McpToolError::internal(format!("failed to serialize card: {e}")))?; // rr0044-ok: serde serialization of own struct
             std::fs::write(&card_path, &json)
                 .map_err(|e| hkask_mcp_server::map_io_error(e, "failed to write card"))?;
             self.local_registry.load().map_err(map_local_swarm_error)?;

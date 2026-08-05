@@ -667,7 +667,7 @@ impl MediaServer {
             vars.insert("style", style_str);
             let prompt = self
                 .render_prompt("video_caption", &vars)
-                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?; // rr0044-ok: own template engine render failure
 
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();

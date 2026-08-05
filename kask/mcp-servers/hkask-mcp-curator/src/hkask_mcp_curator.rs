@@ -424,7 +424,7 @@ impl CuratorServer {
                     | hkask_memory::SemanticMemoryError::Embedding(
                         hkask_storage::EmbeddingError::Infrastructure(ref infra),
                     ) => map_infra_error(infra, "Semantic recall failed"),
-                    other => McpToolError::internal(format!("Semantic recall failed: {other}")),
+                    other => McpToolError::internal(format!("Semantic recall failed: {other}")), // rr0044-ok: fallback arm of per-variant match
                 }),
             }
         })

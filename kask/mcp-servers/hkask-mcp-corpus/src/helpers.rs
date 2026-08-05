@@ -12,36 +12,26 @@ use serde::de::DeserializeOwned;
 pub(crate) use hkask_mcp_server::server::map_io_error as map_corpus_io_error;
 
 /// Classify a `SemanticMemoryError` from a memory-DB operation into the
-/// appropriate `McpToolError` kind. Infrastructure variants (HMem/Embedding
-/// wrapping an `InfrastructureError`) route through the shared
-/// `map_infra_error`; domain contract violations (`InvalidVisibility`,
-/// `HasPerspective`) are caller-fixable (`invalid_argument`); missing
-/// centroid embeddings are `not_found`.
-pub(crate) fn map_semantic_memory_error(
-    error: hkask_memory::SemanticMemoryError,
-    context: &str,
-) -> McpToolError {
-    use hkask_memory::SemanticMemoryError;
+/// appropriate `McpToolError` kind. Alias of the canonical
+/// `hkask_mcp_server::server::map_semantic_memory_error` (shared with the
+/// training server) kept under the corpus-local name so existing call sites
+/// stay readable.
+pub(crate) use hkask_mcp_server::server::map_semantic_memory_error;
+
+/// Classify a `TriageError` from the PDF triage pipeline into the appropriate
+/// `McpToolError` kind: an invalid page spec is caller input
+/// (`invalid_argument`); `pdftotext`/`pdfimages` failures include spawn
+/// failures (binary missing — operator-fixable, `unavailable`); a page-count
+/// mismatch between the two tools is an internal inconsistency (`internal`).
+pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToolError {
+    use crate::ocr::triage::TriageError;
+    let message = format!("triage failed: {error}");
     match error {
-        SemanticMemoryError::HMem(hkask_storage::HMemError::NotFound(_)) => {
-            McpToolError::not_found(format!("{context}: {error}"))
+        TriageError::InvalidPageSpec(_) => McpToolError::invalid_argument(message),
+        TriageError::PdftotextFailed(_) | TriageError::PdfimagesFailed(_) => {
+            McpToolError::unavailable(message)
         }
-        SemanticMemoryError::HMem(hkask_storage::HMemError::Infra(ref infra)) => {
-            hkask_mcp_server::server::map_infra_error(infra, context)
-        }
-        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
-            McpToolError::not_found(format!("{context}: {error}"))
-        }
-        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::Infrastructure(
-            ref infra,
-        )) => hkask_mcp_server::server::map_infra_error(infra, context),
-        SemanticMemoryError::InvalidVisibility(_) | SemanticMemoryError::HasPerspective => {
-            McpToolError::invalid_argument(format!("{context}: {error}"))
-        }
-        SemanticMemoryError::NoEmbeddingsForCentroid(_) => {
-            McpToolError::not_found(format!("{context}: {error}"))
-        }
-        SemanticMemoryError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
+        TriageError::PageCountMismatch { .. } => McpToolError::internal(message),
     }
 }
 
@@ -108,7 +98,28 @@ pub(crate) fn map_service_error(
     }
 }
 
+/// Contained, size-capped read of a caller-supplied text file as UTF-8.
+///
+/// Single enforcement point for caller-supplied `*_jsonl` tool-argument paths
+/// (CWE-22/200/400): the path is resolved through
+/// `crate::path_safety::contain_for_read` and read with the shared
+/// `MAX_READ_BYTES` cap (via `read_capped`), so an escaping path
+/// (`/etc/passwd`, `../../escape`) or an oversized file is rejected with
+/// `invalid_argument` before any bytes reach a tool. `label` is the
+/// parameter-name context used in error messages.
+pub(crate) fn read_text_capped(path: &str, label: &str) -> Result<String, McpToolError> {
+    let bytes = crate::path_safety::read_capped(path, crate::path_safety::MAX_READ_BYTES)?;
+    String::from_utf8(bytes).map_err(|e| {
+        McpToolError::invalid_argument(format!("{label} '{path}' is not valid UTF-8: {e}"))
+    })
+}
+
 /// Read a JSONL file and parse each non-empty line into `T`.
+///
+/// Path containment and the `MAX_READ_BYTES` size cap are enforced here (via
+/// [`read_text_capped`]) — callers pass raw MCP tool-argument paths and this
+/// helper is the enforcement point. Cannot-read failures (escape, unresolvable
+/// path, oversized file) classify as `invalid_argument` (caller-supplied path).
 ///
 /// Lines are split on newlines, trimmed, and empty lines are skipped. Parse errors
 /// are propagated with the 1-based file line number (counting all lines,
@@ -119,9 +130,7 @@ pub(crate) fn read_jsonl<T: DeserializeOwned>(
     path: &str,
     label: &str,
 ) -> Result<Vec<T>, McpToolError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        McpToolError::invalid_argument(format!("Cannot read {label} '{path}': {e}"))
-    })?;
+    let content = read_text_capped(path, label)?;
     let mut out = Vec::new();
     for (i, line) in content.lines().enumerate() {
         let line = line.trim();
@@ -138,6 +147,9 @@ pub(crate) fn read_jsonl<T: DeserializeOwned>(
 
 /// Read a JSONL file, dropping malformed lines and returning the count dropped.
 ///
+/// Path containment and the `MAX_READ_BYTES` size cap are enforced here (via
+/// [`read_text_capped`]), same as [`read_jsonl`].
+///
 /// Like [`read_jsonl`] but lenient: lines that fail to parse are silently
 /// dropped (no error propagated), and the number of dropped lines is returned
 /// so callers can warn or report. Empty lines are not counted as dropped.
@@ -145,9 +157,7 @@ pub(crate) fn read_jsonl_lenient<T: DeserializeOwned>(
     path: &str,
     label: &str,
 ) -> Result<(Vec<T>, usize), McpToolError> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        McpToolError::invalid_argument(format!("Cannot read {label} '{path}': {e}"))
-    })?;
+    let content = read_text_capped(path, label)?;
     let mut out = Vec::new();
     let mut dropped = 0usize;
     for line in content.lines() {
@@ -336,6 +346,31 @@ mod tests {
     fn tokens_to_words_approximate() {
         assert_eq!(tokens_to_words(133), 100);
         assert_eq!(tokens_to_words(0), 0);
+    }
+
+    #[test]
+    fn read_jsonl_rejects_absolute_escape() {
+        // /etc/passwd is outside any plausible cargo-test cwd (the crate dir).
+        let result = read_jsonl::<serde_json::Value>("/etc/passwd", "chunks_jsonl");
+        assert!(result.is_err(), "read of /etc/passwd must be rejected");
+    }
+
+    #[test]
+    fn read_jsonl_lenient_rejects_traversal_escape() {
+        let result = read_jsonl_lenient::<serde_json::Value>("../../escape.jsonl", "tagged_jsonl");
+        assert!(result.is_err(), "read via ../.. must be rejected");
+    }
+
+    #[test]
+    fn read_jsonl_accepts_file_inside_cwd() {
+        let cwd = std::env::current_dir().expect("cwd");
+        let file_path = cwd.join("hkask-helpers-read-jsonl-test.jsonl");
+        std::fs::write(&file_path, "{\"a\":1}\n\n{\"a\":2}\n").expect("write fixture");
+        let result =
+            read_jsonl::<serde_json::Value>(file_path.to_str().expect("utf8 path"), "chunks_jsonl");
+        let _cleanup = std::fs::remove_file(&file_path);
+        let values = result.expect("read inside cwd accepted");
+        assert_eq!(values.len(), 2);
     }
 
     fn sample_structure_with_headings() -> DocStructure {

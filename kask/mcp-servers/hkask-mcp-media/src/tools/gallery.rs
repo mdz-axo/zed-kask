@@ -539,7 +539,7 @@ impl MediaServer {
             vars.insert("style", style_str);
             let prompt = self
                 .render_prompt("caption", &vars)
-                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?;
+                .map_err(|e| McpToolError::internal(format!("Template render failed: {}", e)))?; // rr0044-ok: own template engine render failure
 
             let (vision_model, _vision_label) = self.require_vision().await?;
             let params = hkask_types::template::LLMParameters::default();
@@ -1013,7 +1013,7 @@ impl MediaServer {
                 )
                 .map_err(map_gallery_store_error)?;
             serde_json::to_value(&record)
-                .map_err(|e| McpToolError::internal(format!("encode lineage: {e}")))
+                .map_err(|e| McpToolError::internal(format!("encode lineage: {e}"))) // rr0044-ok: serde serialization of own data
         })
         .await
     }

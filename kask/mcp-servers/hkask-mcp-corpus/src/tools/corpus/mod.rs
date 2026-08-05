@@ -11,7 +11,7 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{map_corpus_io_error, map_semantic_memory_error};
+use crate::helpers::{map_corpus_io_error, map_semantic_memory_error, read_text_capped};
 use crate::services::consolidation::{ConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
@@ -118,7 +118,7 @@ impl CorpusServer {
             let mut out = String::new();
             for &idx in &keep_indices {
                 out.push_str(&serde_json::to_string(&chunks[idx])
-                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?);
+                    .map_err(|e| McpToolError::internal(format!("Serialize: {e}")))?); // rr0044-ok: serde serialization of own struct
                 out.push('\n');
             }
             let output_path = crate::path_safety::contain_for_write(&req.output)?;
@@ -513,12 +513,8 @@ impl CorpusServer {
             // response (`parse_errors`), which is part of the external API. The
             // shared helpers either propagate the first error (strict) or drop
             // silently (lenient) — neither preserves the multi-error report.
-            let content = std::fs::read_to_string(&req.input_jsonl).map_err(|e| {
-                McpToolError::invalid_argument(format!(
-                    "Cannot read input JSONL '{}': {e}",
-                    req.input_jsonl
-                ))
-            })?;
+            // Containment + size cap are still enforced via `read_text_capped`.
+            let content = read_text_capped(&req.input_jsonl, "input_jsonl")?;
 
             // Parse Alpaca-format lines and convert to ChatML
             let mut chatml_lines: Vec<String> = Vec::new();
