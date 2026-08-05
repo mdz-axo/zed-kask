@@ -1,5 +1,5 @@
 # LoRA Training Process Manifest
-# ℏKask v0.31.0 — Evidence-grounded PEFT recommendation and contract audit
+# ℏKask v0.32.0 — Evidence-grounded PEFT recommendation and contract audit
 #
 # v0.31.0 refinement (self-improvement cycle 1, proposed-not-committed):
 #   1. Process manifest created — the skill was previously template-by-template
@@ -56,7 +56,7 @@ manifest:
     (Good Regulator), algedonic escalation for safety-boundary violations,
     and honest convergence metrics that distinguish coverage gaps from risks.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

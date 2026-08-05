@@ -22,7 +22,7 @@ manifest:
     lean-prover — where lean-prover constructs machine-checked proofs,
     idiomatic-lisp constructs idiomatic designs verified by the REPL.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

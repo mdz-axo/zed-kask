@@ -14,7 +14,7 @@ manifest:
     until critique scores converge. Produces background-removed transparent
     PNG deliverables.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

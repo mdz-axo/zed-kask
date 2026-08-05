@@ -1,5 +1,5 @@
 # Wardley Mapper — Generalized strategic mapping skill
-# ℏKask v0.31.0 — Strategy: component evolution mapping for any system
+# ℏKask v0.32.0 — Strategy: component evolution mapping for any system
 # Functional Role: FlowDef (process orchestration)
 # Steps: inventory_components, classify_evolution, map_value_chain, identify_movement, synthesize_recommendations, convergence_check
 
@@ -20,7 +20,7 @@ manifest:
     platforms. This skill builds the map that prevents strategic blindness.
 
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

@@ -20,7 +20,7 @@ manifest:
     coding-guidelines, pragmatic-semantics, graph-audit, deep-module,
     essentialist, and pragmatic-cybernetics as methodological guidance.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

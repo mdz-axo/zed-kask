@@ -18,7 +18,7 @@ manifest:
     .j2 templates against stated goals — load goal, critique, filter for
     soundness, compose revised artifact, drive user-review loop.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

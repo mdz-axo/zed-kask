@@ -31,7 +31,7 @@ manifest:
     is the oracle that prevents the LLM from confidently proposing designs
     the borrow checker would reject.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

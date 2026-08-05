@@ -1,5 +1,5 @@
 # Bug Hunt Process Manifest
-# ℏKask v0.31.0 — Exploratory bug hunting as phased PDCA
+# ℏKask v0.32.0 — Exploratory bug hunting as phased PDCA
 # Decomposed from monolithic expedition into: Charter → Probe → Oracle → Taxonomize → Report → Convergence
 #
 # v0.31.0 refinement (self-improvement cycle 1, proposed-not-committed):
@@ -34,7 +34,7 @@ manifest:
     honest process-stabilization + coverage-estimate metrics and iterates until
     critical quality threats are resolved or escalation is required.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

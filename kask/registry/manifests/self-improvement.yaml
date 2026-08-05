@@ -1,5 +1,5 @@
 # Self-Improvement Skill Manifest
-# ℏKask v0.31.0 — Unified self-induced update operator with nested PDCA + outer Kata
+# ℏKask v0.32.0 — Unified self-induced update operator with nested PDCA + outer Kata
 # Implements: Ren et al. (2026, arXiv:2607.13104) "Self-Improvements in Modern Agentic Systems: A Survey"
 
 manifest:
@@ -15,7 +15,7 @@ manifest:
     experience. Embeds its own PDCA loops at the improvement-cycle level and wraps
     an outer Improvement Kata loop around all algorithmic approaches.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

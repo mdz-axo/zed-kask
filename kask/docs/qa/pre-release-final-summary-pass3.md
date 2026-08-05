@@ -226,7 +226,7 @@ OK, `check-reg-creep.sh` all targets registered.
 | D3 | `swarm_panel.rs` extraction | This pass | **Resolved** — `render_swarm_detail`/`render_card` extracted |
 | D4 | Non-canonical warn targets | This pass | **Resolved** — `reg.mcp.cap`, `reg.mcp`, `reg.ledger` |
 | D5 | Marker-spoofable memory data boundaries | This pass | **Hardened** (Task 4) — embedded close marker neutralized |
-| D6 | Release version/changelog scope | User | Still open |
+| D6 | Release version/changelog scope | This pass | **Resolved** — bumped to 0.32.0; release notes drafted |
 | D7 | Evolving-test-harness plan doc claims "Implemented" while CI steps were removed as dead | This pass | **Resolved** — doc/script/manifest status corrected |
 | D8 | `reg.guard.redact` exact-registration inconsistency | This pass | **Resolved** — registered in CANONICAL_NAMESPACES |
 

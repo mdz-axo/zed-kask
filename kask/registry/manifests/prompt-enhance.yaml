@@ -1,5 +1,5 @@
 # Prompt-Enhance Skill Manifest
-# ℏKask v0.31.0 — Typed prompt enhancement as convergent PDCA
+# ℏKask v0.32.0 — Typed prompt enhancement as convergent PDCA
 #
 # General-purpose prompt enhancement for prompts destined for the zed-kask
 # platform. Typed routing over a 7-type prompt taxonomy (coding, reasoning,
@@ -37,7 +37,7 @@ manifest:
     phase delegates. Default output is the enhanced prompt returned inline
     in a copyable code block; optional file save or both.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

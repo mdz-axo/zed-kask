@@ -83,7 +83,7 @@ Environment variables the installer honors:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.31.2`) or `weekly` |
+| `HKASK_VERSION` | latest release | Pin a release tag (e.g. `v0.32.0`) or `weekly` |
 | `HKASK_CHANNEL` | `stable` | Set to `weekly` for the weekly build |
 | `INSTALL_DIR` | `$HOME/.local` | Install prefix; binaries land in `$INSTALL_DIR/bin` |
 | `HKASK_SYSTEM_INSTALL` | unset | Set to `true` to symlink into `/usr/local/bin` |
@@ -127,7 +127,7 @@ Per-crate documentation (tutorial, how-to, reference, explanation for each major
 
 ## Releases
 
-Releases are cut by pushing a `v*` tag (e.g. `v0.31.2`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A weekly build runs on schedule at 08:00 UTC each Monday, force-moving the `weekly` tag.
+Releases are cut by pushing a `v*` tag (e.g. `v0.32.0`). The [`kask-release`](./.github/workflows/kask-release.yml) workflow builds the Linux x86_64 archive, generates `SHA256SUMS`, and publishes a GitHub Release with auto-generated notes. A weekly build runs on schedule at 08:00 UTC each Monday, force-moving the `weekly` tag.
 
 Release assets:
 

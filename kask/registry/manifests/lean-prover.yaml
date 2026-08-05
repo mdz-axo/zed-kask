@@ -24,7 +24,7 @@ manifest:
     falsifiability — where falsifiability designs discriminating tests,
     lean-prover constructs machine-checked proofs that discriminate.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

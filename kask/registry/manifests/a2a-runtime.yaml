@@ -1,12 +1,12 @@
 # ACP Runtime Configuration
-# ℏKask v0.31.0
+# ℏKask v0.32.0
 
 manifest:
   id: a2a-runtime
   category: runtime-config
   name: ACP Runtime
   description: Agent Capability Protocol runtime configuration
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

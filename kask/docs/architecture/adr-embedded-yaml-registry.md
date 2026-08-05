@@ -23,7 +23,7 @@ The kask-skills system is a four-layer architecture with a single Rust bridge:
 | Process manifests (FlowDef PDCA) | `registry/manifests/<name>.yaml` | `ManifestExecutor` (cascade driver) |
 | Jinja2 templates | `registry/templates/<name>/*.j2` | `TemplateRenderer` (prompt rendering) |
 
-The architectural rationale — often stated as *"the flexible non-compiled YAML and Jinja2 layers can rapidly evolve as a natural sandboxing and learning surface around the core Rust code"* — is only half the story. The other half is in `hkask-templates/build.rs`.
+The architectural rationale — often stated as *"the flexible non-compiled YAML and Jinja2 layers can rapidly evolve as a natural sandboxing and learning surface around the core Rust code"* — is only half the story. The other half is in `hkask-templates/build.rs`.[^fowler-poeaa]
 
 ## Decision
 
@@ -36,7 +36,7 @@ The architectural rationale — often stated as *"the flexible non-compiled YAML
 
 At runtime, `BridgeManifestExecutor::manifest_yaml` prefers the embedded copy (`process_manifest_yaml(skill_name)`); the filesystem path is a **dev-only fallback** (per the `build.rs` header: *"The filesystem paths in `main.rs` are dev-only fallbacks"*).
 
-`build.rs` declares `cargo:rerun-if-changed=` on every manifest and template, so editing a `.yaml` or `.j2` and running `cargo build` regenerates the embedded copy automatically.
+`build.rs` declares `cargo:rerun-if-changed=` on every manifest and template, so editing a `.yaml` or `.j2` and running `cargo build` regenerates the embedded copy automatically.[^rust-include-str]
 
 ## Consequences
 
@@ -45,7 +45,7 @@ At runtime, `BridgeManifestExecutor::manifest_yaml` prefers the embedded copy (`
 - **For developers**: edit a `.yaml` or `.j2` → `cargo build` → the embedded copy updates. The YAML/Jinja layer genuinely evolves faster than Rust code, and `deny_unknown_fields` on `ManifestFile`/`ManifestHeader` gives compile-time schema enforcement against drift. This is a real and well-designed sandboxing surface.
 - **For end users**: the registry is frozen at build time. An end user cannot hot-reload a skill without reinstalling the binary. The filesystem fallback only activates when the source tree is present (dev workflows).
 
-This asymmetry is deliberate: it eliminates the install-time path-resolution problem ("skills execute via the embedded manifests and templates regardless of CWD or install location"). But it means the "evolution surface around the core Rust" is a development-time property, not a runtime property.
+This asymmetry is deliberate: it eliminates the install-time path-resolution problem ("skills execute via the embedded manifests and templates regardless of CWD or install location"). But it means the "evolution surface around the core Rust" is a development-time property, not a runtime property.[^saltzer-protection]
 
 ### What this means for the architectural rationale
 
@@ -68,7 +68,7 @@ The executor does not currently distinguish trust provenance at the execution bo
 ## Alternatives considered
 
 - **Runtime filesystem-only** (no embedding): rejected because it creates an install-time path-resolution problem. The binary would need to locate `registry/` relative to CWD or an env var, breaking skills when run from an unexpected directory.
-- **Hybrid with runtime precedence** (filesystem first, embedded fallback): rejected because it would allow a local file to silently override a built-in skill without a trust signal. The current design (embedded first, filesystem fallback) ensures built-in skills are stable; the filesystem is opt-in (dev mode or marketplace install).
+- **Hybrid with runtime precedence** (filesystem first, embedded fallback): rejected because it would allow a local file to silently override a built-in skill without a trust signal. The current design (embedded first, filesystem fallback) ensures built-in skills are stable; the filesystem is opt-in (dev mode or marketplace install).[^fowler-strangler]
 
 ## Enforcement
 
@@ -77,4 +77,23 @@ This ADR is enforced by:
 - `build.rs` `include_str!` embedding (compile-time)
 - `BridgeManifestExecutor::manifest_yaml` preferring embedded copy (runtime)
 - `manifest_compliance.rs` and `skill_companion_consistency.rs` integration tests (cross-artifact consistency)
-- `deny_unknown_fields` on `ManifestFile`/`ManifestHeader` (schema enforcement at parse time)
+- `deny_unknown_fields` on `ManifestFile`/`ManifestHeader` (schema enforcement at parse time)[^fowler-refactoring]
+
+---
+
+## References
+
+[^fowler-poeaa]: Fowler, M. (2002). *Patterns of enterprise application architecture*. Addison-Wesley. https://martinfowler.com/books/eaa.html
+    Cited for the Registry pattern — the four-layer architecture uses a registry as the source of truth for template manifests and process manifests.
+
+[^rust-include-str]: The Rust Standard Library. (n.d.). *include_str! macro*. The Rust Project. https://doc.rust-lang.org/std/macro.include_str.html
+    Cited for the build-time embedding mechanism (`include_str!`) that freezes the registry into the binary at compile time.
+
+[^saltzer-protection]: Saltzer, J. H., & Schroeder, M. D. (1975). The protection of information in computer systems. *Proceedings of the IEEE*, 63(9), 1278–1308. https://doi.org/10.1109/PROC.1975.9939
+    Cited for the trust-model principles underlying the embedded (trusted by construction) vs. marketplace (signed) vs. local (unsigned) provenance distinction.
+
+[^fowler-strangler]: Fowler, M. (2004). *StranglerFigApplication*. https://martinfowler.com/bliki/StranglerFigApplication.html
+    Cited for the incremental-replacement pattern informing the embedded-first, filesystem-fallback alternative analysis.
+
+[^fowler-refactoring]: Fowler, M. (2018). *Refactoring: Improving the design of existing code* (2nd ed.). Addison-Wesley. https://martinfowler.com/books/refactoring.html
+    Cited for the schema-enforcement and integration-test discipline that pins the embedding decision against drift.

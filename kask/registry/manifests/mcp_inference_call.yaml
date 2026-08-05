@@ -1,5 +1,5 @@
 # MCP Inference — Inference Call Manifest
-# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.32.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: prompt-templates/inference_call
@@ -9,7 +9,7 @@ manifest:
     LLM inference call via prompt templates with capability validation and Regulation monitoring.
     Supports model tier selection, temperature control, and token budgeting.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

@@ -14,7 +14,7 @@ manifest:
     accumulative sentences, tunneling perspective shifts, semicolons as primary connectives.
     Generative layer uses Stanley Fish form-first approach and RDF triple model.
     Embedding layer uses Qwen/Qwen3-Embedding-0.6B for exemplar retrieval and centroid validation.
-  version: 0.31.0
+  version: 0.32.0
   editor: curator
   visibility: Public
 

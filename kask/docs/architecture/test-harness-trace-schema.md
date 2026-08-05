@@ -17,7 +17,7 @@ mds_categories: [domain, composition, lifecycle]
 This document is the single source of truth for the trace filesystem layout.
 All skills that write or read traces (`proptest`, `bug-hunt`, `harness-optimize`)
 reference this schema. Agents that write traces via file tools MUST produce JSON
-matching the shapes defined here.
+matching the shapes defined here.[^claessen-quickcheck]
 
 ## Artifact Families
 
@@ -215,4 +215,14 @@ to reset the cycle.
 - `harness-optimize` reads raw traces (nextest-output.json, failures/*/output.txt,
   bug-hunt-report.json) for causal hypotheses — NOT compressed summaries.
 - Sensors and the stability gate read `metrics.json` (the compressed summary)
-  for homeostatic control. Both coexist by design (Meta-Harness paper).
+  for homeostatic control. Both coexist by design (Meta-Harness paper).[^beizer-testing]
+
+---
+
+## References
+
+[^claessen-quickcheck]: Claessen, K., & Hughes, J. (2000). QuickCheck: A lightweight tool for random testing of Haskell programs. *Proceedings of the 5th ACM SIGPLAN International Conference on Functional Programming (ICFP '00)*, 268–279. https://doi.org/10.1145/351240.351266
+    Cited for the property-based testing paradigm that the trace schema supports (proptest traces, shrunk counterexamples, oracle types).
+
+[^beizer-testing]: Beizer, B. (1990). *Software testing techniques* (2nd ed.). Van Nostrand Reinhold. https://archive.org/details/softwaretestingt00beiz
+    Cited for the bug taxonomy and failure-classification foundation underlying the trace filesystem's raw-trace vs. compressed-summary duality.

@@ -22,7 +22,7 @@ manifest:
   id: qa-regulation-algedonic-loop
   category: qa-script
   name: QA Regulation Algedonic Loop
-  version: 0.31.0
+  version: 0.32.0
   visibility: Private
   description: >
     Verifies Regulation feedback loop integrity through the hkask-regulation test suite

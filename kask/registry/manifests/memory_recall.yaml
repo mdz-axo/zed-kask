@@ -7,7 +7,7 @@ manifest:
   name: Memory Recall
   description: Recalls semantic/episodic memory triples with confidence scoring
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

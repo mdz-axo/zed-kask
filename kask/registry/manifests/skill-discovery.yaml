@@ -1,5 +1,5 @@
 # Skill Discovery Process Manifest
-# ℏKask v0.31.0 — Gap discovery and candidate evaluation as PDCA
+# ℏKask v0.32.0 — Gap discovery and candidate evaluation as PDCA
 # Template type: FlowDef — detect gap + evaluate + convergence loop
 
 manifest:
@@ -12,7 +12,7 @@ manifest:
     against format/quality/safety criteria, computes convergence, and iterates
     until the gap is sufficiently resolved.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

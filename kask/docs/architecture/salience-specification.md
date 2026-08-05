@@ -22,7 +22,7 @@ mds_categories: [domain, composition]
 Define the salience score used by the style corpus embedding pipeline to rank
 passages for budget-gated hMem storage. Salience determines which passages
 receive full metadata hMems (entity tags, method signals, position) vs.
-embedding-only storage.
+embedding-only storage.[^carbonell-mmr]
 
 ---
 
@@ -37,13 +37,13 @@ MMR = λ·Sim₁(Dᵢ, Q) − (1−λ)·maxⱼ(Sim₂(Dᵢ, Dⱼ))
 ```
 
 Relevance to query **minus** maximum similarity to already-selected items.
-Established the pattern: score = relevance_term − redundancy_term.
+Established the pattern: score = relevance_term − redundancy_term.[^carbonell-mmr]
 
 ### 2.2 LexRank (Erkan & Radev, 2004)
 
 Graph-based eigenvector centrality for sentence salience. Builds a sentence
 similarity graph (cosine over TF-IDF), then applies PageRank-style centrality.
-Established the pattern: salience as graph centrality over textual units.
+Established the pattern: salience as graph centrality over textual units.[^erkan-lexrank]
 
 ### 2.3 Local Clustering Coefficient (Watts & Strogatz, 1998)
 
@@ -56,7 +56,7 @@ Cᵢ = 0                        for kᵢ < 2
 
 Measures how tightly a node's neighborhood is interconnected. High Cᵢ = node
 sits in a dense clique (redundant). Low Cᵢ = node bridges otherwise-disconnected
-communities (unique).
+communities (unique).[^watts-strogatz]
 
 ### 2.4 Submodular Selection (Lin & Bilmes, 2010, 2011)
 
@@ -64,7 +64,7 @@ Formalized MMR as budgeted submodular optimization. Key insight: penalizing
 redundancy makes the objective non-monotone; rewarding diversity preserves
 monotonicity and approximation guarantees. Our multiplicative formulation
 `connectedness × (1 − redundancy)` is equivalent to `connectedness × diversity`
-— a monotone-friendly form.
+— a monotone-friendly form.[^lin-bilmes]
 
 ### 2.5 How Our Model Relates
 
@@ -138,7 +138,7 @@ Cᵢ = Eᵢ / (|sample(i)| × (|sample(i)| − 1) / 2)
 For |sample(i)| < 2: Cᵢ = 0.
 
 This is the canonical Watts-Strogatz local clustering coefficient, computed
-over a sampled subset for performance. Range [0, 1].
+over a sampled subset for performance. Range [0, 1].[^watts-strogatz]
 
 ### 3.6 Salience
 
@@ -178,7 +178,7 @@ Moderate clustering gets moderate reduction. Range [0, 1].
 | **Total** | | **O(N × (T×D + K²))** |
 
 With N=2000, T=5, D=500, K=50: ~5M + 2.5M = ~7.5M operations. Completes in
-well under one second.
+well under one second.[^newman-networks]
 
 ### 4.2 Sampling Guarantee
 
@@ -218,7 +218,7 @@ indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
 ```
 
 Foundational rules (style guides, exemplars) bypass the budget gate — they
-always receive hMems regardless of salience score.
+always receive hMems regardless of salience score.[^lin-bilmes]
 
 ### 5.2 Retrieval Filter (implemented)
 
@@ -228,6 +228,25 @@ few-shot context window. This filter is implemented in
 `kask/mcp-servers/hkask-mcp-corpus/src/compose.rs:79` (the `RetrievalConfig.salience_min`
 field, default `0.0`), with the filter logic at `compose.rs:278`
 (`if salience < retrieval.salience_min { skip }`).
+
+---
+
+## Footnotes
+
+[^carbonell-mmr]: Carbonell, J., & Goldstein, J. (1998). The use of MMR, diversity-based reranking for reordering documents and producing summaries. *Proceedings of the 21st Annual International ACM SIGIR Conference on Research and Development in Information Retrieval*, 335–336. https://doi.org/10.1145/290941.291025
+    Cited for the maximal marginal relevance (MMR) formula — the foundational redundancy-aware selection pattern that this salience model instantiates.
+
+[^erkan-lexrank]: Erkan, G., & Radev, D. R. (2004). LexRank: Graph-based lexical centrality as salience in text summarization. *Journal of Artificial Intelligence Research*, 22, 457–479. https://doi.org/10.1613/jair.1503
+    Cited for the eigenvector-centrality salience pattern over sentence similarity graphs — the graph-centrality approach this model adapts.
+
+[^watts-strogatz]: Watts, D. J., & Strogatz, S. H. (1998). Collective dynamics of ‘small-world’ networks. *Nature*, 393(6684), 440–442. https://doi.org/10.1038/30918
+    Cited for the local clustering coefficient formula used as the redundancy signal in this salience model.
+
+[^lin-bilmes]: Lin, H., & Bilmes, J. (2011). A class of submodular functions for document summarization. *Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics (ACL '11)*, 510–520. https://aclanthology.org/P11-1052
+    Cited for the submodular optimization framework that formalizes MMR as budgeted selection — the theoretical basis for the multiplicative connectedness × diversity formulation.
+
+[^newman-networks]: Newman, M. E. J. (2018). *Networks* (2nd ed.). Oxford University Press. https://global.oup.com/academic/product/networks-9780198805090
+    Cited for the graph-algorithm complexity analysis framework applied to the computational bounds of the salience computation.
 
 ---
 

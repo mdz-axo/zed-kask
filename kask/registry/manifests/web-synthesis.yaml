@@ -1,5 +1,5 @@
 # Web Synthesis Manifest
-# ℏKask v0.31.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.32.0 - A Minimal Viable Container for UserPods
 
 manifest:
   id: mcp/web-synthesis
@@ -9,7 +9,7 @@ manifest:
     Extract-synthesize pipeline: search → extract full content from top results →
     produce a synthesis document with inline citations.
     Use when you need a coherent narrative from multiple web sources.
-  version: 0.31.0
+  version: 0.32.0
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public

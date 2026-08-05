@@ -19,7 +19,7 @@ manifest:
     grill-me lenses. Dual mode: extract code graph then audit its health.
     Any userpod may invoke this skill.
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   editor: curator-or-human-admin
   visibility: Public
 

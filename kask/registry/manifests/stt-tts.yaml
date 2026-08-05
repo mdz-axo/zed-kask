@@ -11,7 +11,7 @@ manifest:
     Vertical pipeline: agent text → TTbS simplification (caveman/compression grammar) → VoiceDesign mapping → TTS (generate_speech).
     User speech → audio_capture → STT (transcribe/transcribe_bundle) → agent receives. Uses media server (audio.rs) + inference router (deepinfra_backend.rs / fal.ai endpoints).
   functional_role: flowdef
-  version: 0.31.0
+  version: 0.32.0
   visibility: Public
 
 convergence:

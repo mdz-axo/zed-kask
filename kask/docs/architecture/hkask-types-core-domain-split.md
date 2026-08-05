@@ -27,11 +27,11 @@ The result is a crate that is, in effect, three buckets wearing one name: a **co
 2. The README and `description` repeatedly under-stated the surface (stale `agent_registry`/`NuEvent` references removed 2026-08-02).
 3. Domain types that *belong* with their domain crate (e.g. `wallet_types` logically lives with a wallet domain; `loops` with regulation) are stranded in the foundation crate.
 
-The cycle-break that motivated the consolidation may no longer be necessary: the Regulation subcrates that were blocked by the cycle have since been extracted, and `hkask-types` explicitly forbids depending on `hkask-capability` (the original cycle source). Whether the domain types can now return to their owning crates — or whether a clean two-crate split is the safer move — is the decision this ADR records.
+The cycle-break that motivated the consolidation may no longer be necessary: the Regulation subcrates that were blocked by the cycle have since been extracted, and `hkask-types` explicitly forbids depending on `hkask-capability` (the original cycle source). Whether the domain types can now return to their owning crates — or whether a clean two-crate split is the safer move — is the decision this ADR records.[^evans-ddd]
 
 ## Decision
 
-**Audit complete (2026-08-02); execution pending approval.** Three options were on the table; the consumer-dependency audit (results below) determined which are cycle-free. The informed recommendation is a hybrid (see Recommendation). This ADR exists so the trade-offs are visible before any move.
+**Audit complete (2026-08-02); execution pending approval.** Three options were on the table; the consumer-dependency audit (results below) determined which are cycle-free. The informed recommendation is a hybrid (see Recommendation). This ADR exists so the trade-offs are visible before any move.[^evans-ddd]
 
 ### Option A — Split into two crates: `hkask-types-core` + `hkask-types-domain`
 
@@ -59,7 +59,7 @@ The cycle-break that motivated the consolidation may no longer be necessary: the
 | Churn | medium — 2 crates, facade for back-compat | high — many crate moves + import updates | none |
 | Reversibility | moderate (merge back) | hard (many moves to undo) | trivial |
 | Matches declared purpose | partial (core does; domain crate doesn't) | yes (core shrinks to purpose) | no (purpose doc admits the drift) |
-| Wildcard re-exports | can be scoped per-crate | removed (types leave) | remain |
+| Wildcard re-exports | can be scoped per-crate | removed (types leave) | remain |[^ousterhout]
 
 ## Audit results (2026-08-02)
 
@@ -81,27 +81,43 @@ The consumer-dependency audit is complete (graph-audit semantic mode, manual gre
 
 **Stay core (foundational):** `id`/`error`/`event`/`observable_span`/`visibility`/`time`/`crypto`/`secret`, `ports` (hexagonal seams, 16 consumers), `agent_paths` (path primitives), `json_extract` (utility), `macros` (`enum_str_ops!`).
 
-**Key correction to the original framing:** the worry that Option B re-introduces the cycle that motivated the original consolidation applies to *only* `template`, not to `loops` (the original consolidation's target). `hkask-storage` no longer imports `loops` — that cycle is already broken — so `loops` can return to `hkask-regulation`.
+**Key correction to the original framing:** the worry that Option B re-introduces the cycle that motivated the original consolidation applies to *only* `template`, not to `loops` (the original consolidation's target). `hkask-storage` no longer imports `loops` — that cycle is already broken — so `loops` can return to `hkask-regulation`.[^fowler-strangler]
 
 ## Recommendation
 
-**Execute the hybrid revealed by the audit** (not pure A or B as originally framed): Option-B moves for the 10 viable buckets, internalize the 4 single-consumer buckets, delete `server_config`, keep the foundational buckets in core. After the moves, `hkask-types` shrinks from ~197 to ~80 items, matching its declared purpose. Execute one domain per commit; each move gated on `cargo check` + `./script/clippy` for affected consumers. The audit gate is satisfied — execution may proceed when the active agent's `hkask-types` work lands.
+**Execute the hybrid revealed by the audit** (not pure A or B as originally framed): Option-B moves for the 10 viable buckets, internalize the 4 single-consumer buckets, delete `server_config`, keep the foundational buckets in core. After the moves, `hkask-types` shrinks from ~197 to ~80 items, matching its declared purpose. Execute one domain per commit; each move gated on `cargo check` + `./script/clippy` for affected consumers. The audit gate is satisfied — execution may proceed when the active agent's `hkask-types` work lands.[^fowler-strangler]
 
 ## Consequences
 
 - **If A:** `hkask-types` becomes a re-export facade; two new crates appear in `kask/crates/`; consumers update imports incrementally (facade keeps old paths working during migration). The `pub use ports::*` wildcard can be scoped to `hkask-types-core`.
 - **If B:** ~105 items move across ~10 crates; `hkask-types` drops to ~92 core+port items; `kask/Cargo.toml` and many `Cargo.toml` deps shift; the `loops/mod.rs` "moved to break the cycle" doc is deleted (the move reverses). This is the highest-touch option and must be done one domain per commit (strangler-fig discipline).
-- **If C:** no change; the corrected docs stand; the wildcard re-exports and stranded domain types remain as accepted debt.
+- **If C:** no change; the corrected docs stand; the wildcard re-exports and stranded domain types remain as accepted debt.[^evans-ddd]
 
 ## Verification
 
 - Whichever option is chosen: `cargo check` across all 24+ consumers, `./script/clippy` (per `.rules`), and the existing test suites (e.g. `hkask-types` id/visibility tests, `hkask-regulation` loop tests) must pass.
 - For Option B specifically: a dependency-graph cycle check before and after each domain move (graph-audit semantic mode).
-- A structural-pin test should assert the new crate(s)' public surface matches the intended core/domain split, so the split doesn't silently drift back.
+- A structural-pin test should assert the new crate(s)' public surface matches the intended core/domain split, so the split doesn't silently drift back.[^fowler-refactoring]
 
 ## Non-goals
 
-This ADR does **not** decide the MCP server error consolidation. A separate analysis (2026-08-02) established that the MCP servers already map their errors onto the MCP wire type `McpToolError` (via `map_*_error` fns or inline `.map_err(|e| McpToolError::internal(e.to_string()))`), not onto `hkask_types::McpErrorKind`. The remaining error work is per-server structured-source preservation (replacing inline `McpToolError::internal(e.to_string())` with `From<E> for McpToolError` / `map_*` fns), not a blanket consolidation onto `McpErrorKind`. That is independent of this split.
+This ADR does **not** decide the MCP server error consolidation. A separate analysis (2026-08-02) established that the MCP servers already map their errors onto the MCP wire type `McpToolError` (via `map_*_error` fns or inline `.map_err(|e| McpToolError::internal(e.to_string()))`), not onto `hkask_types::McpErrorKind`. The remaining error work is per-server structured-source preservation (replacing inline `McpToolError::internal(e.to_string())` with `From<E> for McpToolError` / `map_*` fns), not a blanket consolidation onto `McpErrorKind`. That is independent of this split.[^evans-ddd]
+
+---
+
+## Footnotes
+
+[^evans-ddd]: Evans, E. (2003). *Domain-driven design: Tackling complexity in the heart of software*. Addison-Wesley. https://www.domainlanguage.com/ddd/
+    Cited for the bounded context pattern — the core/domain type separation follows DDD's principle of keeping domain types within their owning bounded context.
+
+[^ousterhout]: Ousterhout, J. (2021). *A philosophy of software design* (2nd ed.). Yaknymer Press. https://web.stanford.edu/~ouster/cgi-bin/book.php
+    Cited for the deep-module trade-off analysis applied to the three split options (locality, cycle risk, churn, reversibility).
+
+[^fowler-strangler]: Fowler, M. (2004). *StranglerFigApplication*. https://martinfowler.com/bliki/StranglerFigApplication.html
+    Cited for the strangler-fig discipline of executing one domain move per commit with cycle-free verification.
+
+[^fowler-refactoring]: Fowler, M. (2018). *Refactoring: Improving the design of existing code* (2nd ed.). Addison-Wesley. https://martinfowler.com/books/refactoring.html
+    Cited for the structural-pin test pattern that prevents the split from silently drifting back.
 
 ## References
 
