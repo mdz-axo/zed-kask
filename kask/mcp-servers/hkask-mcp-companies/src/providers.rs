@@ -251,7 +251,7 @@ async fn fmp_get(
     }
 
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("failed to parse FMP response: {e}")))
+        .map_err(|e| McpToolError::unavailable(format!("failed to parse FMP response: {e}")))
 }
 
 // ── EODHD API caller ───────────────────────────────────────────────
@@ -284,7 +284,7 @@ async fn eodhd_get(
     }
 
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("failed to parse EODHD response: {e}")))
+        .map_err(|e| McpToolError::unavailable(format!("failed to parse EODHD response: {e}")))
 }
 
 // ── EODHD → FMP format normalizers ─────────────────────────────────
@@ -622,7 +622,7 @@ pub async fn fmp_search_get(
     }
 
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("failed to parse FMP search response: {e}")))
+        .map_err(|e| McpToolError::unavailable(format!("failed to parse FMP search response: {e}")))
 }
 
 /// EODHD symbol search by name query.
@@ -649,8 +649,9 @@ pub async fn eodhd_search_get(
         return Err(classify_http_error("EODHD", status, &body));
     }
 
-    serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("failed to parse EODHD search response: {e}")))
+    serde_json::from_str(&body).map_err(|e| {
+        McpToolError::unavailable(format!("failed to parse EODHD search response: {e}"))
+    })
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

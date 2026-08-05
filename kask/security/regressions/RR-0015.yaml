@@ -10,7 +10,9 @@ severity: critical
 detection:
   kind: grep
   pattern: 'bnb_4bit_compute_dtype.*fp32'
-  include: "*.yaml *.yml *.json *.py"
+  # Scan the whole kask tree for config files (the bare `*.yaml`-style globs
+  # only matched the kask/ top level, which contains no yaml — a dead scope).
+  include: "--include=*.yaml --include=*.yml --include=*.json --include=*.py ."
 mitigation: "Set bnb_4bit_compute_dtype to bf16 (preferred) or fp16. fp32 compute through a 4-bit frozen base wastes the memory savings — QLoRA paper §3 specifies bf16 compute."
 source: "https://arxiv.org/abs/2305.14314"
 ci_gate: scripts/check-lora-training-regressions.sh

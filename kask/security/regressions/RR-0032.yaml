@@ -12,7 +12,7 @@ severity: high
 detection:
   kind: cargo-test
   pattern: "path_safety"
-  include: "mcp-servers/crates/hkask-mcp-corpus/src/path_safety.rs"
+  include: "mcp-servers/hkask-mcp-corpus/src/path_safety.rs"
 mitigation: "Route every caller-supplied read/write path through path_safety (canonicalize_lenient for write targets, canonicalize for reads, reject paths escaping the canonicalized project root, tracing::warn! on rejection). The corpus server is launched per-project via ContextServerStore with no governance membrane, so server-side containment is the only enforcement point: before this fix, LLM-controlled req.output / cache_dir arguments allowed arbitrary file writes (e.g. ~/.ssh/authorized_keys — CWE-73) and extract_text allowed arbitrary reads (/etc/passwd, SSH keys) flowing back into LLM context (CWE-200). read_capped also enforces MAX_READ_BYTES (32 MiB) via metadata before reading (CWE-400). Follow-up in the same pass closed the remaining LLM-reachable escapes: convert_directory / chunk_directory input+output dirs (tools/document.rs) and the discover service output_dir/cache_dir (corpus/discover/service.rs). The tempfile::tempdir() scratch uses in ocr/ and corpus/embed are self-contained and not LLM-addressable. Deliberately not contained: db_path arguments to SemanticMemory::open (a crate-wide convention across ~10 tools; DBs are opened in place, not read into context) — flagged as future hardening, not a regression."
 source: "Cycle 3 kali-audit — MCP tool surface review (defense layers 1/4)"
 ci_gate: scripts/check-kali-regressions.sh

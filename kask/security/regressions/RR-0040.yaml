@@ -12,7 +12,7 @@ severity: medium
 detection:
   kind: grep
   pattern: '^ocap:'
-  include: "kask/registry/manifests/*.yaml kask/registry/templates/*/manifest.yaml"
+  include: "registry/manifests/ registry/templates/"
 mitigation: "The ocap: manifest block and OcapConfig struct were removed (2026-08-02). The real OCAP boundary is McpRuntime::invoke (capability match) + per-agent mcp_tools allowlist at ToolDispatchPort. Do not re-add an ocap: manifest block without wiring it into the runtime gate — silent manifest-only config is theater. See .rules: Manifest ocap: is declared config, not a security gate."
 source: ".rules: Manifest ocap: is declared config, not a security gate"
 ci_gate: scripts/check-kali-regressions.sh

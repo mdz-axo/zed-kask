@@ -303,13 +303,17 @@ impl CompaniesServer {
                 )
                 .send()
                 .await
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| {
+                    McpToolError::unavailable(format!("FMP screener request failed: {e}"))
+                })?;
 
             let status = response.status();
             let body = response
                 .text()
                 .await
-                .map_err(|e| McpToolError::internal(e.to_string()))?;
+                .map_err(|e| {
+                    McpToolError::unavailable(format!("FMP screener body read failed: {e}"))
+                })?;
 
             let results = parse_screener_response(status, &body)?;
 

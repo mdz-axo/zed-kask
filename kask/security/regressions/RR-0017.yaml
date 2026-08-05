@@ -11,8 +11,15 @@ discovered_at: 2026-07-19
 severity: high
 detection:
   kind: grep
-  pattern: 'find_balanced_json_object'
-  include: "mcp-servers/hkask-mcp-corpus/src/lib.rs"
+  # PRESENCE check: corpus LLM-output parsing must use the shared
+  # brace-balanced extractor (hkask_types::json_extract). The corpus crate
+  # root is src/hkask_mcp_corpus.rs (no lib.rs); the extractor is consumed
+  # via extract_json_from_response, whose implementation wraps
+  # find_balanced_json_object. The absence side (no first-{/last-} slicing
+  # anywhere) is enforced tree-wide by RR-0028.
+  semantics: presence
+  pattern: 'extract_json_from_response'
+  include: "mcp-servers/hkask-mcp-corpus/src/"
 mitigation: "extract_json_from_response must use find_balanced_json_object (brace-balanced scan respecting string literals) rather than find('{')...rfind('}'). The old approach silently merged an injected JSON block (echoed by the LLM in its reasoning preamble) with the model's real answer, allowing a poisoned chunk to control the ontology tags assigned to it. Brace-balanced extraction returns exactly one top-level object, defeating the injection."
 source: "Adversarial review of docproc ontology tagging — C1 finding"
 ci_gate: scripts/check-kali-regressions.sh

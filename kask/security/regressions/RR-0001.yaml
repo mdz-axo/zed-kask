@@ -12,7 +12,7 @@ severity: critical
 detection:
   kind: grep
   pattern: 'replace_range\(m\.span'
-  include: "crates/hkask-guard/src/**/*.rs"
+  include: "crates/hkask-guard/src/"
 mitigation: "Use the redact_spans helper which rebuilds the string in a single forward pass."
 source: "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
 ci_gate: scripts/check-kali-regressions.sh

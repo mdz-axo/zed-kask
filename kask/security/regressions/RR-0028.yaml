@@ -18,7 +18,7 @@ detection:
   # Excludes json_extract.rs (the secure implementation) and test modules
   # (which legitimately reference the pattern to assert against it).
   pattern: '\.find\([^)]*[{][^)]*\).*\.rfind\([^)]*[}][^)]*\)'
-  include: "--include=*.rs --exclude-dir=json_extract ."
+  include: "--include=*.rs --exclude=json_extract.rs ."
 mitigation: "Use brace-balanced JSON extraction via hkask_types::json_extract::extract_json_from_response instead of the first-brace to last-brace slice. The secure primitive lives in hkask-types/src/json_extract.rs so all LLM-output parsers share it. The old approach silently merged an injected JSON block (echoed by the LLM in its reasoning preamble) with the model's real answer, allowing a poisoned chunk to control parsed output. Brace-balanced extraction returns exactly one top-level object, defeating the injection."
 source: "Adversarial review of docproc ontology tagging (RR-0017) — same bug class found in three more files during cycle 2 kali-audit"
 ci_gate: scripts/check-kali-regressions.sh

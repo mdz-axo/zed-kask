@@ -12,7 +12,7 @@ severity: medium
 detection:
   kind: cargo-test
   pattern: "abstract_namespace_without_chunk_tag_is_capped"
-  include: "mcp-servers/crates/hkask-mcp-corpus/src/tools/semantic/triples.rs"
+  include: "mcp-servers/hkask-mcp-corpus/src/tools/semantic/triples.rs"
 mitigation: "The extract-triples hallucination guard bypasses the text-containment check for abstract-namespace predicates (golem/eso/fibo/pko/epistemic/omc/other) ONLY when the predicate's namespace was actually tagged for the chunk (chunk_namespaces.contains(pred_ns)). Without this cross-check, the LLM could emit any golem:/eso:/fibo:/pko: predicate to bypass the guard for chunks where that ontology was never detected — allowing hallucinated triples to enter the knowledge graph at full LLM-reported confidence. The fix uses read_ontology_namespaces to load the chunk's tagged namespaces and passes them into the spawned task as chunk_namespaces."
 source: "Adversarial review of docproc ontology tagging — M4 finding"
 ci_gate: scripts/check-kali-regressions.sh

@@ -8,9 +8,16 @@ discovered_by: lora-training
 discovered_at: 2026-07-21
 severity: high
 detection:
-  kind: grep
-  pattern: 'harness:\s*(axolotl|trl)'
-  include: "*.yaml *.yml *.json"
+  # The invariant is a harness+trainer COMBINATION constraint (axolotl must
+  # not pair with trl_trainer; trl must not pair with unsupported trainers).
+  # A line-based grep for `harness:` alone flags every legitimate harness
+  # declaration (e.g. registry/manifests/training/capabilities-researcher.yaml)
+  # and cannot see the trainer key on another line. The combination gate is
+  # enforced at runtime by the lora-training skill's G6 harness-method
+  # compatibility gate; this entry records the class for audit visibility.
+  kind: runtime-assert
+  pattern: 'harness+trainer compatibility (axolotl: SFT only; trl: SFT/DPO/KTO/ORPO/Reward)'
+  include: "registry/manifests/training/"
 mitigation: "Ensure harness and trainer are compatible: axolotl supports SFT only (no trl_trainer); trl supports SFTTrainer (Phase 1), DPOTrainer/KTOTrainer/ORPOTrainer (Phase 2), RewardTrainer (Phase 3)."
 source: "https://huggingface.co/docs/trl/index"
 ci_gate: scripts/check-lora-training-regressions.sh

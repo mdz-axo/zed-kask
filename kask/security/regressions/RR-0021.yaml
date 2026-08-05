@@ -14,7 +14,9 @@ detection:
   # Detect if calamine is pinned to 0.34 (which pulls vulnerable quick-xml 0.39.x).
   # The fix: calamine = "0.36" pulls quick-xml 0.41.0.
   pattern: 'calamine\s*=\s*"0\.34"'
-  include: "mcp-servers/hkask-mcp-corpus/Cargo.toml"
+  # The crate now inherits the pin via calamine.workspace = true; the actual
+  # version spec lives in the workspace root, so scan both.
+  include: "mcp-servers/hkask-mcp-corpus/Cargo.toml ../Cargo.toml"
 mitigation: "Upgrade calamine from 0.34 to 0.36 in mcp-servers/hkask-mcp-corpus/Cargo.toml. calamine 0.36 uses quick-xml 0.41.0 which fixes the namespace-resolver unbounded allocation (RUSTSEC-2026-0194, RUSTSEC-2026-0195). Run cargo update -p calamine after changing the spec."
 source: "https://rustsec.org/advisories/RUSTSEC-2026-0194, https://rustsec.org/advisories/RUSTSEC-2026-0195"
 ci_gate: scripts/check-kali-regressions.sh

@@ -11,11 +11,15 @@ discovered_at: 2026-07-17
 severity: high
 detection:
   kind: grep
-  # The attribute must be present as the first line. This pattern matches
-  # lib.rs files that do NOT start with #![forbid(unsafe_code)].
-  # The regression checks for the PRESENCE of the attribute (inverted grep).
+  # PRESENCE check: the attribute must appear in the security-critical crate
+  # roots (kask convention: named root files, not lib.rs; hkask-ports was
+  # merged into hkask-types/hkask-capability). Full 38-crate coverage is
+  # enforced mechanically by scripts/check-unsafe-forbid.sh (CI job
+  # unsafe-forbid); this entry pins the three most security-critical roots
+  # inside the regression library itself.
+  semantics: presence
   pattern: '#!\[forbid\(unsafe_code\)\]'
-  include: "crates/hkask-guard/src/lib.rs crates/hkask-types/src/lib.rs crates/hkask-ports/src/lib.rs crates/hkask-templates/src/lib.rs"
+  include: "crates/hkask-guard/src/hkask_guard.rs crates/hkask-types/src/hkask_types.rs crates/hkask-templates/src/hkask_templates.rs"
 mitigation: "Add #![forbid(unsafe_code)] as the first line of src/lib.rs in all hkask-* library crates that do not use unsafe blocks."
 source: "https://anssi-fr.github.io/rust-guide/ — ANSSI Secure Rust Guidelines"
 ci_gate: scripts/check-kali-regressions.sh

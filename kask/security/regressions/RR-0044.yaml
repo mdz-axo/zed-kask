@@ -11,8 +11,16 @@ discovered_at: 2026-08-04
 severity: medium
 detection:
   kind: grep
-  pattern: 'McpToolError::internal\(format!'
-  include: "kask/mcp-servers/"
+  # Sites that are GENUINELY internal (serialize-own-struct failures,
+  # template-render failures of the server's own engine, fallback arms of
+  # per-variant mappers) carry an `rr0044-ok:` marker comment on the same
+  # line documenting the classification decision; the negative lookahead
+  # skips them. Every unmarked blanket internal(format! is a violation.
+  # NOTE: `internal(e.to_string())` is an evasion spelling of the same
+  # class — audit those sites when touching them (82 sites as of
+  # 2026-08-04; widening this pattern requires triaging each first).
+  pattern: '^(?!.*rr0044-ok).*McpToolError::internal\(format!'
+  include: "mcp-servers/"
 mitigation: "Inline McpToolError::internal(format!(\"...: {e}\")) over every variant of a domain error mis-classifies NotFound/PermissionDenied/auth variants as Internal. Use a map_<domain>_error(e) -> McpToolError fn that classifies per variant. See map_media_error (hkask-mcp-media/src/error.rs), map_kanban_error (hkask-mcp-kata-kanban), and tools/error_mapping.rs (hkask-mcp-training) for the clean pattern. See .rules: MCP tool error classification — classify per variant, not blanket internal."
 source: ".rules: MCP tool error classification — classify per variant, not blanket internal"
 ci_gate: scripts/check-kali-regressions.sh

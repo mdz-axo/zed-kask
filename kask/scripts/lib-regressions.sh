@@ -60,12 +60,20 @@ check_regressions() {
     fi
 
     # Extract fields (lightweight grep-based parsing — no yq dependency).
-    local rr_id rr_status rr_kind rr_pattern rr_title
+    # Both single- and double-quoted YAML scalars must be unquoted: a
+    # single-quoted pattern that keeps its literal quotes can never match
+    # Rust source, silently turning the gate into a no-op (found 2026-08-04:
+    # 20 enforced entries were vacuous for exactly this reason).
+    local rr_id rr_status rr_kind rr_pattern rr_title rr_semantics
     rr_id=$(grep -m1 '^id:' "$rr_file" | sed 's/^id:\s*//')
     rr_status=$(grep -m1 '^status:' "$rr_file" | sed 's/^status:\s*//')
     rr_kind=$(grep -m1 'kind:' "$rr_file" | sed 's/.*kind:\s*//')
-    rr_pattern=$(grep -m1 'pattern:' "$rr_file" | sed 's/.*pattern:\s*//' | sed 's/^"\(.*\)"$/\1/')
-    rr_title=$(grep -m1 '^title:' "$rr_file" | sed 's/^title:\s*//' | sed 's/^"\(.*\)"$/\1/')
+    rr_pattern=$(grep -m1 'pattern:' "$rr_file" | sed 's/.*pattern:\s*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\\(.*\\)'$/\\1/")
+    rr_title=$(grep -m1 '^title:' "$rr_file" | sed 's/^title:\s*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\\(.*\\)'$/\\1/")
+    # semantics: absence (default — the bug pattern must NOT appear) or
+    # presence (the invariant pattern MUST appear; zero matches = violation).
+    rr_semantics=$(grep -m1 'semantics:' "$rr_file" | sed 's/.*semantics:\s*//' || true)
+    rr_semantics=${rr_semantics:-absence}
 
     # Skip kinds we don't handle.
     if [ "$rr_kind" != "grep" ] && [ "$rr_kind" != "$deferred_kind" ] && [ "$rr_kind" != "cargo-test" ]; then
@@ -92,10 +100,15 @@ check_regressions() {
         enforced=$((enforced + 1))
         local rr_include
         rr_include=$(grep -m1 'include:' "$rr_file" | sed 's/.*include:\s*//' | sed 's/^"\(.*\)"$/\1/')
-        # Extract the crate name from the include path (e.g., "kask/crates/hkask-templates/src/executor.rs" → "hkask-templates").
+        # Extract the crate name from the include path (e.g.,
+        # "crates/hkask-templates/src/executor.rs" → "hkask-templates",
+        # "mcp-servers/hkask-mcp-corpus/src/path_safety.rs" → "hkask-mcp-corpus").
         local crate_name=""
         if [ -n "$rr_include" ]; then
-          crate_name=$(echo "$rr_include" | sed -n 's|.*\(crates/\)\([^/][^/]*\)/.*|\2|p')
+          crate_name=$(echo "$rr_include" | sed -n 's|.*crates/\([^/][^/]*\)/.*|\1|p')
+          if [ -z "$crate_name" ]; then
+            crate_name=$(echo "$rr_include" | sed -n 's|.*mcp-servers/\([^/][^/]*\)/.*|\1|p')
+          fi
         fi
         if [ -z "$crate_name" ]; then
           echo "::warning::Regression $rr_id (cargo-test): could not extract crate name from include '$rr_include' — skipping"
@@ -142,10 +155,41 @@ check_regressions() {
       else
         # Fall back to per-regression include field (kali-style).
         local rr_include
-        rr_include=$(grep -m1 'include:' "$rr_file" | sed 's/.*include:\s*//' | sed 's/^"\(.*\)"$/\1/')
-        matches=$(grep -rPn "$rr_pattern" $rr_include 2>/dev/null || true)
+        rr_include=$(grep -m1 'include:' "$rr_file" | sed 's/.*include:\s*//' | sed 's/^"\(.*\)"$/\1/' | sed "s/^'\\(.*\\)'$/\\1/")
+        # Orphaned-gate detection: a stale include path (renamed crate,
+        # moved file) makes grep silently match nothing — the gate reports
+        # green while enforcing nothing (the .rules "advertised invariants
+        # need enforcement points" trap; found live 2026-08-04 with 8
+        # dead-path entries). Require at least one non-flag include token
+        # to exist on disk.
+        local include_exists=0 token
+        for token in $rr_include; do
+          case "$token" in
+            -*) include_exists=1 ;; # grep flag (e.g. --include=*.j2): scan is rooted elsewhere
+            *) [ -e "$token" ] && include_exists=1 ;;
+          esac
+        done
+        if [ "$include_exists" -eq 0 ]; then
+          echo "::error::Regression $rr_id orphaned: $rr_title"
+          echo "  include paths do not exist: $rr_include"
+          violations=$((violations + 1))
+          continue
+        fi
+        matches=$(grep -rPn "$rr_pattern" $rr_include \
+          --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules \
+          --exclude-dir=regressions \
+          2>/dev/null || true)
       fi
-      if [ -n "$matches" ]; then
+      if [ "$rr_semantics" = "presence" ]; then
+        # Presence invariant: the pattern MUST appear (e.g. a required
+        # attribute or defense text). Zero matches = the invariant was
+        # removed = violation.
+        if [ -z "$matches" ]; then
+          echo "::error::Regression $rr_id violated (presence): $rr_title"
+          echo "  required pattern not found: $rr_pattern"
+          violations=$((violations + 1))
+        fi
+      elif [ -n "$matches" ]; then
         echo "::error::Regression $rr_id violated: $rr_title"
         echo "  pattern: $rr_pattern"
         echo "$matches" | head -5 | sed 's/^/    /'
