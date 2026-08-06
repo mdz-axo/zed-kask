@@ -57,17 +57,19 @@ impl UrlValidationConfig {
     }
 }
 
-/// Validate a URL for use in MCP web/scholar requests.
+/// Parse a URL and return (scheme, hostname) after basic structural checks.
 ///
-/// Checks:
-/// - Rejects non-HTTP(S) schemes
-/// - Rejects URLs with embedded credentials (user:pass@host)
-/// - Rejects private IPs unless explicitly permitted
-/// - Rejects loopback addresses unless explicitly permitted
-pub(crate) fn validate_url(
-    raw_url: &str,
-    config: &UrlValidationConfig,
-) -> Result<(), SecurityError> {
+/// Shared by [`validate_url`] (sync, literal-IP only) and
+/// [`validate_url_with_dns`] (async, DNS-resolved). Extracting this avoids
+/// duplicating the URL-parsing logic across the two functions.
+///
+/// Returns:
+/// - `Ok((scheme, hostname))` if the URL has a valid scheme separator and
+///   no embedded credentials.
+/// - `Err(DisallowedScheme)` if the scheme is not http/https.
+/// - `Err(EmbeddedCredentials)` if the authority contains `user:pass@`.
+/// - `Err(InvalidUrl)` if the URL is malformed (no `://`, bad IPv6 brackets).
+fn parse_url_for_ssrf(raw_url: &str) -> Result<(&str, &str), SecurityError> {
     let scheme_end = raw_url
         .find("://")
         .ok_or_else(|| SecurityError::InvalidUrl("No scheme separator '://' found".to_string()))?;
@@ -93,6 +95,22 @@ pub(crate) fn validate_url(
         host
     };
 
+    Ok((scheme, hostname))
+}
+
+/// Validate a URL for use in MCP web/scholar requests.
+///
+/// Checks:
+/// - Rejects non-HTTP(S) schemes
+/// - Rejects URLs with embedded credentials (user:pass@host)
+/// - Rejects private IPs unless explicitly permitted
+/// - Rejects loopback addresses unless explicitly permitted
+pub(crate) fn validate_url(
+    raw_url: &str,
+    config: &UrlValidationConfig,
+) -> Result<(), SecurityError> {
+    let (_scheme, hostname) = parse_url_for_ssrf(raw_url)?;
+
     let ip: Option<IpAddr> = hostname.parse().ok();
 
     if let Some(ip) = ip {
@@ -104,13 +122,11 @@ pub(crate) fn validate_url(
         }
     }
 
-    // Return the hostname so callers that want DNS-level SSRF protection
-    // (defeating hostname-based bypasses where a non-literal hostname
-    // resolves to a private/loopback IP) can resolve it via
-    // [`validate_url_with_dns`]. The sync [`validate_url`] only checks
-    // literal-IP hostnames; a hostname like `attacker.example` resolving to
-    // 127.0.0.1 or 169.254.169.254 bypasses the literal check above.
-    let _ = hostname;
+    // NOTE: this sync check only catches *literal-IP* hostnames. A
+    // non-literal hostname (e.g. `attacker.example` resolving to `127.0.0.1`
+    // or `169.254.169.254`) passes this check because `hostname.parse()`
+    // returns `None` for DNS names. Use [`validate_url_with_dns`] for
+    // defense-in-depth DNS resolution that closes this gap.
     Ok(())
 }
 
@@ -137,23 +153,9 @@ pub(crate) async fn validate_url_with_dns(
     // Run the sync checks first (scheme, credentials, literal-IP blocklist).
     validate_url(raw_url, config)?;
 
-    // Re-parse to extract the hostname for DNS resolution. This mirrors the
-    // parsing in validate_url; if validate_url succeeded, this parse is safe.
-    let scheme_end = raw_url
-        .find("://")
-        .ok_or_else(|| SecurityError::InvalidUrl("No scheme separator '://' found".to_string()))?;
-    let after_scheme = &raw_url[scheme_end + 3..];
-    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
-    let host_part = authority.split('@').next_back().unwrap_or(authority);
-    let host = host_part.split(':').next().unwrap_or(host_part);
-    let hostname = if host.starts_with('[') {
-        let bracket_close = host
-            .rfind(']')
-            .ok_or_else(|| SecurityError::InvalidUrl("Malformed IPv6 address".to_string()))?;
-        &host[1..bracket_close]
-    } else {
-        host
-    };
+    // Extract the hostname via the shared parser (same logic as validate_url,
+    // no duplication). If validate_url succeeded, this parse is safe.
+    let (_scheme, hostname) = parse_url_for_ssrf(raw_url)?;
 
     // Literal-IP hostnames were already checked by validate_url. Only resolve
     // non-literal hostnames (DNS names) — resolving a literal IP is redundant

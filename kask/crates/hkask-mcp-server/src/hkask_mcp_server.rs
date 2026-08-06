@@ -20,7 +20,7 @@ pub use server::{
     CapabilityTier, CredentialRequirement, McpError, ServerContext, ToolContext, api_get, api_put,
     execute_tool, load_dotenv, resolve_credential, run_stdio_server,
     run_stdio_server_with_preloaded, tool_internal_error, validate_identifier, validate_path,
-    validate_tool_url, validate_tool_url_permissive, validate_tool_url_with_dns,
+    validate_tool_url_permissive, validate_tool_url_with_dns,
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, map_infra_error, map_io_error,

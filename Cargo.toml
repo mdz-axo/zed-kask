@@ -895,7 +895,7 @@ hkask-test-harness = { path = "kask/crates/hkask-test-harness" }
 llm-guard = "=0.2.0"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"
-rmcp = "1"
+rmcp = "3"
 tokio-util = { version = "0.7", features = ["rt"] }
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
 hkask-ledger = { path = "kask/crates/hkask-ledger" }

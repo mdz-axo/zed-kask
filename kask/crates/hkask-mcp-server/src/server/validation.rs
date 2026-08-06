@@ -285,35 +285,14 @@ pub fn read_capped(path: &str, max_bytes: u64) -> Result<Vec<u8>, McpToolError> 
         .map_err(|e| map_io_error(e, &format!("Failed to read file '{}'", path)))
 }
 
-/// Validate a tool URL (http/https only, no path traversal).
-///
-/// This is the **sync** variant: it checks the scheme, embedded credentials,
-/// and literal-IP blocklist, but does **not** resolve hostnames. A non-literal
-/// hostname resolving to a private/loopback IP bypasses this check. For
-/// defense-in-depth against hostname-based SSRF bypasses (CWE-918/441), use
-/// [`validate_tool_url_with_dns`] instead — it resolves the hostname and
-/// rejects if any resolved IP is private/loopback. The async variant is the
-/// recommended entry point for any tool that accepts an untrusted URL and
-/// then fetches it.
-///
-/// expect: "The system validates tool input against safety and length constraints"
-/// pre:  url is non-empty
-/// post: returns Ok(()) if valid http/https URL
-/// post: returns Err if invalid scheme or format
-#[must_use = "result must be used"]
-pub fn validate_tool_url(url: &str) -> Result<(), McpToolError> {
-    crate::security::validate_url(url, &crate::security::UrlValidationConfig::default())
-        .map_err(|e| McpToolError::invalid_argument(format!("URL validation failed: {e}")))
-}
-
 /// Validate a tool URL with DNS resolution (async, defense-in-depth).
 ///
 /// This is the recommended SSRF validation entry point for any tool that
-/// accepts an untrusted URL and then fetches it. It runs the sync checks from
-/// [`validate_tool_url`] (scheme, credentials, literal-IP blocklist) and then
+/// accepts an untrusted URL and then fetches it. It runs the sync checks
+/// (scheme, credentials, literal-IP blocklist via [`validate_url`]) and then
 /// resolves the hostname via `tokio::net::lookup_host`, rejecting if any
 /// resolved IP is loopback or private. This closes the hostname-bypass gap
-/// in the sync variant (a non-literal hostname resolving to `127.0.0.1` or
+/// in the sync baseline (a non-literal hostname resolving to `127.0.0.1` or
 /// `169.254.169.254` passes the literal check but is caught here).
 ///
 /// A TOCTOU between this resolve and the downstream `reqwest` connect (DNS
