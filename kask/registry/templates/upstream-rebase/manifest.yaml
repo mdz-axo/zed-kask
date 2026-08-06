@@ -1,0 +1,119 @@
+# Template Manifest: upstream-rebase
+# ℏKask v0.33.0
+
+templates:
+  - id: assess
+    file: assess.j2
+    type: KnowAct
+    visibility: Public
+    energy_cap: 8000
+    description: >
+      Assess a D-seam file against the strategy decision rule. Extract line
+      counts, kask call site count, marker count. Recommend merge vs. mapped
+      re-application.
+    contract:
+      input:
+        target_file: string
+        upstream_ref: string
+        task: string
+      output:
+        fork_line_count: integer
+        upstream_line_count: integer
+        kask_call_site_count: integer
+        marker_count: integer
+        marker_density: number
+        strategy: string
+        rationale: string
+    generates_spans:
+      - reg.upstream_rebase.assess
+
+  - id: map
+    file: map.j2
+    type: KnowAct
+    visibility: Public
+    energy_cap: 8000
+    description: >
+      Extract the functional inventory (F1, F2, ...), classify each unit by
+      constraint force, and build the dependency DAG.
+    contract:
+      input:
+        target_file: string
+        step_1_result: object
+        task: string
+      output:
+        functional_units: array
+        constraint_force_table: array
+        dependency_dag: object
+        topological_order: array
+    generates_spans:
+      - reg.upstream_rebase.map
+
+  - id: decide
+    file: decide.j2
+    type: KnowAct
+    visibility: Public
+    energy_cap: 4000
+    description: >
+      Apply the essentialist deletion test: is full re-application necessary,
+      or is surgical marking + pinning sufficient?
+    contract:
+      input:
+        target_file: string
+        step_1_result: object
+        step_2_result: object
+        task: string
+      output:
+        strategy: string
+        full_reapplication: boolean
+        rationale: string
+        cruft_identified: array
+    generates_spans:
+      - reg.upstream_rebase.decide
+
+  - id: execute
+    file: execute.j2
+    type: KnowAct
+    visibility: Public
+    energy_cap: 10000
+    description: >
+      Execute the chosen strategy: add markers + pinning tests (surgical), or
+      re-apply onto clean upstream in topological order (full re-application).
+    contract:
+      input:
+        target_file: string
+        step_2_result: object
+        step_3_result: object
+        task: string
+      output:
+        markers_added: integer
+        tests_added: array
+        files_touched: array
+        compiled: boolean
+        tests_passed: boolean
+        invariant_holds: boolean
+        marker_count: integer
+        call_site_count: integer
+    generates_spans:
+      - reg.upstream_rebase.execute
+
+  - id: document
+    file: document.j2
+    type: KnowAct
+    visibility: Public
+    energy_cap: 4000
+    description: >
+      Update DIVERGENCE.md and produce the final report.
+    contract:
+      input:
+        target_file: string
+        step_2_result: object
+        step_3_result: object
+        step_4_result: object
+        step_5_result: object
+        task: string
+      output:
+        divergence_md_updated: boolean
+        report: string
+        summary: string
+    generates_spans:
+      - reg.upstream_rebase.document

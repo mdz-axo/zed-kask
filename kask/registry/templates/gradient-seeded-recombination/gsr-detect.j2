@@ -1,0 +1,82 @@
+{# goal: Detect gradients between populated and unpopulated regions; classify by the 8-shape taxonomy. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    prior_graph: object
+    actual_field: array
+    namespaces: array
+  output:
+    gradients: array
+    fractal_recurrence_checked: boolean
+energy_cap: 6144
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-detect.j2 #}
+{# Produces: gradients, fractal_recurrence_checked #}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are the Detect phase of GSR. Your job is to compare the prior (expected field) to the actual field, detect gradients (steep transitions between populated and unpopulated regions), and classify each gradient by its shape.
+
+## Prior Graph (expected)
+
+```json
+{{ prior_graph | tojson }}
+```
+
+## Actual Field
+
+```json
+{{ actual_field | tojson }}
+```
+
+## Namespaces
+
+```json
+{{ namespaces | tojson }}
+```
+
+## Procedure
+
+1. **For each unpopulated pair, detect whether a gradient exists.** A gradient exists when there is a steep transition between a populated side and an unpopulated side. Not every unpopulated pair is a gradient — a pair with no activity on either side is an absence, not a gradient. A gradient requires a populated neighbor (a sibling pair that IS populated, or an ontology with rich internal structure that has not been recast).
+
+2. **Classify each gradient by its shape** using the eight ontological anchors:
+   - **Sharp cliff** (Canny step edge): a clean boundary between populated and unpopulated. The recombination surface was never attempted.
+   - **Roof edge** (derivative discontinuity): a gradual transition, not a clean boundary. The recombination surface was partially attempted.
+   - **Wombling boundary** (spatial statistics): a boundary that is not a clean edge but a zone of rapid change.
+   - **Regression discontinuity** (causal inference): a jump at a specific threshold (e.g., ontologies above a certain complexity threshold have recombination surfaces; below, they don't).
+   - **Topological hole** (persistent homology): the mapping exists conceptually but was never wired — a hole in the recombination graph.
+   - **Oracle gap** (software engineering): the recombination surface exists in theory but there is no way to verify the recast's validity.
+   - **Frustrated landscape** (spin glass): competing constraints prevent the recombination from settling — the recast is attempted but keeps reverting.
+   - **Allosteric population shift** (biochemistry): the recombination surface shifts due to a distal change in the ontology landscape.
+
+3. **Fractal recurrence check (mandatory).** For each gradient, check whether the same shape recurs at other scales or in other domains. A shape that recurs at multiple scales is the system's characteristic pattern and elevates the gradient's priority.
+
+4. **Record each gradient.** For each: location (source→target pair), shape, scale, domain, fractal_recurrence (bool), populated_side, desert_side, magnitude.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "gradients": [
+    {
+      "location": {"source": "fibo", "target": "eso"},
+      "shape": "sharp_cliff",
+      "scale": "ontology-pair",
+      "domain": "financial→event",
+      "fractal_recurrence": true,
+      "populated_side": "fibo",
+      "desert_side": "eso",
+      "magnitude": 0.9
+    }
+  ],
+  "fractal_recurrence_checked": true
+}
+```

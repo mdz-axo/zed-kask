@@ -1,0 +1,203 @@
+# Upstream Rebase Process Manifest
+# ℏKask v0.33.0 — Upstream sync as convergent PDCA
+#
+# Ontological anchors:
+# - PKO (Procedural Knowledge Ontology): the re-application is a Procedure
+#   (specification → execution → verification). Each functional unit is a Step;
+#   the DAG is the StepExecution order; the pinning test is the StepVerification.
+# - Pragmatic-semantics: constraint-force classification (Prohibition/Guardrail/
+#   Guideline) determines which units are load-bearing.
+# - Cybernetics: the verification gate is a feedback loop (compile → test →
+#   invariant check → marker count).
+
+manifest:
+  id: upstream-rebase
+  category: skill
+  name: Upstream Rebase
+  description: >
+    Manage upstream Zed rebases for zed-kask. Decides per-D-seam-file strategy
+    (git merge vs. mapped re-application), executes the chosen strategy, pins
+    every kask-wiring deviation with a test, and updates DIVERGENCE.md. For
+    divergent files, uses mapped re-application: extract the functional
+    inventory, classify by constraint force, build the dependency DAG, re-apply
+    onto clean upstream in topological order, and pin every unit with a test.
+  functional_role: flowdef
+  version: 0.33.0
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  target_artifacts_field: step_5_result.verification_passed
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+
+gas:
+  cap: 150000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: target_file
+    type: string
+    required: true
+    description: The D-seam file to re-apply (e.g., crates/zed/src/main.rs).
+  - name: upstream_ref
+    type: string
+    required: false
+    default: "upstream/main"
+    description: The upstream ref to re-apply onto.
+  - name: task
+    type: string
+    required: true
+    description: The user's task description (injected per .rules skill-cascade-context rule).
+
+ledger:
+  span_namespace: reg.skill.upstream-rebase
+
+steps:
+  - ordinal: 1
+    action: select
+    description: >
+      Assess the target file against the strategy decision rule. Extract the
+      fork's line count, upstream's line count, kask call site count, and
+      // zed-kask: marker count. Apply the decision rule: if > 2x upstream
+      lines or < 50% marker density, recommend mapped re-application;
+      otherwise recommend git merge. Delegate to graph-audit (code mode) for
+      the functional inventory extraction.
+    renderer: minijinja
+    template_ref: upstream-rebase/assess
+    gas_cap: 8000
+    timeout_seconds: 120
+    input_mapping:
+      target_file: "{{ target_file }}"
+      upstream_ref: "{{ upstream_ref }}"
+      task: "{{ task }}"
+    generates_spans:
+      - reg.upstream_rebase.assess
+
+  - ordinal: 2
+    action: select
+    description: >
+      Map the functional inventory: extract every kask-wiring functional unit
+      from the fork's file (F1, F2, ...), classify each by constraint force
+      (Prohibition/Guardrail/Guideline/Evidence/Hypothesis), and build the
+      dependency DAG (defines → uses → must-come-after). Delegate to
+      graph-audit (semantic mode) for the constraint-force classification.
+    renderer: minijinja
+    template_ref: upstream-rebase/map
+    gas_cap: 8000
+    timeout_seconds: 120
+    input_mapping:
+      target_file: "{{ target_file }}"
+      step_1_result: "{{ step_1_result }}"
+      task: "{{ task }}"
+    generates_spans:
+      - reg.upstream_rebase.map
+
+  - ordinal: 3
+    action: select
+    description: >
+      Apply the essentialist deletion test (G1): is full re-application
+      necessary, or is surgical marking + pinning sufficient? If the fork's
+      file already compiles and is correctly ordered (no use-before-def, no
+      duplicates), surgical marking + pinning achieves the same end state at
+      lower risk. If the file has compile bugs or ordering violations, full
+      re-application is necessary.
+    renderer: minijinja
+    template_ref: upstream-rebase/decide
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      target_file: "{{ target_file }}"
+      step_1_result: "{{ step_1_result }}"
+      step_2_result: "{{ step_2_result }}"
+      task: "{{ task }}"
+    generates_spans:
+      - reg.upstream_rebase.decide
+
+  - ordinal: 4
+    action: select
+    description: >
+      Execute the chosen strategy. If surgical: add // zed-kask: D<N> markers
+      to every functional unit and add pinning tests. If full re-application:
+      take clean upstream's file and insert each functional unit at its mapped
+      insertion point in topological order, with markers and pinning tests.
+      Delegate to coding-guidelines for surgical-change guardrails.
+    renderer: minijinja
+    template_ref: upstream-rebase/execute
+    gas_cap: 10000
+    timeout_seconds: 180
+    input_mapping:
+      target_file: "{{ target_file }}"
+      step_2_result: "{{ step_2_result }}"
+      step_3_result: "{{ step_3_result }}"
+      task: "{{ task }}"
+    generates_spans:
+      - reg.upstream_rebase.execute
+
+  - ordinal: 5
+    action: compute
+    description: >
+      Verify the re-application: run cargo check, cargo test (pinning tests),
+      check-hkask-no-zed-deps.sh, and grep marker count. Compute the
+      verification_passed boolean (all checks pass) and the marker_density
+      (markers / kask_call_sites).
+    compute_ref: lisp.eval
+    gas_cap: 100
+    timeout_seconds: 30
+    input_mapping:
+      target_file: "{{ target_file }}"
+      step_4_result: "{{ step_4_result }}"
+    lisp_form: |
+      (let ((checks (assoc "step_4_result" input))
+            (compiled (assoc "compiled" checks))
+            (tests_passed (assoc "tests_passed" checks))
+            (invariant_holds (assoc "invariant_holds" checks))
+            (marker_count (assoc "marker_count" checks))
+            (call_site_count (assoc "call_site_count" checks)))
+        (if (and compiled tests_passed invariant_holds
+                 (>= marker_count (* call_site_count 0.5)))
+            (list (cons "verification_passed" true)
+                  (cons "marker_density" (/ marker_count call_site_count)))
+            (list (cons "verification_passed" false)
+                  (cons "marker_density" (/ marker_count call_site_count)))))
+    generates_spans:
+      - reg.upstream_rebase.verify
+
+  - ordinal: 6
+    action: select
+    description: >
+      Update DIVERGENCE.md: document the re-applied file's functional units,
+      constraint forces, and pinning tests. If a new D-seam was introduced,
+      add a D-row. Produce the final report summarizing the strategy chosen,
+      units re-applied, markers added, tests added, and verification results.
+    renderer: minijinja
+    template_ref: upstream-rebase/document
+    gas_cap: 4000
+    timeout_seconds: 60
+    input_mapping:
+      target_file: "{{ target_file }}"
+      step_2_result: "{{ step_2_result }}"
+      step_3_result: "{{ step_3_result }}"
+      step_4_result: "{{ step_4_result }}"
+      step_5_result: "{{ step_5_result }}"
+      task: "{{ task }}"
+    generates_spans:
+      - reg.upstream_rebase.document
+
+loop:
+  description: >
+    If verification failed (step_5_result.verification_passed == false),
+    re-enter at step 4 (execute) with the failure report. The loop converges
+    when all verification checks pass and marker_density >= 0.5.
+  convergence_check: step_5_result.verification_passed

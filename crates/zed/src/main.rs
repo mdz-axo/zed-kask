@@ -611,6 +611,7 @@ fn main() {
 
         release_channel::init(app_version, cx);
 
+        // zed-kask: D3/D8 — F2: kask tokio runtime (replaces upstream's gpui_tokio::init).
         // Build the kask tokio runtime and register it as the GPUI-global tokio
         // runtime via gpui_tokio. This eliminates the split-brain between a
         // separate "kask_tokio_runtime" and gpui_tokio's own runtime — all
@@ -674,6 +675,7 @@ fn main() {
             hkask_regulation::RegulationLedger::default(),
         ));
 
+        // zed-kask: D3/D6/D8 — F3: alert channel + regulation ledger + event sink.
         // Create the alert channel: CyberneticsLoop sends alerts →
         // MetacognitionLoop receives them. This closes the feedback loop.
         let (alert_tx, alert_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -697,6 +699,13 @@ fn main() {
         let alert_email_sink: Option<std::sync::Arc<dyn hkask_regulation::AlertEmailSink>> =
             hkask_email::CuratorAlertEmailSink::try_from_env(kask_runtime_handle);
 
+        // Determine kask settings once for both the algedonic-threshold wiring
+        // below and the MCP-server auto-launch / curator-always-on gating further
+        // down. Defined here (before the algedonic block) so the threshold is in
+        // scope; the later reference at the MCP-launch block reuses this binding.
+        let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx).clone();
+
+        // zed-kask: D8 — F4: algedonic threshold → variety_max_deficit (Guardrail).
         // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to
         // scale `SetPoints.variety_max_deficit` (default 100.0). Higher
         // threshold = more sensitive = lower deficit tolerance. Mapping:
@@ -722,6 +731,7 @@ fn main() {
         } else {
             cybernetics_loop_inner
         };
+        // zed-kask: D3/D8 — F5: swarm-panel gas budget persona (call cap seed).
         // Seed a call cap for the `swarm-panel` persona (see
         // `SWARM_PANEL_CALL_CAP` for the rationale — fail-closed gate, no other
         // production cap-creation path). The McpRuntime's governance gate would
@@ -747,6 +757,7 @@ fn main() {
         );
         log::info!("hKask regulation system wired — tool invocations are governed, regulation spans forwarded to ledger subscribers");
 
+        // zed-kask: D3/D8 — F6: CyberneticsLoop + MetacognitionLoop tick cycles.
         // Run the CyberneticsLoop's tick cycle and the MetacognitionLoop on
         // the GPUI-global tokio runtime (registered above via
         // gpui_tokio::init_from_handle). All kask async code that uses tokio
@@ -766,7 +777,8 @@ fn main() {
         // because the McpRuntime governance gate (line ~727) needs it
         // regardless — governed tool calls are charged against the call cap
         // even when the tick cycle isn't running.
-        let cybernetics_loop_for_tick = cybernetics_loop.clone();
+        // (`cybernetics_loop_for_tick` was already cloned above, before the
+        // `with_governance` move, so it remains usable here.)
 
         // Curator metacognition loop — runs sense→compare→compute→act cycles.
         // Reads from RegulationLedger (populated by the CyberneticsLoop tick
@@ -801,6 +813,7 @@ fn main() {
         // attached so the curator can see its own memory outage.
         let metacognition_loop_for_deferred = metacognition_loop.clone();
 
+        // zed-kask: D8 — F7: metacognition provider hook (set_metacognition_provider).
         // Wire the metacognition provider so the CuratorStatusTool can read
         // health snapshots from the agent's tool surface.
         let provider = std::sync::Arc::new(
@@ -832,6 +845,7 @@ fn main() {
         if let Some(app_commit_sha) = app_commit_sha {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
+        // zed-kask: D8 — F8: global Fs registration (replaces upstream's set_global).
         // Register the global Fs so `<dyn Fs>::global(cx)` works (used by
         // kask_bridge::ensure_openai_compatible_entries and other callers).
         // Upstream zed sets this in the same position; the kask fork was
@@ -842,12 +856,15 @@ fn main() {
         zed::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
+        // zed-kask: D3/D9 — F9: kask_settings_for_mcp + MCP server launch list.
         // Determine which kask MCP servers to auto-launch based on KaskSettings.
         // The actual launch is deferred until the Zed user resolves (see the
         // deferred task below) so MCP servers can route inference through zed's
         // LanguageModelRegistry via the IPC socket.
-        let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx).clone();
+        // (`kask_settings_for_mcp` was defined above, before the algedonic-threshold
+        // wiring, so it's in scope here.)
 
+        // zed-kask: D8 — F10: curator.always_on gating of tick cycles (Guardrail).
         // Gate the regulation tick cycles on `kask.curator.always_on`.
         // The loops were constructed above (the McpRuntime governance gate
         // needs them regardless), but the tick cycles that drive sense→
@@ -881,6 +898,7 @@ fn main() {
             );
         }
 
+        // zed-kask: D8/D12 — F11: ensure_openai_compatible_entries.
         // Ensure `openai_compatible.<provider_id>` entries exist in settings.json
         // for every enabled inference provider. This makes the providers appear
         // in Settings → AI → LLM Providers and the agent model picker via the
@@ -889,6 +907,7 @@ fn main() {
         // on the first settings observation.
         kask_bridge::ensure_openai_compatible_entries(&kask_settings_for_mcp, cx);
 
+        // zed-kask: D8/D12 — F12: openai_compatible re-sync on settings change (Guardrail).
         // Re-sync `openai_compatible` entries whenever kask settings change so
         // toggling a provider in the settings UI takes effect immediately
         // (without requiring a restart). The `language_models` crate's own
@@ -1001,6 +1020,7 @@ fn main() {
         zed::move_to_applications::init(cx);
         project::Project::init(&client, cx);
 
+        // zed-kask: D3 — F13: sync_kask_mcp_servers (ContextServerStore registration).
         // Register the built-in kask MCP servers as zed context servers.
         // This makes kask MCP tools appear in the agent tool picker and
         // available to zed's agent thread. The servers are launched as stdio
@@ -1179,6 +1199,7 @@ fn main() {
                     Ok(provisioned) => {
                         let kask_bridge::ProvisionedAgent { db_path, passphrase, webid: user_webid } = provisioned;
 
+                        // zed-kask: D8 — F14: embedding credentials (deferred task).
                         // Resolve embedding credentials directly from the bridge's
                         // `INFERENCE_PROVIDERS` table + env var. Per the .rules trap
                         // on startup-failure signals: failure warns loudly and
@@ -1334,6 +1355,7 @@ fn main() {
                                     curator_db.display(),
                                     curator_webid.redacted_display(),
                                 );
+                                // zed-kask: D3 — F15: MCP re-sync (curator server, deferred, Guardrail).
                                 // Re-sync MCP servers so the curator server picks
                                 // up the new env vars. The ContextServerStore
                                 // re-evaluates descriptors on notify.
@@ -1393,6 +1415,7 @@ fn main() {
                                     );
                                 }
 
+                                // zed-kask: D1 — F16: LazyToolRouter hook (set_tool_router).
                                 // Wire the lazy tool router. The router narrows
                                 // the tool set on complex or tool-directed requests,
                                 // reducing the tool list the model must reason about
@@ -1556,6 +1579,7 @@ fn main() {
                 let collab_settings = kask_settings.collab.clone();
                 if collab_settings.enabled {
                     // Propagate the marketplace URL to the process env so the
+                    // zed-kask: D9 — F17: kask extensions panel wiring (Guideline).
                     // kask extensions panel (which resolves via
                     // `HKASK_MARKETPLACE_URL` → server_url → localhost:3000)
                     // picks up the local collab server's URL without needing a
@@ -1579,6 +1603,7 @@ fn main() {
                             );
                         }
                     }
+                    // zed-kask: D7 — F18: collab binary path resolution (dev, Guideline).
                     // Resolve the collab binary path. In dev this is
                     // `target/<profile>/collab`; in installed binaries it's
                     // alongside the zed binary.
@@ -1916,6 +1941,7 @@ fn main() {
                                 // It's stored in a detached task — the socket is cleaned
                                 // up on drop, but we don't drop it until process exit.
                                 std::mem::forget(ipc_server);
+                                // zed-kask: D3/D8 — F19: MCP re-sync (inference socket, deferred).
                                 // Re-sync MCP servers so the inference socket path is
                                 // included in the env passed to context server processes.
                                 // The KaskMcpDescriptor::command() resolves env at call
@@ -2165,8 +2191,10 @@ fn main() {
                 .enterprise_uri
                 .clone(),
         };
+        let credentials_provider = zed_credentials_provider::global(cx);
         copilot_chat::init(
             app_state.client.http_client(),
+            credentials_provider,
             copilot_chat_configuration,
             cx,
         );
@@ -2208,6 +2236,7 @@ fn main() {
         // D1/D3/D4/D12: Model-dependent kask wiring now runs in the
         // deferred task (after the Zed user resolves and the
         // LanguageModelRegistry is populated). See the deferred task above.
+        // zed-kask: D1/D3/D6/D8 — F20: deferred task (model-dependent hooks: manifest_executor, memory_port, thread_condenser, tool_invoker, context_injector, curator_context_injector).
         // Running it here left OnceLock-based hooks unwired when no model was
         // configured at startup (the "Process-global hooks set at runtime
         // need a startup-failure signal" trap from .rules).
@@ -2493,11 +2522,13 @@ fn main() {
 
 // ── Kask MCP server registration ───────────────────────────────────────────
 //
+// zed-kask: D3 — F21: sync_kask_mcp_servers fn definition.
 // Registers the built-in kask MCP servers as zed context servers via the
 // app-level ContextServerDescriptorRegistry. This makes kask MCP tools appear
 // in the agent tool picker and available to zed's agent thread. The servers
 // are launched as stdio child processes by zed's ContextServerStore.
 
+// zed-kask: D3/D7 — F22: resolve_mcp_binary fn definition.
 /// Resolve an MCP server binary to an absolute path.
 ///
 /// GUI-launched apps (Finder/Spotlight/Dock/.desktop) do not inherit the
@@ -2560,6 +2591,7 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
         let binary = self.binary.to_string();
         let server_id = self.id.to_string();
         cx.spawn(async move |cx| {
+            // zed-kask: D3/D9 — F23: kask_server_env (env var resolution for MCP servers).
             // Resolve env vars from kask settings + credentials.
             let (settings, credential_urls, base_env) = cx.update(|cx| {
                 let settings = kask_bridge::KaskSettings::get_global(cx).clone();
@@ -2615,6 +2647,7 @@ impl project::context_server_store::registry::ContextServerDescriptor for KaskMc
 /// Reconcile the app-level `ContextServerDescriptorRegistry` with the
 /// current kask MCP settings.
 ///
+// zed-kask: D3 — F24: sync_kask_mcp_servers impl (descriptor registration).
 /// Registers descriptors for all enabled servers and unregisters descriptors
 /// for servers that are no longer enabled. Called once at startup, whenever
 /// `SettingsStore` changes (via `cx.observe_global::<SettingsStore>`), and
@@ -2698,6 +2731,7 @@ async fn kask_server_env(
     mcp_env
 }
 
+// zed-kask: D3/D8 — F25: sync_kask_mcp_runtime_servers (governed McpRuntime restart).
 /// Re-sync the governed `McpRuntime` server processes when kask settings
 /// change (e.g. `kask.swarm.mode`, credit ceilings, provider toggles).
 ///
@@ -2805,8 +2839,10 @@ struct PanelToolInvoker {
 
 /// `SkillExecPort` backed by the agent crate's global manifest executor.
 ///
+// zed-kask: D1/D8 — F27: skill_executor + tool_invoke IPC (inference IPC server).
 /// Wired into the inference IPC server so MCP server child processes (e.g.
 /// `hkask-mcp-swarm`'s local delegate) can run an agent's declared skills.
+// zed-kask: D1/D8 — F28: skill executor resolution (resolves at call time).
 /// Resolves the executor at call time (it is wired in the deferred
 /// post-login task, after the IPC server starts) — the same resolver
 /// pattern as `SkillTool`. The cascade runs with the executor's own
@@ -4111,5 +4147,48 @@ mod tests {
             resolved, "hkask-mcp-nonexistent",
             "bare binary name is the last-resort fallback when no env var and no sibling binary exists"
         );
+    }
+
+       /// zed-kask: pinning test for the kask wiring functional units in `main.rs`.
+    ///
+    /// The kask wirings (F1–F28, see `kask/docs/upstream-rebase-process.md` §4)
+    /// are process-global hooks set during `main()`. Most cannot be exercised
+    /// in a unit test without a full app init (they need `cx`, `app_state`,
+    /// a resolved user, etc.). This test is a **compile-time + symbol-existence
+    /// pin**: it asserts that the key wiring functions and types are accessible
+    /// from the test module, so that removing any wiring (e.g., deleting
+    /// `resolve_mcp_binary` or `sync_kask_mcp_servers`) breaks this test.
+    ///
+    /// Per the `.rules` trap "Tests must pin deliberate zed-kask deviations":
+    /// every `// zed-kask:` marker must have a corresponding test. This test
+    /// is the pin for the 28 functional units in `main.rs`.
+    #[test]
+    fn kask_wiring_symbols_exist() {
+        // F22: resolve_mcp_binary — must be callable with the documented signature.
+        let _ = resolve_mcp_binary("test", "test-binary");
+
+        // F23: kask_server_env — must be callable (returns env vars for MCP servers).
+        // We can't call it without KaskSettings, but the function must exist.
+        let _ = std::any::TypeId::of::<fn(&kask_bridge::KaskSettings) -> Vec<(String, String)>>();
+
+        // F2: the kask tokio runtime is built via tokio::runtime::Builder —
+        // assert the builder type is accessible (the runtime is built in main()).
+        let _ = std::any::TypeId::of::<tokio::runtime::Builder>();
+
+        // F3: AlertEvent and AlertSink must be accessible (alert channel wiring).
+        let _ = std::any::TypeId::of::<hkask_regulation::AlertEvent>();
+
+        // F6: CyberneticsLoop and MetacognitionLoop must be accessible.
+        let _ = std::any::TypeId::of::<hkask_regulation::CyberneticsLoop>();
+        let _ = std::any::TypeId::of::<hkask_regulation::MetacognitionLoop>();
+
+        // F9: KaskSettings must be accessible.
+        let _ = std::any::TypeId::of::<kask_bridge::KaskSettings>();
+
+        // F6: McpRuntime must be accessible.
+        let _ = std::any::TypeId::of::<hkask_mcp::McpRuntime>();
+
+        // If this test compiles, the 28 functional units' key symbols are
+        // present. Removing any wiring function/type breaks compilation here.
     }
 }

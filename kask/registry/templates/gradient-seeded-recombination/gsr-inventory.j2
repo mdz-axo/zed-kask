@@ -1,0 +1,94 @@
+{# goal: Inventory the ontology namespaces in the registry, with per-ontology license check for external sources. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    ontology_registry: array
+    ontology_sources: array
+    bioportal_apikey: string
+  output:
+    namespaces: array
+    key_concepts: array
+    license_warnings: array
+    inventory_complete: boolean
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-inventory.j2 #}
+{# Functional Role: KnowAct — inventory ontology namespaces #}
+{# Produces: namespaces, key_concepts, license_warnings, inventory_complete #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Inventory phase of the Gradient-Seeded Recombination (GSR) process. Your job is to enumerate the ontology namespaces available for cross-ontology recombination, checking per-ontology licenses before caching any external OWL.
+
+## Ontology Registry (project-local)
+
+```json
+{{ ontology_registry | tojson }}
+```
+
+## External Sources (optional)
+
+```json
+{{ ontology_sources | tojson }}
+```
+
+{% if bioportal_apikey %}
+## BioPortal API Key
+
+Present (will be used as config_env, not credential, if BioPortal is in ontology_sources).
+{% else %}
+## BioPortal API Key
+
+Absent. BioPortal ontologies cannot be fetched. OBO Foundry (no auth) and OntoBee (no auth evident) remain available.
+{% endif %}
+
+## Procedure
+
+1. **Enumerate project-local namespaces.** For each entry in `ontology_registry`, record:
+   - `namespace_id`: the namespace id (fibo, eso, golem, mlschema, omc, sumo, pko, dc_bibo, or 5wh1)
+   - `axioms`: the ontology's axioms (the constraints that a recast concept must satisfy)
+   - `signature`: the ontology's term signature (the vocabulary a recast concept must be expressible in)
+   - `key_concepts`: the ontology's central concepts (candidates for seed selection)
+   - `source`: "project-local"
+
+2. **Fetch external ontologies (if configured).** For each provider in `ontology_sources`:
+   - **OBO Foundry** (`obo_foundry`): fetch the registry YAML from `https://obofoundry.org/registry/ontologies.yml`. For each ontology the user wants, download the OWL from `http://purl.obolibrary.org/obo/{acronym}.owl`. **No auth required.** Check the license field in the registry YAML per ontology — OBO Foundry licenses span CC-BY 4.0, CC-BY 3.0, CC0, Apache 2.0, GPL-3.0, Artistic-2.0. Record the license; flag any license that restricts redistribution or commercial use as a `license_warning`.
+   - **OntoBee** (`ontobee`): SPARQL-capable mirror of OBO Foundry. Use for graph queries, not bulk download. Inherits OBO Foundry licenses.
+   - **BioPortal** (`bioportal`): requires `bioportal_apikey` (config_env, not credential). Fetch from `https://data.bioontology.org/ontologies/{acronym}/download?download_format=rdf` with `apikey` query param. Check `hasLicense`, `useGuidelines`, `morePermissions` per submission. **Do not assume blanket CC-BY** — rights are per-ontology.
+   - **EBI OLS4**: accessible but API terms unverified this session. If used, flag as `license_warning: "EBI OLS4 terms unverified"`.
+
+3. **Per-ontology license check (Guardrail).** Before caching any external OWL locally, verify the license permits the intended use (research, redistribution, commercial — as applicable). If the license is missing, restrictive, or unverified, record a `license_warning` and do not cache the OWL; the ontology remains available for in-memory use but is not persisted.
+
+4. **Compile the namespace inventory.** For each namespace (project-local + external), record the namespace_id, axioms, signature, key_concepts, source, and license.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "namespaces": [
+    {
+      "namespace_id": "fibo",
+      "axioms": "...",
+      "signature": ["FinancialInstrument", "Contract", "issuance", ...],
+      "key_concepts": ["FinancialInstrument", "Contract", "FinancialEntity"],
+      "source": "project-local",
+      "license": "N/A"
+    }
+  ],
+  "key_concepts": [
+    {"namespace_id": "fibo", "concept": "FinancialInstrument", "centrality": 0.9}
+  ],
+  "license_warnings": [
+    {"namespace_id": "ncit", "license": "CC-BY 4.0", "warning": "none"}
+  ],
+  "inventory_complete": true
+}
+```
