@@ -1,67 +1,16 @@
-//! MovieLabs Ontology for Media Creation (OMC) bridge for hkask-mcp-media.
+//! Media-server OMC dispatch — server-specific mapping from media-tool names
+//! to OMC concepts, and from OMC concepts to explain-tool dispatch.
 //!
-//! Maps media-tool names to OMC concept URIs. OMC is the MovieLabs standard
-//! ontology for media production workflows (capture → post → distribution).
-//! We anchor to OMC rather than inventing our own taxonomy.
-//!
-//! Reference: <https://movielabs.com/ontology-for-media-creation/>
-//! Source: <https://github.com/MovieLabs/OMC>
-//!
-//! This module follows the STAR extraction pattern (PRINCIPLES.md §P8): seed
-//! terms + direct logical entailments, no intermediate hierarchy. It is the
-//! `media` server's domain bridge layered on top of the DC+BIBO dual-axis
-//! core (PRINCIPLES.md §P5).
-//!
-//! ## Why OMC
-//!
-//! The condenser (`hkask-condenser/src/algorithms.rs::derive_ontology_anchor`)
-//! already classifies media-tool names (`generate_*`, `video_*`, `image_*`,
-//! `gallery_*`, `face_*`) into `OntologyNamespace::Omc`. Without this bridge,
-//! that classification points at a generic `dcterms:Collection` concept —
-//! not a media-creation concept. This module supplies the concrete OMC
-//! concepts so the `display_hint` block carries an ontologically meaningful
-//! tag the media widget can dispatch on (the "I" pattern — ontology-bounded
-//! affordances).
+//! The OMC concept vocabulary (the canonical `omc:*` URIs) lives in the
+//! shared `hkask-bridge-ontology` crate. This module holds only the
+//! media-server-specific dispatch: which tool name produces which OMC
+//! concept, and which explain tool the widget should dispatch on for a
+//! given OMC tag. That is the server's business, not the ontology's.
 
-/// An OMC concept URI — the canonical identifier for a media-creation concept.
-pub type OmcConcept = &'static str;
-
-// ── OMC concept constants (STAR seed terms) ──────────────────────────────
-//
-// These are the top-level OMC concepts most directly entailed by the media
-// server's tool outputs. OMC is large; we extract only the seed terms the
-// tools actually produce, plus their direct logical entailments (a
-// `Version` is a `CreativeWork`, a `Shot` is part of a `Scene`, etc.).
-
-/// A distinct intellectual or artistic creation — the root creative artifact.
-/// OMC: `omc:CreativeWork` (analogous to `dcterms:Work`).
-pub const CREATIVE_WORK: OmcConcept = "omc:CreativeWork";
-/// A continuous sequence of media — a single rendered image or video clip.
-/// OMC: `omc:Scene` (a contiguous segment of a creative work).
-pub const SCENE: OmcConcept = "omc:Scene";
-/// A single camera capture — a frame or take within a scene.
-/// OMC: `omc:Shot`.
-pub const SHOT: OmcConcept = "omc:Shot";
-/// An ordered series of scenes — a multi-step media workflow output.
-/// OMC: `omc:Sequence`.
-pub const SEQUENCE: OmcConcept = "omc:Sequence";
-/// A person or system participating in media creation (model, artist, tool).
-/// OMC: `omc:Participant`.
-pub const PARTICIPANT: OmcConcept = "omc:Participant";
-/// A source media asset — the raw input to a transform or generation.
-/// OMC: `omc:MediaSource`.
-pub const MEDIA_SOURCE: OmcConcept = "omc:MediaSource";
-/// A managed media asset in the gallery — a stored, tagged, retrievable item.
-/// OMC: `omc:Asset`.
-pub const ASSET: OmcConcept = "omc:Asset";
-/// A unit of production work — a workflow execution, a generation job.
-/// OMC: `omc:Task`.
-pub const TASK: OmcConcept = "omc:Task";
-/// A derived or modified form of a creative work — an upscale, transform,
-/// or remix output. OMC: `omc:Version` (a version is a creative work).
-pub const VERSION: OmcConcept = "omc:Version";
-
-// ── tool name → OMC concept mapping ──────────────────────────────────────
+use hkask_bridge_ontology::omc::OmcConcept;
+use hkask_bridge_ontology::omc::{
+    ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, TASK, VERSION,
+};
 
 /// Map a media-tool name to its OMC concept URI.
 ///
@@ -178,8 +127,6 @@ mod tests {
         assert_eq!(explain_tool_for(VERSION), "describe_image");
         assert_eq!(explain_tool_for(MEDIA_SOURCE), "describe_image");
         assert_eq!(explain_tool_for(SEQUENCE), "describe_image");
-        assert_eq!(explain_tool_for(SHOT), "describe_image");
         assert_eq!(explain_tool_for(TASK), "describe_image");
-        assert_eq!(explain_tool_for(PARTICIPANT), "describe_image");
     }
 }

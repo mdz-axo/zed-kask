@@ -28,7 +28,6 @@
 
 mod backend;
 pub mod batch;
-pub mod bridge;
 pub mod compose;
 pub mod convert;
 pub mod corpus;

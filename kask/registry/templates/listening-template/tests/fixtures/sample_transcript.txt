@@ -1,0 +1,39 @@
+Operator: Good day, everyone, and welcome to the Microsoft Q1 fiscal year 2025 earnings call. At this time, all lines are in listen-only mode. Later, we will conduct a question-and-answer session. I will now turn the call over to Brett Iversen, General Manager of Investor Relations.
+
+Brett Iversen: Good afternoon, and thank you for joining us today. On the call with me are Satya Nadella, chairman and chief executive officer; Amy Hood, executive vice president and chief financial officer; and Alice Jolla, corporate vice president of marketing.
+
+Satya Nadella: Thank you for joining us. We had a strong quarter, with revenue of $65.6 billion, up 16% year-over-year. We are committed to our long-term strategy of building platform capability across the cloud, edge, and AI. Our three-year plan to double Azure AI capacity by fiscal 2027 remains on track. The new datacenter region in Germany will come online in Q3 fiscal 2025, which is a key checkpoint on that plan — it unlocks the European enterprise capacity our 2027 revenue target depends on.
+
+Amy Hood: On margins, gross margin this quarter was 69.8%, down 60 basis points year-over-year due to AI infrastructure investment. We expect gross margin to remain stable in the 69-70% range through fiscal 2025 as we absorb AI capacity costs. For the next quarter, we are raising revenue guidance to $68.5 to $69.1 billion. Operating margin guidance is 44.5%.
+
+Satya Nadella: On the moat question, our unit economics continue to improve. Commercial remaining performance obligations grew 31% to $269 billion. We are seeing pricing power in AI workloads — customers pay a premium for inferencing at scale, and payment terms remain net-30 with no concessions. The two-sided test holds: we dictate price AND payment timing.
+
+Amy Hood: On capital allocation, we returned $9.7 billion to shareholders through dividends and buybacks. We are increasing capital expenditure to support AI demand — capex this quarter was $14.9 billion, up from $10.7 billion a year ago. The return on incremental capex is improving as Azure utilization rises. We are draining capital from underperforming legacy segments and reallocating to AI infrastructure where returns are highest.
+
+Satya Nadella: On the expectations gap, the market is modeling Azure growth at 28% for fiscal 2025. We see a path to 32% based on the AI capacity coming online and the enterprise pipeline we have not yet disclosed. The market is underestimating the AI platform revenue layer — it is not on the page yet because the capacity is not yet live, but the Germany datacenter in Q3 is the first checkpoint that makes it visible.
+
+Operator: We will now begin the question-and-answer session.
+
+Question-and-Answer Session
+
+Operator: Our first question comes from Keith Weiss with Morgan Stanley.
+
+Keith Weiss: Satya, can you talk about the competitive landscape in AI? Are you seeing any pricing pressure from the hyperscaler competition?
+
+Satya Nadella: Keith, we are not seeing pricing pressure. The AI workload is differentiated — we offer inferencing at scale with enterprise-grade security. Competitors are competing on raw compute price, but enterprise customers pay for the platform layer, not the compute layer. Our gross margin stability through this investment cycle reflects that pricing power.
+
+Operator: Next question from Mark Moerdler with Bernstein.
+
+Mark Moerdler: Amy, the capex step-up is significant. How should we think about the return on that capital over the next three years?
+
+Amy Hood: Mark, the three-year return profile is the key. We are investing ahead of demand, but the utilization curve is steepening. The Germany datacenter in Q3 is the first proof point — once it is live, we expect utilization above 80% within two quarters, which validates the unit economics. If utilization falls below 70%, we would slow the capex ramp. That is the checkpoint we are watching.
+
+Operator: Next question from Brent Thill with Jefferies.
+
+Brent Thill: Satya, the market seems focused on the near-term Azure deceleration. What changes the narrative?
+
+Satya Nadella: The narrative changes when the Germany datacenter comes online in Q3 and the enterprise AI pipeline we have not disclosed becomes visible in the RPO number. That is the checkpoint. The market is modeling 28% Azure growth; we see a path to 32%. The gap is the AI capacity that is not yet live but is contracted in the RPO.
+
+Operator: That concludes today's question-and-answer session. I will now turn the call back to Satya for closing remarks.
+
+Satya Nadella: Thank you all. We remain committed to the three-year plan to double Azure AI capacity by fiscal 2027. The Germany datacenter in Q3 fiscal 2025 is the next checkpoint. We are confident in the unit economics and the pricing power. Thank you for joining us.

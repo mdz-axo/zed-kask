@@ -11,7 +11,7 @@ hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 
 # Ontology bridges — vocabulary constants for metadata, provenance, and domain predicates
-hkask-bridge-dublincore = { path = "../../crates/hkask-bridge-dublincore" }
+hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
 
 # OCR pipeline (from markitdown)
 hkask-inference = { path = "../../crates/hkask-inference" }

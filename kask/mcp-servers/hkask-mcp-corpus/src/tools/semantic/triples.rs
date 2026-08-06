@@ -2,9 +2,9 @@
 //!
 //! Used by `corpus_extract_triples` in `mod.rs`.
 
-use crate::bridge::eso;
-use crate::bridge::fibo;
-use crate::bridge::golem;
+use hkask_bridge_ontology::eso;
+use hkask_bridge_ontology::fibo;
+use hkask_bridge_ontology::golem;
 
 /// Map an RDF predicate to a 5W1H dimension.
 ///

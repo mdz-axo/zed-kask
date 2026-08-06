@@ -13,166 +13,21 @@ pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Ontology Anchoring (P5.2 / P5.4 / P8.1)
+//
+// The ontology types (`OntologyAnchor`, `OntologyAxis`, `OntologyNamespace`)
+// and the domain-selection logic live in the shared `hkask-bridge-ontology`
+// crate. The condenser re-exports them so its existing call sites
+// (`crate::types::OntologyAnchor` etc.) keep working without touching every
+// reference; the single source of truth is the bridge crate.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Domain ontology tier for content produced by an MCP tool.
-///
-/// Every piece of content in hKask exists within the 3-tier ontology
-/// architecture. The condenser uses this to apply domain-aware saliency
-/// weighting — different ontologies carry different confidence baselines
-/// and information density expectations.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum OntologyAnchor {
-    /// Universal 5W1H core — no domain supplement (P5.2 default ground).
-    /// Content anchored only to Who/What/When/Where/Why/How.
-    #[serde(rename = "core")]
-    #[default]
-    Core,
-    /// Process axis (PKO) or state axis (DC+BIBO) — dual-axis framework (P5.4).
-    /// `concept` is the canonical concept URI, e.g. "pko:StepExecution" or "bibo:Article".
-    DualAxis { axis: OntologyAxis, concept: String },
-    /// Domain supplement — FIBO, GOLEM, CogAT, ML-Schema, or OMC (P8.1).
-    /// Layered on top of the dual-axis core for domain-specific precision.
-    DomainSupplement {
-        namespace: OntologyNamespace,
-        concept: String,
-    },
-}
+pub use hkask_bridge_ontology::axis::{
+    OntologyAnchor, OntologyAxis, OntologyNamespace, select_ontology_anchor,
+};
 
-impl OntologyAnchor {
-    /// Return the confidence modifier for this ontology tier (per pragmatic-semantics §Domain Ontology Anchoring).
-    /// FIBO: +0.10 (OMG standard, high adoption)
-    /// CogAT: -0.10 (metaphorical mapping)
-    /// Others: ±0.00 (standard baseline)
-    pub fn confidence_modifier(&self) -> f64 {
-        match self {
-            OntologyAnchor::Core => 0.0,
-            OntologyAnchor::DualAxis { .. } => 0.0,
-            OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
-                OntologyNamespace::Fibo => 0.10,
-                OntologyNamespace::Cogat => -0.10,
-                _ => 0.0,
-            },
-        }
-    }
-
-    /// Return the information density expectation for this ontology tier.
-    /// Higher values = more information per token; condenser should be more conservative.
-    /// FIBO financial data: dense numerical content, high precision needed → higher retention
-    /// CogAT metaphorical: semantic meaning over exact wording → standard retention
-    /// PKO process: status transitions matter → standard retention
-    pub fn density_factor(&self) -> f64 {
-        match self {
-            OntologyAnchor::Core => 1.0,
-            OntologyAnchor::DualAxis { axis, .. } => match axis {
-                OntologyAxis::Pko => 1.0,    // process steps: standard density
-                OntologyAxis::DcBibo => 1.0, // entity metadata: standard density
-            },
-            OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
-                OntologyNamespace::Fibo => 1.3, // financial data: higher information density
-                OntologyNamespace::Cogat => 0.9, // metaphorical: preserve semantic meaning
-                OntologyNamespace::Golem => 1.0, // narrative: standard density
-                OntologyNamespace::MlSchema => 1.1, // ML experiments: structured data
-                OntologyNamespace::Omc => 1.0,  // media metadata: standard density
-            },
-        }
-    }
-
-    /// Which axis of the dual-axis framework this anchor belongs to (P5.4).
-    pub fn axis(&self) -> Option<OntologyAxis> {
-        match self {
-            OntologyAnchor::Core => None,
-            OntologyAnchor::DualAxis { axis, .. } => Some(*axis),
-            OntologyAnchor::DomainSupplement { .. } => None, // domain supplements are beyond dual-axis
-        }
-    }
-
-    /// Human-readable label for the ontology tier.
-    pub fn tier_label(&self) -> &str {
-        match self {
-            OntologyAnchor::Core => "5w1h_core",
-            OntologyAnchor::DualAxis { .. } => "dual_axis",
-            OntologyAnchor::DomainSupplement { .. } => "domain_supplement",
-        }
-    }
-}
-
-/// Which axis of the dual-axis ontological framework (P5.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OntologyAxis {
-    /// Process (flow) axis — PKO: how did this come to be?
-    Pko,
-    /// State (entity) axis — Dublin Core + BIBO: what is this?
-    DcBibo,
-}
-
-/// Domain supplement namespace — which domain-specific ontology bridge (P8.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OntologyNamespace {
-    /// Financial Industry Business Ontology (companies server)
-    Fibo,
-    /// GOLEM narrative ontology (replica server)
-    Golem,
-    /// Cognitive Atlas (memory server)
-    Cogat,
-    /// ML-Schema (training server)
-    MlSchema,
-    /// MovieLabs Ontology for Media Creation (media server)
-    Omc,
-}
-
-impl OntologyNamespace {
-    /// Map this domain supplement namespace to its canonical Dublin Core concept.
-    pub fn dc_concept(&self) -> hkask_bridge_dublincore::DcConcept {
-        match self {
-            OntologyNamespace::Fibo => hkask_bridge_dublincore::DATASET,
-            OntologyNamespace::Golem => hkask_bridge_dublincore::TEXT,
-            OntologyNamespace::Cogat => hkask_bridge_dublincore::DATASET,
-            OntologyNamespace::MlSchema => hkask_bridge_dublincore::DATASET,
-            OntologyNamespace::Omc => hkask_bridge_dublincore::COLLECTION,
-        }
-    }
-
-    /// Map this domain supplement namespace to its canonical PKO concept.
-    pub fn pko_concept(&self) -> hkask_bridge_dublincore::PkoConcept {
-        match self {
-            OntologyNamespace::Fibo => hkask_bridge_dublincore::PROCEDURE,
-            OntologyNamespace::Golem => hkask_bridge_dublincore::PROCEDURE,
-            OntologyNamespace::Cogat => hkask_bridge_dublincore::FUNCTION,
-            OntologyNamespace::MlSchema => hkask_bridge_dublincore::PROCEDURE,
-            OntologyNamespace::Omc => hkask_bridge_dublincore::PROCEDURE_EXECUTION,
-        }
-    }
-}
-
-impl std::str::FromStr for OntologyNamespace {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "fibo" => Ok(OntologyNamespace::Fibo),
-            "golem" => Ok(OntologyNamespace::Golem),
-            "cogat" => Ok(OntologyNamespace::Cogat),
-            "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
-            "omc" => Ok(OntologyNamespace::Omc),
-            _ => Err(format!("Unknown ontology namespace: {s}")),
-        }
-    }
-}
-
-impl std::fmt::Display for OntologyNamespace {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OntologyNamespace::Fibo => write!(f, "fibo"),
-            OntologyNamespace::Golem => write!(f, "golem"),
-            OntologyNamespace::Cogat => write!(f, "cogat"),
-            OntologyNamespace::MlSchema => write!(f, "mlschema"),
-            OntologyNamespace::Omc => write!(f, "omc"),
-        }
-    }
-}
+// Dublin Core / PKO vocabulary used by the condenser's anchor construction.
+pub use hkask_bridge_ontology::dc_bibo;
+pub use hkask_bridge_ontology::pko;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Request Types

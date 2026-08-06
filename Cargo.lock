@@ -9095,6 +9095,15 @@ name = "hkask-bridge-dublincore"
 version = "0.33.0"
 
 [[package]]
+name = "hkask-bridge-ontology"
+version = "0.33.0"
+dependencies = [
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hkask-capability"
 version = "0.33.0"
 dependencies = [
@@ -9113,7 +9122,7 @@ name = "hkask-condenser"
 version = "0.33.0"
 dependencies = [
  "criterion",
- "hkask-bridge-dublincore",
+ "hkask-bridge-ontology",
  "hkask-types",
  "proptest",
  "schemars 1.2.2",
@@ -9314,6 +9323,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs",
+ "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-ledger",
  "hkask-mcp-server",
@@ -9369,7 +9379,7 @@ dependencies = [
  "dirs",
  "docx-rs",
  "dotenvy",
- "hkask-bridge-dublincore",
+ "hkask-bridge-ontology",
  "hkask-guard",
  "hkask-inference",
  "hkask-keystore",
@@ -9453,6 +9463,7 @@ version = "0.33.0"
 dependencies = [
  "ab_glyph",
  "base64 0.22.1",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-storage",

@@ -350,6 +350,10 @@ pub fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'static st
             namespace: crate::types::OntologyNamespace::Omc,
             ..
         } => vec!["scene", "sequence", "image", "video"],
+        crate::types::OntologyAnchor::DomainSupplement {
+            namespace: crate::types::OntologyNamespace::Eso,
+            ..
+        } => vec!["hypothesis", "evidence", "falsification", "corroboration"],
     }
 }
 

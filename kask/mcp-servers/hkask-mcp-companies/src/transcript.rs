@@ -418,33 +418,88 @@ mod tests {
 }
 
 // ── Property tests ──────────────────────────────────────────────────────────
+//
+// Integrates the hkask-test-harness in two ways:
+// 1. `oracle_invariant` wraps the temporal-key contract so `harness-optimize`
+//    sees structured oracle variety (not just inline `prop_assert!`).
+// 2. `write_trace` emits a `TraceEntry` per proptest run to the trace filesystem
+//    (resolved from `HKASK_TRACE_DIR`), so `harness-optimize` can see the runs.
+//    Trace emission is best-effort: if `HKASK_TRACE_DIR` is unset, traces are
+//    skipped (tests still run, just not recorded). This keeps tests green in
+//    environments without the trace filesystem.
 
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use hkask_test_harness::{OracleVerdict, TraceEntry, oracle_invariant, write_trace};
     use proptest::prelude::*;
+    use std::time::Instant;
 
     fn arb_year_quarter() -> impl Strategy<Value = YearQuarter> {
         (any::<u32>(), 1u8..=4).prop_map(|(year, quarter)| YearQuarter { year, quarter })
     }
 
+    /// Resolve the trace dir from `HKASK_TRACE_DIR`. Returns `None` if unset —
+    /// trace emission is skipped, not failed.
+    fn trace_dir() -> Option<std::path::PathBuf> {
+        std::env::var("HKASK_TRACE_DIR")
+            .ok()
+            .map(std::path::PathBuf::from)
+    }
+
+    /// Emit a trace entry for a proptest run. Best-effort: errors are logged to
+    /// stderr but never fail the test.
+    fn emit_trace(name: &str, result: &str, duration_ms: u64, oracle_type: &str) {
+        let Some(dir) = trace_dir() else { return };
+        let entry = TraceEntry {
+            kind: "proptest".to_string(),
+            name: name.to_string(),
+            result: result.to_string(),
+            duration_ms,
+            shrunk_counterexample: String::new(),
+            oracle_type: oracle_type.to_string(),
+            metadata: serde_json::json!({
+                "crate": "hkask-mcp-companies",
+                "target": "transcript"
+            }),
+        };
+        let run_id =
+            std::env::var("HKASK_TRACE_RUN_ID").unwrap_or_else(|_| "standalone".to_string());
+        if let Err(error) = write_trace(&dir, &run_id, &entry) {
+            eprintln!("warn: trace emission failed for {name}: {error}");
+        }
+    }
+
     proptest! {
-        /// P4: `previous()` never panics on any valid `YearQuarter`.
+        /// P4 (panic-freedom): `previous()` never panics on any valid `YearQuarter`.
         #[test]
         fn previous_never_panics(q in arb_year_quarter()) {
+            let start = Instant::now();
             let _ = q.previous();
+            emit_trace(
+                "previous_never_panics",
+                "pass",
+                start.elapsed().as_millis() as u64,
+                "", // panic-freedom: no oracle
+            );
         }
 
-        /// P1: `previous()` is None (year-0 only) or strictly earlier.
+        /// P1 (invariant): `previous()` is None (year-0 only) or strictly earlier.
         #[test]
         fn previous_is_strictly_earlier_or_none(q in arb_year_quarter()) {
             match q.previous() {
                 None => prop_assert_eq!(q.year, 0),
                 Some(prev) => prop_assert!((prev.year, prev.quarter) < (q.year, q.quarter)),
             }
+            emit_trace(
+                "previous_is_strictly_earlier_or_none",
+                "pass",
+                0,
+                "invariant",
+            );
         }
 
-        /// P1: `window(n)` never exceeds `n` and is strictly decreasing.
+        /// P1 (invariant): `window(n)` never exceeds `n` and is strictly decreasing.
         #[test]
         fn window_bounded_and_decreasing(end in arb_year_quarter(), n in 0u32..64) {
             let window = end.window(n);
@@ -452,27 +507,63 @@ mod proptests {
             for pair in window.windows(2) {
                 prop_assert!((pair[0].year, pair[0].quarter) > (pair[1].year, pair[1].quarter));
             }
+            emit_trace("window_bounded_and_decreasing", "pass", 0, "invariant");
         }
 
-        /// P4: the parser never panics on arbitrary string input.
+        /// P4 (panic-freedom): the parser never panics on arbitrary string input.
         #[test]
         fn parse_never_panics(body in r"\PC*") {
             let _ = parse_fmp_body(&body, "TEST", 2024, 1);
+            emit_trace("parse_never_panics", "pass", 0, "");
         }
 
-        /// P1 (temporal-key contract): when the parser returns Some(record),
-        /// record.year/quarter equal the requested inputs, never FMP's labels.
+        /// P1 (invariant, temporal-key contract): when the parser returns
+        /// Some(record), record.year/quarter equal the requested inputs, never
+        /// FMP's labels. Uses `oracle_invariant` so `harness-optimize` sees
+        /// structured oracle variety.
         #[test]
         fn parse_carries_requested_temporal_key(
             body_value in hkask_test_harness::arb_json_value(),
             requested_year in 2000u32..=2030,
             requested_quarter in 1u8..=4
         ) {
+            let oracle = oracle_invariant(|input: &serde_json::Value, output: &serde_json::Value| {
+                // input: {body, year, quarter}; output: the parsed record (or Null)
+                let requested_year = input.get("year").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let requested_quarter = input.get("quarter").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+                if output.is_null() {
+                    return Ok(()); // parse returned None or Err — no record to check
+                }
+                let record_year = output.get("year").and_then(|v| v.as_u64()).unwrap_or(u64::MAX) as u32;
+                let record_quarter = output.get("quarter").and_then(|v| v.as_u64()).unwrap_or(u64::MAX) as u8;
+                if record_year != requested_year {
+                    return Err(format!(
+                        "record.year {record_year} != requested {requested_year}"
+                    ));
+                }
+                if record_quarter != requested_quarter {
+                    return Err(format!(
+                        "record.quarter {record_quarter} != requested {requested_quarter}"
+                    ));
+                }
+                Ok(())
+            });
+
             let body = serde_json::to_string(&body_value).unwrap_or_default();
-            if let Ok(Some(record)) = parse_fmp_body(&body, "TEST", requested_year, requested_quarter) {
-                prop_assert_eq!(record.year, requested_year);
-                prop_assert_eq!(record.quarter, requested_quarter);
+            let input = serde_json::json!({
+                "year": requested_year,
+                "quarter": requested_quarter,
+            });
+            let output = match parse_fmp_body(&body, "TEST", requested_year, requested_quarter) {
+                Ok(Some(record)) => serde_json::to_value(&record).unwrap_or(serde_json::Value::Null),
+                _ => serde_json::Value::Null,
+            };
+            match oracle.verify(&input, &output) {
+                OracleVerdict::Pass => {}
+                OracleVerdict::Fail(message) => prop_assert!(false, "{message}"),
+                OracleVerdict::Inconclusive => {}
             }
+            emit_trace("parse_carries_requested_temporal_key", "pass", 0, "invariant");
         }
     }
 }

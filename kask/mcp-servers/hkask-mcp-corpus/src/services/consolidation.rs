@@ -291,7 +291,7 @@ impl ConsolidationService {
 
                 // Dublin Core + PKO metadata for the consolidated chunk
                 let ontology = ChunkOntology {
-                    dc_type: hkask_bridge_dublincore::DOCUMENT.to_string(),
+                    dc_type: hkask_bridge_ontology::dc_bibo::DOCUMENT.to_string(),
                     dc_subject: concepts.clone(),
                     dc_source: source.clone(),
                     pko_extracted_from: consolidated_from.clone(),
