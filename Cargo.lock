@@ -9091,10 +9091,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hkask-bridge-dublincore"
-version = "0.33.0"
-
-[[package]]
 name = "hkask-bridge-ontology"
 version = "0.33.0"
 dependencies = [
@@ -9493,7 +9489,7 @@ dependencies = [
  "async-tungstenite",
  "chrono",
  "futures 0.3.33",
- "hkask-bridge-dublincore",
+ "hkask-bridge-ontology",
  "hkask-forecast",
  "hkask-mcp-server",
  "hkask-types",
@@ -9611,6 +9607,7 @@ dependencies = [
  "chrono",
  "dirs",
  "hf-hub",
+ "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",

@@ -109,7 +109,7 @@ Three ontology bridge crates provide canonical predicate constants:
 | `hkask-mcp-corpus::bridge::fibo` | Financial/business | 12 concepts (competitiveAdvantage, returnOnCapital, ...) |
 | `hkask-mcp-corpus::bridge::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
 
-These follow the pattern of `hkask-bridge-dublincore`:
+These follow the pattern of `hkask-bridge-ontology`:
 type alias + const strings, no dependencies, no reasoners.[^dublin-core][^fibo-spec]
 
 ## Why Not Embed → Tag?

@@ -10,8 +10,8 @@
 //! and hkask-mcp-docproc — single owner for the unified corpus server.
 //!
 //! Pattern: thin mapping layer — canonical URI constants, no dependencies,
-//! no reasoners, no overhead. Mirrors hkask-bridge-dublincore and
-//! hkask-bridge-pko.
+//! no reasoners, no overhead. Mirrors the dc_bibo and pko modules in this
+//! crate.
 
 /// A GOLEM concept URI.
 pub type GolemConcept = &'static str;

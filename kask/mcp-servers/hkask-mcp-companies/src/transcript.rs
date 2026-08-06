@@ -262,6 +262,32 @@ fn parse_fmp_body(
     }))
 }
 
+// ── Corpus ingestion ──────────────────────────────────────────────────────────
+//
+// Design: company-corpus-design.md §B3. The pipeline is:
+//   corpus_chunk(text, entity_ref_prefix) → corpus_tag_chunks → corpus_embed
+//   → corpus_extract_triples → centroids → corpus_query
+// The tools already exist on the corpus server. The only transcript-specific
+// logic is the entity-ref convention: `{company}:{kind}:{date}` so chunks,
+// tags, h_mems, and centroids all reference the same provenance.
+
+/// Build the `entity_ref_prefix` for an earnings transcript, per the design
+/// §B3 convention: `{company}:{kind}:{date}`. The corpus pipeline uses this
+/// as the prefix for every chunk/tag/h_mem so cross-document linkage works.
+///
+/// The temporal key is `(year, quarter)` — NOT the FMP `date` field (probe-
+/// verified unreliable). The prefix uses `{year}_Q{quarter}` as the date
+/// component so it's lexicographically sortable (year-first, then quarter).
+///
+/// This is a convention helper invoked by the agent/skill when constructing
+/// the `corpus_chunk` call at runtime — not called from Rust production code.
+/// The tests pin the convention (sortability, validity, format) so the
+/// agent's runtime usage can't drift from the design.
+#[allow(dead_code)]
+pub fn corpus_entity_ref_prefix(symbol: &str, year: u32, quarter: u8) -> String {
+    format!("company:{symbol}:earnings:{year}_Q{quarter}")
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -414,6 +440,36 @@ mod tests {
         };
         assert_eq!(coverage.missing.len(), 2);
         assert!(matches!(coverage.missing[0].reason, MissingReason::NoCall));
+    }
+
+    // ── Corpus ingestion ─────────────────────────────────────────────────────
+
+    #[test]
+    fn entity_ref_prefix_follows_corpus_convention() {
+        // Design §B3: `{company}:{kind}:{date}`. The temporal key is
+        // (year, quarter), not the FMP date field.
+        let prefix = corpus_entity_ref_prefix("MSFT", 2024, 4);
+        assert_eq!(prefix, "company:MSFT:earnings:2024_Q4");
+    }
+
+    #[test]
+    fn entity_ref_prefix_is_valid_identifier() {
+        // The prefix is passed to corpus_chunk's entity_ref_prefix, which
+        // validates via validate_identifier (alphanumeric + _ . - :).
+        let prefix = corpus_entity_ref_prefix("AAPL", 2023, 1);
+        assert!(prefix.chars().all(|character| {
+            character.is_alphanumeric() || character == '_' || character == ':'
+        }));
+    }
+
+    #[test]
+    fn entity_ref_prefix_is_lexicographically_sortable() {
+        // Q{quarter}_{year} sorts chronologically across years and within a year.
+        let q1_2023 = corpus_entity_ref_prefix("MSFT", 2023, 1);
+        let q4_2023 = corpus_entity_ref_prefix("MSFT", 2023, 4);
+        let q1_2024 = corpus_entity_ref_prefix("MSFT", 2024, 1);
+        assert!(q1_2023 < q4_2023);
+        assert!(q4_2023 < q1_2024);
     }
 }
 

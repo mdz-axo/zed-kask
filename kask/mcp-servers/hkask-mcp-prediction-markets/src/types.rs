@@ -105,7 +105,7 @@ pub struct ProcessAxis {
     pub probability_role: Cow<'static, str>,
 }
 
-/// Dublin Core state-axis mapping (vocabulary from hkask-bridge-dublincore;
+/// Dublin Core state-axis mapping (vocabulary from hkask-bridge-ontology;
 /// Q-O1 resolved 2026-08-05).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateAxis {

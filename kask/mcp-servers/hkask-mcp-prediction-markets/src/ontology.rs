@@ -1,6 +1,6 @@
 //! Dual-axis ontology mapping for prediction-market records.
 //!
-//! Q-O1 resolution (2026-08-05): `hkask-bridge-dublincore` is the canonical
+//! Q-O1 resolution (2026-08-05): `hkask-bridge-ontology` is the canonical
 //! vocabulary crate — the `dcterms:*` / `bibo:*` / `pko:*` constants defined
 //! there are reused here, not re-declared. Q-O2 resolution: no `hkask:`
 //! forecasting namespace exists in the workspace; calibration vocabulary is
@@ -39,7 +39,7 @@ pub fn mapping_document() -> serde_json::Value {
         "mapping_version": MAPPING_VERSION,
         "process_axis": {
             "ontology": "PKO (Procedural Knowledge Ontology)",
-            "vocabulary_crate": "hkask-bridge-dublincore",
+            "vocabulary_crate": "hkask-bridge-ontology",
             "record_type": "pko:ProcedureExecution",
             "probability_role": "pko:StepExecution.output",
             "lifecycle_stages": LIFECYCLE_STAGES,
@@ -47,7 +47,7 @@ pub fn mapping_document() -> serde_json::Value {
         },
         "state_axis": {
             "ontology": "Dublin Core (dcterms)",
-            "vocabulary_crate": "hkask-bridge-dublincore",
+            "vocabulary_crate": "hkask-bridge-ontology",
             "fields": {
                 "identifier": "dcterms:identifier = {source}:{market_id}",
                 "title": "dcterms:title ← market question",

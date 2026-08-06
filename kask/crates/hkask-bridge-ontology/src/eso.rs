@@ -11,8 +11,8 @@
 //! (software design), Marletto (can and can't), Kauffman (complexity).
 //!
 //! Pattern: thin mapping layer — canonical URI constants, no dependencies,
-//! no reasoners, no overhead. Mirrors hkask-bridge-dublincore and
-//! hkask-bridge-pko.
+//! no reasoners, no overhead. Mirrors the dc_bibo and pko modules in this
+//! crate.
 
 /// An ESO concept URI.
 pub type EsoConcept = &'static str;

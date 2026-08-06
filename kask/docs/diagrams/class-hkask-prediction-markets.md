@@ -217,7 +217,7 @@ dying, and a dead stream surfaces a typed error.
 **Ontology anchors:** per-record `ontology` blocks and the
 `market_ontology_map` tool output are both generated from `ontology.rs`
 constants (`MAPPING_VERSION`, `LIFECYCLE_STAGES`) so they cannot drift.
-`dcterms:*` / `pko:*` vocabulary is reused from `hkask-bridge-dublincore`;
+`dcterms:*` / `pko:*` vocabulary is reused from `hkask-bridge-ontology`;
 calibration vocabulary (brier, domain_bias, reliability_tier) is domain-supplement
 tier pending a second consumer (ADR-042).
 

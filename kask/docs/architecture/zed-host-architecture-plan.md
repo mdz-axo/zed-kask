@@ -128,7 +128,7 @@ Inference routing (`crates/language_model`, `language_model_core`, `language_mod
 | `hkask-ledger` | hMem accounting. |
 | `hkask-inference` | **Kept (revised):** MCP servers use it directly (`MediaRouter`, `InferenceIpcClient`, `ProviderId`). Reads API keys from the `keyring` crate directly. Embeddings are handled by `kask_bridge::LanguageModelEmbeddingPort` (resolves credentials from `INFERENCE_PROVIDERS` + env var, no `LanguageModelRegistry` lookup). |
 | `hkask-mcp-server` (framework) | MCP server framework with `reg.tool.*`+OCAP gating. Servers run standalone with identity from `ServerContext.webid` (resolved from `HKASK_WEBID`, falling back to anonymous). The daemon transport and `bootstrap_mcp_server()` were removed (replaced by `hkask_mcp_server::run_server` factory — see Appendix A). |
-| `hkask-forecast`, `hkask-condenser`, `hkask-bridge-dublincore`, `hkask-email`, `hkask-lisp` | Domain logic used by keep-crates/MCP servers. |
+| `hkask-forecast`, `hkask-condenser`, `hkask-bridge-ontology`, `hkask-email`, `hkask-lisp` | Domain logic used by keep-crates/MCP servers. |
 | `hkask-test-harness` | Shared test infrastructure (`TraceEntry`, proptest/bug-hunt/harness-optimize support). A surviving workspace member (briefly considered for removal — see Appendix A). |
 | `hkask-mcp` | MCP governance. OCAP + per-agent `CallCap` gate at `McpRuntime::invoke` (the `FlatEnergyEstimator` 10-gas-per-call estimator was removed — see Appendix A). |
 | `hkask-services-core` | Shared foundation: `ServiceError`, `ServiceConfig`, `HkaskSettings`. Consumed by 6 crates. The other `hkask-services-*` crates were folded into their sole MCP server consumers (see Appendix A). |
@@ -391,7 +391,7 @@ zed-kask/
     │                  # hkask-templates, hkask-guard, hkask-capability,
     │                  # hkask-keystore, hkask-ledger, hkask-mcp,
     │                  # hkask-mcp-server, hkask-inference, hkask-condenser,
-    │                  # hkask-forecast, hkask-bridge-dublincore, hkask-services-core,
+    │                  # hkask-forecast, hkask-bridge-ontology, hkask-services-core,
     │                  # hkask-email, hkask-lisp, hkask-test-harness,
     │                  # kask_bridge (D8)
     │                  # (deleted crates — see Appendix A)

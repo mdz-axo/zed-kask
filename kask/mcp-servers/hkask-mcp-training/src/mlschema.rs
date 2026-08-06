@@ -1,68 +1,18 @@
-//! ML-Schema ontology bridge for hkask-mcp-training.
+//! ML-Schema dispatch for the training server — operation & hyperparameter mapping.
 //!
-//! Maps hKask training server concepts to ML-Schema (W3C Community Group)
-//! standard concepts for machine learning experiments. ML-Schema is the
-//! closest thing to a FIBO-equivalent for ML training, though it has less
-//! adoption than FIBO — this bridge is provisional and may be upgraded.
-//!
-//! Reference: <https://www.w3.org/community/ml-schema/>
-//! Reference: <https://ml-schema.github.io/documentation/ML%20Schema.html>
-//!
-//! Pattern: thin mapping layer — canonical URI constants, mapping functions,
-//! no dependencies, no reasoners, no overhead ≤100 lines.
-//!
-//! # Shared Bridge Integration
-//!
-//! Uses [`hkask_bridge_dublincore`] for dataset and model metadata
-//! (e.g., `dctypes:Dataset`, `dctypes:Software`) and [`hkask_bridge_dublincore`]
-//! for training procedure classification.
+//! The ML-Schema concept vocabulary (the canonical `mls:*` URIs) lives in
+//! the shared `hkask-bridge-ontology` crate. This module re-exports those
+//! constants so the training server's existing `mlschema::CONSTANT` call
+//! sites keep working, and holds the server-specific mapping from training
+//! operation names and hyperparameter names to their ML-Schema concepts.
+//! That mapping is the server's business, not the ontology's.
 
-/// An ML-Schema concept URI.
-pub type MlConcept = &'static str;
-
-// ── Core ML concepts ──────────────────────────────────────────────────────
-
-/// A machine learning model — the trained artifact.
-/// hKask mapping: base model, fine-tuned model, LoRA adapter
-pub const MODEL: MlConcept = "mls:Model";
-
-/// A training or evaluation run — one execution of an ML workflow.
-/// hKask mapping: training_submit job, training_sweep run
-pub const RUN: MlConcept = "mls:Run";
-
-/// A dataset used for training or evaluation.
-/// hKask mapping: assembled ChatML JSONL, ingested datasets
-pub const DATA: MlConcept = "mls:Data";
-
-// ── Hyperparameters ───────────────────────────────────────────────────────
-
-/// A hyperparameter definition.
-pub const HYPER_PARAMETER: MlConcept = "mls:HyperParameter";
-
-/// A specific hyperparameter value setting for a Run.
-pub const HYPER_PARAMETER_SETTING: MlConcept = "mls:HyperParameterSetting";
-
-// ── Evaluation ────────────────────────────────────────────────────────────
-
-/// An evaluation of a Model's performance.
-/// hKask mapping: training_evaluate results
-pub const EVALUATION: MlConcept = "mls:Evaluation";
-
-/// A specific metric measured during evaluation.
-/// hKask mapping: accuracy, substring match, semantic comparison scores
-pub const EVALUATION_MEASURE: MlConcept = "mls:EvaluationMeasure";
-
-// ── Model derivation ──────────────────────────────────────────────────────
-
-/// A Model was derived from another Model.
-/// hKask mapping: LoRA adapter derived from base model
-pub const WAS_DERIVED_FROM: MlConcept = "mls:wasDerivedFrom";
-
-/// A Run used a specific Model.
-pub const IMPLEMENTED_BY: MlConcept = "mls:implementedBy";
-
-/// A Run used specific Data.
-pub const HAS_DATA: MlConcept = "mls:hasData";
+// Re-export the ML-Schema vocabulary from the shared bridge crate.
+pub use hkask_bridge_ontology::mlschema::MlConcept;
+pub use hkask_bridge_ontology::mlschema::{
+    ALL_CONCEPTS, DATA, EVALUATION, EVALUATION_MEASURE, HAS_DATA, HYPER_PARAMETER,
+    HYPER_PARAMETER_SETTING, IMPLEMENTED_BY, MODEL, RUN, WAS_DERIVED_FROM,
+};
 
 // ── Mapping helpers ───────────────────────────────────────────────────────
 

@@ -36,15 +36,15 @@ impl ToolSpanGuard {
     /// Tag this span with a domain ontology concept (e.g. "pko:ChangeOfStatus").
     /// The concept flows into the Regulation span for type-aware feedback routing.
     ///
-    /// All hKask bridge crate constants (`hkask-bridge-pko`, `hkask-bridge-dublincore`,
-    /// and domain-specific bridges like `hkask-mcp-companies/src/fibo.rs`) are valid
+    /// All hKask bridge crate constants (`hkask-bridge-ontology`,
+    /// which owns DC/BIBO/PKO + all domain bridges) are valid
     /// `&'static str` concepts. This function documents the intent: `with_ontology`
     /// accepts ontology concepts, not arbitrary debug strings.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use hkask_bridge_dublincore::STEP_EXECUTION;
+    /// use hkask_bridge_ontology::pko::STEP_EXECUTION;
     /// ToolSpanGuard::new("my_tool", &caller)
     ///     .with_ontology(STEP_EXECUTION);
     /// ```
