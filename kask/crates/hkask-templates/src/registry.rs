@@ -67,6 +67,16 @@ pub fn template_manifest_seed() -> &'static [(&'static str, &'static str)] {
     MANIFEST_YAMLS
 }
 
+/// The full compiled-in company-source manifest seed payload as
+/// `(symbol, yaml)` pairs (`registry/company-sources/<symbol>.yaml`).
+/// Seed-only: used by the registry seeding path to write the shipped
+/// company-source manifests to disk under `company-sources/` in the data
+/// directory. The corpus MCP server's `corpus_discover_company` tool reads
+/// them from disk at runtime.
+pub fn company_source_seed() -> &'static [(&'static str, &'static str)] {
+    COMPANY_SOURCE_YAMLS
+}
+
 /// Look up an embedded Jinja2 template file by its `template_ref`.
 ///
 /// Template refs in manifests omit the `.j2` extension (e.g.

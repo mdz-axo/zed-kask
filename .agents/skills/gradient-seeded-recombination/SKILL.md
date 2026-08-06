@@ -54,25 +54,24 @@ The shape is idiosyncratic to GSR's domain — the Inventory phase (enumerate on
 
 ## Composed Skills
 
-| Skill | Role | When Invoked |
-|-------|------|-------------|
-| `pragmatic-cybernetics` | Prior modeling | Prior phase — when no sibling or convention prior is available |
-| `graph-audit` (code mode) | Field topology extraction | Map phase — when hunting topology gradients |
-| `falsifiability` | Counterfactual discrimination | Hypothesize phase — discriminating between reason hypotheses |
-| `metacognition` | Prior perspective rotation | Hypothesize phase — different priors surface different gradients |
+| Skill                     | Role                          | When Invoked                                                     |
+| ------------------------- | ----------------------------- | ---------------------------------------------------------------- |
+| `pragmatic-cybernetics`   | Prior modeling                | Prior phase — when no sibling or convention prior is available   |
+| `graph-audit` (code mode) | Field topology extraction     | Map phase — when hunting topology gradients                      |
+| `falsifiability`          | Counterfactual discrimination | Hypothesize phase — discriminating between reason hypotheses     |
+| `metacognition`           | Prior perspective rotation    | Hypothesize phase — different priors surface different gradients |
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `gsr-inventory.j2` | KnowAct | Enumerate ontology namespaces, fetch external ontologies with license check |
-| `gsr-prior.j2` | KnowAct | Build complete-graph prior K_n |
-| `gsr-map.j2` | KnowAct | Map actual recombination field |
-| `gsr-detect.j2` | KnowAct | Detect gradients, classify by 8-shape taxonomy, fractal recurrence check |
-| `gsr-hypothesize.j2` | KnowAct | Generate reason hypotheses via 7-class taxonomy |
-| `gsr-prioritize.j2` | KnowAct | Prioritize sites by reason class > fractal recurrence > magnitude |
-| `gsr-select-seeds.j2` | KnowAct | Select most-central concept per high-priority site |
-| `gsr-gradient-shapes.yaml` | RenderAct | Reference: 8-shape taxonomy with cross-ontology annotations |
+| Template              | Type    | Purpose                                                                     |
+| --------------------- | ------- | --------------------------------------------------------------------------- |
+| `gsr-inventory.j2`    | KnowAct | Enumerate ontology namespaces, fetch external ontologies with license check |
+| `gsr-prior.j2`        | KnowAct | Build complete-graph prior K_n                                              |
+| `gsr-map.j2`          | KnowAct | Map actual recombination field                                              |
+| `gsr-detect.j2`       | KnowAct | Detect gradients, classify by 8-shape taxonomy, fractal recurrence check    |
+| `gsr-hypothesize.j2`  | KnowAct | Generate reason hypotheses via 7-class taxonomy                             |
+| `gsr-prioritize.j2`   | KnowAct | Prioritize sites by reason class > fractal recurrence > magnitude           |
+| `gsr-select-seeds.j2` | KnowAct | Select most-central concept per high-priority site                          |
 
 ## Constraints
 

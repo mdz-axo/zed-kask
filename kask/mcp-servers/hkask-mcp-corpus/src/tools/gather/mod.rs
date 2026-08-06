@@ -252,28 +252,58 @@ impl CorpusServer {
             // fetch_status label so the caller knows to review before ingesting.
             let fetch_status = if is_curated { "proposed" } else { "discovered" };
 
-            // Load the company manifest from the registry. The path is
-            // LLM-reachable (params.manifest_path), so route it through
-            // path_safety::read_capped for containment under the project root
-            // and a MAX_READ_BYTES cap (CWE-22/200/400). The default path
-            // points into the shipped registry and is also contained for
-            // uniformity — a relative default is already under the root, but
-            // the cap still bounds a malformed shipped manifest.
-            let manifest_path = params.manifest_path.clone().unwrap_or_else(|| {
-                format!("kask/registry/company-sources/{}.yaml", params.symbol.to_lowercase())
-            });
-            let manifest_bytes =
-                crate::path_safety::read_capped(&manifest_path, crate::path_safety::MAX_READ_BYTES)
-                    .map_err(|error| {
-                        McpToolError::not_found(format!(
-                            "company manifest not found or outside the project root at {manifest_path}: {error}"
+            // Load the company manifest from the registry.
+            //
+            // Two cases:
+            // - Explicit `manifest_path` (LLM-reachable): route through
+            //   `path_safety::read_capped` for containment under the project
+            //   root + MAX_READ_BYTES cap (CWE-22/200/400).
+            // - Default path (no `manifest_path` provided): resolve against
+            //   the hKask data directory via `resolve_under_data_dir`. The
+            //   default is trusted (not LLM-controlled), so it's read directly
+            //   without path_safety containment — the data dir is an
+            //   operator-controlled trusted location, not the project root.
+            //   In dev (CWD = repo root), the relative path
+            //   `kask/registry/company-sources/{symbol}.yaml` works directly.
+            //   In production, the manifests are seeded to
+            //   `data_dir()/agents/registry/company-sources/{symbol}.yaml`
+            //   by `seed_registry_to_disk`.
+            let (manifest_text, _manifest_source) = match params.manifest_path.clone() {
+                Some(explicit_path) => {
+                    // LLM-controlled path — contain under project root.
+                    let manifest_bytes =
+                        crate::path_safety::read_capped(
+                            &explicit_path,
+                            crate::path_safety::MAX_READ_BYTES,
+                        )
+                        .map_err(|error| {
+                            McpToolError::not_found(format!(
+                                "company manifest not found or outside the project root at {explicit_path}: {error}"
+                            ))
+                        })?;
+                    let text = String::from_utf8(manifest_bytes).map_err(|error| {
+                        McpToolError::invalid_argument(format!(
+                            "company manifest at {explicit_path} is not valid UTF-8: {error}"
                         ))
                     })?;
-            let manifest_text = String::from_utf8(manifest_bytes).map_err(|error| {
-                McpToolError::invalid_argument(format!(
-                    "company manifest at {manifest_path} is not valid UTF-8: {error}"
-                ))
-            })?;
+                    (text, explicit_path)
+                }
+                None => {
+                    // Default path — resolve against data dir (trusted).
+                    let symbol_lower = params.symbol.to_lowercase();
+                    let relative = std::path::Path::new("kask/registry/company-sources")
+                        .join(format!("{symbol_lower}.yaml"));
+                    let resolved = hkask_types::agent_paths::resolve_under_data_dir(&relative);
+                    let text = std::fs::read_to_string(&resolved).map_err(|error| {
+                        McpToolError::not_found(format!(
+                            "company manifest not found for symbol '{symbol_lower}' at {}: {error}. \
+                             Pass an explicit manifest_path or seed the registry to disk.",
+                            resolved.display()
+                        ))
+                    })?;
+                    (text, resolved.display().to_string())
+                }
+            };
             let manifest =
                 crate::corpus::CompanySourceManifest::from_yaml(&manifest_text).map_err(
                     |error| McpToolError::invalid_argument(format!("manifest parse failed: {error}")),

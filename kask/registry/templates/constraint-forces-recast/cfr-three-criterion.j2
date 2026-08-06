@@ -48,6 +48,12 @@ You are the Three-Criterion phase of CFR — the falsifier. Your job is to check
 
 ## Procedure
 
+{% if rater == 'reasoner' %}
+**Rater mode: reasoner.** An OWL reasoner (Hermit, Pellet) checks criterion (iii) mechanically — verify that the mutant's axiom graph is satisfiable under B's axioms. Criteria (i) and (ii) still require human judgment (the reasoner does not provide minimality or signature-expressibility checks). Run the reasoner on the mutant's axiom graph against B's axioms; report any unsatisfiable classes or properties.
+{% else %}
+**Rater mode: human (default).** All three criteria are judged by a human rater approximating the argmin of the minimal-satisfiability projection.
+{% endif %}
+
 1. **Criterion (i) — Expressible in A's signature.** Check that every term in the mutant is in A's signature. For novel compounds (terms not directly in A's signature but composed from A's terms):
    - Is the compound compositional? Its meaning must be a function of the meanings of its parts per A's existing composition rules.
    - Does the compound require a new axiom to define? If yes, it is extending A's signature, not using it — FAIL criterion (i).

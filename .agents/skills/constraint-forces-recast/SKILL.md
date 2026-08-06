@@ -36,7 +36,7 @@ Core generative process for interdisciplinary concept generation. Recasts a seed
 
 - **Substrate**: Popper falsifiability (the three-criterion test is the falsifier), Platt strong inference (the relabel control is the discriminating test), Pearl counterfactuals (the relabel is the do(not recast) counterfactual), Chamberlin multiple hypotheses (the recast vs relabel is the M1 vs M2 hypothesis pair).
 - **Forcing operator**: minimal-satisfiability projection — `mutant(c, A, B) = argmin_{m ∈ Models(B)} Δ(c, m)`, where Δ is graph-edit distance. Not entailment (too strong — projection, not generation) and not bare satisfiability (too weak — doesn't discriminate M1 from M2). The minimality is what forces mutation.
-- **Weakened thesis T1'**: constraint-forces recasting is *a* mechanism for interdisciplinary *concept generation*, distinct from retrieval-and-grounding (evidence assembly, e.g. Elicit) and analogy (communication). Does not claim to be the only interdisciplinary operation.
+- **Weakened thesis T1'**: constraint-forces recasting is _a_ mechanism for interdisciplinary _concept generation_, distinct from retrieval-and-grounding (evidence assembly, e.g. Elicit) and analogy (communication). Does not claim to be the only interdisciplinary operation.
 
 ## PDCA Shape
 
@@ -56,24 +56,23 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 
 ## Composed Skills
 
-| Skill | Role | When Invoked |
-|-------|------|-------------|
-| `gradient-seeded-recombination` | Seed selection | Before CFR — GSR finds recombination sites and selects seed concepts |
-| `falsifiability` | Three-criterion test | Phase 5 — the three-criterion test is the falsifier |
-| `gpa-evolution` | Pareto frontier management | Phase 7 — the frontier update follows gpa-evolution's non-dominated sort + crowding-distance pruning |
+| Skill                           | Role                       | When Invoked                                                                                         |
+| ------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `gradient-seeded-recombination` | Seed selection             | Before CFR — GSR finds recombination sites and selects seed concepts                                 |
+| `falsifiability`                | Three-criterion test       | Phase 5 — the three-criterion test is the falsifier                                                  |
+| `gpa-evolution`                 | Pareto frontier management | Phase 7 — the frontier update follows gpa-evolution's non-dominated sort + crowding-distance pruning |
 
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `cfr-represent.j2` | KnowAct | Represent seed concept as axiom graph |
-| `cfr-violate.j2` | KnowAct | Identify B's axiom violations |
-| `cfr-project.j2` | KnowAct | Minimal-satisfiability projection (the forcing operator) |
-| `cfr-control.j2` | KnowAct | Generate relabel control (vocabulary swap, no axioms) |
-| `cfr-three-criterion.j2` | KnowAct | Three-criterion test (the falsifier) |
-| `cfr-compare.j2` | KnowAct | Compare mutant vs relabel structural delta (discriminating test) |
-| `cfr-frontier.j2` | KnowAct | Update Pareto frontier on (novelty, validity, cost-inverted) |
-| `cfr-converge.j2` | RenderAct | Reference: convergence formula (lisp.eval: hypervolume_delta + 0.05 × new_non_dominated) |
+| Template                 | Type    | Purpose                                                          |
+| ------------------------ | ------- | ---------------------------------------------------------------- |
+| `cfr-represent.j2`       | KnowAct | Represent seed concept as axiom graph                            |
+| `cfr-violate.j2`         | KnowAct | Identify B's axiom violations                                    |
+| `cfr-project.j2`         | KnowAct | Minimal-satisfiability projection (the forcing operator)         |
+| `cfr-control.j2`         | KnowAct | Generate relabel control (vocabulary swap, no axioms)            |
+| `cfr-three-criterion.j2` | KnowAct | Three-criterion test (the falsifier)                             |
+| `cfr-compare.j2`         | KnowAct | Compare mutant vs relabel structural delta (discriminating test) |
+| `cfr-frontier.j2`        | KnowAct | Update Pareto frontier on (novelty, validity, cost-inverted)     |
 
 ## Constraints
 
@@ -81,7 +80,7 @@ The shape is idiosyncratic to CFR's domain — the Project phase (minimal-satisf
 - Energy caps: represent (4096), violate (4096), project (6144), control (4096), three-criterion (4096), compare (3072), frontier (3072).
 - Gas cap: 150,000 per invocation. Maximum 5 iterations.
 - The forcing operator is minimal-satisfiability projection — not entailment, not bare satisfiability. Changing the operator is a breaking change, not a refactor.
-- The weakened thesis T1' must not drift back to T1 ("the mechanism"). CFR is *a* mechanism, not the only one.
+- The weakened thesis T1' must not drift back to T1 ("the mechanism"). CFR is _a_ mechanism, not the only one.
 - Corroborated is not confirmed. Use "survived", "withstood", "corroborated" — never "proven" or "verified true."
 - The relabel control is mandatory — a mutant without a relabel control is not a discriminating test.
 - Scope boundary: translational research moves insights into the target vocabulary; CFR keeps the mutant in the source vocabulary. Different operations. Do not add a "bilingual" mode to bridge them — that was a metaphor-driven conflation (see the translational amendment).

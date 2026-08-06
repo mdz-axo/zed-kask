@@ -745,3 +745,17 @@ test catches a module with zero call sites, but not a widget that drops a
 field the server emits. The failure mode is silent: the widget renders
 without affordances and the operator cannot distinguish "block has no ontology
 tag" from "widget dropped the tag."
+
+# Stale diagnostics after bulk edits
+
+After a sequence of `edit_file` calls on the same file, `diagnostics` may
+report errors and warnings from the pre-edit state — rust-analyzer's
+incremental index lags behind rapid edits. The crate's lib root (the file
+named in `[lib] path` in `Cargo.toml`) is the authoritative compile check: if
+it compiles clean, the crate compiles, regardless of what individual-file
+diagnostics report. Do not retry the same `diagnostics` call expecting it to
+refresh, and do not "fix" errors that appear only in a stale individual-file
+diagnostic but not in the lib-root diagnostic. The failure mode is an agent
+loop (retrying stale diagnostics) or a phantom-bug chase (editing code that
+was already correct to silence an error that doesn't exist in the current
+file state).

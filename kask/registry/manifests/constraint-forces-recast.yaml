@@ -71,7 +71,7 @@ rjoule:
 
 inputs:
   - name: seed_concepts
-    type: object
+    type: array
     required: true
     description: >
       Seed concepts to recast. Each entry carries the concept (with its
@@ -112,10 +112,11 @@ steps:
     timeout_seconds: 60
     input_mapping:
       # Use the loop-carried seed_index to advance through the seed set.
-      # On the first iteration, seed_index is 0 (default). On subsequent
-      # iterations, it increments from the loop step's input_mapping.
-      seed_concept: "{{ seed_concepts[_loop.seed_index | default(0)] | default(seed_concepts[0]) | default({}) }}"
-      source_ontology: "{{ seed_concepts[_loop.seed_index | default(0)].source_ontology | default(seed_concepts[0].source_ontology) | default({}) }}"
+      # The loop step binds seed_index as a top-level context key (not
+      # _loop.seed_index — the executor binds loop mappings as top-level
+      # keys). On first iteration, seed_index is 0 (default).
+      seed_concept: "{{ seed_concepts[seed_index | default(0)] | default(seed_concepts[0]) | default({}) }}"
+      source_ontology: "{{ seed_concepts[seed_index | default(0)].source_ontology | default(seed_concepts[0].source_ontology) | default({}) }}"
 
   - ordinal: 2
     action: select
@@ -131,7 +132,7 @@ steps:
     timeout_seconds: 60
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
-      target_ontology: "{{ seed_concepts[0].target_ontology | default({}) }}"
+      target_ontology: "{{ seed_concepts[seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
 
   - ordinal: 3
     action: select
@@ -147,8 +148,8 @@ steps:
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
       violations: "{{ step_2_result.violations | default([]) }}"
-      target_ontology: "{{ seed_concepts[0].target_ontology | default({}) }}"
-      source_ontology: "{{ seed_concepts[0].source_ontology | default({}) }}"
+      target_ontology: "{{ seed_concepts[seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
+      source_ontology: "{{ seed_concepts[seed_index | default(0)].source_ontology | default(seed_concepts[0].source_ontology) | default({}) }}"
 
   - ordinal: 4
     action: select
@@ -162,7 +163,7 @@ steps:
     timeout_seconds: 60
     input_mapping:
       axiom_graph: "{{ step_1_result.axiom_graph | default({}) }}"
-      target_ontology: "{{ seed_concepts[0].target_ontology | default({}) }}"
+      target_ontology: "{{ seed_concepts[seed_index | default(0)].target_ontology | default(seed_concepts[0].target_ontology) | default({}) }}"
 
   - ordinal: 5
     action: select

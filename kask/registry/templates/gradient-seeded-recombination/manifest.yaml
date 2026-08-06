@@ -105,16 +105,4 @@ templates:
       Central concepts have the richest structure to mutate; peripheral concepts
       produce trivial mutants.
 
-  - id: gradient-seeded-recombination/gsr-gradient-shapes
-    name: "Gradient shape taxonomy reference"
-    path: gsr-gradient-shapes.yaml
-    type: RenderAct
-    description: >
-      Reference: the eight gradient shape ontology with fractal recurrence,
-      reason classes, and priority ordering. Inherits from gradient-hunter's
-      gradient-shapes.yaml; GSR adds the cross-ontology substrate
-      annotations. This is a RenderAct reference document — the detect
-      step (gsr-detect.j2) describes the shapes inline in its prompt, and
-      this YAML provides the machine-readable taxonomy for programmatic
-      consumption by downstream tools. It is not a flow input; it is a
-      reference consumed by the detect step's template_ref resolution.
+

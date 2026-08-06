@@ -676,8 +676,8 @@ fn extract_text_content(result: &rmcp::model::CallToolResult) -> String {
     result
         .content
         .iter()
-        .filter_map(|c| match &**c {
-            rmcp::model::RawContent::Text(t) => Some(t.text.as_str()),
+        .filter_map(|c| match c {
+            rmcp::model::ContentBlock::Text(t) => Some(t.text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -691,13 +691,12 @@ fn extract_text_content(result: &rmcp::model::CallToolResult) -> String {
 /// Falls back to a plain JSON string if parsing fails.
 /// For multiple items, wraps them in a JSON array.
 fn parse_call_result(result: &rmcp::model::CallToolResult) -> Value {
-    use rmcp::model::RawContent;
     if result.content.is_empty() {
         return Value::Null;
     }
 
     if result.content.len() == 1
-        && let RawContent::Text(text_content) = &*result.content[0]
+        && let rmcp::model::ContentBlock::Text(text_content) = &result.content[0]
     {
         if let Ok(v) = serde_json::from_str::<Value>(&text_content.text) {
             return v;
@@ -708,10 +707,10 @@ fn parse_call_result(result: &rmcp::model::CallToolResult) -> Value {
     let items: Vec<Value> = result
         .content
         .iter()
-        .map(|c| match &**c {
-            RawContent::Text(t) => serde_json::from_str::<Value>(&t.text)
+        .map(|c| match c {
+            rmcp::model::ContentBlock::Text(t) => serde_json::from_str::<Value>(&t.text)
                 .unwrap_or_else(|_| Value::String(t.text.clone())),
-            RawContent::Image(i) => serde_json::json!({
+            rmcp::model::ContentBlock::Image(i) => serde_json::json!({
                 "type": "image",
                 "data": i.data,
                 "mimeType": i.mime_type,

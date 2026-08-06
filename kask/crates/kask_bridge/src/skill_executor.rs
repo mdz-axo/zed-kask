@@ -239,6 +239,22 @@ pub async fn seed_registry_to_disk(fs: &dyn Fs, registry_root: &Path) {
             tracing::warn!("Failed to seed YAML template '{key}': {e}");
         }
     }
+
+    // Company-source manifests (corpus-specific resource, not a skill manifest).
+    // Seeded to `registry_root/company-sources/<symbol>.yaml` so the corpus
+    // MCP server's `corpus_discover_company` tool can resolve the default
+    // `manifest_path` against the data directory in production.
+    let company_sources_dir = registry_root.join("company-sources");
+    for (symbol, content) in hkask_templates::company_source_seed() {
+        let path = company_sources_dir.join(format!("{symbol}.yaml"));
+        if fs.is_file(&path).await {
+            continue;
+        }
+        let _ = fs.create_dir(&company_sources_dir).await;
+        if let Err(e) = fs.write(&path, content.as_bytes()).await {
+            tracing::warn!("Failed to seed company-source manifest '{symbol}': {e}");
+        }
+    }
 }
 
 #[async_trait]

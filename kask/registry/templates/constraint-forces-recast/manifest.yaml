@@ -107,11 +107,3 @@ templates:
       current frontier with newly tested variants, keep non-dominated members,
       prune by crowding distance if frontier exceeds size limit.
 
-  - id: constraint-forces-recast/cfr-converge
-    name: "Convergence check"
-    path: cfr-converge.j2
-    type: RenderAct
-    description: >
-      Reference: the convergence formula for the evolutionary loop. Computes
-      hypervolume delta between frontier_before and frontier_after, counts
-      new non-dominated members. Converged when metric ≤ 0.10 and iteration ≥ 2.
