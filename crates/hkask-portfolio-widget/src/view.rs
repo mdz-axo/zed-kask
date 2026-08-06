@@ -71,6 +71,17 @@ pub struct PortfolioWidget {
     /// when a successful inject fires (repo `.rules`: visible, not a silent
     /// no-op).
     disagree_draft: Option<String>,
+    /// F — inline drill-down: the symbol whose `research_search` explain is
+    /// in flight (`None` = idle). Last-click-wins; a new click replaces the
+    /// pending symbol.
+    explain_symbol: Option<String>,
+    /// The research result text shown inline once the explain completes. The
+    /// full result stays in the agent conversation as the durable record; the
+    /// panel only shows a compact truncation for at-a-glance context.
+    explain_result: Option<String>,
+    /// Visible error when an explain dispatch cannot proceed (missing invoker
+    /// or tool failure). Never silently dropped (repo `.rules`).
+    explain_error: Option<String>,
 }
 
 impl PortfolioWidget {
@@ -106,6 +117,9 @@ impl PortfolioWidget {
             dispatch_in_flight: None,
             dispatch_error: None,
             disagree_draft: None,
+            explain_symbol: None,
+            explain_result: None,
+            explain_error: None,
         }
     }
 
@@ -293,7 +307,28 @@ impl PortfolioWidget {
             .body
             .attribution
             .iter()
-            .map(|row| attribution_row_element(row))
+            .map(|row| {
+                let symbol = row.symbol.clone();
+                h_flex()
+                    .gap_2()
+                    .child(attribution_row_element(row))
+                    // F — inline drill-down: dispatches `research_search` on
+                    // the `companies` MCP server with the row's symbol.
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("explain-{}", row.symbol)))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _event, _window, cx| {
+                                this.on_explain_click(symbol.clone(), cx);
+                            }))
+                            .child(
+                                Label::new("Explain")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Accent),
+                            ),
+                    )
+                    .into_any_element()
+            })
             .collect();
 
         div()
@@ -519,6 +554,54 @@ impl PortfolioWidget {
         }
     }
 
+    /// F — inline drill-down handler. Dispatches `research_search` on the
+    /// `hkask-mcp-companies` server with the row's symbol as the query and
+    /// surfaces the result inline as an explanation panel below the
+    /// attribution section.
+    ///
+    /// Surfaced states (never silent per repo `.rules`):
+    /// - `INVOKER_NOT_WIRED_MSG` when `shared_tool_invoker()` returns `None`.
+    /// - The tool's own error string when dispatch fails.
+    ///
+    /// Last-click-wins: a new click replaces the pending symbol; the prior
+    /// in-flight task's result is dropped on arrival.
+    fn on_explain_click(&mut self, symbol: String, cx: &mut Context<Self>) {
+        let invoker = match shared_tool_invoker() {
+            None => {
+                self.explain_error = Some(INVOKER_NOT_WIRED_MSG.to_string());
+                self.explain_symbol = None;
+                self.explain_result = None;
+                cx.notify();
+                return;
+            }
+            Some(invoker) => invoker,
+        };
+        self.explain_error = None;
+        self.explain_symbol = Some(symbol.clone());
+        self.explain_result = None;
+        let args = serde_json::json!({ "query": symbol });
+        let task = invoker.invoke_tool("hkask-mcp-companies", "research_search", args);
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            this.update(cx, |this, cx| {
+                this.explain_symbol = None;
+                match outcome {
+                    Ok(text) => {
+                        this.explain_result = Some(text);
+                        this.explain_error = None;
+                    }
+                    Err(error) => {
+                        this.explain_error = Some(error);
+                        this.explain_result = None;
+                    }
+                }
+                cx.notify();
+            })
+            .log_err();
+        })
+        .detach();
+    }
+
     /// The "I disagree" affordance handler (C). Composes the provenance-scoped
     /// revision request and injects it back into the active conversation via
     /// the kask `shared_injector()` (D21 widget→agent seam). When no
@@ -670,6 +753,45 @@ impl Render for PortfolioWidget {
             .child(self.render_characteristics(cx))
             // Attribution ranking
             .child(self.render_attribution(cx))
+            // F — inline drill-down status + result panel. Emits nothing
+            // when idle so the widget stays compact; surfaces in-flight,
+            // error, and result states visibly (repo `.rules`).
+            .when_some(self.explain_symbol.clone(), |this, symbol| {
+                this.child(
+                    Label::new(format!("Explaining {symbol} …"))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Accent),
+                )
+            })
+            .when_some(self.explain_error.clone(), |this, error| {
+                this.child(
+                    div()
+                        .p_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(border_color)
+                        .child(
+                            Label::new(error)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Warning),
+                        ),
+                )
+            })
+            .when_some(self.explain_result.clone(), |this, result| {
+                let trimmed = truncate_explain_result(&result);
+                this.child(
+                    div()
+                        .p_2()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(border_color)
+                        .child(
+                            Label::new(trimmed)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
             .when(
                 self.body.returns.is_none()
                     && self.body.characteristics.is_empty()
@@ -709,6 +831,20 @@ fn format_currency(value: f64) -> String {
     } else {
         "—".to_string()
     }
+}
+
+/// Compact the `research_search` result for inline display. The full result
+/// stays in the agent conversation as the durable record; the panel only shows
+/// the first ~500 characters (on a char boundary) so the dashboard stays
+/// compact. A trailing ellipsis marks truncation.
+fn truncate_explain_result(result: &str) -> String {
+    const MAX_CHARS: usize = 500;
+    let trimmed = result.trim();
+    if trimmed.chars().count() <= MAX_CHARS {
+        return trimmed.to_string();
+    }
+    let head: String = trimmed.chars().take(MAX_CHARS).collect();
+    format!("{head}…")
 }
 
 // ── Pure dispatch-planning logic (T5) ──────────────────────────────────
@@ -1161,6 +1297,206 @@ mod tests {
             "no dispatch on non-dispatchable provenance"
         );
     }
+
+    // ── F — inline drill-down ("Explain") tests ──────────────────────────────
+    //
+    // These mutate the process-global `ToolInvoker` (same global as the scrub
+    // tests above), so they take `GLOBAL_TEST_LOCK` and use `InvokerGuard`.
+
+    /// A `MockToolInvoker` variant whose canned result is configurable, so the
+    /// explain-success test can assert the surfaced result text verbatim.
+    struct ExplainMockInvoker {
+        calls: std::sync::Mutex<Vec<(String, String, serde_json::Value)>>,
+        result: std::sync::Mutex<Result<String, String>>,
+    }
+
+    impl hkask_tool_invoker::ToolInvoker for ExplainMockInvoker {
+        fn invoke_tool(
+            &self,
+            server: &str,
+            tool: &str,
+            args: serde_json::Value,
+        ) -> gpui::Task<Result<String, String>> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push((server.to_string(), tool.to_string(), args));
+            let outcome = self
+                .result
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone();
+            gpui::Task::ready(outcome)
+        }
+    }
+
+    /// Build a body carrying a single attribution row with the given symbol so
+    /// the explain chip has a row to click.
+    fn body_with_attribution(symbol: &str) -> PortfolioBlockBody {
+        PortfolioBlockBody {
+            viz: Some("portfolio".into()),
+            portfolio: Some("main".into()),
+            returns: None,
+            characteristics: std::collections::HashMap::new(),
+            attribution: vec![crate::block::AttributionRow {
+                symbol: symbol.to_string(),
+                weight_start_pct: 0.0,
+                weight_end_pct: 0.0,
+                security_return_pct: 0.0,
+                contribution_bps: 0.0,
+                gain_loss: 0.0,
+            }],
+            provenance: BlockProvenance::default(),
+        }
+    }
+
+    #[gpui::test]
+    async fn explain_dispatches_research_search(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = InvokerGuard;
+        let mock = std::sync::Arc::new(ExplainMockInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+            result: std::sync::Mutex::new(Ok("research ok".to_string())),
+        });
+        hkask_tool_invoker::set_tool_invoker(Some(mock.clone()));
+
+        let body = body_with_attribution("AAPL");
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.on_explain_click("AAPL".to_string(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let calls = mock
+            .calls
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert_eq!(calls.len(), 1, "exactly one explain dispatch");
+        assert_eq!(calls[0].0, "hkask-mcp-companies");
+        assert_eq!(calls[0].1, "research_search");
+        assert_eq!(calls[0].2["query"], "AAPL");
+
+        let (symbol, error) = cx.update(|cx| {
+            widget.read_with(cx, |widget, _cx| {
+                (widget.explain_symbol.clone(), widget.explain_error.clone())
+            })
+        });
+        assert!(symbol.is_none(), "explain_symbol cleared after completion");
+        assert!(error.is_none(), "no error on success");
+    }
+
+    #[gpui::test]
+    async fn explain_surfaces_error_when_no_invoker(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = InvokerGuard;
+        hkask_tool_invoker::set_tool_invoker(None);
+
+        let body = body_with_attribution("AAPL");
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.on_explain_click("AAPL".to_string(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let (error, symbol, result) = cx.update(|cx| {
+            widget.read_with(cx, |widget, _cx| {
+                (
+                    widget.explain_error.clone(),
+                    widget.explain_symbol.clone(),
+                    widget.explain_result.clone(),
+                )
+            })
+        });
+        assert_eq!(error.as_deref(), Some(INVOKER_NOT_WIRED_MSG));
+        assert!(symbol.is_none(), "no symbol recorded without an invoker");
+        assert!(result.is_none(), "no result without an invoker");
+    }
+
+    #[gpui::test]
+    async fn explain_surfaces_result_on_success(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = InvokerGuard;
+        let canned = "AAPL is a technology company headquartered in Cupertino.";
+        let mock = std::sync::Arc::new(ExplainMockInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+            result: std::sync::Mutex::new(Ok(canned.to_string())),
+        });
+        hkask_tool_invoker::set_tool_invoker(Some(mock));
+
+        let body = body_with_attribution("AAPL");
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.on_explain_click("AAPL".to_string(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let (result, error, symbol) = cx.update(|cx| {
+            widget.read_with(cx, |widget, _cx| {
+                (
+                    widget.explain_result.clone(),
+                    widget.explain_error.clone(),
+                    widget.explain_symbol.clone(),
+                )
+            })
+        });
+        assert_eq!(result.as_deref(), Some(canned), "research text surfaced");
+        assert!(error.is_none(), "no error on success");
+        assert!(symbol.is_none(), "symbol cleared after completion");
+    }
+
+    #[gpui::test]
+    async fn explain_surfaces_error_on_tool_failure(cx: &mut gpui::TestAppContext) {
+        // grill-me edge case (b): dispatch fails → explain_error is visible.
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = InvokerGuard;
+        let mock = std::sync::Arc::new(ExplainMockInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+            result: std::sync::Mutex::new(Err("research_search unavailable".to_string())),
+        });
+        hkask_tool_invoker::set_tool_invoker(Some(mock));
+
+        let body = body_with_attribution("MSFT");
+        let widget = cx.update(|cx| cx.new(|cx| PortfolioWidget::new(body, cx)));
+        cx.update(|cx| {
+            widget.update(cx, |widget, cx| {
+                widget.on_explain_click("MSFT".to_string(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let (error, result, symbol) = cx.update(|cx| {
+            widget.read_with(cx, |widget, _cx| {
+                (
+                    widget.explain_error.clone(),
+                    widget.explain_result.clone(),
+                    widget.explain_symbol.clone(),
+                )
+            })
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("research_search unavailable"),
+            "tool error surfaced visibly"
+        );
+        assert!(result.is_none(), "no result on failure");
+        assert!(symbol.is_none(), "symbol cleared after failure");
+    }
+
     // ── "I disagree" affordance tests (C, D21 widget→agent seam) ──────────────
     //
     // These mutate the process-global `ConversationInjector` (a separate global

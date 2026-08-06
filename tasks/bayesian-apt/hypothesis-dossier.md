@@ -7,6 +7,15 @@ rdf:type: bibo:Document
 
 # Design Hypothesis Dossier
 
+**v2 amendment (2026-08-05, user corrections):**
+1. **CMP prerequisite**: every test below that consumes contract probabilities now runs on
+   **constant-maturity prediction (CMP) index** inputs, not raw decaying contracts. The time
+   axis is controlled before any test runs (see cmp-foundation.md).
+2. **Equity-pricing discipline**: equities are priced on fundamental forecast models
+   (DCF/RIM, MAIA). No CAPM, no factor betas, no equity-return regressions anywhere in this
+   dossier. The arbitrage-pricing apparatus applies to the **contracts** (decomposition,
+   bridging, price coherence), never to modeling stock returns. H3 is reframed accordingly.
+
 Each hypothesis: FINER gate → PICO structure → H₁/H₀ → multiple working hypotheses →
 minimal counterfactual → discriminating test(s) → evidential status.
 Status vocabulary (falsifiability discipline): **corroborated** (withstood a test that could
@@ -67,12 +76,17 @@ Interesting 8, Novel 8 (equity duration literature is thin and model-sensitive; 
 contract ladders is new), Ethical 9, Relevant 8. Weakest: Feasibility — implied equity duration
 is estimation-sensitive (F2, FRAGILE).
 
-**PICO**: Population = equities with full DCF inputs in `hkask-mcp-companies` + linked contract
-ladders; Intervention = computing an equity-duration measure (Dechow–Sloan–Soliman implied
-duration and/or Leibowitz franchise-value decomposition) and duration-matching contract
-selection; Comparison = naive horizon-matching (contract deadline nearest to forecast horizon);
-Outcome = stability of risk/return mappings (variance of implied risk premia across horizon
-pairs) and forecast gap decomposition error.
+**PICO**: Population = equities with full DCF inputs in `hkask-mcp-companies` + the CMP
+indices over base-event families; Intervention = computing an equity-duration measure
+(Dechow–Sloan–Soliman implied duration and/or Leibowitz franchise-value decomposition) and
+duration-matching against the **constant** CMP tenors (1m/3m/6m); Comparison = matching
+against raw decaying contract maturities (the uncontrolled baseline); Outcome = stability of
+risk/return mappings (variance of implied risk premia across horizon pairs) and forecast gap
+decomposition error.
+
+**v2 note**: the comparison is now equity duration vs *constant* contract maturity — the
+maturity-transformation gap is a controlled quantity only because CMP fixes the tenor. The
+v1 comparison (equity duration vs decaying snapshots) was unmeasurable in principle.
 
 **H₁**: Duration-matched contract selection produces more stable implied risk premia across
 horizons than deadline-nearest matching.
@@ -97,51 +111,60 @@ mappings are statistically indistinguishable, the duration model is cut (essenti
 
 ---
 
-## H3 — Scenario event trees yield APT-relevant factor exposures (the scenario graph is a factor model)
+## H3 — Scenario-tree-implied pricing is coherent with contract prices (contract-price coherence)
 
-**FINER**: Feasible 6 (requires new composition machinery — the largest build), Interesting 9,
-Novel 9 (no located literature maps prediction-market event trees to APT factors), Ethical 9,
-Relevant 9. Weakest: Feasibility — this is the research core.
+**v2 reframe (user correction)**: the v1 framing ("scenario graph is an equity factor model,
+tested by equity-return regressions") is **withdrawn** — it priced equities off betas, which
+is not how MAIA works and not what the research is for. The arbitrage-pricing apparatus
+applies to the **contracts**: decomposing and bridging their prices and analyzing their
+coherence. Equities stay on fundamental forecast models.
 
-**PICO**: Population = companies × scenario trees built from linked contracts; Intervention =
-treating tree nodes as factors and company cash-flow sensitivities to node outcomes as factor
-loadings; Comparison = statistical factors (AMF, arXiv:1804.08472) and FF5; Outcome = (i)
-cross-sectional pricing: does the scenario factor model price test assets (linear relation
-between expected return and scenario-factor covariances, per sr216); (ii) time-invariance of
-loadings (per arXiv:2011.04171).
+**FINER**: Feasible 8 (composition machinery exists; coherence is measurable with
+`market_ladder` + tree joints, no equity-return data), Interesting 9, Novel 8, Ethical 9,
+Relevant 9.
 
-**H₁**: Scenario-graph factor loadings satisfy the APT linear pricing relation cross-sectionally
-with pricing errors comparable to statistical factor models.
-**H₀**: Scenario-graph loadings show no linear pricing relation beyond statistical-factor benchmarks.
+**PICO**: Population = CMP-controlled scenario trees over base-event families + the contract
+ladders that price them; Intervention = composing tree-implied joint probabilities from CMP
+inputs and comparing them to observed contract prices (including parlay/joint contracts where
+listed); Comparison = raw (non-CMP) contract snapshots and single-contract prices;
+Outcome = the coherence gap (tree-implied joint vs market joint price) relative to a
+transaction-cost band.
+
+**H₁**: Tree-implied joint probabilities from CMP-controlled composition are coherent with
+observed contract prices within transaction costs; divergences beyond the band are the
+analyzable arbitrage signal.
+**H₀**: Tree-implied joints diverge from market joint prices beyond transaction costs
+systematically (the composition adds no pricing coherence), OR raw snapshots are as coherent
+as CMP-controlled trees (CMP adds nothing).
 
 **Multiple working hypotheses**:
-- H3a (structural factors): event nodes are *causal* factors — they name the mechanism, unlike statistical factors. Falsifier: scenario factors price no better than a equal-numbered set of principal components.
-- H3b (static-portfolio trap): sr216's warrant covers static portfolios only (C2); scenario trees are inherently dynamic (probabilities update), so APT's linear relation need not hold. Falsifier: pricing errors remain small under probability updates without re-estimating loadings.
-- H3c (spanning): scenario factors are spanned by traded factors — they add interpretation, not pricing power. Falsifier: scenario factors retain significant pricing error reduction after projecting onto FF5/AMF span.
-- H3d (joint-contract bridge): parlay/joint AMMs (C19) already price tree branches; the scenario graph is redundant with market-priced joints. Falsifier: tree-implied joint probabilities deviate from parlay-market prices beyond transaction costs.
+- H3a (coherence holds): the tree is the market's own joint structure made explicit;
+  divergences are transient and within costs. Falsifier: systematic divergence beyond the
+  cost band.
+- H3b (CMP is the active ingredient): coherence holds only on maturity-controlled inputs;
+  raw snapshots diverge because the time axis is uncontrolled. Falsifier: raw snapshots are
+  as coherent as CMP trees.
+- H3c (parlay markets already price joints — C19): joint contracts make the tree redundant
+  as a pricing device; the tree's value is interpretive, not pricing. Falsifier: tree-implied
+  joints deviate from parlay prices beyond costs in the parlay market's favor.
+- H3d (venue fragmentation dominates — C18): cross-venue price deviations swamp any
+  tree-level coherence. Falsifier: single-venue coherence is tight while cross-venue
+  diverges — then coherence is per-venue only.
 
-**Minimal counterfactual**: do(no scenario graph — regress returns on raw contract price changes
-directly). If raw contract factors price as well as tree-composed factors, the composition
-algebra is cut.
-
-**Loading construction note** (phase2-review B2): loadings are cash-flow sensitivities
-elicited via `branch_return` revaluation, not covariances with branch indicators —
-indicators over mutually exclusive branches are collinear and mechanically determined by
-branch probabilities.
-
-**Numeric falsifier threshold** (adopted, flagged): stage-2 out-of-sample ΔR² < 0.005 on
-FF5/AMF residuals refutes H3. *Hypothesis-tier design parameter; re-derive at T8a.*
+**Minimal counterfactual**: do(no composition — read each contract's price as an independent
+probability). If independent prices are as coherent with joints as the tree's composed
+probabilities, the composition algebra is cut (essentialist G1).
 
 **Discriminating tests**:
 | Test | H3a | H3b | H3c | H3d |
 |---|---|---|---|---|
-| T1: Cross-sectional GRS-style pricing test vs FF5/AMF | corroborates | neutral | falsifies | neutral |
-| T2: Loading stability under probability updates | neutral | falsifies | neutral | neutral |
-| T3: Spanning regression onto traded factors | neutral | neutral | falsifies | neutral |
-| T4: Tree joints vs parlay-market prices | neutral | neutral | neutral | falsifies |
+| T1: Tree-implied joint vs market joint price, cost-banded | corroborates | neutral | falsifies | neutral |
+| T2: Coherence of CMP trees vs raw-snapshot trees | neutral | falsifies | neutral | neutral |
+| T3: Tree joints vs parlay-market prices | neutral | neutral | falsifies | neutral |
+| T4: Single-venue vs cross-venue coherence | neutral | neutral | neutral | falsifies |
 
-**Status: open.** Depends on the composition algebra (Workstream 3) — highest-risk, schedule
-fail-fast prototype early.
+**Status: open.** Blocked on CMP (Phase 0) — the coherence test needs the stable probability
+series CMP provides; running it on decaying snapshots would confound time and probability.
 
 ---
 

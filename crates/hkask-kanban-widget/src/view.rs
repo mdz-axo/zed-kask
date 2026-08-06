@@ -223,6 +223,19 @@ impl KanbanWidget {
                                 this.cancel_move(cx);
                             })),
                     )
+                    .child(
+                        div()
+                            .id("kanban-evaluate-move")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, window, cx| {
+                                this.evaluate_move(window, cx);
+                            }))
+                            .child(
+                                Label::new("Evaluate")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Accent),
+                            ),
+                    )
                     .into_any_element(),
             );
         }
@@ -560,8 +573,27 @@ impl KanbanWidget {
     /// instead of a silent no-op (repo `.rules`). Never auto-sends when the
     /// injector is absent — the production injector only pre-fills the
     /// composer; the user reviews and submits.
+    /// The "I disagree" affordance handler (C). Composes the provenance-scoped
+    /// revision request and injects it back into the active conversation via
+    /// the kask `shared_injector()` (D21 widget→agent seam). When no
+    /// conversation is active, surfaces the composed body as a copyable draft
+    /// instead of a silent no-op (repo `.rules`). Never auto-sends when the
+    /// injector is absent — the production injector only pre-fills the
+    /// composer; the user reviews and submits.
     fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let body = self.compose_disagree_body();
+        self.compose_back(body, window, cx);
+    }
+
+    /// Shared compose-back seam (D21 widget→agent) for both the "I disagree"
+    /// affordance (C) and the "Evaluate" affordance (D — ghost edits). Emits
+    /// the `reg.widget.disagree` span, injects `body` into the active
+    /// conversation via `shared_injector()`, and on a no-injector or inject-error
+    /// path surfaces `body` as a copyable `disagree_draft` (visible, not a
+    /// silent no-op — repo `.rules`). Never auto-sends when the injector is
+    /// absent — the production injector only pre-fills the composer; the user
+    /// reviews and submits.
+    fn compose_back(&mut self, body: String, window: &mut Window, cx: &mut Context<Self>) {
         tracing::info!(target: "reg.widget.disagree", "REG");
         if let Some(injector) = hkask_conversation_injector::shared_injector() {
             // The production injector pre-fills the editor synchronously and
@@ -595,6 +627,34 @@ impl KanbanWidget {
             self.disagree_draft = Some(body);
         }
         cx.notify();
+    }
+
+    /// Composes the evaluation request body for the ghost-edit affordance (D):
+    /// asks the agent to advise whether a staged move is safe — checking the
+    /// blocker DAG, dependencies, and task constraints — without executing it.
+    fn compose_evaluate_body(&self, pending: &PendingMove) -> String {
+        format!(
+            "Evaluate this proposed move: should task '{}' move from {} to {}?\n\
+             Check the blocker DAG, dependencies, and task constraints.\n\
+             Don't execute — just advise whether this move is safe and consistent.\n\n\
+             My reasoning: ",
+            pending.task_title, pending.from_label, pending.to_label
+        )
+    }
+
+    /// The "Evaluate" affordance handler (D — ghost edits). Composes an
+    /// evaluation request back to the agent via D21 compose-back: the agent
+    /// advises whether the staged move is safe without executing it, after
+    /// which the user re-stages and confirms or cancels. Clears the pending
+    /// move so the user can't double-evaluate; they re-stage if they want to
+    /// actually execute after the agent's evaluation comes back.
+    fn evaluate_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending_move.clone() {
+            let body = self.compose_evaluate_body(&pending);
+            self.compose_back(body, window, cx);
+            self.pending_move = None;
+            cx.notify();
+        }
     }
 }
 
@@ -1433,6 +1493,149 @@ mod tests {
         assert!(
             !body.contains("''"),
             "no empty-quoted board name in the fallback framing"
+        );
+    }
+
+    // ── "Evaluate" ghost-edit affordance (D, D21) ──────────────────────────
+    //
+    // The Evaluate button (in the PendingMove confirm banner) composes an
+    // evaluation request back to the agent via the same `compose_back` seam as
+    // the disagree affordance (C), then clears the pending move so the user
+    // re-stages after the agent's advice comes back. Shares
+    // `MockConversationInjector` / `ConversationInjectorGuard` / `DummyView`
+    // with the disagree tests above.
+
+    #[gpui::test]
+    async fn evaluate_move_composes_evaluation_request(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        let mock = std::sync::Arc::new(MockConversationInjector::default());
+        hkask_conversation_injector::set_active_injector(Some(mock.clone()));
+
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update_in(cx, |this, window, cx| {
+            this.evaluate_move(window, cx);
+        });
+        cx.run_until_parked();
+
+        let bodies = mock
+            .bodies
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert_eq!(bodies.len(), 1, "exactly one inject");
+        assert!(
+            bodies[0].contains("Evaluate this proposed move"),
+            "body carries the evaluation framing"
+        );
+        assert!(
+            bodies[0].contains("Write tests"),
+            "body references the task title"
+        );
+        assert!(
+            bodies[0].contains("Backlog"),
+            "body references the from label"
+        );
+        assert!(bodies[0].contains("Ready"), "body references the to label");
+
+        // evaluate_move clears the pending move (no double-evaluate).
+        let pending_is_none = widget.read_with(cx, |this, _cx| this.pending_move.is_none());
+        assert!(pending_is_none, "evaluate_move clears the pending move");
+    }
+
+    #[gpui::test]
+    async fn evaluate_move_noop_when_no_pending(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        let mock = std::sync::Arc::new(MockConversationInjector::default());
+        hkask_conversation_injector::set_active_injector(Some(mock.clone()));
+
+        let body = kanban_body(Vec::new());
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+        // No stage_move: pending_move is None.
+        widget.update_in(cx, |this, window, cx| {
+            this.evaluate_move(window, cx);
+        });
+        cx.run_until_parked();
+
+        let bodies = mock
+            .bodies
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert!(
+            bodies.is_empty(),
+            "no inject when no pending move is staged"
+        );
+        let draft = widget.read_with(cx, |this, _cx| this.disagree_draft.clone());
+        assert!(
+            draft.is_none(),
+            "disagree_draft unchanged when no pending move"
+        );
+        let pending_is_none = widget.read_with(cx, |this, _cx| this.pending_move.is_none());
+        assert!(pending_is_none, "pending_move remains None");
+    }
+
+    #[gpui::test]
+    async fn evaluate_move_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+        hkask_conversation_injector::set_active_injector(None);
+
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
+        let widget = cx.update(|_window, cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update_in(cx, |this, window, cx| {
+            this.evaluate_move(window, cx);
+        });
+        cx.run_until_parked();
+
+        // No injector: the evaluation body is surfaced as a copyable draft
+        // (visible, not a silent no-op — repo `.rules`), and the pending move
+        // is still cleared.
+        let draft = widget.read_with(cx, |this, _cx| this.disagree_draft.clone());
+        let draft = draft.expect("draft surfaced when no injector is active");
+        assert!(
+            draft.contains("Evaluate"),
+            "draft carries the evaluation framing"
+        );
+        assert!(
+            draft.contains("Write tests"),
+            "draft carries the task title"
+        );
+        let pending_is_none = widget.read_with(cx, |this, _cx| this.pending_move.is_none());
+        assert!(
+            pending_is_none,
+            "evaluate_move clears pending even with no injector"
         );
     }
 }

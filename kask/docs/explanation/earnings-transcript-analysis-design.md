@@ -154,9 +154,13 @@ earnings_transcript(symbol, year?, quarter?, quarters_back=1, mode=fetch|segment
   UNVERIFIED, segmentation must ship with a fixture-driven test over one real FMP
   `content` blob, and must degrade to a single `full_text` segment when no conventions
   match — never fabricate speaker labels.
-- Storage: transcripts cached via `corpus_cache`; analysis outputs attached to the
-  company via existing `note_add`/`file_attach` portfolio tools. *Depends on A5 (those
-  tools already exist — no new storage surface).*
+- Storage/RAG: transcripts flow through the **corpus server pipeline** (see §(b)′
+  corpus anchoring below), not a bespoke store: `corpus_chunk` → `corpus_tag_chunks`
+  (FIBO/PKO ontology anchors) → `corpus_embed` → `corpus_extract_triples` (h_mem
+  knowledge graph) → centroid grouping → `corpus_query` RAG for the listening
+  template. *Depends on A5 (all five tools verified present with the needed
+  contracts: raw-text chunking with entity_ref_prefix, ontology tagging, triple
+  extraction into the memory DB, RAG query).*
 - Errors: per-quarter fetch failures are collected into `coverage.missing`, not
   propagated as whole-tool failure; the tool fails only when zero quarters succeed.
   Idiomatic-Rust note (verdict c includes a Rust tool, so this applies): request type

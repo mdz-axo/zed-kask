@@ -1,43 +1,29 @@
-# Todo — Bayesian APT Foundation
+# Todo — Bayesian APT Foundation (v2, CMP-first)
 
-## Phase 1 — Foundation (Q1)
-- [x] **T0** Keystone: belief-hierarchy ↔ `EventDependency` mapping — **HOLDS APPROXIMATELY** (t0-keystone-mapping.md); T4/T8 unblocked under the approximate license
-- [ ] **T1** Citation store in research server (R2/R3)
-  - [ ] blake3-pinned store + stable citation IDs
-  - [ ] `web_extract` carries citation IDs + claim spans
-  - [ ] `scenario_research` accepts citation IDs
-- [x] **T2** First-class contract maturity (P2) — found already landed (`time_to_maturity` + `market_ladder`); verified in source, no work needed
-- [x] **T3** Multi-group CPT fix (S1) — found already landed (noisy-OR multi-group combination, superforecast.rs L64–109); verified in source
-- [x] **T6** Equity duration tool (C3) — `equity_duration_years` on `EpValuation` (economic_profit.rs); Macaulay over the EP stream; 3 new tests pass (ordering, None-for-destroyer, hand-check)
-  - [ ] DCF-stream cross-check variant (deferred to Phase 2 — EP stream is primary per the review)
-  - [ ] H2/T1 duration distribution dataset (needs coverage-universe run)
-- [ ] **CP1** tests pass; duration face-validity review
+## Phase 0 — CMP foundation (the base layer)
+- [ ] **C0.1** Base-event registry (oil, gas, bitcoin, ethereum, inflation, rates) — verify continuous availability on both venues via `market_ladder`
+- [ ] **C0.2** Semantic eligibility mapping (FIBO subject + orientation + magnitude band) on the ontology block
+- [ ] **C0.3** Weight solver + roll rules in `hkask-forecast` (maturity ±0.5d + magnitude, least-deviation, withhold when no bracket)
+- [ ] **C0.4** 1m/3m/6m CMP indices per (family, orientation), per-venue; publish probability + weights + maturity error + reliability floor
+- [ ] **CP-CMP** rates family produces continuous 1m/3m/6m series on both venues; ≥90% of days within tolerance; eligibility classifications human-reviewed
 
-## Phase 2 — Core (Q2–Q3)
-- [x] **T4a** Markets→tree composition algebra (`scenario_from_markets_set`) — landed 2026-08-05
-  - [x] N markets → validated EventTree; per-record bridge gates preserved; tree-time validation
-  - [x] Dependency edges caller-authored (never-fabricate at the composition layer); overlap duplicates flagged via matcher.rs Jaccard
-  - [x] CPT-size cap (4 parents/group) + cycle/unknown-parent/duplicate-id rejection
-  - [x] 8 composition tests + 2 schema-compliance tests pass; full crate suite green
-  - [ ] Per-branch `branches: Vec<Branch>` extension (deferred — see note below)
-- [ ] **T4b** Tree-time challenge gates w/ provenance classes
-- [x] **T5** Tree-level Bayesian propagation + journal — landed 2026-08-05
-  - [x] `propagate_prior_update` + `scenario_propagate` tool; descendants + joint recomputed
-  - [x] Propagation journal (per-node before/after deltas) — the tâtonnement record
-  - [x] 4 propagation tests + schema test pass
-- [x] **T6b** DCF-stream equity duration wired — `equity_duration` tool in companies (was dead code from 76bdf3e74b; now exposed with schema test)
-- [x] **T7** Tree-weighted valuation path in companies — landed 2026-08-05, ADDITIVE per maturity ladder
-  - [x] 2×2 mode unchanged (default; regression via existing 176-test suite)
-  - [x] `event_tree` opt-in on `scenario_analysis`: quadrant probabilities from tree root marginals → expected intrinsic
-  - [x] `weighting_mode: "schwartz_2x2" | "event_tree"` label on output; graceful fallback + warning on malformed/non-2-root trees
-  - [x] 5 new tests (root extraction, non-2-root rejection, out-of-range rejection, expected-intrinsic hand-check 140.4, mode serialization); clippy clean
-- [ ] **CP2** vertical slice: markets→tree→propagation→tree-weighted DCF
-- [ ] **T8a** Factor-mapping prototype (5 companies) — **kill gate on H3**
-  - [ ] Loadings via `branch_return` revaluation (not branch-indicator covariances)
-  - [ ] Hand-checks: binary tree σ≈0.176; single-branch loading = 1.0
-- [ ] **T8b** `scenario_factor_exposures` platform surface
+## Phase 1 — Re-point machinery at CMP inputs
+- [ ] **R1** Composition over CMP (T4a re-pointed; provenance = index, not decaying contract)
+- [ ] **R2** Duration matching vs constant maturity (H2 made testable)
+- [ ] **R3** Tree-weighted valuation over CMP (T7 re-pointed)
 
-## Phase 3 — Integration & validation (Q4)
-- [ ] **T9** Falsification suite H1–H5 executed; falsification log committed
-- [ ] **T10** Refresh/tâtonnement journal + equilibrium-drift metrics
-- [ ] **CP3** go/no-go on productionizing T8b
+## Phase 2 — Risk and coherence (CMP-controlled)
+- [ ] **R4** σ_scenario over CMP-driven branches (T8a re-pointed)
+- [ ] **R5** Contract-price coherence test (H3 reframed — tree-implied joints vs market joint prices; NO equity-return betas)
+
+## Phase 3 — Falsification & validation (all on CMP inputs)
+- [ ] **R6** Falsification suite H1–H5 (H3 reframed); falsification log committed
+
+## Completed machinery (v1, retained, awaiting CMP inputs)
+- [x] T0 keystone (approximate license)
+- [x] T1 citations / T2 maturity+ladder / T3 multi-group CPTs / T6 equity duration (EP+DCF)
+- [x] T4a composition / T5 propagation / T7 tree-weighted valuation / T8a risk-core functions
+
+## Removed (v1 drift)
+- ~~Equity-return beta regressions, FF stage-1/stage-2 tests, stock factor loadings~~
+- ~~T8b gated on equity-return pricing test~~ → replaced by R5 contract-price coherence

@@ -1,205 +1,140 @@
 ---
-dcterms:title: "Research Plan — Bayesian Arbitrage Pricing via Composable Prediction-Market Scenarios"
+dcterms:title: "Research Plan — Bayesian Arbitrage Pricing via Composable Prediction-Market Scenarios (v2, CMP-first)"
 dcterms:creator: "zed-kask research architect agent"
 dcterms:date: "2026-08-05"
 rdf:type: bibo:Document
-pko:procedure: "8-workstream foundation build, ~1 senior-researcher-year"
+pko:procedure: "CMP foundation → composition → risk core → integration, ~1 senior-researcher-year"
 ---
 
-# Research Plan
+# Research Plan (v2 — CMP-first)
 
-Scope: ~1 year senior researcher effort. Phases: Foundation (Q1) → Core (Q2–Q3) →
-Integration & Validation (Q4). High-risk slices scheduled early (fail fast).
-Essentialist enforcement: ≤7 top-level workstream blocks — the 8 user-named workstreams
-are preserved but WS6 (MCP examination) is **already executed** (mcp-gap-report.md) and
-folds into WS7; the plan therefore runs 7 live blocks.
+**What changed and why**: v1 skipped the foundation. It built composition, propagation,
+tree-weighted valuation, and a risk core directly on raw prediction-market contracts —
+instruments with decaying, mismatched maturities. That made the outputs uninformative
+(square peg, round hole). v2 inserts the missing base layer: **Constant-Maturity
+Prediction (CMP) indices** — rolling synthetic portfolios of contracts, normalized to
+fixed maturity and fixed orientation/magnitude of change, so the time axis is taken
+out of the equation before anything downstream consumes a probability.
+
+**Equity pricing discipline (user correction)**: equities are priced on **fundamental
+forecast models** (DCF/RIM, MAIA). No CAPM, no factor betas, no equity-return
+regressions. The arbitrage-pricing apparatus applies to the **contracts** — decomposing
+and bridging their prices and analyzing their coherence — never to modeling stock
+returns.
 
 ## Dependency graph (bottom-up)
 
 ```
-T0 keystone mapping verification (3-outcome gate) ──gates──> T4, T8
-T1 citations (R2/R3) ──────────────────────────────┐
-T2 time_to_maturity (P2) ──────────────────────────┤
-T3 CPT multi-group fix (S1) ──> T4 composition algebra (S4) ──> T5 tree propagation (S3)
-T6 equity duration (C3, RIM/EP-based) ──> H2 tests ┤
-T7 tree-weighted valuation (C2) <──────────────────┤
-T8 factor mapping + pricing harness (S7/C4) <──────┴── (highest risk)
-T9 H1–H5 falsification suite (runs against T1–T8 outputs)
-T10 refresh/tâtonnement journal (closes stale-anchor loop)
+C0 CMP foundation (base events, eligibility, weight solver, roll rules)
+   ├─> C1 semantic eligibility mapping (FIBO/DC subject + orientation + magnitude)
+   └─> C2 1m/3m/6m indices for the six base families
+T2 time_to_maturity + market_ladder (done) ──feeds──> C0
+T6 equity duration (done) ──compares against──> C2 (constant maturity, not snapshots)
+T4a composition (done, machinery) ──re-pointed at──> C2 outputs
+T5 propagation (done, machinery) ──re-pointed at──> C2 outputs
+T7 tree-weighted valuation (done, machinery) ──re-pointed at──> C2 outputs
+T8a risk core (done, machinery) ──re-pointed at──> C2 outputs
+H-tests run only on CMP-controlled inputs
 ```
 
-## Phase 1 — Foundation (Q1)
+## Phase 0 — CMP foundation (the new base layer; see cmp-foundation.md)
 
-**Checkpoint CP0 (entry):** MCP gap report + territory map reviewed by human. ✅ (this package)
+### C0.1 — Base-event registry — S
+- Define the six initial base-event families (oil, gas, bitcoin, ethereum, inflation,
+  interest rates) with their systematic-factor rationale.
+- AC: a typed registry (family → subject factor, venue availability, typical ladder
+  shape); each family verified to have continuously-available contracts on both
+  Kalshi and Polymarket (checked via `market_ladder`, not assumed).
+- Deps: T2 (done).
 
-### T0 — Keystone: verify belief-hierarchy ↔ `EventDependency` mapping — S (gates T4/T8)
-- Slice: theory/mapping-verification (adopted from the parallel plan's Task 1.3; see
-  phase2-review.md)
-- Using the already-extracted theorems (territory-map C5–C7), produce a written mapping
-  between Bhattacharya's belief-hierarchy recursion (infinite, interactive, over others'
-  *strategies*) and the CPT algebra (finite, parent-independent, over *states of nature*).
-- AC: three-outcome gate — (i) holds exactly → proceed; (ii) holds approximately → derive
-  the depth-k truncation bound, document the approximate license, proceed; (iii) fails →
-  STOP, no WS3/WS4 build until an independent anchor exists. Expected outcome per C6:
-  (ii), with the state-hierarchy vs strategy-hierarchy distinction made precise.
-- Verification: mapping document reviewed against ar5iv full text; result written back
-  into territory-map C5–C7 (confidence updated).
-- Deps: none (extraction already complete). Files: tasks/bayesian-apt/, no code.
+### C0.2 — Semantic eligibility mapping — M
+- FIBO subject mapping for the six families + orientation (increase/decrease) +
+  magnitude-band extraction from contract text, layered on the existing
+  PKO/Dublin-Core ontology block.
+- AC: given a `MarketRecord`, a deterministic classifier returns
+  (family, orientation, magnitude) or "not a base-event contract"; precision checked
+  on a hand-labeled sample of real contracts per family.
+- Deps: C0.1.
 
-### T1 — Citation store in research server (R2/R3) — M
-- Slice: research/citation-pinning
-- AC: (i) blake3-pinned content store with stable citation IDs; (ii) `web_extract` responses
-  carry citation IDs + claim-level spans; (iii) scenarios `scenario_research` accepts citation
-  IDs in lieu of pasted text; (iv) `ScenarioEvent.basis` warn-and-label gate: basis must be a
-  citation ID or explicitly labeled `hypothesis` (warn, not reject — consistent with the
-  platform's withhold-never-reject refusal-gate semantics, phase2-review.md B4).
-- Verification: integration test — extract → cite → build event → trace event provenance to hash.
-- Deps: none. Files: hkask-mcp-research/{db.rs,types,tools}, hkask-mcp-scenarios bridge.
+### C0.3 — Weight solver + roll rules — M
+- The two-constraint weighting: weights w_i ≥ 0, Σw_i = 1, matching weighted-average
+  maturity to target ± 0.5 days (default) AND weighted-average magnitude to target
+  within tolerance; least-deviation when over-identified; ties broken by
+  liquidity/reliability tier. Smooth roll rule (no cliff-edge probability jumps).
+- AC: pure functions in `hkask-forecast`; hand-check on a 2-contract bracket (exact
+  solution); property tests (weights in [0,1], maturity error ≤ tolerance when a
+  bracket exists); withhold (never fabricate) when no bracket spans the target.
+- Deps: C0.2.
 
-### T2 — First-class contract maturity (P2) — S
-- Slice: prediction-markets/maturity
-- AC: (i) `time_to_maturity: f64` on `MarketRecord`; (ii) ladder endpoint returning a series'
-  contract chain with duration profile; (iii) volatility flags consume the new field.
-- Verification: unit tests + schema test (`find_boolean_schema_positions` per .rules).
-- Deps: none. Files: hkask-mcp-prediction-markets/{types.rs,provider_*,tools}.
+### C0.4 — CMP index construction — M
+- 1-month, 3-month, 6-month forward CMP indices per (family, orientation) for the six
+  families; per-venue (Kalshi-CMP, Polymarket-CMP) to respect the law-of-one-price
+  failure (arXiv:2601.01706).
+- AC: each index publishes daily index probability, constituent weights/maturities,
+  maturity-matching error, reliability floor; degraded/sparse ladders are withheld,
+  not fabricated.
+- Deps: C0.3.
 
-### T3 — Multi-group CPT fix (S1) — S
-- Slice: scenarios/cpt-generalization
-- AC: `compute_marginal_probabilities` consumes all `depends_on` groups; validation covers
-  multi-group CPTs; existing single-group behavior unchanged (regression test).
-- Deps: none. Files: hkask-mcp-scenarios/superforecast.rs, hkask-forecast.
+**Checkpoint CP-CMP**: at least one family (interest rates) produces a continuous
+1m/3m/6m CMP series on both venues for a trailing window; maturity error within
+tolerance on ≥ 90% of days; human reviews the eligibility classifications.
 
-### T6 — Equity duration tool (C3) — S
-- Slice: companies/equity-duration
-- AC: `equity_duration` tool computing D_e as a Macaulay-style weighted average over the
-  RIM/EP stream (`EpPeriod.present_value` per year, `economic_profit.rs` L195–269 —
-  primary, per the parallel plan's Task 2.1) **and** over the DCF stream (cross-check);
-  sensitivity report across ROIC-persistence and fade assumptions; `FadeHorizon` retained
-  as input seeding the schedule.
-- Verification: unit test wide-moat (20y fade) duration > no-moat (5y fade); golden-file
-  tests on 3 reference firms; H2/T1 dataset emitted.
-- Deps: none. Files: hkask-mcp-companies/{economic_profit.rs,valuation.rs,financial_model.rs}.
+## Phase 1 — Re-point the machinery at CMP inputs
 
-**Checkpoint CP1:** all tests pass; H2/T1 (duration distribution) computed on coverage
-universe; human reviews duration estimates for face validity.
+### R1 — Composition over CMP (T4a re-pointed) — S
+- `scenario_from_markets_set` accepts CMP index probabilities as event priors in
+  place of raw contract probabilities. AC: same tree, CMP inputs; provenance records
+  the index (family, orientation, target maturity), not a decaying contract.
 
-## Phase 2 — Core (Q2–Q3)
+### R2 — Duration matching vs constant maturity (H2 made testable) — S
+- Compare equity duration (T6) against the *fixed* CMP tenors (1m/3m/6m), not
+  decaying snapshots. AC: H2/T1 dataset recomputed on CMP tenors; the maturity
+  transformation gap is now a controlled quantity.
 
-### Design constraint: the analyst maturity ladder (user directive, 2026-08-05)
+### R3 — Tree-weighted valuation over CMP (T7 re-pointed) — S
+- The tree-weighted `scenario_analysis` path consumes CMP-driven trees. AC:
+  `weighting_mode: "event_tree"` outputs cite CMP provenance.
 
-The simple 2×2 scenario mode is a **first-class citizen, permanently retained** — not a
-legacy path to be replaced by the tree machinery. The two modes serve different points on
-the analyst's research maturity:
+## Phase 2 — Risk and coherence (CMP-controlled)
 
-1. **Simple mode (entry)**: companies `scenario_analysis` (Schwartz 2×2, growth × margin)
-   → `scenario_from_companies` → single-market `scenario_from_markets`. Fast, low-data,
-   appropriate when the analyst does not yet know which events condition each other.
-2. **Detailed mode (earned)**: `scenario_from_markets_set` → `scenario_propagate` →
-   tree-weighted valuation (T7) → factor loadings (T8). Requires the analyst to have
-   done the research — company, industry, economy, technology, management, domain
-   experts — to know the tree's structure. **You don't start out knowing the full tree
-   of events; you work up to it.**
+### R4 — σ_scenario over CMP-driven branches (T8a re-pointed) — S
+- `scenario_risk_measure` / `fuse_volatility` consume CMP-controlled branch
+  probabilities. AC: risk measures carry CMP provenance; no raw-contract inputs.
 
-Consequences:
-- T7 must **add** a tree-weighted path alongside the 2×2 path, never replace it. The
-  2×2 mode's independence-assuming weights stay as the default; tree weights are an
-  explicit opt-in upgrade when a validated tree exists.
-- The platform's existing pipeline-sequence discipline (`check_sequence`:
-  frame → brainstorm → build → quantify → …) already encodes this ladder; the new
-  tree tools are documented as the ladder's top rung (maturity note added to
-  `scenario_from_markets_set`).
-- This is also the epistemically correct order per T0: the tree's conditioning
-  structure is caller-authored knowledge, and the 2×2 mode is how an analyst
-  accumulates enough understanding to author it.
+### R5 — Contract-price coherence (H3, reframed per user correction) — M
+- The arbitrage analysis on the contracts: are the tree-implied joint probabilities
+  coherent with observed contract prices (incl. parlay/joint contracts where listed)?
+  Divergence = the analyzable signal. **No equity-return regressions, no betas.**
+- AC: a coherence measure (tree-implied joint vs market joint price) with a
+  transaction-cost band; tested on CMP-controlled trees; falsifier defined.
+- Deps: R1, C0.4.
 
-### T4 — Composition algebra (S4) — L→split into T4a/T4b
-- T4a: markets→tree wiring (M): new `scenario_from_markets_set` tool — given N matched
-  `MarketRecord`s + dependency spec, construct a validated `EventTree` with CPTs; refusal
-  gates at tree-time. Dependency links inferred from market-question overlap using the
-  existing matcher.rs Jaccard machinery (parallel plan's Task 3.1 heuristic, adopted).
-  Extend `EventTree` with per-branch `branches: Vec<Branch>` (joint_probability + path).
-  AC: round-trip test markets→tree→marginals matching `compute_marginal_probabilities`;
-  CPT-size cap with independence diagnostics (variety amplifier iv); cycle rejection test;
-  branch probabilities sum to 1 within float tolerance on binary trees.
-- T4b: challenge gates at tree-time (S): provenance-carrying probabilities; gate policy
-  per source class (market/Fermi/base-rate/research-citation). AC: gate audit log; a
-  fabricated-probability attempt is refused in test.
-- Deps: T1, T2, T3. Files: hkask-forecast (new composition module), hkask-mcp-scenarios.
+## Phase 3 — Falsification & validation (all on CMP inputs)
 
-### T5 — Tree-level Bayesian propagation (S3) — M
-- Slice: scenarios/propagation
-- AC: updating any node's prior recomputes descendant marginals + joint; `scenario_update`
-  gains a tree mode; propagation journal for the tâtonnement record.
-- Deps: T4a. Files: hkask-forecast, hkask-mcp-scenarios/superforecast.rs.
+### R6 — Falsification suite (H1–H5, reframed) — M
+- H1 (systemic risk capture), H2 (duration), H3 (contract-price coherence, reframed),
+  H4 (complexity allocation), H5 (LLM leverage) — all run on CMP-controlled inputs.
+- AC: falsification log; statuses updated; no equity-return beta machinery anywhere.
 
-### T7 — Tree-weighted valuation (C2) — M
-- Slice: companies/tree-weighted-dcf
-- **Maturity-ladder constraint (user directive)**: the 2×2 mode stays the default,
-  first-class path. T7 ADDS a tree-weighted option alongside it — an explicit opt-in
-  upgrade for analysts who have built a validated tree — it does not replace the
-  independence-assuming 2×2 weights.
-- AC: (i) `scenario_analysis` retains its current 2×2 behavior unchanged (regression
-  test); (ii) a new tree-weighted path accepts an `EventTree` (from
-  `scenario_from_markets_set`/`scenario_propagate`) and produces a scenario-weighted
-  valuation using tree marginals/joints as the weights; (iii) the output labels which
-  mode produced it (`weighting_mode: "schwartz_2x2" | "event_tree"`) so downstream
-  consumers can tell the maturity level of the analysis; (iv) gap decomposition
-  attributes error to scenario vs operating assumptions in both modes.
-- Verification: 2×2 regression test unchanged; tree-weighted path on a hand-built tree
-  reproduces hand-computed weights; mode label present.
-- Deps: T4a. Files: hkask-mcp-companies/{scenarios.rs,superforecast.rs,valuation.rs}.
+## What is preserved from v1 (machinery, re-pointed)
 
-**Checkpoint CP2:** end-to-end vertical slice demo — markets → tree → propagation →
-tree-weighted DCF for one real company; H4 error-concentration instrumentation live.
+- T0 keystone (approximate license) — unchanged, still valid.
+- T1 citations, T2 maturity field + ladder, T3 multi-group CPTs, T6 equity duration
+  (both variants), T4a composition, T5 propagation, T7 tree-weighted valuation,
+  T8a risk-core functions — all retained as **machinery awaiting CMP inputs**.
+- The analyst maturity ladder (2×2 simple mode first, tree mode earned) — unchanged.
 
-### T8 — Factor mapping + pricing harness (S7/C4) — L (highest risk, fail-fast prototype first)
-- T8a: prototype (S): hand-built tree for 5 companies; loadings = cash-flow sensitivity
-  of company value to branch outcomes, elicited via `branch_return` revaluation of the
-  DCF/RIM under each branch's assumptions (NOT Cov with branch indicators — indicators
-  across mutually exclusive branches are collinear; see phase2-review.md B2). Run H3/T1
-  cross-sectional pricing test vs FF5/AMF baseline. AC: pricing errors computed; verdict
-  on H3a/H3c recorded; hand-check unit tests pass (binary tree {+20%, −15%} at p=0.6 →
-  σ≈0.176; single-branch loading = 1.0). **Kill gate: if prototype refutes H3, T8b is
-  re-scoped before building.**
-- T8b: platform surface (M): `scenario_factor_exposures` tool + pricing-test harness in
-  hkask-forecast; loading-stability tracking (H3/T2).
-- Deps: T5, T7. Files: hkask-forecast, hkask-mcp-scenarios, hkask-mcp-companies.
+## What is removed from v1 (the drift)
 
-## Phase 3 — Integration & validation (Q4)
+- Equity-return beta regressions, Fama-French stage-1/stage-2 ΔR² tests, "factor
+  loading of a stock" framing. Equities are priced on fundamentals; APT lives on the
+  contracts.
+- The T8a kill-gate verdict that gated T8b on an equity-return pricing test — replaced
+  by R5's contract-price coherence test.
 
-### T9 — Falsification suite (H1–H5) — M
-- AC: every test in hypothesis-dossier.md executed or explicitly deferred with reason;
-  falsification log committed; statuses updated (corroborated/refuted/open).
-- Deps: T1–T8. Files: kask/traces/, tasks/bayesian-apt/.
+## Open questions (from cmp-foundation.md §6)
 
-### T10 — Refresh / tâtonnement journal — S
-- AC: re-bridge policy (scheduled + price-move trigger); each refresh journaled as a
-  tâtonnement step (SDF-analog: scenario-weighted implied returns); equilibrium-drift
-  metrics reported.
-- Deps: T5, T7. Files: hkask-mcp-scenarios, hkask-forecast.
-
-**Checkpoint CP3:** full falsification suite results; metacognitive close-out re-run;
-human go/no-go on productionizing T8b.
-
-## Risks
-
-| Risk | Impact | Mitigation |
-|---|---|---|
-| H3 refuted (scenario graph not pricing-relevant) | foundation becomes interpretive tool | T8a kill gate before T8b spend |
-| Equity duration model-sensitive (F2) | duration axis decorative | two estimation variants + sensitivity report (T6) |
-| Venue fragmentation swamps signal (C18) | H1 fails | single-venue scoping; tier controls (T9/H1c) |
-| CPT combinatorics explode | trees unusable | size caps + independence diagnostics (T4a) |
-| sr216 dynamic-portfolio limitation (C2) | APT warrant misapplied | label dynamic layer as outside APT warrant; static tests only |
-
-## Open questions
-
-1. Which venue is canonical for the single-venue scope (Polymarket vs Kalshi coverage)?
-2. Is parlay/joint-contract data (H3d) obtainable from either provider API?
-3. What is the human analyst's current workflow cost baseline for H5's paired study?
-4. Should refresh policy be per-tree or global (variety vs simplicity)?
-
-## Refinement history
-
-Iteration 1 (this plan): producer self-evaluation — sizing 0.10 (T4/T8 split pre-emptively),
-vertical-slice 0.05, AC specificity 0.10, dependency ordering 0.05, checkpoints 0.0,
-red-flags 0.0 → weighted 0.075. Quality gate: pass (≤0.15, no criterion >0.30).
+1. Magnitude bands: fixed per family vs continuous with tolerance?
+2. Orientation: independent increase/decrease index pairs vs one signed index?
+3. Cross-venue: per-venue indices (recommended) vs pooled with adjustment?
+4. Sparse ladders: withhold (recommended) vs publish degraded with wide error?

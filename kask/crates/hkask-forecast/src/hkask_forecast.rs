@@ -272,10 +272,7 @@ pub fn isotonic_fit(pairs: &[(f64, bool)]) -> Option<Vec<(f64, f64)>> {
     sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
     // PAVA: blocks of (weight-sum, count, start-probability).
-    let mut blocks: Vec<(f64, usize, f64)> = sorted
-        .iter()
-        .map(|(p, o)| (*o, 1usize, *p))
-        .collect();
+    let mut blocks: Vec<(f64, usize, f64)> = sorted.iter().map(|(p, o)| (*o, 1usize, *p)).collect();
     let mut i = 0;
     while i + 1 < blocks.len() {
         let mean_a = blocks[i].0 / blocks[i].1 as f64;
@@ -372,9 +369,239 @@ pub fn domain_bias_correction(probability: f64, delta: f64) -> f64 {
     (0.5 + (probability - 0.5) * (1.0 + delta)).clamp(0.01, 0.99)
 }
 
+// ── Scenario risk core (T8a) ────────────────────────────────────────────────
+//
+// The risk axis of the three-axes specification: probability-weighted risk
+// measures over scenario-tree branches. Pure math over caller-supplied branch
+// returns — the valuation engine (companies server) supplies per-branch
+// revaluations; this module turns them into risk measures and factor
+// exposures. Time and return stay simple by design; the complexity budget
+// lives here.
+
+/// One branch of a scenario tree with its probability and the company's
+/// implied return under that branch.
+///
+/// `probability` is the branch's joint probability (product of path
+/// conditionals); `branch_return` is the company's annualized return if the
+/// branch realizes (from re-evaluating the DCF/RIM under the branch's
+/// assumptions — the `branch_return` step of the risk core).
+#[derive(Debug, Clone, Copy)]
+pub struct BranchOutcome {
+    pub probability: f64,
+    pub branch_return: f64,
+}
+
+/// Probability-weighted risk measure over scenario branches.
+#[derive(Debug, Clone, Copy)]
+pub struct ScenarioRiskMeasure {
+    /// Probability-weighted mean branch return (the scenario-implied
+    /// expected return).
+    pub expected_return: f64,
+    /// σ_scenario: probability-weighted standard deviation of branch returns.
+    pub sigma_scenario: f64,
+    /// Number of branches.
+    pub branch_count: usize,
+    /// Sum of branch probabilities (diagnostic — 1.0 for a complete tree).
+    pub probability_mass: f64,
+}
+
+/// Compute the scenario risk measure over a set of branches.
+///
+/// Branches need not sum to probability 1 (an incomplete tree is measurable —
+/// the mass is reported so the caller can decide whether the residual is a
+/// hold-out branch). Returns None when no branch has positive probability —
+/// a risk measure over zero mass is undefined, never fabricated.
+#[must_use = "risk measure should feed valuation or factor analysis"]
+pub fn scenario_risk_measure(branches: &[BranchOutcome]) -> Option<ScenarioRiskMeasure> {
+    let mass: f64 = branches.iter().map(|b| b.probability).sum();
+    if mass <= 0.0 {
+        return None;
+    }
+    let expected: f64 = branches
+        .iter()
+        .map(|b| b.probability * b.branch_return)
+        .sum::<f64>()
+        / mass;
+    let variance: f64 = branches
+        .iter()
+        .map(|b| b.probability * (b.branch_return - expected).powi(2))
+        .sum::<f64>()
+        / mass;
+    Some(ScenarioRiskMeasure {
+        expected_return: expected,
+        sigma_scenario: variance.sqrt(),
+        branch_count: branches.len(),
+        probability_mass: mass,
+    })
+}
+
+/// Scenario factor exposure: the company's return sensitivity to a single
+/// scenario node (factor), in the APT loading sense.
+///
+/// Construction (per the corrected T8a design, phase2-review B2): the factor
+/// is the node's binary outcome; the loading is the difference in the
+/// company's branch return between branches where the node is true and
+/// branches where it is false, probability-weighted:
+///
+///   β(node) = E[r | node true] − E[r | node false]
+///
+/// This is the cash-flow sensitivity of company value to the node's outcome
+/// — elicited by revaluation, not estimated by covariance with an indicator
+/// (indicators over mutually exclusive branches are collinear).
+///
+/// Returns None when either conditioning set has zero probability mass.
+#[must_use = "loading should feed factor-exposure analysis"]
+pub fn scenario_node_loading(branches: &[BranchOutcome], node_true: &[bool]) -> Option<f64> {
+    if node_true.len() != branches.len() {
+        return None;
+    }
+    let (mut mass_true, mut mass_false) = (0.0, 0.0);
+    let (mut ret_true, mut ret_false) = (0.0, 0.0);
+    for (branch, &is_true) in branches.iter().zip(node_true.iter()) {
+        if is_true {
+            mass_true += branch.probability;
+            ret_true += branch.probability * branch.branch_return;
+        } else {
+            mass_false += branch.probability;
+            ret_false += branch.probability * branch.branch_return;
+        }
+    }
+    if mass_true <= 0.0 || mass_false <= 0.0 {
+        return None;
+    }
+    Some(ret_true / mass_true - ret_false / mass_false)
+}
+
+/// Fuse realized market volatility with scenario-implied volatility.
+///
+/// Graceful degradation (per the three-axes spec): when `sigma_scenario` is
+/// None (no tree, or a zero-mass tree), the fused value IS the realized
+/// volatility — the simple path is the default and the detailed path is an
+/// earned upgrade (analyst maturity ladder).
+///
+/// When both exist, the fusion is the root-sum-square: the two sources are
+/// treated as independent risk channels (market microstructure noise vs
+/// event-driven scenario uncertainty), so their variances add. `scenario_weight`
+/// in [0,1] scales the scenario channel's contribution — 1.0 for a fully
+/// validated tree, less for partial coverage.
+#[must_use = "fused volatility should replace the single-source estimate"]
+pub fn fuse_volatility(
+    realized_volatility: f64,
+    sigma_scenario: Option<f64>,
+    scenario_weight: f64,
+) -> f64 {
+    match sigma_scenario {
+        None => realized_volatility,
+        Some(sigma) => {
+            let weight = scenario_weight.clamp(0.0, 1.0);
+            (realized_volatility.powi(2) + (weight * sigma).powi(2)).sqrt()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── T8a scenario risk core ───────────────────────────────────────────
+
+    #[test]
+    fn sigma_scenario_binary_hand_check() {
+        // Binary tree {+20%, −15%} at p=0.6: E[r] = 0.06, σ = 0.35·√0.24
+        // ≈ 0.17146. (The plan's "≈ 0.176" was an arithmetic slip — the
+        // correct value is recorded here and the plan amended.)
+        let branches = [
+            BranchOutcome {
+                probability: 0.6,
+                branch_return: 0.20,
+            },
+            BranchOutcome {
+                probability: 0.4,
+                branch_return: -0.15,
+            },
+        ];
+        let measure = scenario_risk_measure(&branches).expect("positive mass");
+        assert!((measure.expected_return - 0.06).abs() < 1e-12);
+        assert!(
+            (measure.sigma_scenario - 0.17146).abs() < 0.0001,
+            "sigma {}",
+            measure.sigma_scenario
+        );
+        assert_eq!(measure.branch_count, 2);
+        assert!((measure.probability_mass - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn risk_measure_none_on_zero_mass() {
+        assert!(scenario_risk_measure(&[]).is_none());
+        assert!(
+            scenario_risk_measure(&[BranchOutcome {
+                probability: 0.0,
+                branch_return: 0.1
+            }])
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn risk_measure_normalizes_partial_mass() {
+        // Incomplete tree (mass 0.8): measure is over the covered branches.
+        let branches = [
+            BranchOutcome {
+                probability: 0.4,
+                branch_return: 0.10,
+            },
+            BranchOutcome {
+                probability: 0.4,
+                branch_return: 0.30,
+            },
+        ];
+        let measure = scenario_risk_measure(&branches).expect("positive mass");
+        assert!((measure.expected_return - 0.20).abs() < 1e-12);
+        assert!((measure.probability_mass - 0.8).abs() < 1e-12);
+    }
+
+    #[test]
+    fn node_loading_hand_check() {
+        // Two branches: node true → r=0.20 (p=0.6); node false → r=−0.15
+        // (p=0.4). Loading = 0.20 − (−0.15) = 0.35.
+        let branches = [
+            BranchOutcome {
+                probability: 0.6,
+                branch_return: 0.20,
+            },
+            BranchOutcome {
+                probability: 0.4,
+                branch_return: -0.15,
+            },
+        ];
+        let loading = scenario_node_loading(&branches, &[true, false]).expect("both sides");
+        assert!((loading - 0.35).abs() < 1e-12);
+    }
+
+    #[test]
+    fn node_loading_none_when_one_side_empty() {
+        let branches = [BranchOutcome {
+            probability: 0.6,
+            branch_return: 0.20,
+        }];
+        assert!(scenario_node_loading(&branches, &[true]).is_none());
+        assert!(scenario_node_loading(&branches, &[true, false]).is_none()); // length mismatch
+    }
+
+    #[test]
+    fn fuse_volatility_degrades_to_realized() {
+        assert!((fuse_volatility(0.25, None, 1.0) - 0.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fuse_volatility_rss_when_scenario_present() {
+        // sqrt(0.25² + 0.15²) ≈ 0.2915.
+        let fused = fuse_volatility(0.25, Some(0.15), 1.0);
+        assert!((fused - 0.2915).abs() < 0.001, "fused {fused}");
+        // Zero weight → realized only.
+        assert!((fuse_volatility(0.25, Some(0.15), 0.0) - 0.25).abs() < 1e-12);
+    }
 
     #[test]
     fn log_odds_round_trip() {
@@ -424,7 +651,10 @@ mod tests {
         // Smooth: many comparable small moves (macro-style drift).
         let smooth = [0.5, 0.52, 0.54, 0.56, 0.58, 0.6];
         assert_eq!(volatility_regime(&smooth), VolatilityRegime::Smooth);
-        assert_eq!(volatility_regime(&[0.5]), VolatilityRegime::InsufficientData);
+        assert_eq!(
+            volatility_regime(&[0.5]),
+            VolatilityRegime::InsufficientData
+        );
         assert_eq!(volatility_regime(&[]), VolatilityRegime::InsufficientData);
     }
 
