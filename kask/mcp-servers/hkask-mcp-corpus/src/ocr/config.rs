@@ -71,7 +71,7 @@ impl std::fmt::Display for OcrBackend {
 /// Uses kask-ocr on RunPod (OLMOCR-2, synchronous /runsync endpoint).
 /// Override via `HKASK_OCR_MODEL` env var or `llm_model` pipeline parameter.
 /// Requires RUNPOD_API_KEY and RUNPOD_OCR_ENDPOINT env vars.
-pub const DEFAULT_LLM_OCR_MODEL: &str = "RunPod/kask-ocr";
+pub const DEFAULT_LLM_OCR_MODEL: &str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
 
 /// Configurable OCR complexity thresholds.
 ///

@@ -9096,7 +9096,6 @@ version = "0.33.0"
 dependencies = [
  "schemars 1.2.2",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -9261,7 +9260,6 @@ dependencies = [
 name = "hkask-lisp"
 version = "0.33.0"
 dependencies = [
- "serde",
  "serde_json",
  "thiserror 2.0.19",
 ]
@@ -9486,9 +9484,7 @@ dependencies = [
  "chrono",
  "dirs",
  "hkask-mcp-server",
- "hkask-test-harness",
  "hkask-types",
- "proptest",
  "rmcp",
  "rusqlite",
  "schemars 1.2.2",

@@ -46,8 +46,125 @@ if [ "${#MCP_SERVERS[@]}" -eq 0 ]; then
     exit 1
 fi
 
+# jq is required for JSONC settings.json parsing/merging. The previous python3
+# fallback was removed (no Python shipped with the installer). Fail loudly here
+# so a missing jq is caught before any settings write is attempted.
+if ! command -v jq >/dev/null 2>&1; then
+    log_error "jq is required but not found on PATH. Install jq (e.g. 'apt install jq' or 'brew install jq') and re-run."
+    exit 1
+fi
+
 # System bin path for optional symlink.
 SYSTEM_BIN="/usr/local/bin"
+
+# strip_jsonc_comments — strip JSONC comments from a file and emit clean JSON
+# on stdout.
+#
+# Zed writes settings.json as JSONC (// line comments and /* */ block comments).
+# jq is strict JSON, so comments must be removed before jq parses the file.
+#
+# Approach: a single awk pass that walks the input line-by-line, tracking
+# whether the current position is inside a double-quoted string, and strips
+# // line comments and /* */ block comments only when outside a string. This
+# preserves // inside string values (e.g. "https://example.com"). Escaped
+# quotes (\\") and escaped backslashes (\\\\) are handled so a string-internal
+# escaped quote does not flip the string-state tracker.
+#
+# Mirrors the behavior of the deleted kask/scripts/build/jsonc_load.py
+# _strip_comments helper (string-aware, block comments spanning newlines are
+# replaced with a newline so downstream line numbers stay meaningful). Does
+# NOT strip trailing commas — jq 1.6+ rejects them, but Zed's settings.json
+# files in this tree do not use trailing commas; if that changes, add a second
+# sed pass for ,] and ,} outside strings.
+#
+# Args: $1 = path to the JSONC file. Emits stripped JSON to stdout.
+strip_jsonc_comments() {
+    local file="$1"
+    if [ ! -f "$file" ]; then
+        log_error "strip_jsonc_comments: file not found: $file"
+        return 1
+    fi
+    awk '
+        BEGIN { in_string = 0; out = "" }
+        {
+            line = $0
+            n = length(line)
+            i = 1
+            while (i <= n) {
+                ch = substr(line, i, 1)
+                if (in_string) {
+                    out = out ch
+                    if (ch == "\\" && i < n) {
+                        # Preserve the escaped character verbatim (handles \", \\, etc.).
+                        out = out substr(line, i + 1, 1)
+                        i += 2
+                        continue
+                    }
+                    if (ch == "\"") in_string = 0
+                    i++
+                    continue
+                }
+                # Not in a string.
+                if (ch == "\"") {
+                    in_string = 1
+                    out = out ch
+                    i++
+                    continue
+                }
+                if (ch == "/" && i < n) {
+                    nxt = substr(line, i + 1, 1)
+                    if (nxt == "/") {
+                        # Line comment: skip rest of line (do not consume the newline).
+                        i = n + 1
+                        continue
+                    }
+                    if (nxt == "*") {
+                        # Block comment: skip to */. May span multiple lines.
+                        # Find closing */ on this line first.
+                        rest = substr(line, i + 2)
+                        pos = index(rest, "*/")
+                        if (pos > 0) {
+                            # Single-line block comment.
+                            i = i + 2 + pos + 1
+                            continue
+                        } else {
+                            # Multi-line block comment: consume lines until */ found.
+                            i = n + 1
+                            in_block = 1
+                            while (in_block) {
+                                if ((getline line) <= 0) {
+                                    # EOF inside block comment — unterminated.
+                                    print "strip_jsonc_comments: unterminated block comment" > "/dev/stderr"
+                                    exit 1
+                                }
+                                n = length(line)
+                                pos = index(line, "*/")
+                                if (pos > 0) {
+                                    # Resume after */ on this line.
+                                    i = pos + 2
+                                    in_block = 0
+                                    break
+                                }
+                                # Whole line consumed by block comment.
+                                line = ""
+                                n = 0
+                                i = 1
+                            }
+                            # Emit a newline so downstream line numbers stay sane
+                            # (matches jsonc_load.py behavior for multi-line blocks).
+                            out = out "\n"
+                            continue
+                        }
+                    }
+                }
+                out = out ch
+                i++
+            }
+            print out
+            out = ""
+        }
+    ' "$file"
+}
 
 # prepare_install_dir — remove stale zed-kask / hkask-mcp-* binaries from
 # BIN_DIR before installing fresh ones.
@@ -237,22 +354,10 @@ write_mcp_server_settings() {
             log_warning "MCP server binary not found, skipping settings entry: $binary_path"
             continue
         fi
-        # Use python3 or jq to build the JSON entry safely (no string
-        # interpolation into JSON — avoids quoting bugs).
-        if command -v python3 >/dev/null 2>&1; then
-            kask_servers_json=$(python3 -c "
-import json, sys
-d = json.loads(sys.argv[1])
-d[sys.argv[2]] = {'command': sys.argv[3], 'args': [], 'env': {}}
-print(json.dumps(d))
-" "$kask_servers_json" "$server_id" "$binary_path")
-        elif command -v jq >/dev/null 2>&1; then
-            kask_servers_json=$(jq --arg id "$server_id" --arg path "$binary_path" \
-                '. + {($id): {"command": $path, "args": [], "env": {}}}' <<< "$kask_servers_json")
-        else
-            log_error "write_mcp_server_settings: requires python3 or jq for JSON merging"
-            return 1
-        fi
+        # Use jq to build the JSON entry safely (no string interpolation into
+        # JSON — avoids quoting bugs). jq is required (checked at source time).
+        kask_servers_json=$(jq --arg id "$server_id" --arg path "$binary_path" \
+            '. + {($id): {"command": $path, "args": [], "env": {}}}' <<< "$kask_servers_json")
     done
 
     # Merge kask_servers_json into the existing settings.json's context_servers.
@@ -262,43 +367,21 @@ print(json.dumps(d))
     #   (by id) but preserve any non-kask entries the user added.
     if [ ! -f "$settings_file" ]; then
         # Create a new settings.json with the context_servers block.
-        if command -v python3 >/dev/null 2>&1; then
-            python3 -c "
-import json, sys
-settings = {'context_servers': json.loads(sys.argv[1])}
-print(json.dumps(settings, indent=2))
-" "$kask_servers_json" > "$settings_file"
-        else
-            jq -n --argjson servers "$kask_servers_json" '{context_servers: $servers}' > "$settings_file"
-        fi
+        jq -n --argjson servers "$kask_servers_json" '{context_servers: $servers}' > "$settings_file"
         log "Created $settings_file with kask MCP server entries"
     else
         # Merge into existing settings.json. Preserve everything except
         # overwrite kask server entries under context_servers.
-        if command -v python3 >/dev/null 2>&1; then
-            python3 -c "
-import json, sys
-sys.path.insert(0, sys.argv[3])
-from jsonc_load import load_jsonc
-with open(sys.argv[1]) as f:
-    settings = load_jsonc(f)
-kask = json.loads(sys.argv[2])
-cs = settings.setdefault('context_servers', {})
-# Overwrite kask-managed entries, preserve user-added ones.
-for k, v in kask.items():
-    cs[k] = v
-with open(sys.argv[1], 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$settings_file" "$kask_servers_json" "$_HKASK_COMMON_DIR"
-        else
-            # jq merge: deep-merge kask servers into existing context_servers.
-            local tmp
-            tmp=$(mktemp)
-            jq --argjson kask "$kask_servers_json" \
-                '.context_servers = ((.context_servers // {}) + $kask)' \
-                "$settings_file" > "$tmp" && mv "$tmp" "$settings_file"
-        fi
+        # jq is strict JSON, so strip JSONC comments (// line and /* */ block)
+        # first — Zed writes settings.json as JSONC. strip_jsonc_comments is
+        # string-aware so // inside string values (e.g. URLs) is preserved.
+        local stripped
+        stripped=$(strip_jsonc_comments "$settings_file") || return 1
+        local tmp
+        tmp=$(mktemp)
+        jq --argjson kask "$kask_servers_json" \
+            '.context_servers = ((.context_servers // {}) + $kask)' \
+            <<< "$stripped" > "$tmp" && mv "$tmp" "$settings_file"
         log "Updated $settings_file with kask MCP server entries"
     fi
 
@@ -326,34 +409,22 @@ remove_mcp_server_settings() {
     fi
 
     # Remove entries whose command basename matches hkask-mcp-*.
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "
-import json, os, sys
-sys.path.insert(0, sys.argv[2])
-from jsonc_load import load_jsonc
-with open(sys.argv[1]) as f:
-    settings = load_jsonc(f)
-cs = settings.get('context_servers', {})
-removed = 0
-for k in list(cs.keys()):
-    cmd = cs[k].get('command', '') if isinstance(cs[k], dict) else ''
-    if os.path.basename(cmd).startswith('hkask-mcp-'):
-        del cs[k]
-        removed += 1
-if not cs:
-    settings.pop('context_servers', None)
-with open(sys.argv[1], 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-if removed:
-    print(f'Removed {removed} kask MCP server entries from settings.json')
-" "$settings_file" "$_HKASK_COMMON_DIR" 2>/dev/null && log "Cleaned kask MCP entries from $settings_file"
-    elif command -v jq >/dev/null 2>&1; then
-        local tmp
-        tmp=$(mktemp)
-        jq '.context_servers |= with_entries(select(.value.command | split("/") | last | startswith("hkask-mcp-") | not))' \
-            "$settings_file" > "$tmp" 2>/dev/null && mv "$tmp" "$settings_file" \
-            && log "Cleaned kask MCP entries from $settings_file"
+    # jq is strict JSON, so strip JSONC comments first (Zed writes settings.json
+    # as JSONC). jq is required (checked at source time).
+    local stripped
+    if ! stripped=$(strip_jsonc_comments "$settings_file"); then
+        log_warning "Could not parse $settings_file; leaving kask MCP entries in place"
+        return 0
+    fi
+    local tmp
+    tmp=$(mktemp)
+    if jq '.context_servers |= with_entries(select(.value.command | split("/") | last | startswith("hkask-mcp-") | not))' \
+            <<< "$stripped" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$settings_file"
+        log "Cleaned kask MCP entries from $settings_file"
+    else
+        rm -f "$tmp"
+        log_warning "Could not clean kask MCP entries from $settings_file (jq parse failed)"
     fi
 }
 

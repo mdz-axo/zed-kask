@@ -33,5 +33,3 @@ workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-proptest.workspace = true
-hkask-test-harness.workspace = true

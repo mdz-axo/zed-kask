@@ -9,7 +9,6 @@ description = "Sandboxed Lisp interpreter for deterministic manifest compute ste
 path = "src/hkask_lisp.rs"
 
 [dependencies]
-serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror.workspace = true
 
