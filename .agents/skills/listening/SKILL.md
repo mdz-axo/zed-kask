@@ -1,11 +1,12 @@
 ---
 name: listening
 description: >
-  Apply the MAIA v3 listening template to an earnings-call transcript. Extracts
-  per-section verdicts with verbatim evidence quotes, classifies claims by
-  horizon (seam checkpoint / tactical / strategic / short-term-only), and emits
-  the checkpoint map. Enforces the no-fabrication invariant: every evidence
-  field is a verbatim substring of the source transcript. Single-pass
+  Apply the MAIA v3 listening template to an earnings-call transcript using a
+  retrieve-cite-verify process. The transcript is split into numbered chunks;
+  the model searches the chunks for evidence and cites what it found
+  (chunk_id + substring + char_offset); a post-processing step verifies each
+  cited substring is present in the referenced chunk. The no-fabrication
+  invariant is enforced by the process, not by the prompt. Single-pass
   (sense→act, not iterative). Anchored to the MAIA guidebook (company-analysis,
   financial-signposts, time-horizons, company-template) and the operator's
   2026-08-05 seam clarification (12–36mo = tactical→strategic transition zone).
@@ -15,9 +16,23 @@ description: >
 
 Applies the MAIA v3 listening template to an earnings-call transcript. The
 template is a semantic evaluation procedure over text — it extracts claims,
-classifies them by horizon, and emits per-section verdicts with verbatim
-evidence quotes. The no-fabrication invariant is load-bearing: every evidence
-field is a verbatim substring of the source transcript.
+classifies them by horizon, and emits per-section verdicts with evidence.
+
+## The retrieve-cite-verify process
+
+The no-fabrication invariant is enforced by the process, not by the prompt:
+
+1. **Chunk** — the transcript is split into numbered chunks (by speaker turns
+   or paragraph boundaries).
+2. **Retrieve** — the model searches the chunks for evidence relevant to each
+   section's `listen_for` criteria.
+3. **Cite** — the model returns the chunk_id, the exact substring it found,
+   and the character offset where it starts.
+4. **Verify** — a post-processing step checks that each cited substring is
+   actually present in the referenced chunk. Fabricated quotes are rejected.
+
+The model never "writes" a quote — it "finds" one and points to where it found
+it. The verification is mechanical (substring match), not model-mediated.
 
 ## When to Use
 
@@ -30,35 +45,20 @@ field is a verbatim substring of the source transcript.
 - When you need to filter short-term-only guidance changes (no strategic-path
   linkage) into `ignored_short_term` so they don't influence verdicts.
 
-## Instructions
-
-1. Provide the transcript text (from `company_transcript` tool output or pasted).
-2. Optionally provide prior-quarter transcripts for `management_consistency`
-   (checkpoint drift detection across quarters).
-3. The template applies the stance block (horizon classification + admissibility
-   rule) to every extracted claim before emitting a verdict.
-4. The output is JSON: `per_section` (7 sections, each with verdict + evidence +
-   certainty), `horizon_summary` (checkpoint_map, strategic_goals,
-   ignored_short_term, speculative_far).
-5. Every `evidence` field is a verbatim substring of the source transcript.
-   Fabricated quotes fail the golden-file test.
-6. `ignored_short_term` entries never influence verdicts or forecast inputs.
-
 ## Registry Templates
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `listening/apply-template.j2` | KnowAct | Apply the v3 listening template to a single transcript; emit per-section verdicts + checkpoint map. |
-| `listening/apply-template-rag.j2` | KnowAct | Apply the v3 listening template over RAG-retrieved corpus passages + KG triples; emit per-section verdicts with cross-source citations. |
+| `listening/apply-template.j2` | KnowAct | Apply the v3 listening template to a single transcript (chunked); retrieve-cite-verify process. |
+| `listening/apply-template-rag.j2` | KnowAct | Apply the v3 listening template over RAG-retrieved corpus passages + KG triples; cross-source citations. |
 
 ## Constraints
 
-- Single-pass (sense→act, not iterative) — the design says "the loop terminates
-  per quarter (one pass over one transcript, fixed template, no iteration)."
-- No fabrication: every evidence field is a verbatim substring of the source.
-- The linkage, not the calendar date, is the admissibility bar: a near-term
-  event that is a nameable checkpoint on the path to a stated strategic goal
-  IS primary material.
-- Certainty vocabulary: proximate (≥67%) / probable (33–66%) / possible (<32%) —
-  the guidebook tier, matching `hkask_forecast.rs:158 certainty_tier`.
+- Single-pass (sense→act, not iterative).
+- No-fabrication invariant is process-embedded: the model retrieves from
+  numbered chunks and cites what it found; the process verifies each citation
+  mechanically (substring match). The model cannot fabricate a quote because
+  the process never gives it a "write a quote" step.
+- The linkage, not the calendar date, is the admissibility bar.
+- Certainty vocabulary: proximate (≥67%) / probable (33–66%) / possible (<32%).
 - No verdict or forecast input may be derived from `ignored_short_term` entries.

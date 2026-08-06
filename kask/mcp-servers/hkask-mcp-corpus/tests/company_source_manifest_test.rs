@@ -226,3 +226,168 @@ ingestion:
         .validate()
         .expect("all valid ontology namespaces should be accepted");
 }
+
+// ── Property tests for manifest validation ──────────────────────────────────
+//
+// Uses the hkask-test-harness for structured oracle variety + trace emission.
+
+mod proptests {
+    use super::*;
+    use hkask_test_harness::{OracleVerdict, TraceEntry, oracle_invariant, write_trace};
+    use proptest::prelude::*;
+
+    fn trace_dir() -> Option<std::path::PathBuf> {
+        std::env::var("HKASK_TRACE_DIR")
+            .ok()
+            .map(std::path::PathBuf::from)
+    }
+
+    fn emit_trace(name: &str, result: &str, oracle_type: &str) {
+        let Some(dir) = trace_dir() else { return };
+        let entry = TraceEntry {
+            kind: "proptest".to_string(),
+            name: name.to_string(),
+            result: result.to_string(),
+            duration_ms: 0,
+            shrunk_counterexample: String::new(),
+            oracle_type: oracle_type.to_string(),
+            metadata: serde_json::json!({
+                "crate": "hkask-mcp-corpus",
+                "target": "company_manifest"
+            }),
+        };
+        let run_id =
+            std::env::var("HKASK_TRACE_RUN_ID").unwrap_or_else(|_| "standalone".to_string());
+        if let Err(error) = write_trace(&dir, &run_id, &entry) {
+            eprintln!("warn: trace emission failed for {name}: {error}");
+        }
+    }
+
+    /// A valid manifest body with configurable ontology names.
+    fn manifest_with_ontologies(ontologies: &[&str]) -> String {
+        let ontology_list: String = ontologies
+            .iter()
+            .map(|ontology| format!("\"{ontology}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            r#"
+manifest:
+  id: test
+  category: company-source-manifest
+  name: Test
+  version: 0.1.0
+company:
+  symbol: TEST
+  name: Test Co
+  cik: "0000000000"
+  ir_base: "https://example.com/ir"
+source_tiers:
+  tier_1_self_description: []
+  tier_2_executive_voice: []
+  tier_3_external: []
+provenance_rule: test
+exclusion_rule: test
+ingestion:
+  entity_ref_prefix: "company:test"
+  tagging:
+    ontologies: [{ontology_list}]
+"#
+        )
+    }
+
+    /// All valid OntologyNamespace names (the domain supplements).
+    const VALID_ONTOLOGIES: &[&str] = &["fibo", "eso", "golem", "mlschema", "omc", "sumo"];
+
+    proptest! {
+        /// P4 (panic-freedom): `from_yaml` + `validate()` never panics on
+        /// arbitrary string input.
+        #[test]
+        fn manifest_validate_never_panics(yaml in r"\PC*") {
+            if let Ok(manifest) = CompanySourceManifest::from_yaml(&yaml) {
+                let _ = manifest.validate();
+            }
+            emit_trace("manifest_validate_never_panics", "pass", "");
+        }
+
+        /// P1 (invariant): every valid ontology name is accepted by `validate()`.
+        #[test]
+        fn manifest_accepts_all_valid_ontologies(
+            ontology in prop::sample::select(VALID_ONTOLOGIES.to_vec())
+        ) {
+            let yaml = manifest_with_ontologies(&[ontology]);
+            let manifest = CompanySourceManifest::from_yaml(&yaml).expect("parse");
+            manifest.validate().expect("valid ontology should be accepted");
+            emit_trace("manifest_accepts_all_valid_ontologies", "pass", "invariant");
+        }
+
+        /// P1 (invariant): any string that is NOT a valid OntologyNamespace is
+        /// rejected by `validate()` with `UnknownOntology`.
+        /// Uses `oracle_invariant` — the check is a property of the output.
+        #[test]
+        fn manifest_rejects_unknown_ontology(
+            ontology in "[a-z]{1,10}".prop_filter("not a valid ontology", |s| !VALID_ONTOLOGIES.contains(&s.as_str()))
+        ) {
+            let oracle = oracle_invariant(|_input: &serde_json::Value, output: &serde_json::Value| {
+                let result = output.get("result").and_then(|v| v.as_str()).unwrap_or("");
+                if result == "UnknownOntology" {
+                    Ok(())
+                } else {
+                    Err(format!("expected UnknownOntology, got {result}"))
+                }
+            });
+
+            let yaml = manifest_with_ontologies(&[&ontology]);
+            let manifest = CompanySourceManifest::from_yaml(&yaml).expect("parse");
+            let result = manifest.validate();
+            let output = serde_json::json!({
+                "result": match &result {
+                    Err(ManifestValidationError::UnknownOntology(_)) => "UnknownOntology".to_string(),
+                    Err(other) => other.to_string(),
+                    Ok(()) => "Ok".to_string(),
+                }
+            });
+            match oracle.verify(&serde_json::Value::Null, &output) {
+                OracleVerdict::Pass => {}
+                OracleVerdict::Fail(message) => prop_assert!(false, "{message}"),
+                OracleVerdict::Inconclusive => {}
+            }
+            emit_trace("manifest_rejects_unknown_ontology", "pass", "invariant");
+        }
+
+        /// P1 (invariant): a manifest with tier_3 entries is always rejected
+        /// (the MAIA self-description doctrine enforced at parse time).
+        #[test]
+        fn manifest_rejects_tier3_via_any_kind(kind in "[a-z_]{1,20}", via in "[a-z_]{1,20}") {
+            let yaml = format!(
+                r#"
+manifest:
+  id: test
+  category: company-source-manifest
+  name: Test
+  version: 0.1.0
+company:
+  symbol: TEST
+  name: Test Co
+  cik: "0000000000"
+  ir_base: "https://example.com/ir"
+source_tiers:
+  tier_1_self_description: []
+  tier_2_executive_voice: []
+  tier_3_external:
+    - kind: {kind}
+      via: {via}
+provenance_rule: test
+exclusion_rule: test
+"#
+            );
+            let manifest = CompanySourceManifest::from_yaml(&yaml).expect("parse");
+            let result = manifest.validate();
+            prop_assert!(
+                matches!(result, Err(ManifestValidationError::Tier3EnabledByDefault { .. })),
+                "any tier_3 entry must be rejected, got {result:?}"
+            );
+            emit_trace("manifest_rejects_tier3_via_any_kind", "pass", "invariant");
+        }
+    }
+}

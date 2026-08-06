@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+#![warn(clippy::let_underscore_future)]
 //! hKask MCP Portfolio — general-purpose transaction-ledger portfolio store.
 //!
 //! A portfolio is an append-only transaction ledger. Everything else —
@@ -31,6 +33,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use chrono::Datelike;
 
 const MAX_IMPORT_REQUEST_BYTES: usize = 5 * 1024 * 1024;
 const MAX_IMPORT_TRANSACTION_COUNT: usize = 10_000;
@@ -156,7 +160,7 @@ impl From<LedgerError> for PortfolioError {
 /// a stock portfolio holds tickers; a CMP-index portfolio holds nested
 /// portfolio references (each itself a portfolio of contracts); a
 /// prediction-event portfolio holds contract identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetType {
     /// A stock ticker (e.g. AAPL, VOD.L).
@@ -227,7 +231,7 @@ impl Default for AssetType {
 /// indices: a roll moves a position from one contract to its successor at
 /// the same tenor; a weight adjustment changes a constituent's target weight
 /// without a buy/sell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum TxType {
     Buy,
@@ -300,7 +304,7 @@ impl rusqlite::types::FromSql for TxType {
 /// `asset_type` discriminates the `symbol`: a stock ticker, a contract id,
 /// or a nested portfolio name. `weight` is used by `WeightAdjust` for CMP
 /// index rebalancing; it is `None` for stock transactions.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Transaction {
     pub id: String,
     pub date: String,
@@ -412,7 +416,7 @@ impl<'a> LedgerFilter<'a> {
 }
 
 /// A price observation for a symbol on a date, used by [`returns`].
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct PricePoint {
     pub symbol: String,
     pub date: String,
@@ -509,7 +513,9 @@ impl PortfolioStore {
         self
     }
 
-    #[cfg(test)]
+    /// Test constructor: create a store backed by a DB at `base_dir/master.db`.
+    /// Not `#[cfg(test)]` so downstream crates (e.g. hkask-mcp-companies) can
+    /// use it in their own test suites.
     pub fn with_dir(base_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&base_dir).expect("failed to create test portfolio directory");
         let db_path = base_dir.join("master.db");
@@ -522,7 +528,7 @@ impl PortfolioStore {
         }
     }
 
-    #[cfg(test)]
+    /// Test constructor: create a store for a specific owner under `base_dir`.
     pub fn with_dir_for_owner(base_dir: PathBuf, owner: WebID) -> Self {
         Self::with_dir(base_dir.join(sanitize_name(&owner.to_string())))
     }
@@ -718,7 +724,7 @@ impl PortfolioStore {
         let mut issues = Vec::new();
 
         for tx in &txs {
-            if tx.date > date {
+            if tx.date.as_str() > date {
                 continue;
             }
             match tx.tx_type {
@@ -823,7 +829,7 @@ impl PortfolioStore {
         let snapshot = HoldingsSnapshot {
             portfolio: name.to_string(),
             date: date.to_string(),
-            transaction_count: txs.iter().filter(|t| t.date <= date).count(),
+            transaction_count: txs.iter().filter(|t| t.date.as_str() <= date).count(),
             holdings,
             cash_balance: cash,
             issues,
@@ -910,14 +916,14 @@ impl PortfolioStore {
         let txs = self.ledger(name, LedgerFilter::all())?;
         let cash = txs
             .iter()
-            .filter(|t| t.date <= date)
+            .filter(|t| t.date.as_str() <= date)
             .map(|t| t.cash_flow())
             .sum::<f64>();
         let issues = validate_holdings(&txs, date);
         Ok(Some(HoldingsSnapshot {
             portfolio: name.to_string(),
             date: date.to_string(),
-            transaction_count: txs.iter().filter(|t| t.date <= date).count(),
+            transaction_count: txs.iter().filter(|t| t.date.as_str() <= date).count(),
             holdings,
             cash_balance: cash,
             issues,
@@ -1091,7 +1097,7 @@ impl PortfolioStore {
 /// re-walking the ledger.
 fn validate_holdings(txs: &[Transaction], date: &str) -> Vec<String> {
     let mut issues = Vec::new();
-    for tx in txs.iter().filter(|t| t.date <= date) {
+    for tx in txs.iter().filter(|t| t.date.as_str() <= date) {
         match tx.tx_type {
             TxType::Buy => {
                 let qty = tx.quantity.unwrap_or(0.0);
@@ -1160,24 +1166,28 @@ pub fn returns(
 
     for tx in &txs {
         let cf = tx.cash_flow();
-        if tx.date <= from {
+        if tx.date.as_str() <= from {
             cash_start += cf;
         }
-        if tx.date <= to {
+        if tx.date.as_str() <= to {
             cash_end += cf;
         }
-        if tx.date > from
-            && tx.date <= to
+        if tx.date.as_str() > from
+            && tx.date.as_str() <= to
             && matches!(tx.tx_type, TxType::Deposit | TxType::Withdrawal)
         {
             cash_flow_events.push((tx.date.clone(), cf));
         }
         if let Some(ref sym) = tx.symbol {
             let delta = tx.position_delta();
-            if tx.date <= from && matches!(tx.tx_type, TxType::Buy | TxType::Sell | TxType::Roll) {
+            if tx.date.as_str() <= from
+                && matches!(tx.tx_type, TxType::Buy | TxType::Sell | TxType::Roll)
+            {
                 *positions_start.entry(sym.clone()).or_insert(0.0) += delta;
             }
-            if tx.date <= to && matches!(tx.tx_type, TxType::Buy | TxType::Sell | TxType::Roll) {
+            if tx.date.as_str() <= to
+                && matches!(tx.tx_type, TxType::Buy | TxType::Sell | TxType::Roll)
+            {
                 *positions_end.entry(sym.clone()).or_insert(0.0) += delta;
             }
         }
@@ -1245,7 +1255,11 @@ pub fn returns(
 
     // IRR via Newton's method.
     let from_days = from_date.num_days_from_ce();
-    let mut cfs: Vec<(f64, f64)> = vec![(-total_start, from_days as f64)];
+    // The first cash flow (-total_start) is at day 0 (the `from` date);
+    // subsequent flows are relative to it. Using the absolute day number
+    // here would put the exponent at ~738000/365 ≈ 2021, causing Newton's
+    // method to diverge numerically.
+    let mut cfs: Vec<(f64, f64)> = vec![(-total_start, 0.0)];
     for (date_str, amt) in &cash_flow_events {
         let cf_date = parse_ymd(date_str, "cash flow date")?;
         let days = (cf_date.num_days_from_ce() - from_days) as f64;
@@ -1316,16 +1330,17 @@ pub fn parse_ymd(value: &str, field: &str) -> Result<chrono::NaiveDate, Portfoli
 
 /// A [`PriceResolver`] backed by the store's `price_cache` table. The
 /// companies server seeds this cache from FMP/EODHD; the portfolio crate
-/// itself never calls a provider.
-pub struct CachedPriceResolver<'a> {
-    store: &'a PortfolioStore,
+/// itself never calls a provider. Owns a [`PortfolioStore`] clone so it is
+/// `'static` and can be moved into `spawn_blocking` closures.
+pub struct CachedPriceResolver {
+    store: PortfolioStore,
     portfolio: String,
 }
 
-impl<'a> CachedPriceResolver<'a> {
-    pub fn new(store: &'a PortfolioStore, portfolio: &str) -> Self {
+impl CachedPriceResolver {
+    pub fn new(store: &PortfolioStore, portfolio: &str) -> Self {
         Self {
-            store,
+            store: store.clone(),
             portfolio: portfolio.to_string(),
         }
     }
@@ -1351,7 +1366,7 @@ impl<'a> CachedPriceResolver<'a> {
     }
 }
 
-impl<'a> PriceResolver for CachedPriceResolver<'a> {
+impl PriceResolver for CachedPriceResolver {
     fn resolve(&self, symbol: &str, date: &str) -> Option<f64> {
         let conn = self.store.open().ok()?;
         let mut stmt = conn
@@ -1521,6 +1536,10 @@ pub fn export_csv(store: &PortfolioStore, name: &str) -> Result<String, Portfoli
     }
     Ok(out)
 }
+
+pub mod server;
+
+pub use server::run;
 
 #[cfg(test)]
 mod tests;

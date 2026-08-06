@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-mcp-server.workspace = true
+hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
 hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }

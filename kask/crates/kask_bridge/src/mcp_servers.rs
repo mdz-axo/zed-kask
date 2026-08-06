@@ -50,6 +50,13 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         ]),
     },
     BuiltinMcpServer {
+        id: "portfolio",
+        binary: "hkask-mcp-portfolio",
+        description: "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
+        credentials: Some(&[]),
+        config_env: Some(&[]),
+    },
+    BuiltinMcpServer {
         id: "companies",
         binary: "hkask-mcp-companies",
         description: "Companies — company research and filings",
@@ -322,6 +329,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
 /// Convenience for consumers that only need the ID list (e.g. `swarm_panel`).
 pub const BUILT_IN_MCP_SERVERS_IDS: &[&str] = &[
     "codegraph",
+    "portfolio",
     "companies",
     "condenser",
     "corpus",
@@ -341,6 +349,10 @@ pub const BUILT_IN_MCP_SERVERS_PAIRS: &[(&str, &str)] = &[
     (
         "codegraph",
         "Codegraph — code structure query and traversal",
+    ),
+    (
+        "portfolio",
+        "Portfolio — general-purpose transaction-ledger portfolio store (stocks, prediction-event portfolios, CMP indices) with materialized daily holdings and returns views",
     ),
     ("companies", "Companies — company research and filings"),
     (
@@ -603,6 +615,32 @@ mod tests {
                 "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
             ],
             "prediction-markets config_env allowlist drifted — every entry must              have a read site in hkask-mcp-prediction-markets"
+        );
+    }
+
+    // The portfolio server is provider-agnostic: no credentials, no config
+    // env. It reads only HKASK_WEBID (identity, injected via config_env by
+    // the runtime, not declared here) and writes to the owner-scoped SQLite
+    // DB under the config dir. This pins the blast-radius reduction — a
+    // future edit that adds a provider key here would leak it to a process
+    // that has no read site for it.
+    #[test]
+    fn portfolio_allowlist_matches_actual_reads() {
+        let s = server_by_id("portfolio");
+        // Read sites: none — the portfolio store is provider-agnostic.
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            Vec::<&str>::new(),
+            "portfolio credentials allowlist drifted — the portfolio store is \
+             provider-agnostic; add a credential only with a read site in \
+             hkask-mcp-portfolio"
+        );
+        // Read sites: none beyond HKASK_WEBID (identity, not config).
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            Vec::<&str>::new(),
+            "portfolio config_env allowlist drifted — add an entry only with \
+             a read site in hkask-mcp-portfolio"
         );
     }
 

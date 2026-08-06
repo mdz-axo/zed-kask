@@ -10,19 +10,15 @@
 //!    linkage → output must place it on `checkpoint_map` with
 //!    `strategic_goal_link` populated.
 //!
-//! These tests validate the FIXTURE and the TEMPLATE STRUCTURE. The actual
-//! LLM golden-file run (template applied to fixture → JSON output → assertions)
-//! happens when the skill is invoked via the cascade; here we assert the
-//! preconditions that make the golden-file test meaningful:
-//! - The fixture contains the required test material.
-//! - The template enforces the no-fabrication invariant in its prompt text.
-//! - The template's output schema includes the required fields.
+//! No-fabrication design (process-embedded, not instruction-embedded):
+//! The template uses a retrieve-cite-verify process. The transcript is
+//! pre-split into numbered chunks. The model searches the chunks and cites
+//! what it found (chunk_id + quote + char_start). A post-processing step
+//! verifies each cited substring is present in the referenced chunk. The
+//! tests assert the template structure enforces this process.
 
 use std::path::PathBuf;
 
-/// Path to the listening registry crate, resolved from this crate's
-/// manifest dir (the companies server is the natural home for transcript tests;
-/// the template lives in the registry).
 fn template_crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/templates/listening")
 }
@@ -37,6 +33,10 @@ fn template_path() -> PathBuf {
 
 fn manifest_path() -> PathBuf {
     template_crate_dir().join("manifest.yaml")
+}
+
+fn process_manifest_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/manifests/listening.yaml")
 }
 
 fn read_fixture() -> String {
@@ -57,28 +57,27 @@ fn read_manifest() -> String {
         .unwrap_or_else(|error| panic!("failed to read manifest {}: {error}", path.display()))
 }
 
+fn read_process_manifest() -> String {
+    let path = process_manifest_path();
+    std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "failed to read process manifest {}: {error}",
+            path.display()
+        )
+    })
+}
+
 // ── Fixture preconditions ───────────────────────────────────────────────────
 
-/// The fixture must contain a bare short-term guidance change (for the
-/// horizon-filter test). This is a next-quarter raise with no explicit
-/// strategic-path linkage in the same sentence.
 #[test]
 fn fixture_contains_short_term_guidance_change() {
     let fixture = read_fixture();
-    // "raising revenue guidance to $68.5 to $69.1 billion" is a next-quarter
-    // guidance change. The horizon-filter test asserts the template places
-    // this in ignored_short_term (no strategic linkage in the guidance sentence
-    // itself — the strategic linkage is in the separate Germany datacenter
-    // checkpoint, not in the guidance raise).
     assert!(
         fixture.contains("raising revenue guidance"),
         "fixture must contain a short-term guidance change for the horizon-filter test"
     );
 }
 
-/// The fixture must contain a dated milestone with a nameable strategic
-/// linkage (for the checkpoint test). The Germany datacenter in Q3 fiscal 2025
-/// links to the "double Azure AI capacity by fiscal 2027" strategic goal.
 #[test]
 fn fixture_contains_strategic_checkpoint() {
     let fixture = read_fixture();
@@ -92,8 +91,6 @@ fn fixture_contains_strategic_checkpoint() {
     );
 }
 
-/// The fixture must contain speaker markers (probe-verified shape) so the
-/// template can attribute claims to speakers.
 #[test]
 fn fixture_contains_speaker_markers() {
     let fixture = read_fixture();
@@ -111,23 +108,82 @@ fn fixture_contains_speaker_markers() {
     );
 }
 
-// ── Template invariant tests ────────────────────────────────────────────────
+// ── Retrieve-cite-verify process tests ──────────────────────────────────────
 
-/// The template must enforce the no-fabrication invariant in its prompt text.
+/// The template must use the retrieve-cite-verify process: the model searches
+/// numbered chunks and cites what it found, rather than generating quotes.
 #[test]
-fn template_enforces_no_fabrication_invariant() {
+fn template_uses_retrieve_cite_verify_process() {
     let template = read_template();
     assert!(
-        template.contains("verbatim substring"),
-        "template must enforce the no-fabrication invariant (verbatim substring)"
+        template.contains("retrieve") && template.contains("Retrieve"),
+        "template must describe the retrieve step"
     );
     assert!(
-        template.contains("Fabricated quotes fail"),
-        "template must warn that fabricated quotes fail the test"
+        template.contains("Cite") || template.contains("cite"),
+        "template must describe the cite step"
+    );
+    assert!(
+        template.contains("Verify") || template.contains("verify"),
+        "template must describe the verify step (done by the process, not the model)"
+    );
+    assert!(
+        template.contains("You do NOT write quotes. You FIND them."),
+        "template must tell the model to find quotes, not write them"
     );
 }
 
-/// The template must include the horizon classification (the stance block).
+/// The template's evidence schema must use chunk_id + quote + char_start
+/// (the retrieval result shape), not bare strings.
+#[test]
+fn template_evidence_schema_uses_chunk_refs() {
+    let template = read_template();
+    assert!(
+        template.contains("chunk_id"),
+        "evidence schema must include chunk_id for citation"
+    );
+    assert!(
+        template.contains("char_start"),
+        "evidence schema must include char_start for verification"
+    );
+    assert!(
+        template.contains("\"quote\""),
+        "evidence schema must include the quote field"
+    );
+}
+
+/// The template must accept transcript_chunks (pre-split), not a raw
+/// transcript string.
+#[test]
+fn template_accepts_chunked_input() {
+    let template = read_template();
+    assert!(
+        template.contains("transcript_chunks"),
+        "template must accept transcript_chunks as input (pre-split by the process)"
+    );
+    assert!(
+        template.contains("[chunk_id:"),
+        "template must label chunks with chunk_id in the input format"
+    );
+}
+
+/// The template must tell the model that the verifier checks substrings
+/// mechanically — the model cannot pass with a fabricated quote.
+#[test]
+fn template_states_mechanical_verification() {
+    let template = read_template();
+    assert!(
+        template.contains("verifier checks this mechanically"),
+        "template must state that verification is mechanical (not model-mediated)"
+    );
+    assert!(
+        template.contains("fabricated quotes are rejected"),
+        "template must state that fabricated quotes are rejected"
+    );
+}
+
+// ── Horizon model tests ─────────────────────────────────────────────────────
+
 #[test]
 fn template_includes_horizon_classification() {
     let template = read_template();
@@ -149,7 +205,6 @@ fn template_includes_horizon_classification() {
     );
 }
 
-/// The template must include the admissibility rule (the linkage bar).
 #[test]
 fn template_includes_admissibility_rule() {
     let template = read_template();
@@ -159,8 +214,6 @@ fn template_includes_admissibility_rule() {
     );
 }
 
-/// The template must include the checkpoint_map in its output schema, with
-/// the strategic_goal_link field (the checkpoint test asserts this is populated).
 #[test]
 fn template_includes_checkpoint_map_schema() {
     let template = read_template();
@@ -174,7 +227,6 @@ fn template_includes_checkpoint_map_schema() {
     );
 }
 
-/// The template must include all 7 sections from the design §(b).
 #[test]
 fn template_includes_all_seven_sections() {
     let template = read_template();
@@ -194,8 +246,6 @@ fn template_includes_all_seven_sections() {
     }
 }
 
-/// The template must use the guidebook certainty vocabulary (proximate/probable/
-/// possible), not a numeric scale.
 #[test]
 fn template_uses_guidebook_certainty_vocabulary() {
     let template = read_template();
@@ -207,9 +257,39 @@ fn template_uses_guidebook_certainty_vocabulary() {
     }
 }
 
-// ── Manifest validation ────────────────────────────────────────────────────
+// ── Process manifest tests ──────────────────────────────────────────────────
 
-/// The template crate manifest must exist and reference the apply-template.j2.
+/// The process manifest must include the chunk_transcript step (step 1)
+/// and the verify_citations step (step 3) — the process-embedded enforcement.
+#[test]
+fn process_manifest_includes_chunk_and_verify_steps() {
+    let manifest = read_process_manifest();
+    assert!(
+        manifest.contains("chunk_transcript"),
+        "process manifest must include the chunk_transcript compute step"
+    );
+    assert!(
+        manifest.contains("verify_citations"),
+        "process manifest must include the verify_citations compute step"
+    );
+    assert!(
+        manifest.contains("VERIFY CITATIONS"),
+        "process manifest must describe the citation verification step"
+    );
+}
+
+/// The process manifest must pass chunked input to the template (not raw text).
+#[test]
+fn process_manifest_passes_chunks_to_template() {
+    let manifest = read_process_manifest();
+    assert!(
+        manifest.contains("transcript_chunks"),
+        "process manifest must pass transcript_chunks to the template"
+    );
+}
+
+// ── Manifest validation ─────────────────────────────────────────────────────
+
 #[test]
 fn manifest_references_template() {
     let manifest = read_manifest();

@@ -1,6 +1,14 @@
 # Listening Process Manifest
-# ℏKask v0.33.0 — MAIA v3 listening skill as a single-pass KnowAct
+# ℏKask v0.33.0 — MAIA v3 listening skill as a retrieve-cite-verify process
 # Design: kask/docs/explanation/earnings-transcript-analysis-design.md §(b), §(c)
+#
+# No-fabrication design (process-embedded, not instruction-embedded):
+# The transcript is pre-split into numbered chunks (step 1). The model
+# searches the chunks and cites what it found (step 2). A post-processing
+# step verifies each cited substring is present in the referenced chunk
+# (step 3). The model cannot fabricate a quote because the process never
+# gives it a "write a quote" step — only a "find a quote and point to it"
+# step. The verification is mechanical (substring match), not model-mediated.
 
 manifest:
   id: listening
@@ -8,10 +16,11 @@ manifest:
   name: Listening
   description: >
     Applies the MAIA v3 listening template to an earnings-call transcript.
-    Single-pass extraction: per-section verdicts with verbatim evidence quotes,
-    horizon classification (seam checkpoint / tactical / strategic /
-    short-term-only), and the checkpoint map. Enforces the no-fabrication
-    invariant — every evidence field is a verbatim substring of the source.
+    Retrieve-cite-verify process: the transcript is split into numbered
+    chunks, the model searches the chunks for evidence and cites what it
+    found (chunk_id + substring), and a post-processing step verifies each
+    cited substring is present in the referenced chunk. The no-fabrication
+    invariant is enforced by the process, not by the prompt.
   functional_role: flowdef
   version: 0.33.0
   editor: curator-or-human-admin
@@ -56,21 +65,48 @@ ledger:
 
 steps:
   - ordinal: 1
+    action: compute
+    compute_ref: listening.chunk_transcript
+    description: >
+      Split the transcript into numbered chunks (by speaker turns or
+      paragraph boundaries). This is the pre-splitting step that makes the
+      retrieve-cite-verify process possible — the model searches numbered
+      chunks, not raw text, so each piece of evidence can reference a
+      specific chunk_id for mechanical verification.
+    input_mapping:
+      transcript: "{{ transcript }}"
+      prior_transcripts: "{{ prior_transcripts | default([]) }}"
+
+  - ordinal: 2
     action: select
     description: >
-      Apply the v3 listening template to the transcript. Extract per-section
-      verdicts with verbatim evidence, classify claims by horizon, emit the
+      Apply the v3 listening template to the chunked transcript. The model
+      searches the chunks for evidence, cites what it found (chunk_id +
+      substring + char_start), and emits per-section verdicts with the
       checkpoint map and ignored_short_term.
     renderer: minijinja
     template_ref: listening/apply-template
     gas_cap: 100000
     timeout_seconds: 60
     input_mapping:
-      transcript: "{{ transcript }}"
-      prior_transcripts: "{{ prior_transcripts | default([]) }}"
+      transcript_chunks: "{{ step_1_result.transcript_chunks | default([]) }}"
+      prior_transcript_chunks: "{{ step_1_result.prior_transcript_chunks | default([]) }}"
       company_symbol: "{{ company_symbol | default('UNKNOWN') }}"
 
-  - ordinal: 2
+  - ordinal: 3
+    action: compute
+    compute_ref: listening.verify_citations
+    description: >
+      VERIFY CITATIONS: for every evidence item in the model's output, check
+      that the `quote` is a substring of the chunk referenced by `chunk_id`.
+      Reject any verdict whose evidence fails the substring check. This is
+      the mechanical enforcement of the no-fabrication invariant — the
+      process verifies, not the model.
+    input_mapping:
+      model_output: "{{ step_2_result }}"
+      transcript_chunks: "{{ step_1_result.transcript_chunks | default([]) }}"
+
+  - ordinal: 4
     action: compute
     compute_ref: kata.convergence_check
     description: >
@@ -82,7 +118,7 @@ steps:
       cauchy_window: "{{ _convergence.cauchy_window | default(1) }}"
       cauchy_mode: "cauchy"
 
-  - ordinal: 3
+  - ordinal: 5
     action: loop
     description: Single-pass — no loop (max_iterations=1).
     input_mapping:

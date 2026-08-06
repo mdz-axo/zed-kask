@@ -309,6 +309,7 @@ members = [
     "kask/mcp-servers/hkask-mcp-media",
     "kask/mcp-servers/hkask-mcp-training",
     "kask/mcp-servers/hkask-mcp-companies",
+    "kask/mcp-servers/hkask-mcp-portfolio",
     "kask/mcp-servers/hkask-mcp-corpus",
     "kask/mcp-servers/hkask-mcp-swarm",
 ]
@@ -886,6 +887,7 @@ hkask-memory = { path = "kask/crates/hkask-memory" }
 hkask-email = { path = "kask/crates/hkask-email" }
 hkask-mcp = { path = "kask/crates/hkask-mcp" }
 hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
+hkask-mcp-portfolio = { path = "kask/mcp-servers/hkask-mcp-portfolio" }
 hkask-mcp-prediction-markets = { path = "kask/mcp-servers/hkask-mcp-prediction-markets" }
 hkask-test-harness = { path = "kask/crates/hkask-test-harness" }
 llm-guard = "=0.2.0"
