@@ -1,6 +1,5 @@
 use super::{
     ProviderSearchOutput, WebBrowseProvider, WebError, WebExtractProvider, WebSearchProvider,
-    validate_provider_url,
 };
 use crate::research::types::*;
 use async_trait::async_trait;
@@ -110,11 +109,7 @@ impl WebExtractProvider for FirecrawlProvider {
         url: &str,
         opts: &ExtractOptions,
     ) -> Result<ExtractedContent, WebError> {
-        // SSRF defense-in-depth: validate at the provider boundary too, in case
-        // a future caller bypasses the tool-layer check. Firecrawl passes the
-        // URL to a third-party service that fetches it — an internal URL
-        // (e.g. 169.254.169.254) would be fetched by Firecrawl's backend.
-        validate_provider_url(url).await?;
+        // SSRF validation is at the pool boundary (extract_with_fallback).
         let auth = self.auth_header()?;
         let mut payload = serde_json::json!({ "url": url });
         match opts.format.as_str() {
@@ -197,8 +192,7 @@ impl WebBrowseProvider for FirecrawlProvider {
         instruction: &str,
         timeout: Duration,
     ) -> Result<BrowseResult, WebError> {
-        // SSRF defense-in-depth: validate at the provider boundary.
-        validate_provider_url(url).await?;
+        // SSRF validation is at the pool boundary (browse_with_fallback).
         let auth = self.auth_header()?;
         let payload = serde_json::json!({
             "url": url, "formats": ["markdown"],

@@ -420,6 +420,11 @@ impl ProviderPool {
         url: &str,
         opts: &ExtractOptions,
     ) -> Result<ExtractedContent, WebError> {
+        // SSRF defense-in-depth: validate once at the pool boundary so each
+        // provider in the fallback chain doesn't re-resolve DNS. The tool
+        // layer (validate_tool_url_with_dns) is the outer gate; this is the
+        // inner gate before any provider fetches the URL.
+        validate_provider_url(url).await?;
         try_fallback!(&self.extract_providers, extract, url, opts)
     }
 
@@ -429,6 +434,8 @@ impl ProviderPool {
         instruction: &str,
         timeout: Duration,
     ) -> Result<BrowseResult, WebError> {
+        // SSRF defense-in-depth: validate once at the pool boundary.
+        validate_provider_url(url).await?;
         try_fallback!(&self.browse_providers, browse, url, instruction, timeout)
     }
 

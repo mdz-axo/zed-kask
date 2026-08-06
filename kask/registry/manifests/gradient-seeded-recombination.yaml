@@ -75,7 +75,12 @@ inputs:
       a BioPortal/OBO Foundry acronym), its axioms, its term signature, and
       its key concepts. The project's default registry is the 6
       domain-supplement namespaces + 2 universal axes; external extensions
-      require per-ontology license check.
+      require per-ontology license check. The NCATS T-spectrum (T0–T4:
+      basic research → clinical research → clinical practice → population
+      health → policy/outcomes) may be included as a directed-process
+      ontology — GSR can map recombination gradients ALONG the T-spectrum
+      (e.g., T0↔T1, T0↔T2) as well as ACROSS domain ontologies. Each
+      T-stage has its own entities, constraints, and evidence standards.
   - name: ontology_sources
     type: array
     required: false

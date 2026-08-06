@@ -1,4 +1,4 @@
-use super::{WebBrowseProvider, WebError, validate_provider_url};
+use super::{WebBrowseProvider, WebError};
 use crate::research::types::*;
 use async_trait::async_trait;
 use std::time::Duration;
@@ -28,10 +28,7 @@ impl WebBrowseProvider for BrowserbaseProvider {
         instruction: &str,
         timeout: Duration,
     ) -> Result<BrowseResult, WebError> {
-        // SSRF defense-in-depth: validate at the provider boundary.
-        // Browserbase passes the URL to a third-party service that fetches
-        // it — an internal URL would be fetched by Browserbase's backend.
-        validate_provider_url(url).await?;
+        // SSRF validation is at the pool boundary (browse_with_fallback).
         let payload = serde_json::json!({
             "url": url,
             "actions": [{ "type": "wait", "milliseconds": 2000u64 }],

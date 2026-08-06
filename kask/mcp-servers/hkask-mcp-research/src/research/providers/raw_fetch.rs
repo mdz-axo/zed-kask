@@ -1,4 +1,4 @@
-use super::{WebBrowseProvider, WebError, WebExtractProvider, validate_provider_url};
+use super::{WebBrowseProvider, WebError, WebExtractProvider};
 use crate::research::strip_html;
 use crate::research::types::*;
 use async_trait::async_trait;
@@ -26,8 +26,8 @@ impl WebExtractProvider for RawFetchProvider {
         url: &str,
         _opts: &ExtractOptions,
     ) -> Result<ExtractedContent, WebError> {
-        // Task 6: Validate URL at provider boundary — RawFetch is the most SSRF-sensitive provider
-        validate_provider_url(url).await?;
+        // SSRF validation is at the pool boundary (extract_with_fallback) —
+        // no per-provider re-validation needed.
         let resp =
             self.client.get(url).send().await.map_err(|e| {
                 WebError::ProviderUnavailable(format!("RawFetch request failed: {e}"))
@@ -84,7 +84,7 @@ impl WebBrowseProvider for RawFetchProvider {
         instruction: &str,
         timeout: Duration,
     ) -> Result<BrowseResult, WebError> {
-        validate_provider_url(url).await?;
+        // SSRF validation is at the pool boundary (browse_with_fallback).
         let resp = self
             .client
             .get(url)
