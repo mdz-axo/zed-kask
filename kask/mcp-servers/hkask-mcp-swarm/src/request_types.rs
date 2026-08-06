@@ -7,7 +7,7 @@
 //! single `impl` block — see the `tool_router` macro in `rmcp-macros`).
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // ── Request types ──────────────────────────────────────────────────────────
 
@@ -148,6 +148,75 @@ pub struct ValenceInput {
     pub personality_traits: Option<Vec<String>>,
 }
 
+/// Inbound MCP server declaration — a third-party MCP server an ABW agent
+/// may *consume* (call as a client). Mirrors fermi's `RemoteMcpServer` shape
+/// (fermi v0.11.6, mig-177; `src/agent_backend/mcp_client.rs`). fermi accepts
+/// both a sequence and a map form; zed-kask sends the sequence form because
+/// the map form's keys are server namespaces that the model cannot
+/// authoritatively choose.
+///
+/// This is the inbound direction (what the agent can call). The outbound
+/// direction (what the agent exposes over `/mcp/agents/:id`) is `mcp_tools`
+/// — a separate field on the same card. The two are easy to conflate; fermi
+/// v0.11.8 release notes pin the mnemonic: `mcp_servers` = inbound,
+/// `mcp_tools` = outbound.
+///
+/// Secrets are never inlined in the card. `secret_key` names an entry in
+/// the agent owner's scoped secret store (resolved fermi-side via
+/// `fermi_auth::get_secrets_for_agent`); `env` is a process-level fallback
+/// for platform-owned integrations. zed-kask never sees the secret value.
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, JsonSchema, Serialize)]
+pub struct McpServerAuthSpec {
+    /// Authentication scheme. `"bearer"` (default) sends the credential as
+    /// `Authorization: Bearer <secret>`. `"header"` sends it as a raw
+    /// header value on `header`.
+    #[serde(default = "default_auth_scheme")]
+    pub scheme: String,
+    /// Header carrying the credential. Defaults to `Authorization`.
+    pub header: Option<String>,
+    /// Key into the agent owner's scoped secret store. fermi resolves this
+    /// to the plaintext secret at execution time; zed-kask never handles
+    /// the value.
+    pub secret_key: Option<String>,
+    /// Environment-variable fallback when the secret store has no entry.
+    /// Platform-owned integrations use this.
+    pub env: Option<String>,
+}
+
+fn default_auth_scheme() -> String {
+    "bearer".to_string()
+}
+
+/// A remote MCP server an ABW agent is authorised to call as a client.
+///
+/// Field names follow the MCP ecosystem convention (Claude Desktop,
+/// Cursor, `mcp.json`) so a card authored in that style transfers
+/// directly. Only `name` and `endpoint` are load-bearing for discovery;
+/// the rest narrow or authenticate the connection.
+#[derive(Debug, Default, Clone, PartialEq, Deserialize, JsonSchema, Serialize)]
+pub struct McpServerSpec {
+    /// Namespace prefix for this server's tools. Sanitised to
+    /// `[a-zA-Z0-9_-]` fermi-side; becomes part of the qualified tool
+    /// name the model sees (`<name>__<tool>`).
+    pub name: String,
+    /// Streamable-HTTP JSON-RPC endpoint. Must be an `http://` or
+    /// `https://` URL — fermi refuses stdio-only servers with an
+    /// actionable error (ABW does not spawn MCP processes).
+    pub endpoint: String,
+    /// If non-empty, only these remote tool names are exposed. Narrows a
+    /// broad third-party surface to what the agent actually needs.
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
+    /// Per-call timeout in seconds. Default 30 (fermi-side).
+    pub timeout_secs: Option<u64>,
+    /// Authentication. When `None`, the server is treated as open (no
+    /// credential attached). An `auth` block with an unset `secret_key`
+    /// and `env` is a hard failure fermi-side — do not use it to mean
+    /// "open".
+    #[serde(default)]
+    pub auth: Option<McpServerAuthSpec>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateAgentRequest {
     /// Agent name (lowercase_with_underscores) — becomes the system identifier.
@@ -171,11 +240,35 @@ pub struct CreateAgentRequest {
     pub dependencies_required: Option<Vec<String>>,
     /// Optional dependency agent names (for compound agents).
     pub dependencies_optional: Option<Vec<String>>,
-    /// MCP tools the agent may call (ABW-side capabilities, e.g.
+    /// Outbound MCP tool allowlist — what this agent *exposes* over
+    /// `/mcp/agents/:id` to external MCP clients (Claude Desktop, Cursor,
+    /// Zed). Qualified `server/tool` names (e.g.
     /// `["codegraph/codegraph_query"]`). Passed through to the ABW card's
-    /// `capabilities.mcp_tools`. The local-mode analog is the local card's
-    /// `capabilities.mcp_tools` (executed by `swarm_delegate_local`).
+    /// `capabilities.mcp_tools`. The local-mode analog is the local
+    /// card's `capabilities.mcp_tools` (executed by
+    /// `swarm_delegate_local`).
+    ///
+    /// Distinct from `mcp_servers` (inbound). fermi v0.11.8 release notes
+    /// pin the mnemonic: `mcp_tools` = outbound (what I expose),
+    /// `mcp_servers` = inbound (who I can call).
     pub mcp_tools: Option<Vec<String>>,
+    /// Inbound MCP server declarations — third-party MCP servers this
+    /// agent may *call* as a client at execution time. fermi v0.11.6
+    /// (mig-177) added the `agents.mcp_servers` JSONB column; v0.11.8
+    /// (mig-178) wired `resolve_agent_card` to bridge it over the file
+    /// card. fermi discovers each server's `tools/list` (TTL-cached),
+    /// namespaces the results as `<name>__<tool>`, and routes
+    /// `tools/call` back out. Builtins win on name collisions.
+    ///
+    /// Secrets are referenced by `auth.secret_key` (agent owner's scoped
+    /// secret store) — never inlined in the card. zed-kask never handles
+    /// the secret value.
+    ///
+    /// When `None` (the default), the card omits `mcp_servers` and fermi
+    /// inherits from the filesystem card (NULL column). When `Some([])`,
+    /// the card publishes "explicitly no servers", overriding a file
+    /// card. When `Some([...])`, the list is authoritative.
+    pub mcp_servers: Option<Vec<McpServerSpec>>,
     /// Skill ids the agent declares (ABW-side capabilities). Passed through
     /// to the ABW card's `capabilities.skills`.
     pub skills: Option<Vec<String>>,

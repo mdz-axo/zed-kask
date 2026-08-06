@@ -1,7 +1,7 @@
 ---
 title: "hkask-regulation — Explanation"
 audience: [developers, architects, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-06
 version: "0.3.0"
 status: "Active"
 domain: "Regulation"
@@ -20,20 +20,20 @@ snapshots that the `MetacognitionLoop` senses.
 
 ## Source citations
 
-| Symbol | Location |
-|--------|----------|
-| `RegulationCycleEntry` (captures all phases) | `kask/crates/hkask-regulation/src/runtime.rs:343` |
-| `RegulationLedger` | `kask/crates/hkask-regulation/src/runtime.rs:423` |
-| `CyberneticsLoop` | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:75` |
-| `MetacognitionLoop::run` | `kask/crates/hkask-regulation/src/metacognition.rs:212` |
-| `MetacognitionLoop::tick` | `kask/crates/hkask-regulation/src/metacognition.rs:223` |
-| `VarietyMonitor` | `kask/crates/hkask-regulation/src/runtime.rs:276` |
-| `EscalationAlert` | `kask/crates/hkask-regulation/src/metacognition.rs:103` |
-| `EscalationTrigger` enum | `kask/crates/hkask-regulation/src/metacognition.rs:113` |
-| `ProposedAction` struct | `kask/crates/hkask-regulation/src/regulation_policy.rs:27` |
-| `PolicyVerdict` enum | `kask/crates/hkask-regulation/src/runtime_policy.rs:14` |
-| `RuntimeAlert` | `kask/crates/hkask-regulation/src/algedonic.rs:37` |
-| `AlertSeverity` enum | `kask/crates/hkask-regulation/src/algedonic.rs:26` |
+| Symbol                                       | Location                                                   |
+| -------------------------------------------- | ---------------------------------------------------------- |
+| `RegulationCycleEntry` (captures all phases) | `kask/crates/hkask-regulation/src/runtime.rs:343`          |
+| `RegulationLedger`                           | `kask/crates/hkask-regulation/src/runtime.rs:423`          |
+| `CyberneticsLoop`                            | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:75`  |
+| `MetacognitionLoop::run`                     | `kask/crates/hkask-regulation/src/metacognition.rs:212`    |
+| `MetacognitionLoop::tick`                    | `kask/crates/hkask-regulation/src/metacognition.rs:223`    |
+| `VarietyMonitor`                             | `kask/crates/hkask-regulation/src/runtime.rs:276`          |
+| `EscalationAlert`                            | `kask/crates/hkask-regulation/src/metacognition.rs:103`    |
+| `EscalationTrigger` enum                     | `kask/crates/hkask-regulation/src/metacognition.rs:113`    |
+| `ProposedAction` struct                      | `kask/crates/hkask-regulation/src/regulation_policy.rs:27` |
+| `PolicyVerdict` enum                         | `kask/crates/hkask-regulation/src/runtime_policy.rs:14`    |
+| `RuntimeAlert`                               | `kask/crates/hkask-regulation/src/algedonic.rs:37`         |
+| `AlertSeverity` enum                         | `kask/crates/hkask-regulation/src/algedonic.rs:26`         |
 
 ## The homeostatic loop
 
@@ -48,7 +48,7 @@ stateDiagram-v2
     Sense --> Compare: collect afferent signals
     Compare --> Compute: detect deviations from set points
     Compute --> Act: produce RegulatoryAction
-    Act --> Verify: apply actions
+    Act --> Verify: convert to Escalate alert, route to Curator
     Verify --> Sense: verify impact, record cycle
     Verify --> Escalate: deviation exceeds threshold
     Escalate --> Alert: emit EscalationAlert
@@ -57,7 +57,7 @@ stateDiagram-v2
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-002
-verified_date: 2026-07-29
+verified_date: 2026-08-06
 verified_against: kask/crates/hkask-regulation/src/runtime.rs:343,405; kask/crates/hkask-regulation/src/cybernetics_loop.rs:75; kask/crates/hkask-regulation/src/metacognition.rs:103,113,212,223; kask/crates/hkask-regulation/src/regulation_policy.rs:27; kask/crates/hkask-regulation/src/runtime_policy.rs:14
 status: VERIFIED
 -->
@@ -71,7 +71,9 @@ collected signals against set points stored in `set_points.rs`. The compute
 phase matches `Deviation`s against `RegulationRule`s in `regulation_policy.rs`,
 producing `ProposedAction` records (`regulation_policy.rs:27`) that
 `CyberneticsLoop::build_regulation_action` converts into `RegulatoryAction`s.
-The act phase applies the action (throttle, escalate, circuit-break, notify).
+The act phase converts all actions to Escalate alerts routed to the
+Curator/human (the loop is a sensor+advisor, not an actuator — see the
+[Reference](./reference.md) § "Efferent action dispatch" for the rationale).
 The verify phase records the impact and feeds it back to the next sense phase.
 
 The separation of compare and compute is deliberate. Merging them would
@@ -79,8 +81,8 @@ conflate detection (what changed) with response (what to do). Keeping them
 separate allows the metacognition loop to evaluate whether the responses
 are actually improving the system, which is the Good Regulator requirement.
 
-`DefaultPolicy` (`runtime_policy.rs:49`) is a *separate* gate from
-the compute phase: its `check` method decides whether a *tool invocation* is allowed, blocked,
+`DefaultPolicy` (`runtime_policy.rs:49`) is a _separate_ gate from
+the compute phase: its `check` method decides whether a _tool invocation_ is allowed, blocked,
 requires human confirmation, or is logged — based on `ToolTaint`, untrusted
 input, and session action count. It does not consume `ProposedAction`; the
 `PolicyVerdict` enum (`runtime_policy.rs:14`) has variants `Allow`,
@@ -144,6 +146,6 @@ on each `tick`. These are the five cybernetic feedback-loop properties:
 
 ---
 
-[^conant-ashby]: Conant, R. C., & Ashby, W. R. (1970). *Every good regulator of a control system must be a model of that system.* International Journal of Systems Science, 1(2), 89-97. <https://www.tandfonline.com/doi/abs/10.1080/00207727008902020>. The Good Regulator theorem: the Regulation system must model the system it regulates, which is why the `RegulationLedger` records every cycle entry.
+[^conant-ashby]: Conant, R. C., & Ashby, W. R. (1970). _Every good regulator of a control system must be a model of that system._ International Journal of Systems Science, 1(2), 89-97. <https://www.tandfonline.com/doi/abs/10.1080/00207727008902020>. The Good Regulator theorem: the Regulation system must model the system it regulates, which is why the `RegulationLedger` records every cycle entry.
 
-[^wiener-cybernetics]: Wiener, N. (1948). *Cybernetics: Or Control and Communication in the Animal and the Machine.* MIT Press. The foundational cybernetic feedback loop that the five-phase cycle implements.
+[^wiener-cybernetics]: Wiener, N. (1948). _Cybernetics: Or Control and Communication in the Animal and the Machine._ MIT Press. The foundational cybernetic feedback loop that the five-phase cycle implements.

@@ -1249,6 +1249,33 @@ fn main() {
                             }
                         }
 
+                        // Open the reviewable escalation queue on the same
+                        // curator pod.db — the same DB the curator MCP
+                        // server's `curator_escalations` /
+                        // `curator_escalation_resolve` /
+                        // `curator_escalation_dismiss` tools read. This is
+                        // the primary durable path for alert review:
+                        // `CyberneticsLoop` writes escalated alerts here
+                        // unconditionally so the Curator/user can review and
+                        // resolve them. Before this, the escalation sink is
+                        // `None` (alerts not persisted to the reviewable
+                        // backlog).
+                        match kask_bridge::open_curator_escalation_queue(&passphrase) {
+                            Some(queue) => {
+                                let sink: std::sync::Arc<dyn hkask_regulation::AlertEscalationSink> =
+                                    std::sync::Arc::new(kask_bridge::BridgeAlertEscalationSink::new(queue));
+                                let mut loop_guard = cybernetics_loop_for_panel_deferred.write().await;
+                                loop_guard.set_alert_escalation_sink(Some(sink));
+                                log::info!("hKask escalation queue wired — algedonic alerts now persist to the reviewable backlog on curator pod.db");
+                            }
+                            None => {
+                                log::warn!(
+                                    "hKask escalation queue unavailable — algedonic alerts will not persist to the reviewable backlog. \
+                                     Remediation: ensure the curator pod.db can be opened (HKASK_CURATOR_DB, DB passphrase)."
+                                );
+                            }
+                        }
+
                         match kask_bridge::RealMemoryPort::new(
                             &db_path,
                             &passphrase,

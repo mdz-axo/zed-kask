@@ -108,6 +108,16 @@ inputs:
     description: >
       The target task the swarm must be composed for. Drives the
       required_transforms set in the variety check.
+  - name: mode
+    type: string
+    required: false
+    description: >
+      The swarm backend: "abw" (Agent Bestiary World, the default) or "local"
+      (zed-kask substrate). Selects the data source (ABW REST vs local registry
+      + ledger) and the spend gate (consent token vs ledger balance) at the
+      SENSE/ACT/CHECK steps. The Steer-mode curator passes this from
+      `kask.swarm.mode` via the skill's `context` argument; without it the
+      templates default to `abw` and steer the wrong backend.
   - name: target_condition
     type: object
     required: false

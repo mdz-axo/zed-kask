@@ -23,9 +23,11 @@
 //!   in the output.
 
 use hkask_mcp_swarm::test_utils::{
-    SwarmMode, detect_embedded_error, effective_hire_cost, extract_quoted, filter_declared_skills,
-    filter_mcp_tools, fnv1a, make_swarm_slug, mint_token, sanitize_abw_response, sanitize_abw_text,
-    sanitize_agent_id, strip_leading_mentions, url_encode_segment, validate_agent_name,
+    SwarmMode, build_create_agent_card, detect_embedded_error, effective_hire_cost,
+    extract_quoted, filter_declared_skills, filter_mcp_tools, fnv1a, make_swarm_slug, mint_token,
+    sanitize_abw_response, sanitize_abw_text, sanitize_agent_id, strip_leading_mentions,
+    url_encode_segment, validate_agent_name, CreateAgentRequest, McpServerAuthSpec,
+    McpServerSpec, ValenceInput,
 };
 use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant, oracle_reference};
 use proptest::prelude::*;
@@ -488,5 +490,354 @@ proptest! {
         let a = s.parse::<SwarmMode>();
         let b = s.parse::<SwarmMode>();
         prop_assert_eq!(a.ok(), b.ok(), "non-deterministic parse for s={:?}", s);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 2. Create-agent card construction — fermi v0.11.6 mcp_servers contract
+// ──────────────────────────────────────────────────────────────────────────
+//
+// `build_create_agent_card` is the pure function that builds the JSON payload
+// for `POST /api/agents`. It was extracted from `swarm_create_agent` so the
+// card shape can be property-tested without a live ABW connection. The
+// properties below pin the fermi v0.11.6 (mig-177) contract for
+// `capabilities.mcp_servers` (inbound MCP servers) and the fermi v0.11.8
+// mnemonic: `mcp_servers` = inbound, `mcp_tools` = outbound.
+//
+// Oracle taxonomy:
+// - `oracle_invariant` — check a property of (input, output): no inlined
+//   secrets, determinism, field-presence contract, default values.
+// - `oracle_reference` — compare the serialized `mcp_servers` against the
+//   input struct (round-trip).
+
+/// Arbitrary `McpServerAuthSpec` — exercises all optional fields.
+fn arb_auth_spec() -> impl Strategy<Value = McpServerAuthSpec> {
+    (
+        prop::option::of(prop::string::string_regex("[a-z]{1,12}").expect("valid regex")),
+        prop::option::of(prop::string::string_regex("[A-Z_]{1,20}").expect("valid regex")),
+        prop::option::of(prop::string::string_regex("[A-Z_]{1,20}").expect("valid regex")),
+    )
+        .prop_map(|(header, secret_key, env)| McpServerAuthSpec {
+            scheme: "bearer".to_string(),
+            header,
+            secret_key,
+            env,
+        })
+}
+
+/// Arbitrary `McpServerSpec` — name is a slug, endpoint is an http(s) URL.
+fn arb_mcp_server_spec() -> impl Strategy<Value = McpServerSpec> {
+    (
+        prop::string::string_regex("[a-z][a-z0-9_-]{0,30}").expect("valid regex"),
+        prop::string::string_regex("https://[a-z0-9.]{1,30}/[a-z0-9/]{0,20}")
+            .expect("valid regex"),
+        prop::collection::vec(prop::string::string_regex("[a-z_]{1,20}").expect("valid regex"), 0..4),
+        prop::option::of(1u64..=120),
+        prop::option::of(arb_auth_spec()),
+    )
+        .prop_map(|(name, endpoint, tool_allowlist, timeout_secs, auth)| McpServerSpec {
+            name,
+            endpoint,
+            tool_allowlist,
+            timeout_secs,
+            auth,
+        })
+}
+
+/// Arbitrary `CreateAgentRequest` with valid-ish fields. The `agent_name` is
+/// slug-compliant (the handler validates it separately; the card builder does
+/// not). Composed from sub-generators because proptest's tuple `Strategy`
+/// impl stops at 12 elements.
+fn arb_create_agent_request() -> impl Strategy<Value = CreateAgentRequest> {
+    // Core required fields + simple optionals.
+    let core = (
+        prop::string::string_regex("[a-z][a-z0-9_]{2,30}").expect("valid regex"),
+        prop::string::string_regex("[a-z]{1,12}").expect("valid regex"),
+        arb_short_string(64),
+        arb_short_string(64),
+        prop::option::of(prop::string::string_regex("[a-z0-9/-]{1,40}").expect("valid regex")),
+        prop::option::of(0.0f64..=1.0),
+        prop::option::of(arb_string_vec(4, 16)),
+        prop::option::of(arb_string_vec(4, 32)),
+    )
+        .prop_map(
+            |(agent_name, agent_type, system_prompt, description, model, temperature, tags, sample_queries)| {
+                (agent_name, agent_type, system_prompt, description, model, temperature, tags, sample_queries)
+            },
+        );
+
+    // Dependency + capability optionals.
+    let deps_caps = (
+        prop::option::of(arb_string_vec(4, 16)),
+        prop::option::of(arb_string_vec(4, 16)),
+        prop::option::of(arb_string_vec(4, 16)),
+        prop::option::of(prop::collection::vec(arb_mcp_server_spec(), 0..4)),
+        prop::option::of(arb_string_vec(4, 16)),
+    )
+        .prop_map(
+            |(dependencies_required, dependencies_optional, mcp_tools, mcp_servers, skills)| {
+                (dependencies_required, dependencies_optional, mcp_tools, mcp_servers, skills)
+            },
+        );
+
+    // Visibility + valence.
+    let vis_valence = (
+        prop::option::of(prop::sample::select(&["public", "private", "unlisted"])),
+        prop::option::of((
+            0.0f64..=1.0,
+            0.0f64..=1.0,
+            prop::option::of(prop::string::string_regex("[a-z]{1,12}").expect("valid regex")),
+            prop::option::of(arb_string_vec(4, 16)),
+        )),
+    );
+
+    (core, deps_caps, vis_valence).prop_map(
+        |(
+            (agent_name, agent_type, system_prompt, description, model, temperature, tags, sample_queries),
+            (dependencies_required, dependencies_optional, mcp_tools, mcp_servers, skills),
+            (visibility, valence),
+        )| {
+            CreateAgentRequest {
+                agent_name,
+                agent_type,
+                system_prompt,
+                description,
+                model,
+                temperature,
+                tags,
+                sample_queries,
+                dependencies_required,
+                dependencies_optional,
+                mcp_tools,
+                mcp_servers,
+                skills,
+                visibility: visibility.map(|s| s.to_string()),
+                valence: valence.map(|(arousal, valence, primary_affect, personality_traits)| {
+                    ValenceInput {
+                        arousal: Some(arousal),
+                        valence: Some(valence),
+                        primary_affect,
+                        personality_traits,
+                    }
+                }),
+            }
+        },
+    )
+}
+
+proptest! {
+    /// `McpServerSpec` round-trips through serde_json: serialize then
+    /// deserialize produces the same value. Pins the field names fermi's
+    /// `RemoteMcpServer` expects (name, endpoint, tool_allowlist,
+    /// timeout_secs, auth).
+    #[test]
+    fn mcp_server_spec_round_trips(spec in arb_mcp_server_spec()) {
+        let json = serde_json::to_value(&spec).expect("serialize");
+        let back: McpServerSpec = serde_json::from_value(json).expect("deserialize");
+        prop_assert_eq!(&spec.name, &back.name);
+        prop_assert_eq!(&spec.endpoint, &back.endpoint);
+        prop_assert_eq!(&spec.tool_allowlist, &back.tool_allowlist);
+        prop_assert_eq!(&spec.timeout_secs, &back.timeout_secs);
+        prop_assert_eq!(&spec.auth, &back.auth);
+    }
+
+    /// `build_create_agent_card` never panics on arbitrary input.
+    #[test]
+    fn build_create_agent_card_never_panics(req in arb_create_agent_request()) {
+        let result = std::panic::catch_unwind(|| {
+            build_create_agent_card(&req, "claude-haiku-4-5-20251001")
+        });
+        prop_assert!(result.is_ok(), "panicked on req={req:?}");
+    }
+
+    /// `build_create_agent_card` is deterministic: same input → same output.
+    #[test]
+    fn build_create_agent_card_deterministic(req in arb_create_agent_request()) {
+        let a = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
+        let b = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
+        prop_assert_eq!(&a, &b, "non-deterministic card for req={:?}", req);
+    }
+
+    /// `mcp_servers` field-presence contract (fermi v0.11.6 mig-177):
+    /// - `None` → the `capabilities.mcp_servers` key is ABSENT (fermi inherits
+    ///   from the filesystem card via NULL column).
+    /// - `Some([])` → the key is present and equals `[]` (authoritative "no
+    ///   servers").
+    /// - `Some([...])` → the key is present and equals the serialized list.
+    #[test]
+    fn mcp_servers_field_presence_contract(
+        servers in prop::option::of(prop::collection::vec(arb_mcp_server_spec(), 0..4))
+    ) {
+        let req = CreateAgentRequest {
+            agent_name: "test_agent".to_string(),
+            agent_type: "research".to_string(),
+            system_prompt: "prompt".to_string(),
+            description: "desc".to_string(),
+            model: None,
+            temperature: None,
+            tags: None,
+            sample_queries: None,
+            dependencies_required: None,
+            dependencies_optional: None,
+            mcp_tools: None,
+            mcp_servers: servers.clone(),
+            skills: None,
+            visibility: None,
+            valence: None,
+        };
+        let card = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
+        let caps = card.get("capabilities").expect("capabilities present");
+        match &servers {
+            None => {
+                prop_assert!(
+                    caps.get("mcp_servers").is_none(),
+                    "None must omit mcp_servers, got {:?}",
+                    caps.get("mcp_servers")
+                );
+            }
+            Some(list) => {
+                let field = caps.get("mcp_servers").expect("Some must inject mcp_servers");
+                let expected = serde_json::to_value(list).expect("serialize");
+                prop_assert_eq!(field, &expected, "mcp_servers field mismatch");
+            }
+        }
+    }
+
+    /// No inlined secrets: the card must never contain `Bearer ` or a
+    /// plaintext API key. fermi's `RemoteMcpServer` resolves credentials
+    /// by `auth.secret_key` reference at execution time — the card only
+    /// carries the key *name*, never the value. The `sk-` prefix is the
+    /// Anthropic key format; a `secret_key` that starts with `sk-` means
+    /// someone inlined the actual key value instead of the key name.
+    /// `Bearer ` in the serialized card would mean a literal credential
+    /// was embedded. Both are the security invariant fermi v0.9.0
+    /// established and v0.11.6 preserved.
+    #[test]
+    fn card_never_contains_inlined_secrets(req in arb_create_agent_request()) {
+        let card = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
+        let serialized = serde_json::to_string(&card).expect("serialize");
+        prop_assert!(
+            !serialized.contains("Bearer "),
+            "card contains 'Bearer ': {serialized}"
+        );
+        // Check each mcp_servers auth block: secret_key must be a name,
+        // not a literal key value.
+        if let Some(servers) = card
+            .get("capabilities")
+            .and_then(|c| c.get("mcp_servers"))
+            .and_then(|s| s.as_array())
+        {
+            for server in servers {
+                if let Some(auth) = server.get("auth") {
+                    if let Some(secret_key) = auth.get("secret_key").and_then(|k| k.as_str()) {
+                        prop_assert!(
+                            !secret_key.starts_with("sk-"),
+                            "auth.secret_key looks like a literal key value, not a name: {secret_key}"
+                        );
+                    }
+                    if let Some(env) = auth.get("env").and_then(|k| k.as_str()) {
+                        prop_assert!(
+                            !env.starts_with("sk-"),
+                            "auth.env looks like a literal key value, not a name: {env}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// `mcp_tools` and `skills` default to `[]` when `None` (fermi's card
+    /// shape requires these keys to be present — `resolve_agent_card`
+    /// treats absent as inherit, which is correct for `mcp_servers` but
+    /// wrong for `mcp_tools`/`skills` which are always arrays).
+    #[test]
+    fn mcp_tools_and_skills_default_to_empty_array(req in arb_create_agent_request()) {
+        let card = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
+        let caps = card.get("capabilities").expect("capabilities present");
+        let mcp_tools = caps.get("mcp_tools").expect("mcp_tools present");
+        let skills = caps.get("skills").expect("skills present");
+        prop_assert!(
+            mcp_tools.is_array(),
+            "mcp_tools must be an array, got {mcp_tools}"
+        );
+        prop_assert!(
+            skills.is_array(),
+            "skills must be an array, got {skills}"
+        );
+        // When the request field is None, the array is empty.
+        if req.mcp_tools.is_none() {
+            prop_assert!(
+                mcp_tools.as_array().unwrap().is_empty(),
+                "None mcp_tools must produce [], got {mcp_tools}"
+            );
+        }
+        if req.skills.is_none() {
+            prop_assert!(
+                skills.as_array().unwrap().is_empty(),
+                "None skills must produce [], got {skills}"
+            );
+        }
+    }
+
+    /// `mcp_tools` (outbound) and `mcp_servers` (inbound) are never confused:
+    /// the outbound list goes under `capabilities.mcp_tools`, the inbound
+    /// list goes under `capabilities.mcp_servers`. fermi v0.11.8 release
+    /// notes pin the mnemonic; this test pins it in code.
+    #[test]
+    fn mcp_tools_and_mcp_servers_never_confused(
+        tools in prop::collection::vec(prop::string::string_regex("[a-z_]{1,20}").expect("valid regex"), 0..4),
+        servers in prop::collection::vec(arb_mcp_server_spec(), 0..4),
+    ) {
+        let req = CreateAgentRequest {
+            agent_name: "test_agent".to_string(),
+            agent_type: "research".to_string(),
+            system_prompt: "prompt".to_string(),
+            description: "desc".to_string(),
+            model: None,
+            temperature: None,
+            tags: None,
+            sample_queries: None,
+            dependencies_required: None,
+            dependencies_optional: None,
+            mcp_tools: Some(tools),
+            mcp_servers: Some(servers),
+            skills: None,
+            visibility: None,
+            valence: None,
+        };
+        let card = build_create_agent_card(&req, "claude-haiku-4-5-20251001");
+        let caps = card.get("capabilities").expect("capabilities present");
+        // mcp_tools is a flat array of strings (outbound tool names).
+        let mcp_tools_field = caps.get("mcp_tools").expect("mcp_tools present");
+        prop_assert!(
+            mcp_tools_field.is_array(),
+            "mcp_tools must be an array of strings"
+        );
+        for entry in mcp_tools_field.as_array().unwrap() {
+            prop_assert!(
+                entry.is_string(),
+                "mcp_tools entries must be strings, got {entry}"
+            );
+        }
+        // mcp_servers is an array of objects (inbound server specs).
+        let mcp_servers_field = caps.get("mcp_servers").expect("mcp_servers present");
+        prop_assert!(
+            mcp_servers_field.is_array(),
+            "mcp_servers must be an array of objects"
+        );
+        for entry in mcp_servers_field.as_array().unwrap() {
+            prop_assert!(
+                entry.is_object(),
+                "mcp_servers entries must be objects, got {entry}"
+            );
+            prop_assert!(
+                entry.get("name").is_some(),
+                "mcp_servers entry missing name: {entry}"
+            );
+            prop_assert!(
+                entry.get("endpoint").is_some(),
+                "mcp_servers entry missing endpoint: {entry}"
+            );
+        }
     }
 }

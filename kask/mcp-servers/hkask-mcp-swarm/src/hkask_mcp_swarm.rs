@@ -85,8 +85,12 @@ mod spend_gate;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
     pub use crate::abw_util::*;
+    pub use crate::cloud_tools::build_create_agent_card;
     pub use crate::config::{SwarmMode, resolve_local_agents_dir};
     pub use crate::consent::{ConsentStore, fnv1a, mint_token};
+    pub use crate::request_types::{
+        CreateAgentRequest, McpServerAuthSpec, McpServerSpec, ValenceInput,
+    };
     pub use crate::sanitize::*;
 }
 

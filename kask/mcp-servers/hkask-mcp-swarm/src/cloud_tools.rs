@@ -18,6 +18,72 @@ use crate::spend_gate;
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
+/// Build the ABW agent-card JSON payload for `POST /api/agents` from a
+/// `CreateAgentRequest`. Pure function — no HTTP, no auth, no side effects —
+/// so it can be property-tested without a live ABW connection.
+///
+/// The card shape mirrors fermi's `resolve_agent_card` expectations:
+/// - `capabilities.mcp_tools` (outbound — what the agent exposes over
+///   `/mcp/agents/:id`). Always present, defaulting to `[]`.
+/// - `capabilities.mcp_servers` (inbound — third-party MCP servers the agent
+///   may call as a client, fermi v0.11.6 / mig-177). Injected only when the
+///   caller supplies a value: `None` omits the field (fermi inherits from the
+///   filesystem card via NULL column); `Some([])` is authoritative "no
+///   servers"; `Some([...])` is authoritative replacement. Secrets are
+///   referenced by `auth.secret_key` (agent owner's scoped secret store) —
+///   never inlined in the card.
+/// - `metadata.valence` (personality encoding, fermi v0.10.x).
+/// - `dependencies` (compound agent team, fermi v0.10.x).
+pub fn build_create_agent_card(
+    req: &CreateAgentRequest,
+    default_agent_model: &str,
+) -> serde_json::Value {
+    let mut card = serde_json::json!({
+        "agent_name": req.agent_name,
+        "agent_type": req.agent_type,
+        "system_prompt": req.system_prompt,
+        "capabilities": {
+            "executor": "llm",
+            "model": req.model.clone().unwrap_or_else(|| default_agent_model.to_string()),
+            "temperature": req.temperature.unwrap_or(0.3),
+            "provider": "anthropic",
+            "mcp_tools": req.mcp_tools.clone().unwrap_or_default(),
+            "skills": req.skills.clone().unwrap_or_default(),
+        },
+        "metadata": {
+            "description": req.description,
+            "tags": req.tags.clone().unwrap_or_default(),
+            "sample_queries": req.sample_queries.clone().unwrap_or_default(),
+        },
+        "visibility": req.visibility.clone().unwrap_or_else(|| "private".to_string()),
+    });
+    // fermi v0.11.6 (mig-177): inbound MCP servers. Inject only when the
+    // caller supplied a value. See the struct doc on `CreateAgentRequest`
+    // for the None/Some([])/Some([...]) precedence contract.
+    if let Some(mcp_servers) = &req.mcp_servers {
+        card["capabilities"]["mcp_servers"] = serde_json::to_value(mcp_servers)
+            .unwrap_or_else(|_| serde_json::json!([]));
+    }
+    // Valence (personality encoding) goes under metadata.valence, matching
+    // the ABW agent card shape (verified live 2026-08-04).
+    if let Some(valence) = &req.valence {
+        card["metadata"]["valence"] = serde_json::json!({
+            "arousal": valence.arousal,
+            "valence": valence.valence,
+            "primary_affect": valence.primary_affect,
+            "personality_traits": valence.personality_traits.clone().unwrap_or_default(),
+        });
+    }
+    // Compound agents declare their dependency team.
+    if req.dependencies_required.is_some() || req.dependencies_optional.is_some() {
+        card["dependencies"] = serde_json::json!({
+            "required": req.dependencies_required.clone().unwrap_or_default(),
+            "optional": req.dependencies_optional.clone().unwrap_or_default(),
+        });
+    }
+    card
+}
+
 #[tool_router(router = cloud_router, vis = "pub")]
 impl SwarmServer {
     /// Browse the ABW agent catalogue. Works without an API key.
@@ -851,42 +917,7 @@ impl SwarmServer {
                 return Err(crate::error::map_local_swarm_error(e));
             }
 
-            let mut card = serde_json::json!({
-                "agent_name": req.agent_name,
-                "agent_type": req.agent_type,
-                "system_prompt": req.system_prompt,
-                "capabilities": {
-                    "executor": "llm",
-                    "model": req.model.unwrap_or_else(|| self.client.config().default_agent_model.clone()),
-                    "temperature": req.temperature.unwrap_or(0.3),
-                    "provider": "anthropic",
-                    "mcp_tools": req.mcp_tools.unwrap_or_default(),
-                    "skills": req.skills.unwrap_or_default(),
-                },
-                "metadata": {
-                    "description": req.description,
-                    "tags": req.tags.unwrap_or_default(),
-                    "sample_queries": req.sample_queries.unwrap_or_default(),
-                },
-                "visibility": req.visibility.unwrap_or_else(|| "private".to_string()),
-            });
-            // Valence (personality encoding) goes under metadata.valence,
-            // matching the ABW agent card shape (verified live 2026-08-04).
-            if let Some(valence) = req.valence {
-                card["metadata"]["valence"] = serde_json::json!({
-                    "arousal": valence.arousal,
-                    "valence": valence.valence,
-                    "primary_affect": valence.primary_affect,
-                    "personality_traits": valence.personality_traits.unwrap_or_default(),
-                });
-            }
-            // Compound agents declare their dependency team.
-            if req.dependencies_required.is_some() || req.dependencies_optional.is_some() {
-                card["dependencies"] = serde_json::json!({
-                    "required": req.dependencies_required.unwrap_or_default(),
-                    "optional": req.dependencies_optional.unwrap_or_default(),
-                });
-            }
+            let card = build_create_agent_card(&req, &self.client.config().default_agent_model);
 
             let data = self
                 .client

@@ -443,26 +443,42 @@ impl CyberneticsLoop {
     /// Persist an algedonic alert to the reviewable escalation queue.
     ///
     /// This is the primary durable path for alert review: every escalated
-    /// alert is written here unconditionally (not just as a fallback), so the
-    /// Curator/user can review pending alerts via `curator_escalations` and
-    /// resolve/dismiss them with an audit trail. Best-effort — a failing or
-    /// missing sink never breaks the regulation loop.
+    /// alert is written here when the sink is wired (not just as a fallback),
+    /// so the Curator/user can review pending alerts via `curator_escalations`
+    /// and resolve/dismiss them with an audit trail. Best-effort — a failing
+    /// or missing sink never breaks the regulation loop. Non-escalated alerts
+    /// (Info severity, or `escalated: false`) are skipped to avoid polluting
+    /// the review queue with non-actionable noise.
     ///
     /// The `RuntimeAlert` fields are mapped to `EscalationEntry` columns:
     /// `output` = `alert.message`, `error_context` = serialized alert JSON
     /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
     /// 0.5 for Warning.
-    fn persist_alert_to_queue(&self, alert: &RuntimeAlert) {
+    ///
+    /// `efferent_action` carries the original `ActionType` for actions that
+    /// were converted to Escalate alerts (non-native Escalate). `None` for
+    /// native Escalate actions. The field is included in the `error_context`
+    /// JSON so the Curator's `curator_escalations` tool sees the recommended
+    /// action as structured data, not just free-text in the message.
+    fn persist_alert_to_queue(&self, alert: &RuntimeAlert, efferent_action: Option<&str>) {
         let Some(ref sink) = self.alert_escalation_sink else {
             return;
         };
+        // Skip non-escalated alerts — only escalated alerts (Critical, or
+        // Warning with `escalated: true`) belong in the reviewable backlog.
+        // Info alerts and non-escalated Warnings are diagnostic, not
+        // actionable, and would pollute the queue.
+        if !alert.escalated {
+            return;
+        }
         let confidence = if alert.is_critical() { 1.0 } else { 0.5 };
         let error_context = serde_json::json!({
             "domain": alert.domain,
             "deficit": alert.deficit,
             "threshold": alert.threshold,
-            "severity": format!("{:?}", alert.severity),
+            "severity": alert.severity,
             "escalated": alert.escalated,
+            "efferent_action": efferent_action,
             "timestamp": alert.timestamp.to_rfc3339(),
         })
         .to_string();
@@ -884,7 +900,7 @@ impl CyberneticsLoop {
                 // the queue is the primary durable path for alert review, not
                 // a fallback (the RegulationArchive below is the fallback for
                 // restart durability when the live channel is down).
-                self.persist_alert_to_queue(&alert);
+                self.persist_alert_to_queue(&alert, None);
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
                         WebID::from_persona(b"regulation"),
@@ -952,95 +968,160 @@ impl CyberneticsLoop {
             tracing::warn!(target: "reg.cybernetics", action_count = actions.len(), max_iterations = self.max_iterations, "Cascade detected: action count exceeds max_iterations");
         }
         for action in actions {
-            tracing::info!(target: "reg.cybernetics", action_type = ?action.action_type, target_loop = %action.target, "Cybernetics Loop efferent signal");
-            let target_id = action.target;
+            self.route_action_as_alert(&action).await;
+        }
+    }
 
-            // Send CurationInput::Alert on direct alerts channel.
-            // Fallback: persist to RegulationArchive when channel is down (Curator inactive).
-            // Per design decision: the algedonic system must always be connected
-            // to the Curator agent — persistence is the bridge when the
-            // live channel has no receiver.
-            if action.action_type == ActionType::Escalate && target_id == LoopId::Curation {
-                let (deficit, threshold) = extract_deficit_threshold(&action.parameters.data);
-                let domain = String::new();
-                let alert = RuntimeAlert {
-                    domain,
-                    deficit,
-                    threshold,
-                    severity: AlertSeverity::Critical,
-                    escalated: true,
-                    timestamp: chrono::Utc::now(),
-                    message: format!(
-                        "Variety deficit {} exceeds threshold {}",
-                        deficit, threshold
-                    ),
-                };
+    /// Convert a single `RegulatoryAction` into a `RuntimeAlert` and route it
+    /// through the three-tier alert path (escalation queue → live channel →
+    /// archive fallback → email fallback).
+    ///
+    /// Design decision (2026-08-06): the cybernetics loop is a sensor+advisor,
+    /// not an actuator. All computed actions are converted to Escalate alerts
+    /// routed to the Curator/human. Actions that would have been direct
+    /// efferent signals (Throttle, CircuitBreak, AdjustEnergyBudget, etc.)
+    /// carry an `efferent_action` field in the alert data so the Curator sees
+    /// what the loop would have done — but the actuator is not wired. This
+    /// preserves user sovereignty: the human decides whether to apply the
+    /// recommended action, the loop does not act autonomously.
+    ///
+    /// `Notify` actions are skipped — they are observational ("no action
+    /// required, positive signal" per `ActionType::Notify`'s doc). Converting
+    /// them to Critical alerts would be a variety inversion (positive signal
+    /// → critical alert) and would pollute the escalation queue with
+    /// non-actionable noise.
+    ///
+    /// See `kask/docs/diataxis/hkask-regulation/reference.md` §
+    /// "Efferent action dispatch" for the full rationale.
+    async fn route_action_as_alert(&self, action: &RegulatoryAction) {
+        let target_id = action.target;
 
-                // Persist to the reviewable escalation queue unconditionally —
-                // the queue is the primary durable path for alert review, not
-                // a fallback. The RegulationArchive below remains as a
-                // secondary fallback for restart durability when the live
-                // channel is down.
-                self.persist_alert_to_queue(&alert);
+        if action.action_type == ActionType::Notify {
+            tracing::info!(
+                target: "reg.cybernetics",
+                action_type = ?action.action_type,
+                target_loop = %action.target,
+                "Notify action — observational, not routed as alert"
+            );
+            return;
+        }
 
-                // Primary path: live channel to Curator's inbox
-                let sent_live = if let Some(ref alerts_tx) = self.alerts_tx {
-                    match alerts_tx.send(CurationInput::Alert(alert.clone())) {
-                        Ok(()) => true,
-                        Err(e) => {
-                            tracing::warn!(target: "reg.cybernetics", error = %e, "Failed to send CurationInput::Alert via live channel — falling back to persistence");
-                            false
-                        }
-                    }
-                } else {
-                    tracing::warn!(target: "reg.cybernetics", "Alerts channel not connected — falling back to persistence. Wire with_alerts_channel() for live delivery.");
+        let is_native_escalate = action.action_type == ActionType::Escalate
+            && target_id == LoopId::Curation;
+        let efferent_action = if is_native_escalate {
+            None
+        } else {
+            Some(action.action_type.as_str())
+        };
+
+        tracing::info!(
+            target: "reg.cybernetics",
+            action_type = ?action.action_type,
+            target_loop = %action.target,
+            efferent = ?efferent_action,
+            "Cybernetics Loop efferent signal (routed as Escalate{})",
+            if efferent_action.is_some() { " — efferent not wired" } else { "" }
+        );
+
+        // Build the alert. For native Escalate actions (variety deficit,
+        // wallet balance, etc.), extract the deficit/threshold from the
+        // typed data. For converted efferent actions, synthesize a
+        // deficit of 1 and threshold of 1 — the alert's purpose is
+        // advisory, not quantitative.
+        let (deficit, threshold) = if is_native_escalate {
+            extract_deficit_threshold(&action.parameters.data)
+        } else {
+            (1, 1)
+        };
+        let domain = if is_native_escalate {
+            String::new()
+        } else {
+            format!("efferent:{}", action.action_type.as_str())
+        };
+        let message = if is_native_escalate {
+            format!("Variety deficit {} exceeds threshold {}", deficit, threshold)
+        } else {
+            format!(
+                "Efferent action {} (target: {}) recommended but not wired — reason: {}",
+                action.action_type.as_str(),
+                action.target,
+                action.parameters.reason
+            )
+        };
+        let alert = RuntimeAlert {
+            domain,
+            deficit,
+            threshold,
+            severity: AlertSeverity::Critical,
+            escalated: true,
+            timestamp: chrono::Utc::now(),
+            message,
+        };
+
+        // Persist to the reviewable escalation queue unconditionally —
+        // the queue is the primary durable path for alert review, not
+        // a fallback. The RegulationArchive below remains as a
+        // secondary fallback for restart durability when the live
+        // channel is down.
+        self.persist_alert_to_queue(&alert, efferent_action);
+
+        // Primary path: live channel to Curator's inbox
+        let sent_live = if let Some(ref alerts_tx) = self.alerts_tx {
+            match alerts_tx.send(CurationInput::Alert(alert.clone())) {
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::warn!(target: "reg.cybernetics", error = %e, "Failed to send CurationInput::Alert via live channel — falling back to persistence");
                     false
-                };
+                }
+            }
+        } else {
+            tracing::warn!(target: "reg.cybernetics", "Alerts channel not connected — falling back to persistence. Wire with_alerts_channel() for live delivery.");
+            false
+        };
 
-                // Fallback: persist full alert to RegulationArchive for Curator retrieval on next activation
-                if !sent_live {
-                    let mut persisted = false;
-                    if let Some(ref sink) = self.event_sink {
-                        let event = RegulationRecord::new(
-                            WebID::from_persona(b"regulation"),
-                            Span::from_kind(SpanKind::VarietyAlgedonicAlert),
-                            CyclePhase::Act,
-                            serde_json::json!({
-                                "domain": alert.domain,
-                                "deficit": alert.deficit,
-                                "threshold": alert.threshold,
-                                "severity": "Critical",
-                                "escalated": true,
-                                "message": alert.message,
-                                "timestamp": alert.timestamp.to_rfc3339(),
-                            }),
-                            0,
-                        );
-                        match sink.persist(&event) {
-                            Ok(()) => {
-                                persisted = true;
-                                tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert persisted to RegulationArchive (Curator inbox unavailable)");
-                            }
-                            Err(e) => {
-                                tracing::error!(target: "reg.alert", error = %e, "Failed to persist algedonic alert to archive");
-                            }
-                        }
+        // Fallback: persist full alert to RegulationArchive for Curator retrieval on next activation
+        if !sent_live {
+            let mut persisted = false;
+            if let Some(ref sink) = self.event_sink {
+                let event = RegulationRecord::new(
+                    WebID::from_persona(b"regulation"),
+                    Span::from_kind(SpanKind::VarietyAlgedonicAlert),
+                    CyclePhase::Act,
+                    serde_json::json!({
+                        "domain": alert.domain,
+                        "deficit": alert.deficit,
+                        "threshold": alert.threshold,
+                        "severity": "Critical",
+                        "escalated": true,
+                        "message": alert.message,
+                        "efferent_action": efferent_action,
+                        "timestamp": alert.timestamp.to_rfc3339(),
+                    }),
+                    0,
+                );
+                match sink.persist(&event) {
+                    Ok(()) => {
+                        persisted = true;
+                        tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert persisted to RegulationArchive (Curator inbox unavailable)");
                     }
-
-                    // Email notification: fires when live channel is down, regardless of
-                    // archive outcome. Serves as notification (archive succeeded) or last
-                    // resort (archive failed/unavailable).
-                    if let Some(ref email_sink) = self.alert_email_sink {
-                        email_sink.send_alert_email(&alert);
-                        if persisted {
-                            tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as notification (live channel down, archive persisted)");
-                        } else {
-                            tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as last resort (archive unavailable)");
-                        }
-                    } else if !persisted {
-                        tracing::error!(target: "reg.alert", deficit = deficit, threshold = threshold, "CRITICAL: Algedonic alert LOST - no live channel, event_sink, or email sink");
+                    Err(e) => {
+                        tracing::error!(target: "reg.alert", error = %e, "Failed to persist algedonic alert to archive");
                     }
                 }
+            }
+
+            // Email notification: fires when live channel is down, regardless of
+            // archive outcome. Serves as notification (archive succeeded) or last
+            // resort (archive failed/unavailable).
+            if let Some(ref email_sink) = self.alert_email_sink {
+                email_sink.send_alert_email(&alert);
+                if persisted {
+                    tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as notification (live channel down, archive persisted)");
+                } else {
+                    tracing::info!(target: "reg.alert", deficit = deficit, threshold = threshold, "Algedonic alert emailed as last resort (archive unavailable)");
+                }
+            } else if !persisted {
+                tracing::error!(target: "reg.alert", deficit = deficit, threshold = threshold, "CRITICAL: Algedonic alert LOST - no live channel, event_sink, or email sink");
             }
         }
     }
@@ -1161,7 +1242,7 @@ impl CyberneticsLoop {
                     ),
                 };
                 // Persist to the reviewable escalation queue unconditionally.
-                self.persist_alert_to_queue(&alert);
+                self.persist_alert_to_queue(&alert, None);
                 if let Some(ref tx) = self.alerts_tx {
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
@@ -1203,7 +1284,7 @@ impl CyberneticsLoop {
                     ),
                 };
                 // Persist to the reviewable escalation queue unconditionally.
-                self.persist_alert_to_queue(&alert);
+                self.persist_alert_to_queue(&alert, None);
                 if let Some(ref tx) = self.alerts_tx {
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Block alert send failed — channel closed");
@@ -1709,6 +1790,7 @@ impl CyberneticsLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::strategy::Strategy;
 
     #[tokio::test]
     async fn new_loop_starts_with_default_quality() {
@@ -1732,5 +1814,288 @@ mod tests {
             q.gain >= 0.0 && q.fidelity_score >= 0.0,
             "quality should be computed after tick"
         );
+    }
+
+    /// A capturing `AlertEscalationSink` for testing the escalation-queue
+    /// wiring. Records every `persist_alert` call so the test can assert the
+    /// alert reached the reviewable backlog.
+    struct CapturingEscalationSink {
+        calls: std::sync::Mutex<Vec<(String, f64, String)>>,
+    }
+
+    impl CapturingEscalationSink {
+        fn new() -> Self {
+            Self {
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<(String, f64, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn clear(&self) {
+            self.calls.lock().unwrap().clear();
+        }
+    }
+
+    impl crate::algedonic::AlertEscalationSink for CapturingEscalationSink {
+        fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((output.to_string(), confidence, error_context.to_string()));
+        }
+    }
+
+    /// `persist_alert_to_queue` must write to the `AlertEscalationSink` when
+    /// wired. This pins the Store seam: if the sink call is dropped or guarded
+    /// by the wrong condition, the alert never reaches the reviewable backlog
+    /// and `curator_escalations` returns `count: 0` — the loop is open.
+    #[tokio::test]
+    async fn persist_alert_to_queue_writes_to_escalation_sink() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let sink = Arc::new(CapturingEscalationSink::new());
+        let loop_instance = CyberneticsLoop::new(ledger)
+            .with_alert_escalation_sink(sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>);
+
+        let critical_alert = RuntimeAlert {
+            domain: "test_domain".to_string(),
+            deficit: 150,
+            threshold: 100,
+            severity: AlertSeverity::Critical,
+            escalated: true,
+            timestamp: chrono::Utc::now(),
+            message: "Critical test alert".to_string(),
+        };
+        loop_instance.persist_alert_to_queue(&critical_alert, None);
+
+        let warning_alert = RuntimeAlert {
+            domain: "test_domain".to_string(),
+            deficit: 60,
+            threshold: 100,
+            severity: AlertSeverity::Warning,
+            escalated: true,
+            timestamp: chrono::Utc::now(),
+            message: "Warning test alert".to_string(),
+        };
+        loop_instance.persist_alert_to_queue(&warning_alert, None);
+
+        let calls = sink.calls();
+        assert_eq!(calls.len(), 2, "both alerts must reach the escalation sink");
+
+        // Critical alert: confidence 1.0, message preserved
+        assert_eq!(calls[0].0, "Critical test alert");
+        assert!((calls[0].1 - 1.0).abs() < f64::EPSILON, "critical confidence must be 1.0");
+        assert!(calls[0].2.contains("\"severity\":\"Critical\""), "error_context must carry severity");
+        assert!(calls[0].2.contains("\"domain\":\"test_domain\""), "error_context must carry domain");
+
+        // Warning alert: confidence 0.5
+        assert_eq!(calls[1].0, "Warning test alert");
+        assert!((calls[1].1 - 0.5).abs() < f64::EPSILON, "warning confidence must be 0.5");
+        assert!(calls[1].2.contains("\"severity\":\"Warning\""), "error_context must carry severity");
+    }
+
+    /// When no `AlertEscalationSink` is wired, `persist_alert_to_queue` must
+    /// be a no-op (not panic). This pins the best-effort contract: a missing
+    /// sink never breaks the regulation loop.
+    #[tokio::test]
+    async fn persist_alert_to_queue_no_op_when_sink_absent() {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let loop_instance = CyberneticsLoop::new(ledger);
+
+        let alert = RuntimeAlert {
+            domain: "test_domain".to_string(),
+            deficit: 150,
+            threshold: 100,
+            severity: AlertSeverity::Critical,
+            escalated: true,
+            timestamp: chrono::Utc::now(),
+            message: "Critical test alert".to_string(),
+        };
+        // Must not panic — the sink is None.
+        loop_instance.persist_alert_to_queue(&alert, None);
+    }
+
+    // ── Property tests ──────────────────────────────────────────────────
+    //
+    // The unit tests above pin specific values (Critical → 1.0, Warning →
+    // 0.5, specific domain strings). Property tests verify the universal
+    // invariants hold across the full input space — any domain, any deficit,
+    // any threshold, any severity, any escalated flag. This catches edge
+    // cases the static tests miss (e.g. empty domain, zero threshold, very
+    // large deficit, Info severity with escalated=true).
+
+    /// Strategy for generating arbitrary `RuntimeAlert` values across the
+    /// full input space. Generates non-empty domains (the `RuntimeAlert::new`
+    /// constructor rejects empty domains, but `persist_alert_to_queue` takes a
+    /// constructed `RuntimeAlert` directly, so we test all non-empty strings).
+    fn arb_runtime_alert() -> proptest::prelude::BoxedStrategy<RuntimeAlert> {
+        use proptest::prelude::*;
+        (
+            "[a-z_][a-z0-9_/]{0,30}",
+            0u64..=10_000,
+            1u64..=10_000, // threshold > 0 (RuntimeAlert::new rejects 0)
+            proptest::sample::select(&[
+                AlertSeverity::Info,
+                AlertSeverity::Warning,
+                AlertSeverity::Critical,
+            ]),
+            any::<bool>(),
+        )
+            .prop_map(|(domain, deficit, threshold, severity, escalated)| RuntimeAlert {
+                domain,
+                deficit,
+                threshold,
+                severity,
+                escalated,
+                timestamp: chrono::Utc::now(),
+                message: format!(
+                    "Variety deficit {} in domain '{}' (threshold: {})",
+                    deficit, "test", threshold
+                ),
+            })
+            .boxed()
+    }
+
+    /// Helper: build a CyberneticsLoop wired with a CapturingEscalationSink.
+    fn loop_with_sink() -> (
+        CyberneticsLoop,
+        Arc<CapturingEscalationSink>,
+    ) {
+        let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+        let sink = Arc::new(CapturingEscalationSink::new());
+        let loop_instance = CyberneticsLoop::new(ledger)
+            .with_alert_escalation_sink(sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>);
+        (loop_instance, sink)
+    }
+
+    // **P4 — panic_freedom:** `persist_alert_to_queue` must never panic on
+    // any `RuntimeAlert` input, whether the sink is wired or absent. This
+    // is the foundational contract — the regulation loop must never break
+    // due to an alert persistence failure.
+    proptest::proptest! {
+        #[test]
+        fn prop_persist_alert_to_queue_never_panics(
+            alert in arb_runtime_alert()
+        ) {
+            let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
+            let (loop_with_sink, _sink) = loop_with_sink();
+            let loop_without_sink = CyberneticsLoop::new(ledger);
+
+            // With sink wired — must not panic
+            loop_with_sink.persist_alert_to_queue(&alert, None);
+            // Without sink — must not panic
+            loop_without_sink.persist_alert_to_queue(&alert, None);
+        }
+    }
+
+    // **P1 — invariant:** Non-escalated alerts (`escalated: false`) are
+    // never persisted to the sink, regardless of severity, deficit, domain,
+    // or threshold. This prevents Info and non-escalated Warning alerts from
+    // polluting the reviewable backlog.
+    proptest::proptest! {
+        #[test]
+        fn prop_non_escalated_alerts_never_persisted(
+            alert in arb_runtime_alert().prop_filter(
+                "only non-escalated alerts",
+                |a| !a.escalated
+            )
+        ) {
+            let (loop_instance, sink) = loop_with_sink();
+            loop_instance.persist_alert_to_queue(&alert, None);
+            assert_eq!(
+                sink.calls().len(),
+                0,
+                "non-escalated alert must not reach the sink"
+            );
+        }
+    }
+
+    // **P1 — invariant:** Escalated alerts (`escalated: true`) are always
+    // persisted when the sink is wired, regardless of severity, deficit,
+    // domain, or threshold. This is the Store seam — if an escalated alert
+    // is dropped, the loop is open.
+    proptest::proptest! {
+        #[test]
+        fn prop_escalated_alerts_always_persisted(
+            alert in arb_runtime_alert().prop_filter(
+                "only escalated alerts",
+                |a| a.escalated
+            )
+        ) {
+            let (loop_instance, sink) = loop_with_sink();
+            sink.clear();
+            loop_instance.persist_alert_to_queue(&alert, None);
+            let calls = sink.calls();
+            assert_eq!(
+                calls.len(),
+                1,
+                "escalated alert must reach the sink exactly once"
+            );
+        }
+    }
+
+    // **P1 — invariant:** The `confidence` passed to the sink is always
+    // exactly 1.0 for Critical alerts and 0.5 for non-Critical (Warning/Info)
+    // escalated alerts. This is the severity→confidence mapping that the
+    // `alert-review` flowdef's triage report relies on to classify alerts.
+    proptest::proptest! {
+        #[test]
+        fn prop_confidence_mapping_is_correct(
+            alert in arb_runtime_alert().prop_filter(
+                "only escalated alerts (non-escalated are skipped)",
+                |a| a.escalated
+            )
+        ) {
+            let (loop_instance, sink) = loop_with_sink();
+            sink.clear();
+            loop_instance.persist_alert_to_queue(&alert, None);
+            let calls = sink.calls();
+            assert_eq!(calls.len(), 1);
+            let expected_confidence = if alert.is_critical() { 1.0 } else { 0.5 };
+            assert!(
+                (calls[0].1 - expected_confidence).abs() < f64::EPSILON,
+                "confidence {:?} != expected {:?} for severity {:?}",
+                calls[0].1, expected_confidence, alert.severity
+            );
+        }
+    }
+
+    // **P1 — invariant:** The `error_context` JSON always contains the
+    // `domain`, `deficit`, `threshold`, `severity`, `escalated`, and
+    // `timestamp` fields. The `alert-review` flowdef's triage report reads
+    // these fields to classify and propose actions — if any is missing, the
+    // report is incomplete.
+    proptest::proptest! {
+        #[test]
+        fn prop_error_context_carries_all_fields(
+            alert in arb_runtime_alert().prop_filter(
+                "only escalated alerts",
+                |a| a.escalated
+            )
+        ) {
+            let (loop_instance, sink) = loop_with_sink();
+            sink.clear();
+            loop_instance.persist_alert_to_queue(&alert, None);
+            let calls = sink.calls();
+            assert_eq!(calls.len(), 1);
+            let ctx = &calls[0].2;
+            // Parse as JSON to verify all fields are present
+            let parsed: serde_json::Value = serde_json::from_str(ctx)
+                .expect("error_context must be valid JSON");
+            assert!(parsed.get("domain").is_some(), "error_context must carry domain");
+            assert!(parsed.get("deficit").is_some(), "error_context must carry deficit");
+            assert!(parsed.get("threshold").is_some(), "error_context must carry threshold");
+            assert!(parsed.get("severity").is_some(), "error_context must carry severity");
+            assert!(parsed.get("escalated").is_some(), "error_context must carry escalated");
+            assert!(parsed.get("efferent_action").is_some(), "error_context must carry efferent_action");
+            assert!(parsed.get("timestamp").is_some(), "error_context must carry timestamp");
+            // The domain must match the alert's domain
+            assert_eq!(
+                parsed.get("domain").and_then(|v| v.as_str()),
+                Some(alert.domain.as_str())
+            );
+        }
     }
 }
