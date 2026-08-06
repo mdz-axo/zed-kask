@@ -112,8 +112,11 @@ steps:
     description: >
       Phase 2 — Audit prompt health via pragmatic-semantics (provenance tracing),
       pragmatic-cybernetics (loop diagnosis, high only), and essentialist
-      (deletion test on prompt sections). Produces constraint-force-labeled
-      findings that drive Phase 3 mutations.
+      (deletion test on prompt sections). Lens 0 (unresolved-placeholder
+      check) runs at all tiers and emits a universal Prohibition finding for
+      any literal `<PLACEHOLDER>` / `{{ mustache }}` token that the consumer
+      cannot bind. Produces constraint-force-labeled findings that drive
+      Phase 3 mutations.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-audit.j2
     gas_cap: 7000

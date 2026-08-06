@@ -92,6 +92,10 @@ For each item in `proxy_eval_set`, mentally simulate: would this enhanced prompt
 
 Explicitly state: "I am not the generator. I did not write this prompt. My job is to find what's wrong with it." If you find yourself defending the prompt, stop and re-interrogate.
 
+## Unresolved-Placeholder Re-Check (always run)
+
+Re-scan the enhanced prompt for unresolved template placeholders (`<UPPERCASE_NAME>`, `<UPPER_SNAKE_CASE>`, `{{ mustache }}` / `{{ jinja_var }}` outside fenced code blocks illustrating syntax). If Phase 3 was given a Lens 0 Prohibition finding and the enhanced prompt still contains the literal placeholder token with no substitution instruction, that is a **Gap** finding with `severity: Prohibition` and `verdict: rewrite_needed` — the generator failed to address a Prohibition finding. Do not pass a prompt that still contains unresolved placeholders.
+
 ## Context
 ```json
 {

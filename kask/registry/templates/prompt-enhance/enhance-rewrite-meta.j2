@@ -56,6 +56,7 @@ You are the typed rewrite phase for **meta** prompts — prompts that generate, 
 ## Mutation Discipline
 
 - Each audit finding → at most one mutation.
+- Unresolved-placeholder findings (Lens 0) are Prohibition-tier — must be addressed. Do NOT emit an enhanced prompt that still contains the literal placeholder token; either require the user to supply the value before enhancement, or replace the placeholder with a concrete example value AND add an explicit substitution instruction naming the placeholder and where the real value comes from.
 - Self-confirming-loop findings (no critic decoupling) are Prohibition-tier — must be addressed.
 - Missing-convergence findings are Prohibition-tier — must be addressed.
 - Hypothesis-tier findings → defer.

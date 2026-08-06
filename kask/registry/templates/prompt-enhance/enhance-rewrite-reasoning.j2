@@ -54,6 +54,7 @@ You are the typed rewrite phase for **reasoning** prompts. Apply audit findings 
 ## Mutation Discipline
 
 - Each audit finding → at most one mutation.
+- Unresolved-placeholder findings (Lens 0) are Prohibition-tier — must be addressed. Do NOT emit an enhanced prompt that still contains the literal placeholder token; either require the user to supply the value before enhancement, or replace the placeholder with a concrete example value AND add an explicit substitution instruction naming the placeholder and where the real value comes from.
 - Hypothesis-tier findings → defer, don't mutate.
 - `iteration > 1`: address each grill Partial/Gap rating.
 - Preserve intent. Don't add scope.

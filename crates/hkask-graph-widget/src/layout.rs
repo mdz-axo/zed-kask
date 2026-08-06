@@ -91,35 +91,22 @@ pub fn compute_layout(body: &GraphBlockBody) -> Result<LayeredLayout> {
         }
     }
 
-    // Validate conditional tables. The scenarios server requires
-    // `conditionals.len() == 2^parent_event_ids.len()`; a missing/short table
-    // silently yields P≈0 in `propagate::recompute_marginals` (each missing entry
-    // contributes 0). Warn so a malformed block is visible rather than rendering a
-    // misleading 0% node.
-    for node in &body.nodes {
-        for dep in &node.depends_on {
-            let n_parents = dep.parent_event_ids.len();
-            if n_parents > 20 {
-                log::warn!(
-                    "hkask-graph-widget: node '{}' dependency has {} parents (>20); \
-                     conditional table too large to validate",
-                    node.id,
-                    n_parents
-                );
-                continue;
-            }
-            let expected = 1usize << n_parents;
-            if dep.conditionals.len() != expected {
-                log::warn!(
-                    "hkask-graph-widget: node '{}' dependency has {} conditionals, \
-                     expected {} (2^{} parents) — marginals for this branch are incomplete",
-                    node.id,
-                    dep.conditionals.len(),
-                    expected,
-                    n_parents
-                );
-            }
-        }
+    // Validate conditional tables via the shared S4 layer (block::validate_conditionals).
+    // The marginalization engine treats missing entries as 0, so a short table
+    // silently yields a near-0 marginal; warn here (parse/layout time) so a
+    // malformed block is visible before any propagation runs. The math boundary
+    // (propagate::recompute_marginals) re-runs the same check and warns again —
+    // two signals for two consumers (layout vs propagation), acceptable noise.
+    for warning in crate::block::validate_conditionals(body) {
+        log::warn!(
+            "hkask-graph-widget: node '{}' dependency {} has {} conditionals, \
+             expected {} (2^{} parents) — marginals for this branch are incomplete",
+            warning.node_id,
+            warning.dependency_index,
+            warning.actual,
+            warning.expected,
+            warning.n_parents,
+        );
     }
 
     // Kahn's topological sort: layer[n] = 0 for roots, else max(layer[parent]) + 1.

@@ -355,15 +355,25 @@ impl GraphWidget {
         self.body.subject.clone().unwrap_or_default()
     }
 
-    /// Joint probability for the header — only meaningful before any evidence
-    /// override (evidence changes the tree; the cached joint is stale then), so
-    /// hide it once evidence is set.
+    /// Joint probability for the header. When no evidence is set, this is the
+    /// server-provided `body.joint_probability`. When evidence is set, the cached
+    /// value is stale, so recompute it as the product of the current node
+    /// marginals (under the same independence assumption the propagation engine
+    /// makes). This keeps the header informative during what-if exploration
+    /// rather than hiding the joint entirely.
     fn joint_probability_for_header(&self) -> Option<f64> {
         if self.evidence.is_empty() {
-            self.body.joint_probability
-        } else {
-            None
+            return self.body.joint_probability;
         }
+        // Recompute from the current marginals stored on the layout by
+        // `repropagate`. Product under independence: Π_i P(node_i).
+        let product = self
+            .layout
+            .nodes
+            .iter()
+            .filter_map(|n| n.marginal_probability)
+            .fold(1.0_f64, |acc, p| acc * p.clamp(0.0, 1.0));
+        Some(product)
     }
 
     /// Compose the "I disagree" body. References the tree's subject and, when a
@@ -1021,6 +1031,34 @@ mod tests {
         widget.update(cx, |w, cx| w.revert_to_base(cx));
         assert!(widget.read_with(cx, |w, _| w.evidence.is_empty()));
         assert_eq!(widget.read_with(cx, |w, _| w.compare_branch), None);
+    }
+
+    #[gpui::test]
+    async fn joint_probability_recomputes_after_evidence(cx: &mut gpui::TestAppContext) {
+        // make_body has joint_probability = None, so build a body with a stale
+        // server joint to verify the recompute path overrides it.
+        let mut body = make_body();
+        body.joint_probability = Some(0.999); // stale server value
+        let widget = cx.new(|cx| GraphWidget::new(body, cx));
+        // Before evidence: header shows the server-provided joint.
+        assert_eq!(
+            widget.read_with(cx, |w, _| w.joint_probability_for_header()),
+            Some(0.999)
+        );
+        // After evidence on node 0 (a, P=0.5 → 0.9): marginals become
+        //   a = 0.9, b = 0.1*0.1 + 0.6*0.9 = 0.55
+        // joint (product under independence) = 0.9 * 0.55 = 0.495.
+        widget.update(cx, |w, cx| w.set_evidence(0, 0.9, cx));
+        let joint = widget
+            .read_with(cx, |w, _| w.joint_probability_for_header())
+            .expect("recomputed joint is present after evidence");
+        assert!((joint - 0.495).abs() < 1e-9, "got {joint}");
+        // revert restores the server joint.
+        widget.update(cx, |w, cx| w.revert_to_base(cx));
+        assert_eq!(
+            widget.read_with(cx, |w, _| w.joint_probability_for_header()),
+            Some(0.999)
+        );
     }
 
     #[gpui::test]

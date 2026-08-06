@@ -85,6 +85,54 @@ pub fn parse_graph_body(body: &str) -> anyhow::Result<GraphBlockBody> {
     Ok(serde_json::from_str(body.trim())?)
 }
 
+/// A conditional-table mismatch found by [`validate_conditionals`].
+///
+/// `expected == 2^parent_event_ids.len()`; a `conditionals` vector whose length
+/// differs yields a warning. The marginalization engine treats missing entries
+/// as 0 (see `hkask_forecast::marginalize`), so a short table silently produces
+/// a near-0 marginal rather than erroring — the warning makes that visible.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalWarning {
+    pub node_id: String,
+    pub dependency_index: usize,
+    pub n_parents: usize,
+    pub expected: usize,
+    pub actual: usize,
+}
+
+/// Validate every node's conditional tables. Returns one warning per
+/// `depends_on` entry whose `conditionals.len() != 2^parent_event_ids.len()`.
+///
+/// This is the S4 (intelligence) layer the widget was missing: it runs at both
+/// the parse boundary (`layout::compute_layout`) and the math boundary
+/// (`propagate::recompute_marginals`) so a malformed block is signalled at the
+/// point of consumption, not just at layout time. High-fan-in nodes (>20
+/// parents) are skipped here — the bitmap would overflow `usize` and the
+/// propagate engine falls back to the base marginal with its own warn.
+pub fn validate_conditionals(body: &GraphBlockBody) -> Vec<ConditionalWarning> {
+    let mut warnings = Vec::new();
+    for node in &body.nodes {
+        for (dep_idx, dep) in node.depends_on.iter().enumerate() {
+            let n_parents = dep.parent_event_ids.len();
+            if n_parents > 20 {
+                continue;
+            }
+            let expected = 1usize << n_parents;
+            let actual = dep.conditionals.len();
+            if actual != expected {
+                warnings.push(ConditionalWarning {
+                    node_id: node.id.clone(),
+                    dependency_index: dep_idx,
+                    n_parents,
+                    expected,
+                    actual,
+                });
+            }
+        }
+    }
+    warnings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +176,76 @@ mod tests {
     fn parent_ids_empty_when_no_parents() {
         let node = node_with_parents("n", &[], &[]);
         assert!(node.parent_ids().is_empty());
+    }
+
+    fn body_with_nodes(nodes: Vec<NodeBody>) -> GraphBlockBody {
+        GraphBlockBody {
+            viz: Some("event_tree".into()),
+            subject: None,
+            joint_probability: None,
+            nodes,
+        }
+    }
+
+    #[test]
+    fn validate_conditionals_passes_full_table() {
+        // 1 parent → 2 conditionals. Full table → no warnings.
+        let node = NodeBody {
+            id: "n".into(),
+            name: None,
+            question: None,
+            marginal_probability: None,
+            depends_on: vec![DependencyBody {
+                parent_event_ids: vec!["p".into()],
+                conditionals: vec![0.1, 0.6],
+            }],
+            parents: Vec::new(),
+        };
+        let body = body_with_nodes(vec![node]);
+        assert!(validate_conditionals(&body).is_empty());
+    }
+
+    #[test]
+    fn validate_conditionals_warns_on_short_table() {
+        // 2 parents → expect 4 conditionals; only 2 provided.
+        let node = NodeBody {
+            id: "n".into(),
+            name: None,
+            question: None,
+            marginal_probability: None,
+            depends_on: vec![DependencyBody {
+                parent_event_ids: vec!["a".into(), "b".into()],
+                conditionals: vec![0.1, 0.2],
+            }],
+            parents: Vec::new(),
+        };
+        let body = body_with_nodes(vec![node]);
+        let warnings = validate_conditionals(&body);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].node_id, "n");
+        assert_eq!(warnings[0].dependency_index, 0);
+        assert_eq!(warnings[0].n_parents, 2);
+        assert_eq!(warnings[0].expected, 4);
+        assert_eq!(warnings[0].actual, 2);
+    }
+
+    #[test]
+    fn validate_conditionals_skips_high_fan_in() {
+        // 21 parents → skipped (bitmap would overflow; propagate falls back
+        // to base marginal with its own warn). No validation warning here.
+        let parents: Vec<String> = (0..21).map(|i| format!("p{i}")).collect();
+        let node = NodeBody {
+            id: "n".into(),
+            name: None,
+            question: None,
+            marginal_probability: None,
+            depends_on: vec![DependencyBody {
+                parent_event_ids: parents,
+                conditionals: Vec::new(),
+            }],
+            parents: Vec::new(),
+        };
+        let body = body_with_nodes(vec![node]);
+        assert!(validate_conditionals(&body).is_empty());
     }
 }

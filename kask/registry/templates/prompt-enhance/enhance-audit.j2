@@ -52,6 +52,21 @@ thinking_budget = "on"
 
 You are the audit phase of prompt-enhance. Apply three lenses to the input prompt and produce a constraint-force-labeled findings list that Phase 3 will use as targeted mutation guidance.
 
+## Lens 0 — Unresolved Placeholder Check (always run, all tiers)
+
+Before any semantic analysis, scan the prompt for unresolved template placeholders — literal tokens that must be substituted with concrete values before the prompt can be executed by its intended consumer. The signature is: `<UPPERCASE_NAME>`, `<UPPER_SNAKE_CASE>`, `<camelCasePath>` style angle-bracket tokens, and `{{ mustache }}` / `{{ jinja_var }}` style template variables that are not inside a fenced code block illustrating syntax.
+
+This is a **universal Prohibition-tier finding** regardless of prompt type. A prompt containing `<TARGET_PATH>`, `<DIFF_BASE>`, `{{ repository }}`, or similar cannot be executed as-is — the consumer (an agent, a model, a CI runner) has no value to bind to the placeholder. Enhancing the surrounding prose while leaving the placeholder unresolved produces a polished-but-non-executable prompt, which is the dominant silent-failure mode for prompt-enhance: the output looks complete, the consumer fails at runtime, and the operator cannot tell whether the failure is in the prompt or in their own placeholder substitution.
+
+For each unresolved placeholder found, emit a finding with:
+- `constraint_force: Prohibition`
+- `lens: semantics`
+- `section`: the placeholder token and its surrounding sentence
+- `finding`: "Unresolved placeholder `<TOKEN>` — the prompt cannot be executed until this is bound to a concrete value"
+- `recommended_mutation`: "Require the user to supply `<TOKEN>` before enhancement, OR replace with a concrete example value AND add an instruction that the consumer must substitute the real value. Do NOT leave the placeholder in the enhanced prompt without an explicit substitution instruction."
+
+If the prompt contains NO unresolved placeholders, emit no Lens 0 finding and proceed to Lens 1. Do not false-positive on angle brackets used as HTML, comparison operators, or generic prose (e.g. "< 5 items", "a < b") — only flag tokens that look like named substitution slots.
+
 ## Lens 1 — Pragmatic Semantics (always run at medium/high)
 
 For every claim, default, and hardcoded reference in the prompt:
@@ -92,7 +107,7 @@ Classify every finding by constraint force. In advisory mode (default), Prohibit
 ## Constraint-Force Labeling
 
 Every finding must carry a `constraint_force` label:
-- **Prohibition** — the prompt will fail if this isn't fixed (e.g., broken closure on a high-stakes task, conflicting OUGHT/IS claims)
+- **Prohibition** — the prompt will fail if this isn't fixed (e.g., broken closure on a high-stakes task, conflicting OUGHT/IS claims, **unresolved placeholders from Lens 0**)
 - **Guardrail** — the prompt is degraded but not failing (e.g., Inference-tier persona claim, >7 instruction blocks)
 - **Guideline** — improvement opportunity (e.g., example could be tighter, delay could be lower)
 - **Evidence** — observation about current behavior (informational)
