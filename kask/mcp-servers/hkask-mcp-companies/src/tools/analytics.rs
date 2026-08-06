@@ -15,7 +15,7 @@ use uuid::Uuid;
 #[tool_router(router = analytics_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
-        description = "What moved the portfolio — each position's weight, return, and contribution, ranked by impact"
+        description = "What moved the portfolio - each position's weight, return, and contribution, ranked by impact"
     )]
     pub async fn portfolio_attribution(
         &self,
@@ -113,7 +113,7 @@ impl CompaniesServer {
                 }
             }
 
-            // Build attribution table. Cap at 99 holdings — if the portfolio
+            // Build attribution table. Cap at 99 holdings - if the portfolio
             // exceeds this, keep the largest by starting market value. This
             // bounds the calculation and presentation for a single portfolio.
             const MAX_HOLDINGS: usize = 99;
@@ -190,7 +190,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Weighted-average fundamentals of what the portfolio owns — valuation, profitability, leverage, growth, composition"
+        description = "Weighted-average fundamentals of what the portfolio owns - valuation, profitability, leverage, growth, composition"
     )]
     pub async fn portfolio_characteristics(
         &self,
@@ -262,7 +262,7 @@ impl CompaniesServer {
                 ));
             }
 
-            // Cap at 99 holdings — if the portfolio exceeds this, keep the
+            // Cap at 99 holdings - if the portfolio exceeds this, keep the
             // largest by market value. Bounds the fetch + calculation cost.
             const MAX_HOLDINGS: usize = 99;
             if market_values.len() > MAX_HOLDINGS {
@@ -463,7 +463,7 @@ impl CompaniesServer {
             );
 
             if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
             }
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
@@ -588,7 +588,7 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "Reverse DCF (Mauboussin's Expectations Investing). Solves for the revenue growth rate implied by the current stock price. \"What growth does the market expect?\" — compare to your own estimate to find mispricing. Default: 10yr model, 3yr stage 1, 7yr stage 2, 10% WACC."
+        description = "Reverse DCF (Mauboussin's Expectations Investing). Solves for the revenue growth rate implied by the current stock price. \"What growth does the market expect?\" - compare to your own estimate to find mispricing. Default: 10yr model, 3yr stage 1, 7yr stage 2, 10% WACC."
     )]
     pub async fn reverse_dcf(
         &self,
@@ -640,7 +640,7 @@ impl CompaniesServer {
             );
 
             if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
             }
 
             let signal_quality = hist.signal_quality();
@@ -674,7 +674,7 @@ impl CompaniesServer {
                 );
                 if lo_model.intrinsic_per_share > current_price {
                     return Err(McpToolError::invalid_argument(format!(
-                        "price ({:.2}) below intrinsic ({:.2}) at -50% growth — stock may be distressed or data inconsistent",
+                        "price ({:.2}) below intrinsic ({:.2}) at -50% growth - stock may be distressed or data inconsistent",
                         current_price, lo_model.intrinsic_per_share
                     )));
                 }
@@ -688,7 +688,7 @@ impl CompaniesServer {
                 );
                 if hi_model.intrinsic_per_share < current_price {
                     return Err(McpToolError::invalid_argument(format!(
-                        "price ({:.2}) implies growth > 100% — intrinsic at +100% growth is {:.2}",
+                        "price ({:.2}) implies growth > 100% - intrinsic at +100% growth is {:.2}",
                         current_price, hi_model.intrinsic_per_share
                     )));
                 }
@@ -742,7 +742,7 @@ impl CompaniesServer {
                 "interpretation": {
                     "implied_growth_pct": format!("{:.1}%", implied_growth * 100.0),
                     "signal": if implied_growth < 0.05 { "low_expectations" } else if implied_growth > 0.15 { "high_expectations" } else { "moderate_expectations" },
-                    "mauboussin_framework": "The current stock price implies a revenue growth rate. Compare this to your own estimate of sustainable growth. If your estimate is higher, the stock may be undervalued. If lower, it may be overvalued. The gap between implied and expected growth is the expectations gap — the core of Expectations Investing (Mauboussin & Rappaport, 2001).",
+                    "mauboussin_framework": "The current stock price implies a revenue growth rate. Compare this to your own estimate of sustainable growth. If your estimate is higher, the stock may be undervalued. If lower, it may be overvalued. The gap between implied and expected growth is the expectations gap - the core of Expectations Investing (Mauboussin & Rappaport, 2001).",
                 },
             });
 
@@ -751,7 +751,6 @@ impl CompaniesServer {
     }
 
     #[tool(
-        description = "2x2 Schwartz scenario
         description = "Schwartz 2x2 scenario analysis. Projects four scenarios (Bull, Land Grab, Cash Cow, Bear) based on revenue growth x profit margin axes. Runs DCF under each scenario and returns the intrinsic value range. Default axes: revenue_growth x profit_margin. Adjustable multipliers let you tune scenario severity."
     )]
     pub async fn scenario_analysis(
@@ -804,7 +803,7 @@ impl CompaniesServer {
             );
 
             if hist.revenue.len() < 2 {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data - need at least 2 years of revenue"}));
             }
 
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
@@ -849,13 +848,13 @@ impl CompaniesServer {
                         }
                         None => {
                             tree_warning = Some(
-                                "event tree does not have exactly two roots with valid marginals — falling back to simple 2x2 mode (no probabilities)".into()
+                                "event tree does not have exactly two roots with valid marginals - falling back to simple 2x2 mode (no probabilities)".into()
                             );
                         }
                     },
                     Err(e) => {
                         tree_warning = Some(format!(
-                            "event_tree JSON did not match the scenarios-server tree projection ({e}) — falling back to simple 2x2 mode"
+                            "event_tree JSON did not match the scenarios-server tree projection ({e}) - falling back to simple 2x2 mode"
                         ));
                     }
                 }
@@ -909,7 +908,7 @@ impl CompaniesServer {
                     "overall_confidence": signal_quality.overall_confidence,
                     "quality_warning": signal_quality.quality_warning,
                 },
-                "framework": "Schwartz 2x2 scenario matrix: revenue growth x gross margin. Four scenarios: Bull (high/high), Land Grab (high/low), Cash Cow (low/high), Bear (low/low). Each scenario runs through the two-stage DCF model. The range of intrinsic values represents the uncertainty around the single-point DCF estimate. Simple mode (default) returns the range without probabilities; detailed mode (event_tree supplied) derives quadrant probabilities from the tree's root marginals — the earned upgrade on the analyst maturity ladder.",
+                "framework": "Schwartz 2x2 scenario matrix: revenue growth x gross margin. Four scenarios: Bull (high/high), Land Grab (high/low), Cash Cow (low/high), Bear (low/low). Each scenario runs through the two-stage DCF model. The range of intrinsic values represents the uncertainty around the single-point DCF estimate. Simple mode (default) returns the range without probabilities; detailed mode (event_tree supplied) derives quadrant probabilities from the tree's root marginals - the earned upgrade on the analyst maturity ladder.",
             });
 
             Ok(fibo::enrich_with_ontology(output, "scenario_analysis"))

@@ -1,6 +1,6 @@
 //! Financial data tools — profile, quote, statements, metrics, history, search.
 use crate::{
-    CompaniesServer, providers,
+    CompaniesServer, fibo, providers,
     types::{HistoricalRequest, SearchRequest, SymbolLimitRequest, SymbolRequest},
     validate_symbol,
 };
@@ -16,7 +16,8 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "company_profile", async {
             validate_symbol(&symbol)?;
-            self.fetch("company_profile", &symbol, &[]).await
+            let result = self.fetch("company_profile", &symbol, &[]).await?;
+            Ok(fibo::enrich_with_ontology(result, "company_profile"))
         })
         .await
     }
@@ -28,7 +29,8 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "stock_quote", async {
             validate_symbol(&symbol)?;
-            self.fetch("stock_quote", &symbol, &[]).await
+            let result = self.fetch("stock_quote", &symbol, &[]).await?;
+            Ok(fibo::enrich_with_ontology(result, "stock_quote"))
         })
         .await
     }
@@ -83,8 +85,10 @@ impl CompaniesServer {
         execute_tool(self, "key_metrics", async {
             validate_symbol(&symbol)?;
             let limit_str = limit.unwrap_or(5).to_string();
-            self.fetch("key_metrics", &symbol, &[("limit", &limit_str)])
-                .await
+            let result = self
+                .fetch("key_metrics", &symbol, &[("limit", &limit_str)])
+                .await?;
+            Ok(fibo::enrich_with_ontology(result, "key_metrics"))
         })
         .await
     }
@@ -96,8 +100,10 @@ impl CompaniesServer {
     ) -> String {
         execute_tool(self, "historical_price", async {
             validate_symbol(&symbol)?;
-            self.fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
-                .await
+            let result = self
+                .fetch("historical_price", &symbol, &[("from", &from), ("to", &to)])
+                .await?;
+            Ok(fibo::enrich_with_ontology(result, "historical_price"))
         })
         .await
     }

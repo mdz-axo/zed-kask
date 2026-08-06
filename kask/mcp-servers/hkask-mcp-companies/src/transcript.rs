@@ -280,6 +280,277 @@ fn parse_fmp_body(
 // `TranscriptRecord` — the agent reads it from the tool output and passes it
 // to `corpus_chunk`, so the convention can't drift.
 
+// ── Corpus mode (non-earnings transcripts via SerpAPI YouTube) ──────────────
+//
+// Design: company-corpus-design.md §B1 corpus mode + §B6 slice 3.
+// Fetches non-earnings company transcripts (investor-day keynotes, executive
+// interviews) via SerpAPI YouTube, channel-allowlisted. Does NOT segment.
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CorpusTranscriptRecord {
+    pub symbol: String,
+    pub source_tier: u8,
+    pub kind: String,
+    pub title: String,
+    pub url: String,
+    pub channel: String,
+    pub content: String,
+    pub entity_ref_prefix: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExcludedVideo {
+    pub title: String,
+    pub url: String,
+    pub channel: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CorpusTranscriptResult {
+    pub transcripts: Vec<CorpusTranscriptRecord>,
+    pub excluded: Vec<ExcludedVideo>,
+}
+
+const SERPAPI_BASE: &str = "https://serpapi.com/search";
+
+pub async fn fetch_corpus_transcripts(
+    client: &reqwest::Client,
+    symbol: &str,
+    query: &str,
+    channels_allowlist: &[String],
+    max_results: u32,
+    serpapi_key: &str,
+) -> Result<CorpusTranscriptResult, McpToolError> {
+    let search_params: Vec<(&str, String)> = vec![
+        ("q", query.to_string()),
+        ("api_key", serpapi_key.to_string()),
+        ("engine", "youtube".to_string()),
+        ("num", max_results.to_string()),
+    ];
+    let search_response = client
+        .get(SERPAPI_BASE)
+        .query(&search_params)
+        .send()
+        .await
+        .map_err(|error| {
+            McpToolError::unavailable(format!("SerpAPI YouTube search failed: {error}"))
+        })?;
+    let search_body = search_response.text().await.map_err(|error| {
+        McpToolError::unavailable(format!("SerpAPI search body read failed: {error}"))
+    })?;
+    let search_json: serde_json::Value = serde_json::from_str(&search_body).map_err(|error| {
+        McpToolError::unavailable(format!("SerpAPI search returned malformed JSON: {error}"))
+    })?;
+    let video_results = search_json["video_results"]
+        .as_array()
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|video| {
+                    let title = video["title"].as_str()?.to_string();
+                    let link = video["link"].as_str()?.to_string();
+                    let channel = video["channel"]
+                        .as_str()
+                        .or_else(|| video["channel"]["name"].as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    Some((title, link, channel))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut transcripts = Vec::new();
+    let mut excluded = Vec::new();
+    for (title, url, channel) in video_results {
+        let channel_allowed = channels_allowlist
+            .iter()
+            .any(|allowed| channel.contains(allowed.as_str()));
+        if !channel_allowed {
+            excluded.push(ExcludedVideo {
+                title,
+                url,
+                channel,
+                reason: "channel not on allowlist".to_string(),
+            });
+            continue;
+        }
+        let Some(video_id) = hkask_types::url_utils::extract_youtube_id(&url) else {
+            excluded.push(ExcludedVideo {
+                title,
+                url,
+                channel,
+                reason: "could not extract video ID".to_string(),
+            });
+            continue;
+        };
+        match fetch_youtube_transcript(client, &video_id, serpapi_key).await {
+            Ok(Some(content)) => {
+                transcripts.push(CorpusTranscriptRecord {
+                    symbol: symbol.to_string(),
+                    source_tier: 2,
+                    kind: "youtube".to_string(),
+                    title,
+                    url,
+                    channel,
+                    content,
+                    entity_ref_prefix: format!("company:{symbol}:youtube:{video_id}"),
+                });
+            }
+            Ok(None) => {
+                excluded.push(ExcludedVideo {
+                    title,
+                    url,
+                    channel,
+                    reason: "no transcript available".to_string(),
+                });
+            }
+            Err(error) => {
+                excluded.push(ExcludedVideo {
+                    title,
+                    url,
+                    channel,
+                    reason: format!("transcript fetch failed: {error}"),
+                });
+            }
+        }
+    }
+    Ok(CorpusTranscriptResult {
+        transcripts,
+        excluded,
+    })
+}
+
+async fn fetch_youtube_transcript(
+    client: &reqwest::Client,
+    video_id: &str,
+    serpapi_key: &str,
+) -> Result<Option<String>, String> {
+    let params: Vec<(&str, String)> = vec![
+        ("v", video_id.to_string()),
+        ("api_key", serpapi_key.to_string()),
+        ("engine", "youtube_video_transcript".to_string()),
+    ];
+    let response = client
+        .get(SERPAPI_BASE)
+        .query(&params)
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("body read failed: {error}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|error| format!("malformed JSON: {error}"))?;
+    let snippets = parsed["transcripts"]
+        .as_array()
+        .or_else(|| parsed["organic_results"].as_array())
+        .or_else(|| parsed["results"].as_array());
+    let Some(snippets) = snippets else {
+        return Ok(None);
+    };
+    let content: String = snippets
+        .iter()
+        .filter_map(|snippet| {
+            snippet["snippet"]
+                .as_str()
+                .or_else(|| snippet["text"].as_str())
+                .map(|text| text.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if content.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(content))
+    }
+}
+
+// ── Full-document entity-ref conventions (C5) ──────────────────────────────────
+
+#[allow(dead_code)]
+pub fn sec_filing_entity_ref_prefix(symbol: &str, form: &str, year: u32) -> String {
+    format!("company:{symbol}:sec_filing:{form}:{year}")
+}
+
+#[allow(dead_code)]
+pub fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
+    format!("company:{symbol}:youtube:{video_id}")
+}
+
+#[allow(dead_code)]
+pub fn symbol_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
+    let mut parts = prefix.split(':');
+    let _ = parts.next()?;
+    let symbol = parts.next()?;
+    if symbol.is_empty() {
+        return None;
+    }
+    Some(symbol)
+}
+
+#[allow(dead_code)]
+pub fn kind_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
+    let mut parts = prefix.split(':');
+    let _ = parts.next()?;
+    let _ = parts.next()?;
+    let kind = parts.next()?;
+    if kind.is_empty() {
+        return None;
+    }
+    Some(kind)
+}
+
+// ── Citation verification (the no-fabrication enforcement point) ──────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Citation {
+    pub chunk_id: usize,
+    pub quote: String,
+    #[serde(default)]
+    pub char_start: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationVerdict {
+    Verified,
+    Fabricated { chunk_id: usize, quote: String },
+    InvalidChunkId { chunk_id: usize, chunk_count: usize },
+}
+
+pub fn verify_citation(citation: &Citation, chunks: &[String]) -> CitationVerdict {
+    if citation.chunk_id >= chunks.len() {
+        return CitationVerdict::InvalidChunkId {
+            chunk_id: citation.chunk_id,
+            chunk_count: chunks.len(),
+        };
+    }
+    let chunk = &chunks[citation.chunk_id];
+    if chunk.contains(&citation.quote) {
+        CitationVerdict::Verified
+    } else {
+        CitationVerdict::Fabricated {
+            chunk_id: citation.chunk_id,
+            quote: citation.quote.clone(),
+        }
+    }
+}
+
+pub fn verify_all_citations(citations: &[Citation], chunks: &[String]) -> Vec<CitationVerdict> {
+    citations
+        .iter()
+        .map(|citation| verify_citation(citation, chunks))
+        .collect()
+}
+
+pub fn all_citations_verified(citations: &[Citation], chunks: &[String]) -> bool {
+    verify_all_citations(citations, chunks)
+        .iter()
+        .all(|verdict| matches!(verdict, CitationVerdict::Verified))
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -493,6 +764,248 @@ mod tests {
         .expect("record");
         assert!(q1_2023.entity_ref_prefix < q4_2023.entity_ref_prefix);
         assert!(q4_2023.entity_ref_prefix < q1_2024.entity_ref_prefix);
+    }
+
+    // ── Corpus mode ───────────────────────────────────────────────────────
+
+    #[test]
+    fn extract_youtube_id_from_watch_url() {
+        assert_eq!(
+            hkask_types::url_utils::extract_youtube_id(
+                "https://www.youtube.com/watch?v=ceV3RsG946s"
+            )
+            .as_deref(),
+            Some("ceV3RsG946s")
+        );
+    }
+
+    #[test]
+    fn extract_youtube_id_from_short_url() {
+        assert_eq!(
+            hkask_types::url_utils::extract_youtube_id("https://youtu.be/ceV3RsG946s").as_deref(),
+            Some("ceV3RsG946s")
+        );
+    }
+
+    #[test]
+    fn extract_youtube_id_rejects_invalid_urls() {
+        assert!(hkask_types::url_utils::extract_youtube_id("https://example.com").is_none());
+        assert!(hkask_types::url_utils::extract_youtube_id("not a url").is_none());
+        assert!(hkask_types::url_utils::extract_youtube_id("").is_none());
+    }
+
+    #[test]
+    fn corpus_transcript_record_has_pipeline_ready_shape() {
+        let record = CorpusTranscriptRecord {
+            symbol: "MSFT".to_string(),
+            source_tier: 2,
+            kind: "youtube".to_string(),
+            title: "Microsoft Build 2024 Keynote".to_string(),
+            url: "https://www.youtube.com/watch?v=abc12345678".to_string(),
+            channel: "Microsoft".to_string(),
+            content: "Satya Nadella: Welcome to Build.".to_string(),
+            entity_ref_prefix: "company:MSFT:youtube:abc12345678".to_string(),
+        };
+        assert_eq!(record.source_tier, 2);
+        assert_eq!(record.kind, "youtube");
+        assert!(record.entity_ref_prefix.starts_with("company:MSFT:"));
+    }
+
+    #[test]
+    fn excluded_video_records_the_reason() {
+        let excluded = ExcludedVideo {
+            title: "Random Video".to_string(),
+            url: "https://youtube.com/watch?v=xyz".to_string(),
+            channel: "Random Channel".to_string(),
+            reason: "channel not on allowlist".to_string(),
+        };
+        assert_eq!(excluded.reason, "channel not on allowlist");
+    }
+
+    #[test]
+    fn corpus_transcript_result_serializes_with_excluded() {
+        let result = CorpusTranscriptResult {
+            transcripts: vec![],
+            excluded: vec![ExcludedVideo {
+                title: "Excluded".to_string(),
+                url: "https://youtube.com/watch?v=xyz".to_string(),
+                channel: "NotAllowlisted".to_string(),
+                reason: "channel not on allowlist".to_string(),
+            }],
+        };
+        let json = serde_json::to_value(&result).expect("serialize");
+        assert!(json["excluded"].is_array());
+        assert_eq!(json["excluded"][0]["reason"], "channel not on allowlist");
+    }
+
+    // ── Entity-ref conventions ───────────────────────────────────────────
+
+    #[test]
+    fn sec_filing_entity_ref_prefix_format() {
+        assert_eq!(
+            sec_filing_entity_ref_prefix("MSFT", "10-K", 2024),
+            "company:MSFT:sec_filing:10-K:2024"
+        );
+    }
+
+    #[test]
+    fn youtube_entity_ref_prefix_format() {
+        assert_eq!(
+            youtube_entity_ref_prefix("MSFT", "ceV3RsG946s"),
+            "company:MSFT:youtube:ceV3RsG946s"
+        );
+    }
+
+    #[test]
+    fn symbol_from_entity_ref_prefix_extracts_symbol() {
+        assert_eq!(
+            symbol_from_entity_ref_prefix("company:MSFT:earnings:2024_Q4"),
+            Some("MSFT")
+        );
+        assert_eq!(
+            symbol_from_entity_ref_prefix("company:AAPL:sec_filing:10-K:2024"),
+            Some("AAPL")
+        );
+    }
+
+    #[test]
+    fn kind_from_entity_ref_prefix_extracts_kind() {
+        assert_eq!(
+            kind_from_entity_ref_prefix("company:MSFT:earnings:2024_Q4"),
+            Some("earnings")
+        );
+        assert_eq!(
+            kind_from_entity_ref_prefix("company:MSFT:sec_filing:10-K:2024"),
+            Some("sec_filing")
+        );
+    }
+
+    #[test]
+    fn entity_ref_prefix_extractors_reject_malformed() {
+        assert!(symbol_from_entity_ref_prefix("").is_none());
+        assert!(symbol_from_entity_ref_prefix("company").is_none());
+        assert!(kind_from_entity_ref_prefix("company:MSFT").is_none());
+    }
+
+    // ── Citation verification (no-fabrication enforcement) ──────────────────
+
+    #[test]
+    fn verify_citation_passes_for_verbatim_quote() {
+        let chunks = vec!["Satya Nadella: We had a strong quarter.".to_string()];
+        let citation = Citation {
+            chunk_id: 0,
+            quote: "strong quarter".to_string(),
+            char_start: 0,
+        };
+        assert_eq!(
+            verify_citation(&citation, &chunks),
+            CitationVerdict::Verified
+        );
+    }
+
+    #[test]
+    fn verify_citation_fails_for_fabricated_quote() {
+        let chunks = vec!["Satya Nadella: We had a strong quarter.".to_string()];
+        let citation = Citation {
+            chunk_id: 0,
+            quote: "record-breaking year".to_string(),
+            char_start: 0,
+        };
+        assert_eq!(
+            verify_citation(&citation, &chunks),
+            CitationVerdict::Fabricated {
+                chunk_id: 0,
+                quote: "record-breaking year".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn verify_citation_fails_for_invalid_chunk_id() {
+        let chunks = vec!["chunk 0".to_string()];
+        let citation = Citation {
+            chunk_id: 5,
+            quote: "chunk 0".to_string(),
+            char_start: 0,
+        };
+        assert_eq!(
+            verify_citation(&citation, &chunks),
+            CitationVerdict::InvalidChunkId {
+                chunk_id: 5,
+                chunk_count: 1
+            }
+        );
+    }
+
+    #[test]
+    fn all_citations_verified_passes_when_all_verbatim() {
+        let chunks = vec!["strong quarter".to_string(), "69.8%".to_string()];
+        let citations = vec![
+            Citation {
+                chunk_id: 0,
+                quote: "strong".to_string(),
+                char_start: 0,
+            },
+            Citation {
+                chunk_id: 1,
+                quote: "69.8%".to_string(),
+                char_start: 0,
+            },
+        ];
+        assert!(all_citations_verified(&citations, &chunks));
+    }
+
+    #[test]
+    fn all_citations_verified_fails_when_one_fabricated() {
+        let chunks = vec!["strong quarter".to_string()];
+        let citations = vec![
+            Citation {
+                chunk_id: 0,
+                quote: "strong".to_string(),
+                char_start: 0,
+            },
+            Citation {
+                chunk_id: 0,
+                quote: "record year".to_string(),
+                char_start: 0,
+            },
+        ];
+        assert!(!all_citations_verified(&citations, &chunks));
+    }
+
+    #[test]
+    fn no_fabrication_invariant_holds_against_real_fixture() {
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../registry/templates/listening/tests/fixtures/sample_transcript.txt");
+        let Ok(fixture) = std::fs::read_to_string(&fixture_path) else {
+            return;
+        };
+        let chunks: Vec<String> = fixture
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .collect::<Vec<_>>()
+            .chunks(3)
+            .map(|chunk| chunk.join("\n"))
+            .collect();
+        let verbatim_citations = vec![
+            Citation {
+                chunk_id: 0,
+                quote: "Operator".to_string(),
+                char_start: 0,
+            },
+            Citation {
+                chunk_id: 0,
+                quote: "Good day".to_string(),
+                char_start: 0,
+            },
+        ];
+        assert!(all_citations_verified(&verbatim_citations, &chunks));
+        let fabricated = Citation {
+            chunk_id: 0,
+            quote: "This quote does not appear.".to_string(),
+            char_start: 0,
+        };
+        assert!(!all_citations_verified(&[fabricated], &chunks));
     }
 }
 

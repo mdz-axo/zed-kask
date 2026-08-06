@@ -160,10 +160,13 @@ impl From<LedgerError> for PortfolioError {
 /// a stock portfolio holds tickers; a CMP-index portfolio holds nested
 /// portfolio references (each itself a portfolio of contracts); a
 /// prediction-event portfolio holds contract identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, schemars::JsonSchema)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetType {
     /// A stock ticker (e.g. AAPL, VOD.L).
+    #[default]
     Stock,
     /// A prediction-market contract (e.g. a Kalshi market ticker or
     /// Polymarket CLOB token id).
@@ -214,12 +217,6 @@ impl rusqlite::types::FromSql for AssetType {
             }
             _ => Err(rusqlite::types::FromSqlError::InvalidType),
         }
-    }
-}
-
-impl Default for AssetType {
-    fn default() -> Self {
-        Self::Stock
     }
 }
 

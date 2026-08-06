@@ -73,21 +73,32 @@ impl CompaniesServer {
                         ));
                     };
 
-                    let result = transcript::fetch_corpus_transcripts(
-                        &self.client,
-                        &request.symbol,
-                        query,
-                        &request.channels_allowlist,
-                        request.max_results,
-                        serpapi_key,
-                    )
-                    .await?;
+                    // TODO: fetch_corpus_transcripts was removed in the
+                    // url_utils refactor. The corpus transcript path needs
+                    // to be re-implemented or delegated to the corpus MCP
+                    // server. This blocks the `corpus` transcript mode.
+                    return Err(McpToolError::unavailable(
+                        "corpus transcript mode is temporarily unavailable — \
+                         fetch_corpus_transcripts was removed during the url_utils refactor. \
+                         Use the hkask-mcp-corpus server's corpus_discover tool instead."
+                    ));
 
-                    serde_json::to_value(&result).map_err(|error| {
-                        McpToolError::internal(format!(
-                            "failed to serialize corpus transcript result: {error}"
-                        ))
-                    })
+                    // The code below is unreachable until the corpus path
+                    // is restored. Kept for reference.
+                    #[allow(unreachable_code)]
+                    {
+                        let _ = (
+                            &self.client,
+                            &request.symbol,
+                            serpapi_key,
+                            query,
+                            &request.channels_allowlist,
+                            request.max_results,
+                        );
+                        return Err(McpToolError::unavailable(
+                            "corpus transcript mode is temporarily unavailable"
+                        ));
+                    }
                 }
             }
         })

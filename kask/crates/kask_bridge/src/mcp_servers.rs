@@ -234,9 +234,7 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "prediction-markets",
         binary: "hkask-mcp-prediction-markets",
         description: "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
-        credentials: Some(&[]),
-        config_env: Some(&[
-            "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
+        credentials: Some(&["HKASK_FRED_API_KEY"]),
             "HKASK_PREDICTION_MARKETS_DATA",
             "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
         ]),

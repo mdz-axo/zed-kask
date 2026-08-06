@@ -80,12 +80,19 @@ pub struct Calibration {
 
 /// Volatility annotation (2607.08199). `realized_variance` is computed from
 /// price history by T4's follow-up; until history is wired it is None and
-/// only structural flags are set.
+/// only structural flags are set. `dras_forecast` carries the closed-form
+/// DR-AS structural conditional variance forecast when the forecast-origin
+/// state (price, time-to-resolution, spread, volume) is available.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Volatility {
     pub realized_variance: Option<f64>,
     pub structural_flag: StructuralFlag,
     pub interpretation: Cow<'static, str>,
+    /// The DR-AS structural conditional volatility forecast (arXiv:2607.08199),
+    /// when the forecast-origin state is available. None when the inputs are
+    /// missing or degenerate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dras_forecast: Option<crate::volatility::VolatilityForecast>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -429,6 +436,7 @@ fn assemble(parts: RecordParts, calibration: Calibration) -> MarketRecord {
             realized_variance: parts.realized_variance,
             structural_flag: flag,
             interpretation: interpretation_for(flag),
+            dras_forecast: None,
         },
         status: parts.status,
         resolved_outcome: parts.resolved_outcome,
@@ -605,6 +613,7 @@ pub mod test_utils {
                 realized_variance: None,
                 structural_flag: StructuralFlag::None,
                 interpretation: Cow::Borrowed("low"),
+                dras_forecast: None,
             },
             status: MarketStatus::Open,
             resolved_outcome: None,

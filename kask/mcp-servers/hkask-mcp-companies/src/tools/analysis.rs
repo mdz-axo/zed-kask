@@ -126,7 +126,7 @@ impl CompaniesServer {
             let roic_values = analysis::extract_roic(&metrics);
             let capital_values = analysis::extract_invested_capital(&balance_sheets);
 
-            // Align ROIC and invested capital by calendar year — they come from
+            // Align ROIC and invested capital by calendar year - they come from
             // different API endpoints and may have different year ranges.
             use std::collections::HashMap;
             let roic_by_year: HashMap<&str, f64> = roic_values

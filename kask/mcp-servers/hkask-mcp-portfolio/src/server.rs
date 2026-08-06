@@ -246,8 +246,8 @@ impl PortfolioServer {
                 store.snapshot(&portfolio, &date)
             })
             .await?;
-            Ok(serde_json::to_value(snapshot)
-                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?)
+            serde_json::to_value(snapshot)
+                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))
         })
         .await
     }
