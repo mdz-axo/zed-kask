@@ -54,7 +54,13 @@ impl TtlCache {
         self.entries
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(key.to_string(), Entry { value, inserted: now });
+            .insert(
+                key.to_string(),
+                Entry {
+                    value,
+                    inserted: now,
+                },
+            );
     }
 
     #[cfg(test)]

@@ -18,5 +18,7 @@ hkask-mcp-training
 hkask-mcp-kata-kanban
 hkask-mcp-curator
 hkask-mcp-codegraph
+hkask-mcp-portfolio
 hkask-mcp-scenarios
+hkask-mcp-prediction-markets
 hkask-mcp-swarm

@@ -5,7 +5,7 @@
 use hkask_mcp_prediction_markets::economic_object::BaseEconomicObject;
 use hkask_mcp_prediction_markets::provider_kalshi::KalshiMarket;
 use hkask_mcp_prediction_markets::semantic_mapping::{
-    map_gamma_event, map_kalshi_event, MappedEvent,
+    MappedEvent, map_gamma_event, map_kalshi_event,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -86,14 +86,23 @@ async fn main() {
         let file = std::fs::File::open(&kalshi_events_path).expect("open kalshi events");
         let reader = BufReader::new(file);
         for line in reader.lines() {
-            let line = match line { Ok(l) => l, Err(_) => continue };
-            if line.trim().is_empty() { continue; }
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
             let event: KalshiEvent = match serde_json::from_str(&line) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
             if let Some(mapped) = map_kalshi_event(
-                &event.event_ticker, &event.series_ticker, &event.title, &event.category, None,
+                &event.event_ticker,
+                &event.series_ticker,
+                &event.title,
+                &event.category,
+                None,
             ) {
                 kalshi_event_tickers.push(event.event_ticker.clone());
                 all_mapped.push(mapped);
@@ -105,16 +114,28 @@ async fn main() {
         let file = std::fs::File::open(&gamma_events_path).expect("open gamma events");
         let reader = BufReader::new(file);
         for line in reader.lines() {
-            let line = match line { Ok(l) => l, Err(_) => continue };
-            if line.trim().is_empty() { continue; }
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
             let event: GammaEvent = match serde_json::from_str(&line) {
                 Ok(e) => e,
                 Err(_) => continue,
             };
             let tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
             if let Some(mapped) = map_gamma_event(
-                &event.id, &event.title, &event.slug, &tags,
-                if event.end_date.is_empty() { None } else { Some(&event.end_date) },
+                &event.id,
+                &event.title,
+                &event.slug,
+                &tags,
+                if event.end_date.is_empty() {
+                    None
+                } else {
+                    Some(&event.end_date)
+                },
             ) {
                 all_mapped.push(mapped);
                 gamma_event_records.push(event);
@@ -122,8 +143,11 @@ async fn main() {
         }
     }
 
-    eprintln!("  Matched {} Kalshi events, {} Gamma events",
-        kalshi_event_tickers.len(), gamma_event_records.len());
+    eprintln!(
+        "  Matched {} Kalshi events, {} Gamma events",
+        kalshi_event_tickers.len(),
+        gamma_event_records.len()
+    );
 
     eprintln!("Stage 2: fetching Kalshi contracts per matched event...");
     let client = reqwest::Client::builder()
@@ -158,7 +182,10 @@ async fn main() {
                 Err(e) => {
                     if attempt < 2 {
                         eprintln!("  retry {}/3 for {}: {}", attempt + 1, event_ticker, e);
-                        tokio::time::sleep(std::time::Duration::from_millis(500 * (attempt as u64 + 1))).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            500 * (attempt as u64 + 1),
+                        ))
+                        .await;
                     } else {
                         eprintln!("  FAILED {}: {}", event_ticker, e);
                     }
@@ -187,12 +214,18 @@ async fn main() {
                 "result": market.result,
                 "rules_primary": market.rules_primary,
             });
-            kalshi_contracts.entry(base_object).or_default().push(record);
+            kalshi_contracts
+                .entry(base_object)
+                .or_default()
+                .push(record);
         }
     }
-    eprintln!("  Kalshi: {} events fetched, {} failed, {} total contracts",
-        kalshi_fetched, kalshi_failed,
-        kalshi_contracts.values().map(|v| v.len()).sum::<usize>());
+    eprintln!(
+        "  Kalshi: {} events fetched, {} failed, {} total contracts",
+        kalshi_fetched,
+        kalshi_failed,
+        kalshi_contracts.values().map(|v| v.len()).sum::<usize>()
+    );
 
     eprintln!("Stage 2: extracting Gamma contracts from embedded markets...");
     let mut gamma_contracts: HashMap<BaseEconomicObject, Vec<serde_json::Value>> = HashMap::new();
@@ -225,8 +258,10 @@ async fn main() {
             gamma_contracts.entry(base_object).or_default().push(record);
         }
     }
-    eprintln!("  Gamma: {} total contracts from embedded markets",
-        gamma_contracts.values().map(|v| v.len()).sum::<usize>());
+    eprintln!(
+        "  Gamma: {} total contracts from embedded markets",
+        gamma_contracts.values().map(|v| v.len()).sum::<usize>()
+    );
 
     eprintln!("Stage 2: writing contracts to disk...");
     for object in BaseEconomicObject::ALL {
@@ -238,8 +273,12 @@ async fn main() {
         let gamma_records = gamma_contracts.get(&object).cloned().unwrap_or_default();
         write_jsonl(&kalshi_path, &kalshi_records);
         write_jsonl(&gamma_path, &gamma_records);
-        eprintln!("  {}: {} Kalshi + {} Gamma contracts",
-            object.label(), kalshi_records.len(), gamma_records.len());
+        eprintln!(
+            "  {}: {} Kalshi + {} Gamma contracts",
+            object.label(),
+            kalshi_records.len(),
+            gamma_records.len()
+        );
     }
 
     eprintln!();
@@ -263,9 +302,16 @@ async fn fetch_kalshi_event_async(
         "https://external-api.kalshi.com/trade-api/v2/markets?limit=1000&event_ticker={}",
         event_ticker
     );
-    let response = client.get(&url).send().await.map_err(|e| format!("request failed: {e}"))?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?;
     let status = response.status();
-    let body = response.text().await.map_err(|e| format!("body read failed: {e}"))?;
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("body read failed: {e}"))?;
     if !status.is_success() {
         return Err(format!("HTTP {}: {}", status, &body[..body.len().min(200)]));
     }
@@ -326,19 +372,32 @@ fn inventory_expirations(
     let mut bucket_6m = 0u32;
     let mut bucket_long = 0u32;
     for (_, d) in &days {
-        if *d < 45.0 { bucket_1m += 1; }
-        else if *d < 120.0 { bucket_3m += 1; }
-        else if *d < 210.0 { bucket_6m += 1; }
-        else { bucket_long += 1; }
+        if *d < 45.0 {
+            bucket_1m += 1;
+        } else if *d < 120.0 {
+            bucket_3m += 1;
+        } else if *d < 210.0 {
+            bucket_6m += 1;
+        } else {
+            bucket_long += 1;
+        }
     }
     eprintln!(
         "  {:<28} {:>4} contracts  1m(<45d):{:>3}  3m(45-120d):{:>3}  6m(120-210d):{:>3}  long(>210d):{:>3}",
-        object.label(), days.len(), bucket_1m, bucket_3m, bucket_6m, bucket_long
+        object.label(),
+        days.len(),
+        bucket_1m,
+        bucket_3m,
+        bucket_6m,
+        bucket_long
     );
     if !days.is_empty() {
         let min = days.first().unwrap().1;
         let max = days.last().unwrap().1;
         let median = days[days.len() / 2].1;
-        eprintln!("    min: {:.0}d  median: {:.0}d  max: {:.0}d", min, median, max);
+        eprintln!(
+            "    min: {:.0}d  median: {:.0}d  max: {:.0}d",
+            min, median, max
+        );
     }
 }

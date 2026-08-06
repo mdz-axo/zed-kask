@@ -67,7 +67,11 @@ pub fn residual_analysis(observations: &[(f64, f64)]) -> Option<ResidualAnalysis
     }
     let beta = sxy / sxx;
     let alpha = mean_y - beta * mean_x;
-    let r_squared = if syy < 1e-12 { 0.0 } else { (sxy * sxy) / (sxx * syy) };
+    let r_squared = if syy < 1e-12 {
+        0.0
+    } else {
+        (sxy * sxy) / (sxx * syy)
+    };
 
     // Latest residual from the final observation levels.
     let (last_niche, last_base) = observations[observations.len() - 1];

@@ -1,9 +1,9 @@
 ---
 title: "Prediction Markets Integration — Project Status"
 audience: [developers, architects, agents, operators]
-last_updated: 2026-08-05
+last_updated: 2026-08-06
 version: "0.33.0"
-status: "Paused at a stable checkpoint"
+status: "Active — portfolio extraction + CMP index storage + DR-AS volatility landed"
 domain: "Forecasting"
 mds_categories: [domain, composition, lifecycle]
 ---
@@ -17,17 +17,17 @@ implementation, verification. Status as of 2026-08-05.
 ## Where we stopped
 
 The workstream is **complete through its planned four phases plus hardening**,
-and is **paused at a stable, verified checkpoint**. The system is live,
-self-feeding, and tested; what remains is a short human UI pass and a set of
-deliberately deferred depth items with documented re-entry triggers. This is a
-stopping point by design, not abandonment — every deferred item names the
-evidence that would reopen it.
+and has been **extended with portfolio extraction, CMP index storage, and
+the DR-AS structural volatility model**. The system is live, self-feeding,
+and tested; what remains is a short human UI pass and a set of
+deliberately deferred depth items with documented re-entry triggers.
 
 ### Shipped and verified
 
 | Capability | State | Evidence |
 |---|---|---|
-| `hkask-mcp-prediction-markets` server (12 market tools + status) | ✅ live | 74 server tests; 3 live smoke probes |
+| `hkask-mcp-prediction-markets` server (18 market tools + status) | ✅ live | 85 server tests; 3 live smoke probes |
+| `hkask-mcp-portfolio` server (13 portfolio tools) | ✅ shipped | 42 server tests; extracted from companies |
 | Annotated `MarketRecord` contract (never a bare probability) | ✅ enforced | contract tests; live lookups |
 | Dual-axis ontology mapping (PKO + Dublin Core) | ✅ live-verified | `market_ontology_map` over stdio |
 | Polymarket + Kalshi read-only providers | ✅ live-verified | T0 spike + fixtures + live calls |
@@ -35,14 +35,19 @@ evidence that would reopen it.
 | Calibration feedback loop (negative-only) | ✅ **live-firing** | live demotion of a poisoned bucket |
 | Self-feeding resolution scanner | ✅ live-verified | idempotent; 19 recorded on first scan |
 | CMP curve + published index + slope | ✅ live-verified | 6-tenor FED curve from 12 cohorts |
+| CMP index storage as transaction ledgers | ✅ shipped | `market_cmp_index_store` + `market_cmp_portfolio_store` |
+| DR-AS structural volatility model (arXiv:2607.08199) | ✅ shipped | `market_volatility` tool; 16 volatility tests |
+| Strike extraction from Kalshi market titles | ✅ shipped | 8 extraction tests; auto-fills `predicted_level` |
+| Curated default economic context + live FRED/CoinGecko fetch | ✅ shipped | `market_cmp_context_suggest` tool |
 | Residual-risk decomposition | ✅ live-verified | 81 observations on real FED pair |
 | Realized variance + volatility regime | ✅ live-verified | 94-observation FED history |
 | Scenarios bridge (`scenario_from_markets`) | ✅ live-verified | base_rate + provenance end-to-end |
 | Superforecasting + scenario-builder injection | ✅ wired | FlowDef `market_context` inputs |
 | Settings plumbing + UI sub-page | ✅ compiles | `mcp_env()` fix; full `zed` binary builds |
-| No-trading boundary | ✅ pinned by test | `credentials: Some(&[])`; Kalshi WS excluded |
+| Portfolio widget holdings rendering (any portfolio type) | ✅ shipped | `render_holdings` + `HoldingsBody` |
+| No-trading boundary | ✅ pinned by test | `credentials: Some(&["HKASK_FRED_API_KEY"])`; Kalshi WS excluded |
 
-**Totals:** 481+ tests passing across the touched crates; `./script/clippy --deny warnings` clean; full `zed` binary compiles.
+**Totals:** 299+ tests passing across the touched crates; `cargo clippy` clean; full `zed` binary compiles.
 
 ## The one remaining human step
 

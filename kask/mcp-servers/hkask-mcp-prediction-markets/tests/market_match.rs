@@ -19,8 +19,7 @@ fn stale_calibration() -> hkask_mcp_prediction_markets::types::Calibration {
 }
 
 fn kalshi_records() -> Vec<MarketRecord> {
-    let markets: KalshiMarketsResponse =
-        serde_json::from_str(KALSHI_FIXTURE).expect("parses");
+    let markets: KalshiMarketsResponse = serde_json::from_str(KALSHI_FIXTURE).expect("parses");
     markets
         .markets
         .iter()
@@ -112,7 +111,11 @@ fn confidence_tiers_are_refusable_mechanically() {
     let market = &records[0];
     let high = score_match(&market.question, extract_deadline(&market.question), market);
     assert!(high.score >= 0.65);
-    let noise = score_match("Completely unrelated question about chess 1997", None, market);
+    let noise = score_match(
+        "Completely unrelated question about chess 1997",
+        None,
+        market,
+    );
     assert!(matches!(noise.match_confidence, MatchConfidence::Low));
     assert!(noise.score < 0.45);
 }

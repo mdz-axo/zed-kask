@@ -42,7 +42,10 @@ impl CalibrationStore {
     /// Record a resolved observation into a bucket (e.g. "politics",
     /// "economics", or a series ticker).
     pub fn record(&mut self, bucket: &str, observation: ResolvedObservation) {
-        self.buckets.entry(bucket.to_string()).or_default().push(observation);
+        self.buckets
+            .entry(bucket.to_string())
+            .or_default()
+            .push(observation);
     }
 
     /// Brier score for a bucket. `Err(())` when the bucket is missing or
@@ -121,9 +124,10 @@ impl CalibrationStore {
                     probability: o.probability,
                     outcome: o.outcome,
                 };
-                out.push_str(&serde_json::to_string(&row).map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-                })?);
+                out.push_str(
+                    &serde_json::to_string(&row)
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?,
+                );
                 out.push('\n');
             }
         }

@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! Prediction-markets data-service MCP server.
 //!
 //! Read-only annotated feed of market-implied probabilities from Polymarket

@@ -706,7 +706,15 @@ pub fn upsert_citation(
              content = excluded.content,
              span_map = excluded.span_map,
              fetched_at = datetime('now')",
-        rusqlite::params![citation_id, url, content_hash, title, provider, content, span_map],
+        rusqlite::params![
+            citation_id,
+            url,
+            content_hash,
+            title,
+            provider,
+            content,
+            span_map
+        ],
     )?;
     Ok((citation_id, content_hash))
 }
@@ -766,7 +774,9 @@ pub fn list_citations(
     if let Some(filter) = url_filter {
         query_and_collect(
             conn,
-            &format!("SELECT {COLS} FROM citations WHERE url = ?1 ORDER BY fetched_at DESC LIMIT ?2"),
+            &format!(
+                "SELECT {COLS} FROM citations WHERE url = ?1 ORDER BY fetched_at DESC LIMIT ?2"
+            ),
             rusqlite::params![filter, limit as i64],
             map_row,
         )

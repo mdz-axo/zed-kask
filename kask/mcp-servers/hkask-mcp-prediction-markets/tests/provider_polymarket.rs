@@ -60,7 +60,11 @@ fn http_error_classification_is_per_variant() {
     let unavailable =
         classify_http_error("Gamma", reqwest::StatusCode::SERVICE_UNAVAILABLE, "down");
     // Wire format carries the variant kind; blanket `internal` would fail this.
-    for (err, expected) in [(not_found, "not_found"), (rate, "rate_limited"), (unavailable, "unavailable")] {
+    for (err, expected) in [
+        (not_found, "not_found"),
+        (rate, "rate_limited"),
+        (unavailable, "unavailable"),
+    ] {
         let wire = err.to_string();
         assert!(
             wire.contains(expected),

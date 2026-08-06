@@ -161,10 +161,7 @@ pub async fn fetch_markets(
     let url = format!("{GAMMA_BASE}/markets");
     let response = client
         .get(&url)
-        .query(&[
-            ("limit", limit.to_string()),
-            ("closed", closed.to_string()),
-        ])
+        .query(&[("limit", limit.to_string()), ("closed", closed.to_string())])
         .send()
         .await
         .map_err(|e| McpToolError::unavailable(format!("Gamma request failed: {e}")))?;
@@ -220,7 +217,10 @@ pub async fn fetch_prices_history(
 }
 
 /// Fetch active, open events from Gamma.
-pub async fn fetch_events(client: &reqwest::Client, limit: u32) -> Result<Vec<GammaEvent>, McpToolError> {
+pub async fn fetch_events(
+    client: &reqwest::Client,
+    limit: u32,
+) -> Result<Vec<GammaEvent>, McpToolError> {
     let url = format!("{GAMMA_BASE}/events");
     let response = client
         .get(&url)

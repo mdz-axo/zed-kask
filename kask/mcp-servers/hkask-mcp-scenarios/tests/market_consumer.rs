@@ -75,17 +75,17 @@ fn market_probability_feeds_cross_validate_divergence() {
         None,
     );
     assert!((result.divergence - 0.17).abs() < 1e-9);
-    assert!(result.requires_review, "0.17 divergence exceeds the 0.15 threshold");
+    assert!(
+        result.requires_review,
+        "0.17 divergence exceeds the 0.15 threshold"
+    );
 }
 
 #[test]
 fn market_perspective_flows_through_synthesize() {
     let record = market_record_json();
     let market_perspective = Perspective {
-        source: format!(
-            "market:{}",
-            record["source"].as_str().expect("source")
-        ),
+        source: format!("market:{}", record["source"].as_str().expect("source")),
         probability: record["probability"].as_f64().expect("probability"),
         fermi_sub_questions: vec![],
         base_rate: None,

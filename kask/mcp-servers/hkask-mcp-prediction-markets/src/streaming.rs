@@ -94,9 +94,8 @@ where
         .map_err(|e| McpToolError::unavailable(format!("market WS subscribe failed: {e}")))?;
 
     while let Some(message) = read.next().await {
-        let message = message.map_err(|e| {
-            McpToolError::unavailable(format!("market WS read failed: {e}"))
-        })?;
+        let message = message
+            .map_err(|e| McpToolError::unavailable(format!("market WS read failed: {e}")))?;
         if let async_tungstenite::tungstenite::Message::Text(text) = message
             && let Some(event) = parse_frame(&text)
         {

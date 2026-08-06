@@ -88,6 +88,7 @@ classDiagram
         +f64? realized_variance
         +StructuralFlag structural_flag
         +string interpretation
+        +VolatilityForecast? dras_forecast
     }
     class OntologyBlock {
         +ProcessAxis process  (PKO: lifecycle stage)
@@ -112,7 +113,7 @@ xychart
 
 *Live curve, KXFEDDECISION, 2026-08-05 (12 cohorts, log-odds interpolated). The 30d→1y slope (+0.79 log-odds/yr) is the term-structure signal: expectations of holding steady strengthen with horizon.*
 
-## Tool surface (12 tools)
+## Tool surface (18 tools)
 
 | Tool | Role |
 |---|---|
@@ -126,5 +127,9 @@ xychart
 | `market_ladder` | series duration profile |
 | `market_cmp` | single-tenor CMP point |
 | `market_cmp_index` | the full published curve + slope |
+| `market_cmp_index_store` | store the CMP curve as a transaction-ledger portfolio |
+| `market_cmp_portfolio_store` | store the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged) |
+| `market_cmp_context_suggest` | propose curated/live economic context with reasoning |
+| `market_volatility` | DR-AS structural volatility forecast (arXiv:2607.08199) |
 | `market_residual` | niche-event base exposure (β, r²) |
 | `market_history` | price history + realized variance + regime |

@@ -17,9 +17,27 @@ fn empty_bucket_is_stale_not_zero() {
 fn populated_bucket_computes_brier() {
     let mut store = CalibrationStore::new();
     // Well-calibrated mini sample: high-prob correct, low-prob incorrect.
-    store.record("economics", ResolvedObservation { probability: 0.9, outcome: true });
-    store.record("economics", ResolvedObservation { probability: 0.8, outcome: true });
-    store.record("economics", ResolvedObservation { probability: 0.1, outcome: false });
+    store.record(
+        "economics",
+        ResolvedObservation {
+            probability: 0.9,
+            outcome: true,
+        },
+    );
+    store.record(
+        "economics",
+        ResolvedObservation {
+            probability: 0.8,
+            outcome: true,
+        },
+    );
+    store.record(
+        "economics",
+        ResolvedObservation {
+            probability: 0.1,
+            outcome: false,
+        },
+    );
     let reading = read_calibration(&store, "economics");
     assert!(!reading.stale);
     let brier = reading.brier.expect("computed");
@@ -33,7 +51,13 @@ fn brier_uses_hkask_forecast_math() {
     // true) must score exactly 0 via brier_score_multi — if someone swaps in
     // a local reimplementation this catches drift.
     let mut store = CalibrationStore::new();
-    store.record("x", ResolvedObservation { probability: 1.0, outcome: true });
+    store.record(
+        "x",
+        ResolvedObservation {
+            probability: 1.0,
+            outcome: true,
+        },
+    );
     let reading = read_calibration(&store, "x");
     assert_eq!(reading.brier, Some(0.0));
     assert!(!reading.stale, "a real 0.0 is a measurement, not stale");
@@ -41,8 +65,7 @@ fn brier_uses_hkask_forecast_math() {
 
 #[test]
 fn calibration_request_schema_has_no_boolean_positions() {
-    let schema =
-        schemars::schema_for!(hkask_mcp_prediction_markets::MarketCalibrationRequest);
+    let schema = schemars::schema_for!(hkask_mcp_prediction_markets::MarketCalibrationRequest);
     let value = serde_json::to_value(&schema).expect("serializes");
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");
@@ -81,8 +104,11 @@ fn loop_closure_malformed_journal_line_degrades_to_stale_not_panic() {
     let dir = std::env::temp_dir().join(format!("pm-cal-bad-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("calibration.jsonl");
-    std::fs::write(&path, "{\"bucket\":\"x\",\"probability\":0.9,\"outcome\":true}\nNOT-JSON\n")
-        .expect("write");
+    std::fs::write(
+        &path,
+        "{\"bucket\":\"x\",\"probability\":0.9,\"outcome\":true}\nNOT-JSON\n",
+    )
+    .expect("write");
     let loaded = CalibrationStore::load(&path).expect("loads despite bad line");
     assert_eq!(loaded.sample_size("x"), 1, "good lines survive");
     std::fs::remove_dir_all(&dir).ok();
@@ -117,9 +143,7 @@ fn loop_closure_is_negative_via_tier_demotion() {
 
 #[test]
 fn record_resolution_request_schema_has_no_boolean_positions() {
-    let schema = schemars::schema_for!(
-        hkask_mcp_prediction_markets::MarketRecordResolutionRequest
-    );
+    let schema = schemars::schema_for!(hkask_mcp_prediction_markets::MarketRecordResolutionRequest);
     let value = serde_json::to_value(&schema).expect("serializes");
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");
@@ -148,7 +172,10 @@ fn loop_closes_across_platform_dialects() {
     for _ in 0..6 {
         store.record(
             &canonical_bucket("Elections"), // Kalshi dialect
-            ResolvedObservation { probability: 0.9, outcome: false },
+            ResolvedObservation {
+                probability: 0.9,
+                outcome: false,
+            },
         );
     }
     let reading = read_calibration(&store, &canonical_bucket("Politics")); // Polymarket dialect
@@ -172,10 +199,19 @@ fn contains_guards_idempotent_ingest() {
     // The resolution scanner re-scans the same settled markets; the store
     // must not double-count.
     let mut store = CalibrationStore::new();
-    let observation = ResolvedObservation { probability: 0.9, outcome: true };
+    let observation = ResolvedObservation {
+        probability: 0.9,
+        outcome: true,
+    };
     store.record("politics", observation);
     assert!(store.contains("politics", &observation));
-    assert!(!store.contains("politics", &ResolvedObservation { probability: 0.9, outcome: false }));
+    assert!(!store.contains(
+        "politics",
+        &ResolvedObservation {
+            probability: 0.9,
+            outcome: false
+        }
+    ));
     assert!(!store.contains("economics", &observation));
     // Second identical record would be skipped by the caller's contains check.
     assert_eq!(store.sample_size("politics"), 1);
@@ -183,9 +219,7 @@ fn contains_guards_idempotent_ingest() {
 
 #[test]
 fn check_resolutions_request_schema_has_no_boolean_positions() {
-    let schema = schemars::schema_for!(
-        hkask_mcp_prediction_markets::MarketCheckResolutionsRequest
-    );
+    let schema = schemars::schema_for!(hkask_mcp_prediction_markets::MarketCheckResolutionsRequest);
     let value = serde_json::to_value(&schema).expect("serializes");
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");

@@ -29,9 +29,8 @@ pub(crate) use {
     curator::render_curator_email_page, curator::render_curator_page,
     data_services::render_data_services_page, inference_providers::render_inference_providers_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
-    models::render_models_page,
-    prediction_markets::render_prediction_markets_page, scenarios::render_scenarios_page,
-    training::render_training_page,
+    models::render_models_page, prediction_markets::render_prediction_markets_page,
+    scenarios::render_scenarios_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -335,9 +334,8 @@ pub(crate) fn kask_string_input(
                                 }
                             }
                             ("prediction_markets", "base_events") => {
-                                kask.prediction_markets
-                                    .get_or_insert_default()
-                                    .base_events = Some(parsed.clone());
+                                kask.prediction_markets.get_or_insert_default().base_events =
+                                    Some(parsed.clone());
                             }
                             ("training", "host") => {
                                 kask.training.get_or_insert_default().host = Some(parsed.clone());

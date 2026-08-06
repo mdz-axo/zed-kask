@@ -38,12 +38,12 @@ pub struct MatchBasis {
 
 /// English stopwords plus domain-generic verbs that carry no entity signal.
 const STOPWORDS: &[&str] = &[
-    "a", "an", "the", "in", "on", "of", "for", "to", "by", "at", "or", "and", "is", "be",
-    "will", "what", "who", "whom", "which", "that", "this", "these", "those", "it", "its",
-    "happen", "occur", "take", "place", "there", "their", "they", "them", "his", "her",
-    "before", "after", "during", "above", "below", "over", "under", "than", "then", "when",
-    "how", "many", "much", "does", "do", "did", "any", "some", "no", "not", "yes", "win",
-    "become", "get", "make", "made", "out", "up", "down", "new", "next", "end", "year",
+    "a", "an", "the", "in", "on", "of", "for", "to", "by", "at", "or", "and", "is", "be", "will",
+    "what", "who", "whom", "which", "that", "this", "these", "those", "it", "its", "happen",
+    "occur", "take", "place", "there", "their", "they", "them", "his", "her", "before", "after",
+    "during", "above", "below", "over", "under", "than", "then", "when", "how", "many", "much",
+    "does", "do", "did", "any", "some", "no", "not", "yes", "win", "become", "get", "make", "made",
+    "out", "up", "down", "new", "next", "end", "year",
 ];
 
 /// Normalize into a set of significant lowercase tokens.
@@ -92,10 +92,7 @@ pub fn extract_deadline(query: &str) -> Option<chrono::NaiveDate> {
 }
 
 /// Days between the query deadline and a market deadline string (RFC3339).
-fn deadline_delta_days(
-    query_deadline: chrono::NaiveDate,
-    market_deadline: &str,
-) -> Option<f64> {
+fn deadline_delta_days(query_deadline: chrono::NaiveDate, market_deadline: &str) -> Option<f64> {
     let market = chrono::DateTime::parse_from_rfc3339(market_deadline).ok()?;
     Some((market.date_naive() - query_deadline).num_days().abs() as f64)
 }
@@ -120,9 +117,9 @@ pub fn score_match(
     // query (day precision) penalizes mismatches past 45 days; a year-only
     // query (±6-month precision) only penalizes different *cycles* (>1 year).
     let day_precision = query_deadline.is_some()
-        && query.split(|c: char| !c.is_alphanumeric() && c != '-').any(|t| {
-            chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok()
-        });
+        && query
+            .split(|c: char| !c.is_alphanumeric() && c != '-')
+            .any(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok());
     let tolerance = if day_precision { 45.0 } else { 366.0 };
     let deadline_factor = match delta {
         Some(d) if d <= tolerance => 1.0,
@@ -149,10 +146,7 @@ pub fn score_match(
 }
 
 /// Rank candidates by score, highest first.
-pub fn rank_matches(
-    query: &str,
-    candidates: &[MarketRecord],
-) -> Vec<MatchCandidate> {
+pub fn rank_matches(query: &str, candidates: &[MarketRecord]) -> Vec<MatchCandidate> {
     let query_deadline = extract_deadline(query);
     let mut scored: Vec<MatchCandidate> = candidates
         .iter()
