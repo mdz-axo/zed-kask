@@ -1,7 +1,7 @@
 ---
 title: "Swarm MCP Server Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.32.2"
 status: "Active"
 domain: "Composition"
@@ -11,7 +11,9 @@ mds_categories: [composition, trust, lifecycle, curation]
 # Swarm MCP Server Reference
 
 **Crate:** `mcp-servers/hkask-mcp-swarm`
-**Tools:** 31 — 20 ABW + 11 local, **both sets always exposed in either mode**
+**Tools:** 51 — 27 ABW + 24 local, **both sets always exposed in either mode**
+(pinned by `tool_surface_is_exactly_51_registered_tools`,
+`src/hkask_mcp_swarm.rs:350`)
 **Modes:** `kask.swarm.mode` selects the substrate — `abw` (default, ABW REST) or `local` (zed-kask's local substrate)
 **ABW auth:** ABW Pro-tier API key (`Authorization: Bearer`), injected as `HKASK_ABW_API_KEY`
 **Local auth:** none — the hkask-ledger balance check is the gate (no consent token)
@@ -40,58 +42,65 @@ substrate. ABW and local tools both fit the same three surfaces.[^reynolds-swarm
 
 | Surface | What | ABW tools | Local tools |
 |---|---|---|---|
-| **Authoring** | Create new agents | `swarm_generate_prompt`, `swarm_generate_ontology`, `swarm_create_agent`, `swarm_ontology_templates` | `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_clone_to_local` |
-| **Composition** | Group agents into teams | `swarm_create_swarm`, `swarm_create_app`, `swarm_xaman` | `swarm_list_local_agents`, `swarm_create_swarm` (shared), `swarm_fanout_local` |
-| **Operation** | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`, `swarm_push_to_cloud`, `swarm_remove_local` |
+| **Authoring** | Create new agents | `swarm_generate_prompt`, `swarm_generate_ontology`, `swarm_create_agent`, `swarm_ontology_templates`, `swarm_fork_agent` | `swarm_create_local_agent`, `swarm_reconfigure_local_agent`, `swarm_generate_prompt_local`, `swarm_generate_ontology_local`, `swarm_clone_to_local`, `swarm_ai_assist` |
+| **Composition** | Group agents into teams | `swarm_create_swarm`, `swarm_create_app`, `swarm_xaman`, `swarm_fanout`, `swarm_publish_agent`, `swarm_publish_checks` | `swarm_create_local_swarm`, `swarm_list_local_swarms`, `swarm_get_local_swarm`, `swarm_delete_local_swarm`, `swarm_add_agent_local`, `swarm_remove_agent_local`, `swarm_list_local_agents`, `swarm_fanout_local`, `swarm_pipeline_local` |
+| **Operation** | Browse, run, spend, manage | `swarm_list_agents`, `swarm_get_agent`, `swarm_list_apps`, `swarm_get_swarm`, `swarm_execute_agent`, `swarm_hire`, `swarm_delegate`, `swarm_delegate_and_wait`, `swarm_run_status`, `swarm_hire_cost`, `swarm_request_consent`, `swarm_authorize_session`, `swarm_search_knowledge`, `swarm_fire`, `swarm_delete_agent`, `swarm_delete_swarm` | `swarm_delegate_local`, `swarm_a2a_send`, `swarm_a2a_card`, `swarm_search_knowledge_local`, `swarm_fund_local`, `swarm_balance_local`, `swarm_local_history`, `swarm_push_to_cloud`, `swarm_remove_local` |
 
-## Tool reference — ABW (20 tools)
+## Tool reference — ABW (27 tools)
 
 ### Discovery (read-only)
 
 | Tool | ABW endpoint | Purpose |
 |---|---|---|
-| `swarm_list_agents` | `GET /api/agents` | Browse the catalogue (filter by type/tag). Descriptions sanitized. Keyless-capable but auth-gated for consistency (KA-02). |
-| `swarm_get_agent` | `GET /api/agents` | Full card for one agent (capabilities, dependencies, stats). |
-| `swarm_list_apps` | `GET /api/apps` | Published Apps (reusable team manifests) — the sharing surface. |
-| `swarm_get_swarm` | `GET /api/workspaces[/{id}]` | List workspaces or get one roster. |
-| `swarm_run_status` | `GET /api/workspaces/{id}/messages` | Recent run activity. Each message sanitized. |
-| `swarm_ontology_templates` | `GET /api/ontology-templates` | Seed-ontology starting points for authoring. |
+| `swarm_list_agents` | `GET /api/agents` | Browse the catalogue (filter by type/tag). Descriptions sanitized. Keyless. |
+| `swarm_get_agent` | `GET /api/agents` | Full card for one agent (capabilities, dependencies, ontology, execution stats, versions). |
+| `swarm_list_apps` | `GET /api/apps` | Published Apps (reusable team manifests) — the sharing/discovery surface. |
+| `swarm_get_swarm` | `GET /api/workspaces[/{id}]` | List workspaces (budgets, agent counts) or get one full roster. |
+| `swarm_run_status` | `GET /api/workspaces/{id}/messages` | Recent run activity: latest chat messages and agent activity. Each message sanitized. |
+| `swarm_ontology_templates` | `GET /api/ontology-templates` | Seed-ontology (entity-relationship) starting points for authoring. |
+| `swarm_search_knowledge` | `GET /api/agents/{id}/knowledge/search` | Vector-search an agent's consolidated dreaming-memory knowledge graph; returns matching knowledge fragments. |
+| `swarm_publish_checks` | `GET /api/agents/{id}/publish-checks` | Preflight an agent publish: returns `can_publish` and the list of failing checks. |
 
 ### Authoring (agent creation)
 
 | Tool | ABW endpoint | Purpose |
 |---|---|---|
-| `swarm_generate_prompt` | `POST /api/agents/generate-prompt` | Draft a system prompt from a description. Output sanitized. |
-| `swarm_generate_ontology` | `POST /api/agents/generate-ontology` | Draft a seed ontology (Mermaid ER) for a domain. |
-| `swarm_create_agent` | `POST /api/agents` | Create the agent. Builds the full card (model, temperature, tags, sample queries); supports `dependencies` for compound agents. |
+| `swarm_generate_prompt` | `POST /api/agents/generate-prompt` | Draft an ABW system prompt from a natural-language description. Output sanitized. |
+| `swarm_generate_ontology` | `POST /api/agents/generate-ontology` | Draft a seed ontology (Mermaid ER) for a knowledge domain. |
+| `swarm_create_agent` | `POST /api/agents` | Create the agent (appears in your library as a draft). Builds the full card (model, temperature, tags, sample queries); supports `dependencies` for compound agents. |
+| `swarm_fork_agent` | `POST /api/agents/{id}/fork` | Fork an agent into a derivative (`{source}_fork_{n}`) with author-royalty tracking. Source must have a slug-compliant name. |
+| `swarm_publish_agent` | `POST /api/agents/{id}/publish` | Publish an agent to the public catalogue. With `force=true` (admin), failing checks are bypassed and audited to `admin_bypass_events`. |
 
 ### Composition (team building)
 
 | Tool | ABW endpoint | Purpose |
 |---|---|---|
 | `swarm_xaman` | `POST /api/xaman/sessions[/{id}/message]` | Consult Xaman Ek (typed sessions: `composition_design`, `workspace_help`, `free`). **Consent-gated** when `curator_consent_default: false`. Output sanitized. |
-| `swarm_create_app` | `POST /api/xaman/sessions/{id}/create-app` | Materialize a composition session into an App. |
-| `swarm_create_swarm` | `POST /api/teams` + `/workspaces/{id}/hire` | Create a workspace and optionally hire agents (each hire consent-gated). |
+| `swarm_create_app` | `POST /api/xaman/sessions/{id}/create-app` | Materialize a composition-design session into an App; returns the app's slug and url, or structured issues if the plan is incomplete. |
+| `swarm_create_swarm` | `POST /api/teams` + `/workspaces/{id}/hire` | Create a workspace with a name and mission; optionally hire agents (each hire consent-gated via `consent_tokens`). |
+| `swarm_fanout` | `POST /api/workspaces/{id}/messages` (×N) | Parallel multi-agent fan-out: post N @mention delegations in one call, each with its own consent token. Fire-and-forget — responses arrive via `swarm_run_status`. Capped at 10 agents. |
 
 ### Governed spend (consent-gated)
 
 | Tool | ABW endpoint | Purpose |
 |---|---|---|
-| `swarm_hire_cost` | `GET /api/agents/{id}/dependencies` | Pre-flight cost estimate. Fails closed on missing field (no fabricated zero). |
+| `swarm_hire_cost` | `GET /api/agents/{id}/dependencies` | Pre-flight cost estimate (including the dependency team). Fails closed on missing field (no fabricated zero). |
 | `swarm_request_consent` | — (local) | Mint a single-use, action+target-scoped consent token after the operator confirms. `require_auth`. |
+| `swarm_authorize_session` | — (local) | Open a pre-authorized spend session for headless ABW pipelines; the session token works in place of per-spend consent tokens for `swarm_hire`/`swarm_delegate`/`swarm_fanout`, deducting from `total_credits` with the per-dispatch ceiling still gating individual spends. |
 | `swarm_hire` | `POST /api/workspaces/{id}/hire` | Hire an agent. Consumes the token, **re-verifies cost against ABW** before spending. |
-| `swarm_delegate` | `POST /api/workspaces/{id}/messages` | Delegate a task via @mention. Consumes the token. |
-| `swarm_execute_agent` | `POST /api/agents/{name}/execute` | Text-only agent consultation (token fees). Output sanitized. |
+| `swarm_delegate` | `POST /api/workspaces/{id}/messages` | Delegate a task via @mention (full tool access, gas-charged). Consumes the token. |
+| `swarm_delegate_and_wait` | `POST` + `GET /api/workspaces/{id}/messages` | Delegate, then poll `swarm_run_status` every 2s until the agent responds or `timeout_secs` (default 60, max 300). Returns the agent's response message or a timeout. |
+| `swarm_execute_agent` | `POST /api/agents/{name}/execute` | Text-only agent consultation (single turn, no tools; token fees; the agent's owner must have funded it). Output sanitized. |
 
 ### Lifecycle (teardown)
 
 | Tool | ABW endpoint | Purpose |
 |---|---|---|
-| `swarm_fire` | `POST /api/workspaces/{id}/fire` | Remove an agent from a workspace roster. |
-| `swarm_delete_agent` | `DELETE /api/agents/{id}` | Delete an authored agent from the catalogue. |
-| `swarm_delete_swarm` | `DELETE /api/workspaces/{id}` | Delete a workspace and its roster. |
+| `swarm_fire` | `POST /api/workspaces/{id}/fire` | Remove an agent from a workspace roster (the agent itself is NOT deleted). |
+| `swarm_delete_agent` | `DELETE /api/agents/{id}` | Permanently delete an authored agent (irreversible; removes it from your library and all rosters). A synced local card is NOT touched. |
+| `swarm_delete_swarm` | `DELETE /api/teams/{id}` | Permanently delete a workspace and its roster (irreversible). |
 
-## Tool reference — Local (11 tools)
+## Tool reference — Local (24 tools)
 
 Local-mode tools route to zed-kask's local substrate (`hkask-inference`,
 `hkask-ledger`, `hkask-guard`). They are **always exposed regardless of
@@ -111,8 +120,25 @@ only changes which substrate the *composition* cascade uses by default.
 
 | Tool | Purpose |
 |---|---|
-| `swarm_delegate_local` | Run a local agent against a task. The execution path: **scan input** → **tool loop** (declared `mcp_tools` dispatched through the governed `McpRuntime`, each invocation OCAP-gated + gas-budgeted) → **guard scan output** → **ledger debit**. Returns a `LocalDelegateResult` (see shape below). |
-| `swarm_fanout_local` | Delegate the same task to N local agents in parallel and collect `LocalDelegateResult[]` — the substrate-level primitive the `swarm-intelligence` CHECK step reads. |
+| `swarm_delegate_local` | Run a local agent against a task. The execution path: **scan input** → **tool loop** (declared `mcp_tools` dispatched through the governed `McpRuntime`, each invocation OCAP-gated + gas-budgeted) → **guard scan output** → **ledger debit**. Declared `capabilities.skills` (capped at 3) execute against the task through the zed-side `ManifestExecutor` before the LLM call. Returns a `LocalDelegateResult` (see shape below). |
+| `swarm_fanout_local` | Parallel multi-agent fan-out: dispatch N agents in one call and aggregate. Runs sequentially to avoid ledger TOCTOU. Capped at `MAX_FANOUT` (10) — the substrate-level primitive the `swarm-intelligence` CHECK step reads. |
+| `swarm_pipeline_local` | Sequential local pipeline: run N agents in order with `{prev_output}` substitution (each step's task may reference the previous step's response). Capped at 10 steps. |
+| `swarm_a2a_send` | Send an A2A (Agent2Agent) protocol message to a local agent: wraps in A2A types (Message/Task/Artifact) and dispatches in-process. No HTTP — MCP tool dispatch is the transport. Agents declare this tool in `mcp_tools` to communicate with each other. |
+| `swarm_a2a_card` | Get the A2A Agent Card for a local agent (or all local agents when `agent_name` is omitted): capabilities, skills, supported interface. A2A-compliant discovery. |
+
+### Local swarms (team registry)
+
+Local swarms are the local replica of an ABW workspace: a named grouping of
+local agent ids with a mission. No cost, no consent token.
+
+| Tool | Purpose |
+|---|---|
+| `swarm_create_local_swarm` | Create a local swarm (name, mission, optional seed `agents`). Local counterpart of `swarm_create_swarm`. |
+| `swarm_list_local_swarms` | List all local swarms (id, name, mission, members, created_at). Local counterpart of `swarm_get_swarm` list mode. |
+| `swarm_get_local_swarm` | Get one local swarm by `swarm_id`, including its member roster. Not-found if absent. |
+| `swarm_delete_local_swarm` | Permanently delete a local swarm by `swarm_id`; the roster is dropped, member agents are NOT deleted. Local counterpart of `swarm_delete_swarm`. |
+| `swarm_add_agent_local` | Add a local agent to a swarm's roster by `swarm_id` + `agent_name`. Idempotent; the agent need not exist yet (roster is ids). Local counterpart of `swarm_hire`. |
+| `swarm_remove_agent_local` | Remove a local agent from a swarm's roster by `swarm_id` + `agent_name`. Idempotent; does NOT delete the agent. Local counterpart of `swarm_fire`. |
 
 ### Local agent registry
 
@@ -123,11 +149,15 @@ Local agent cards live at `agents/local/curated/<id>/agent_card.json`
 
 | Tool | Purpose |
 |---|---|
-| `swarm_list_local_agents` | List local agent cards from the registry. |
-| `swarm_create_local_agent` | Write a new local agent card to the registry. |
-| `swarm_reconfigure_local_agent` | Update an existing local agent card (used by the C6 reconfigure step in the cybernetic swarm plan). |
-| `swarm_clone_to_local` | Clone an ABW agent card into the local registry (the cloud→local bridge). |
-| `swarm_remove_local` | Delete a local agent card. |
+| `swarm_list_local_agents` | List local agent cards from the registry. Each card carries a `cloud_id`: present = synced with an ABW agent, absent = local-only. |
+| `swarm_create_local_agent` | Write a new local agent card to the registry (`agents/local/curated/<id>/agent_card.json`) and reload the registry. |
+| `swarm_reconfigure_local_agent` | Update an existing local agent's `system_prompt` in place (the C6 reconfigure step in the cybernetic swarm plan); preserves all other card fields. |
+| `swarm_clone_to_local` | Clone an ABW agent card into the local registry with `min_provider_class: local`; sets `cloud_id` to mark it as synced (the cloud→local bridge). Requires the ABW API key. |
+| `swarm_remove_local` | Delete a local agent card (the local counterpart of firing). A synced card's ABW agent is NOT touched. |
+| `swarm_generate_prompt_local` | Generate a system prompt for a local agent from a description (local analog of `swarm_generate_prompt`). Uses the local `InferencePort`; optionally seeded with the agent's consolidated memory. Output guard-scanned. |
+| `swarm_generate_ontology_local` | Generate a seed ontology (Mermaid ER) for a knowledge domain (local analog of `swarm_generate_ontology`). Uses the local `InferencePort`; optionally seeded with an agent's semantic-memory graph. Output guard-scanned. |
+| `swarm_search_knowledge_local` | Search a local agent's prefix-scoped semantic memory (local analog of ABW `swarm_search_knowledge`); returns entity-attribute-value triples. Degrades to an empty result with a `memory_unconfigured` note when the store cannot be opened. |
+| `swarm_ai_assist` | AI assist for the swarm panel authoring forms: suggests completions for partial inputs or validates well-formedness. Runs the `swarm-compose-guide` skill cascade (Jinja2 guidance template) via the `SkillExecPort` — the template is the source of truth. The `mode` field (abw/local) tailors the guidance; no ABW calls in either mode. |
 
 ### Cloud bridge
 

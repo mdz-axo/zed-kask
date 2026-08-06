@@ -12,7 +12,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 > **zed-kask** is a minimal-divergence fork of the [Zed editor](https://zed.dev) with the hKask agent platform compiled in-process. The agent runtime, MCP servers, skills, Regulation nervous system, and sovereign memory run inside the editor as native surfaces.
 
-**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D20 integration plan, composition root, and current crate inventory.
+**Canonical reference:** [`architecture/zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) — the D1–D21 integration plan, composition root, and current crate inventory (D21 added 2026-08-05; repo-root `DIVERGENCE.md` is authoritative for the seam list).
 
 **Per-crate docs:** [`diataxis/INDEX.md`](diataxis/INDEX.md) — Diataxis documentation set (tutorial, how-to, reference, explanation) for 10 crate sets (39 artifacts).
 
@@ -20,7 +20,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 | Document | Description |
 |----------|-------------|
-| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D20 integration seams, composition root, crate inventory, deletion history. |
+| [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md) | **Canonical architecture** — D1–D21 integration seams, composition root, crate inventory, deletion history. |
 | [`salience-specification.md`](architecture/salience-specification.md) | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`). |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md) | Architecture principles P1–P12. |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md) | The Magna Carta — 4 sovereignty principles (P1–P4). |
@@ -33,7 +33,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document | Description |
 |----------|-------------|
 | [`reference/regulation-spans.md`](reference/regulation-spans.md) | Regulation span catalog. |
-| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 11 built-in servers (child processes over stdio). |
+| [`reference/mcp-servers/README.md`](reference/mcp-servers/README.md) | MCP server registry — 12 built-in servers (child processes over stdio). |
 | [`reference/mcp-servers/companies.md`](reference/mcp-servers/companies.md) | Companies server — valuation, forecasting, portfolio. |
 | [`reference/mcp-servers/condenser.md`](reference/mcp-servers/condenser.md) | Condenser server — compression algorithms. |
 | [`reference/mcp-servers/corpus.md`](reference/mcp-servers/corpus.md) | Corpus server — gather→process→output pipeline. |
@@ -77,14 +77,9 @@ Build plans for major features. All plans in the active tree have `status: Activ
 
 | Document | Description |
 |----------|-------------|
-| [`plans/kask-skill-signing-and-trust.md`](plans/kask-skill-signing-and-trust.md) | Skill marketplace signing & trust model — Ed25519-signed manifests with `expires_at` set at signing, server verification (upload 400 / poll skip), 120-day catalog expiry + sweep, client install verification. All 5 phases complete. |
-| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (50 tools: 27 ABW + 23 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
+| [`plans/abw-swarm-intelligence.md`](plans/abw-swarm-intelligence.md) | Agent Bestiary World (ABW) swarm intelligence integration — `hkask-mcp-swarm` MCP server (51 tools: 27 ABW + 24 local) + `swarm_panel`. v1 feature-complete; v2 local mode implemented. |
 | [`plans/cybernetic-swarm-plan.md`](plans/cybernetic-swarm-plan.md) | Cybernetic Swarm Plan — the `swarm-intelligence` skill design + implementation record. 10-step PDCA cascade, C0–C8 cybernetic components, steering modes, `delegate_results` contract. |
-| [`plans/media-system-refactor.md`](plans/media-system-refactor.md) | Media system review, architecture refactor, and multi-provider expansion plan. Forward-looking; not yet executed. |
-| [`plans/prediction-plan.md`](plans/prediction-plan.md) | Prediction markets MCP server plan — proposed `hkask-mcp-prediction-markets` crate. Forward-looking. |
-| [`plans/semantic-memory-wiki.md`](plans/semantic-memory-wiki.md) | Semantic memory wiki — proposed `hkask-mcp-wiki` MCP server. Draft; no code exists yet. |
 | [`plans/evolving-test-harness.md`](plans/evolving-test-harness.md) | Evolving test harness plan — trace filesystem, oracle taxonomy, property-based testing infrastructure. |
-| [`plans/test-harness-skill-evolution.md`](plans/test-harness-skill-evolution.md) | Test harness skill evolution — proptest/bug-hunt/tdd skill integration plan. |
 
 ## QA
 
@@ -92,7 +87,7 @@ Quality assurance strategy and artifacts for the hKask MCP server fleet.
 
 | Document | Description |
 |----------|-------------|
-| [`qa/mcp-server-qa-strategy.md`](qa/mcp-server-qa-strategy.md) | Per-tool QA routine for all tools across 11 MCP servers. |
+| [`qa/mcp-server-qa-strategy.md`](qa/mcp-server-qa-strategy.md) | Per-tool QA routine for all tools across 12 MCP servers. |
 | [`qa/per-tool-contracts.md`](qa/per-tool-contracts.md) | Per-tool 7-category contract tables (input struct, output shape, LLM I/O boundary). |
 | [`qa/coverage-matrix.md`](qa/coverage-matrix.md) | Coverage matrix generated by `scripts/qa-mcp-servers.sh`. |
 | [`qa/pre-release-final-summary-pass3.md`](qa/pre-release-final-summary-pass3.md) | Final pre-release QA summary — 5 open deferred/user-decision items (D2, D3, D6, D7, D8). |

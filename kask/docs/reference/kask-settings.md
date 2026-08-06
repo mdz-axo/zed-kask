@@ -1,7 +1,7 @@
 ---
 title: "Kask Settings Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.32.3"
 status: "Active"
 domain: "Composition"
@@ -20,7 +20,7 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 
 ## Top-level struct (`KaskSettings`)
 
-`KaskSettings` (settings.rs:35) has 14 subsections:
+`KaskSettings` (settings.rs:36-85) has 16 subsections:
 
 | Field | Type | Default source |
 |-------|------|---------------|
@@ -34,18 +34,25 @@ system deserializes `SettingsContent`, not `KaskSettings`).
 | `corpus` | `KaskCorpusSettings` | `Default` |
 | `media` | `KaskMediaSettings` | derived `Default` |
 | `scenarios` | `KaskScenariosSettings` | derived `Default` |
+| `prediction_markets` | `KaskPredictionMarketsSettings` | derived `Default` |
 | `swarm` | `KaskSwarmSettings` | `Default` |
 | `training` | `KaskTrainingSettings` | derived `Default` |
 | `models` | `KaskModelsSettings` | derived `Default` |
 | `inference_providers` | `KaskInferenceProvidersSettings` | derived `Default` (all false) |
+| `collab` | `KaskCollabSettings` | `Default` (enabled, localhost:3000, sqlite) |
 
 ## MCP Servers (`KaskMcpSettings`)
 
-Toggle which of the 11 built-in kask MCP servers are loaded.[^mcp-spec-settings]
+Toggle which of the 12 built-in kask MCP servers are loaded.[^mcp-spec-settings]
+The 12 servers (settings.rs:37 comment still says 11 — the `Default` and the
+`BUILT_IN_MCP_SERVERS_IDS` constant in `kask/crates/kask_bridge/src/mcp_servers.rs:323-336`
+are authoritative): `codegraph`, `companies`, `condenser`, `corpus`, `curator`,
+`kata-kanban`, `media`, `research`, `scenarios`, `prediction-markets`, `swarm`,
+`training`. The crates live under `kask/mcp-servers/` (12 `hkask-mcp-*` crates).
 
 | Field | Type | Default |
 |-------|------|---------|
-| `load_default` | `bool` | `true` — load all 11 servers |
+| `load_default` | `bool` | `true` — load all 12 servers |
 | `overrides` | `HashMap<String, bool>` | empty — per-server overrides (e.g. `"curator": false`) |
 
 The master `load_default` toggle controls all servers; individual `overrides`
@@ -92,14 +99,32 @@ enabled:[^openai-compatible-settings]
 | `openrouter_enabled` | `false` | `OPENROUTER_API_KEY` set |
 | `kilocode_enabled` | `false` | `KILOCODE_API_KEY` set |
 | `cline_enabled` | `false` | `CLINE_API_KEY` set |
+| `atlascloud_enabled` | `false` | `ATLASCLOUD_API_KEY` set |
 
 `Default` returns all-false (pure, no side effects). The env-var-based
 auto-enable logic lives in `From<KaskInferenceProvidersSettingsContent>` and
-`KaskInferenceProvidersSettings::from_env()`, which auto-enable a provider
-when its API key env var is set and the user hasn't explicitly toggled it.
+`KaskInferenceProvidersSettings::from_env()` (settings.rs:175-184), which
+auto-enable a provider when its API key env var is set and the user hasn't
+explicitly toggled it.
 
 **To add models**: After enabling a provider, go to Settings → AI → LLM
 Providers, find the provider, and add models via its configuration sub-page.
+
+## Collab (`KaskCollabSettings`)
+
+Local collab server configuration (settings.rs:199-227). When `enabled` is
+true, zed-kask launches a local `collab serve api` process at startup so the
+kask extensions panel can fetch `/api/kask-skills` without depending on the
+deployed `zed.dev` server. The server uses SQLite (no Postgres/S3 needed)
+for local dev; S3 is only required for publish/download/vote.
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `enabled` | `bool` | `true` | Auto-launch the local collab server at startup |
+| `database_url` | `String` | `"sqlite:kask_marketplace.db?mode=rwc"` | SQLite connection string |
+| `http_port` | `u16` | `3000` | HTTP port the collab server listens on |
+| `zed_environment` | `String` | `"development"` | `development`, `staging`, or `production` |
+| `marketplace_url` | `String` | `"http://localhost:3000"` | Marketplace base URL the extensions panel uses; when set and non-empty, overrides `server_url`-based resolution |
 
 ## Curator (`KaskCuratorSettings`)
 
@@ -194,17 +219,36 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 |-------|------|---------|-------|
 | `data_dir` | `String` | `""` | Scenario persistence directory; empty = in-memory |
 
+## Prediction Markets (`KaskPredictionMarketsSettings`)
+
+Prediction-markets data-service configuration (settings.rs:451-458).
+
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `data_dir` | `String` | `""` | `HKASK_PREDICTION_MARKETS_DATA` | Calibration journal directory; empty = in-memory |
+| `cache_ttl_secs` | `u64` | `0` | `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | Market-data cache TTL; 0 = server default |
+| `base_events` | `String` | `""` | `HKASK_PREDICTION_MARKETS_BASE_EVENTS` | Base-event registry: `"domain:series,..."` pairs for CMP construction |
+
 ## Swarm (`KaskSwarmSettings`)
 
 Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-swarm-intelligence.md`.[^reynolds-swarm-settings]
 
-| Field | Type | Default | Notes |
-|-------|------|---------|-------|
-| `mode` | `SwarmModeConfig` | `"abw"` | `"abw"` (Agent Bestiary World, v1) or `"local"` (local substrate crates, v2 §15) |
-| `api_url` | `String` | `""` | ABW API base URL override; empty = `https://agent-bestiary.world` |
-| `max_credits_per_dispatch` | `u32` | `50` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
-| `curator_consent_default` | `bool` | `false` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
-| `local_agents_dir` | `String` | `""` | Directory for local agent cards (`<id>/agent_card.json`) in `local` mode; empty = `agents/local/curated` |
+| Field | Type | Default | Env var injected | Notes |
+|-------|------|---------|-------------------|-------|
+| `mode` | `SwarmModeConfig` | `"abw"` | `HKASK_SWARM_MODE` | `"abw"` (Agent Bestiary World, v1) or `"local"` (local substrate crates, v2 §15) |
+| `api_url` | `String` | `""` | `HKASK_ABW_API_URL` | ABW API base URL override; empty = `https://agent-bestiary.world` |
+| `max_credits_per_dispatch` | `u32` | `50` | `HKASK_ABW_MAX_CREDITS` | Per-dispatch credit ceiling (S3 budget gate); dispatches above this are refused pre-spend |
+| `curator_consent_default` | `bool` | `false` | `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | When `false`, `swarm_xaman` requires a per-call `consent_token`; `true` = operator globally opted in |
+| `local_agents_dir` | `String` | `""` | `HKASK_LOCAL_AGENTS_DIR` | Directory for local agent cards (`<id>/agent_card.json`) in `local` mode; empty = `agents/local/curated` |
+| `local_swarms_dir` | `String` | `""` | `HKASK_LOCAL_SWARMS_DIR` | Directory for local swarms (`<id>/swarm.json`), read/written by `LocalSwarmRegistry`; empty = `agents/local/swarms` |
+
+The ABW API key is a secret — it lives in the keychain under
+`kask://credentials/hkask_abw_api_key`, injected as `HKASK_ABW_API_KEY` by
+`mcp_env_with_credentials`, not by `mcp_env()`. The bridge `Default` impl
+(settings.rs:536-557) MUST stay in sync with `SwarmConfig::default()` in
+`kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs` — the two impls are
+deliberately duplicated across the crate boundary to avoid a circular
+dependency.
 
 ## Training (`KaskTrainingSettings`)
 
@@ -217,13 +261,22 @@ Agent Bestiary World (ABW) swarm integration (added 2026-08-01). See `plans/abw-
 
 Kask-wide model configuration. Two-layer default design: fields default to
 empty strings; `effective_*` methods fall back to the `DEFAULT_*_MODEL`
-constants.[^ousterhout-models-settings]
+constants, which are `const` references to the single source of truth in
+`hkask_inference::model_constants`.[^ousterhout-models-settings]
 
 | Field | Type | Default | Effective fallback |
 |-------|------|---------|-------------------|
-| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `"OpenRouter/z-ai/glm-5.2"` |
-| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` |
-| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/deepseek/deepseek-v4-flash"` |
+| `default_model` | `String` | `""` | `DEFAULT_INFERENCE_MODEL` = `DEFAULT_FALLBACK_MODEL` = `"OpenRouter/z-ai/glm-5.2"` (model_constants.rs:35) |
+| `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` (model_constants.rs:26) |
+| `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/deepseek/deepseek-v4-flash"` (model_constants.rs:23) |
+
+`model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`,
+env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"fal.ai/Qwen3-TTS"`),
+`DEFAULT_STT_MODEL` (`"fal.ai/wizper"`), `DEFAULT_VISION_MODEL`
+(`"KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct"`), and `DEFAULT_IMAGE_GEN_MODEL`
+(`"fal.ai/flux-2"`). Every constant has an env-var accessor (e.g.
+`classifier_model()` reads `HKASK_CLASSIFIER_MODEL` first) so operators can
+override without recompiling.
 
 ## Keychain Architecture
 
@@ -288,7 +341,13 @@ constructor.
 ## Environment Variable Reference
 
 All env vars can be set either via the settings UI (keychain) or via shell
-environment. Shell env vars take precedence over keychain values.
+environment. Shell env vars take precedence over keychain values. The
+`mcp_env()` method (settings.rs:668-970) translates settings into env vars for
+MCP server child processes; only non-empty/non-default values are emitted.
+`mcp_env()` also unconditionally injects `HKASK_MCP_SERVER_IDS` (the
+comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
+`config_env` allowlist) and passes through `HKASK_DATA_DIR` and
+`HKASK_CURATOR_WEBID` → `HKASK_WEBID` when set in the parent environment.
 
 ### Storage
 
@@ -330,6 +389,7 @@ environment. Shell env vars take precedence over keychain values.
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `KILOCODE_API_KEY` | KiloCode |
 | `CLINE_API_KEY` | Cline |
+| `ATLASCLOUD_API_KEY` | AtlasCloud |
 
 ### Curator Email
 
@@ -365,13 +425,27 @@ environment. Shell env vars take precedence over keychain values.
 | `HKASK_MEDIA_VISION_MODEL` | media | `media.vision_model` |
 | `HKASK_MEDIA_IMAGE_GEN_MODEL` | media | `media.image_gen_model` |
 | `HKASK_SCENARIOS_DATA` | scenarios | `scenarios.data_dir` |
+| `HKASK_PREDICTION_MARKETS_DATA` | prediction-markets | `prediction_markets.data_dir` |
+| `HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS` | prediction-markets | `prediction_markets.cache_ttl_secs` |
+| `HKASK_PREDICTION_MARKETS_BASE_EVENTS` | prediction-markets | `prediction_markets.base_events` |
+| `HKASK_SWARM_MODE` | swarm | `swarm.mode` |
+| `HKASK_ABW_API_URL` | swarm | `swarm.api_url` |
+| `HKASK_ABW_MAX_CREDITS` | swarm | `swarm.max_credits_per_dispatch` |
+| `HKASK_ABW_CURATOR_CONSENT_DEFAULT` | swarm | `swarm.curator_consent_default` |
+| `HKASK_LOCAL_AGENTS_DIR` | swarm | `swarm.local_agents_dir` |
+| `HKASK_LOCAL_SWARMS_DIR` | swarm | `swarm.local_swarms_dir` |
+| `HKASK_ABW_API_KEY` | swarm | ABW API key (keychain only) |
 | `HKASK_TRAINING_HOST` | training | `training.host` |
 | `HKASK_TRAINING_CACHE_DIR` | training | `training.cache_dir` |
 | `HKASK_DEFAULT_MODEL` | all | `models.default_model` |
 | `HKASK_EMBEDDING_MODEL` | all | `models.embedding_model` / `corpus.embedding_model` |
 | `HKASK_CLASSIFIER_MODEL` | all | `models.classifier_model` |
 | `HKASK_WEBID` | curator | mapped from `HKASK_CURATOR_WEBID` |
+| `HKASK_MCP_SERVER_IDS` | swarm | `BUILT_IN_MCP_SERVERS_IDS` joined (unconditional) |
 | `HKASK_CURATOR_DB` | curator | injected by deferred task |
+
+The collab server is launched directly by zed-kask (not via `mcp_env()`), so
+there are no `collab.*`-derived env vars.
 
 ## Footnotes
 

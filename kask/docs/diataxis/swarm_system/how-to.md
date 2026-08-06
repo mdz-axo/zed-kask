@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — How-to: Compose and Steer a Swarm"
 audience: [operators, developers]
-last_updated: 2026-08-04
-version: "0.1.1"
+last_updated: 2026-08-05
+version: "0.1.2"
 status: "Active"
 domain: "Swarm"
 mds_categories: [composition]
@@ -25,7 +25,7 @@ spend, and the feedback path that closes the loop. Read the
 | `ensure_steer_conversation` | `crates/swarm_panel/src/swarm_panel.rs:1870` |
 | `begin_hire` / `confirm_hire` | `crates/swarm_panel/src/swarm_panel.rs:1441` / `:1543` |
 | `create_swarm` / `ask_xaman` | `crates/swarm_panel/src/swarm_panel.rs:1973` / `:2145` |
-| 50-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:3355` |
+| 51-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:350` |
 | Consent gate (mint/consume/refund) | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:150`/`:184`/`:227` |
 | Spend gate (hire/delegate/curate) | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` |
 | Debit-before-scan invariant | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:11` |
@@ -56,7 +56,7 @@ status: VERIFIED
 
 ## How-to 1: Switch the backend
 
-The backend toggles the substrate, not the tool surface (all 50 tools stay
+The backend toggles the substrate, not the tool surface (all 51 tools stay
 registered). Toggle in the panel header, or set `kask.swarm.mode` in
 `settings.json`:
 
@@ -211,6 +211,6 @@ call ABW. For the cloud equivalents (fermi-backed), use `swarm_search_knowledge`
 
 ## See also
 
-- [Reference: The 50-Tool Surface](./reference.md)
+- [Reference: The 51-Tool Surface](./reference.md)
 - [Explanation: Why the Loops Are Shaped This Way](./explanation.md)
 - [Swarm Cybernetics/Semantics Audit](../../audits/swarm-cybernetics-semantics-audit.md)

@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — Explanation: Why the Loops Are Shaped This Way"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "0.1.1"
+last_updated: 2026-08-05
+version: "0.1.2"
 status: "Active"
 domain: "Swarm"
 mds_categories: [trust, curation]
@@ -136,12 +136,13 @@ paths by design" trap; do not try to unify them.
 
 ## Why `kask.swarm.mode` selects the substrate, not the surface
 
-All 50 tools are always registered; `kask.swarm.mode` selects which substrate
+All 51 tools are always registered; `kask.swarm.mode` selects which substrate
 the tools route to. This is deliberate: a mode toggle must not hide tools from
 the agent (the model discovering the loss only via "tool not found" mid-turn
 is the `LazyToolRouter` trap, generalized). The substrate switch happens at
 the tool's call site, not at registration. The tool-surface test
-(`hkask_mcp_swarm.rs:3355`) pins the count at 50 so a future tool addition
+`tool_surface_is_exactly_51_registered_tools` (`hkask_mcp_swarm.rs:350`) pins
+the count at 51 so a future tool addition
 cannot silently change the surface — it must update the test in the same
 commit, which is the single source of truth for the count (audit Gap S1
 found the SKILL.md drifted to "31" because the companion was not regenerated

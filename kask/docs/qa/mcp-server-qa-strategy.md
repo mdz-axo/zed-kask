@@ -1,8 +1,8 @@
 ---
 title: "hKask MCP Server QA Strategy"
 audience: [QA engineers, security engineers, agents]
-last_updated: 2026-08-04
-version: "0.3.2"
+last_updated: 2026-08-05
+version: "0.3.3"
 status: "Active"
 domain: "trust"
 mds_categories: [trust, composition, lifecycle]
@@ -13,7 +13,7 @@ mds_categories: [trust, composition, lifecycle]
 A per-tool QA routine for every tool exposed by every hKask MCP server, with
 explicit pass/fail criteria, skill assignments, and observability hooks.
 
-**Scope**: 11 MCP servers, 206 tools (counted from source via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/` on 2026-08-01 — never fabricated).
+**Scope**: 12 MCP servers, 260 tools (counted from source via `grep -c '#\\[tool('` over each server's `src/` on 2026-08-05 — never fabricated).
 
 **Status of this document**: Phase 1 (inventory) is grounded in source reads.
 Phases 2-5 are the contract. The runnable routine lives alongside this doc
@@ -38,14 +38,15 @@ at `kask/scripts/qa-mcp-servers.sh` and the per-tool contracts at
 | 8 | `hkask-mcp-research` | `hkask-mcp-research` | stdio | `src/hkask_mcp_research.rs` | `run()` | **optional**: `HKASK_BRAVE_API_KEY`, `HKASK_FIRECRAWL_API_KEY`, `HKASK_TAVILY_API_KEY`, `HKASK_SERPAPI_API_KEY`, `HKASK_EXA_API_KEY`, `HKASK_BROWSERBASE_API_KEY` |
 | 9 | `hkask-mcp-scenarios` | `hkask-mcp-scenarios` | stdio | `src/hkask_mcp_scenarios.rs` | `run()` | (none; uses `reqwest::Client` for upstream research/companies calls) |
 | 10 | `hkask-mcp-training` | `hkask-mcp-training` | stdio | `src/hkask_mcp_training.rs` | `run()` | **optional**: `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`, `NEBIUS_PROJECT_ID`, `NEBIUS_SUBNET_ID`, `HKASK_TRAINING_HOST`, `RUNPOD_TEMPLATE_ID`, `RUNPOD_GPU_TYPE_ID`, `RUNPOD_CONTAINER_DISK_GB`, `RUNPOD_DOCKER_IMAGE`, `HKASK_TRAINING_DB`, `HKASK_DB_PASSPHRASE` |
-| 11 | `hkask-mcp-swarm` | `hkask-mcp-swarm` | stdio | `src/hkask_mcp_swarm.rs` | `run()` L2551 | **optional**: `HKASK_SWARM_DB`, `HKASK_DB_PASSPHRASE` |
+| 11 | `hkask-mcp-prediction-markets` | `hkask-mcp-prediction-markets` | stdio | `src/hkask_mcp_prediction_markets.rs` | `run()` | **optional**: Polymarket (public, keyless) + Kalshi (public, keyless) providers; base events registered via `HKASK_PREDICTION_*` config |
+| 12 | `hkask-mcp-swarm` | `hkask-mcp-swarm` | stdio | `src/hkask_mcp_swarm.rs` | `run()` | **optional**: `HKASK_SWARM_DB`, `HKASK_DB_PASSPHRASE`, ABW API key for cloud mode |
 
 All servers use `hkask_mcp_server::run_server` → `run_stdio_server` (stdio
 transport). No SSE/HTTP server exists in the fleet.
 
-### Tool inventory (206 tools)
+### Tool inventory (260 tools)
 
-Tool counts (verified 2026-08-01 via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/`): codegraph 8, companies 40, condenser 6, corpus 26, curator 11, kata-kanban 18, media 37, research 15, scenarios 18, training 8, swarm 19.
+Tool counts (verified 2026-08-05 via `grep -c '#\\[tool('` over each server's `src/`): codegraph 9, companies 42, condenser 4, corpus 27, curator 8, kata-kanban 18, media 42, prediction-markets 13, research 17, scenarios 21, swarm 51, training 8.
 
 The full per-tool table (with input schema struct, output shape, LLM I/O
 boundary, external deps, McpToolError kinds used) is in
@@ -53,32 +54,35 @@ boundary, external deps, McpToolError kinds used) is in
 
 | Server | Tools | LLM I/O boundary? | External deps hit |
 |---|---|---|---|
-| codegraph | 8 | yes — `codegraph_index_embeddings` calls embedding API; `codegraph_context` returns LLM-bound text | sqlite (bundled), tree-sitter, reqwest (DeepInfra/OpenRouter embeddings) |
-| companies | 40 | yes — `research_search` returns raw LLM/web claims; `company_screener` parses NL prompts | FMP, EODHD, Exa, Tavily, Brave (reqwest) |
+| codegraph | 9 | yes — `codegraph_index_embeddings` calls embedding API; `codegraph_context` returns LLM-bound text | sqlite (bundled), tree-sitter, reqwest (DeepInfra/OpenRouter embeddings) |
+| companies | 42 | yes — `research_search` returns raw LLM/web claims; `company_screener` parses NL prompts | FMP, EODHD, Exa, Tavily, Brave (reqwest) |
 | condenser | 4 | yes — `condenser_thread_summary`, `condenser_score_saliency` call `InferencePort` | `InferencePort` (HKASK_INFERENCE_URL), episodic/semantic memory |
-| corpus | 26 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
-| curator | 11 | no — reads Regulation ledger, does not call LLM | sqlite (SQLCipher) |
+| corpus | 27 | yes — `corpus_compose`, `corpus_mashup`, `corpus_generate_qa`, `corpus_extract_triples`, `corpus_tag_chunks`, `corpus_ocr` all return LLM output | inference port, FAL docres, sqlite FTS5 |
+| curator | 8 | no — reads Regulation ledger, does not call LLM | sqlite (SQLCipher) |
 | kata-kanban | 18 | no — pure state machine over sqlite | sqlite (SQLCipher) |
-| media | 37 | yes — `generate_image`, `generate_video`, `voice_design`, `generate_speech`, `transcribe`, `describe_image`, `gallery_analyze`, `video_caption` all return model output | DeepInfra, fal.ai, AtlasCloud, ElevenLabs (reqwest) |
-| research | 15 | yes — `web_search`, `web_extract`, `web_browse`, `web_find_similar` return fetched/scraped content (indirect LLM boundary via tool output) | Brave, Firecrawl, Tavily, SerpAPI, Exa, Browserbase, arXiv, Semantic Scholar (reqwest) |
-| scenarios | 18 | yes — `scenario_brainstorm`, `scenario_synthesize`, `scenario_assess` call inference; `scenario_research` calls research server | inference port, research server, companies server |
+| media | 42 | yes — `generate_image`, `generate_video`, `voice_design`, `generate_speech`, `transcribe`, `describe_image`, `gallery_analyze`, `video_caption` all return model output | DeepInfra, fal.ai, AtlasCloud, ElevenLabs (reqwest) |
+| prediction-markets | 13 | yes — `market_lookup`/`market_match`/`market_history` return fetched market records (indirect LLM boundary via tool output) | Polymarket Gamma/CLOB, Kalshi REST (reqwest), hkask-forecast calibration store |
+| research | 17 | yes — `web_search`, `web_extract`, `web_browse`, `web_find_similar` return fetched/scraped content (indirect LLM boundary via tool output) | Brave, Firecrawl, Tavily, SerpAPI, Exa, Browserbase, arXiv, Semantic Scholar (reqwest) |
+| scenarios | 21 | yes — `scenario_brainstorm`, `scenario_synthesize`, `scenario_assess` call inference; `scenario_research` calls research server | inference port, research server, companies server |
+| swarm | 51 | yes — `swarm_generate_prompt`, `swarm_generate_ontology` call LLM; `swarm_delegate_local`/`swarm_fanout_local`/`swarm_pipeline_local` dispatch to local agents | sqlite (SQLCipher), ABW REST, local agent runtime, InferencePort |
 | training | 8 | yes — `training_validate_config`, `training_evaluate` call LLM; `training_submit` provisions GPU pods | RunPod, DeepInfra, Nebius, HuggingFace, OpenAI (reqwest) |
-| swarm | 19 | yes — `swarm_generate_prompt`, `swarm_generate_ontology` call LLM; `swarm_execute_agent` dispatches to local agents | sqlite (SQLCipher), local agent runtime |
 
 ### Existing test coverage (from source)
 
 | Server | `#[cfg(test)]` modules in `src/` | `tests/` dir | Verdict |
 |---|---|---|---|
-| codegraph | 10 | yes (1 file: `qa_contract.rs`) | moderate inline coverage |
-| companies | 20 | no | moderate inline coverage |
-| condenser | **0** | yes (1 file: `qa_contract.rs`) | **gap — no inline tests**; qa_contract.rs covers the 8 tools |
-| corpus | 29 | yes (4 files) | moderate inline coverage |
-| curator | 1 | yes (1 file: `qa_contract.rs`) | **gap — minimal inline tests**; qa_contract.rs covers the 11 tools |
-| kata-kanban | 5 | yes (2 files: `qa_contract.rs`, `service_integration.rs`) | qa_contract.rs covers all 18 tools |
-| media | 5 | no | low inline coverage |
-| research | 4 | yes (1 file: `research_contract.rs`) | low |
-| scenarios | 1 | yes (1 file: `scenarios_contract.rs`) | **gap — minimal inline tests** |
-| training | 15 | yes (1 file: `live_adapter.rs`) | moderate inline, no tool-behavior |
+| codegraph | 12 | yes (2 files: `edge_resolution.rs`, `schema_compliance.rs`) | moderate inline + integration; no per-tool contract |
+| companies | 22 | no | moderate inline coverage; no `tests/` dir |
+| condenser | **0** | yes (1 file: `schema_compliance.rs`) | **gap — no inline tests**; schema-compliance only |
+| corpus | 27 | yes (5 files + proptest regressions: `compose_contract.rs`, `corpus_config_parse_test.rs`, `corpus_properties.rs`, `gentle_lovelace_corpus_test.rs`, `schema_compliance.rs`) | moderate inline + property tests |
+| curator | 2 | yes (2 files: `qa_contract.rs`, `schema_compliance.rs`) | **qa_contract.rs covers the 8 tools**; minimal inline |
+| kata-kanban | 5 | yes (2 files: `qa_contract.rs`, `schema_compliance.rs`) | qa_contract.rs covers all 18 tools |
+| media | 8 | yes (1 file: `schema_compliance.rs`) | low inline + schema-compliance |
+| prediction-markets | 4 | yes (7 files + fixtures: `calibration.rs`, `cmp.rs`, `market_lookup.rs`, `market_match.rs`, `provider_kalshi.rs`, `provider_polymarket.rs`, `residual.rs`) | good component/fixture coverage; no per-tool contract |
+| research | 6 | yes (1 file: `research_contract.rs`) | low |
+| scenarios | 3 | yes (3 files: `market_consumer.rs`, `scenarios_contract.rs`, `schema_compliance.rs`) | minimal inline; contract-adjacent |
+| swarm | 16 | yes (3 files: `schema_compliance.rs`, `swarm_gap_properties.rs`, `swarm_properties.rs`) | good property coverage; no per-tool contract |
+| training | 14 | yes (1 file: `schema_compliance.rs`) | moderate inline + schema-compliance |
 
 The existing CI gate `scripts/check-mcp-tool-tests.sh` passes because its
 grep keys on `Parameters(` in `src/` (where every tool's signature lives),
@@ -217,7 +221,7 @@ evidence produced.
 
 ### 3.2 Rust code path → `bug-hunt` + `kali-audit`
 
-- **Tools covered**: all 206 tools (the implementation path of every tool).
+- **Tools covered**: all 260 tools (the implementation path of every tool).
 - **Template/phase**: `bug-hunt` Charter → Probe → Oracle → Taxonomize →
   Report → Convergence, with Beizer taxonomy and the missing-tests
   detection sub-phase (which will surface the condenser/curator
@@ -228,7 +232,7 @@ evidence produced.
 
 ### 3.3 Dependency manifest → `supply-chain-sentinel`
 
-- **Tools covered**: all 11 servers (Cargo.toml scope, not per-tool).
+- **Tools covered**: all 12 servers (Cargo.toml scope, not per-tool).
 - **Template/phase**: `supply-chain-sentinel` 4-phase pipeline
   (select → probe → report → convergence) over each server's `Cargo.toml`
   and the workspace `deny.toml`.
@@ -237,7 +241,7 @@ evidence produced.
 
 ### 3.4 Runtime behavior → `runtime-posture-monitor`
 
-- **Tools covered**: all 206 tools, observed live during the QA routine.
+- **Tools covered**: all 260 tools, observed live during the QA routine.
 - **Template/phase**: `runtime-posture-monitor` 4-phase pipeline
   (select → classify → regulate → convergence) consuming `hkask.*`
   performative spans and `reg.tool` spans emitted by the routine itself.
@@ -247,7 +251,7 @@ evidence produced.
 
 ### 3.5 Code-graph / call-site coverage → `graph-audit`
 
-- **Tools covered**: all 206 tools (verification that the QA routine
+- **Tools covered**: all 260 tools (verification that the QA routine
   actually reaches each tool).
 - **Template/phase**: `graph-audit` code mode via the
   `hkask-mcp-codegraph` MCP server — query the symbol graph for each

@@ -1,14 +1,30 @@
 ---
 title: "Swarm System — Pragmatic-Semantics + Pragmatic-Cybernetics Audit"
 audience: [architects, developers, operators]
-last_updated: 2026-08-04
-version: "0.1.1"
+last_updated: 2026-08-05
+version: "0.1.2"
 status: "Active"
 domain: "Swarm"
 mds_categories: [trust, composition, lifecycle]
 ---
 
 # Swarm System — Pragmatic-Semantics + Pragmatic-Cybernetics Audit
+
+## Remediation status (verified 2026-08-05)
+
+Status of the findings below against live code, verified 2026-08-05. The
+historical findings are preserved as-written; this section records what has
+landed since.
+
+| Finding | Status (2026-08-05) | Evidence |
+|---------|--------------------|----------|
+| Gap S1 (tool-count drift) | **Partially fixed** | Diagrams updated — `kask/docs/diagrams/flowchart-swarm-architecture.md:13/:21/:60` now states "51 tools: 27 ABW + 24 local". But the surface moved again: `hkask_mcp_swarm.rs:350` now pins `tool_surface_is_exactly_51_registered_tools` (51 = 27 ABW + 24 local), while `.agents/skills/swarm-intelligence/SKILL.md:230` still reads "50 tools". The drift mechanism (test is ground truth; generated companions lag) is confirmed as durable. |
+| Gap S2 (Steer prompt omits pipeline tool) | **FIXED** | `crates/swarm_panel/src/swarm_panel.rs:159` includes `swarm_pipeline_local` (sequential pipeline with `{{prev_output}}` substitution); pinned by `steer_prompt_describes_local_tools` at `swarm_panel.rs:3974`. |
+| Loop C remediation (SENSE reads `swarm_balance_local` in local mode) | **FIXED** | `kask/registry/templates/swarm-intelligence/swarm-sense.j2:120` calls `swarm_balance_local` and handles failure by setting `wallet_state.balance: null` — explicitly *not* fabricating a zero (the `.rules` `unwrap_or(0)` trap is honored in-template). |
+| Loop D remediation (surface `go_see` in the Steer UI) | **Partially fixed** | The prompt side landed: `swarm-decide.j2:95`–`96` instructs surfacing a Go See directive instead of changing composition when `recommendation = "go_see"`. The render wiring (`render_run_status_strip`, `swarm_panel.rs:2340`) was not re-verified this pass — treat the UI surfacing as unverified. |
+| Gap S3 / S4, Loop A/B, C4 latency, Part 4 variety | Unchanged | No re-verification performed; findings below still stand as written. |
+
+---
 
 A combined gap analysis (pragmatic-semantics) and feedback-loop
 composition/efficiency analysis (pragmatic-cybernetics) of the zed-kask swarm
@@ -21,7 +37,7 @@ four feedback loops that govern swarm behavior.
 
 | Component | Primary source |
 |----------|----------------|
-| MCP server (50 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115` (`SwarmServer`), `:3003` (`tool_surface_is_exactly_50_registered_tools`) |
+| MCP server (51 tools) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115` (`SwarmServer`), `:350` (`tool_surface_is_exactly_51_registered_tools`, 27 ABW + 24 local) |
 | Consent gate | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56` (`ConsentStore`), `:77` (`CONSENT_TTL_SECS`), `:150`/`:184`/`:227` (mint/consume/refund) |
 | Spend gate | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` (authorize_hire/delegate/curate) |
 | Local runtime | `kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39` (`LazyLocalSwarmRuntime`), `:73` (`LocalSwarmRuntime`); `agent_executor.rs:55` (`AgentExecutor`), `:33`/`:38` (round/skill caps) |

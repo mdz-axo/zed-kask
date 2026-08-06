@@ -9157,12 +9157,15 @@ version = "0.33.0"
 dependencies = [
  "anyhow",
  "gpui",
+ "gpui_util",
+ "hkask-conversation-injector",
  "hkask-forecast",
  "log",
  "serde",
  "serde_json",
  "theme",
  "tracing",
+ "ui",
 ]
 
 [[package]]

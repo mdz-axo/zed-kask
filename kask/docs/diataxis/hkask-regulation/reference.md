@@ -1,8 +1,8 @@
 ---
 title: "hkask-regulation — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-04
-version: "0.3.0"
+last_updated: 2026-08-05
+version: "0.3.1"
 status: "Active"
 domain: "Regulation"
 mds_categories: [domain, lifecycle]
@@ -21,12 +21,12 @@ observable events.
 
 | Symbol | Location |
 |--------|----------|
-| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:405` |
-| `RegulationCycleEntry` struct | `kask/crates/hkask-regulation/src/runtime.rs:343` |
-| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:276` |
-| `StoredSkillSpan` struct | `kask/crates/hkask-regulation/src/runtime.rs:57` |
-| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:1045` |
-| `LedgerSink` | `kask/crates/hkask-regulation/src/runtime.rs:1067` |
+| `RegulationLedger` struct | `kask/crates/hkask-regulation/src/runtime.rs:418` |
+| `RegulationCycleEntry` struct | `kask/crates/hkask-regulation/src/runtime.rs:359` |
+| `VarietyMonitor` struct | `kask/crates/hkask-regulation/src/runtime.rs:273` |
+| `StoredSkillSpan` struct | `kask/crates/hkask-regulation/src/runtime.rs:54` |
+| `NoopEventSink` | `kask/crates/hkask-regulation/src/runtime.rs:848` |
+| `RegulationArchive` (`RegulationSink` impl) | `kask/crates/hkask-storage/src/regulation_store.rs:508` |
 | `MetacognitionLoop` struct | `kask/crates/hkask-regulation/src/metacognition.rs:150` |
 | `MetacognitionConfig` | `kask/crates/hkask-regulation/src/metacognition.rs:121` |
 | `HealthSnapshot` | `kask/crates/hkask-regulation/src/metacognition.rs:88` |
@@ -35,7 +35,7 @@ observable events.
 | `AlertSink` trait | `kask/crates/hkask-regulation/src/metacognition.rs:78` |
 | `AlertEvent` | `kask/crates/hkask-regulation/src/metacognition.rs:61` |
 | `EscalationSeverity` enum | `kask/crates/hkask-types/src/curator.rs:68` |
-| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs` |
+| `CyberneticsLoop` struct | `kask/crates/hkask-regulation/src/cybernetics_loop.rs:72` |
 | `ProposedAction` struct | `kask/crates/hkask-regulation/src/regulation_policy.rs` |
 | `CallCapManager` | `kask/crates/hkask-regulation/src/energy.rs` |
 | `CallCap` | `kask/crates/hkask-regulation/src/energy.rs` |
@@ -44,33 +44,33 @@ observable events.
 | `AlertSeverity` enum | `kask/crates/hkask-regulation/src/algedonic.rs:26` |
 | `AlertEmailSink` trait | `kask/crates/hkask-regulation/src/algedonic.rs:54` |
 | `PolicyVerdict` enum | `kask/crates/hkask-regulation/src/runtime_policy.rs:14` |
-| `DefaultPolicy` | `kask/crates/hkask-regulation/src/runtime_policy.rs:66` |
+| `DefaultPolicy` | `kask/crates/hkask-regulation/src/runtime_policy.rs:49` |
 | `ToolStats` | `kask/crates/hkask-regulation/src/tool_stats.rs:73` |
-| `CostDistribution` | `kask/crates/hkask-regulation/src/tool_stats.rs:49` |
-| `ToolReliabilityAlert` | `kask/crates/hkask-regulation/src/tool_stats.rs:60` |
+| `CostDistribution` | `kask/crates/hkask-regulation/src/tool_stats.rs:50` |
+| `ToolReliabilityAlert` | `kask/crates/hkask-regulation/src/tool_stats.rs:61` |
 | `QaSpan` enum | `kask/crates/hkask-regulation/src/qa_span.rs:13` |
 | `CANONICAL_NAMESPACES` | `kask/crates/hkask-types/src/event.rs` |
 
 ## Regulation architecture
 
-The crate has five responsibility clusters: the ledger and event sink, the
-cybernetic loop, the metacognition loop, the per-agent call cap, and the
-algedonic alert path. The class diagram below shows the key types and their
-relationships.
+The crate has five responsibility clusters: the ledger, the cybernetic loop,
+the metacognition loop, the per-agent call cap, and the algedonic alert path.
+The class diagram below shows the key types and their relationships.
 
 ```mermaid
 classDiagram
     class RegulationLedger {
-        +regulation_history: VecDeque~RegulationCycleEntry~
+        +state: Arc~RwLock~RegState~~
         +record_regulation_cycle(entry)
-        +publish_event(event)
         +record_skill_span(skill_id, phase, payload)
-        +subscribe(observer)
+        +variety_for_domain(domain) u64
+        +health() LedgerHealth
     }
     class CyberneticsLoop {
-        +sense() Vec~Signal~
-        +compute(deviations) Vec~RegulatoryAction~
-        +act(actions)
+        +event_sink: Option~Arc~RegulationSink~~
+        +with_event_sink(sink)
+        +set_event_sink(sink)
+        +tick()
         +verify_impact()
     }
     class MetacognitionLoop {
@@ -112,6 +112,11 @@ classDiagram
         RequireHuman
         Log
     }
+    class RegulationSink {
+        <<interface>>
+        +persist(event) Result
+        +persist_if_absent(source_event_id, event) Result~bool~
+    }
     class ToolStats {
         +reliability_threshold: f64
         +reserve_estimate(tool) Option
@@ -121,6 +126,7 @@ classDiagram
     CyberneticsLoop --> RegulationLedger : reads/writes
     MetacognitionLoop --> RegulationLedger : senses
     CyberneticsLoop ..> ProposedAction : consumes
+    CyberneticsLoop --> RegulationSink : persists spans + alerts
     MetacognitionLoop --> EscalationAlert : emits
     RuntimeAlert --> AlertSeverity
     CallCapManager --> CallCap : manages
@@ -129,27 +135,56 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-REG-001
-verified_date: 2026-08-04
+verified_date: 2026-08-05
 verified_against: kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-regulation/src/metacognition.rs; kask/crates/hkask-regulation/src/cybernetics_loop.rs; kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/energy.rs; kask/crates/hkask-regulation/src/algedonic.rs; kask/crates/hkask-regulation/src/runtime_policy.rs; kask/crates/hkask-regulation/src/tool_stats.rs; kask/crates/hkask-types/src/curator.rs
 status: VERIFIED
 -->
 
 ## Ledger and event sink
 
-The `RegulationLedger` (`runtime.rs:405`) is the central record store. It
-holds a `RegState` containing a `regulation_history: VecDeque<RegulationCycleEntry>`
-and a `VarietyMonitor` (`runtime.rs:276`) that tracks tool and template
-diversity. The ledger implements `LedgerObserver` from `hkask-types` to
-receive Regulation events, and exposes `subscribe` / `subscribe_async` to
-register `LedgerObserver`s whose `interest_mask` matches a span namespace.
+The `RegulationLedger` (`runtime.rs:418`) is the central in-memory record
+store — a cheaply clonable `Arc<RwLock<RegState>>` (`runtime.rs:419`) holding
+the `VarietyMonitor` (`runtime.rs:273`), the
+`regulation_history: VecDeque<RegulationCycleEntry>` (`runtime.rs:383`), the
+`ToolStats`, and the `SkillSpanStore`. It is write-only state: there is no
+`subscribe`/`subscribe_async` observer API and no `publish_event` fan-out
+(`LedgerObserver` does not exist in `hkask-types`). Consumers read the ledger
+through direct async accessors: `health()` (`runtime.rs:459`),
+`variety_for_domain()` (`runtime.rs:621`), `record_regulation_cycle()`
+(`runtime.rs:483`), and `record_skill_span()` (`runtime.rs:670`).
 
-Two event sinks are provided: `NoopEventSink` (`runtime.rs:1045`) for tests
-and `LedgerSink` (`runtime.rs:1067`) for production. `LedgerSink::persist`
-spawns `publish_event` on a caller-supplied tokio handle so emitters on
-threads without a reactor context (e.g. the GPUI foreground thread) can
-forward spans without panicking.
+Durability is separate from the ledger. Regulation events are persisted
+through the `RegulationSink` trait (`hkask-types`), which has two
+implementations:
 
-The `DefaultPolicy` (`runtime_policy.rs:66`) decides whether to allow,
+- `NoopEventSink` (`runtime.rs:848`) — for tests and pre-login bootstrap
+  contexts where persistence is not needed (e.g. seam watcher unit tests).
+- `RegulationArchive` (`kask/crates/hkask-storage/src/regulation_store.rs:508`)
+  — the durable store on the curator's `pod.db` (the same DB the curator MCP
+  server's `reg_query` / `curator_algedonic_log` tools read). `persist`
+  delegates to `insert`; `persist_if_absent` to `insert_if_absent`
+  (`regulation_store.rs:513`).
+
+The sink is wired on the `CyberneticsLoop`, not the ledger:
+`CyberneticsLoop::with_event_sink` (`cybernetics_loop.rs:190`) and
+`set_event_sink` (`cybernetics_loop.rs:236`) attach it. Every
+`emit_regulation_span` (`cybernetics_loop.rs:387`) persists through the sink
+when present and `tracing::warn!`s "Regulation span dropped — no event_sink
+configured" (`cybernetics_loop.rs:400`) when absent — the `.rules`
+startup-failure-signal pattern. The same sink is the algedonic fallback: when
+the live `CurationInput::Alert` channel has no receiver, the alert is
+persisted to the archive (`cybernetics_loop.rs:921`); if neither live channel
+nor sink nor email sink delivers, an error is logged
+(`cybernetics_loop.rs:960` — "Algedonic alert LOST").
+
+The composition root (`crates/zed/src/main.rs`) starts with `NoopEventSink`
+and upgrades to `RegulationArchive` in the post-login deferred task, because
+the archive needs the curator DB passphrase, which only resolves after the
+user logs in (`main.rs:663`, `main.rs:1166`). `McpRuntime::set_event_sink`
+(`kask/crates/hkask-mcp/src/runtime.rs:196`) performs the same upgrade for
+the governed MCP dispatch path.
+
+The `DefaultPolicy` (`runtime_policy.rs:49`) decides whether to allow,
 block, require human confirmation, or log an action. The `PolicyVerdict`
 enum (`runtime_policy.rs:14`) has four variants: `Allow`, `Block(String)`,
 `RequireHuman(String)`, and `Log(String)`. `DefaultPolicy` implements four rules: human-in-loop tools require
@@ -159,17 +194,17 @@ tools are logged.
 
 The `ToolStats` (`tool_stats.rs:73`) tracks per-tool cost distributions and
 reliability via a Beta posterior over success/failure outcomes. The
-`CostDistribution` (`tool_stats.rs:49`) holds the p90 reserve point and
-observation count. The `ToolReliabilityAlert` (`tool_stats.rs:60`) fires when
+`CostDistribution` (`tool_stats.rs:50`) holds the p90 reserve point and
+observation count. The `ToolReliabilityAlert` (`tool_stats.rs:61`) fires when
 a tool's success probability falls below `reliability_threshold`.
 
 ## Cybernetics and metacognition loops
 
-The `CyberneticsLoop` (`cybernetics_loop.rs:79`) drives the five-phase
+The `CyberneticsLoop` (`cybernetics_loop.rs:72`) drives the five-phase
 sense→compare→compute→act→verify cycle. It implements the `RegulationLoop`
-trait and consumes `ProposedAction` records (`regulation_policy.rs:27`)
+trait and consumes `ProposedAction` records (`regulation_policy.rs`)
 produced by matching `RegulationRule`s against `Deviation`s. Each phase
-produces data that the `RegulationCycleEntry` (`runtime.rs:343`) captures:
+produces data that the `RegulationCycleEntry` (`runtime.rs:359`) captures:
 afferent signal count, deviation count, action count, verified count, and
 decision counts (`accepted`/`staged`/`blocked`).
 
@@ -218,7 +253,9 @@ root seeds a cap for every agent that makes governed tool calls (e.g. the
 - [hkask-regulation Explanation](./explanation.md): state diagram of the
   homeostatic loop.
 - [hkask-types Reference](../hkask-types/reference.md): the
-  `LedgerObserver` type this crate consumes, and the `EscalationSeverity` type from `hkask-types`.
+  `RegulationSink` trait this crate consumes, and the `EscalationSeverity` type from `hkask-types`.
+- [guard-taint-pipeline](../../architecture/guard-taint-pipeline.md): the
+  FIDES taint policy `DefaultPolicy` enforces at the tool boundary.
 - [`kask/docs/architecture/core/PRINCIPLES.md`](../../architecture/core/PRINCIPLES.md):
   P9 (feedback loops) and P12 (authenticated host mandate).
 

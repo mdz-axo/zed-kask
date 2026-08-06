@@ -1,7 +1,7 @@
 ---
 title: "Companies MCP Server — Reference"
 audience: [developers, analysts, agents, operators]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.32.2"
 status: "Active"
 domain: "Companies"
@@ -38,7 +38,7 @@ flowchart TD
     Srv --> Comb["combined_router<br/>sum of 7 sub-routers"]
     Comb --> R1["financial_data_router<br/>8 tools"]
     Comb --> R2["analysis_router<br/>5 tools"]
-    Comb --> R3["valuation_router<br/>8 tools"]
+    Comb --> R3["valuation_router<br/>9 tools"]
     Comb --> R4["portfolio_router<br/>12 tools"]
     Comb --> R5["analytics_router<br/>5 tools"]
     Comb --> R6["economic_profit_router<br/>1 tool"]
@@ -72,7 +72,7 @@ verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (Co
 status: VERIFIED (v5 — tool count corrected to 40 #[tool] methods via `grep -c 'Parameters<' src/tools/*.rs` on 2026-08-01: financial_data 8, analysis 5, valuation 8, portfolio 12, analytics 5, economic_profit 1, expectations 1; boot node corrected to hkask_mcp_server::run_server; fabricated record_fetch_outcome/record_experience node removed; result_feedback learning edge added; file paths corrected from lib.rs to hkask_mcp_companies.rs)
 -->
 
-## Tools (41)
+## Tools (42)
 
 ### Financial data (8)
 
@@ -107,12 +107,13 @@ status: VERIFIED (v5 — tool count corrected to 40 #[tool] methods via `grep -c
 | `reverse_dcf` | Solve for the revenue growth implied by the current market price |
 | `scenario_analysis` | Four growth-by-margin scenarios; returns intrinsic-value range |
 
-### Valuation and forecasting (8)
+### Valuation and forecasting (9)
 
 | Tool | Description |
 |------|-------------|
 | `comparable_analysis` | Peer valuation multiples (P/E, P/B, P/S, EV/EBITDA) with DCF overlay |
 | `sensitivity_analysis` | Rank DCF inputs by their effect on intrinsic value |
+| `equity_duration` | Equity duration (Macaulay-style, years) of projected FCFs plus terminal value; reports terminal/stage-1/stage-2 PV shares |
 | `monte_carlo_dcf` | N-simulation Monte Carlo; returns intrinsic-value distribution |
 | `calibrate_forecast` | Calibrate growth and margin estimates into scenario-weighted intrinsic value (Fermi + Bayesian) |
 | `forecast_get` | Retrieve one durable forecast and its recorded outcomes for the authenticated owner |

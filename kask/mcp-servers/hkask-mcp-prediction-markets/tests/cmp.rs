@@ -119,3 +119,60 @@ fn history_request_schema_has_no_boolean_positions() {
     let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
     assert!(positions.is_empty(), "bare booleans: {positions:?}");
 }
+
+// ── CMP index ──────────────────────────────────────────────────────────────
+
+#[test]
+fn index_spans_the_standard_grid() {
+    use hkask_mcp_prediction_markets::cmp::{INDEX_TENORS_DAYS, compute_index};
+    let points = [
+        TenorPoint { days_to_resolution: 30.0, price: 0.60 },
+        TenorPoint { days_to_resolution: 90.0, price: 0.65 },
+        TenorPoint { days_to_resolution: 180.0, price: 0.70 },
+        TenorPoint { days_to_resolution: 400.0, price: 0.75 },
+    ];
+    let index = compute_index("TEST", &points, "2026-08-05T00:00:00Z");
+    assert_eq!(index.points.len(), INDEX_TENORS_DAYS.len());
+    // Interior tenors interpolate; the 7d tenor extrapolates flat from 30d.
+    let p30 = index.points.iter().find(|p| p.tenor_days == 30).expect("30d");
+    assert!((p30.probability.expect("p") - 0.60).abs() < 1e-9);
+    let p90 = index.points.iter().find(|p| p.tenor_days == 90).expect("90d");
+    assert!((p90.probability.expect("p") - 0.65).abs() < 1e-9);
+}
+
+#[test]
+fn index_never_fabricates_on_empty_input() {
+    use hkask_mcp_prediction_markets::cmp::compute_index;
+    let index = compute_index("TEST", &[], "2026-08-05T00:00:00Z");
+    assert!(index.points.iter().all(|p| p.probability.is_none()));
+}
+
+#[test]
+fn curve_slope_sign_tracks_term_structure() {
+    use hkask_mcp_prediction_markets::cmp::{compute_index, curve_slope};
+    // Rising curve: longer tenors higher probability.
+    let rising = [
+        TenorPoint { days_to_resolution: 30.0, price: 0.50 },
+        TenorPoint { days_to_resolution: 400.0, price: 0.70 },
+    ];
+    let index = compute_index("TEST", &rising, "2026-08-05T00:00:00Z");
+    let slope = curve_slope(&index, 30, 365).expect("slope");
+    assert!(slope > 0.0, "rising curve ⇒ positive slope, got {slope}");
+    // Inverted curve.
+    let inverted = [
+        TenorPoint { days_to_resolution: 30.0, price: 0.70 },
+        TenorPoint { days_to_resolution: 400.0, price: 0.50 },
+    ];
+    let index = compute_index("TEST", &inverted, "2026-08-05T00:00:00Z");
+    let slope = curve_slope(&index, 30, 365).expect("slope");
+    assert!(slope < 0.0, "inverted curve ⇒ negative slope, got {slope}");
+}
+
+#[test]
+fn cmp_index_request_schema_has_no_boolean_positions() {
+    let schema =
+        schemars::schema_for!(hkask_mcp_prediction_markets::MarketCmpIndexRequest);
+    let value = serde_json::to_value(&schema).expect("serializes");
+    let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+    assert!(positions.is_empty(), "bare booleans: {positions:?}");
+}

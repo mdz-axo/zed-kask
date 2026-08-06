@@ -1,7 +1,7 @@
 ---
 title: "Cognition and Replica — Scenario Forecasting, Nu-Event Semantics, Companies Server"
 audience: [architects, developers, operators, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.34.0"
 status: "Active"
 domain: "Cross-cutting"
@@ -93,8 +93,9 @@ mcp-servers/hkask-mcp-scenarios/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs             # Binary entrypoint (bootstrap + run)
-│   ├── lib.rs              # Server struct, 18 MCP tools, request types
+│   ├── hkask_mcp_scenarios.rs # Server struct, 21 MCP tools, request types
 │   ├── types.rs            # Core data model (events, trees, forecasts, assessment)
+│   ├── templates.rs        # Prompt/document templates
 │   └── superforecast.rs    # Computation engine (Fermi, Bayes, Brier, trees, assessment)
 ```
 
@@ -119,9 +120,9 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-002
-verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (18 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
-status: VERIFIED (v2 — verified_against corrected to scenarios server; hkask-memory/src/lib.rs reference removed as stale)
+verified_date: 2026-08-05
+verified_against: mcp-servers/hkask-mcp-scenarios/src/hkask_mcp_scenarios.rs (21 tool routers), mcp-servers/hkask-mcp-scenarios/src/superforecast.rs (engine functions)
+status: VERIFIED (v3 — corrected tool count to 21 and directory sketch to the post-split layout per 2026-08-05 audit)
 -->
 
 ### Implications
@@ -349,9 +350,9 @@ flowchart TD
 ```
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-004
-verified_date: 2026-07-29
-verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct, run factory), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager), mcp-servers/hkask-mcp-companies/src/tools/ (41 tool methods across 7 tool modules)
-status: VERIFIED (v2 — verified_against corrected to companies server; hkask-memory/src/lib.rs reference removed as stale)
+verified_date: 2026-08-05
+verified_against: mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs (CompaniesServer struct, run factory), mcp-servers/hkask-mcp-companies/src/providers.rs (companies_get, emit_provider_reg), mcp-servers/hkask-mcp-companies/src/portfolio.rs (PortfolioManager), mcp-servers/hkask-mcp-companies/src/tools/ (42 tool methods across 7 tool modules)
+status: VERIFIED (v3 — corrected tool count to 42 per 2026-08-05 audit)
 -->
 
 ### Implications

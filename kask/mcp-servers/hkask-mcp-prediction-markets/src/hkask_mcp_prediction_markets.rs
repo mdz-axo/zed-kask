@@ -87,6 +87,14 @@ pub struct MarketResidualRequest {
     pub window_days: Option<u32>,
 }
 
+/// Request for market_cmp_index: the full constant-maturity curve for a
+/// registered base event (the published index, not a point query).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpIndexRequest {
+    /// Base-event series ticker (must be registered).
+    pub series: String,
+}
+
 /// Request for market_cmp: constant-maturity prediction for a registered
 /// base event at a fixed tenor.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -868,6 +876,72 @@ impl PredictionMarketsServer {
                 .map_err(|e| {
                     hkask_mcp_server::server::McpToolError::internal(format!(
                         "history serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// The full CMP index curve for a registered base event.
+    #[tool(
+        description = "Compute the full Constant Maturity Prediction index for a registered base event: the curve of probabilities across the standard tenor grid (7d/30d/90d/180d/1y/2y), interpolated in log-odds space. Tenors without cohort coverage return null probability, never a fabricated extrapolation. Includes curve slope (log-odds/year) as the term-structure signal."
+    )]
+    pub async fn market_cmp_index(
+        &self,
+        Parameters(req): Parameters<MarketCmpIndexRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp_index",
+            Some(Self::ontology_anchor("market_cmp_index")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp_index".to_string());
+                if !self.base_events.iter().any(|(_, series)| series == &req.series) {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!(
+                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                            req.series
+                        ),
+                    ));
+                }
+                let markets =
+                    provider_kalshi::fetch_markets(&self.http, Some(&req.series), 200).await?;
+                let now = chrono::Utc::now();
+                let points: Vec<cmp::TenorPoint> = markets
+                    .iter()
+                    .filter_map(|m| {
+                        let mid = m.yes_midpoint()?;
+                        let deadline =
+                            chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
+                        let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds()
+                            as f64
+                            / 86_400.0;
+                        (days > 0.0).then_some(cmp::TenorPoint {
+                            days_to_resolution: days,
+                            price: mid,
+                        })
+                    })
+                    .collect();
+                if points.is_empty() {
+                    return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
+                        "no live markets with future deadlines for series '{}'",
+                        req.series
+                    )));
+                }
+                let index =
+                    cmp::compute_index(&req.series, &points, &now.to_rfc3339());
+                let slope_30_365 = cmp::curve_slope(&index, 30, 365);
+                serde_json::to_value(serde_json::json!({
+                    "index": index,
+                    "slope_30d_1y_logodds_per_year": slope_30_365,
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "index serialization failed: {e}"
                     ))
                 })
             },

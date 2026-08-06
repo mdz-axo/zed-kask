@@ -1,7 +1,7 @@
 ---
 title: "Regulation Span Registry — Reference"
 audience: [developers, operators, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.32.3"
 status: "Active"
 domain: "Core"
@@ -38,7 +38,7 @@ Spans describe *what* happened; RegulationRecords describe *who observed it, whe
 
 ### Span validation
 
-All namespace strings are registered in `CANONICAL_NAMESPACES` (`crates/hkask-types/src/event.rs`) — a 262-entry array that is the single source of truth. `SpanNamespace::new()` returns `None` on unknown namespaces; `SpanNamespace::parse()` returns `None`. Domain span enums construct namespaces via `SpanNamespace::from_observable()` which also validates. Hierarchical validation: a sub-namespace like `reg.pipeline.decimation.binarize` is valid if any prefix segment is registered.
+All namespace strings are registered in `CANONICAL_NAMESPACES` (`kask/crates/hkask-types/src/event.rs:111-442`) — a 262-entry array that is the single source of truth. `SpanNamespace::new()` returns `None` on unknown namespaces; `SpanNamespace::parse()` returns `None`. Domain span enums construct namespaces via `SpanNamespace::from_observable()` which also validates. Hierarchical validation: a sub-namespace like `reg.pipeline.decimation.binarize` is valid if any prefix segment is registered.
 
 ---
 
@@ -62,7 +62,7 @@ Namespaces form a tree rooted at `regulation`. The namespace prefix maps to a `S
 
 ### 3.1 RegulationSpan — Core Regulation Spans
 
-**File:** `crates/hkask-types/src/regulation.rs`
+**File:** `kask/crates/hkask-types/src/regulation.rs`
 
 Core spans used across 2+ crates. This is the foundational enum implementing `ObservableSpan`.[^otel-domain-spans]
 
@@ -112,7 +112,7 @@ Core spans used across 2+ crates. This is the foundational enum implementing `Ob
 
 ### 3.5 InfraSpan — Infrastructure Spans
 
-**File:** `crates/hkask-regulation/src/infra_span.rs`
+**File:** `kask/crates/hkask-regulation/src/infra_span.rs`
 
 Cross-subsystem spans used by curator, governance, and wallet components.
 
@@ -126,7 +126,7 @@ Cross-subsystem spans used by curator, governance, and wallet components.
 
 ### 3.6 QaSpan — QA Repair Lifecycle
 
-**File:** `crates/hkask-regulation/src/qa_span.rs`
+**File:** `kask/crates/hkask-regulation/src/qa_span.rs`
 
 Emitted by the QA test harness (`qa_script::run_script()`) and qa-script-builder.
 
@@ -155,9 +155,9 @@ Additional QA namespaces in `CANONICAL_NAMESPACES` (emitted as tracing events, n
 
 ### 3.9 Skill Spans
 
-**File:** `crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `crates/hkask-templates/src/manifest_executor.rs` (skill execution via D1)
+**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted by `kask/crates/hkask-templates/src/manifest_executor.rs` (skill execution via D1)
 
-Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill execution layer. The hierarchical `is_canonical()` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
+Skill lifecycle, registry, cascade, convergence, budget, provenance, profile-enforcement, routing, and discovery spans. All namespaced under `reg.skill.*`. Unlike other span types (which have dedicated Rust enums), skill spans are canonical namespace strings emitted as tracing events by the skill execution layer. The hierarchical `is_canonical()` function makes `reg.skill.<any-id>.*` valid without per-skill registration.
 
 > **Ownership note (v0.32.0):** Skill execution moved from the deleted `hkask-services-skill`
 > crate to `hkask-templates` (`ManifestExecutor` + registry + cascade + PDCA), invoked in-process
@@ -168,17 +168,20 @@ Skill lifecycle, registry, cascade, convergence, budget, routing, and discovery 
 |---|---|---|
 | `reg.skill.lifecycle` | `.skill_activated`, `.skills_loaded`, `.skills_discovered`, `.skill_published` | Skill lifecycle events (activation, loading, publishing) |
 | `reg.skill.registry` | `.registry_validated` | Registry manifest validated successfully |
-| `reg.skill.cascade` | `.step_executed`, `.compute` | Cascade step execution |
+| `reg.skill.cascade` | `.step_executed`, `.compute`, `.escalated`, `.branching_misconfigured` | Cascade step execution; cascade escalation; branching misconfiguration detected |
 | `reg.skill.convergence` | `.converged`, `.escalated` | Cascade convergence outcomes (metric ≤ threshold, or max iterations exhausted) |
 | `reg.skill.budget` | `.gas_exhausted`, `.gas_alert`, `.rjoule_exhausted`, `.rjoule_alert` | Gas and rJoule budget events |
+| `reg.skill.provenance` | (bare) | Skill provenance tracking (skill_executor / manifest executor) |
+| `reg.skill.profile_enforcement` | (bare) | Skill profile enforcement (skill_executor / manifest executor) |
 | `reg.skill.frontmatter` | `.missing` | SKILL.md frontmatter parse errors |
 | `reg.skill.manifest` | `.unparseable`, `.absent`, `.unreadable` | Registry manifest errors |
 | `reg.skill.routing` | `.matched`, `.uncovered` | Skill-to-task routing (skill-router) |
 | `reg.skill.discovery` | `.gap_detected`, `.searched`, `.evaluated` | Capability gap detection and candidate evaluation (skill-discovery) |
+| `reg.skill` | (bare) | Unified cybernetic feedback — one namespace per skill: every skill emits `reg.skill.<skill-id>.<phase>` for its PDCA phases |
 
 ### 3.10 Wallet Spans
 
-**File:** `crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted as tracing events by `crates/hkask-regulation/src/cybernetics_loop.rs` and `crates/hkask-services-core/src/error/regulation_record.rs`
+**File:** `kask/crates/hkask-types/src/event.rs` (CANONICAL_NAMESPACES) · emitted as tracing events by `kask/crates/hkask-regulation/src/cybernetics_loop.rs` and `kask/crates/hkask-services-core/src/error/regulation_record.rs`
 
 Wallet spans are canonical namespace strings (not a dedicated `WalletSpan` enum). The `hkask-wallet` crate was deleted in the 2026-07-25 cleanup, and the residual crypto wallet ledger (`hkask-storage::wallet`), `hkask-regulation::WalletManager`/`Well`, and the `hkask-types::wallet_types` module (`RJoule`/`WalletConfig`/`GAS_PER_RJOULE`/…) were removed 2026-08-03 as dead-in-production. The `reg.wallet.*` namespace strings below are **retained** in `CANONICAL_NAMESPACES` for tracing-target stability; the only remaining emitters are the regulation loop's raw `reg.wallet` events for the `WalletBalanceLow`/`WalletKeyUnhealthy` reasons and `InfraSpan::WalletConversion` (which covers the `reg.wallet.conversion` namespace). The unrelated ABW wallet balance shown in the swarm panel is read from the ABW REST API, not from these spans.
 
@@ -215,11 +218,12 @@ Historically, this was a single-variant span (`reg.api.request`) emitted for eve
 
 ### 3.12 Additional Canonical Namespaces
 
-The following namespace groups are registered in `CANONICAL_NAMESPACES` and emitted as tracing events (not via dedicated enums):
+The following namespace groups are registered in `CANONICAL_NAMESPACES` and emitted as tracing events (not via dedicated enums). Every string below appears verbatim in `event.rs:111-442`.
 
 | Group | Namespaces | Emitted When |
 |---|---|---|
 | **Adapter** | `reg.adapter` | Adapter lifecycle |
+| **Agent** | `reg.agent.registered` | Agent registration |
 | **Alert** | `reg.alert` | Algedonic alert emission |
 | **Authorization** | `reg.authorization` | Authorization decisions |
 | **Backup** | `reg.backup`, `reg.backup.variety` | Backup operations |
@@ -228,35 +232,39 @@ The following namespace groups are registered in `CANONICAL_NAMESPACES` and emit
 | **Condenser** | `reg.condenser` | Condenser operations |
 | **Consent** | `reg.consent` | Consent decisions |
 | **Consolidation** | `reg.consolidation` | Memory consolidation |
+| **Curation/Curator** | `reg.curation`, `reg.curation.escalation`, `reg.curation.escalation.critical`, `reg.curation.matrix`, `reg.curator`, `reg.curator.consolidation`, `reg.curator.efficiency.exceeded`, `reg.curator.metacognition` | Curation loop operations, escalation signals, curator efficiency and metacognition events |
 | **Cybernetics** | `reg.cybernetics`, `.backpressure`, `.substitution` | Cybernetic loop operations |
-| **Email** | `reg.email` | Curator email (outbound sent + inbound received) |
+| **Email** | `reg.email`, `reg.email.sent` | Curator email — outbound sent (`reg.email.sent`) + inbound received (under `reg.email`) |
 | **Deploy** | `reg.deploy.backup_auto_export`, `.backup_export`, `.backup_upload`, `.session_close`, `.session_open` | Deploy/session lifecycle |
+| **Gas** | `reg.gas.calibration` | Gas calibration events (core `reg.gas` is `RegulationSpan::Gas`, §3.1) |
 | **Goal** | `reg.goal` | Goal operations |
-| **Guard** | `reg.guard`, `.canary`, `.input`, `.output`, `.runtime_policy`, `.violation` | Guard operations |
+| **Guard** | `reg.guard`, `.canary`, `.input`, `.output`, `.redact`, `.runtime_policy`, `.violation` | Guard operations. `reg.guard.redact` marks **post-hoc redaction** of streaming output — the leaked text has already been forwarded to the consumer in real-time chunks; the redaction sanitizes the *stored* version, not the *displayed* version (see `.rules`: "`GuardedStream` is post-hoc redaction, not real-time blocking"). Retention note: redacted records are retained in the audit trail with the redaction applied. |
 | **Heal** | `reg.heal`, `.attempt`, `.code_change_proposed`, `.dotenv`, `.escalated`, `.file_created`, `.llm_assisted`, `.retry_loop`, `.set_env`, `.strategy`, `.unmatched` | Self-healing operations |
 | **Kata/Keystore** | `reg.kata`, `reg.keystore` | Kata and keystore operations |
-| **MCP** | `reg.mcp`, `.health`, `.media.face` | MCP server health and media face detection |
-| **Media/Memory** | `reg.media`, `reg.memory`, `.budget`, `.decay`, `.encode`, `.episodic` | Media and memory operations |
+| **Ledger** | `reg.ledger` | Governance/rollback failure signals (runtime-posture-monitor visible) |
+| **MCP** | `reg.mcp`, `.cap`, `.health`, `.media.face` | MCP server health, capability events (`reg.mcp.cap`), and media face detection |
+| **Media/Memory** | `reg.media`, `reg.media.select`, `reg.memory`, `.budget`, `.decay`, `.encode`, `.episodic` | Media operations (`reg.media.select` = media model/endpoint selection) and memory operations |
 | **Multi-agent** | `reg.multi.invite.accepted`, `.invite.sent`, `.role.assigned` | Multi-agent coordination |
-| **Outcome** | `reg.outcome`, `.calibration`, `.coherence`, `.predictive` | Fermi impact-gate outcomes (v0.31.0) |
+| **Outcome** | `reg.outcome`, `.calibration`, `.coherence`, `.predictive` | Fermi impact-gate outcomes (v0.31.0). Note: `reg.outcome` appears twice in `CANONICAL_NAMESPACES` (event.rs:236 and :259) — a benign duplicate entry. |
 | **Platform metrics** | `reg.platform.metric`, `.dora.change_fail_rate`, `.dora.deploy_freq`, `.dora.lead_time`, `.dora.mttr`, `.loyalty`, `.space.activity`, `.space.communication`, `.space.efficiency`, `.space.performance`, `.space.satisfaction` | Platform metrics (DORA, SPACE, Loyalty) |
-| **Pipeline** | `reg.pipeline`, `.calibration`, `.decimation`, `.decimation.binarize`, `.ocr`, `.ocr.circuit_breaker`, `.ocr.collusion`, `.ocr.low_confidence`, `.ocr.rate_limit`, `.ocr.silent_failure`, `.ocr.trust_invert`, `.pdf_extract` | Corpus pipeline operations |
+| **Pipeline** | `reg.pipeline`, `.calibration`, `.decimation`, `.decimation.binarize`, `.triage`, `.ocr`, `.ocr.circuit_breaker`, `.ocr.collusion`, `.ocr.low_confidence`, `.ocr.rate_limit`, `.ocr.silent_failure`, `.ocr.trust_invert`, `.pdf_extract` | Corpus pipeline operations (`reg.pipeline.triage` = corpus triage phase) |
 | **Semantic** | `reg.semantic.published` | Semantic publication |
 | **SLO** | `reg.slo.evaluated` | SLO evaluation (typed enum deleted; namespace retained) |
 | **Sovereignty** | `reg.sovereignty`, `.consent_anomaly`, `.consent_audited`, `.governance_report`, `.portability_failure`, `.portability_verified` | Sovereignty operations |
 | **Spec** | `reg.spec`, `.executor` | Spec operations |
 | **Storage** | `reg.storage`, `.corruption` | Storage operations |
-| **Tool subsystems** | `reg.tool.communication`, `.companies`, `.condenser`, `.corpus`, `.curator`, `.filesystem`, `.kanban`, `.media`, `.memory`, `.registry`, `.research`, `.training`, `.wallet`, `.web_search` | Per-subsystem tool spans |
+| **Tool subsystems** | `reg.tool`, `reg.tool.communication`, `.companies`, `.condenser`, `.corpus`, `.curator`, `.filesystem`, `.kanban`, `.media`, `.memory`, `.registry`, `.research`, `.training`, `.wallet`, `.web_search` | Per-subsystem tool spans |
 | **Variety** | `reg.variety` | Variety tracking |
 | **Well** | `reg.well.created`, `.draw`, `.exhausted`, `.replenished` | Gas well operations |
-| **Supply chain** | `reg.supply_chain`, `.select`, `.probe`, `.report`, `.convergence` | Supply-chain-sentinel skill |
-| **Runtime posture** | `reg.runtime`, `.select`, `.classify`, `.regulate`, `.convergence` | Runtime-posture-monitor skill |
+| **Supply chain** | `reg.supply_chain`, `.select`, `.probe`, `.report`, `.convergence` | supply-chain-sentinel skill |
+| **Runtime posture** | `reg.runtime`, `.select`, `.classify`, `.regulate`, `.convergence` | runtime-posture-monitor skill |
 | **Attack taxonomy** | `reg.taxonomy`, `.select`, `.map`, `.report`, `.convergence` | kali-audit taxonomy_map phase |
 | **LoRA training** | `reg.lora`, `.select`, `.audit`, `.report`, `.convergence`, `.runtime` | lora-training skill |
+| **Bug hunt** | `reg.bughunt`, `.charter`, `.probe`, `.oracle`, `.taxonomize`, `.report`, `.learn` | bug-hunt skill phases (Charter → Probe → Oracle → Taxonomize → Report → Learn) |
+| **Code review** | `reg.codereview`, `.scope`, `.perspectives`, `.adjudicate`, `.report`, `.implement` | code-review skill phases (Scope → Perspectives → Adjudicate → Report → Implement) |
 | **Template** | `reg.template` | Template operations |
 | **Training providers** | `reg.training.provider`, `.runpod.cancel`, `.runpod.drain`, `.runpod.graphql`, `.runpod.provision`, `.runpod.status`, `.runpod.submit`, `.runpod.teardown`, `.runpod.upload` | RunPod provider HTTP observability |
 | **Training checkpoint** | `reg.training.checkpoint.resume` | Pod restart → Axolotl auto-resume |
-| **Agent** | `reg.agent.registered` | Agent registration |
 | ~~**Meta**~~ (removed) | ~~`reg.meta`, `.circuit_breaker`, `.directive`, `.escalation`, `.self_calibration`~~ | Curator self-observation — `reg.meta.*` spans removed from `CANONICAL_NAMESPACES` |
 
 ---
@@ -278,7 +286,7 @@ flowchart TD
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-RF-SPANS-001
-verified_date: 2026-08-04
+verified_date: 2026-08-05
 verified_against: kask/crates/hkask-regulation/src/regulation_policy.rs; kask/crates/hkask-regulation/src/runtime.rs; kask/crates/hkask-types/src/curator.rs
 status: VERIFIED
 -->
@@ -375,7 +383,7 @@ let alerts = rt.alerts().await;   // Vec<RuntimeAlert>
 ### Adding a New Span
 
 1. Create or extend a domain span enum implementing `ObservableSpan`
-2. Add the namespace string to `CANONICAL_NAMESPACES` in `crates/hkask-types/src/event.rs`
+2. Add the namespace string to `CANONICAL_NAMESPACES` in `kask/crates/hkask-types/src/event.rs`
 3. Add a test verifying `SpanNamespace::new(span.as_str())` succeeds
 4. Emit through `SpanNamespace::from_observable()` → `Span::new()` → `RegulationRecord::new()` → `sink.persist()`
 5. (Optional) If the span should trigger algedonic alerts, call `RegulationLedger::increment_variety(domain, state_name)`

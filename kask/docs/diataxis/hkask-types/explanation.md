@@ -117,7 +117,7 @@ This placement is deliberate. The guard wraps the skill cascade path
 `LanguageModel::stream_completion` with provider-side safety and a refusal
 fallback. The `cascade_only` behavior is hardcoded (the
 `kask.guard.direct_chat_strategy` setting was deleted in the 2026-07-31
-simplification pass — see `tasks/plan.md` C6); the guard applies to skills
+simplification pass — formerly tracked in `tasks/plan.md` C6, removed with the completed docs-alignment scaffolding 2026-08-05); the guard applies to skills
 but not to direct chat.[^owasp-llm]
 
 ## The memory bridge

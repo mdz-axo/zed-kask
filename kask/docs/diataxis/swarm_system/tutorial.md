@@ -1,8 +1,8 @@
 ---
 title: "Swarm Systems — Tutorial: Operate Your First Swarm"
 audience: [operators, developers new to zed-kask swarms]
-last_updated: 2026-08-04
-version: "0.1.1"
+last_updated: 2026-08-05
+version: "0.1.2"
 status: "Active"
 domain: "Swarm"
 mds_categories: [lifecycle]
@@ -26,7 +26,7 @@ loop:
    modes: Browse, Author, Compose, Steer. Open it from the status bar
    (`SwarmPanelButton`, `panel_button.rs:13`) or the View menu's `Toggle`
    action (`swarm_panel.rs:79`).
-2. **The swarm MCP server** (`hkask-mcp-swarm`) — 50 tools (27 ABW + 23 local)
+2. **The swarm MCP server** (`hkask-mcp-swarm`) — 51 tools (27 ABW + 24 local)
    that talk to one of two substrates, selected by `kask.swarm.mode`
    (`swarm_panel.rs:1814`). It is launched by two independent paths
    (`McpRuntime` app-global + `ContextServerStore` per-project) — both correct
@@ -60,7 +60,7 @@ status: VERIFIED
 ## Step 1: Pick a backend
 
 The backend (`kask.swarm.mode`) selects the substrate, not the tool surface —
-all 50 tools are always registered.
+all 51 tools are always registered.
 
 - **`abw`** (default): routes to Agent Bestiary World (cloud). Requires the ABW
   Pro-tier API key. Spend is consent-gated and wallet-reconciled.
@@ -108,7 +108,7 @@ it composes the swarm for you via its PDCA cascade. See Step 5.
 `Steer` mode (`:296`) lazily builds a curator `ConversationView`
 (`ensure_steer_conversation`, `:1870`) scoped to the swarm MCP server. Its
 system prompt (`steer_system_prompt`, `:100`) tells the Kask Curator about the
-50-tool surface, the active backend, and the `swarm-intelligence` skill.
+51-tool surface, the active backend, and the `swarm-intelligence` skill.
 
 Tell the curator what you want (e.g., "compose a research swarm for the X
 task" or "steer my swarm to reduce cost without losing coverage"). The curator
@@ -168,7 +168,7 @@ proactively (Loop C fidelity, audit Gap C-fidelity).
 ## Next steps
 
 - [How-to: Compose and Steer a Swarm](./how-to.md) — procedural recipes.
-- [Reference: The 50-Tool Surface](./reference.md) — every tool, grouped.
+- [Reference: The 51-Tool Surface](./reference.md) — every tool, grouped.
 - [Explanation: Why the Loops Are Shaped This Way](./explanation.md) — the
   cybernetic rationale and the two structural gaps.
 - [Swarm Cybernetics/Semantics Audit](../../audits/swarm-cybernetics-semantics-audit.md)

@@ -1,23 +1,23 @@
 ---
-title: "Swarm Systems — Reference: The 50-Tool Surface and Components"
+title: "Swarm Systems — Reference: The 51-Tool Surface and Components"
 audience: [developers, operators]
-last_updated: 2026-08-04
-version: "0.1.1"
+last_updated: 2026-08-05
+version: "0.1.2"
 status: "Active"
 domain: "Swarm"
 mds_categories: [domain]
 ---
 
-# Swarm Systems — Reference: The 50-Tool Surface and Components
+# Swarm Systems — Reference: The 51-Tool Surface and Components
 
 A reference for the `hkask-mcp-swarm` tool surface, the panel components, and
-the two skills. The surface is pinned by `tool_surface_is_exactly_50_registered_tools`
-(`hkask_mcp_swarm.rs:3355`) — 27 ABW + 23 local, both sets always registered
+the two skills. The surface is pinned by `tool_surface_is_exactly_51_registered_tools`
+(`hkask_mcp_swarm.rs:350`) — 27 ABW + 24 local, both sets always registered
 in either mode; `kask.swarm.mode` selects the substrate, not the surface. See
 the [class diagram](../../diagrams/class-swarm-server.md) for the type
 relationships.
 
-## Tool surface (50)
+## Tool surface (51)
 
 ### ABW tools (27) — cloud, `mode: abw`
 
@@ -51,7 +51,7 @@ relationships.
 | `swarm_publish_agent` | catalogue publish (admin force-publish path) | — |
 | `swarm_fork_agent` | derivative fork | — |
 
-### Local tools (23) — `mode: local`, zed-kask substrate
+### Local tools (24) — `mode: local`, zed-kask substrate
 
 | Tool | Purpose | Gate |
 |------|---------|------|
@@ -78,6 +78,7 @@ relationships.
 | `swarm_search_knowledge_local` | search the agent's prefix-scoped `hkask-memory` (EAV) | read |
 | `swarm_generate_prompt_local` | local-LLM system-prompt authoring aid (memory-seeded, guard-scanned) | read |
 | `swarm_generate_ontology_local` | local-LLM seed Mermaid ER from a domain / agent memory | read |
+| `swarm_ai_assist` | swarm-compose-guide authoring aid: `suggest` completions / `validate` verdict over compose fields (see `.agents/skills/swarm-compose-guide/`) | read (no ledger debit, no consent) |
 
 Note: `swarm_pipeline_local` and the A2A pair are omitted from the Steer
 system prompt's curated tool list (audit Gap S2); they remain available via
@@ -157,7 +158,7 @@ produce a prompt/ontology via the local LLM, just without the memory seed.
 
 | Component | Source | Role |
 |-----------|--------|------|
-| `SwarmServer` | `hkask_mcp_swarm.rs:115` | the rmcp server; `combined_router` (`:124`) registers all 50 tools |
+| `SwarmServer` | `hkask_mcp_swarm.rs:115` | the rmcp server; `combined_router` (`:127`) registers all 51 tools (pinned by `tool_surface_is_exactly_51_registered_tools`, `hkask_mcp_swarm.rs:350`) |
 | `AbwClient` | `abw_client.rs` | ABW REST; 200 body may carry upstream LLM error, 500 for domain failure (`SwarmError` inspects body) |
 | `ConsentStore` | `consent.rs:56` | real-time spend gate; `mint`/`consume`/`refund`; sqlite or memory; TTL `:77` enforced |
 | `SpendGate` | `spend_gate.rs` | `authorize_hire`/`complete_hire`, `authorize_delegate`, `authorize_curate`, session variants; ceiling refunds on refusal |

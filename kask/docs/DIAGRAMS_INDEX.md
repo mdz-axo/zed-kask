@@ -1,7 +1,7 @@
 ---
 title: "hKask Diagram Index — Mermaid Verification Registry"
 audience: [maintainers, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.32.1"
 status: "Active"
 domain: "documentation"
@@ -68,6 +68,7 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | DIAG-RF-005 | Scenario Forecasting Pipeline — 18 MCP tools grouped by pipeline phase | `reference/mcp-servers/scenarios.md` | `mcp-servers/hkask-mcp-scenarios/src/lib.rs`, `mcp-servers/hkask-mcp-scenarios/src/superforecast.rs`, `mcp-servers/hkask-mcp-scenarios/src/types.rs` | ✅ VERIFIED 2026-07-21 |
 | DIAG-RF-006 | Condenser MCP Server pipeline — CondenserServer tool router + compression pipeline | `reference/mcp-servers/condenser.md` | `mcp-servers/hkask-mcp-condenser/` | ✅ SURVIVES 2026-08-03 (path confirmed) |
 | DIAG-RF-SWARM | Swarm consent gate sequence — panel → swarm_hire_cost → ABW → swarm_request_consent → consume (single-use, TTL) | `reference/mcp-servers/swarm.md` | `mcp-servers/hkask-mcp-swarm/src/consent.rs`, `mcp-servers/hkask-mcp-swarm/src/spend_gate.rs` | ✅ SURVIVES 2026-08-03 (path confirmed) |
+| DIAG-RF-PM | Prediction Markets server reference model — PredictionMarketsServer, MarketRecord (+Calibration/Volatility/OntologyBlock), CalibrationStore, CMP, residual, matcher, Gamma/Kalshi providers, market WS; providers → matcher → calibration pipeline flow | `diagrams/class-hkask-prediction-markets.md` | `mcp-servers/hkask-mcp-prediction-markets/src/{hkask_mcp_prediction_markets,types,calibration,cmp,residual,matcher,streaming,cache,ontology,provider_polymarket,provider_kalshi}.rs` | ✅ VERIFIED 2026-08-05 |
 
 ## 9. Training and Corpus Diagrams
 
@@ -98,10 +99,10 @@ The swarm system (`hkask-mcp-swarm` + `crates/swarm_panel` + the `swarm-intellig
 
 | Diagram ID | Type | File | Description | Verified Against | Status |
 |-----------|------|------|-------------|------------------|--------|
-| DIAG-DIA-SWARM-001 | flowchart | `diagrams/flowchart-swarm-architecture.md` | Swarm MCP server architecture — two launch paths, two substrates, panel + skills + curator | `hkask_mcp_swarm.rs`, `swarm_panel.rs` | ✅ VERIFIED 2026-08-03 |
+| DIAG-DIA-SWARM-001 | flowchart | `diagrams/flowchart-swarm-architecture.md` | Swarm MCP server architecture — two launch paths, two substrates, panel + skills + curator (51 tools: 27 ABW + 24 local) | `hkask_mcp_swarm.rs` (`tool_surface_is_exactly_51_registered_tools`), `swarm_panel.rs` | ✅ VERIFIED 2026-08-05 |
 | DIAG-DIA-SWARM-002 | flowchart | `diagrams/flowchart-swarm-pdca-cascade.md` | swarm-intelligence 10-step PDCA cascade with deterministic compute steps | `swarm-intelligence/SKILL.md` | ✅ VERIFIED |
 | DIAG-DIA-SWARM-003 | sequence | `diagrams/sequence-swarm-steering-loop.md` | Steering loop — advisory vs steering execution, delegate_results feedback | `swarm-steering/SKILL.md` | ✅ VERIFIED |
-| DIAG-DIA-SWARM-006 | class | `diagrams/class-swarm-server.md` | SwarmServer collaborators — AbwClient, ConsentStore, SpendGate, runtime, executor, A2A, LocalDelegateResult | `hkask_mcp_swarm.rs`, `consent.rs`, `spend_gate.rs`, `local_runtime.rs`, `agent_executor.rs`, `a2a.rs` | ✅ VERIFIED 2026-08-03 |
+| DIAG-DIA-SWARM-006 | class | `diagrams/class-swarm-server.md` | SwarmServer collaborators — AbwClient, ConsentStore, spend_gate module (crate-private authorize/complete fns), runtime, executor, A2A, LocalDelegateResult | `hkask_mcp_swarm.rs`, `consent.rs`, `spend_gate.rs`, `local_runtime.rs`, `agent_executor.rs`, `a2a.rs` | ✅ VERIFIED 2026-08-05 (phantom `SpendGate` struct removed — module has fns only) |
 | DIAG-DIA-SWARM-007 | state | `diagrams/state-swarm-panel-modes.md` | SwarmPanel PanelMode states (Browse/Author/Compose/Steer) + backend toggle | `swarm_panel.rs` | ✅ VERIFIED 2026-08-03 |
 | DIAG-DIA-SWARM-008 | flowchart | `diagrams/flowchart-swarm-feedback-loops.md` | Four feedback loops with 5-property health + algedonic override + C4 latency deficit | `swarm-intelligence/SKILL.md`, `consent.rs`, `swarm_panel.rs` | ✅ VERIFIED 2026-08-03 |
 
@@ -117,10 +118,8 @@ These live under `docs/plans/` and `docs/research/` and were not previously trac
 | DIAG-PLAN-SWARM-B | flowchart | `plans/cybernetic-swarm-plan.md` §8 | Implementation sequencing — C0/C2/C1/C4/C5 step dependency | `plans/cybernetic-swarm-plan.md` | ✅ SURVIVES 2026-08-03 (path confirmed) |
 | DIAG-PLAN-SWARM-C | flowchart | `plans/cybernetic-swarm-plan.md` §9.1 | Complete cybernetic swarm map (revision 2 — fusion removed, deterministic judge) | `plans/cybernetic-swarm-plan.md` | ✅ SURVIVES 2026-08-03 (path confirmed) |
 | DIAG-PLAN-HARNESS | graph | `plans/evolving-test-harness.md` §3.1 | Evolving test harness target architecture — CI Evaluator + Proposer + trace filesystem | `plans/evolving-test-harness.md`, `crates/hkask-test-harness/` | ✅ SURVIVES 2026-08-03 (path confirmed) |
-| DIAG-PLAN-SIGN-A | flowchart | `plans/kask-skill-signing-and-trust.md` (Architecture) | Skill signing & trust — package → keychain → sign → install → verify | `crates/kask_extensions_ui/`, `crates/hkask-keystore/` | ✅ SURVIVES 2026-08-03 (path confirmed) |
-| DIAG-PLAN-SIGN-B | state | `plans/kask-skill-signing-and-trust.md` (Skill lifecycle) | Skill lifecycle — Local → Published → Verified → Listed → Expired → Purged | `crates/kask_extensions_ui/` | ✅ SURVIVES 2026-08-03 (path confirmed) |
-| DIAG-PLAN-MEDIA | flowchart | `plans/media-system-refactor.md` §1.1 | Media two-process split — zed foreground (MediaRouter/FalBackend/DeepInfraBackend) vs MCP server | `mcp-servers/hkask-mcp-media/`, `crates/hkask-inference/` | ✅ SURVIVES 2026-08-03 (path confirmed) |
-| DIAG-PLAN-WIKI | flowchart | `plans/semantic-memory-wiki.md` §5 | Semantic memory wiki architecture — sources → raw → hMem semantic → consolidation → wiki | `plans/semantic-memory-wiki.md` | ✅ SURVIVES 2026-08-03 (path confirmed) |
+
+Removed 2026-08-05 with their parent plans (all deleted): DIAG-PLAN-SIGN-A, DIAG-PLAN-SIGN-B (`plans/kask-skill-signing-and-trust.md`), DIAG-PLAN-MEDIA (`plans/media-system-refactor.md`), DIAG-PLAN-WIKI (`plans/semantic-memory-wiki.md`). Recoverable via git history.
 
 ## 14. Viz Widgets (D18) — class diagrams
 
@@ -143,19 +142,19 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 
 ## 16. Summary
 
-**Surviving diagram inventory (2026-08-03):**
+**Surviving diagram inventory (2026-08-05):**
 
 | Location | Count |
 |----------|-------|
-| `docs/diagrams/` standalone (swarm + capability + invoke-gate + 6 viz widgets) | 14 |
+| `docs/diagrams/` standalone (swarm + capability + invoke-gate + prediction-markets + 6 viz widgets) | 15 |
 | `docs/explanation/` (cognition-and-replica, training-and-adapters, skills-and-composition) | ~12 |
 | `docs/reference/mcp-servers/` (README, companies, scenarios, condenser, swarm) | 5 |
 | `docs/reference/regulation-spans.md` | 1 |
 | `docs/architecture/` (MDS ×4, DOCUMENTATION_STANDARDS ×1) | 5 |
-| `docs/plans/` (cybernetic-swarm ×3, evolving-test-harness, kask-skill-signing ×2, media-system-refactor, semantic-memory-wiki) | 8 |
+| `docs/plans/` (cybernetic-swarm ×3, evolving-test-harness) | 4 |
 | `docs/research/media-research/` (gallery ERD, media landscape) | 2 |
 | `docs/diataxis/` (10 crates × ~4) | ~40 |
-| **Total surviving** | **~87** |
+| **Total surviving** | **~84** |
 
 **Removed from this registry (2026-08-03):** all "PARENT DELETED" / "removed — host status report" entries (~26 diagrams whose parents were deleted in the 2026-07-24 cleanup). Recoverable via git history.
 
@@ -176,3 +175,4 @@ The `docs/diataxis/` set carries one diagram per artifact across 10 crates (`hka
 *ℏKask v0.33.0 — A Sovereign Chat Client for Human Users with AI Skills — Diagram Verification Registry*
 *Mermaid-First Mandate: Every interaction pattern, data flow, and object model is diagrammed.*
 *2026-08-03: deleted-parent entries purged; new surviving diagrams + D18 widgets added; stale paths corrected.*
+*2026-08-05: prediction-markets class diagram added (DIAG-RF-PM); swarm tool count 50→51 (pinned by `tool_surface_is_exactly_51_registered_tools`); phantom `SpendGate` struct removed from class-swarm-server; §13 rows for deleted plans (skill-signing, media-refactor, semantic-memory-wiki) removed; counts refreshed.*

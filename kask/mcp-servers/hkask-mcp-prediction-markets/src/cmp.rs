@@ -143,3 +143,76 @@ pub fn constant_maturity(points: &[TenorPoint], tenor_days: u32) -> Option<CmpVa
         bracket_days: t1 - t0,
     })
 }
+
+// ── CMP Index: the published curve (not just a point query) ───────────────
+
+/// The standard tenor grid, in days — the CMT-analogous publication points.
+/// Short end matters most for forecasting (horizon effects per 2602.19520);
+/// the long end captures structural expectations.
+pub const INDEX_TENORS_DAYS: [u32; 6] = [7, 30, 90, 180, 365, 730];
+
+/// One point on the published index curve.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CmpIndexPoint {
+    pub tenor_days: u32,
+    /// None when the cohort coverage cannot support this tenor (empty input,
+    /// or the tenor lies beyond all observed cohorts and flat extrapolation
+    /// would misrepresent the curve's reach).
+    pub probability: Option<f64>,
+    pub method: CmpMethod,
+    pub cohorts: usize,
+    pub bracket_days: f64,
+}
+
+/// A computed index curve for one base event at one observation time.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CmpIndex {
+    pub series: String,
+    pub computed_at: String,
+    pub points: Vec<CmpIndexPoint>,
+}
+
+/// Compute the full index curve for a base event from its tenor points.
+/// Each grid tenor goes through `constant_maturity`; tenors with no
+/// supporting coverage surface as `probability: None` rather than a
+/// fabricated extrapolation.
+pub fn compute_index(series: &str, points: &[TenorPoint], computed_at: &str) -> CmpIndex {
+    let index_points = INDEX_TENORS_DAYS
+        .iter()
+        .map(|&tenor| match constant_maturity(points, tenor) {
+            Some(value) => CmpIndexPoint {
+                tenor_days: tenor,
+                probability: Some(value.probability),
+                method: value.method,
+                cohorts: value.cohorts,
+                bracket_days: value.bracket_days,
+            },
+            None => CmpIndexPoint {
+                tenor_days: tenor,
+                probability: None,
+                method: CmpMethod::BucketedSparse,
+                cohorts: 0,
+                bracket_days: 0.0,
+            },
+        })
+        .collect();
+    CmpIndex {
+        series: series.to_string(),
+        computed_at: computed_at.to_string(),
+        points: index_points,
+    }
+}
+
+/// The slope of the curve between two tenors, in log-odds per year —
+/// the term-structure signal (steepening/flattening of expectations).
+/// None when either endpoint is unsupported.
+pub fn curve_slope(index: &CmpIndex, short_tenor: u32, long_tenor: u32) -> Option<f64> {
+    let short = index.points.iter().find(|p| p.tenor_days == short_tenor)?;
+    let long = index.points.iter().find(|p| p.tenor_days == long_tenor)?;
+    let (short_p, long_p) = (short.probability?, long.probability?);
+    let years = (long_tenor as f64 - short_tenor as f64) / 365.25;
+    if years <= 0.0 {
+        return None;
+    }
+    Some((hkask_forecast::log_odds(long_p) - hkask_forecast::log_odds(short_p)) / years)
+}

@@ -17,7 +17,7 @@ defines `KaskSettings`, `BridgeManifestExecutor`, `BridgeMemoryPort`,
 `LanguageModelInferencePort`, and the settings structs that configure the kask
 subsystem. `McpRuntime` is passed directly as the
 `ToolPort` (the former `BridgeToolPort` adapter was collapsed in the
-2026-07-31 simplification pass — see `tasks/plan.md` C3).
+2026-07-31 simplification pass).
 
 ## Source citations
 
@@ -118,14 +118,14 @@ Two bridge adapters implement hKask port traits against zed types:
   entered around manifest execution so `tokio::time::timeout` has a
   reactor. (The former `BridgeToolPort` adapter was collapsed in the
   2026-07-31 simplification pass — `McpRuntime` is passed directly as the
-  `ToolPort`; see `tasks/plan.md` C3. The `a2a_secret` field was deleted
-  with the OCAP/a2a secret threading — see `tasks/plan.md` D5 verdict.)
+  `ToolPort`. The `a2a_secret` field was deleted
+  with the OCAP/a2a secret threading.)
 - `BridgeMemoryPort` (`memory.rs:1615`) implements zed's `ThreadMemoryPort`
   by delegating to hKask's `MemoryPort`. It wraps an `Arc<dyn MemoryPort>`
   — a `RealMemoryPort` (`memory.rs:42`), wired once the zed user resolves
   (before that the hook is `None` and turn ingest no-ops — the former
   `LoggingMemoryPort` no-op placeholder was deleted in the 2026-07-31
-  simplification pass; see `tasks/plan.md` C4).
+  simplification pass).
 
 The `LanguageModelInferencePort` (`inference.rs:52`, trait impl at `:281`)
 implements hKask's `InferencePort` by wrapping zed's `LanguageModel`. It

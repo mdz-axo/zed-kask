@@ -1,8 +1,8 @@
 ---
 title: "Swarm Server Class Diagram"
 audience: [architects, developers]
-last_updated: 2026-08-04
-version: "1.0.0"
+last_updated: 2026-08-05
+version: "1.0.1"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust]
@@ -10,8 +10,9 @@ mds_categories: [domain, composition, trust]
 
 # Swarm Server Class Diagram
 
-The `hkask-mcp-swarm` server (`SwarmServer`) exposes 50 tools (27 ABW + 20
-local) selected by `kask.swarm.mode`. `SwarmServer` composes four collaborators:
+The `hkask-mcp-swarm` server (`SwarmServer`) exposes 51 tools (27 ABW + 24
+local) selected by `kask.swarm.mode` — pinned by
+`tool_surface_is_exactly_51_registered_tools` (`hkask_mcp_swarm.rs:350`). `SwarmServer` composes four collaborators:
 the ABW REST client, the consent store (real-time spend gate with TTL), the
 local agent registry, and the lazily-initialized local runtime. The spend gate
 consumes consent grants before any debit; the local runtime owns the
@@ -43,14 +44,16 @@ classDiagram
         -CONSENT_TTL_SECS enforced
         -sqlite or memory backing
     }
-    class SpendGate {
+    class spend_gate_module {
+        <<module>>
         +authorize_hire()
         +complete_hire()
         +authorize_delegate()
+        +complete_delegate()
         +authorize_curate()
-        +authorize_hire_with_session()
-        +authorize_delegate_with_session()
+        +resolve_auth()
         ceiling HKASK_ABW_MAX_CREDITS
+        crate-private fns no SpendGate struct
     }
     class LazyLocalSwarmRuntime {
         -ledger_path: String
@@ -102,21 +105,21 @@ classDiagram
     SwarmServer --> ConsentStore
     SwarmServer --> LocalAgentRegistry : local mode
     SwarmServer --> LazyLocalSwarmRuntime : local mode
-    SpendGate ..> ConsentStore : consumes grants
-    SwarmServer ..> SpendGate : hire delegate fanout xaman
+    spend_gate_module ..> ConsentStore : consumes grants
+    SwarmServer ..> spend_gate_module : hire delegate fanout xaman
     LazyLocalSwarmRuntime ..> LocalSwarmRuntime : get_or_init
     LocalSwarmRuntime --> AgentExecutor : run then scan
     LocalSwarmRuntime ..> LocalDelegateResult : produces
     A2A ..> LocalSwarmRuntime : wraps delegate
     LocalAgentRegistry ..> LocalSwarmRuntime : reads cards
 
-    note for SwarmServer "50 tools = 27 ABW + 23 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_50_registered_tools"
+    note for SwarmServer "51 tools = 27 ABW + 24 local\nBoth sets always registered\nkask.swarm.mode selects the substrate not the surface\nSpend mutating tools are consent gated\npinned by tool_surface_is_exactly_51_registered_tools"
     note for LocalDelegateResult "Fed back as delegate_results\nto swarm-intelligence ORIENT\nactivates C5 fault attribution\nand C6 reconfigure"
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-SWARM-006
-verified_date: 2026-08-04
-verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115,124,3003; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56,77,150,184,227; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83,253,334; kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24
+verified_date: 2026-08-05
+verified_against: kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:115,126,350; kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:56,77,150,184,227; kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:44,169,317,368,443,483 (no pub struct SpendGate — crate-private authorize_*/complete_* fns only); kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24 kask/mcp-servers/hkask-mcp-swarm/src/local_runtime.rs:39,73; kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:33,38,55; kask/mcp-servers/hkask-mcp-swarm/src/a2a.rs:24
 status: VERIFIED
 -->

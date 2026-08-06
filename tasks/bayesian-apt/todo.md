@@ -26,7 +26,11 @@
   - [x] Propagation journal (per-node before/after deltas) — the tâtonnement record
   - [x] 4 propagation tests + schema test pass
 - [x] **T6b** DCF-stream equity duration wired — `equity_duration` tool in companies (was dead code from 76bdf3e74b; now exposed with schema test)
-- [ ] **T7** Tree-weighted valuation path in companies — ADD alongside 2×2 (maturity ladder: 2×2 stays default; tree mode is the earned upgrade; `weighting_mode` label on output)
+- [x] **T7** Tree-weighted valuation path in companies — landed 2026-08-05, ADDITIVE per maturity ladder
+  - [x] 2×2 mode unchanged (default; regression via existing 176-test suite)
+  - [x] `event_tree` opt-in on `scenario_analysis`: quadrant probabilities from tree root marginals → expected intrinsic
+  - [x] `weighting_mode: "schwartz_2x2" | "event_tree"` label on output; graceful fallback + warning on malformed/non-2-root trees
+  - [x] 5 new tests (root extraction, non-2-root rejection, out-of-range rejection, expected-intrinsic hand-check 140.4, mode serialization); clippy clean
 - [ ] **CP2** vertical slice: markets→tree→propagation→tree-weighted DCF
 - [ ] **T8a** Factor-mapping prototype (5 companies) — **kill gate on H3**
   - [ ] Loadings via `branch_return` revaluation (not branch-indicator covariances)

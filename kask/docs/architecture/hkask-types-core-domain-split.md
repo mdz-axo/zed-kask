@@ -1,8 +1,8 @@
 ---
 title: "ADR: Split hkask-types into core primitives and domain types"
 audience: [architects, developers, agents]
-last_updated: 2026-08-04
-version: "0.33.0"
+last_updated: 2026-08-05
+version: "0.33.1"
 status: "Draft"
 domain: "architecture"
 mds_categories: [composition, lifecycle]
@@ -14,7 +14,7 @@ mds_categories: [composition, lifecycle]
 
 ## Context
 
-`hkask-types` is the dependency root of the hKask crate tree — depended on by every `hkask-*` crate, `kask_bridge`, and all 11 MCP servers (24+ consumers). It currently exposes **~197 public items** across 34 files.
+`hkask-types` is the dependency root of the hKask crate tree — depended on by every `hkask-*` crate, `kask_bridge`, and all 12 MCP servers (24+ consumers). It currently exposes **~197 public items** across 34 files.
 
 Its declared purpose has drifted from its actual surface:
 
@@ -77,7 +77,7 @@ The consumer-dependency audit is complete (graph-audit semantic mode, manual gre
 
 **Cycle (stays core):** `template` (`LLMParameters`/`TemplateFile`) -> `hkask-templates` cycles because templates depends on `hkask-guard` and guard uses `LLMParameters`. `LLMParameters` is a foundational config primitive (11 consumers), not a domain type — stays core.
 
-**Dead code (delete):** `server_config` is not root-re-exported, has zero module-path imports, and no test/doc references. Deletion held while another agent is active in `hkask-types`.
+**Dead code (deleted since):** `server_config` is not root-re-exported, has zero module-path imports, and no test/doc references. **Its deletion has landed** — it no longer appears in the `hkask_types.rs` module list (verified 2026-08-05).
 
 **Stay core (foundational):** `id`/`error`/`event`/`observable_span`/`visibility`/`time`/`crypto`/`secret`, `ports` (hexagonal seams, 16 consumers), `agent_paths` (path primitives), `json_extract` (utility), `macros` (`enum_str_ops!`).
 
@@ -85,7 +85,7 @@ The consumer-dependency audit is complete (graph-audit semantic mode, manual gre
 
 ## Recommendation
 
-**Execute the hybrid revealed by the audit** (not pure A or B as originally framed): Option-B moves for the 10 viable buckets, internalize the 4 single-consumer buckets, delete `server_config`, keep the foundational buckets in core. After the moves, `hkask-types` shrinks from ~197 to ~80 items, matching its declared purpose. Execute one domain per commit; each move gated on `cargo check` + `./script/clippy` for affected consumers. The audit gate is satisfied — execution may proceed when the active agent's `hkask-types` work lands.[^fowler-strangler]
+**Execute the hybrid revealed by the audit** (not pure A or B as originally framed): Option-B moves for the viable buckets, internalize the 4 single-consumer buckets, keep the foundational buckets in core. (`server_config` deletion has landed; the `wallet_types` bucket is moot — deleted with the wallet collapse, so the `wallet_types -> hkask-storage` move is no longer needed.) After the moves, `hkask-types` shrinks from ~197 toward its declared purpose. Execute one domain per commit; each move gated on `cargo check` + `./script/clippy` for affected consumers.[^fowler-strangler]
 
 ## Consequences
 

@@ -11,9 +11,12 @@ doctest = false
 
 [dependencies]
 gpui.workspace = true
+gpui_util.workspace = true
 theme.workspace = true
+ui.workspace = true
 anyhow.workspace = true
 hkask-forecast.workspace = true
+hkask_conversation_injector.workspace = true
 log.workspace = true
 tracing.workspace = true
 serde.workspace = true

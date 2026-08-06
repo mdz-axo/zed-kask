@@ -1,7 +1,7 @@
 ---
 title: "Per-Tool QA Contracts"
 audience: [QA engineers, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.3.1"
 status: "Active"
 domain: "trust"
@@ -63,7 +63,7 @@ Three sub-calls:
 ### 4. empty-result
 - **Action**: call the tool against an empty store / missing entity
   (e.g. `codegraph_query` with `query="zzznonexistentzzz"`; `kanban_task_list`
-  on a fresh DB; `corpus_query` on an empty index).
+  on a fresh DB; `corpus_registry` on an empty index).
 - **Assert**:
   - no panic
   - typed empty result: `[]`, `{}`, or `{"error": "..."}` per the
@@ -91,7 +91,7 @@ Three sub-calls:
 
 ### 6. resource-bounds
 - **Action**: call the tool with the largest legal input (e.g.
-  `codegraph_context` with `budget` at max; `corpus_query` with a
+  `codegraph_context` with `budget` at max; `corpus_discover` with a
   10KB query string; `kanban_task_create` with a 64KB task title — the
   max `validate_identifier` allows). Apply a 30s timeout.
 - **Assert**:
@@ -129,7 +129,7 @@ Three sub-calls:
 
 ## Per-server tool tables
 
-### hkask-mcp-codegraph (9 tools)
+### hkask-mcp-codegraph (8 tool functions; the 9th `#[tool(` match is the `#[tool_router]` attribute — not a tool)
 
 Credentials: none declared (reads `DEEPINFRA_API_KEY`/`OPENROUTER_API_KEY`
 inline for `codegraph_index_embeddings` only).
@@ -146,7 +146,7 @@ inline for `codegraph_index_embeddings` only).
 | `codegraph_reindex` | (none) | `{"files_indexed":N,"symbols_added":N,...}` | no | filesystem, sqlite | n/a |
 | `codegraph_index_embeddings` | `EmbedIndexRequest{model:Option<String>, batch_size:u32=32}` | `{"symbols_embedded":N,"total_symbols":N,"model":...,"dim":N,"errors":[...]}` | **yes** (calls embedding API) | DeepInfra/OpenRouter HTTP | `symbols_embedded:0` with note |
 
-### hkask-mcp-companies (41 tools)
+### hkask-mcp-companies (42 tools)
 
 Credentials: **required** `HKASK_FMP_API_KEY`, `HKASK_EODHD_API_KEY`;
 **optional** `HKASK_EXA_API_KEY`, `HKASK_TAVILY_API_KEY`,
@@ -195,8 +195,9 @@ Credentials: **required** `HKASK_FMP_API_KEY`, `HKASK_EODHD_API_KEY`;
 | `forecast_list` | no | sqlite | yes | yes | skip |
 | `forecast_record` | no | sqlite | yes | yes | skip |
 | `result_feedback` | no | sqlite | yes | yes | skip |
+| `equity_duration` | no | FMP | yes | yes | skip |
 
-### hkask-mcp-condenser (8 tools)
+### hkask-mcp-condenser (4 tools)
 
 Credentials: none declared (uses `InferencePort` from `HKASK_INFERENCE_URL`).
 
@@ -237,7 +238,7 @@ Credentials: **optional** `HKASK_OCR_MODEL`, `HKASK_EMBEDDING_MODEL`,
 | `corpus_extract_triples` | **yes** | inference | yes | yes | **yes** |
 | `corpus_embed` | **yes** | embedding API | yes | yes | **yes** |
 | `corpus_cache` | no | sqlite | yes | yes | skip |
-| `corpus_query` | no | sqlite FTS5 | yes | yes | skip |
+| `corpus_query` | yes | sqlite | yes | yes | skip |
 | `corpus_clear_index` | no | sqlite | yes | yes | skip |
 | `corpus_purge_qa` | no | sqlite | yes | yes | skip |
 | `corpus_tag_chunks` | **yes** | inference | yes | yes | **yes** |
@@ -282,7 +283,7 @@ Credentials: **optional** `HKASK_KANBAN_DB`, `HKASK_DB_PASSPHRASE`.
 | `kanban_task_spawn` | no | sqlite | yes | yes | skip |
 | `contract_propose_expect` | no | sqlite | yes | yes | skip |
 
-### hkask-mcp-media (38 tools)
+### hkask-mcp-media (42 tools)
 
 Credentials: **optional** `DEEPINFRA_API_KEY`, `FALAI_API_KEY`.
 
@@ -328,6 +329,10 @@ Credentials: **optional** `DEEPINFRA_API_KEY`, `FALAI_API_KEY`.
 | `video_concat` | no | ffmpeg | yes | yes | skip |
 | `video_caption` | **yes** | inference | yes | yes | **yes** |
 | `video_meme` | **yes** | inference | yes | yes | **yes** |
+| `expand_prompt` | **yes** | inference | yes | yes | **yes** |
+| `gallery_lineage` | no | sqlite | yes | yes | skip |
+| `gallery_record_generation` | no | sqlite | yes | yes | skip |
+| `gallery_reproduce` | no | sqlite | yes | yes | skip |
 
 ### hkask-mcp-research (17 tools)
 
@@ -356,7 +361,7 @@ Credentials: **optional** `HKASK_BRAVE_API_KEY`,
 | `rss_discover_feeds` | no | HTTP | yes | yes | skip |
 | `rss_edit_tag` | no | sqlite | yes | yes | skip |
 
-### hkask-mcp-scenarios (18 tools)
+### hkask-mcp-scenarios (21 tools)
 
 Credentials: none declared (uses `reqwest::Client` for upstream
 research/companies calls).
@@ -381,6 +386,9 @@ research/companies calls).
 | `scenario_calibration` | no | sqlite | N/A | yes | skip |
 | `scenario_triage` | no | sqlite | N/A | yes | skip |
 | `scenario_assess` | **yes** | inference | N/A | yes | **yes** |
+| `scenario_from_markets` | no | prediction-markets records (caller-supplied JSON) | N/A | yes | skip |
+| `scenario_from_markets_set` | no | prediction-markets records (caller-supplied JSON) | N/A | yes | skip |
+| `scenario_propagate` | no | sqlite (event tree recompute) | N/A | yes | skip |
 
 ### hkask-mcp-training (8 tools)
 
@@ -400,12 +408,106 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
 | `training_submit` | no | RunPod/DeepInfra/Nebius/HF | yes | yes | skip |
 | `training_validate_config` | **yes** | OpenAI HTTP (optional) | yes | yes | **yes** |
 
+### hkask-mcp-swarm (51 tools)
+
+Credentials: **optional** `HKASK_SWARM_DB`, `HKASK_DB_PASSPHRASE`; ABW API key
+required for all cloud (ABW) tools. Local-mode tools have no consent gate —
+the local ledger balance check is the gate. Consent-gated spend tools
+(`swarm_hire`, `swarm_delegate`, `swarm_fanout`) require a `consent_token`
+from `swarm_request_consent` or a session token from `swarm_authorize_session`.
+
+| Tool | LLM I/O | External dep | Category 3 | Category 5 | Category 7 |
+|---|---|---|---|---|---|
+| `swarm_list_agents` | no | ABW REST (keyless catalogue) | N/A | yes | skip |
+| `swarm_get_swarm` | no | ABW REST | yes | yes | skip |
+| `swarm_get_agent` | no | ABW REST | yes | yes | skip |
+| `swarm_list_apps` | no | ABW REST | yes | yes | skip |
+| `swarm_ontology_templates` | no | ABW REST | yes | yes | skip |
+| `swarm_execute_agent` | **yes** (agent LLM consult) | ABW REST | yes | yes | **yes** |
+| `swarm_hire_cost` | no | ABW REST | yes | yes | skip |
+| `swarm_request_consent` | no | sqlite (consent store) | yes | yes | skip |
+| `swarm_authorize_session` | no | sqlite | yes | yes | skip |
+| `swarm_hire` | no | ABW REST + consent store | yes | yes | skip |
+| `swarm_delegate` | **yes** (agent LLM + tools) | ABW REST + consent store | yes | yes | **yes** |
+| `swarm_delegate_and_wait` | **yes** | ABW REST + consent store | yes | yes | **yes** |
+| `swarm_fanout` | **yes** | ABW REST + consent store | yes | yes | **yes** |
+| `swarm_run_status` | no | ABW REST | yes | yes | skip |
+| `swarm_generate_prompt` | **yes** (LLM authoring aid) | ABW REST | yes | yes | **yes** |
+| `swarm_generate_ontology` | **yes** | ABW REST | yes | yes | **yes** |
+| `swarm_create_agent` | no | ABW REST | yes | yes | skip |
+| `swarm_create_swarm` | no | ABW REST + consent store | yes | yes | skip |
+| `swarm_xaman` | **yes** (curator LLM) | ABW REST | yes | yes | **yes** |
+| `swarm_create_app` | no | ABW REST | yes | yes | skip |
+| `swarm_fire` | no | ABW REST | yes | yes | skip |
+| `swarm_delete_agent` | no | ABW REST | yes | yes | skip |
+| `swarm_delete_swarm` | no | ABW REST | yes | yes | skip |
+| `swarm_search_knowledge` | no | ABW REST | yes | yes | skip |
+| `swarm_publish_checks` | no | ABW REST | yes | yes | skip |
+| `swarm_publish_agent` | no | ABW REST | yes | yes | skip |
+| `swarm_fork_agent` | no | ABW REST | yes | yes | skip |
+| `swarm_fund_local` | no | sqlite (local ledger) | yes | yes | skip |
+| `swarm_balance_local` | no | sqlite | yes | yes | skip |
+| `swarm_local_history` | no | sqlite | yes | yes | skip |
+| `swarm_delegate_local` | **yes** (local agent inference) | InferencePort + hkask-guard + sqlite | yes | yes | **yes** |
+| `swarm_fanout_local` | **yes** | InferencePort + sqlite | yes | yes | **yes** |
+| `swarm_pipeline_local` | **yes** | InferencePort + sqlite | yes | yes | **yes** |
+| `swarm_a2a_send` | **yes** (in-process A2A dispatch) | local runtime | yes | yes | **yes** |
+| `swarm_a2a_card` | no | local registry | N/A | yes | skip |
+| `swarm_list_local_agents` | no | filesystem (agent cards) | yes | yes | skip |
+| `swarm_clone_to_local` | no | ABW REST + filesystem | yes | yes | skip |
+| `swarm_push_to_cloud` | no | ABW REST + filesystem | yes | yes | skip |
+| `swarm_remove_local` | no | filesystem | yes | yes | skip |
+| `swarm_create_local_agent` | no | filesystem | yes | yes | skip |
+| `swarm_reconfigure_local_agent` | no | filesystem | yes | yes | skip |
+| `swarm_create_local_swarm` | no | filesystem/sqlite | yes | yes | skip |
+| `swarm_list_local_swarms` | no | filesystem/sqlite | yes | yes | skip |
+| `swarm_get_local_swarm` | no | filesystem/sqlite | yes | yes | skip |
+| `swarm_delete_local_swarm` | no | filesystem/sqlite | yes | yes | skip |
+| `swarm_add_agent_local` | no | filesystem/sqlite | yes | yes | skip |
+| `swarm_remove_agent_local` | no | filesystem/sqlite | yes | yes | skip |
+| `swarm_search_knowledge_local` | no | hkask-memory (sqlite) | yes | yes | skip |
+| `swarm_generate_prompt_local` | **yes** | InferencePort | N/A | yes | **yes** |
+| `swarm_generate_ontology_local` | **yes** | InferencePort | N/A | yes | **yes** |
+| `swarm_ai_assist` | **yes** (skill cascade) | InferencePort | N/A | yes | **yes** |
+
+### hkask-mcp-prediction-markets (13 tools)
+
+Credentials: none required for read paths (Polymarket Gamma/CLOB and Kalshi
+public REST are keyless); base events for CMP are registered via
+`HKASK_PREDICTION_*` config. Every probability is annotated with
+spread/volume/calibration/volatility/reliability tier — the server never
+returns a bare probability.
+
+| Tool | LLM I/O | External dep | Category 3 | Category 5 | Category 7 |
+|---|---|---|---|---|---|
+| `prediction_markets_status` | no | in-process state | N/A | N/A | skip |
+| `market_lookup` | **yes** (market records returned to caller) | Polymarket + Kalshi HTTP | N/A | yes | **yes** |
+| `market_match` | **yes** | matcher (in-process) over lookup data | N/A | yes | **yes** |
+| `market_ontology_map` | no | in-process mapping doc | N/A | N/A | skip |
+| `market_calibration` | no | calibration store (hkask-forecast) | N/A | yes | skip |
+| `market_record_resolution` | no | calibration store | N/A | yes | skip |
+| `market_subscribe_resolutions` | no | Polymarket websocket | N/A | yes | skip |
+| `market_ladder` | **yes** | Polymarket + Kalshi HTTP | N/A | yes | **yes** |
+| `market_cmp` | no | cmp engine + registered base events | N/A | yes | skip |
+| `market_residual` | no | residual engine + market history | N/A | yes | skip |
+| `market_check_resolutions` | no | Polymarket + Kalshi HTTP + calibration store | N/A | yes | skip |
+| `market_history` | **yes** | Kalshi candlesticks / Polymarket CLOB prices-history | N/A | yes | **yes** |
+| `market_cmp_index` | no | cmp engine + registered base events | N/A | yes | skip |
+
 ---
 
 ## Coverage summary
 
-- Total tools: 206 (195 across the original 10 servers + 11 from the `swarm` server added 2026-08-01)
-- LLM I/O boundary tools (Category 7 applies): 50
+- Total tools: 260 (verified 2026-08-05: codegraph 8 tools + 1 `#[tool_router]` attribute matched by the naive grep, companies 42, condenser 4, corpus 27, curator 8, kata-kanban 18, media 42, prediction-markets 13, research 17, scenarios 21, swarm 51, training 8)
+- LLM I/O boundary tools (Category 7 applies): 69
+  (as below, plus swarm: 13 — `swarm_execute_agent`, `swarm_delegate`,
+  `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_generate_prompt`,
+  `swarm_generate_ontology`, `swarm_xaman`, `swarm_delegate_local`,
+  `swarm_fanout_local`, `swarm_pipeline_local`, `swarm_a2a_send`,
+  `swarm_generate_prompt_local`, `swarm_generate_ontology_local`,
+  `swarm_ai_assist` [14]; prediction-markets: 4 — `market_lookup`,
+  `market_match`, `market_ladder`, `market_history`; media now includes
+  `expand_prompt` [21]). Total: 50 (original) + 14 (swarm) + 4 (prediction-markets) + 1 (media `expand_prompt`) = 69 Category-7 tools; the added `equity_duration` (companies) is deterministic and does not enter Category 7.
   (codegraph: 2 — `codegraph_context`, `codegraph_index_embeddings`;
   companies: 2 — `company_screener`, `research_search`;
   condenser: 2 — `condenser_thread_summary`,
@@ -427,12 +529,12 @@ Credentials: **optional** `RUNPOD_API_KEY`, `DEEPINFRA_API_KEY`,
 - Tools with declared credentials (Category 3 applies): all tools on servers
   credentials (companies, corpus, curator, kata-kanban, media,
   research, training) plus `codegraph_index_embeddings` which reads inline
-  keys. codegraph (other 8), condenser (4), scenarios (18) declare no
+  keys. codegraph (other 8), condenser (4), scenarios (21) declare no
   credentials → Category 3 is N/A for those.
 - Tools with external dependencies (Category 5 applies): all except the
   in-memory-only tools: `corpus_convert`, `corpus_is_complex`, `corpus_chunk`,
   `corpus_explain`, `image_create_collage`, `audio_capture`, `web_ping`.
 
-The routine's total cell count is `206 × 7 = 1442`, minus the explicit
+The routine's total cell count is `260 × 7 = 1820`, minus the explicit
 N/A skips documented above. The coverage matrix converges when every
 non-N/A cell is `pass | fail | skipped-with-reason`.

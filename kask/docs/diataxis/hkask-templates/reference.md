@@ -1,8 +1,8 @@
 ---
 title: "hkask-templates — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-04
-version: "0.2.1"
+last_updated: 2026-08-05
+version: "0.2.2"
 status: "Active"
 domain: "Skills"
 mds_categories: [domain, composition]
@@ -20,9 +20,13 @@ templates against the inference port. Template types are `Prompt` (WordAct),
 
 | Symbol | Location |
 |--------|----------|
-| `ManifestExecutor` struct | `kask/crates/hkask-templates/src/executor.rs:126` |
-| `ManifestExecutor::new` | `kask/crates/hkask-templates/src/executor.rs:160` |
-| `execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:435` |
+| `ManifestExecutor` struct | `kask/crates/hkask-templates/src/executor.rs:128` |
+| `ManifestExecutor::new` | `kask/crates/hkask-templates/src/executor.rs:170` |
+| `execute_manifest` | `kask/crates/hkask-templates/src/executor.rs:467` |
+| `extract_final_step_result` | `kask/crates/hkask-templates/src/executor.rs:1853` |
+| `propagate_taint_for_binding` | `kask/crates/hkask-templates/src/executor.rs:282` |
+| `check_untrusted_input` | `kask/crates/hkask-templates/src/executor.rs:233` |
+| `spotlight_tool_output` | `kask/crates/hkask-templates/src/executor.rs:1904` |
 | `BundleManifest` struct | `kask/crates/hkask-templates/src/bundle/manifest.rs:91` |
 | `BundleManifestStep` | `kask/crates/hkask-templates/src/bundle/manifest.rs:35` |
 | `BundleSkill` | `kask/crates/hkask-templates/src/bundle/manifest.rs:24` |
@@ -42,8 +46,6 @@ templates against the inference port. Template types are `Prompt` (WordAct),
 | `resolve_manifest` | `kask/crates/hkask-templates/src/manifest_loader.rs:197` |
 | `ManifestLoadError` enum | `kask/crates/hkask-templates/src/manifest_loader.rs:319` |
 | `PromptStrategy` enum | `kask/crates/hkask-templates/src/prompt_strategy.rs:14` |
-| `TemplateCrateLoader` | `kask/crates/hkask-templates/src/crate_loader.rs:15` |
-| `CapabilityAwareValidator` | `kask/crates/hkask-templates/src/capability_validator.rs:19` |
 | `BudgetTracker` | `kask/crates/hkask-templates/src/budget.rs:71` |
 
 ## Manifest schema
@@ -80,7 +82,9 @@ classDiagram
         Post
     }
     class ManifestExecutor {
-        +new(inference, tools, secret)
+        +new(inference, tools, default_params)
+        +with_runtime_policy(policy)
+        +with_terminal_check(check)
         +execute_manifest(manifest, ctx)
     }
     class ConvergenceTracker {
@@ -111,8 +115,8 @@ classDiagram
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-TPL-001
-verified_date: 2026-08-02
-verified_against: kask/crates/hkask-templates/src/executor.rs:126,160,435; kask/crates/hkask-templates/src/bundle/manifest.rs:91,35,24,314; kask/crates/hkask-templates/src/bundle/cascade.rs:8; kask/crates/hkask-templates/src/bundle/config.rs:52; kask/crates/hkask-templates/src/convergence.rs:73,153,163; kask/crates/hkask-templates/src/bundle/composition.rs:72,97; kask/crates/hkask-templates/src/skill_loader.rs:64; kask/crates/hkask-templates/src/registry_sqlite.rs:65; kask/crates/hkask-templates/src/bundle/mod.rs:22
+verified_date: 2026-08-05
+verified_against: kask/crates/hkask-templates/src/executor.rs:128,170,467; kask/crates/hkask-templates/src/bundle/manifest.rs:91,35,24,314; kask/crates/hkask-templates/src/bundle/cascade.rs:8; kask/crates/hkask-templates/src/bundle/config.rs:52; kask/crates/hkask-templates/src/convergence.rs:73; kask/crates/hkask-templates/src/bundle/composition.rs:72,97; kask/crates/hkask-templates/src/skill_loader.rs:64; kask/crates/hkask-templates/src/registry_sqlite.rs:65; kask/crates/hkask-templates/src/bundle/mod.rs:22
 status: VERIFIED
 -->
 
@@ -129,9 +133,7 @@ against a `BundleRegistryIndex`. The `ManifestLoadError` enum
 
 The `SkillLoader` (`skill_loader.rs:64`) loads skill definitions from the
 registry. It parses `SkillFrontMatter` (`skill_loader.rs:28`) and returns a
-`SkillLoadResult` (`skill_loader.rs:57`). The `TemplateCrateLoader`
-(`crate_loader.rs:15`) loads template crates from disk with path validation
-to prevent directory traversal.
+`SkillLoadResult` (`skill_loader.rs:57`).
 
 ## Registry
 
@@ -140,27 +142,72 @@ The `SqliteRegistry` (`registry_sqlite.rs:65`) implements the
 template metadata in SQLite. An in-memory `Registry` adapter also exists (see
 `hkask_templates.rs:39`).
 
+## ManifestExecutor — constructor and defense wiring
+
+`ManifestExecutor::new(inference, tools, default_params)`
+(`executor.rs:170`) takes exactly three arguments: the `InferencePort`, the
+`ToolPort`, and default `LLMParameters`. (The former `secret` parameter was
+removed.) The struct (`executor.rs:128`) additionally carries three
+defense-layer fields, all defaulted in `new` and settable via builders:
+
+| Field | Layer | Set via | Default |
+|-------|-------|---------|---------|
+| `spotlighter: Spotlighter` (`executor.rs:143`) | Spotlighting of untrusted tool outputs (arXiv:2403.14720) | always `SpotlightMode::Delimit` in `new` (`executor.rs:183`) | Delimit |
+| `runtime_policy: Option<Arc<DefaultPolicy>>` (`executor.rs:147`) | Pre-execution policy check (Layer 6) | `with_runtime_policy` (`executor.rs:217`) | None |
+| `taint_labels: Arc<Mutex<HashMap<String, ToolTaint>>>` (`executor.rs:151`) | FIDES taint tracking for context entries (Layer 5, arXiv:2505.23643) | internal | empty |
+| `terminal_check: Option<Arc<dyn Fn() -> bool>>` (`executor.rs:160`) | Profile enforcement for the built-in `terminal` tool (F6 proposer/evaluator separation) | `with_terminal_check` (`executor.rs:198`) | None |
+
+At every tool invocation, `invoke_tool` runs the runtime policy first
+(`executor.rs:402`): `PolicyVerdict::Block` and `RequireHuman` abort the step,
+`Log` emits a `reg.guard.runtime_policy` span, `Allow` proceeds. The result
+is spotlight-transformed (`spotlight_tool_output`, `executor.rs:1904`) and
+returned together with the tool's `ToolTaint` label, which is stored in
+`taint_labels` under `step_{ordinal}_result`.
+
+### FIDES taint propagation
+
+Two complementary functions close the Source→Sink information-flow gate (see
+[`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md)):
+
+- `propagate_taint_for_binding(original_value, new_key)` (`executor.rs:282`)
+  — called at every `input_mapping` binding **before** `context.insert`, so
+  the new key inherits the strongest taint of every context key it references
+  (Source > Endorser > Pure). Enforced by regression RR-0026/RR-0027 (cargo
+  tests in `executor.rs`); the call sites are `run_cascade`
+  (`executor.rs:789`), `execute_select` (`executor.rs:1245`),
+  `execute_populate` (`executor.rs:1376`), and `execute_render`
+  (`executor.rs:1423`). Passing the *original* mapping value (with `$ref` /
+  `{{ }}` markers), not the resolved value — the function inspects
+  pre-resolution markers to find referenced keys.
+- `check_untrusted_input(value)` (`executor.rs:233`) — the gate side:
+  recursively scans a bound tool-input JSON for `{"$ref": "step_N_result..."}`
+  patterns **and** inline-Jinja `{{ step_N_result }}` strings (the same
+  reference grammar propagation recognizes — the gate must scan the same
+  grammar or inline Jinja would bypass the Source→Sink block), returning true
+  when any referenced entry is labeled `Source`.
+
 ## Cascade actions
 
-`ManifestExecutor::execute_manifest` (`executor.rs:435`) dispatches on
+`ManifestExecutor::execute_manifest` (`executor.rs:467`) dispatches on
 `step.action`:
 
 | Action | Handler | Purpose |
 |--------|---------|---------|
-| `select` | `execute_select` (`executor.rs:1071`) | LLM inference, parse JSON, merge into context |
-| `populate` | `execute_populate` (`executor.rs:1184`) | Render-only, store under `step_N_populated` |
-| `render` | `execute_render` (`executor.rs:1240`) | RenderAct — no inference, for reference docs |
-| `flowdef` | `execute_flowdef` (`executor.rs:1300`) | Nested sub-manifest cascade (composability) |
-| `tool_invoke` | `execute_tool_invoke` (`executor.rs:1445`) | MCP tool call via `step.mcp` |
-| `compute` | `execute_compute` (`executor.rs:1503`) | Deterministic math primitive (`hkask_forecast::*`) |
-| `choice` | inline (`executor.rs:583`) | Conditional branch via `_next_ordinal` |
-| `loop` | inline (`executor.rs:602`) | PDCA re-entry from target ordinal |
+| `select` | `execute_select` (`executor.rs:1231`) | LLM inference, parse JSON, merge into context |
+| `populate` | `execute_populate` (`executor.rs:1358`) | Render-only, store under `step_N_populated` |
+| `render` | `execute_render` (`executor.rs:1412`) | RenderAct — no inference, for reference docs |
+| `flowdef` | `execute_flowdef` (`executor.rs:1472`) | Nested sub-manifest cascade (composability) |
+| `tool_invoke` | `execute_tool_invoke` (`executor.rs:1629`) | MCP tool call via `step.mcp` |
+| `compute` | `execute_compute` (`executor.rs:1704`) | Deterministic math primitive (`hkask_forecast::*`) |
+| `choice` | inline (`executor.rs:671`) | Conditional branch via `_next_ordinal` |
+| `loop` | inline (`executor.rs:695`) | PDCA re-entry from target ordinal |
 | `abort` / `escalate` | inline | Terminate cascade |
 
 Step results are stored under `step_{ordinal}_result` keys. Final-result
-extraction must be ordinal-keyed (see
-`kask_bridge/src/skill_executor.rs:251`); `HashMap::values().last()` is
-non-deterministic.
+extraction must be ordinal-keyed — the canonical extractors are
+`extract_final_step_result` (`executor.rs:1853`) and the same-named function
+in `kask_bridge/src/skill_executor.rs`; `HashMap::values().last()` is
+non-deterministic (`RandomState`).
 
 ## See also
 
@@ -168,6 +215,8 @@ non-deterministic.
   ManifestExecutor invocation path.
 - [hkask-types Reference](../hkask-types/reference.md): the
   `SkillRegistryIndex` and `RegistryIndex` traits this crate implements.
+- [`guard-taint-pipeline.md`](../../architecture/guard-taint-pipeline.md): the
+  FIDES taint pipeline this executor participates in.
 - [`kask/docs/explanation/skills-and-composition.md`](../../explanation/skills-and-composition.md):
   cross-cutting skill anatomy and composition.
 

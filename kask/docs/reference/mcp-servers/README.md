@@ -1,7 +1,7 @@
 ---
 title: "MCP Server Registry — Reference"
 audience: [developers, architects, agents]
-last_updated: 2026-08-04
+last_updated: 2026-08-05
 version: "0.32.2"
 status: "Active"
 domain: "Composition"
@@ -23,35 +23,38 @@ struct.
 > **Hosting note (v0.32.2):** hKask runs in-process inside zed-kask. The standalone `kask mcp start
 > <id>` and `kask serve` CLI surfaces have been **deleted**. MCP servers are loaded by zed's
 > `context_server` host; the `BUILT_IN_MCP_SERVERS` constant in
-> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 11 on-disk servers. Five servers from
-> the original 16 have been deleted: `communication` (Matrix/TTS → zed voip), `filesystem` (zed
-> provides fs tools), `memory` (consolidated into the `hkask-memory` crate), `skill` (skill
-> execution is native via D1), and `regulation` (consolidated into the `hkask-regulation` crate);
-> `docproc` and `replica` were folded into `corpus`. The 11th server, `swarm` (Agent Bestiary
-> World integration), was added 2026-08-01. See
+> `kask/crates/kask_bridge/src/mcp_servers.rs` enumerates the 12 on-disk servers. Five servers from the original 16 have been deleted: `communication` (Matrix/TTS →
+> zed voip), `filesystem` (zed provides fs tools), `memory` (consolidated into the
+> `hkask-memory` crate), `skill` (skill execution is native via D1), and `regulation`
+> (consolidated into the `hkask-regulation` crate); `docproc` and `replica` were folded into
+> `corpus`. The 11th server, `swarm` (Agent Bestiary World integration), was added 2026-08-01;
+> the 12th, `prediction-markets` (Polymarket/Kalshi calibration), was added 2026-08-05. See
 > [`docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md)
 > §2.4.
 
 ## Server Catalog
 
-11 on-disk MCP servers:
+12 on-disk MCP servers, **260 tools** fleet-wide. Tool counts are verified against
+`#[tool(description = ...)]` annotations in each server's `src/` (2026-08-05 audit); where a
+pinning test exists, the count cites the test name.
 
-| Server | Crate | Domain | Tools | Math Engine |
-|--------|-------|--------|-------|-------------|
-| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact) | 8 | `hkask-mcp-codegraph` |
-| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting | 41 | `hkask-forecast` |
-| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation | 4 | — |
-| Corpus / DocProc / Replica | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | — |
-| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition | 11 | — |
-| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 18 | — |
-| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation | 37 | — |
-| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 15 | `hkask-mcp-research` |
-| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 18 | `hkask-forecast` |
-| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World agent swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 31 | — |
-| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline | 8 | — |
+| Server | Crate | Purpose | Tools | Count source |
+|--------|-------|---------|------:|--------------|
+| CodeGraph | `mcp-servers/hkask-mcp-codegraph` | Code understanding (query, traverse, impact, context assembly) | 9 | `#[tool]` grep |
+| [Companies](companies.md) | `mcp-servers/hkask-mcp-companies` | FIBO-anchored financial forecasting, dual-provider routing, portfolio ledger | 42 | `#[tool]` grep |
+| [Condenser](condenser.md) | `mcp-servers/hkask-mcp-condenser` | Context condensation (thread summarization, persistence, saliency) | 4 | `#[tool]` grep |
+| [Corpus](corpus.md) | `mcp-servers/hkask-mcp-corpus` | Corpus gathering, document processing, QA generation, style replicas | 27 | `#[tool]` grep |
+| Curator | `mcp-servers/hkask-mcp-curator` | Curator agent metacognition (escalations, memory, regulation query) | 8 | `#[tool]` grep |
+| Kata Kanban | `mcp-servers/hkask-mcp-kata-kanban` | Toyota Kata task boards | 18 | `#[tool]` grep |
+| Media | `mcp-servers/hkask-mcp-media` | Fal.ai media generation (image, video, audio, gallery) | 42 | `#[tool]` grep |
+| [Prediction Markets](prediction-markets.md) | `mcp-servers/hkask-mcp-prediction-markets` | Polymarket/Kalshi base rates, calibration, CMP curves, residuals | 12 | `#[tool]` grep |
+| Research | `mcp-servers/hkask-mcp-research` | Web search, extraction, browsing, RSS feeds | 17 | `#[tool]` grep |
+| [Scenarios](scenarios.md) | `mcp-servers/hkask-mcp-scenarios` | Event-tree forecasting (Tetlock/Schwartz/Chermack) | 21 | `#[tool]` grep |
+| [Swarm](swarm.md) | `mcp-servers/hkask-mcp-swarm` | Agent Bestiary World swarms + Xaman Ek curator + local swarm substrate (v2 §15) | 51 | `tool_surface_is_exactly_51_registered_tools` (`hkask_mcp_swarm.rs:350`) |
+| Training | `mcp-servers/hkask-mcp-training` | LoRA training pipeline (dataset, submit, validate, evaluate) | 8 | `#[tool]` grep |
 
 > The `curator` MCP server is kept on disk but may be unloaded by default (Curator is a native
-> agent, D2). All 11 build clean.
+> agent, D2). All 12 build clean.
 
 ## Common Patterns
 
@@ -66,15 +69,16 @@ All servers follow these patterns:
 
 ## Testing standard
 
-Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across all 11 servers.
+Every MCP server MUST include **tool-behavior contract tests** that invoke tools through their public `Parameters<T>` seam (e.g. `server.fs_read(Parameters(FsReadRequest { ... }))`), covering at minimum: the happy path, invalid input, boundary/edge cases, and error-specificity. Helper-seam-only tests (testing `sandbox_path`/services/infrastructure in isolation) are necessary but **not sufficient** — a helper-seam-only suite cannot catch tool-contract bugs (slice-index panics on bad input, canonicalize-on-non-existent, silent no-ops, error-swallowing). The kata-kanban contract test suite is the exemplar pattern. See the fleet test-seam audit for the current coverage gap across the 12 servers.
 
 ## Cross-links
 
-- [Companies MCP Server Reference](companies.md) — 41 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
+- [Companies MCP Server Reference](companies.md) — 42 tools, dual-provider routing, forecast store, portfolio ledger (DIAG-RF-004 inline)
 - [Condenser MCP Server Reference](condenser.md) — 4 tools, 3 compression algorithms, 2-phase condensation (DIAG-RF-006 inline)
-- [Corpus MCP Server Reference](corpus.md) — corpus gathering, document processing, QA generation, style replicas
-- [Scenario Forecasting Pipeline Diagram](scenarios.md) — scenarios tool flow (DIAG-RF-005 inline)
-- [Swarm MCP Server Reference](swarm.md) — 31 tools (20 ABW + 11 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
+- [Corpus MCP Server Reference](corpus.md) — 27 tools: corpus gathering, document processing, QA generation, style replicas
+- [Prediction Markets MCP Server Reference](prediction-markets.md) — 12 tools: Polymarket/Kalshi base rates, calibration loop, CMP curves
+- [Scenario Forecasting Pipeline Diagram](scenarios.md) — 21 tools, scenarios tool flow (DIAG-RF-005 inline)
+- [Swarm MCP Server Reference](swarm.md) — 51 tools (27 ABW + 24 local), dual mode (ABW cloud + local substrate), swarm-intelligence skill ecosystem (C0–C8, steering modes), consent-gated spend, algedonic wallet channel
 - [Superforecasting: Layered Model](../../explanation/forecasting-and-scenarios.md) — three-layer architecture
 - [MCP Tool Dispatch Sequence](../../diataxis/hkask-mcp-server/explanation.md) — MCP dispatch and governance (replaces the deleted `explanation/architecture-patterns.md`)
 - CodeGraph Adversarial Review — adversarial code review of the codegraph server (17 findings, all fixed)
