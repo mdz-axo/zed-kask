@@ -113,25 +113,6 @@ pub struct MarketCmpIndexStoreRequest {
     pub date: Option<String>,
 }
 
-/// Request for market_cmp_index_holdings: read the materialized holdings for
-/// a stored CMP index portfolio.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketCmpIndexHoldingsRequest {
-    /// The stored CMP index portfolio name (e.g.
-    /// `cmp:KXFEDDECISION:1m:increase`).
-    pub portfolio: String,
-    /// The snapshot date (YYYY-MM-DD). Defaults to today's UTC date.
-    pub date: Option<String>,
-}
-
-/// Request for market_cmp_index_list: list all stored CMP index portfolios
-/// for a base-event series.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct MarketCmpIndexListRequest {
-    /// Base-event series ticker. If omitted, lists all CMP index portfolios.
-    pub series: Option<String>,
-}
-
 /// Request for market_cmp_portfolio_store: compute the solved-portfolio CMP
 /// index set (maturity-bucketed, orientation-tagged portfolios of contracts
 /// with maturity-matched weights) for a registered base event and persist
@@ -256,6 +237,9 @@ hkask_mcp_server::mcp_server!(
         /// persisting CMP indices as transaction ledgers with materialized
         /// daily holdings and returns views.
         pub portfolio_store: hkask_mcp_portfolio::PortfolioStore,
+        /// Optional FRED API key for live reference-level fetches. When absent,
+        /// `market_cmp_context_suggest` uses curated static defaults.
+        pub fred_api_key: Option<String>,
     }
 );
 
@@ -1191,119 +1175,13 @@ impl PredictionMarketsServer {
     }
 
     /// Read the materialized holdings for a stored CMP index portfolio.
-    #[tool(
-        description = "Read the materialized daily holdings for a stored CMP index portfolio (created by market_cmp_index_store). Returns the constituent tenors and their weights at the snapshot date."
-    )]
-    pub async fn market_cmp_index_holdings(
-        &self,
-        Parameters(MarketCmpIndexHoldingsRequest { portfolio, date }): Parameters<
-            MarketCmpIndexHoldingsRequest,
-        >,
-    ) -> String {
-        execute_tool_semantic(
-            self,
-            "market_cmp_index_holdings",
-            Some(Self::ontology_anchor("market_cmp_index_holdings")),
-            async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp_index_holdings".to_string());
-                let snapshot_date = date
-                    .clone()
-                    .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
-                let store = self.portfolio_store.clone();
-                let portfolio_name = portfolio.clone();
-                let snapshot = tokio::task::spawn_blocking(move || {
-                    store.snapshot(&portfolio_name, &snapshot_date)
-                })
-                .await
-                .map_err(|e| {
-                    hkask_mcp_server::server::McpToolError::internal(format!(
-                        "holdings read task failed: {e}"
-                    ))
-                })?
-                .map_err(|e| {
-                    hkask_mcp_server::server::McpToolError::internal(format!(
-                        "failed to read CMP index holdings: {e}"
-                    ))
-                })?;
-                serde_json::to_value(serde_json::json!({
-                    "portfolio": portfolio,
-                    "date": snapshot.date,
-                    "holdings": snapshot.holdings,
-                    "cash_balance": snapshot.cash_balance,
-                    "transaction_count": snapshot.transaction_count,
-                    "issues": snapshot.issues,
-                }))
-                .map_err(|e| {
-                    hkask_mcp_server::server::McpToolError::internal(format!(
-                        "holdings serialization failed: {e}"
-                    ))
-                })
-            },
-        )
-        .await
-    }
-
-    /// List stored CMP index portfolios, optionally filtered by series.
-    #[tool(
-        description = "List all stored CMP index portfolios (created by market_cmp_index_store), optionally filtered by base-event series."
-    )]
-    pub async fn market_cmp_index_list(
-        &self,
-        Parameters(MarketCmpIndexListRequest { series }): Parameters<MarketCmpIndexListRequest>,
-    ) -> String {
-        execute_tool_semantic(
-            self,
-            "market_cmp_index_list",
-            Some(Self::ontology_anchor("market_cmp_index_list")),
-            async {
-                self.called_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert("market_cmp_index_list".to_string());
-                let store = self.portfolio_store.clone();
-                let prefix = series.as_ref().map(|s| format!("cmp:{s}"));
-                let names = tokio::task::spawn_blocking(move || store.list())
-                    .await
-                    .map_err(|e| {
-                        hkask_mcp_server::server::McpToolError::internal(format!(
-                            "list task failed: {e}"
-                        ))
-                    })?
-                    .map_err(|e| {
-                        hkask_mcp_server::server::McpToolError::internal(format!(
-                            "failed to list CMP index portfolios: {e}"
-                        ))
-                    })?;
-                let filtered: Vec<String> = match &prefix {
-                    Some(p) => names.into_iter().filter(|n| n.starts_with(p)).collect(),
-                    None => names
-                        .into_iter()
-                        .filter(|n| n.starts_with("cmp:"))
-                        .collect(),
-                };
-                serde_json::to_value(serde_json::json!({
-                    "portfolios": filtered,
-                }))
-                .map_err(|e| {
-                    hkask_mcp_server::server::McpToolError::internal(format!(
-                        "list serialization failed: {e}"
-                    ))
-                })
-            },
-        )
-        .await
-    }
-
     /// Compute the solved-portfolio CMP index set for a registered base event
     /// and persist each (bucket, orientation) index as a transaction-ledger
     /// portfolio of contracts with maturity-matched weights. This is the
     /// contract-portfolio CMP index (from `cmp_portfolio`), distinct from the
     /// curve-based `market_cmp_index_store`.
     #[tool(
-        description = "Compute the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged portfolios of contracts with maturity-matched weights) for a registered base event and persist each (bucket, orientation) index as a transaction-ledger portfolio. Requires operator-supplied economic context (reference level, volatility, predicted level, direction)."
+        description = "Compute the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged portfolios of contracts with maturity-matched weights) for a registered base event and persist each (bucket, orientation) index as a transaction-ledger portfolio. All economic-context fields are optional — when omitted, the tool uses the curated default for the base-event family (see market_cmp_context_suggest)."
     )]
     pub async fn market_cmp_portfolio_store(
         &self,
@@ -1762,6 +1640,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         detail: format!("failed to initialize CMP index portfolio store: {e}"),
                     }
                 })?;
+            let fred_api_key = ctx.credentials.get("HKASK_FRED_API_KEY").cloned();
             Ok(PredictionMarketsServer::new(
                 ctx.webid,
                 reqwest::Client::new(),
@@ -1772,6 +1651,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 base_events.clone(),
                 std::sync::Mutex::new(HashSet::new()),
                 portfolio_store,
+                fred_api_key,
             ))
         },
         vec![
@@ -1782,6 +1662,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             CredentialRequirement::optional(
                 "HKASK_PREDICTION_MARKETS_DATA",
                 "Data directory for the calibration journal (in-memory if absent)",
+            ),
+            CredentialRequirement::optional(
+                "HKASK_FRED_API_KEY",
+                "FRED API key for live reference-level fetches (curated static defaults used when absent)",
             ),
         ],
     )
@@ -1981,28 +1865,6 @@ mod tests {
         assert!(
             positions.is_empty(),
             "MarketCmpIndexStoreRequest schema has bare-boolean positions: {positions:?}"
-        );
-    }
-
-    #[test]
-    fn cmp_index_holdings_request_schema_has_no_boolean_positions() {
-        let schema = schemars::schema_for!(MarketCmpIndexHoldingsRequest);
-        let value = serde_json::to_value(&schema).expect("schema serializes");
-        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
-        assert!(
-            positions.is_empty(),
-            "MarketCmpIndexHoldingsRequest schema has bare-boolean positions: {positions:?}"
-        );
-    }
-
-    #[test]
-    fn cmp_index_list_request_schema_has_no_boolean_positions() {
-        let schema = schemars::schema_for!(MarketCmpIndexListRequest);
-        let value = serde_json::to_value(&schema).expect("schema serializes");
-        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
-        assert!(
-            positions.is_empty(),
-            "MarketCmpIndexListRequest schema has bare-boolean positions: {positions:?}"
         );
     }
 

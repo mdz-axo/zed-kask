@@ -31,6 +31,7 @@ pub mod tool_response;
 pub mod tool_schema;
 pub mod tool_taint;
 pub mod transcript;
+pub mod url_utils;
 pub mod visibility;
 pub mod voice;
 

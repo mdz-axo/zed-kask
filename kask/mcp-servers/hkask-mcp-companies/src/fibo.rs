@@ -86,6 +86,60 @@ pub fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
     }
 }
 
+/// Map a companies-server tool name to its top-level FIBO concept URI — the
+/// concept that represents *what the artifact is* (not the per-field concepts
+/// in the `"fibo"` map). This is the unified `"ontology"` field the widget
+/// reads for the "I" pattern dispatch and the compose-back body.
+///
+/// Returns `None` for tools that don't produce a FIBO-anchored artifact
+/// (e.g. `symbol_search`, `note_add`).
+pub fn tool_to_fibo(tool: &str) -> Option<FiboConcept> {
+    match tool {
+        // Portfolio tools
+        "portfolio_list" | "portfolio_delete" | "portfolio_comparison" => Some(PORTFOLIO),
+        "portfolio_returns" => Some(TIME_WEIGHTED_RETURN),
+        "ledger_import" | "ledger_export" | "transaction_note_append" => Some(TRANSACTION_LEDGER),
+        // Valuation tools
+        "dcf_valuation" | "reverse_dcf" => Some(DCF_VALUATION),
+        "ep_valuation" => Some(ECONOMIC_PROFIT),
+        "expectations_gap" => Some(INTRINSIC_VALUE_PER_SHARE),
+        "scenario_analysis" => Some(SCENARIO_PROBABILITY),
+        // Analysis tools
+        "company_screener" => Some(STOCK_SCREENER),
+        "moat_check" => Some(COMPETITIVE_ADVANTAGE),
+        "management_scorecard" => Some(CAPITAL_ALLOCATION),
+        "working_capital_cycle" => Some(NET_WORKING_CAPITAL),
+        "portfolio_attribution" => Some(ATTRIBUTION_ANALYSIS),
+        "portfolio_characteristics" => Some(WEIGHTED_AVERAGE),
+        "research_search" => Some(CORPORATION),
+        // Financial data tools
+        "company_profile" => Some(CORPORATION),
+        "stock_quote" => Some(MARKET_CAPITALIZATION),
+        "key_metrics" => Some(PRICE_EARNINGS_RATIO),
+        "historical_price" => Some(MARKET_CAPITALIZATION),
+        // Not FIBO-anchored (utility/metadata tools)
+        _ => None,
+    }
+}
+
+/// Inject the unified `"ontology"` key into a tool output `Value` if the tool
+/// has a FIBO concept mapping. Tools without a mapping are returned unchanged.
+/// This is the companies-server equivalent of the media server's
+/// `enrich_with_omc_and_provenance` — it bakes the ontology concept into the
+/// tool output so the portfolio widget can read it for the "I" pattern dispatch
+/// and the compose-back body.
+pub fn enrich_with_ontology(mut result: serde_json::Value, tool: &str) -> serde_json::Value {
+    if let Some(concept) = tool_to_fibo(tool) {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert(
+                "ontology".to_string(),
+                serde_json::Value::String(concept.to_string()),
+            );
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +156,50 @@ mod tests {
     fn fibo_unknown_field_returns_none() {
         assert!(fmp_field_to_fibo("someFmpSpecificMetadata").is_none());
         assert!(fmp_field_to_fibo("").is_none());
+    }
+
+    #[test]
+    fn tool_to_fibo_maps_portfolio_tools() {
+        assert_eq!(tool_to_fibo("portfolio_list"), Some(PORTFOLIO));
+        assert_eq!(
+            tool_to_fibo("portfolio_returns"),
+            Some(TIME_WEIGHTED_RETURN)
+        );
+        assert_eq!(tool_to_fibo("ledger_import"), Some(TRANSACTION_LEDGER));
+    }
+
+    #[test]
+    fn tool_to_fibo_maps_valuation_tools() {
+        assert_eq!(tool_to_fibo("dcf_valuation"), Some(DCF_VALUATION));
+        assert_eq!(tool_to_fibo("ep_valuation"), Some(ECONOMIC_PROFIT));
+    }
+
+    #[test]
+    fn tool_to_fibo_maps_analysis_tools() {
+        assert_eq!(tool_to_fibo("company_screener"), Some(STOCK_SCREENER));
+        assert_eq!(tool_to_fibo("research_search"), Some(CORPORATION));
+        assert_eq!(
+            tool_to_fibo("portfolio_attribution"),
+            Some(ATTRIBUTION_ANALYSIS)
+        );
+    }
+
+    #[test]
+    fn tool_to_fibo_unknown_returns_none() {
+        assert!(tool_to_fibo("symbol_search").is_none());
+        assert!(tool_to_fibo("note_add").is_none());
+        assert!(tool_to_fibo("").is_none());
+    }
+
+    #[test]
+    fn enrich_with_ontology_injects_concept() {
+        let result = enrich_with_ontology(serde_json::json!({"status": "ok"}), "portfolio_list");
+        assert_eq!(result["ontology"], "fibo-sec-sec-ast:Portfolio");
+    }
+
+    #[test]
+    fn enrich_with_ontology_no_mapping_leaves_result_unchanged() {
+        let result = enrich_with_ontology(serde_json::json!({"status": "ok"}), "note_add");
+        assert!(result.get("ontology").is_none());
     }
 }

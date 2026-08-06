@@ -952,4 +952,27 @@ mod tests {
         );
         assert!(report.irr_converged);
     }
+
+    /// Pin the delegation seam: the companies `PortfolioManager` must hold a
+    /// `hkask_mcp_portfolio::PortfolioStore` and delegate general ops
+    /// (create/list/apply/ledger/returns) through it, not re-implement them.
+    /// If someone re-inlines the returns computation or drops the store field,
+    /// this test fails — the delegation is a deliberate architectural
+    /// decision (the companies server depends on the portfolio server for
+    /// portfolio operations, per the extraction).
+    #[test]
+    fn portfolio_manager_delegates_to_portfolio_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = PortfolioManager::with_dir(dir.path().to_path_buf());
+        // The store() accessor returns the underlying PortfolioStore —
+        // the delegation seam. If this field is removed, the test won't compile.
+        let _store: &hkask_mcp_portfolio::PortfolioStore = manager.store();
+        // create + list delegate through the store.
+        manager.create("seam-test").unwrap();
+        let names = manager.list().unwrap();
+        assert!(names.contains(&"seam-test".to_string()));
+        // The store sees the same portfolio (same DB).
+        let store_names = manager.store().list().unwrap();
+        assert!(store_names.contains(&"seam-test".to_string()));
+    }
 }

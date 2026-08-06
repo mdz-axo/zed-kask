@@ -79,7 +79,7 @@ The following are added to the root `Cargo.toml` `[workspace.members]` array.
 Upstream merges never conflict with these paths.
 
 - `kask/crates/` — 19 hKask crates (`hkask-types`, `hkask-storage`, `hkask-memory`, `hkask-regulation`, `hkask-templates`, `hkask-guard`, `hkask-capability`, `hkask-keystore`, `hkask-ledger`, `hkask-mcp`, `hkask-mcp-server`, `hkask-inference`, `hkask-condenser`, `hkask-bridge-dublincore`, `hkask-services-core`, `hkask-email`, `hkask-forecast`, `hkask-lisp`, `hkask-test-harness`) plus the `kask_bridge` bidirectional seam (D8, zed-kask-side). The `hkask-{media,graph}-widget` and `hkask-viz-core` viz crates live under `crates/` (zed-kask-side, see D18) because they render GPUI elements and must depend on `gpui`/`theme`, which §13.1 forbids for hKask crates. The `hkask-services-{context,corpus,compose,inference,kata-kanban,runtime}` crates were folded into their sole MCP server consumers; `hkask-goal` was deleted (`GoalState` retained in `hkask-types`; `Goal`/`GoalArtifact`/`GoalCriterion` removed).
-- `kask/mcp-servers/` — 11 MCP server crates (`hkask-mcp-{codegraph,companies,condenser,corpus,curator,kata-kanban,media,research,scenarios,swarm,training}`)
+- `kask/mcp-servers/` — 13 MCP server crates (`hkask-mcp-{codegraph,companies,condenser,corpus,curator,kata-kanban,media,portfolio,prediction-markets,research,scenarios,swarm,training}`)
 - `crates/kask_extensions_ui` — zed-kask-side kask skill marketplace UI
 - `crates/marketplace_ui_common` — shared catalog-page chrome (`MarketplaceCard`, search bar, empty state) extracted from the duplicated copies in `extensions_ui` (upstream, untouched) and `kask_extensions_ui`
 

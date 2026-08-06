@@ -57,7 +57,10 @@ impl CompaniesServer {
     pub async fn portfolio_list(&self) -> String {
         execute_tool(self, "portfolio_list", async {
             let names = run_portfolio(self.portfolio.clone(), |portfolio| portfolio.list()).await?;
-            Ok(serde_json::json!({"portfolios": names, "fibo": {"portfolio": fibo::PORTFOLIO}}))
+            Ok(fibo::enrich_with_ontology(
+                serde_json::json!({"portfolios": names, "fibo": {"portfolio": fibo::PORTFOLIO}}),
+                "portfolio_list",
+            ))
         })
         .await
     }
@@ -120,7 +123,10 @@ impl CompaniesServer {
                 types::ImportFormat::Json => manager.export_json(&portfolio),
             })
             .await?;
-            Ok(serde_json::json!({"format": output_format, "data": data, "fibo": {"transaction_ledger": fibo::TRANSACTION_LEDGER}}))
+            Ok(fibo::enrich_with_ontology(
+                serde_json::json!({"format": output_format, "data": data, "fibo": {"transaction_ledger": fibo::TRANSACTION_LEDGER}}),
+                "ledger_export",
+            ))
         })
         .await
     }
@@ -295,31 +301,34 @@ impl CompaniesServer {
             });
             let provenance_span_id = serde_json::Value::Null;
 
-            Ok(serde_json::json!({
-                "portfolio": report.portfolio,
-                "from": report.from,
-                "to": report.to,
-                "total_return": report.total_return,
-                "modified_dietz": report.modified_dietz,
-                "irr": report.irr,
-                "irr_converged": report.irr_converged,
-                "start_value": report.start_value,
-                "end_value": report.end_value,
-                "net_cash_flows": report.net_cash_flows,
-                "cash_flow_count": report.cash_flow_count,
-                "positions_at_start": report.positions_at_start,
-                "positions_at_end": report.positions_at_end,
-                "fibo": {
-                    "time_weighted_return": fibo::TIME_WEIGHTED_RETURN,
-                    "internal_rate_of_return": fibo::INTERNAL_RATE_OF_RETURN,
-                },
-                "provenance": {
-                    "tool": "portfolio_returns",
-                    "server": "hkask-mcp-companies",
-                    "args": provenance_args,
-                    "span_id": provenance_span_id,
-                },
-            }))
+            Ok(fibo::enrich_with_ontology(
+                serde_json::json!({
+                    "portfolio": report.portfolio,
+                    "from": report.from,
+                    "to": report.to,
+                    "total_return": report.total_return,
+                    "modified_dietz": report.modified_dietz,
+                    "irr": report.irr,
+                    "irr_converged": report.irr_converged,
+                    "start_value": report.start_value,
+                    "end_value": report.end_value,
+                    "net_cash_flows": report.net_cash_flows,
+                    "cash_flow_count": report.cash_flow_count,
+                    "positions_at_start": report.positions_at_start,
+                    "positions_at_end": report.positions_at_end,
+                    "fibo": {
+                        "time_weighted_return": fibo::TIME_WEIGHTED_RETURN,
+                        "internal_rate_of_return": fibo::INTERNAL_RATE_OF_RETURN,
+                    },
+                    "provenance": {
+                        "tool": "portfolio_returns",
+                        "server": "hkask-mcp-portfolio",
+                        "args": provenance_args,
+                        "span_id": provenance_span_id,
+                    },
+                }),
+                "portfolio_returns",
+            ))
         })
         .await
     }
@@ -602,7 +611,7 @@ mod tests {
         assert_eq!(tool, "portfolio_returns");
         assert_eq!(
             provenance.get("server").and_then(|s| s.as_str()),
-            Some("hkask-mcp-companies")
+            Some("hkask-mcp-portfolio")
         );
         // args carries the request the tool was invoked with.
         assert_eq!(provenance["args"]["from"].as_str(), Some("2024-01-03"));

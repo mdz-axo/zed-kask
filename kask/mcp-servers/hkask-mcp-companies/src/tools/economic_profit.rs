@@ -249,7 +249,7 @@ impl CompaniesServer {
                 },
             });
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "ep_valuation"))
         })
         .await
     }

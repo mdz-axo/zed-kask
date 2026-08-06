@@ -86,7 +86,7 @@ impl CompaniesServer {
                 },
                 "data_periods": gross_margins.len(),
             });
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "moat_check"))
         })
         .await
     }
@@ -153,7 +153,7 @@ impl CompaniesServer {
                 "data_periods": roic_nums.len(),
                 "framework": "MAIA: Good = decreasing capital with improving returns, OR increasing capital with improving returns. Bad = increasing capital with decreasing returns.",
             });
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "management_scorecard"))
         }).await
     }
 
@@ -241,7 +241,7 @@ impl CompaniesServer {
                 "data_points": periods.len(),
                 "framework": "MAIA CFO scorecard: stability of working capital management through economic conditions. The level is structural; consistency is management skill.",
             });
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "working_capital_cycle"))
         }).await
     }
 
@@ -333,7 +333,7 @@ impl CompaniesServer {
                 "framework": "FMP Stock Screener. Parses natural language screening prompts into FMP screener API parameters. Use criteria_overrides to adjust parsed criteria. Reply with a modified prompt or criteria_overrides to refine results."
             });
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "company_screener"))
         })
         .await
     }
@@ -394,7 +394,7 @@ impl CompaniesServer {
                 "framework": "Multi-provider fundamental research search (Exa, Tavily, Brave). Claims are classified by category and numeric values extracted. Use with thesis_test, scenario_weight, or guidance_check skills for structured financial analysis mapping claims to DCF assumptions."
             });
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "research_search"))
         }).await
     }
 

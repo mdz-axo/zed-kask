@@ -213,31 +213,9 @@ pub(crate) async fn search_youtube_transcripts(
     Ok(transcripts)
 }
 
-fn extract_youtube_id(url: &str) -> Option<String> {
-    if let Some(pos) = url.find("v=") {
-        let after = &url[pos + 2..];
-        let id: String = after.chars().take(11).collect();
-        if id.len() == 11
-            && id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            return Some(id);
-        }
-    }
-    if let Some(pos) = url.find("youtu.be/") {
-        let after = &url[pos + 9..];
-        let id: String = after.chars().take(11).collect();
-        if id.len() == 11
-            && id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            return Some(id);
-        }
-    }
-    None
-}
+// `extract_youtube_id` is shared via `hkask_types::url_utils::extract_youtube_id`
+// to avoid duplication between the corpus server and the companies server.
+pub(crate) use hkask_types::url_utils::extract_youtube_id;
 
 async fn fetch_youtube_transcript(
     client: &reqwest::Client,

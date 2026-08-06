@@ -176,7 +176,7 @@ impl CompaniesServer {
                 cb.partial_cmp(&ca).unwrap_or(std::cmp::Ordering::Equal)
             });
 
-            Ok(serde_json::json!({
+            Ok(fibo::enrich_with_ontology(serde_json::json!({
                 "portfolio": req.portfolio,
                 "from": req.from,
                 "to": req.to,
@@ -185,7 +185,7 @@ impl CompaniesServer {
                 "fibo": {
                     "attribution_analysis": fibo::ATTRIBUTION_ANALYSIS,
                 },
-            }))
+            }), "portfolio_attribution"))
         }).await
     }
 
@@ -384,15 +384,18 @@ impl CompaniesServer {
                 characteristics.insert(format!("{field}_breakdown"), serde_json::json!(breakdown));
             }
 
-            Ok(serde_json::json!({
-                "portfolio": req.portfolio,
-                "date": req.date,
-                "aggregation": req.aggregation,
-                "total_market_value": total_mv,
-                "position_count": market_values.len(),
-                "characteristics": characteristics,
-                "errors": errors,
-            }))
+            Ok(fibo::enrich_with_ontology(
+                serde_json::json!({
+                    "portfolio": req.portfolio,
+                    "date": req.date,
+                    "aggregation": req.aggregation,
+                    "total_market_value": total_mv,
+                    "position_count": market_values.len(),
+                    "characteristics": characteristics,
+                    "errors": errors,
+                }),
+                "portfolio_characteristics",
+            ))
         })
         .await
     }
@@ -580,7 +583,7 @@ impl CompaniesServer {
                 "framework": "Two-stage 11-line-item DCF: History-calibrated projections through income statement (revenue, COGS, D&A) and balance sheet (NWC, capex) to FCF. Terminal value via Gordon Growth perpetuity (capped at r - 0.5%). Enterprise value to equity bridge via net debt. Damodaran (2012) Investment Valuation. Use forecast_record with the forecast_id to decompose actual outcomes against these projections.",
             });
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "dcf_valuation"))
         }).await
     }
 
@@ -743,11 +746,12 @@ impl CompaniesServer {
                 },
             });
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "reverse_dcf"))
         }).await
     }
 
     #[tool(
+        description = "2x2 Schwartz scenario
         description = "Schwartz 2x2 scenario analysis. Projects four scenarios (Bull, Land Grab, Cash Cow, Bear) based on revenue growth x profit margin axes. Runs DCF under each scenario and returns the intrinsic value range. Default axes: revenue_growth x profit_margin. Adjustable multipliers let you tune scenario severity."
     )]
     pub async fn scenario_analysis(
@@ -908,7 +912,7 @@ impl CompaniesServer {
                 "framework": "Schwartz 2x2 scenario matrix: revenue growth x gross margin. Four scenarios: Bull (high/high), Land Grab (high/low), Cash Cow (low/high), Bear (low/low). Each scenario runs through the two-stage DCF model. The range of intrinsic values represents the uncertainty around the single-point DCF estimate. Simple mode (default) returns the range without probabilities; detailed mode (event_tree supplied) derives quadrant probabilities from the tree's root marginals — the earned upgrade on the analyst maturity ladder.",
             });
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "scenario_analysis"))
         }).await
     }
 }

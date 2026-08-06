@@ -111,7 +111,7 @@ impl CompaniesServer {
 
             let output = serde_json::json!(analysis);
 
-            Ok(output)
+            Ok(fibo::enrich_with_ontology(output, "expectations_gap"))
         })
         .await
     }

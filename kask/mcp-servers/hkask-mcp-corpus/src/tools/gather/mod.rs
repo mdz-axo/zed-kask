@@ -486,6 +486,11 @@ async fn search_youtube_for_company(
     api_key: &str,
     limit: u32,
 ) -> Result<Vec<(String, String, String)>, String> {
+    // CorpusServer doesn't have a shared reqwest::Client field (unlike
+    // CompaniesServer), so this helper creates a standalone client with a
+    // 30s timeout. The companies server's fetch_corpus_transcripts uses the
+    // server's shared client. This is an intentional difference — the two
+    // servers are independently deployed with different HTTP client policies.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
