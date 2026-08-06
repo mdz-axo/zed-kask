@@ -297,7 +297,7 @@ impl MediaServer {
         }): Parameters<VideoClipRequest>,
     ) -> String {
         execute_tool(self, "video_clip", async {
-            validate_tool_url(&video_url)?;
+            validate_tool_url_with_dns(&video_url).await?;
 
             if start_sec < 0.0 || end_sec <= 0.0 {
                 return Err(McpToolError::invalid_argument(
@@ -355,7 +355,7 @@ impl MediaServer {
         }): Parameters<VideoToGifRequest>,
     ) -> String {
         execute_tool(self, "video_to_gif", async {
-            validate_tool_url(&video_url)?;
+            validate_tool_url_with_dns(&video_url).await?;
 
             self.require_ffmpeg()?;
 
@@ -468,7 +468,7 @@ impl MediaServer {
         }): Parameters<VideoAddCaptionRequest>,
     ) -> String {
         execute_tool(self, "video_add_caption", async {
-            validate_tool_url(&video_url)?;
+            validate_tool_url_with_dns(&video_url).await?;
 
             self.require_ffmpeg()?;
 
@@ -522,7 +522,7 @@ impl MediaServer {
         }): Parameters<VideoRemixRequest>,
     ) -> String {
         execute_tool(self, "video_remix", async {
-            validate_tool_url(&video_url)?;
+            validate_tool_url_with_dns(&video_url).await?;
 
             if start_sec >= end_sec {
                 return Err(McpToolError::invalid_argument(
@@ -663,7 +663,7 @@ impl MediaServer {
             }
 
             for url in &video_urls {
-                validate_tool_url(url)?;
+                validate_tool_url_with_dns(url).await?;
             }
 
             self.require_ffmpeg()?;
@@ -699,7 +699,7 @@ impl MediaServer {
         Parameters(VideoCaptionRequest { video_url, style }): Parameters<VideoCaptionRequest>,
     ) -> String {
         execute_tool(self, "video_caption", async {
-            validate_tool_url(&video_url)?;
+            validate_tool_url_with_dns(&video_url).await?;
 
             let style_str = style.as_deref().unwrap_or("descriptive");
             self.require_ffmpeg()?;

@@ -259,7 +259,7 @@ impl ResearchServer {
         execute_tool(self, "web_find_similar", async {
             self.rate_limiter.check("web_find_similar")?;
 
-            validate_tool_url(&url)?;
+            validate_tool_url_with_dns(&url).await?;
 
             let num = num_results.unwrap_or(5).min(20);
 
@@ -342,7 +342,7 @@ impl ResearchServer {
                 )));
             }
 
-            validate_tool_url(&url)?;
+            validate_tool_url_with_dns(&url).await?;
 
             let fmt = format.unwrap_or_else(|| "markdown".to_string());
             let main_content_only = main_content_only.unwrap_or(true);
@@ -432,7 +432,7 @@ impl ResearchServer {
                 )));
             }
 
-            validate_tool_url(&url)?;
+            validate_tool_url_with_dns(&url).await?;
 
             let instr = instruction.unwrap_or_else(|| "Extract page content".to_string());
             let timeout =
@@ -758,7 +758,7 @@ impl ResearchServer {
     ) -> String {
         execute_tool(self, "rss_discover_feeds", async {
             self.rate_limiter.check("rss_discover_feeds")?;
-            validate_tool_url(&url)?;
+            validate_tool_url_with_dns(&url).await?;
             match discover_feeds(&self.rss_client, &url).await {
                 Ok(feeds) => {
                     Ok(serde_json::json!({"url": url, "feeds": feeds, "count": feeds.len()}))

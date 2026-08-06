@@ -73,7 +73,7 @@ pub async fn discover_feeds(
     // SSRF defense: validate the URL before fetching. discover_feeds is
     // reachable from the rss_discover_feeds tool, so user-supplied URLs
     // must pass the same validation as web_extract/web_browse.
-    validate_provider_url(url).map_err(|e| anyhow::anyhow!("URL validation failed: {e}"))?;
+    validate_provider_url(url).await.map_err(|e| anyhow::anyhow!("URL validation failed: {e}"))?;
     let response = client.get(url).send().await?;
     let content_type = response
         .headers()

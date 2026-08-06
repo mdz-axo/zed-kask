@@ -216,7 +216,103 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
-//
-// The check is gated behind an env var so it doesn't run on
-// every `cargo test` invocation (it walks the whole workspace).
-// CI sets `HKASK_RUN_MCP_GATE_AUDIT=1` to enable it.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The sync `validate_url` must reject literal loopback IPs (the baseline
+    /// check that `validate_url_with_dns` builds on).
+    #[test]
+    fn validate_url_rejects_literal_loopback() {
+        let config = UrlValidationConfig::default();
+        let result = validate_url("http://127.0.0.1:8080/", &config);
+        assert!(matches!(result, Err(SecurityError::LoopbackNotAllowed(_))));
+    }
+
+    /// The sync `validate_url` must reject literal private IPs.
+    #[test]
+    fn validate_url_rejects_literal_private_ip() {
+        let config = UrlValidationConfig::default();
+        let result = validate_url("http://10.0.0.1/", &config);
+        assert!(matches!(result, Err(SecurityError::PrivateIpNotAllowed(_))));
+    }
+
+    /// The sync `validate_url` must reject the cloud-metadata endpoint
+    /// (169.254.169.254) — a primary SSRF target.
+    #[test]
+    fn validate_url_rejects_cloud_metadata_endpoint() {
+        let config = UrlValidationConfig::default();
+        let result = validate_url("http://169.254.169.254/latest/meta-data/", &config);
+        assert!(matches!(result, Err(SecurityError::PrivateIpNotAllowed(_))));
+    }
+
+    /// The sync `validate_url` must accept a non-literal hostname (it cannot
+    /// resolve it — that is `validate_url_with_dns`'s job). This test pins the
+    /// gap: a hostname that *would* resolve to a private IP passes the sync
+    /// check. The async variant closes this gap.
+    #[test]
+    fn validate_url_accepts_non_literal_hostname_without_dns() {
+        let config = UrlValidationConfig::default();
+        // `localhost` is a hostname, not a literal IP; the sync check cannot
+        // catch it. This is the documented gap that validate_url_with_dns
+        // closes.
+        let result = validate_url("http://localhost:8080/", &config);
+        assert!(result.is_ok(), "sync validate_url cannot resolve hostnames");
+    }
+
+    /// `validate_url_with_dns` must resolve `localhost` and reject it as
+    /// loopback. This is the core SSRF DNS-resolution test: a non-literal
+    /// hostname resolving to a loopback IP is caught by the async variant.
+    #[tokio::test]
+    async fn validate_url_with_dns_rejects_localhost_resolving_to_loopback() {
+        let config = UrlValidationConfig::default();
+        let result = validate_url_with_dns("http://localhost:8080/", &config).await;
+        assert!(
+            matches!(result, Err(SecurityError::LoopbackNotAllowed(_))),
+            "localhost resolves to 127.0.0.1 and must be rejected; got {result:?}"
+        );
+    }
+
+    /// `validate_url_with_dns` must accept a public hostname that resolves to
+    /// a public IP (e.g. `example.com`). This guards against false positives.
+    #[tokio::test]
+    async fn validate_url_with_dns_accepts_public_hostname() {
+        let config = UrlValidationConfig::default();
+        // example.com resolves to public IPs; the async check must accept it.
+        // If DNS is unavailable in the test environment, skip rather than fail.
+        let result = validate_url_with_dns("https://example.com/", &config).await;
+        match result {
+            Ok(()) => {}
+            // DNS may be unavailable in offline CI; treat that as a skip.
+            Err(SecurityError::InvalidUrl(msg)) if msg.contains("DNS resolution failed") => {
+                eprintln!("skipped: DNS unavailable in test env");
+            }
+            other => panic!("expected Ok or DNS-unavailable, got {other:?}"),
+        }
+    }
+
+    /// `validate_url_with_dns` must accept a literal public IP without DNS
+    /// (the literal-IP fast path skips resolution).
+    #[tokio::test]
+    async fn validate_url_with_dns_accepts_literal_public_ip() {
+        let config = UrlValidationConfig::default();
+        // 8.8.8.8 is a public DNS resolver; literal IPs skip DNS resolution.
+        let result = validate_url_with_dns("http://8.8.8.8/", &config).await;
+        assert!(
+            result.is_ok(),
+            "literal public IP must be accepted; got {result:?}"
+        );
+    }
+
+    /// The permissive config must allow loopback even after DNS resolution
+    /// (used by RSS tools where the user explicitly chose a local feed).
+    #[tokio::test]
+    async fn validate_url_with_dns_allows_loopback_in_permissive_mode() {
+        let config = UrlValidationConfig::permissive();
+        let result = validate_url_with_dns("http://localhost:4000/feed.xml", &config).await;
+        assert!(
+            result.is_ok(),
+            "permissive config must allow loopback; got {result:?}"
+        );
+    }
+}

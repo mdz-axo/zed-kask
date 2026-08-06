@@ -25,7 +25,7 @@ pub use error::{MediaError, map_gallery_store_error, map_image_open_error, map_m
 
 use gallery::GalleryState;
 use gallery::vision::{self};
-use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url};
+use hkask_mcp_server::server::{McpToolError, execute_tool, validate_tool_url_with_dns};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::database::value::DbValue;
 use hkask_storage::{GalleryMode, GalleryStore, GalleryStoreError};

@@ -510,7 +510,16 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 detail: e.to_string(),
             })
         },
-        vec![],
+        vec![
+            hkask_mcp_server::CredentialRequirement::optional(
+                "HKASK_DB_PATH",
+                "Path to the condenser episodic + semantic SQLite database (defaults to in-memory when unset)",
+            ),
+            hkask_mcp_server::CredentialRequirement::optional(
+                "HKASK_DB_PASSPHRASE",
+                "SQLCipher encryption passphrase for the condenser database (required when HKASK_DB_PATH is set)",
+            ),
+        ],
     )
     .await
 }

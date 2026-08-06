@@ -532,7 +532,7 @@ impl MediaServer {
         Parameters(DescribeImageRequest { image_url, style }): Parameters<DescribeImageRequest>,
     ) -> String {
         execute_tool(self, "describe_image", async {
-            validate_tool_url(&image_url)?;
+            validate_tool_url_with_dns(&image_url).await?;
 
             let style_str = style.as_deref().unwrap_or("descriptive");
             let mut vars = HashMap::new();

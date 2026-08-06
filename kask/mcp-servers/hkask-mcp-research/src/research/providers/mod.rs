@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::research::types::*;
-use hkask_mcp_server::server::validate_tool_url;
+use hkask_mcp_server::server::validate_tool_url_with_dns;
 
 mod arxiv;
 mod brave;
@@ -60,10 +60,15 @@ pub(crate) trait WebSearchProvider: Send + Sync {
 
 /// Validate a URL for SSRF safety before making outbound requests.
 ///
-/// Wraps the shared `validate_tool_url` from `hkask-mcp` and converts the error
-/// to `WebError`. Used by `RawFetchProvider` for defense-in-depth URL validation.
-pub fn validate_provider_url(url: &str) -> Result<(), WebError> {
-    validate_tool_url(url).map_err(|e| WebError::BadArgs(e.message))
+/// Wraps the shared `validate_tool_url_with_dns` from `hkask-mcp` and converts
+/// the error to `WebError`. Used by `RawFetchProvider` for defense-in-depth URL
+/// validation. This is async because it resolves the hostname via DNS to
+/// defeat hostname-based SSRF bypasses (CWE-918/441) — a non-literal hostname
+/// resolving to a private/loopback IP is rejected here.
+pub async fn validate_provider_url(url: &str) -> Result<(), WebError> {
+    validate_tool_url_with_dns(url)
+        .await
+        .map_err(|e| WebError::BadArgs(e.message))
 }
 
 /// Validate a URL with permissive SSRF config (allows private IPs and loopback).

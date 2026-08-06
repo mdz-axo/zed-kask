@@ -8,6 +8,38 @@
 
 use serde::Deserialize;
 
+/// Evidence kind for interactive what-if overrides. Hard evidence clamps a
+/// node's marginal to an observed value (the original click-to-set-0.9/0.1
+/// behavior). Soft evidence applies a Bayesian likelihood-ratio update — the
+/// superforecasting-standard input shape — so a user can express "I observed
+/// X with likelihood 3:1" without fixing the marginal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EvidenceKind {
+    /// Observed probability: the node's marginal is clamped to this value.
+    Hard(f64),
+    /// Likelihood ratio P(evidence | node=true) / P(evidence | node=false).
+    /// The posterior is P' = P·LR / (P·LR + (1−P)), then propagated.
+    Soft(f64),
+}
+
+impl EvidenceKind {
+    /// Apply the evidence to a prior marginal, returning the posterior.
+    /// Hard evidence clamps; soft evidence applies the Bayesian update.
+    pub fn apply(self, prior: f64) -> f64 {
+        match self {
+            EvidenceKind::Hard(value) => value.clamp(0.0, 1.0),
+            EvidenceKind::Soft(likelihood_ratio) => {
+                let p = prior.clamp(0.0, 1.0);
+                if p <= 0.0 || p >= 1.0 {
+                    return p;
+                }
+                let lr = likelihood_ratio.max(0.0);
+                (p * lr / (p * lr + (1.0 - p))).clamp(0.0, 1.0)
+            }
+        }
+    }
+}
+
 /// The discriminator-tagged body of a ```` ```graph ```` block.
 ///
 /// `viz` selects the renderer; `"event_tree"` renders the MAIA event-tree DAG.

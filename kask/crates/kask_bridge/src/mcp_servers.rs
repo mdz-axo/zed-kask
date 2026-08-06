@@ -264,6 +264,11 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_ABW_DEFAULT_AGENT_MODEL",
             "HKASK_SWARM_MODE",
             "HKASK_LOCAL_AGENTS_DIR",
+            // Local swarms dir — read by `LocalSwarmRegistry::new` via
+            // `HKASK_LOCAL_SWARMS_DIR` in `config.rs`. Without this entry,
+            // a kask-settings-derived `local_swarms_dir` override is
+            // silently dropped by `filter_config_env_for_server`.
+            "HKASK_LOCAL_SWARMS_DIR",
             "HKASK_SWARM_LEDGER_PATH",
             "HKASK_SWARM_CONSENT_STORE",
             // The governed server id set — the swarm server filters cloned
@@ -604,6 +609,35 @@ mod tests {
             s.config_env.unwrap().to_vec(),
             vec!["HKASK_DATA_DIR"],
             "kata-kanban config_env allowlist drifted"
+        );
+    }
+
+    #[test]
+    fn condenser_allowlist_matches_actual_reads() {
+        let s = server_by_id("condenser");
+        // Read sites in `run()`:
+        //   ctx.credentials.get("HKASK_DB_PATH")       → episodic + semantic DB path
+        //   ctx.credentials.get("HKASK_DB_PASSPHRASE") → SQLCipher passphrase (required when DB_PATH set)
+        //   std::env::var("HKASK_CONDENSER_PERSONA_KEYWORDS") → persona keyword list
+        //   std::env::var("HKASK_CONDENSE_SALIENCY_WINDOW")   → saliency window multiplier
+        //   ctx.credentials.get("HKASK_DEFAULT_MODEL")        → default inference model
+        assert_eq!(
+            s.credentials.unwrap().to_vec(),
+            vec!["HKASK_DB_PASSPHRASE"],
+            "condenser credentials allowlist drifted — HKASK_DB_PASSPHRASE is read \
+             in run() for the episodic + semantic SQLite stores; under-granting forces \
+             in-memory mode (no persistence) under governed launch"
+        );
+        assert_eq!(
+            s.config_env.unwrap().to_vec(),
+            vec![
+                "HKASK_CONDENSER_PERSONA_KEYWORDS",
+                "HKASK_CONDENSE_SALIENCY_WINDOW",
+                "HKASK_DEFAULT_MODEL",
+                "HKASK_DB_PATH",
+            ],
+            "condenser config_env allowlist drifted — every entry must have a read \
+             site in hkask-mcp-condenser"
         );
     }
 
@@ -997,6 +1031,7 @@ mod tests {
             "HKASK_ABW_DEFAULT_AGENT_MODEL",
             "HKASK_SWARM_MODE",
             "HKASK_LOCAL_AGENTS_DIR",
+            "HKASK_LOCAL_SWARMS_DIR",
             "HKASK_SWARM_LEDGER_PATH",
             "HKASK_SWARM_CONSENT_STORE",
             "HKASK_MCP_SERVER_IDS",

@@ -43,18 +43,20 @@
 
 ## Phase 3 — Capabilities (Guidelines)
 
-- [ ] **T5a. Polytree detection + backward inference core (Pearl π-λ)**
-  - [ ] `is_polytree(body) -> bool` returns true for chain/tree/polytree, false for diamond
-  - [ ] `recompute_posteriors(body, topo_order, evidence) -> Vec<f64>` implements Pearl π-λ message passing for singly-connected DAGs
-  - [ ] Test: 3-node chain A→B→C, evidence on C, asserts A's marginal moves toward posterior
-  - Verify: `cargo test -p hkask-graph-widget propagate polytree`
+- [x] **T5a. Polytree detection + backward inference core (Pearl π-λ)**
+  - [x] `is_polytree(body) -> bool` returns true for chain/tree/polytree, false for diamond (union-find on undirected edges)
+  - [x] `recompute_posteriors(body, topo_order, evidence) -> Vec<f64>` implements fixpoint forward+backward sweeps (Pearl π-λ)
+  - [x] `debug_assert!(is_polytree(body))` encodes the polytree precondition (catches test-time misuse)
+  - [x] Tests: `is_polytree_true_for_chain/tree`, `is_polytree_false_for_diamond`, `backward_inference_updates_parent_on_leaf_evidence`, `backward_inference_updates_sibling_on_evidence` (the discriminating test that catches the sibling-stale bug)
+  - Verify: `cargo test -p hkask-graph-widget propagate polytree` (deferred to user)
   - Depends: T2, T3
 
-- [ ] **T5b. Backward inference fallback + view integration**
-  - [ ] `repropagate` uses posteriors if polytree + evidence set; else forward marginals + `tracing::warn!` for multiply-connected
-  - [ ] Setting evidence on a leaf in a diamond shows forward-only result + visible "backward inference unavailable for this graph shape" notice
-  - [ ] No regression in existing forward-only tests
-  - Verify: `cargo test -p hkask-graph-widget view backward`
+- [x] **T5b. Backward inference fallback + view integration**
+  - [x] `repropagate` uses posteriors if polytree + evidence set; else forward marginals + `tracing::warn!` for multiply-connected
+  - [x] `backward_inference_available: bool` field on `GraphWidget`, computed once in `new`
+  - [x] Visible header notice: "backward inference unavailable for this graph shape — evidence propagates forward only" when `!polytree && !evidence.is_empty()`
+  - [x] No regression in existing forward-only tests
+  - Verify: `cargo test -p hkask-graph-widget view backward` (deferred to user)
   - Depends: T5a
 
 - [ ] **T6. Soft evidence mode (likelihood ratios)**

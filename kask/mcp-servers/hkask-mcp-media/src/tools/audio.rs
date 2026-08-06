@@ -111,7 +111,7 @@ impl MediaServer {
         }): Parameters<TranscribeRequest>,
     ) -> String {
         execute_tool(self, "transcribe", async {
-            validate_tool_url(&audio_url)?;
+            validate_tool_url_with_dns(&audio_url).await?;
 
             let media_params = hkask_types::MediaGenerateParams {
                 audio_url: Some(audio_url.clone()),
@@ -137,7 +137,7 @@ impl MediaServer {
         }): Parameters<TranscribeRequest>,
     ) -> String {
         execute_tool(self, "transcribe_bundle", async {
-            validate_tool_url(&audio_url)?;
+            validate_tool_url_with_dns(&audio_url).await?;
 
             let media_params = hkask_types::MediaGenerateParams {
                 audio_url: Some(audio_url.clone()),

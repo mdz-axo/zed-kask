@@ -698,9 +698,12 @@ fn main() {
             hkask_email::CuratorAlertEmailSink::try_from_env(kask_runtime_handle);
 
         let cybernetics_loop_inner =
-            hkask_regulation::CyberneticsLoop::new(regulation_ledger.clone())
-                .with_alerts_channel(alert_tx)
-                .with_event_sink(event_sink.clone());
+            hkask_regulation::CyberneticsLoop::with_set_points(
+                regulation_ledger.clone(),
+                hkask_regulation::load_set_points(),
+            )
+            .with_alerts_channel(alert_tx)
+            .with_event_sink(event_sink.clone());
         let cybernetics_loop_inner = if let Some(sink) = alert_email_sink {
             cybernetics_loop_inner.with_alert_email_sink(sink)
         } else {

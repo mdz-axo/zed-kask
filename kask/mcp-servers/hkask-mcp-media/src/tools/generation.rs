@@ -67,7 +67,7 @@ impl MediaServer {
         }): Parameters<TransformImageRequest>,
     ) -> String {
         execute_tool(self, "transform_image", async {
-            validate_tool_url(&image_url)?;
+            validate_tool_url_with_dns(&image_url).await?;
             if let Some(s) = strength
                 && !(0.0..=1.0).contains(&s)
             {
@@ -110,7 +110,7 @@ impl MediaServer {
         Parameters(UpscaleImageRequest { image_url, scale }): Parameters<UpscaleImageRequest>,
     ) -> String {
         execute_tool(self, "upscale_image", async {
-            validate_tool_url(&image_url)?;
+            validate_tool_url_with_dns(&image_url).await?;
             let media_params = hkask_types::MediaGenerateParams {
                 image_url: Some(image_url.clone()),
                 scale,

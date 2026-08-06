@@ -27,7 +27,7 @@ impl WebExtractProvider for RawFetchProvider {
         _opts: &ExtractOptions,
     ) -> Result<ExtractedContent, WebError> {
         // Task 6: Validate URL at provider boundary — RawFetch is the most SSRF-sensitive provider
-        validate_provider_url(url)?;
+        validate_provider_url(url).await?;
         let resp =
             self.client.get(url).send().await.map_err(|e| {
                 WebError::ProviderUnavailable(format!("RawFetch request failed: {e}"))
@@ -84,7 +84,7 @@ impl WebBrowseProvider for RawFetchProvider {
         instruction: &str,
         timeout: Duration,
     ) -> Result<BrowseResult, WebError> {
-        validate_provider_url(url)?;
+        validate_provider_url(url).await?;
         let resp = self
             .client
             .get(url)

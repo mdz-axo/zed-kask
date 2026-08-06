@@ -200,14 +200,15 @@ pub fn recompute_posteriors(
     // Forward pass: compute causal marginals (same as recompute_marginals).
     let mut marginals = recompute_marginals(body, topo_order, evidence);
 
-    // Backward pass: propagate diagnostic evidence from children to parents.
-    // For each node with evidence (or whose children have evidence), update
-    // its parents' marginals via Bayes: P(parent | child evidence) ∝
-    // P(child | parent) · P(parent).
-    //
-    // On a polytree, processing nodes in reverse topological order and
-    // pushing diagnostic updates to parents is exact: each parent receives
-    // exactly one diagnostic message per child (no double-counting).
+    // Fixpoint iteration: alternate forward and backward sweeps until the
+    // marginals stabilize. On a polytree this converges in ≤ diameter sweeps
+    // because there is exactly one path between any two nodes (no double-
+    // counting). The forward sweep re-marginalizes children from the (updated)
+    // parent priors; the backward sweep re-updates parents from the (updated)
+    // child likelihoods. Without this iteration a single forward+backward pass
+    // leaves siblings of an evidence node stale — the parent gets updated by
+    // the evidence-bearing child, but the sibling's marginal is never
+    // recomputed from the updated parent.
     let id_index: HashMap<String, usize> = body
         .nodes
         .iter()
@@ -215,65 +216,91 @@ pub fn recompute_posteriors(
         .map(|(i, node)| (node.id.clone(), i))
         .collect();
 
-    // Build child lists (parent → children) from the child-side parent lists.
-    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for (child_idx, node) in body.nodes.iter().enumerate() {
-        for parent_id in node.parent_ids() {
-            if let Some(&parent_idx) = id_index.get(&parent_id) {
-                children[parent_idx].push(child_idx);
-            }
-        }
-    }
+    const MAX_FIXPOINT_SWEEPS: usize = 100;
+    const CONVERGENCE_EPSILON: f64 = 1e-9;
+    for _sweep in 0..MAX_FIXPOINT_SWEEPS {
+        let prev = marginals.clone();
 
-    // Reverse topological order: children before parents.
-    for &idx in topo_order.iter().rev() {
-        let node = &body.nodes[idx];
-        let parents = node.parent_ids();
-        if parents.is_empty() {
-            continue;
-        }
-        // Only push diagnostic updates if this node or its descendants carry
-        // evidence. We approximate by checking: if the node's marginal differs
-        // from a pure forward computation, it has diagnostic support to push.
-        // For a polytree, the backward pass is: for each parent, update its
-        // marginal by the likelihood of the child's observed state.
-        //
-        // Simplified backward update: treat the node's current marginal as the
-        // observed child state and apply Bayes to each parent.
-        // For each parent, compute P(parent | child) ∝ P(child | parent) · P(parent).
-        // We need P(child | parent) from the conditional table. For a single-parent
-        // dependency (the common case on polytrees), this is direct. For multi-dep,
-        // we marginalize over the other parents (assumed independent).
-        for dep in &node.depends_on {
-            for (k, parent_id) in dep.parent_event_ids.iter().enumerate() {
-                let Some(&parent_idx) = id_index.get(parent_id) else {
-                    continue;
-                };
-                let parent_prior = marginals[parent_idx];
-                if parent_prior <= 0.0 || parent_prior >= 1.0 {
-                    continue;
+        // Forward sweep: recompute children from current parent marginals.
+        // Evidence nodes stay clamped; roots use their current marginal (which
+        // the backward sweep may have updated away from the static prior).
+        for &idx in topo_order {
+            if evidence.contains_key(&idx) {
+                continue;
+            }
+            let node = &body.nodes[idx];
+            let parents = node.parent_ids();
+            if parents.is_empty() {
+                // Root: keep the current marginal (set by backward sweep or
+                // the initial forward pass). Do not reset to the static prior.
+                continue;
+            }
+            if node.depends_on.is_empty() {
+                continue;
+            }
+            let mut combined: f64 = 1.0;
+            for dep in &node.depends_on {
+                let parent_marginals: Vec<f64> = dep
+                    .parent_event_ids
+                    .iter()
+                    .map(|pid| {
+                        id_index
+                            .get(pid)
+                            .and_then(|&pi| marginals.get(pi).copied())
+                            .unwrap_or(0.0)
+                    })
+                    .collect();
+                let n_parents = dep.parent_event_ids.len();
+                if n_parents > 20 {
+                    combined = node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
+                    break;
                 }
-                // P(child | parent=true) and P(child | parent=false) from the
-                // conditional table. For a single-parent dep, conditionals[1] is
-                // P(child|parent=true), conditionals[0] is P(child|parent=false).
-                // For multi-parent, we marginalize over the other parents at
-                // their current marginals (polytree assumption: independent).
-                let p_child_given_parent_true =
-                    conditional_for_parent(dep, k, true, &marginals, &id_index);
-                let p_child_given_parent_false =
-                    conditional_for_parent(dep, k, false, &marginals, &id_index);
-                // Bayes: P(parent=true | child) ∝ P(child | parent=true) · P(parent=true)
-                let numerator = p_child_given_parent_true * parent_prior;
-                let denominator = numerator + p_child_given_parent_false * (1.0 - parent_prior);
-                if denominator > 1e-12 {
-                    let posterior = (numerator / denominator).clamp(0.0, 1.0);
-                    // Only update if the parent is not itself under hard evidence
-                    // (evidence nodes are clamped and should not be updated).
-                    if !evidence.contains_key(&parent_idx) {
-                        marginals[parent_idx] = posterior;
+                combined *= hkask_forecast::marginalize(&parent_marginals, &dep.conditionals)
+                    .clamp(0.0, 1.0);
+            }
+            marginals[idx] = combined.clamp(0.0, 1.0);
+        }
+
+        // Backward sweep: re-update parents from current child marginals.
+        for &idx in topo_order.iter().rev() {
+            let node = &body.nodes[idx];
+            let parents = node.parent_ids();
+            if parents.is_empty() {
+                continue;
+            }
+            for dep in &node.depends_on {
+                for (k, parent_id) in dep.parent_event_ids.iter().enumerate() {
+                    let Some(&parent_idx) = id_index.get(parent_id) else {
+                        continue;
+                    };
+                    let parent_prior = marginals[parent_idx];
+                    if parent_prior <= 0.0 || parent_prior >= 1.0 {
+                        continue;
+                    }
+                    let p_child_given_parent_true =
+                        conditional_for_parent(dep, k, true, &marginals, &id_index);
+                    let p_child_given_parent_false =
+                        conditional_for_parent(dep, k, false, &marginals, &id_index);
+                    let numerator = p_child_given_parent_true * parent_prior;
+                    let denominator = numerator + p_child_given_parent_false * (1.0 - parent_prior);
+                    if denominator > 1e-12 {
+                        let posterior = (numerator / denominator).clamp(0.0, 1.0);
+                        if !evidence.contains_key(&parent_idx) {
+                            marginals[parent_idx] = posterior;
+                        }
                     }
                 }
             }
+        }
+
+        // Convergence: max abs delta across all nodes.
+        let max_delta = marginals
+            .iter()
+            .zip(prev.iter())
+            .map(|(new, old)| (new - old).abs())
+            .fold(0.0_f64, f64::max);
+        if max_delta < CONVERGENCE_EPSILON {
+            break;
         }
     }
     marginals
@@ -595,6 +622,55 @@ mod tests {
             posteriors[0] > 0.5,
             "backward inference should increase P(a) above 0.5, got {}",
             posteriors[0]
+        );
+    }
+
+    #[test]
+    fn backward_inference_updates_sibling_on_evidence() {
+        // Branching polytree: a → b, a → c. Evidence on b should update a
+        // (backward), and the updated a should re-propagate to c (forward
+        // re-pass). Without the fixpoint iteration, c stays at its forward
+        // value — the sibling-stale bug.
+        // Priors: P(a)=0.5. P(b|¬a)=0.1, P(b|a)=0.9. P(c|¬a)=0.2, P(c|a)=0.8.
+        // Forward: P(b) = 0.1*0.5 + 0.9*0.5 = 0.5. P(c) = 0.2*0.5 + 0.8*0.5 = 0.5.
+        // Set evidence b = 0.9 (high). Backward: P(a|b=0.9) should increase
+        // (b is more likely when a is true). Then forward re-pass: P(c) should
+        // increase too (c is more likely when a is true, and a just went up).
+        let mut a = node("a", 0.5, &[]);
+        let mut b = node("b", 0.0, &["a"]);
+        b.depends_on = vec![DependencyBody {
+            parent_event_ids: vec!["a".into()],
+            conditionals: vec![0.1, 0.9],
+        }];
+        let mut c = node("c", 0.0, &["a"]);
+        c.depends_on = vec![DependencyBody {
+            parent_event_ids: vec!["a".into()],
+            conditionals: vec![0.2, 0.8],
+        }];
+        let _ = &mut a;
+        let body = GraphBlockBody {
+            viz: Some("event_tree".into()),
+            subject: None,
+            joint_probability: None,
+            nodes: vec![a, b, c],
+        };
+        let topo = vec![0, 1, 2];
+        let mut evidence = HashMap::new();
+        evidence.insert(1, 0.9); // evidence on b
+        let posteriors = recompute_posteriors(&body, &topo, &evidence);
+        // P(a) forward was 0.5. With b observed high, P(a) should increase.
+        assert!(
+            posteriors[0] > 0.5,
+            "backward inference should increase P(a) above 0.5, got {}",
+            posteriors[0]
+        );
+        // P(c) forward was 0.5. The fixpoint re-pass should propagate the
+        // updated P(a) to c, increasing P(c). This is the assertion that
+        // catches the sibling-stale bug — the old two-pass code left c at 0.5.
+        assert!(
+            posteriors[2] > 0.5,
+            "fixpoint should re-propagate updated P(a) to sibling c, increasing it above 0.5, got {}",
+            posteriors[2]
         );
     }
 }
