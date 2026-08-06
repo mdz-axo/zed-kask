@@ -23,7 +23,7 @@ mod settings;
 mod skill_executor;
 
 pub use condenser_bridge::BridgeThreadCondenser;
-pub use context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
+pub use context_injector::BridgeContextInjector;
 pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
@@ -102,13 +102,12 @@ pub fn spawn_test_email(recipient: String, cx: &gpui::App) {
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils {
-    pub use crate::context_injector::{BridgeContextInjector, BridgeCuratorContextInjector};
+    pub use crate::context_injector::BridgeContextInjector;
 
     /// Expose the pure prompt-length recall gate as a free function for
     /// proptest. `should_recall` is an associated function on
-    /// `BridgeContextInjector`/`BridgeCuratorContextInjector`; a method cannot
-    /// be re-exported via `pub use`, so this thin wrapper forwards to the
-    /// `pub(crate)` impl.
+    /// `BridgeContextInjector`; a method cannot be re-exported via `pub use`,
+    /// so this thin wrapper forwards to the `pub(crate)` impl.
     pub fn should_recall(prompt: &str) -> bool {
         BridgeContextInjector::should_recall(prompt)
     }

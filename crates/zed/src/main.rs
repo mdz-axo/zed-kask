@@ -1397,7 +1397,7 @@ fn main() {
                                 if kask_settings.memory.auto_inject {
                                     let injector = std::sync::Arc::new(
                                         kask_bridge::BridgeContextInjector::new(
-                                            real_memory,
+                                            real_memory_typed.clone(),
                                             kask_settings.memory.recall_limit,
                                             kask_settings.memory.recall_min_confidence,
                                         ),
@@ -1414,7 +1414,7 @@ fn main() {
                                     // `curator_semantic_search` as tools, which is
                                     // the asymmetry this block fixes.
                                     let curator_injector = std::sync::Arc::new(
-                                        kask_bridge::BridgeCuratorContextInjector::new(
+                                        kask_bridge::BridgeContextInjector::new_curator(
                                             real_memory_typed,
                                             kask_settings.memory.recall_limit,
                                             kask_settings.memory.recall_min_confidence,

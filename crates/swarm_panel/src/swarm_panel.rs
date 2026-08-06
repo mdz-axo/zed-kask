@@ -167,7 +167,12 @@ fn steer_system_prompt(
          of `swarm_search_knowledge`), `swarm_generate_prompt_local` /
          `swarm_generate_ontology_local` (local LLM authoring aids over the
          local `InferencePort`, seeded with the agent's memory — the local
-         analogs of `swarm_generate_prompt` / `swarm_generate_ontology`). These run on the local \
+         analogs of `swarm_generate_prompt` / `swarm_generate_ontology`). \
+         `swarm_evaluate_local` (deterministic task-success evaluator — stamps \
+         a `TaskSuccessVerdict` with `provenance: Deterministic` onto a \
+         delegation response via a contains/not_contains/regex check; call it \
+         after `swarm_delegate_local` to close the C5/C6 fault-attribution loop). \
+         These run on the local \
          substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
@@ -2572,7 +2577,7 @@ mod tests {
         // of importing the server's canonical list.
         assert_eq!(
             parse::SWARM_TOOLS.len(),
-            51,
+            52,
             "tool count changed — update SWARM_TOOLS to match hkask-mcp-swarm #[tool] fns"
         );
 

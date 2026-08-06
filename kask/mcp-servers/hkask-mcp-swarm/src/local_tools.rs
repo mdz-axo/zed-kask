@@ -1144,4 +1144,62 @@ impl SwarmServer {
         })
         .await
     }
+
+    /// Deterministic task-success evaluator. The Curator (or a human) calls
+    /// this after `swarm_delegate_local` to stamp a `TaskSuccessVerdict` with
+    /// `provenance: Deterministic` onto the delegation result. This is the
+    /// enforcement point for the C5/C6 fault-attribution loop: ORIENT's
+    /// highest-fidelity fault signal (rule 1: per-delegation task failure)
+    /// requires a deterministic `task_success` verdict — an LLM-judged verdict
+    /// is downgraded by ORIENT (Gap S3). No ABW calls, no ledger spend —
+    /// evaluation is free.
+    #[tool(
+        description = "Deterministic task-success evaluator for local swarm delegations. Takes an agent's response and a deterministic check (contains / not_contains / regex) and returns a TaskSuccessVerdict with provenance: Deterministic. The Curator calls this after swarm_delegate_local to stamp task_success for the C5/C6 fault-attribution loop. No ABW calls, no ledger spend — evaluation is free."
+    )]
+    pub(crate) async fn swarm_evaluate_local(
+        &self,
+        parameters: Parameters<EvaluateLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_evaluate_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.response.trim().is_empty() || req.spec.trim().is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "response and spec must be non-empty".to_string(),
+                ));
+            }
+            let pass = match req.evaluator.as_str() {
+                "contains" => req.response.contains(&req.spec),
+                "not_contains" => !req.response.contains(&req.spec),
+                "regex" => {
+                    let re = regex::Regex::new(&req.spec).map_err(|e| {
+                        McpToolError::invalid_argument(format!(
+                            "invalid regex spec: {e}"
+                        ))
+                    })?;
+                    re.is_match(&req.response)
+                }
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "evaluator must be 'contains', 'not_contains', or 'regex'; got '{other}'"
+                    )));
+                }
+            };
+            let detail = format!(
+                "evaluator={}, spec_len={}, pass={}",
+                req.evaluator,
+                req.spec.len(),
+                pass
+            );
+            let verdict = crate::local_runtime::TaskSuccessVerdict {
+                pass,
+                score: None,
+                detail: Some(detail),
+                provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
+            };
+            Ok(serde_json::to_value(&verdict).unwrap_or_else(|_| {
+                serde_json::json!({ "error": "failed to serialize verdict" })
+            }))
+        })
+        .await
+    }
 }

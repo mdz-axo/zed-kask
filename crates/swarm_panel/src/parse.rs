@@ -236,6 +236,11 @@ pub(crate) const SWARM_TOOLS: &[&str] = &[
     // AI Assist — model-backed form suggestions and validation (Author +
     // Compose surfaces). Called from the panel's `ai_assist` method.
     "swarm_ai_assist",
+    // Deterministic task-success evaluator — stamps a TaskSuccessVerdict
+    // with provenance: Deterministic onto a delegation result. The Curator
+    // calls this after swarm_delegate_local to close the C5/C6 fault-
+    // attribution loop.
+    "swarm_evaluate_local",
 ];
 
 /// Extract the algedonic wallet balance from a tool response (the

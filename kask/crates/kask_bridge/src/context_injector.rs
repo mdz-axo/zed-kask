@@ -79,8 +79,8 @@ fn neutralize_close_marker(text: &str) -> String {
 ///
 /// Short prompts ("fix this", "run tests") are unlikely to benefit from
 /// memory recall and would waste an embedding HTTP call + SQL queries.
-/// Shared by `BridgeContextInjector` and `BridgeCuratorContextInjector` —
-/// both injectors gate on the same thresholds, so the logic lives once here.
+/// Shared by both the user and curator recall paths (selected by the
+/// `curator` flag on `BridgeContextInjector`), so the logic lives once here.
 pub(crate) fn should_recall(prompt: &str) -> bool {
     if prompt.len() < MIN_RECALL_PROMPT_LEN {
         return false;
@@ -93,10 +93,8 @@ pub(crate) fn should_recall(prompt: &str) -> bool {
 /// Each snippet is wrapped in an explicit data boundary
 /// (`MEMORY_CONTEXT_OPEN` … `MEMORY_CONTEXT_CLOSE`) so the model treats
 /// recalled memory as data, not as instructions. See `MEMORY_CONTEXT_OPEN`
-/// for the threat model. Shared by `BridgeContextInjector` and
-/// `BridgeCuratorContextInjector`, which previously had near-identical
-/// inline formatting loops (Phase 2 Finding M3 — duplicated context-injector
-/// logic).
+/// for the threat model. Shared by both the user and curator recall paths
+/// (selected by the `curator` flag on `BridgeContextInjector`).
 ///
 /// `header` is the consumer-specific preamble (e.g. "Relevant context from
 /// memory:"). `snippets` is the confidence-filtered recall result.
@@ -118,19 +116,20 @@ pub(crate) fn format_recall_context(header: &str, snippets: &[MemorySnippet]) ->
 
 /// Bridge context injector — retrieves memories and formats them for prompt injection.
 pub struct BridgeContextInjector {
-    memory_port: Arc<dyn MemoryPort>,
+    memory_port: Arc<RealMemoryPort>,
     recall_limit: u32,
     recall_min_confidence: f64,
+    /// When true, recall from the curator's sovereign DB
+    /// (`recall_context_curator` / `recall_thread_curator`) instead of the
+    /// user's stores. Selects the perspective-scoped recall path without
+    /// duplicating the injector logic.
+    curator: bool,
 }
 
 impl BridgeContextInjector {
-    /// Construct a new context injector.
-    ///
-    /// Reads `recall_limit` and `recall_min_confidence` from `KaskMemorySettings`
-    /// at the composition root (which has access to `cx: &App`) and passes them
-    /// here.
+    /// Construct a new context injector for the user's memory.
     pub fn new(
-        memory_port: Arc<dyn MemoryPort>,
+        memory_port: Arc<RealMemoryPort>,
         recall_limit: u32,
         recall_min_confidence: f64,
     ) -> Self {
@@ -138,12 +137,28 @@ impl BridgeContextInjector {
             memory_port,
             recall_limit,
             recall_min_confidence,
+            curator: false,
+        }
+    }
+
+    /// Construct a new context injector for the curator's sovereign memory.
+    /// Same recall logic, but delegates to `recall_context_curator` /
+    /// `recall_thread_curator` so the Curator recalls from
+    /// `agents/curator/pod.db` rather than the user's `memory.db`.
+    pub fn new_curator(
+        memory_port: Arc<RealMemoryPort>,
+        recall_limit: u32,
+        recall_min_confidence: f64,
+    ) -> Self {
+        Self {
+            memory_port,
+            recall_limit,
+            recall_min_confidence,
+            curator: true,
         }
     }
 
     /// Check whether a prompt is long enough to warrant recall.
-    /// Delegates to the shared `should_recall` free fn so the gate logic
-    /// lives once for both injectors (Phase 2 Finding M3).
     pub(crate) fn should_recall(prompt: &str) -> bool {
         should_recall(prompt)
     }
@@ -161,28 +176,36 @@ impl ContextInjector for BridgeContextInjector {
         let min_confidence = self.recall_min_confidence;
         let prompt = user_prompt.to_string();
         let memory_port = self.memory_port.clone();
+        let curator = self.curator;
+        let header = if curator {
+            "Relevant context from curator memory:"
+        } else {
+            "Relevant context from memory:"
+        };
+        let log_label = if curator { "curator" } else { "user" };
 
-        // Gate: skip recall for short prompts that won't benefit from it.
-        // This avoids the embedding HTTP call + SQL queries for prompts like
-        // "fix this", "run the tests", "what does this do".
         if !Self::should_recall(&prompt) {
             return Box::pin(async move { Vec::new() });
         }
 
         Box::pin(async move {
-            let snippets = match memory_port.recall_context(&prompt, limit).await {
+            let snippets = if curator {
+                memory_port.recall_context_curator(&prompt, limit).await
+            } else {
+                memory_port.recall_context(&prompt, limit).await
+            };
+            let snippets = match snippets {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(
                         target: "reg.memory",
                         error = %e,
-                        "Context injection recall failed"
+                        "{log_label} context injection recall failed"
                     );
                     return Vec::new();
                 }
             };
 
-            // Filter by minimum confidence
             let filtered: Vec<_> = snippets
                 .into_iter()
                 .filter(|s| s.confidence >= min_confidence)
@@ -192,16 +215,12 @@ impl ContextInjector for BridgeContextInjector {
                 return Vec::new();
             }
 
-            // Format snippets into a single system message. Each snippet is
-            // wrapped in a data boundary so the model treats recalled memory
-            // (which includes prior tool output and fetched content) as data,
-            // not as instructions.
-            let context_text = format_recall_context("Relevant context from memory:", &filtered);
+            let context_text = format_recall_context(header, &filtered);
 
             tracing::info!(
                 target: "reg.memory",
                 injected_count = filtered.len(),
-                "Injecting memory context into prompt"
+                "Injecting {log_label} memory context into prompt"
             );
 
             vec![LanguageModelRequestMessage {
@@ -221,15 +240,29 @@ impl ContextInjector for BridgeContextInjector {
         let thread_id = thread_id.to_string();
         let static_limit = (self.recall_limit * 2) as usize;
         let static_min_confidence = (self.recall_min_confidence + 0.1).min(1.0);
+        let curator = self.curator;
+        let header = if curator {
+            "Session curator memory context:"
+        } else {
+            "Session memory context:"
+        };
+        let log_label = if curator { "curator" } else { "user" };
 
         Box::pin(async move {
-            let snippets = match memory_port.recall_thread(&thread_id, static_limit).await {
+            let snippets = if curator {
+                memory_port
+                    .recall_thread_curator(&thread_id, static_limit)
+                    .await
+            } else {
+                memory_port.recall_thread(&thread_id, static_limit).await
+            };
+            let snippets = match snippets {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::warn!(
                         target: "reg.memory",
                         error = %e,
-                        "Static context thread recall failed"
+                        "{log_label} static context thread recall failed"
                     );
                     Vec::new()
                 }
@@ -244,156 +277,13 @@ impl ContextInjector for BridgeContextInjector {
                 return None;
             }
 
-            let context_text = format_recall_context("Session memory context:", &filtered);
+            let context_text = format_recall_context(header, &filtered);
 
             tracing::info!(
                 target: "reg.memory",
                 injected_count = filtered.len(),
-                "Injecting static memory context into system prompt"
+                "Injecting {log_label} static memory context into system prompt"
             );
-
-            Some(context_text)
-        })
-    }
-}
-
-/// Bridge curator context injector — recalls from the curator's sovereign DB.
-///
-/// Mirrors `BridgeContextInjector` but delegates to
-/// `RealMemoryPort::recall_context_curator` (per-turn, content-similarity) and
-/// `RealMemoryPort::recall_thread_curator` (static, entity-scoped) instead of
-/// the user-scoped `MemoryPort` methods, so the Curator recalls its own
-/// episodic + semantic memory (stored in `agents/curator/pod.db`) rather than
-/// the user's. This closes the curator memory loop: the Curator ingests its
-/// own turns (D6, curator-perspective episodic) and recalls them here (D11,
-/// curator-scoped recall), exactly parallel to the user agent's loop.
-///
-/// Wired in the composition root via `agent::set_curator_context_injector`.
-pub struct BridgeCuratorContextInjector {
-    memory_port: Arc<RealMemoryPort>,
-    recall_limit: u32,
-    recall_min_confidence: f64,
-}
-
-impl BridgeCuratorContextInjector {
-    /// Construct a new curator context injector.
-    ///
-    /// Takes the same `RealMemoryPort` the user injector uses — the curator
-    /// recall method (`recall_context_curator`) is on `RealMemoryPort` and
-    /// reads from the `curator_episodic` / `curator_semantic` fields on that
-    /// struct, which are opened alongside the user's stores in `RealMemoryPort::new`.
-    pub fn new(
-        memory_port: Arc<RealMemoryPort>,
-        recall_limit: u32,
-        recall_min_confidence: f64,
-    ) -> Self {
-        Self {
-            memory_port,
-            recall_limit,
-            recall_min_confidence,
-        }
-    }
-
-    /// Reuse the shared `should_recall` gate. Short prompts skip recall to
-    /// avoid the embedding HTTP call + SQL queries. Delegates to the free fn
-    /// so the gate logic lives once (Phase 2 Finding M3).
-    pub(crate) fn should_recall(prompt: &str) -> bool {
-        should_recall(prompt)
-    }
-}
-
-impl ContextInjector for BridgeCuratorContextInjector {
-    fn inject_context(
-        &self,
-        _thread_id: &str,
-        user_prompt: &str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Vec<LanguageModelRequestMessage>> + Send + '_>,
-    > {
-        let limit = self.recall_limit as usize;
-        let min_confidence = self.recall_min_confidence;
-        let prompt = user_prompt.to_string();
-        let memory_port = self.memory_port.clone();
-
-        if !Self::should_recall(&prompt) {
-            return Box::pin(async move { Vec::new() });
-        }
-
-        Box::pin(async move {
-            let snippets = match memory_port.recall_context_curator(&prompt, limit).await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        error = %e,
-                        "Curator context injection recall failed"
-                    );
-                    return Vec::new();
-                }
-            };
-
-            let filtered: Vec<_> = snippets
-                .into_iter()
-                .filter(|s| s.confidence >= min_confidence)
-                .collect();
-
-            if filtered.is_empty() {
-                return Vec::new();
-            }
-
-            let context_text =
-                format_recall_context("Relevant context from curator memory:", &filtered);
-
-            tracing::info!(
-                target: "reg.memory",
-                injected_count = filtered.len(),
-                "Injecting curator memory context into prompt"
-            );
-
-            vec![LanguageModelRequestMessage {
-                role: Role::System,
-                content: vec![MessageContent::Text(context_text)],
-                cache: false,
-                reasoning_details: None,
-            }]
-        })
-    }
-
-    fn inject_static_context<'a>(
-        &'a self,
-        thread_id: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + 'a>> {
-        let memory_port = self.memory_port.clone();
-        let thread_id = thread_id.to_string();
-        let static_limit = (self.recall_limit * 2) as usize;
-        let static_min_confidence = (self.recall_min_confidence + 0.1).min(1.0);
-
-        Box::pin(async move {
-            let snippets = match memory_port
-                .recall_thread_curator(&thread_id, static_limit)
-                .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        error = %e,
-                        "Curator static context thread recall failed"
-                    );
-                    Vec::new()
-                }
-            };
-
-            let filtered: Vec<_> = snippets
-                .into_iter()
-                .filter(|s| s.confidence >= static_min_confidence)
-                .collect();
-
-            if filtered.is_empty() {
-                return None;
-            }
-
-            let context_text = format_recall_context("Session curator memory context:", &filtered);
 
             Some(context_text)
         })
@@ -511,14 +401,11 @@ mod tests {
     }
 
     #[test]
-    fn both_injectors_share_should_recall() {
-        // Phase 2 Finding M3: the two injectors must agree on the gate.
-        for prompt in ["short", "long enough prompt with words"] {
-            assert_eq!(
-                BridgeContextInjector::should_recall(prompt),
-                BridgeCuratorContextInjector::should_recall(prompt),
-                "injectors must share the should_recall gate"
-            );
-        }
+    fn should_recall_gates_short_prompts() {
+        // The single injector's gate must reject short prompts and accept
+        // long ones — covers both the user and curator recall paths, which
+        // share the same gate.
+        assert!(!BridgeContextInjector::should_recall("short"));
+        assert!(BridgeContextInjector::should_recall("long enough prompt with words"));
     }
 }

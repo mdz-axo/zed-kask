@@ -1313,7 +1313,7 @@ impl RealMemoryPort {
     /// This mirrors `recall_context` but reads from `curator_semantic` and
     /// `curator_episodic` (both in `agents/curator/pod.db`) using the
     /// curator's WebID for perspective-scoped episodic queries. Used by the
-    /// curator context injector (`BridgeCuratorContextInjector`) so the
+    /// curator context injector (`BridgeContextInjector::new_curator`) so the
     /// Curator recalls its own memory — a parallel of the user agent's
     /// `BridgeContextInjector`.
     ///

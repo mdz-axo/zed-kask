@@ -407,15 +407,10 @@ pub struct NativeAgent {
     /// three agent-panel interaction points: input box focus, slash
     /// autocomplete, and conversation submit.
     skills_state: SkillsState,
-    /// When set, all new threads created by this agent get this system
-    /// prompt override. Used by the Curator agent to inject its own persona.
-    system_prompt_override: Option<SharedString>,
     /// When set, all new threads get this static context appended to the
     /// system prompt (NOT an override — the Zed Agent prompt stays).
     /// Used by the Curator overlay to inject regulatory context.
     curator_static_context: Option<SharedString>,
-    /// Whether to register curator tools on new threads.
-    register_curator_tools: bool,
     /// When set, new threads' context-server (MCP) tools are filtered to
     /// this server only — the kask panel's per-tab scoping enforcement.
     /// Applied via `Thread::set_mcp_server_scope` in `new_session`.
@@ -638,9 +633,7 @@ impl NativeAgent {
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
-                system_prompt_override: None,
                 curator_static_context: None,
-                register_curator_tools: false,
                 mcp_server_scope: None,
             }
         })
@@ -833,26 +826,16 @@ impl NativeAgent {
         self.sibling_thread_host = Some(host);
     }
 
-    /// Set a system prompt override for all new threads created by this agent.
-    ///
-    /// Used by the Curator agent to inject its own persona. When set,
-    /// each new thread created via `new_session` gets this prompt via
-    /// `Thread::set_system_prompt_override`.
-    pub fn set_system_prompt_override(&mut self, prompt: SharedString, _cx: &mut Context<Self>) {
-        self.system_prompt_override = Some(prompt);
-    }
-
     /// Enable the Curator overlay on this agent.
     ///
-    /// This does NOT override the system prompt. Instead, it:
-    /// 1. Sets `curator_static_context` — appended to the system prompt
-    /// 2. Enables `register_curator_tools` — curator tools added to each thread
+    /// This does NOT override the system prompt. Instead, it appends
+    /// `curator_static_context` to the system prompt and registers the
+    /// `CuratorStatusTool` on each new thread.
     ///
     /// The Zed Agent's coding instructions remain intact. The Curator
     /// gets all coding capabilities PLUS regulatory context and tools.
     pub fn set_curator_static_context(&mut self, context: SharedString) {
         self.curator_static_context = Some(context);
-        self.register_curator_tools = true;
     }
 
     /// Restrict all new threads' context-server (MCP) tools to one server.
@@ -897,13 +880,6 @@ impl NativeAgent {
             )
         });
 
-        // Apply the system prompt override if set (e.g., Curator persona).
-        if let Some(ref override_prompt) = self.system_prompt_override {
-            thread.update(cx, |thread, cx| {
-                thread.set_system_prompt_override(override_prompt.clone(), cx);
-            });
-        }
-
         // Apply the Curator overlay: static context + curator tools.
         // This is NOT a system prompt override — the Zed Agent prompt stays.
         // The curator context is appended via `static_context`.
@@ -917,10 +893,6 @@ impl NativeAgent {
                 // turns would be ingested as user-perspective records and the
                 // curator would have no automatic recall.
                 thread.set_agent_id(CURATOR_AGENT_ID.clone(), cx);
-            });
-        }
-        if self.register_curator_tools {
-            thread.update(cx, |thread, _cx| {
                 thread.add_tool(CuratorStatusTool);
             });
         }

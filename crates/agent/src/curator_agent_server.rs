@@ -1,5 +1,5 @@
 //! Curator agent server — an overlay on the Zed Agent that adds
-//! metacognition, curator tools, and regulatory monitoring.
+//! curator tools and regulatory context.
 //!
 //! The Curator is NOT a separate agent with its own system prompt. It IS
 //! the Zed Agent — same coding tools, same system prompt, same model —
@@ -8,8 +8,10 @@
 //! - **Curator tools**: `curator_status` for checking regulation health
 //! - **Curator context**: appended to the system prompt via `static_context`,
 //!   describing the Curator's role and current system state
-//! - **Background metacognition**: a detached task that runs the
-//!   sense→compare→compute→act governance loop
+//!
+//! The background metacognition loop (sense→compare→compute→act) is spawned
+//! once, process-globally, in `crates/zed/src/main.rs` — not by this server.
+//! Every Curator thread reads from that shared loop via `CuratorStatusTool`.
 //!
 //! This overlay design means the Curator can do everything the Zed Agent can
 //! (write code, run terminals, edit files) while also having access to the
@@ -60,7 +62,6 @@ You are anchored on the following methodologies:\n\
 /// Like `NativeAgentServer`, but:
 /// 1. Injects curator static context into each thread's system prompt
 /// 2. Registers the `curator_status` tool on each thread
-/// 3. Runs a background metacognition task
 ///
 /// The optional `extra_static_context` is appended to
 /// `CURATOR_STATIC_CONTEXT` when the connection establishes. This is used by

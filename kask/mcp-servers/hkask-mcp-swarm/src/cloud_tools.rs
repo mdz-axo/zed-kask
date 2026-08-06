@@ -1502,6 +1502,20 @@ impl SwarmServer {
     /// vector search. The embedder was broken platform-wide for 6 weeks; fixed
     /// in fermi v0.10.26 (OpenAI `text-embedding-3-large` @ 1024, matching the
     /// pgvector column). Returns matching knowledge fragments. Requires API key.
+    ///
+    /// fermi-contract (v0.10.26, commit `03edd0d6`): the embedder was broken
+    /// from the Spec-22 embedding-portability work until v0.10.26
+    /// (2026-08-03). The server built `AnthropicEmbeddings`, which POSTs to
+    /// `https://api.anthropic.com/v1/embeddings` — an endpoint Anthropic does
+    /// not serve (404). Every embedding call errored/hung; consolidation jobs
+    /// wedged at `episodes_processed=0`; `swarm_search_knowledge` returned
+    /// empty results for every agent. The fix switched to
+    /// `OpenAIEmbeddings` (`text-embedding-3-large`, 1024-dim, matching the
+    /// existing pgvector column + HNSW indices — no schema migration).
+    /// zed-kask's tool just GETs `/agents/{id}/knowledge/search?q=` — the
+    /// server-side fix means the endpoint now returns results where it
+    /// previously errored. A live probe (`live_search_knowledge_returns_results_post_v0_10_26`)
+    /// is the canary.
     #[tool(
         description = "Vector-search an Agent Bestiary World agent's consolidated dreaming-memory knowledge graph (GET /api/agents/{id}/knowledge/search?q=). Returns matching knowledge fragments. Requires API key."
     )]
@@ -1635,6 +1649,16 @@ impl SwarmServer {
     /// slug-validated (a legacy-name source with `-` or `/` is refused with a
     /// detailed 400 — rename via `/api/admin/agents/legacy-slugs` first).
     /// Requires API key.
+    ///
+    /// fermi-contract (v0.10.16, commit `4a7cd27f`): the fork endpoint was
+    /// broken from mig-006 (2026-05-23) until v0.10.16 (2026-08-01) because
+    /// the SELECT and INSERT both referenced `agents.owner_id` — a column
+    /// that has never existed (the owner column is `agents.user_id` since
+    /// mig-006). Every fork attempt 500'd at the SELECT. The fix aliased
+    /// `user_id AS owner_id` in the SELECT and writes `user_id` in the
+    /// INSERT. zed-kask's `swarm_fork_agent` just POSTs — the server-side
+    /// fix means the tool now works where it previously 500'd. A live probe
+    /// (`live_fork_agent_succeeds_post_v0_10_16` below) is the canary.
     #[tool(
         description = "Fork an Agent Bestiary World agent into a derivative (POST /api/agents/{id}/fork). Creates {source}_fork_{n} with author-royalty tracking. The source must have a slug-compliant name (legacy names with '-' or '/' are refused — admin-rename first). Requires API key."
     )]

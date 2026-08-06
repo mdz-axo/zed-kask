@@ -827,6 +827,26 @@ pub struct AiAssistRequest {
     pub agents: String,
 }
 
+/// Request for `swarm_evaluate_local` — a deterministic task-success evaluator.
+/// The Curator (or a human) calls this after a `swarm_delegate_local` to stamp
+/// a `TaskSuccessVerdict` with `provenance: Deterministic` onto the delegation
+/// result. This is the enforcement point for the C5/C6 fault-attribution loop:
+/// without it, `task_success` is always `None` and ORIENT's highest-fidelity
+/// fault signal is inert.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct EvaluateLocalRequest {
+    /// The agent's response text (the `response` field from
+    /// `swarm_delegate_local`'s result).
+    pub response: String,
+    /// The evaluator type: "contains" (response contains the spec string),
+    /// "regex" (response matches the spec regex), or "not_contains" (response
+    /// does NOT contain the spec string — for verifying absence of an error).
+    pub evaluator: String,
+    /// The spec: the substring to find (contains/not_contains) or the regex
+    /// pattern to match (regex). Case-sensitive.
+    pub spec: String,
+}
+
 #[cfg(test)]
 mod schema_tests {
     use super::*;
