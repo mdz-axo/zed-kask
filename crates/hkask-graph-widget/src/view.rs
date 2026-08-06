@@ -28,7 +28,7 @@ use gpui_util::ResultExt as _;
 use theme::ActiveTheme;
 use ui::{Color, Label, LabelCommon, LabelSize};
 
-use crate::block::GraphBlockBody;
+use crate::block::{EvidenceKind, GraphBlockBody};
 use crate::layout::LayeredLayout;
 use crate::propagate;
 
@@ -42,7 +42,7 @@ const HIT_RADIUS: f32 = NODE_RADIUS * 1.6;
 /// user can revert to, load, delete, or compare against base.
 struct WhatIfBranch {
     name: String,
-    evidence: HashMap<usize, f64>,
+    evidence: HashMap<usize, EvidenceKind>,
 }
 
 /// The graph widget view. Renders inline in agent markdown (via the D18 seam
@@ -52,8 +52,9 @@ pub struct GraphWidget {
     /// base (root) probabilities. Held so evidence overrides can re-propagate.
     body: GraphBlockBody,
     layout: LayeredLayout,
-    /// Evidence overrides: node index → observed probability.
-    evidence: HashMap<usize, f64>,
+    /// Evidence overrides: node index → evidence kind (hard clamp or soft
+    /// likelihood-ratio update).
+    evidence: HashMap<usize, EvidenceKind>,
     pan: Point<Pixels>,
     zoom: f32,
     /// Last mouse position while left-dragging, for pan deltas.
@@ -122,13 +123,22 @@ impl GraphWidget {
         }
     }
 
-    /// Set a node's probability as observed evidence and re-propagate.
+    /// Set a node's probability as observed hard evidence and re-propagate.
     fn set_evidence(&mut self, idx: usize, value: f64, cx: &mut Context<Self>) {
-        self.evidence.insert(idx, value);
+        self.set_evidence_kind(idx, EvidenceKind::Hard(value), cx);
+    }
+
+    /// Set a node's evidence as a soft likelihood-ratio update and re-propagate.
+    /// `likelihood_ratio` is P(evidence | node=true) / P(evidence | node=false).
+    fn set_soft_evidence(&mut self, idx: usize, likelihood_ratio: f64, cx: &mut Context<Self>) {
+        self.set_evidence_kind(idx, EvidenceKind::Soft(likelihood_ratio), cx);
+    }
+
+    fn set_evidence_kind(&mut self, idx: usize, kind: EvidenceKind, cx: &mut Context<Self>) {
+        self.evidence.insert(idx, kind);
         tracing::info!(
             target: "reg.widget.evidence_set",
             node_idx = idx,
-            value = value,
             evidence_count = self.evidence.len(),
             "REG"
         );
@@ -659,6 +669,21 @@ impl Render for GraphWidget {
                                     }))
                                     .child("Set P≈10%"),
                             )
+                            .child(
+                                div()
+                                    .id(("ev-soft", idx))
+                                    .text_xs()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        // Soft evidence: likelihood ratio 3:1 (moderate
+                                        // "I have evidence this is more likely" signal).
+                                        // The Bayesian update moves the marginal toward 1
+                                        // without clamping, then propagates.
+                                        this.set_soft_evidence(idx, 3.0, cx);
+                                        cx.stop_propagation();
+                                    }))
+                                    .child("Observe (LR 3:1)"),
+                            )
                             .when(is_evidence, |t| {
                                 t.child(
                                     div()
@@ -1003,7 +1028,7 @@ fn draw_ring(center: Point<Pixels>, radius: Pixels, color: gpui::Hsla, window: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::{DependencyBody, GraphBlockBody, NodeBody};
+    use crate::block::{DependencyBody, EvidenceKind, GraphBlockBody, NodeBody};
 
     /// Two-node body: `a` (root, P=0.5) → `b` (conditionals [0.1, 0.6]).
     /// Base P(b) = 0.1*0.5 + 0.6*0.5 = 0.35.
@@ -1043,7 +1068,7 @@ mod tests {
         assert_eq!(widget.read_with(cx, |w, _| w.branches.len()), 1);
         let evidence = widget.read_with(cx, |w, _| w.branches[0].evidence.clone());
         let mut expected = HashMap::new();
-        expected.insert(0, 0.9);
+        expected.insert(0, EvidenceKind::Hard(0.9));
         assert_eq!(evidence, expected);
     }
 
@@ -1090,6 +1115,27 @@ mod tests {
             widget.read_with(cx, |w, _| w.joint_probability_for_header()),
             Some(0.999)
         );
+    }
+
+    #[gpui::test]
+    async fn soft_evidence_updates_marginal_without_clamping(cx: &mut gpui::TestAppContext) {
+        // make_body: a (root, P=0.5) → b (conditionals [0.1, 0.6]).
+        // Base P(b) = 0.1*0.5 + 0.6*0.5 = 0.35.
+        // Soft evidence on a with LR=3.0: P'(a) = 0.5*3 / (0.5*3 + 0.5) = 0.75.
+        // Then P(b) re-propagates: 0.1*0.25 + 0.6*0.75 = 0.025 + 0.45 = 0.475.
+        let widget = cx.new(|cx| GraphWidget::new(make_body(), cx));
+        widget.update(cx, |w, cx| w.set_soft_evidence(0, 3.0, cx));
+        let marginals = widget.read_with(cx, |w, _| {
+            w.layout
+                .nodes
+                .iter()
+                .map(|n| n.marginal_probability.unwrap_or(0.0))
+                .collect::<Vec<_>>()
+        });
+        // P(a) should be 0.75 (Bayesian update, not clamped).
+        assert!((marginals[0] - 0.75).abs() < 1e-6, "P(a) = {}, expected 0.75", marginals[0]);
+        // P(b) should re-propagate to 0.475.
+        assert!((marginals[1] - 0.475).abs() < 1e-6, "P(b) = {}, expected 0.475", marginals[1]);
     }
 
     #[gpui::test]

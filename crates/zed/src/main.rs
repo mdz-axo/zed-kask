@@ -697,10 +697,23 @@ fn main() {
         let alert_email_sink: Option<std::sync::Arc<dyn hkask_regulation::AlertEmailSink>> =
             hkask_email::CuratorAlertEmailSink::try_from_env(kask_runtime_handle);
 
+        // Wire `kask.curator.algedonic_threshold` (0.0–1.0, default 0.8) to
+        // scale `SetPoints.variety_max_deficit` (default 100.0). Higher
+        // threshold = more sensitive = lower deficit tolerance. Mapping:
+        //   variety_max_deficit = DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - threshold)
+        // clamped to [1.0, DEFAULT_VARIETY_MAX_DEFICIT] so threshold=1.0
+        // doesn't produce 0.0 (which fails validation). This wires the
+        // previously-dead `algedonic_threshold` setting to a real enforcement
+        // point (the `.rules` "Advertised invariants need enforcement points"
+        // trap).
+        let mut set_points = hkask_regulation::load_set_points();
+        let algedonic_threshold = kask_settings_for_mcp.curator.algedonic_threshold;
+        let scaled = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT * (1.0 - algedonic_threshold);
+        set_points.variety_max_deficit = scaled.max(1.0);
         let cybernetics_loop_inner =
             hkask_regulation::CyberneticsLoop::with_set_points(
                 regulation_ledger.clone(),
-                hkask_regulation::load_set_points(),
+                set_points,
             )
             .with_alerts_channel(alert_tx)
             .with_event_sink(event_sink.clone());
@@ -746,17 +759,14 @@ fn main() {
         // Without this, the RegulationLedger stays empty — no variety
         // counters, no regulation health, no algedonic alerts. The
         // metacognition loop would be sensing a dead system.
-        gpui_tokio::Tokio::spawn(cx, async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-            interval.tick().await; // skip the first immediate tick
-            loop {
-                interval.tick().await;
-                let loop_guard = cybernetics_loop_for_tick.read().await;
-                loop_guard.tick().await;
-            }
-        })
-        .detach();
-        log::info!("CyberneticsLoop tick cycle started (10s interval)");
+        //
+        // The spawn is gated on `kask.curator.always_on` (read after
+        // `settings::init` below) so an operator who disables the curator
+        // gets no background tick cycle. The loop is still constructed above
+        // because the McpRuntime governance gate (line ~727) needs it
+        // regardless — governed tool calls are charged against the call cap
+        // even when the tick cycle isn't running.
+        let cybernetics_loop_for_tick = cybernetics_loop.clone();
 
         // Curator metacognition loop — runs sense→compare→compute→act cycles.
         // Reads from RegulationLedger (populated by the CyberneticsLoop tick
@@ -784,12 +794,7 @@ fn main() {
                 .with_alert_receiver(alert_rx)
                 .with_alert_sink(alert_sink),
         );
-        let metacog_loop = metacognition_loop.clone();
-        gpui_tokio::Tokio::spawn(cx, async move {
-            metacog_loop.run().await;
-        })
-        .detach();
-        log::info!("Curator metacognition loop started (30s tick interval)");
+        let metacognition_loop_for_tick = metacognition_loop.clone();
 
         // Hoisted for the deferred task: once the RealMemoryPort exists
         // (post-login), the provider is re-set with the memory-health probe
@@ -842,6 +847,39 @@ fn main() {
         // deferred task below) so MCP servers can route inference through zed's
         // LanguageModelRegistry via the IPC socket.
         let kask_settings_for_mcp = kask_bridge::KaskSettings::get_global(cx).clone();
+
+        // Gate the regulation tick cycles on `kask.curator.always_on`.
+        // The loops were constructed above (the McpRuntime governance gate
+        // needs them regardless), but the tick cycles that drive sense→
+        // compare→act only run when the curator is enabled. Default `true`.
+        // This wires the previously-dead `always_on` setting to a real
+        // enforcement point (the `.rules` "Advertised invariants need
+        // enforcement points" trap).
+        let curator_always_on = kask_settings_for_mcp.curator.always_on;
+        if curator_always_on {
+            gpui_tokio::Tokio::spawn(cx, async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
+                interval.tick().await; // skip the first immediate tick
+                loop {
+                    interval.tick().await;
+                    let loop_guard = cybernetics_loop_for_tick.read().await;
+                    loop_guard.tick().await;
+                }
+            })
+            .detach();
+            log::info!("CyberneticsLoop tick cycle started (10s interval)");
+
+            gpui_tokio::Tokio::spawn(cx, async move {
+                metacognition_loop_for_tick.run().await;
+            })
+            .detach();
+            log::info!("Curator metacognition loop started (30s tick interval)");
+        } else {
+            log::info!(
+                "Curator always_on=false — regulation tick cycles not started \
+                 (McpRuntime governance gate remains active)"
+            );
+        }
 
         // Ensure `openai_compatible.<provider_id>` entries exist in settings.json
         // for every enabled inference provider. This makes the providers appear

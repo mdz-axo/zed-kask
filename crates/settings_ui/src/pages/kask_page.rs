@@ -30,7 +30,7 @@ pub(crate) use {
     data_services::render_data_services_page, inference_providers::render_inference_providers_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
     models::render_models_page, prediction_markets::render_prediction_markets_page,
-    scenarios::render_scenarios_page, training::render_training_page,
+    scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -39,6 +39,7 @@ mod memory;
 mod models;
 mod prediction_markets;
 mod scenarios;
+mod swarm;
 mod training;
 
 use std::sync::{Arc, Mutex};
@@ -594,6 +595,20 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_prediction_markets_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Swarm".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.swarm"),
+            description: Some(
+                "Configure the swarm MCP server: backend mode (remote ABW vs local \
+                 substrate), per-dispatch credit ceiling, curator consent default, and \
+                 local agent/swarm directories.".into(),
+            ),
+            search_aliases: &["swarm", "abw", "agent bestiary", "xaman ek", "local agents"],
+            in_json: true,
+            files: USER,
+            render: render_swarm_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Training".into(),

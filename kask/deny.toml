@@ -13,7 +13,7 @@ no-default-features = false
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained but has no safe upgrade; transitive via pulp (← exr ← image ← gpui/hkask-media-widget) and simba (← nalgebra ← manatee git pin). The former utoipa-axum chain is gone. Reviewed 2026-08-04 — re-review 2026-11-04." },
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of aquamarine. No safe upgrade. Reviewed 2026-07-22 — re-review 2026-10-22. (hkask-communication was deleted; this advisory may be removable if no other dep pulls aquamarine.)" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; transitive dep of stacksafe-macro (← stacksafe ← gpui/markdown, upstream Zed). The former aquamarine chain was removed (hkask-communication deleted; aquamarine no longer in Cargo.lock). No safe upgrade. Reviewed 2026-08-06 — re-review 2026-10-22."" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained but has no safe upgrade; required transitively by current lopdf and imageproc for PDF/font processing. Reviewed 2026-07-22 — re-review 2026-10-22." },
     # Upstream-Zed transitive advisories (verified 2026-08-04: every reverse-dep
     # chain terminates in an upstream Zed crate — rpc, language_models, gpui, agent,

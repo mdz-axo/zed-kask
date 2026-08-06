@@ -1,0 +1,19 @@
+id: RR-0048
+title: "validate_url SSRF filter must resolve hostnames to IPs before the private-IP/loopback check (CWE-918/441)"
+surface: mcp
+cwe: CWE-918
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-mcp-server/src/security.rs
+discovered_by: bug-hunt
+discovered_at: 2026-08-06
+severity: high
+detection:
+  kind: cargo-test
+  pattern: "validate_url_with_dns_rejects_localhost_resolving_to_loopback"
+  include: "crates/hkask-mcp-server/src/security.rs"
+mitigation: "The sync validate_url only parses the literal hostname string (hostname.parse().ok()); a non-literal hostname (e.g. attacker.example resolving to 127.0.0.1 or 169.254.169.254) bypasses the is_loopback()/is_private_ip() checks. The fix adds validate_url_with_dns (async) which runs the sync checks then resolves the hostname via tokio::net::lookup_host and rejects if any resolved IP is loopback or private. The async variant is exposed as validate_tool_url_with_dns and used by all untrusted-URL tool call sites (web_extract, web_browse, web_find_similar, media audio/image/video fetch). The permissive variant (validate_tool_url_permissive, used by RSS tools where the user explicitly chose a local feed) stays sync — it allows loopback/private by config. A TOCTOU between resolve and connect (DNS rebinding) remains; closing that requires a custom reqwest connector that re-checks the resolved IP at connect time (future hardening, documented in the function doc comment)."
+source: "Cycle 7 bug-hunt — MCP SSRF boundary review (defense layer 1)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

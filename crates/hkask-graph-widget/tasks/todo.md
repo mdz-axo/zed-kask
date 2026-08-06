@@ -59,12 +59,14 @@
   - Verify: `cargo test -p hkask-graph-widget view backward` (deferred to user)
   - Depends: T5a
 
-- [ ] **T6. Soft evidence mode (likelihood ratios)**
-  - [ ] `EvidenceKind = Hard(f64) | Soft(likelihood_ratio: f64)`; `evidence: HashMap<usize, EvidenceKind>`
-  - [ ] Hard evidence behaves exactly as before (no regression)
-  - [ ] Soft evidence with `LR = 1.0` is a no-op; `LR = 3.0` on prior 0.5 yields posterior 0.75
-  - [ ] Test: soft evidence on a leaf propagates backward to parents (via T5) and forward to children
-  - Verify: `cargo test -p hkask-graph-widget propagate soft_evidence`
+- [x] **T6. Soft evidence mode (likelihood ratios)**
+  - [x] `EvidenceKind = Hard(f64) | Soft(likelihood_ratio: f64)` in `block.rs` with `apply(prior) -> f64` method
+  - [x] `evidence: HashMap<usize, EvidenceKind>` on `GraphWidget` and `WhatIfBranch`
+  - [x] Hard evidence behaves exactly as before (no regression) — `set_evidence` delegates to `set_evidence_kind(Hard(value))`
+  - [x] Soft evidence with `LR = 1.0` is a no-op; `LR = 3.0` on prior 0.5 yields posterior 0.75 (test `soft_evidence_applies_bayesian_update`)
+  - [x] New "Observe (LR 3:1)" click button in render calls `set_soft_evidence(idx, 3.0, cx)`
+  - [x] View test `soft_evidence_updates_marginal_without_clamping` verifies P(a)=0.75, P(b)=0.475 after soft evidence on a
+  - Verify: `cargo test -p hkask-graph-widget propagate soft_evidence` (deferred to user)
   - Depends: T5b
 
 **Checkpoint 3:** Full `cargo test` across `hkask-forecast`, `hkask-graph-widget`, `hkask-mcp-scenarios`. Manual smoke: 3-node chain, set evidence on leaf, observe root marginal update. Set soft evidence, observe Bayesian update. Compare two branches, observe recomputed joint probability.

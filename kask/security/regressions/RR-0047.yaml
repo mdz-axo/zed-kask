@@ -1,0 +1,19 @@
+id: RR-0047
+title: "corpus_discover_company manifest_path and corpus_build_persona config_path must be contained under the project root (RR-0032 class — LLM-reachable read paths)"
+surface: mcp
+cwe: CWE-22
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/mcp-servers/hkask-mcp-corpus/src/tools/gather/mod.rs, kask/mcp-servers/hkask-mcp-corpus/src/tools/persona/mod.rs
+discovered_by: bug-hunt
+discovered_at: 2026-08-06
+severity: high
+detection:
+  kind: cargo-test
+  pattern: "path_safety"
+  include: "mcp-servers/hkask-mcp-corpus/src/path_safety.rs"
+mitigation: "Route LLM-reachable read paths through path_safety before reading. corpus_discover_company's manifest_path (Option<String>) must go through path_safety::read_capped (containment + MAX_READ_BYTES cap) instead of std::fs::read_to_string; corpus_build_persona's config_path (String) must go through path_safety::contain_for_read before being passed to EmbedService::embed_corpus. Same class as RR-0032 (which covered output/cache_dir/db_path) but manifest_path and config_path were missed because they feed config-file reads, not output writes or DB opens. A poisoned path (/etc/passwd, ~/.ssh/id_rsa, ../../escape) is read and the contents flow back into LLM context via parsed manifest/config fields and error strings (CWE-22/200). The call-site pin is the cargo-test grep on path_safety in the corpus crate; the primitive pin is the manifest_path_*/config_path_* rejection tests in path_safety.rs."
+source: "Cycle 7 bug-hunt — MCP tool input boundary review (defense layer 4)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

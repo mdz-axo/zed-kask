@@ -16,7 +16,47 @@
 
 use std::collections::HashMap;
 
-use crate::block::GraphBlockBody;
+use crate::block::{EvidenceKind, GraphBlockBody};
+
+/// Compute the forward marginalization for a single node, reading parent
+/// marginals from the `marginals` slice. Used by soft-evidence application
+/// (which needs the forward prior before applying the Bayesian update) and
+/// by the fixpoint forward sweep in `recompute_posteriors`.
+///
+/// Roots return their stored `marginal_probability`. Dependents marginalize
+/// over each `depends_on` entry and combine by independence (product).
+/// High-fan-in nodes (>20 parents) fall back to the base marginal.
+fn forward_marginal_for_node(body: &GraphBlockBody, idx: usize, marginals: &[f64]) -> f64 {
+    let node = &body.nodes[idx];
+    let parents = node.parent_ids();
+    if parents.is_empty() {
+        return node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
+    }
+    if node.depends_on.is_empty() {
+        return node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
+    }
+    let mut combined: f64 = 1.0;
+    for dep in &node.depends_on {
+        let parent_marginals: Vec<f64> = dep
+            .parent_event_ids
+            .iter()
+            .map(|pid| {
+                body.nodes
+                    .iter()
+                    .position(|n| &n.id == pid)
+                    .and_then(|pi| marginals.get(pi).copied())
+                    .unwrap_or(0.0)
+            })
+            .collect();
+        let n_parents = dep.parent_event_ids.len();
+        if n_parents > 20 {
+            return node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0);
+        }
+        combined *=
+            hkask_forecast::marginalize(&parent_marginals, &dep.conditionals).clamp(0.0, 1.0);
+    }
+    combined.clamp(0.0, 1.0)
+}
 
 /// Recompute every node's marginal probability given the current base
 /// probabilities (root nodes' `marginal_probability`) and a set of evidence
@@ -36,7 +76,7 @@ use crate::block::GraphBlockBody;
 pub fn recompute_marginals(
     body: &GraphBlockBody,
     topo_order: &[usize],
-    evidence: &HashMap<usize, f64>,
+    evidence: &HashMap<usize, EvidenceKind>,
 ) -> Vec<f64> {
     // S4 layer: validate conditional tables at the math boundary so a
     // malformed block is signalled here, not only at layout time. Missing
@@ -56,8 +96,31 @@ pub fn recompute_marginals(
     let n = body.nodes.len();
     let mut marginals = vec![0.0f64; n];
     for &idx in topo_order {
-        if let Some(&value) = evidence.get(&idx) {
-            marginals[idx] = value.clamp(0.0, 1.0);
+        if let Some(&kind) = evidence.get(&idx) {
+            // Hard evidence clamps; soft evidence applies a Bayesian update to
+            // the node's base marginal (roots) or the forward-computed marginal
+            // (dependents). For soft evidence on a dependent node, the prior is
+            // the forward marginalization result — computed below, so we fall
+            // through and apply the update after. For roots, the prior is the
+            // stored marginal_probability.
+            let node = &body.nodes[idx];
+            let prior = if node.parent_ids().is_empty() {
+                node.marginal_probability.unwrap_or(0.0).clamp(0.0, 1.0)
+            } else {
+                // Fall through to forward computation, then apply soft update.
+                // Hard evidence can clamp immediately.
+                if matches!(kind, EvidenceKind::Hard(_)) {
+                    marginals[idx] = kind.apply(0.0);
+                    continue;
+                }
+                // Soft: compute forward first, then apply. We'll handle this by
+                // not continuing here — the forward path runs, and we apply the
+                // soft update at the end of the loop body. Mark for update.
+                // (Implemented by falling through and applying after forward.)
+                // For simplicity, compute forward inline for soft evidence.
+                forward_marginal_for_node(body, idx, &marginals)
+            };
+            marginals[idx] = kind.apply(prior);
             continue;
         }
         let node = &body.nodes[idx];
@@ -182,7 +245,7 @@ pub fn is_polytree(body: &GraphBlockBody) -> bool {
 pub fn recompute_posteriors(
     body: &GraphBlockBody,
     topo_order: &[usize],
-    evidence: &HashMap<usize, f64>,
+    evidence: &HashMap<usize, EvidenceKind>,
 ) -> Vec<f64> {
     let n = body.nodes.len();
     if n == 0 {
@@ -360,7 +423,7 @@ fn conditional_for_parent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::{DependencyBody, GraphBlockBody, NodeBody};
+    use crate::block::{DependencyBody, EvidenceKind, GraphBlockBody, NodeBody};
 
     fn node(id: &str, prob: f64, parents: &[&str]) -> NodeBody {
         NodeBody {
@@ -436,7 +499,7 @@ mod tests {
             ..body
         };
         let mut evidence = HashMap::new();
-        evidence.insert(0, 0.9);
+        evidence.insert(0, EvidenceKind::Hard(0.9));
         let m = recompute_marginals(&body, &topo, &evidence);
         assert!((m[0] - 0.9).abs() < 1e-9);
         assert!((m[1] - 0.55).abs() < 1e-9, "got {}", m[1]);
@@ -464,7 +527,7 @@ mod tests {
         let (body, topo) = body(nodes, topo);
         // Set evidence on a parent so a propagated child would differ from 0.3.
         let mut evidence = HashMap::new();
-        evidence.insert(0, 0.9);
+        evidence.insert(0, EvidenceKind::Hard(0.9));
         let marginals = recompute_marginals(&body, &topo, &evidence);
         let child_idx = body.nodes.len() - 1;
         // The fallback returns the base marginal (0.3), not a propagated
@@ -607,7 +670,7 @@ mod tests {
         };
         let topo = vec![0, 1, 2];
         let mut evidence = HashMap::new();
-        evidence.insert(2, 0.9); // evidence on c (the leaf)
+        evidence.insert(2, EvidenceKind::Hard(0.9)); // evidence on c (the leaf)
         let posteriors = recompute_posteriors(&body, &topo, &evidence);
         // P(b) forward was 0.35. With c observed at 0.9 (high), P(b) should
         // increase — c is more likely when b is true.
@@ -623,6 +686,37 @@ mod tests {
             "backward inference should increase P(a) above 0.5, got {}",
             posteriors[0]
         );
+    }
+
+    #[test]
+    fn soft_evidence_applies_bayesian_update() {
+        // Soft evidence with LR=1.0 is a no-op; LR=3.0 on prior 0.5 yields 0.75.
+        // P' = P·LR / (P·LR + (1−P)) = 0.5·3 / (0.5·3 + 0.5) = 1.5 / 2.0 = 0.75.
+        let a = node("a", 0.5, &[]);
+        let (body, topo) = body(vec![a], vec![0]);
+        let mut evidence = HashMap::new();
+        evidence.insert(0, EvidenceKind::Soft(1.0));
+        let m = recompute_marginals(&body, &topo, &evidence);
+        assert!((m[0] - 0.5).abs() < 1e-9, "LR=1.0 no-op, got {}", m[0]);
+        let mut evidence = HashMap::new();
+        evidence.insert(0, EvidenceKind::Soft(3.0));
+        let m = recompute_marginals(&body, &topo, &evidence);
+        assert!(
+            (m[0] - 0.75).abs() < 1e-9,
+            "LR=3.0 on 0.5 → 0.75, got {}",
+            m[0]
+        );
+    }
+
+    #[test]
+    fn hard_evidence_clamps_no_regression() {
+        // Hard evidence clamps the marginal to the set value (original behavior).
+        let a = node("a", 0.5, &[]);
+        let (body, topo) = body(vec![a], vec![0]);
+        let mut evidence = HashMap::new();
+        evidence.insert(0, EvidenceKind::Hard(0.9));
+        let m = recompute_marginals(&body, &topo, &evidence);
+        assert!((m[0] - 0.9).abs() < 1e-9, "hard clamp, got {}", m[0]);
     }
 
     #[test]
@@ -656,7 +750,7 @@ mod tests {
         };
         let topo = vec![0, 1, 2];
         let mut evidence = HashMap::new();
-        evidence.insert(1, 0.9); // evidence on b
+        evidence.insert(1, EvidenceKind::Hard(0.9)); // evidence on b
         let posteriors = recompute_posteriors(&body, &topo, &evidence);
         // P(a) forward was 0.5. With b observed high, P(a) should increase.
         assert!(
