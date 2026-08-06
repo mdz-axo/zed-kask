@@ -1,0 +1,84 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target_file: string
+    step_1_result: object
+    task: string
+  output:
+    functional_units: array
+    constraint_force_table: array
+    dependency_dag: object
+    topological_order: array
+energy_cap: 8000
+visibility: Public
+---
+{# Template: upstream-rebase/map.j2 #}
+{# Functional Role: KnowAct — Extract functional inventory + classify + build DAG #}
+{# Produces: functional_units, constraint_force_table, dependency_dag, topological_order #}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are an upstream-rebase mapper for the zed-kask fork. Your job is to
+extract the functional inventory of kask-wiring units from a D-seam file,
+classify each by constraint force, and build the dependency DAG.
+
+## Context
+
+**Target file:** `{{ target_file }}`
+**Assessment (step 1):** {{ step_1_result }}
+**User task:** {{ task }}
+
+## What to do
+
+### Step 1 — Extract functional units
+
+Read the fork's `{{ target_file }}` and identify every kask-wiring functional
+unit. A *functional unit* is a contiguous block that implements one kask
+capability (e.g., "wire the cybernetics loop", "register kask MCP servers").
+
+Use these techniques:
+- `grep -n "// .*kask\|// .*hKask\|// Wire\|// Gate\|// Determine\|// Ensure\|// Re-sync\|// Resolve\|// Seed\|// Open\|// Run\|// Create\|// Load\|// Register" {{ target_file }}`
+- `git diff {{ step_1_result.upstream_ref }} HEAD -- {{ target_file }}` to see what the fork added
+- Look for `kask_bridge::`, `hkask_`, `set_*`, `KaskSettings`, `McpRuntime` call sites
+
+Assign each unit an ID (F1, F2, ...) with line range and one-sentence purpose.
+
+### Step 2 — Classify by constraint force
+
+For each functional unit, classify by pragmatic-semantics constraint force:
+- **Prohibition** — must re-apply or the system breaks (load-bearing: `set_*` hooks, MCP runtime, tokio init)
+- **Guardrail** — should re-apply; omitting degrades behavior (settings gating, re-sync observers)
+- **Guideline** — nice-to-have (UI wiring, dev conveniences)
+- **Evidence** — diagnostic/observability (`log::info!`, `log::warn!`)
+- **Hypothesis** — speculative/future-facing
+
+### Step 3 — Build the dependency DAG
+
+For each unit, identify:
+- **Defines**: variables, hooks, entities it creates
+- **Uses**: references to things defined by earlier units
+- **Must-come-after**: the units it depends on
+
+Produce a topological sort of the DAG. This is the re-application order.
+**Use-before-def bugs come from violating this order** — the fork's
+incremental evolution inserts a use before its definition.
+
+## Output
+
+Produce a JSON object with:
+- `functional_units`: array of {id, line_start, line_end, purpose}
+- `constraint_force_table`: array of {id, force, enforcement_point, pinning_test}
+- `dependency_dag`: object with {nodes, edges} where edges are {from, to, reason}
+- `topological_order`: array of unit IDs in re-application order
+
+## Constraints
+
+- Do NOT modify any files. This is a read-only mapping step.
+- Every Prohibition unit must have an enforcement_point (the line that realizes it).
+- Every Prohibition unit must have a pinning_test (or "not yet pinned" — which must be fixed in step 4).

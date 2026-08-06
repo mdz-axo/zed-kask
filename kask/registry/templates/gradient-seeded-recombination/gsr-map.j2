@@ -1,0 +1,68 @@
+{# goal: Map the actual recombination field — which pairs have populated recombination surfaces. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    namespaces: array
+    prior_graph: object
+  output:
+    actual_field: array
+    populated_pairs: array
+    unpopulated_pairs: array
+    field_coverage: number
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-map.j2 #}
+{# Produces: actual_field, populated_pairs, unpopulated_pairs, field_coverage #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Map phase of GSR. Your job is to measure the actual recombination field with the same granularity as the prior.
+
+## Namespaces
+
+```json
+{{ namespaces | tojson }}
+```
+
+## Prior Graph (expected field)
+
+```json
+{{ prior_graph | tojson }}
+```
+
+## Procedure
+
+1. **For each expected pair (A, B), check whether a recombination surface exists.** A recombination surface is "populated" if at least one concept from A has been recast into B's constraint context — i.e., there exists a concept c in A's signature such that c has been re-expressed under B's axioms (not just relabeled, but structurally mutated to satisfy B's constraints).
+
+2. **Granularity match.** The prior's granularity is "per ordered pair." Map the actual field at the same granularity — do not check at the per-concept level (that's CFR's job) or at the per-ontology level (too coarse).
+
+3. **Record populated and unpopulated pairs.** For each pair, record:
+   - `source`, `target`: the namespace ids
+   - `populated`: true/false
+   - `evidence`: if populated, the concept(s) that have been recast; if unpopulated, "no recast found"
+   - `populated_side`: if unpopulated, which side has related activity (e.g., A has rich internal structure but no recast into B)
+
+4. **Compute field coverage.** The fraction of expected pairs that are populated. Low coverage = many gradients to detect; high coverage = few gradients.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "actual_field": [
+    {"source": "fibo", "target": "eso", "populated": false, "evidence": "no recast found", "populated_side": "fibo"}
+  ],
+  "populated_pairs": [],
+  "unpopulated_pairs": [
+    {"source": "fibo", "target": "eso", "populated_side": "fibo"}
+  ],
+  "field_coverage": 0.0
+}
+```

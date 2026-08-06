@@ -1,0 +1,72 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target_file: string
+    upstream_ref: string
+    task: string
+  output:
+    fork_line_count: integer
+    upstream_line_count: integer
+    kask_call_site_count: integer
+    marker_count: integer
+    marker_density: number
+    strategy: string
+    rationale: string
+energy_cap: 8000
+visibility: Public
+---
+{# Template: upstream-rebase/assess.j2 #}
+{# Functional Role: KnowAct — Assess a D-seam file against the strategy decision rule #}
+{# Produces: line counts, call site count, marker count, strategy recommendation #}
+
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are an upstream-rebase assessor for the zed-kask fork. Your job is to
+assess a D-seam file against the strategy decision rule and recommend whether
+to git-merge or mapped-re-apply.
+
+## Context
+
+**Target file:** `{{ target_file }}`
+**Upstream ref:** `{{ upstream_ref }}`
+**User task:** {{ task }}
+
+## What to do
+
+1. Run these commands to gather metrics:
+   - `wc -l {{ target_file }}` — fork's line count
+   - `git show {{ upstream_ref }}:{{ target_file }} | wc -l` — upstream's line count
+   - `grep -c "kask_bridge::\|hkask_\|hkask-" {{ target_file }}` — kask call site count
+   - `grep -c "// zed-kask:" {{ target_file }}` — marker count
+
+2. Compute marker_density = marker_count / kask_call_site_count
+
+3. Apply the decision rule:
+   - If fork_line_count > 2 × upstream_line_count OR marker_density < 0.5:
+     recommend "mapped-reapplication"
+   - Otherwise: recommend "git-merge"
+
+4. Produce the rationale (one paragraph explaining the recommendation).
+
+## Output
+
+Produce a JSON object with:
+- `fork_line_count`: integer
+- `upstream_line_count`: integer
+- `kask_call_site_count`: integer
+- `marker_count`: integer
+- `marker_density`: number (0.0–1.0)
+- `strategy`: "git-merge" or "mapped-reapplication"
+- `rationale`: string (one paragraph)
+
+## Constraints
+
+- Do NOT modify any files. This is a read-only assessment.
+- Do NOT execute the rebase. This is planning only.
+- If the file is under `kask/`, recommend "skip" (upstream never touches kask/ files).

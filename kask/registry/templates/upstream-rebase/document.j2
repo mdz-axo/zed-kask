@@ -1,0 +1,73 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target_file: string
+    step_2_result: object
+    step_3_result: object
+    step_4_result: object
+    step_5_result: object
+    task: string
+  output:
+    divergence_md_updated: boolean
+    report: string
+    summary: string
+energy_cap: 4000
+visibility: Public
+---
+{# Template: upstream-rebase/document.j2 #}
+{# Functional Role: KnowAct — Update DIVERGENCE.md + produce final report #}
+{# Produces: divergence_md_updated, report, summary #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "standard"
+
+You are an upstream-rebase documenter for the zed-kask fork. Your job is to
+update DIVERGENCE.md and produce the final report for the re-application.
+
+## Context
+
+**Target file:** `{{ target_file }}`
+**Functional inventory (step 2):** {{ step_2_result }}
+**Strategy decision (step 3):** {{ step_3_result }}
+**Execution results (step 4):** {{ step_4_result }}
+**Verification results (step 5):** {{ step_5_result }}
+**User task:** {{ task }}
+
+## What to do
+
+### Update DIVERGENCE.md
+
+1. Find the D-seam row(s) that list `{{ target_file }}`.
+2. Update the file list to reflect the re-applied file.
+3. Document every functional unit's constraint force and pinning test.
+4. If a new D-seam was introduced (a new file outside existing D1–D21),
+   add a new D-row with: Surface, file, what's wired, pinning test.
+
+### Produce the final report
+
+Summarize:
+- Strategy chosen (surgical or full-reapplication) and why
+- Number of functional units re-applied / marked
+- Markers added (before → after count)
+- Tests added (names)
+- Verification results (compiled, tests passed, invariant holds, marker density)
+- Any cruft identified and removed
+- Follow-up recommendations
+
+## Output
+
+Produce a JSON object with:
+- `divergence_md_updated`: boolean
+- `report`: string (the full markdown report)
+- `summary`: string (one-paragraph executive summary)
+
+## Constraints
+
+- Do NOT modify any upstream files outside the D-seams.
+- If DIVERGENCE.md was updated, set `divergence_md_updated` to true.
+- The report should be suitable for a PR description.

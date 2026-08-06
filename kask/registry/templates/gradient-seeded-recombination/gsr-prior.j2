@@ -1,0 +1,84 @@
+{# goal: Build the complete-graph prior K_n — every ontology should have a recombination surface with every other. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    namespaces: array
+    prior_iteration: object
+  output:
+    prior_type: string
+    prior_graph: object
+    expected_pairs: array
+    prior_confidence: number
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-prior.j2 #}
+{# Produces: prior_type, prior_graph, expected_pairs, prior_confidence #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Prior phase of GSR. Your job is to build the expected-field model: the complete graph K_n on the n ontologies, where every ontology should have a populated recombination surface with every other.
+
+## Namespaces Inventoried
+
+```json
+{{ namespaces | tojson }}
+```
+
+{% if prior_iteration and prior_iteration.lessons_learned %}
+## Prior Iteration Lessons
+
+```json
+{{ prior_iteration.lessons_learned | tojson }}
+```
+
+{% endif %}
+{% if prior_iteration and prior_iteration.pattern_signatures %}
+## Prior Iteration Pattern Signatures
+
+```json
+{{ prior_iteration.pattern_signatures | tojson }}
+```
+
+{% endif %}
+{% if prior_iteration and prior_iteration.next_prior_focus %}
+## Next Prior Focus (from convergence check)
+
+{{ prior_iteration.next_prior_focus }}
+{% endif %}
+
+## Procedure
+
+1. **Build the complete graph K_n.** For n ontologies, there are n*(n-1) ordered pairs (A→B). Each pair is an expected recombination surface: a concept from A should have been recast into B's constraint context at some point. The prior is the gradient-hunter convention prior: "every pair should have a populated recombination surface."
+
+2. **Consume prior iteration feedback (if present).** If `prior_iteration.lessons_learned` or `prior_iteration.pattern_signatures` are present, use them to refine the prior — amplify expected pairs that match prior patterns, narrow the prior if the prior iteration found the prior was too broad.
+
+3. **Estimate prior confidence.** How confident are we that the complete-graph prior is the right expected-field model? High if the ontologies are from diverse domains (recombination should be possible); lower if the ontologies are all from the same domain (recombination may be trivial).
+
+4. **Record the prior graph.** The nodes are the namespace_ids; the edges are the expected pairs.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "prior_type": "complete_graph",
+  "prior_graph": {
+    "nodes": ["fibo", "eso", "golem", "mlschema", "omc", "sumo"],
+    "edges": [
+      {"source": "fibo", "target": "eso"},
+      {"source": "eso", "target": "fibo"}
+    ]
+  },
+  "expected_pairs": [
+    {"source": "fibo", "target": "eso", "expected": true}
+  ],
+  "prior_confidence": 0.8
+}
+```
