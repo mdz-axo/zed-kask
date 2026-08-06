@@ -28,6 +28,7 @@ pub use hkask_bridge_ontology::axis::{
 // Dublin Core / PKO vocabulary used by the condenser's anchor construction.
 pub use hkask_bridge_ontology::dc_bibo;
 pub use hkask_bridge_ontology::pko;
+pub use hkask_bridge_ontology::sumo;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Request Types
@@ -469,14 +470,14 @@ mod tests {
                 < 0.001
         );
 
-        // CogAT: -0.10 (metaphorical mapping)
+        // SUMO: +0.05 (upper ontology, broad coverage)
         assert!(
             (OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Cogat,
-                concept: "cogat:episodic_memory".into()
+                namespace: OntologyNamespace::Sumo,
+                concept: "sumo:Entity".into()
             }
             .confidence_modifier()
-                - (-0.10))
+                - 0.05)
                 .abs()
                 < 0.001
         );
@@ -508,14 +509,14 @@ mod tests {
                 < 0.001
         );
 
-        // CogAT metaphorical: lowest density (0.9x — preserve semantic meaning)
+        // SUMO: standard density (1.0x)
         assert!(
             (OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Cogat,
-                concept: "cogat:salience".into()
+                namespace: OntologyNamespace::Sumo,
+                concept: "sumo:Process".into()
             }
             .density_factor()
-                - 0.9)
+                - 1.0)
                 .abs()
                 < 0.001
         );
@@ -589,8 +590,8 @@ mod tests {
             OntologyNamespace::Golem
         );
         assert_eq!(
-            "cogat".parse::<OntologyNamespace>().unwrap(),
-            OntologyNamespace::Cogat
+            "sumo".parse::<OntologyNamespace>().unwrap(),
+            OntologyNamespace::Sumo
         );
         assert_eq!(
             "mlschema".parse::<OntologyNamespace>().unwrap(),
@@ -612,9 +613,9 @@ mod tests {
         let namespaces = [
             OntologyNamespace::Fibo,
             OntologyNamespace::Golem,
-            OntologyNamespace::Cogat,
             OntologyNamespace::MlSchema,
             OntologyNamespace::Omc,
+            OntologyNamespace::Sumo,
         ];
         for ns in &namespaces {
             let s = ns.to_string();

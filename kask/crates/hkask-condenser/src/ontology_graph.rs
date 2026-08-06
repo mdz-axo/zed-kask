@@ -14,9 +14,9 @@
 //! | Edge | Meaning | Example |
 //! |------|---------|---------|
 //! | **PartOf** | A is a component of B | `pko:StepExecution` is part of `pko:ProcedureExecution` |
-//! | **Precedes** | A must happen before B | `cogat:encoding` precedes `cogat:memory_consolidation` |
+//! | **Precedes** | A must happen before B | `sumo:encoding` precedes `sumo:memory_consolidation` |
 //! | **HasProperty** | A has attribute/measure B | `fibo:Corporation` has `fibo:MarketCapitalization` |
-//! | **RelatedTo** | A and B are semantically linked | `cogat:salience` relates to `cogat:cued_recall` |
+//! | **RelatedTo** | A and B are semantically linked | `sumo:salience` relates to `sumo:cued_recall` |
 //! | **Contains** | A structurally contains B | `omc:Scene` contains `omc:Shot` |
 //! | **CrossDomain** | A (domain X) maps to B (domain Y) | `pko:IssueOccurrence` may reference a `fibo:Corporation` |
 
@@ -95,7 +95,7 @@ impl OntologyGraph {
             ],
         );
 
-        // ── CogAT cognitive ──────────────────────────────────────────────
+        // ── SUMO cognitive (memory/process) ──────────────────────────────
         edges.insert(
             "encoding",
             vec![
@@ -329,7 +329,7 @@ pub fn anchor_keywords(anchor: &crate::types::OntologyAnchor) -> Vec<&'static st
             ..
         } => vec!["corporation", "portfolio", "dcf", "market"],
         crate::types::OntologyAnchor::DomainSupplement {
-            namespace: crate::types::OntologyNamespace::Cogat,
+            namespace: crate::types::OntologyNamespace::Sumo,
             ..
         } => vec![
             "encoding",
@@ -391,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn cogat_encoding_precedes_consolidation() {
+    fn sumo_encoding_precedes_consolidation() {
         let g = graph();
         let related = g.related("encoding");
         let precedes = related

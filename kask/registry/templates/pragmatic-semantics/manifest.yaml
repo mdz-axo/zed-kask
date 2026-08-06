@@ -40,5 +40,5 @@ templates:
     description: >
       Resolve a conflict between statements using 5-tier OT ranking.
       Rank by ontological type, epistemic mode, constraint force,
-      evidence provenance, and ontology anchoring (FIBO > CogAT >
+      evidence provenance, and ontology anchoring (FIBO > SUMO >
       unanchored).

@@ -17,6 +17,7 @@
 
 use crate::dc_bibo;
 use crate::pko;
+use crate::sumo;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -49,12 +50,14 @@ pub enum OntologyNamespace {
     Eso,
     /// GOLEM narrative ontology — literature, narrative, persona.
     Golem,
-    /// Cognitive Atlas — cognitive/memory concepts.
-    Cogat,
     /// ML-Schema — machine-learning experiments.
     MlSchema,
     /// MovieLabs Ontology for Media Creation — media production.
     Omc,
+    /// SUMO (Suggested Upper Merged Ontology) — the universal upper ontology
+    /// and fallback for domains that don't map to a specific supplement.
+    /// Provides foundational categories (Entity, Process, Object, Agent).
+    Sumo,
 }
 
 impl OntologyNamespace {
@@ -64,9 +67,9 @@ impl OntologyNamespace {
             OntologyNamespace::Fibo => dc_bibo::DATASET,
             OntologyNamespace::Eso => dc_bibo::TEXT,
             OntologyNamespace::Golem => dc_bibo::TEXT,
-            OntologyNamespace::Cogat => dc_bibo::DATASET,
             OntologyNamespace::MlSchema => dc_bibo::DATASET,
             OntologyNamespace::Omc => dc_bibo::COLLECTION,
+            OntologyNamespace::Sumo => dc_bibo::TEXT,
         }
     }
 
@@ -76,9 +79,9 @@ impl OntologyNamespace {
             OntologyNamespace::Fibo => pko::PROCEDURE,
             OntologyNamespace::Eso => pko::STEP_VERIFICATION,
             OntologyNamespace::Golem => pko::PROCEDURE,
-            OntologyNamespace::Cogat => pko::FUNCTION,
             OntologyNamespace::MlSchema => pko::PROCEDURE,
             OntologyNamespace::Omc => pko::PROCEDURE_EXECUTION,
+            OntologyNamespace::Sumo => pko::PROCEDURE,
         }
     }
 }
@@ -90,9 +93,9 @@ impl std::str::FromStr for OntologyNamespace {
             "fibo" => Ok(OntologyNamespace::Fibo),
             "eso" => Ok(OntologyNamespace::Eso),
             "golem" => Ok(OntologyNamespace::Golem),
-            "cogat" => Ok(OntologyNamespace::Cogat),
             "mlschema" | "ml_schema" | "ml-schema" => Ok(OntologyNamespace::MlSchema),
             "omc" => Ok(OntologyNamespace::Omc),
+            "sumo" => Ok(OntologyNamespace::Sumo),
             _ => Err(format!("Unknown ontology namespace: {s}")),
         }
     }
@@ -104,9 +107,9 @@ impl std::fmt::Display for OntologyNamespace {
             OntologyNamespace::Fibo => write!(f, "fibo"),
             OntologyNamespace::Eso => write!(f, "eso"),
             OntologyNamespace::Golem => write!(f, "golem"),
-            OntologyNamespace::Cogat => write!(f, "cogat"),
             OntologyNamespace::MlSchema => write!(f, "mlschema"),
             OntologyNamespace::Omc => write!(f, "omc"),
+            OntologyNamespace::Sumo => write!(f, "sumo"),
         }
     }
 }
@@ -128,8 +131,9 @@ pub enum OntologyAnchor {
     /// Process axis (PKO) or state axis (DC+BIBO) — dual-axis framework (P5.4).
     /// `concept` is the canonical concept URI, e.g. "pko:StepExecution" or "bibo:Article".
     DualAxis { axis: OntologyAxis, concept: String },
-    /// Domain supplement — FIBO, ESO, GOLEM, CogAT, ML-Schema, or OMC (P8.1).
+    /// Domain supplement — FIBO, ESO, GOLEM, ML-Schema, OMC, or SUMO (P8.1).
     /// Layered on top of the dual-axis core for domain-specific precision.
+    /// SUMO is the universal fallback for domains without a specific supplement.
     DomainSupplement {
         namespace: OntologyNamespace,
         concept: String,
@@ -139,7 +143,7 @@ pub enum OntologyAnchor {
 impl OntologyAnchor {
     /// Return the confidence modifier for this ontology tier.
     /// FIBO: +0.10 (OMG standard, high adoption)
-    /// CogAT: -0.10 (metaphorical mapping)
+    /// SUMO: +0.05 (actively maintained upper ontology, broad coverage)
     /// Others: ±0.00 (standard baseline)
     pub fn confidence_modifier(&self) -> f64 {
         match self {
@@ -147,7 +151,7 @@ impl OntologyAnchor {
             OntologyAnchor::DualAxis { .. } => 0.0,
             OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
                 OntologyNamespace::Fibo => 0.10,
-                OntologyNamespace::Cogat => -0.10,
+                OntologyNamespace::Sumo => 0.05,
                 _ => 0.0,
             },
         }
@@ -165,10 +169,10 @@ impl OntologyAnchor {
             OntologyAnchor::DomainSupplement { namespace, .. } => match namespace {
                 OntologyNamespace::Fibo => 1.3,
                 OntologyNamespace::Eso => 1.0,
-                OntologyNamespace::Cogat => 0.9,
                 OntologyNamespace::Golem => 1.0,
                 OntologyNamespace::MlSchema => 1.1,
                 OntologyNamespace::Omc => 1.0,
+                OntologyNamespace::Sumo => 1.0,
             },
         }
     }
@@ -273,16 +277,6 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: dc_bibo::TEXT.to_string(),
         };
     }
-    // Cognitive / memory → CogAT.
-    if ["memory", "cognitive", "episodic", "semantic"]
-        .iter()
-        .any(|kw| matches_kw(kw))
-    {
-        return OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Cogat,
-            concept: dc_bibo::DATASET.to_string(),
-        };
-    }
     // ML training → ML-Schema.
     if ["training", "ml", "adapter", "sweep", "lora"]
         .iter()
@@ -335,8 +329,19 @@ pub fn select_ontology_anchor(domain: &str) -> OntologyAnchor {
             concept: dc_bibo::TEXT.to_string(),
         };
     }
-    // Unknown → universal 5W1H core (the fallback).
-    OntologyAnchor::Core
+    // Unknown → SUMO upper ontology (the universal fallback). SUMO provides
+    // formal categorization (Entity, Process, Object, Agent) beyond the bare
+    // 5W1H interrogative ground, so unknown domains get a real ontology anchor
+    // rather than a no-op. The 5W1H core remains the tier for artifacts that
+    // genuinely have no domain hint (the `Core` variant is still reachable
+    // when `domain` is empty).
+    if lower.is_empty() {
+        return OntologyAnchor::Core;
+    }
+    OntologyAnchor::DomainSupplement {
+        namespace: OntologyNamespace::Sumo,
+        concept: sumo::ENTITY.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -425,8 +430,24 @@ mod tests {
     }
 
     #[test]
-    fn unknown_domain_falls_back_to_core() {
+    fn unknown_domain_falls_back_to_sumo() {
+        // Unknown domains now route to SUMO (the upper ontology) rather than
+        // the bare 5W1H core, so they get formal categorization.
         let anchor = select_ontology_anchor("some-unknown-domain");
+        assert_eq!(
+            anchor,
+            OntologyAnchor::DomainSupplement {
+                namespace: OntologyNamespace::Sumo,
+                concept: sumo::ENTITY.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn empty_domain_falls_back_to_core() {
+        // An empty domain hint has no signal — the 5W1H core is the right
+        // anchor (no domain to categorize).
+        let anchor = select_ontology_anchor("");
         assert_eq!(anchor, OntologyAnchor::Core);
     }
 
@@ -482,9 +503,9 @@ mod tests {
             ("fibo", OntologyNamespace::Fibo),
             ("eso", OntologyNamespace::Eso),
             ("golem", OntologyNamespace::Golem),
-            ("cogat", OntologyNamespace::Cogat),
             ("mlschema", OntologyNamespace::MlSchema),
             ("omc", OntologyNamespace::Omc),
+            ("sumo", OntologyNamespace::Sumo),
         ] {
             let parsed: OntologyNamespace = name.parse().unwrap_or_else(|e| panic!("{e}"));
             assert_eq!(parsed, variant, "FromStr round-trip for {name}");
@@ -499,9 +520,9 @@ mod tests {
             OntologyNamespace::Fibo,
             OntologyNamespace::Eso,
             OntologyNamespace::Golem,
-            OntologyNamespace::Cogat,
             OntologyNamespace::MlSchema,
             OntologyNamespace::Omc,
+            OntologyNamespace::Sumo,
         ] {
             let concept = variant.dc_concept();
             assert!(
@@ -517,9 +538,9 @@ mod tests {
             OntologyNamespace::Fibo,
             OntologyNamespace::Eso,
             OntologyNamespace::Golem,
-            OntologyNamespace::Cogat,
             OntologyNamespace::MlSchema,
             OntologyNamespace::Omc,
+            OntologyNamespace::Sumo,
         ] {
             let concept = variant.pko_concept();
             assert!(
@@ -530,17 +551,19 @@ mod tests {
     }
 
     #[test]
-    fn confidence_modifier_fibo_positive_cogat_negative() {
+    fn confidence_modifier_fibo_positive_sumo_positive() {
         let fibo = OntologyAnchor::DomainSupplement {
             namespace: OntologyNamespace::Fibo,
             concept: dc_bibo::DATASET.to_string(),
         };
-        let cogat = OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Cogat,
-            concept: dc_bibo::DATASET.to_string(),
+        let sumo = OntologyAnchor::DomainSupplement {
+            namespace: OntologyNamespace::Sumo,
+            concept: sumo::ENTITY.to_string(),
         };
         assert!(fibo.confidence_modifier() > 0.0);
-        assert!(cogat.confidence_modifier() < 0.0);
+        assert!(sumo.confidence_modifier() > 0.0);
+        // FIBO (OMG standard) gets a higher boost than SUMO (upper ontology).
+        assert!(fibo.confidence_modifier() > sumo.confidence_modifier());
     }
 
     #[test]

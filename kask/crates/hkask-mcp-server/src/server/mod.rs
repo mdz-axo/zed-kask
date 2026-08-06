@@ -328,9 +328,9 @@ mod tests {
         let domain_concepts: &[&str] = &[
             "fibo:Corporation",
             "golem:Character",
-            "cogat:episodic_memory",
             "mls:Model",
             "omc:Image",
+            "sumo:Entity",
         ];
 
         let mut guard = ToolSpanGuard::new("test_tool", &hkask_types::WebID::new());

@@ -248,7 +248,7 @@ pub fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
             }
         }
         Some(OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Cogat,
+            namespace: OntologyNamespace::Sumo,
             ..
         }) => {
             if line.contains("memory")
@@ -688,19 +688,22 @@ mod tests {
     }
 
     #[test]
-    fn derive_ontology_cogat_for_memory_tools() {
+    fn derive_ontology_sumo_for_memory_tools() {
+        // Memory/cognitive domains no longer have a CogAT supplement; they route
+        // to SUMO (the universal fallback) which provides the upper-ontology
+        // categories (Process, Proposition) for cognitive concepts.
         assert_eq!(
             derive_ontology_anchor("memory_recall"),
             OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Cogat,
-                concept: dc_bibo::DATASET.to_string()
+                namespace: OntologyNamespace::Sumo,
+                concept: sumo::ENTITY.to_string()
             }
         );
         assert_eq!(
             derive_ontology_anchor("episodic_store"),
             OntologyAnchor::DomainSupplement {
-                namespace: OntologyNamespace::Cogat,
-                concept: dc_bibo::DATASET.to_string()
+                namespace: OntologyNamespace::Sumo,
+                concept: sumo::ENTITY.to_string()
             }
         );
     }
@@ -757,8 +760,20 @@ mod tests {
     }
 
     #[test]
-    fn derive_ontology_core_for_unknown_tools() {
-        assert_eq!(derive_ontology_anchor("unknown_tool"), OntologyAnchor::Core);
+    fn derive_ontology_sumo_for_unknown_tools() {
+        // Unknown tools route to SUMO (the universal fallback), not Core.
+        assert_eq!(
+            derive_ontology_anchor("unknown_tool"),
+            OntologyAnchor::DomainSupplement {
+                namespace: OntologyNamespace::Sumo,
+                concept: sumo::ENTITY.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn derive_ontology_core_for_empty_tool_name() {
+        // An empty tool name has no signal — the 5W1H core is the right anchor.
         assert_eq!(derive_ontology_anchor(""), OntologyAnchor::Core);
     }
 
@@ -954,9 +969,9 @@ mod tests {
         assert!(result_lines.len() <= 30, "result exceeds budget");
     }
 
-    /// CogAT-anchored text preserves memory/cognitive keywords.
+    /// SUMO-anchored text preserves memory/cognitive keywords.
     #[test]
-    fn cogat_anchor_preserves_memory_keywords() {
+    fn sumo_anchor_preserves_memory_keywords() {
         let input = concat!(
             "Memory Operation Report\n",
             "The episodic memory store received 15 new events.\n",
@@ -972,8 +987,8 @@ mod tests {
         );
         let algo = WordRankAlgorithm;
         let anchor = Some(OntologyAnchor::DomainSupplement {
-            namespace: OntologyNamespace::Cogat,
-            concept: "cogat:episodic_memory".into(),
+            namespace: OntologyNamespace::Sumo,
+            concept: "sumo:Process".into(),
         });
         let (result, _) = algo.compress(
             input,
@@ -981,7 +996,7 @@ mod tests {
             ContextCategory::LogOutput,
             anchor.as_ref(),
         );
-        // CogAT anchor should prioritize lines with cognitive/memory keywords
+        // SUMO anchor should prioritize lines with cognitive/memory keywords
         // Soft profile (60% retention): enough budget for multiple lines
         let preserved_keywords = result.contains("episodic")
             || result.contains("Encoding")
