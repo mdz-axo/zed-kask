@@ -1,5 +1,9 @@
 # Prediction Markets → zed-kask: Task Checklist
 
+> **Status (2026-08-05): all phases complete.** See `plan.md` header and
+> `docs/reports/prediction-markets/07-project-status.md` for the
+> stopping-point record and deferred-item triggers.
+
 Companion to `tasks/plan.md`. Grouped by phase. ☐ = pending.
 
 ## Phase 0 — Spike (fail-fast gate)

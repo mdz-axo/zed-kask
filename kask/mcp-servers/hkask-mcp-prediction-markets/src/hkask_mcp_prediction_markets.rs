@@ -16,15 +16,17 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-pub mod matcher;
+pub mod base_event;
 pub mod cache;
-pub mod cmp;
 pub mod calibration;
+pub mod cmp;
+pub mod cmp_portfolio;
+pub mod matcher;
 pub mod ontology;
 pub mod provider_kalshi;
+pub mod provider_polymarket;
 pub mod residual;
 mod streaming;
-pub mod provider_polymarket;
 pub mod types;
 
 // ── Request/response types ─────────────────────────────────────────────────
@@ -173,7 +175,6 @@ hkask_mcp_server::mcp_server!(
 );
 
 // ── Tool router ────────────────────────────────────────────────────────────
-
 
 impl PredictionMarketsServer {
     fn combined_router() -> ToolRouter<Self> {
@@ -507,7 +508,9 @@ impl PredictionMarketsServer {
                             }
                             let event_tags: Vec<String> =
                                 event.tags.iter().map(|t| t.label.clone()).collect();
-                            let bucket = types::canonical_bucket(event_tags.first().map(String::as_str).unwrap_or(""));
+                            let bucket = types::canonical_bucket(
+                                event_tags.first().map(String::as_str).unwrap_or(""),
+                            );
                             let reading = {
                                 let guard = self
                                     .calibration_store
@@ -646,13 +649,9 @@ impl PredictionMarketsServer {
                     end,
                 )
                 .await?;
-                let base_history = provider_kalshi::fetch_price_history(
-                    &self.http,
-                    &req.base_ticker,
-                    start,
-                    end,
-                )
-                .await?;
+                let base_history =
+                    provider_kalshi::fetch_price_history(&self.http, &req.base_ticker, start, end)
+                        .await?;
                 // Align on shared period timestamps.
                 let observations: Vec<(f64, f64)> = niche_history
                     .iter()
@@ -756,7 +755,9 @@ impl PredictionMarketsServer {
                             if market.uma_resolution_status != "resolved" {
                                 continue;
                             }
-                            let Some(price) = market.yes_probability() else { continue };
+                            let Some(price) = market.yes_probability() else {
+                                continue;
+                            };
                             let outcome = if price >= 0.99 {
                                 Some(true)
                             } else if price <= 0.01 {
@@ -849,14 +850,13 @@ impl PredictionMarketsServer {
                         .map(|p| p.price)
                         .collect()
                     }
-                    "polymarket" => provider_polymarket::fetch_prices_history(
-                        &self.http,
-                        &req.market,
-                    )
-                    .await?
-                    .iter()
-                    .map(|p| p.price)
-                    .collect(),
+                    "polymarket" => {
+                        provider_polymarket::fetch_prices_history(&self.http, &req.market)
+                            .await?
+                            .iter()
+                            .map(|p| p.price)
+                            .collect()
+                    }
                     other => {
                         return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
                             format!("unknown source '{other}' (expected kalshi|polymarket)"),
@@ -976,16 +976,15 @@ impl PredictionMarketsServer {
 
         let gamma_events = provider_polymarket::fetch_events(&self.http, 100).await?;
         for event in &gamma_events {
-            let event_tags: Vec<String> =
-                event.tags.iter().map(|t| t.label.clone()).collect();
-            let bucket = types::canonical_bucket(event_tags.first().map(String::as_str).unwrap_or(""));
+            let event_tags: Vec<String> = event.tags.iter().map(|t| t.label.clone()).collect();
+            let bucket =
+                types::canonical_bucket(event_tags.first().map(String::as_str).unwrap_or(""));
             let reading = {
                 let guard = store.lock().unwrap_or_else(|e| e.into_inner());
                 calibration::read_calibration(&guard, &bucket)
             };
             for market in &event.markets {
-                let calibration_block =
-                    types::calibration_for(Some(&reading), &bucket);
+                let calibration_block = types::calibration_for(Some(&reading), &bucket);
                 if let Some(record) = types::MarketRecord::from_polymarket(
                     market,
                     &event.id,
@@ -1044,7 +1043,6 @@ impl PredictionMarketsServer {
     }
 }
 
-
 #[tool_handler(router = Self::combined_router())]
 impl rmcp::ServerHandler for PredictionMarketsServer {}
 
@@ -1077,21 +1075,17 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     // never silent — the loop must distinguish "no data" from "failed to
     // read data" (the unwrap_or(0) sense-input trap).
     let data_dir = std::env::var("HKASK_PREDICTION_MARKETS_DATA").ok();
-    let calibration_path = data_dir
-        .as_ref()
-        .map(|d| format!("{d}/calibration.jsonl"));
+    let calibration_path = data_dir.as_ref().map(|d| format!("{d}/calibration.jsonl"));
     let store = match &calibration_path {
-        Some(path) => {
-            match calibration::CalibrationStore::load(std::path::Path::new(path)) {
-                Ok(store) => store,
-                Err(e) => {
-                    tracing::warn!(
-                        "calibration journal at {path} failed to load ({e});                          starting with an empty store — calibration signals                          will read stale until new observations accrue"
-                    );
-                    calibration::CalibrationStore::new()
-                }
+        Some(path) => match calibration::CalibrationStore::load(std::path::Path::new(path)) {
+            Ok(store) => store,
+            Err(e) => {
+                tracing::warn!(
+                    "calibration journal at {path} failed to load ({e});                          starting with an empty store — calibration signals                          will read stale until new observations accrue"
+                );
+                calibration::CalibrationStore::new()
             }
-        }
+        },
         None => calibration::CalibrationStore::new(),
     };
 

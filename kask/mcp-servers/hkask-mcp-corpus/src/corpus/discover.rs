@@ -19,6 +19,7 @@
 //! 8. Generate/augment corpus.yaml
 
 mod cache;
+mod company_manifest;
 mod config;
 mod llm;
 mod search;
@@ -30,6 +31,7 @@ mod utils;
 mod tests;
 
 pub use cache::download_and_cache;
+pub use company_manifest::{CompanySourceManifest, ManifestValidationError};
 pub use config::{default_corpus_config, generate_corpus_yaml};
 pub use service::DiscoveryService;
 pub use types::{DiscoverRequest, DiscoverResult, DiscoveredWork};

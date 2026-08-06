@@ -1,5 +1,15 @@
 # Prediction Markets → zed-kask: Implementation Plan
 
+> **Status (2026-08-05): COMPLETE through Phase 4 + post-plan hardening.**
+> All tasks T0–T15 done; checkpoints 1–4 reached; calibration loop verified
+> live-firing (a poisoned bucket demoted a live election market to medium
+> tier). Post-plan additions shipped: `market_check_resolutions` (self-feeding
+> sense arm), `market_cmp_index` (published curve + slope), `market_history`
+> (realized variance), `market_ladder` (duration profile), settings plumbing +
+> UI sub-page. Stopping-point record:
+> `docs/reports/prediction-markets/07-project-status.md`. Remaining: a
+> 5-minute human UI click-through (`06-verification.md`).
+
 **Companion to:** `docs/reports/prediction-markets/01-prediction-markets-research.md`, `02-zed-kask-integration.md`
 **Method:** task-breakdown PDCA (PLAN → DECOMPOSE → EVALUATE → QUALITY-GATE → WRITE). Vertical slices, bottom-up dependency order, high-risk-first (Phase 0 spike), checkpoints between phases.
 **PKO anchor:** `pko:Procedure` targeting "Prediction-market data service for zed-kask forecasting".

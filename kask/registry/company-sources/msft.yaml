@@ -1,0 +1,91 @@
+# Company Corpus Source Manifest — Microsoft (MSFT)
+# ℏKask v0.33.0 — approved-source trust policy for corpus_discover_company
+#
+# Design: kask/docs/explanation/company-corpus-design.md §B2
+# Doctrine anchor (MAIA 137881063.company-analysis): "Company research should
+# always start with how the company sees themselves… It is important not to
+# begin with sell side or media reports." The tier ordering below IS that
+# doctrine made mechanical.
+#
+# Provenance invariant: every discovered document carries source_tier +
+# dc:source + retrieval date. tier_3 may inform context but can never be cited
+# as the company's own position in a listening-template verdict. Generated
+# content (corpus_generate_qa output) is never tier_1/tier_2 evidence.
+
+manifest:
+  id: msft
+  category: company-source-manifest   # NOT category: skill — no SKILL.md, not agent-facing
+  name: Microsoft Company Corpus Sources
+  version: 0.1.0
+  editor: curator-or-human-admin
+  visibility: Private                  # operator's source policy, not a public skill
+
+company:
+  symbol: MSFT
+  name: Microsoft Corporation
+  cik: "0000789019"                   # SEC EDGAR central index key
+  ir_base: "https://www.microsoft.com/en-us/Investor"
+  ceo: "Satya Nadella"
+  cfo: "Amy Hood"
+  fiscal_year_end_month: 6            # June FY end — fiscal Q1 = Jul–Sep; matters for
+                                      # mapping FMP year/quarter labels to fiscal periods
+
+# ── Source tiers ────────────────────────────────────────────────────────────
+source_tiers:
+  tier_1_self_description:
+    - kind: sec_filings
+      via: sec_edgar
+      forms: [10-K, 10-Q, 8-K, DEF-14A]
+    - kind: ir_documents
+      via: ir_site
+      base: "https://www.microsoft.com/en-us/Investor"
+      subpaths: [earnings, annual-reports, investor-day, events]
+    - kind: earnings_transcript
+      via: companies_mcp                # company_transcript mode=earnings (FMP /stable)
+      notes: "Named speakers verified (2026-08-05 probe); prepared-remarks/Q&A markers present"
+
+  tier_2_executive_voice:
+    - kind: youtube
+      via: serpapi
+      queries:
+        - "Satya Nadella keynote"
+        - "Satya Nadella interview"
+        - "Amy Hood investor"
+        - "Microsoft investor day"
+        - "Microsoft Build keynote"
+      channels_allowlist:
+        - "Microsoft"
+        - "Microsoft Investor Relations"
+        - "Microsoft Events"
+        - "Microsoft Developer"
+      speaker_attribution: generic      # 2026-08-05 probe: SPEAKER n labels, not named
+    - kind: company_transcript
+      via: companies_mcp                # company_transcript mode=corpus
+
+  tier_3_external:
+    # OPT-IN ONLY. Empty by default: sell-side research and news media are
+    # excluded per the MAIA anchor. Add entries here only with a stated reason.
+    []
+
+provenance_rule: >
+  Every document carries source_tier + dc:source + retrieval date. tier_3 may
+  inform context but can never be cited as the company's own position in a
+  template verdict. Generated content (corpus_generate_qa output) is never
+  tier_1/tier_2 evidence.
+
+exclusion_rule: >
+  A tier_2 youtube result whose channel is not on channels_allowlist, or whose
+  transcript fails the no-fabrication citation check, is excluded (logged in
+  coverage.excluded), never silently downgraded to tier_3.
+
+# ── Ingestion defaults (feed the §B3 pipeline) ──────────────────────────────
+ingestion:
+  entity_ref_prefix: "company:msft"     # chunks: company:msft:{kind}:{date}
+  chunking:
+    multi_tier: true
+  tagging:
+    ontologies: [FIBO, PKO, DublinCore, FiveW1H]
+  embedding:
+    dim: 1024                           # matches EmbeddingStore contract (corpus_config_parse_test)
+  centroids:
+    group_by: [theme, document_kind, fiscal_period]

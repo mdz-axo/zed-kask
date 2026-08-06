@@ -19,37 +19,46 @@ tied to a Phase A finding (OUGHT). Unverified items are marked UNVERIFIED, not g
 - Consequence: **EODHD is excluded from Phase B.** (Caveat: an EODHD Marketplace
   third-party listing is theoretically possible — UNVERIFIED either way.)
 
-### A2. FMP transcript endpoint: **exists** (verified via archived docs)
+### A2. FMP transcript endpoint: **exists** (verified live 2026-08-05 with the operator's key)
 
-- `GET https://financialmodelingprep.com/api/v3/earning_call_transcript/{symbol}?year={YYYY}&quarter={1-4}`
-  — documented at `https://site.financialmodelingprep.com/developer/docs/earning-call-transcript-api`
-  (verified via Wayback capture 2025-11-20; the live docs host returns HTTP 403 to
-  non-browser fetchers, UNVERIFIED whether current docs differ).
-- The v3 endpoint is flagged **legacy**; a newer `/stable/` replacement exists but its
-  exact path is UNVERIFIED. The codebase already uses `FMP_BASE_URL =
-  "https://financialmodelingprep.com/stable"` (`providers.rs:27`), so the current path
-  must be confirmed before implementation (likely `/stable/earning-call-transcript` —
-  UNVERIFIED).
-- Response fields: `[symbol, quarter, year, date, content]` — a single `content` text
-  blob. **Full text: verified. Speaker segmentation: UNVERIFIED (docs show none).
-  Timestamps: no (none documented).**
+- **Working endpoint (verified):** `GET https://financialmodelingprep.com/stable/earning-call-transcript?symbol={SYM}&year={YYYY}&quarter={1-4}`
+  — returns HTTP 200 with the operator's key. The legacy v3 path
+  (`/api/v3/earning_call_transcript/{symbol}`) returns **403 "Legacy Endpoint … only
+  available for legacy users … prior August 31, 2025"** — dead for this subscription.
+- **Plan gating: RESOLVED** — the operator's current plan serves transcripts (200 on
+  `/stable/`). No upgrade needed.
+- **Response fields (verified):** `[symbol, period, year, date, content]` — `period` is
+  `"Q1".."Q4"`, `content` is a single text blob (~45–51k chars for AAPL).
+- **Shape (verified on AAPL 2023Q1, 45,583 chars):** speaker markers PRESENT —
+  `Name:` at line starts (13 distinct labels: `Timothy Cook` ×14, `Operator` ×12,
+  `Luca Maestri` ×6, analysts by name); `Question-and-Answer` section marker PRESENT;
+  `Operator:` PRESENT; **timestamps ABSENT**. Segmentation into prepared-remarks/Q&A +
+  per-speaker turns is therefore feasible by rule-based parsing (design §(a) segment
+  mode is viable as specified).
+- **Caveat (verified oddity):** AAPL 2023Q1 returns `"date": "2012-03-19"` — the
+  `date` field is unreliable (likely first-call date); use (year, period) as the
+  temporal key, not `date`.
+- **History depth (verified):** 200 with full content at 2010Q3 (50,927B), 2015Q2,
+  2020Q4; **empty array `[]` at 2005Q2 and 2000Q2** — the floor is somewhere between
+  2005 and 2010 for AAPL. 20 quarters (5y) and 10 fiscal-year-ends are comfortably
+  retrievable; the "15+ years" marketing claim is plausible but the exact floor is
+  per-symbol and UNVERIFIED beyond these probes.
 
-### A3. History depth
+### A3. History depth (verified live 2026-08-05)
 
-- The endpoint is keyed by explicit `year`+`quarter`, so there is no documented cap on
-  the retrievable window; the earliest retrievable quarter is UNVERIFIED. Practically,
-  the last 20 quarters (5y) are retrievable by iteration. FMP's "15+ years" claim
-  appears in marketing but was not verified on a docs page.
+- Verified retrievable: 2010Q3, 2015Q2, 2020Q4 (full content). Empty (`[]`) at 2005Q2
+  and 2000Q2 for AAPL — floor between 2005–2010, per-symbol. The endpoint is keyed by
+  explicit `year`+`quarter` with no documented cap; 20 quarters (5y) and 10
+  fiscal-year-ends are retrievable by iteration.
 - "Annual transcripts" are not a distinct artifact: the fiscal-year-end call is the Q4
   (or fiscal-Q4) transcript. Retrievable via the same endpoint; fiscal-quarter mapping
-  for non-calendar fiscal years is UNVERIFIED.
+  for non-calendar fiscal years is UNVERIFIED (AAPL's Q1-2023 = fiscal Q1 ending Dec
+  2022 — the `period`/`year` labeling follows FMP's own fiscal mapping).
 
-### A4. Plan gating
+### A4. Plan gating (RESOLVED 2026-08-05)
 
-- UNVERIFIED. The archived page shows generic plan boilerplate; whether transcripts are
-  gated above the plan the `HKASK_FMP_API_KEY` key is on must be checked with a live
-  probe (`GET /stable/earning-call-transcript?symbol=AAPL` with the real key) before any
-  slice that depends on it.
+- The operator's current plan serves `/stable/earning-call-transcript` (HTTP 200).
+  Legacy v3 is 403 for this subscription. No plan change needed for the design.
 
 ### A5. Codebase state (IS, from repo inspection)
 
@@ -133,6 +142,12 @@ tied to a Phase A finding (OUGHT). Unverified items are marked UNVERIFIED, not g
 Every recommendation cites its Phase A dependency.
 
 ### (a) Transcript-analysis tool design
+
+> **Generalized 2026-08-05:** this tool is now the `earnings` mode of the general
+> **`company_transcript`** tool (modes: `earnings` / `corpus` / `combined`) — see
+> `company-corpus-design.md` §B1. The fetch/segment mechanics below are the
+> `earnings`-mode spec, unchanged. The corpus pipeline below is the shared §B3
+> ingestion path from that doc.
 
 One new tool on the **companies** server, plus reuse of corpus tools — no new server.
 

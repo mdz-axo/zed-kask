@@ -163,10 +163,7 @@ pub struct MarketRecord {
 /// Build the calibration block for a record: store reading (Brier, sample
 /// size, staleness) + the static-or-measured domain bias for the category.
 /// The server (which owns the store) calls this; the builders stay pure.
-pub fn calibration_for(
-    store_reading: Option<&CalibrationReading>,
-    category: &str,
-) -> Calibration {
+pub fn calibration_for(store_reading: Option<&CalibrationReading>, category: &str) -> Calibration {
     let bias = domain_bias_for(category);
     let bias_source = if bias.is_some() {
         Cow::Borrowed("static_2602_19520")
@@ -201,9 +198,7 @@ pub fn canonical_bucket(category: &str) -> String {
     let normalized = category.trim().to_lowercase();
     match normalized.as_str() {
         "politics" | "elections" | "election" => "politics".to_string(),
-        "economics" | "economy" | "macro" | "finance" | "financials" => {
-            "economics".to_string()
-        }
+        "economics" | "economy" | "macro" | "finance" | "financials" => "economics".to_string(),
         "sports" | "sport" => "sports".to_string(),
         "crypto" | "cryptocurrency" => "crypto".to_string(),
         "climate" | "weather" => "climate".to_string(),
@@ -334,10 +329,7 @@ const DAYS_PER_YEAR: f64 = 365.25;
 /// Fractional years between an RFC3339 deadline and a reference instant.
 /// Deadline in the past → negative. Unparseable deadline → None (the
 /// unparseable-deadline warning is emitted once, at assembly time).
-pub fn years_between(
-    deadline: &str,
-    reference: &chrono::DateTime<chrono::Utc>,
-) -> Option<f64> {
+pub fn years_between(deadline: &str, reference: &chrono::DateTime<chrono::Utc>) -> Option<f64> {
     let parsed = chrono::DateTime::parse_from_rfc3339(deadline).ok()?;
     Some(
         (parsed.with_timezone(&chrono::Utc) - *reference).num_seconds() as f64
@@ -358,8 +350,7 @@ pub fn realized_variance(prices: &[f64]) -> Option<f64> {
         return None;
     }
     let mean = moves.iter().sum::<f64>() / moves.len() as f64;
-    let variance =
-        moves.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / moves.len() as f64;
+    let variance = moves.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / moves.len() as f64;
     Some(variance)
 }
 
@@ -472,10 +463,9 @@ impl MarketRecord {
         } else {
             MarketStatus::Closed
         };
-        let maturity_reference =
-            chrono::DateTime::parse_from_rfc3339(&market.updated_time)
-                .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-                .unwrap_or(*now);
+        let maturity_reference = chrono::DateTime::parse_from_rfc3339(&market.updated_time)
+            .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+            .unwrap_or(*now);
         Some(assemble(
             RecordParts {
                 realized_variance: None,
@@ -547,10 +537,9 @@ impl MarketRecord {
         } else {
             None
         };
-        let maturity_reference =
-            chrono::DateTime::parse_from_rfc3339(&market.updated_at)
-                .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
-                .unwrap_or(*now);
+        let maturity_reference = chrono::DateTime::parse_from_rfc3339(&market.updated_at)
+            .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+            .unwrap_or(*now);
         Some(assemble(
             RecordParts {
                 realized_variance: None,
@@ -582,5 +571,67 @@ impl MarketRecord {
             },
             calibration,
         ))
+    }
+}
+
+/// Test fixtures for consumers that need a `MarketRecord` without standing up
+/// a provider. `pub` (not `#[cfg(test)]`) so sibling modules in the same
+/// crate can use it in their own `#[cfg(test)]` blocks.
+#[doc(hidden)]
+pub mod test_utils {
+    use super::*;
+
+    /// A minimal valid record; tests override the fields they exercise.
+    pub fn market_record_fixture() -> MarketRecord {
+        MarketRecord {
+            source: Source::Kalshi,
+            event_id: "KXTEST".into(),
+            market_id: "KXTEST-1".into(),
+            question: "Will the test event occur?".into(),
+            description: "A test market.".into(),
+            category: "economics".into(),
+            series: "KXTEST".into(),
+            deadline: "2027-01-01T00:00:00Z".into(),
+            time_to_maturity: Some(0.5),
+            probability: 0.5,
+            probability_method: ProbabilityMethod::Midpoint,
+            spread: Some(0.02),
+            volume: 100_000.0,
+            volume_grain: VolumeGrain::Market,
+            liquidity: Some(10_000.0),
+            open_interest: Some(1_000.0),
+            last_update: "2026-07-01T00:00:00Z".into(),
+            volatility: Volatility {
+                realized_variance: None,
+                structural_flag: StructuralFlag::None,
+                interpretation: Cow::Borrowed("low"),
+            },
+            status: MarketStatus::Open,
+            resolved_outcome: None,
+            resolution_source: Cow::Borrowed("kalshi_exchange"),
+            calibration: Calibration {
+                brier: None,
+                domain_bias: None,
+                bias_source: Cow::Borrowed("seeded"),
+                sample_size: 0,
+                stale: true,
+            },
+            reliability_tier: ReliabilityTier::High,
+            ontology: OntologyBlock {
+                process: ProcessAxis {
+                    r#type: Cow::Borrowed("pko:ProcedureExecution"),
+                    stage: Cow::Borrowed("trading"),
+                    probability_role: Cow::Borrowed("pko:StepExecution.output"),
+                },
+                state: StateAxis {
+                    identifier: "kalshi:KXTEST-1".into(),
+                    title: "t".into(),
+                    description: "d".into(),
+                    temporal: "2027-01-01T00:00:00Z".into(),
+                    provenance: Cow::Borrowed("kalshi_exchange"),
+                },
+                mapping_version: 1,
+            },
+        }
     }
 }

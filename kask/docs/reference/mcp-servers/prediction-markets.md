@@ -130,6 +130,13 @@ At runtime the base-event registry is read from
   maturity profile with prediction-market `time_to_maturity` for
   duration-matching across horizons.
 
+## Project record
+
+The full design → build → verify record lives in
+`docs/reports/prediction-markets/` (00 spike through 06 verification). The
+stopping-point status — what's shipped, what's deferred, and the re-entry
+triggers — is `07-project-status.md`.
+
 ## Cross-links
 
 - [Scenarios MCP Server Reference](scenarios.md) — event-tree forecasting that consumes market base rates

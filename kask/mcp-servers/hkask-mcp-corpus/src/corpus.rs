@@ -7,8 +7,9 @@ pub(crate) mod embed;
 pub(crate) mod fetch;
 
 pub use discover::{
-    DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService, default_corpus_config,
-    download_and_cache, generate_corpus_yaml, slugify,
+    CompanySourceManifest, DiscoverRequest, DiscoverResult, DiscoveredWork, DiscoveryService,
+    ManifestValidationError, default_corpus_config, download_and_cache, generate_corpus_yaml,
+    slugify,
 };
 pub use embed::{
     ChunkingConfig, CorpusConfig, DimensionCentroid, EmbedPhase, EmbedProgress, EmbedResult,
