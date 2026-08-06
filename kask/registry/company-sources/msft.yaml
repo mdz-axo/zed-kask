@@ -80,11 +80,15 @@ exclusion_rule: >
 
 # ── Ingestion defaults (feed the §B3 pipeline) ──────────────────────────────
 ingestion:
-  entity_ref_prefix: "company:msft"     # chunks: company:msft:{kind}:{date}
+  entity_ref_prefix: "company:MSFT"     # chunks: company:MSFT:{kind}:{date}
   chunking:
     multi_tier: true
   tagging:
-    ontologies: [FIBO, PKO, DublinCore, FiveW1H, SUMO]
+    # Ontology namespaces for the tagging pipeline. These are validated
+    # against OntologyNamespace::from_str at manifest validate() time.
+    # Dublin Core, PKO, and 5W1H are the universal axes/core (always applied);
+    # only domain supplements are listed here.
+    ontologies: [fibo, sumo]
   embedding:
     dim: 1024                           # matches EmbeddingStore contract (corpus_config_parse_test)
   centroids:

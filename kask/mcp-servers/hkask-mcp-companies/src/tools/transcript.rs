@@ -4,6 +4,7 @@
 //! work (auth, endpoint iteration, coverage accounting) lives in the module;
 //! the tool validates inputs and dispatches.
 use crate::{CompaniesServer, transcript, types::CompanyTranscriptRequest, validate_symbol};
+use chrono::Datelike;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
@@ -73,9 +74,12 @@ fn resolve_window_end(
             "year and quarter must both be provided, or both omitted (to infer the most recent quarter)",
         )),
         (None, None) => {
+            // Infer the most recent completed quarter from the current UTC date.
+            // `Datelike::month` returns 1–12 directly — no parse, no underflow
+            // (the prior `unwrap_or(0)` + `month - 1` was a latent panic path).
             let now = chrono::Utc::now();
-            let year = now.format("%Y").to_string().parse::<u32>().unwrap_or(0);
-            let month: u32 = now.format("%m").to_string().parse::<u32>().unwrap_or(0);
+            let year = now.year().try_into().unwrap_or(0);
+            let month = now.month();
             let quarter = ((month - 1) / 3) + 1;
             let current = transcript::YearQuarter::new(year, quarter as u8)
                 .ok_or_else(|| McpToolError::internal("failed to infer current quarter"))?;

@@ -13,6 +13,7 @@
 //! company's position).
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Top-level consumer struct for a company-source manifest YAML.
 #[derive(Debug, Deserialize, Serialize)]
@@ -117,6 +118,9 @@ pub struct ChunkingDefaults {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaggingDefaults {
+    /// Ontology namespaces to tag with (e.g. ["fibo", "pko", "sumo"]).
+    /// Validated against `OntologyNamespace::from_str` at `validate()` time —
+    /// unknown namespaces are rejected, not silently accepted.
     #[serde(default)]
     pub ontologies: Vec<String>,
 }
@@ -151,6 +155,10 @@ pub enum ManifestValidationError {
     },
     #[error("company.fiscal_year_end_month must be 1–12, got {0}")]
     BadFiscalMonth(u8),
+    #[error(
+        "unknown ontology namespace '{0}' in tagging.ontologies — must be one of: fibo, eso, golem, mlschema, omc, sumo"
+    )]
+    UnknownOntology(String),
 }
 
 impl CompanySourceManifest {
@@ -198,6 +206,19 @@ impl CompanySourceManifest {
                     kind: entry.kind.clone(),
                     field: "channels_allowlist",
                 });
+            }
+        }
+        // Validate the tagging ontologies field (if present) against the
+        // known ontology namespaces. This is the enforcement point for the
+        // `tagging.ontologies` manifest field — without it, the field is
+        // dead config (advertised invariant with no enforcement).
+        if let Some(ingestion) = &self.ingestion
+            && let Some(tagging) = &ingestion.tagging
+        {
+            for ontology in &tagging.ontologies {
+                if hkask_bridge_ontology::axis::OntologyNamespace::from_str(ontology).is_err() {
+                    return Err(ManifestValidationError::UnknownOntology(ontology.clone()));
+                }
             }
         }
         Ok(())

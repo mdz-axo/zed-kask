@@ -10,7 +10,7 @@ The corpus ingestion pipeline for an earnings transcript is a sequence of
 existing corpus-server MCP tool calls:
 
 ```
-corpus_chunk(text, entity_ref_prefix="company:{symbol}:earnings:Q{quarter}_{year}")
+→ corpus_chunk(text, entity_ref_prefix="company:{symbol}:earnings:{year}_Q{quarter}")
   → corpus_tag_chunks        # 5W1H + Dublin Core + PKO + FIBO
   → corpus_embed             # ontology-anchored vectors
   → corpus_extract_triples    # h_mems in the memory DB
@@ -22,7 +22,7 @@ The entity-ref prefix is the single transcript-specific input. It's built by
 `transcript::corpus_entity_ref_prefix(symbol, year, quarter)`:
 
 ```
-company:MSFT:earnings:Q4_2024
+company:MSFT:earnings:2024_Q4
 ```
 
 This convention ensures chunks, tags, h_mems, and centroids all reference the

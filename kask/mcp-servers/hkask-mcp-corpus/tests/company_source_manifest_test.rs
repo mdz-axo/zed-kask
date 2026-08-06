@@ -161,3 +161,68 @@ exclusion_rule: test
         "unknown field 'ticker' must be rejected by deny_unknown_fields"
     );
 }
+
+#[test]
+fn schema_rejects_unknown_ontology_in_tagging() {
+    // The tagging.ontologies field is validated against OntologyNamespace::from_str.
+    // Unknown namespaces (including the old CogAT) must be rejected — this is
+    // the enforcement point for the ontology manifest field.
+    let yaml = r#"
+manifest:
+  id: test
+  category: company-source-manifest
+  name: Test
+  version: 0.1.0
+company:
+  symbol: TEST
+  name: Test Co
+  cik: "0000000000"
+  ir_base: "https://example.com/ir"
+source_tiers:
+  tier_1_self_description: []
+  tier_2_executive_voice: []
+  tier_3_external: []
+provenance_rule: test
+exclusion_rule: test
+ingestion:
+  entity_ref_prefix: "company:test"
+  tagging:
+    ontologies: [fibo, cogat, sumo]
+"#;
+    let manifest = CompanySourceManifest::from_yaml(yaml).expect("yaml should parse");
+    let result = manifest.validate();
+    assert!(
+        matches!(result, Err(ManifestValidationError::UnknownOntology(ref name)) if name == "cogat"),
+        "unknown ontology 'cogat' must be rejected, got {result:?}"
+    );
+}
+
+#[test]
+fn schema_accepts_valid_ontologies_in_tagging() {
+    let yaml = r#"
+manifest:
+  id: test
+  category: company-source-manifest
+  name: Test
+  version: 0.1.0
+company:
+  symbol: TEST
+  name: Test Co
+  cik: "0000000000"
+  ir_base: "https://example.com/ir"
+source_tiers:
+  tier_1_self_description: []
+  tier_2_executive_voice: []
+  tier_3_external: []
+provenance_rule: test
+exclusion_rule: test
+ingestion:
+  entity_ref_prefix: "company:test"
+  tagging:
+    ontologies: [fibo, sumo, eso, golem, mlschema, omc]
+"#;
+    let manifest = CompanySourceManifest::from_yaml(yaml).expect("yaml should parse");
+    manifest
+        .validate()
+        .expect("all valid ontology namespaces should be accepted");
+}

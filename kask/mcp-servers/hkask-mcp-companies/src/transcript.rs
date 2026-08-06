@@ -35,6 +35,11 @@ pub struct TranscriptRecord {
     pub content: String,
     /// Provenance for the corpus pipeline's `dc:source`.
     pub source_endpoint: String,
+    /// The `entity_ref_prefix` for the corpus pipeline (design §B3 convention:
+    /// `company:{symbol}:earnings:{year}_Q{quarter}`). The agent passes this
+    /// to `corpus_chunk`'s `entity_ref_prefix` parameter — this field is the
+    /// enforcement point so the agent can't drift from the convention.
+    pub entity_ref_prefix: String,
 }
 
 /// Why a requested quarter is missing.
@@ -250,7 +255,7 @@ fn parse_fmp_body(
         return Ok(None);
     };
     Ok(Some(TranscriptRecord {
-        symbol: entry.symbol,
+        symbol: entry.symbol.clone(),
         year,
         quarter,
         period: entry.period,
@@ -259,6 +264,7 @@ fn parse_fmp_body(
         source_endpoint: format!(
             "fmp:/stable{FMP_TRANSCRIPT_PATH}?symbol={symbol}&year={year}&quarter={quarter}"
         ),
+        entity_ref_prefix: format!("company:{symbol}:earnings:{year}_Q{quarter}"),
     }))
 }
 
@@ -270,23 +276,9 @@ fn parse_fmp_body(
 // The tools already exist on the corpus server. The only transcript-specific
 // logic is the entity-ref convention: `{company}:{kind}:{date}` so chunks,
 // tags, h_mems, and centroids all reference the same provenance.
-
-/// Build the `entity_ref_prefix` for an earnings transcript, per the design
-/// §B3 convention: `{company}:{kind}:{date}`. The corpus pipeline uses this
-/// as the prefix for every chunk/tag/h_mem so cross-document linkage works.
-///
-/// The temporal key is `(year, quarter)` — NOT the FMP `date` field (probe-
-/// verified unreliable). The prefix uses `{year}_Q{quarter}` as the date
-/// component so it's lexicographically sortable (year-first, then quarter).
-///
-/// This is a convention helper invoked by the agent/skill when constructing
-/// the `corpus_chunk` call at runtime — not called from Rust production code.
-/// The tests pin the convention (sortability, validity, format) so the
-/// agent's runtime usage can't drift from the design.
-#[allow(dead_code)]
-pub fn corpus_entity_ref_prefix(symbol: &str, year: u32, quarter: u8) -> String {
-    format!("company:{symbol}:earnings:{year}_Q{quarter}")
-}
+// The `entity_ref_prefix` is built in `parse_fmp_body` and carried on each
+// `TranscriptRecord` — the agent reads it from the tool output and passes it
+// to `corpus_chunk`, so the convention can't drift.
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
@@ -447,29 +439,60 @@ mod tests {
     #[test]
     fn entity_ref_prefix_follows_corpus_convention() {
         // Design §B3: `{company}:{kind}:{date}`. The temporal key is
-        // (year, quarter), not the FMP date field.
-        let prefix = corpus_entity_ref_prefix("MSFT", 2024, 4);
-        assert_eq!(prefix, "company:MSFT:earnings:2024_Q4");
+        // (year, quarter), not the FMP date field. The prefix is built in
+        // `parse_fmp_body` and carried on `TranscriptRecord.entity_ref_prefix`.
+        let record = parse_fmp_body(FMP_SAMPLE, "MSFT", 2024, 4)
+            .expect("parse")
+            .expect("record");
+        assert_eq!(record.entity_ref_prefix, "company:MSFT:earnings:2024_Q4");
     }
 
     #[test]
     fn entity_ref_prefix_is_valid_identifier() {
         // The prefix is passed to corpus_chunk's entity_ref_prefix, which
         // validates via validate_identifier (alphanumeric + _ . - :).
-        let prefix = corpus_entity_ref_prefix("AAPL", 2023, 1);
-        assert!(prefix.chars().all(|character| {
+        let record = parse_fmp_body(
+            r#"[{"symbol":"AAPL","period":"Q1","year":"2023","date":"x","content":"y"}]"#,
+            "AAPL",
+            2023,
+            1,
+        )
+        .expect("parse")
+        .expect("record");
+        assert!(record.entity_ref_prefix.chars().all(|character| {
             character.is_alphanumeric() || character == '_' || character == ':'
         }));
     }
 
     #[test]
     fn entity_ref_prefix_is_lexicographically_sortable() {
-        // Q{quarter}_{year} sorts chronologically across years and within a year.
-        let q1_2023 = corpus_entity_ref_prefix("MSFT", 2023, 1);
-        let q4_2023 = corpus_entity_ref_prefix("MSFT", 2023, 4);
-        let q1_2024 = corpus_entity_ref_prefix("MSFT", 2024, 1);
-        assert!(q1_2023 < q4_2023);
-        assert!(q4_2023 < q1_2024);
+        // {year}_Q{quarter} sorts chronologically across years and within a year.
+        let q1_2023 = parse_fmp_body(
+            r#"[{"symbol":"MSFT","period":"Q1","year":"2023","date":"x","content":"y"}]"#,
+            "MSFT",
+            2023,
+            1,
+        )
+        .expect("parse")
+        .expect("record");
+        let q4_2023 = parse_fmp_body(
+            r#"[{"symbol":"MSFT","period":"Q4","year":"2023","date":"x","content":"y"}]"#,
+            "MSFT",
+            2023,
+            4,
+        )
+        .expect("parse")
+        .expect("record");
+        let q1_2024 = parse_fmp_body(
+            r#"[{"symbol":"MSFT","period":"Q1","year":"2024","date":"x","content":"y"}]"#,
+            "MSFT",
+            2024,
+            1,
+        )
+        .expect("parse")
+        .expect("record");
+        assert!(q1_2023.entity_ref_prefix < q4_2023.entity_ref_prefix);
+        assert!(q4_2023.entity_ref_prefix < q1_2024.entity_ref_prefix);
     }
 }
 
