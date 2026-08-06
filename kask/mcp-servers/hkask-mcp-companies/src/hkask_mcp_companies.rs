@@ -86,11 +86,13 @@ pub mod research;
 mod scenarios;
 mod screener;
 pub mod superforecast;
+mod transcript;
 pub mod types;
 
 use portfolio::{PersistedForecast, PortfolioError, PortfolioManager};
 
 pub mod tools;
+pub use transcript::{MissingReason, TranscriptCoverage, TranscriptRecord, TranscriptResult};
 
 // ── Forecast store ───────────────────────────────────────────────────
 
@@ -268,6 +270,7 @@ impl CompaniesServer {
             + Self::valuation_router()
             + Self::economic_profit_router()
             + Self::expectations_router()
+            + Self::transcript_router()
     }
 }
 

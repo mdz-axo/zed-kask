@@ -16,9 +16,15 @@ image.workspace = true
 smallvec.workspace = true
 anyhow.workspace = true
 log.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 parking_lot.workspace = true
 base64.workspace = true
+hkask_tool_invoker.workspace = true
+hkask_conversation_injector.workspace = true
+gpui_util.workspace = true
+tracing.workspace = true
+ui.workspace = true
 
 # Video decode — gated behind cargo features to keep dev builds fast.
 # - `video`: uses system FFmpeg via pkg-config
@@ -32,3 +38,6 @@ video = ["dep:ffmpeg-next"]
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

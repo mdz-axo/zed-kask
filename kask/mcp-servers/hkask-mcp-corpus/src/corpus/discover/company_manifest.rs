@@ -176,7 +176,7 @@ impl CompanySourceManifest {
                 return Err(ManifestValidationError::BadFiscalMonth(month));
             }
         }
-        for entry in &self.source_tiers.tier_3_external {
+        if let Some(entry) = self.source_tiers.tier_3_external.first() {
             return Err(ManifestValidationError::Tier3EnabledByDefault {
                 kind: entry.kind.clone(),
                 via: entry.via.clone(),

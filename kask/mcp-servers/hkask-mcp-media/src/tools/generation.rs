@@ -39,20 +39,17 @@ impl MediaServer {
                 .map_err(|e| {
                     McpToolError::unavailable(format!("Image generation failed: {}", e))
                 })?;
-            // Attach a display hint so the model can embed the result inline.
-            let display_hint = result
-                .get("output_urls")
-                .and_then(|urls| urls.as_array())
-                .and_then(|urls| urls.first())
-                .and_then(|url| url.as_str())
-                .map(crate::media_block::image_block);
-            if let Some(hint) = display_hint {
-                let mut enriched = result;
-                enriched["display_hint"] = serde_json::Value::String(hint);
-                Ok(enriched)
-            } else {
-                Ok(result)
-            }
+            // Attach an OMC-tagged, provenance-carrying display hint so the
+            // media widget can dispatch the OMC-driven "Explain" affordance and
+            // compose-back the "I disagree" gesture.
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
+                result,
+                "generate_image",
+                "image",
+                args,
+                None,
+            ))
         })
         .await
     }
@@ -95,10 +92,13 @@ impl MediaServer {
                 .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image transform failed: {}", e)))?;
-            let display_hint = crate::media_block::image_hint_from_result(&result);
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "transform_image",
+                "image",
+                args,
+                None,
             ))
         })
         .await
@@ -122,10 +122,13 @@ impl MediaServer {
                 .media_generate("upscale", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Upscale failed: {}", e)))?;
-            let display_hint = crate::media_block::image_hint_from_result(&result);
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "upscale_image",
+                "image",
+                args,
+                None,
             ))
         })
         .await
@@ -164,10 +167,13 @@ impl MediaServer {
                 .map_err(|e| {
                     McpToolError::unavailable(format!("Video generation failed: {}", e))
                 })?;
-            let display_hint = crate::media_block::video_hint_from_result(&result);
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "generate_video",
+                "video",
+                args,
+                None,
             ))
         })
         .await
@@ -207,8 +213,14 @@ impl MediaServer {
                     })
                 })
                 .map_err(|e| McpToolError::unavailable(format!("Workflow execution failed: {e}")))?;
-            let display_hint = crate::media_block::image_hint_from_result(&result);
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            let args = serde_json::json!({ "workflow": workflow_json });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
+                result,
+                "execute_workflow",
+                "image",
+                args,
+                None,
+            ))
         })
         .await
     }

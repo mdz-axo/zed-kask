@@ -15,6 +15,7 @@
 mod error;
 mod gallery;
 pub mod media_block;
+pub mod omc;
 mod templates;
 pub mod video;
 
@@ -2135,31 +2136,42 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 // The MovieLabs OMC bridge was removed: it had zero call sites — write-only
 // documentation masquerading as architecture (the "advertised invariants need
 // enforcement points" trap). This test pins the removal so the module is not
-// re-added without a consumer. See kask/docs/plans/media-system-refactor.md
+// re-added with a consumer. See kask/docs/plans/media-system-refactor.md
 // §6 (F-1).
 #[cfg(test)]
 mod dead_surface_pins {
+    /// The OMC bridge module was re-added on 2026-08-05 with a consumer: the
+    /// `media_block::enrich_with_omc_and_provenance` function references
+    /// `omc::tool_to_omc` to bake OMC concept tags into the `display_hint`
+    /// block body. This test pins the ENFORCEMENT (the call site), not the
+    /// absence — per `.rules` "Advertised invariants need enforcement points",
+    /// a module with no consumer is dead surface regardless of its doc
+    /// comments.
     #[test]
-    fn omc_module_not_present() {
-        // The source file must not be re-added.
+    fn omc_module_present_with_consumer() {
+        // The source file must exist.
         let omc_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/omc.rs");
         assert!(
-            !omc_path.exists(),
-            "src/omc.rs must not be re-added without a consumer — it was dead surface"
+            omc_path.exists(),
+            "src/omc.rs must exist — it is the MovieLabs OMC bridge"
         );
-        // The lib root must not re-declare the module. A line-level scan
-        // avoids matching this test's own text.
+        // The lib root must declare the module.
         let lib_root = include_str!("hkask_mcp_media.rs");
-        let redeclared = lib_root.lines().any(|line| {
+        let declared = lib_root.lines().any(|line| {
             let t = line.trim();
-            t == "pub mod omc;"
-                || t == "mod omc;"
-                || t.starts_with("pub mod omc")
-                || t.starts_with("mod omc")
+            t == "pub mod omc;" || t == "mod omc;"
         });
+        assert!(declared, "the omc module must be declared in the lib root");
+        // The media_block module must reference the omc module — the consumer.
+        // A line-level scan avoids matching this test's own text.
+        let media_block = include_str!("media_block.rs");
+        let has_consumer = media_block
+            .lines()
+            .any(|line| line.contains("crate::omc") || line.contains("use crate::omc"));
         assert!(
-            !redeclared,
-            "do not re-declare the omc module without a consumer"
+            has_consumer,
+            "media_block.rs must reference the omc module — \
+             a module without a consumer is dead surface"
         );
     }
 }

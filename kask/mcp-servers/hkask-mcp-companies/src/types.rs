@@ -601,6 +601,34 @@ pub struct ResearchSearchRequest {
     pub query: String,
 }
 
+// ── Company transcript request (earnings mode) ──────────────────────
+
+/// Request for `company_transcript` (earnings mode).
+///
+/// Temporal key is `(year, quarter)` — the FMP `date` field is unreliable
+/// (probe-verified: AAPL 2023Q1 returns `date: "2012-03-19"`). Callers must
+/// not rely on `date` for ordering or deduplication.
+///
+/// Corpus/combined modes are reserved for the company-corpus design slices;
+/// they will be added as a mode enum when that design lands, not speculatively.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompanyTranscriptRequest {
+    pub symbol: String,
+    /// Calendar year (e.g. 2024). Required when `quarters_back` is not used.
+    pub year: Option<u32>,
+    /// Calendar quarter 1–4. Required when `quarters_back` is not used.
+    pub quarter: Option<u8>,
+    /// Fetch the last N quarters ending at `(year, quarter)`. Default 1.
+    /// Per-quarter failures are collected into `coverage.missing`, not
+    /// propagated as whole-tool failure.
+    #[serde(default = "default_transcript_quarters_back")]
+    pub quarters_back: u32,
+}
+
+fn default_transcript_quarters_back() -> u32 {
+    1
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScreenerRequest {
     /// Natural language screening prompt (e.g., "large cap tech stocks with pe under 20 and dividend over 2%")
@@ -675,6 +703,17 @@ mod tests {
         assert!(
             violations.is_empty(),
             "EquityDurationRequest schema has bare-boolean property values: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn company_transcript_request_schema_has_no_boolean_property_values() {
+        let schema = schema_for!(CompanyTranscriptRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let violations = find_boolean_schema_positions(&value);
+        assert!(
+            violations.is_empty(),
+            "CompanyTranscriptRequest schema has bare-boolean property values: {violations:?}"
         );
     }
 }

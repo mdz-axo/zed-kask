@@ -32,45 +32,10 @@ pub mod simple_slider;
 pub mod transport;
 pub mod video_decoder;
 
-pub use media_ref::{MediaKind, MediaRef, MediaStorage, ResolvedMedia};
+pub use media_ref::{MediaBlockBody, MediaKind, MediaRef, MediaStorage, ResolvedMedia};
 pub use media_widget::MediaWidget;
 
-use gpui::{App, AppContext, Entity, SharedString, Window};
-
-/// Parse the JSON body of a ```` ```media ```` block.
-///
-/// Expected format:
-/// ```json
-/// { "kind": "video", "src": "/path/to/clip.mp4" }
-/// { "kind": "audio", "src": "data:audio/wav;base64,..." }
-/// { "kind": "image", "src": "/path/to/image.png" }
-/// { "kind": "svg", "src": "/path/to/diagram.svg" }
-/// ```
-fn parse_media_block_body(body: &str) -> anyhow::Result<MediaRef> {
-    let value: serde_json::Value = serde_json::from_str(body.trim())?;
-    let kind = value
-        .get("kind")
-        .and_then(|value| value.as_str())
-        .unwrap_or("image");
-    let src = value
-        .get("src")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| anyhow::anyhow!("media block missing 'src' field"))?;
-
-    let media_kind = match kind {
-        "image" | "img" => MediaKind::Image,
-        "svg" => MediaKind::Svg,
-        "audio" => MediaKind::Audio,
-        "video" => MediaKind::Video,
-        other => {
-            return Err(anyhow::anyhow!(
-                "unknown media kind '{other}' — expected image, svg, audio, or video"
-            ));
-        }
-    };
-
-    Ok(MediaRef::new(SharedString::from(src), media_kind))
-}
+use gpui::{App, AppContext, Entity, Window};
 
 /// Create a `MediaWidget` entity from a block body, without wrapping it in an
 /// element. Used by `hkask_viz_core::block_renderer` to cache the entity across
@@ -87,12 +52,20 @@ pub fn create_media_widget(
     if !body.trim_start().starts_with('{') {
         return None;
     }
-    match parse_media_block_body(body) {
-        Ok(media_ref) => Some(cx.new(|cx| {
-            let mut widget = MediaWidget::new(media_ref, cx);
-            widget.load(cx);
-            widget
-        })),
+    match MediaBlockBody::parse(body) {
+        Ok(block_body) => {
+            let media_ref = block_body.to_media_ref().map_err(|error| {
+                log::warn!(
+                    "hkask-media-widget: failed to resolve media ref from block: {error}. Body: {body}"
+                );
+                error
+            }).ok()?;
+            Some(cx.new(|cx| {
+                let mut widget = MediaWidget::new_with_block(media_ref, block_body, cx);
+                widget.load(cx);
+                widget
+            }))
+        }
         Err(error) => {
             log::warn!("hkask-media-widget: failed to parse media block: {error}. Body: {body}");
             None

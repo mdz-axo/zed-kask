@@ -857,6 +857,7 @@ impl MediaServer {
                 object_description: Some(object_description.clone()),
                 ..Default::default()
             };
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             let result = self
                 .vision_port
                 .media_generate("segment_object", &media_params)
@@ -864,13 +865,15 @@ impl MediaServer {
                 .map_err(|e| {
                     McpToolError::unavailable(format!("Object extraction failed: {}", e))
                 })?;
-            // Connect the extracted object to the inline widget: emit a
-            // ```media display_hint (mirrors generate_image/transform_image) so
-            // the agent can copy the block and the D18 MediaWidget renders it.
-            let display_hint = crate::media_block::image_hint_from_result(&result);
-            Ok(crate::media_block::enrich_with_display_hint(
+            // Connect the extracted object to the inline widget: emit an
+            // OMC-tagged, provenance-carrying ```media display_hint so the
+            // agent can copy the block and the D18 MediaWidget renders it.
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "extract_object",
+                "image",
+                args,
+                None,
             ))
         })
         .await
@@ -1080,13 +1083,18 @@ impl MediaServer {
                 .map_err(|e| McpToolError::unavailable(format!("Reproduce failed: {e}")))?;
             // Connect the reproduced asset to the inline widget (mirrors
             // generate_image/generate_video). image_to_video yields a video;
-            // every other recorded op yields an image.
-            let display_hint = if lineage.op == "image_to_video" {
-                crate::media_block::video_hint_from_result(&result)
-            } else {
-                crate::media_block::image_hint_from_result(&result)
-            };
-            Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            // every other recorded op yields an image. The OMC tag reflects
+            // the reproduced op (a reproduce of `upscale` is a `Version`).
+            let kind = if lineage.op == "image_to_video" { "video" } else { "image" };
+            let args = serde_json::to_value(&media_params)
+                .unwrap_or(serde_json::Value::Null);
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
+                result,
+                "gallery_reproduce",
+                kind,
+                args,
+                None,
+            ))
         })
         .await
     }

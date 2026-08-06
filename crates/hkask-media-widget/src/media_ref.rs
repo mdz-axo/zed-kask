@@ -1,6 +1,8 @@
 //! Media reference types — how assets are identified and resolved.
 
 use gpui::SharedString;
+use hkask_tool_invoker::BlockProvenance;
+use serde::Deserialize;
 use std::path::PathBuf;
 
 /// The type of media asset.
@@ -115,5 +117,107 @@ impl MediaStorage for PathMediaStorage {
                 url: None,
             })
         }
+    }
+}
+
+/// The parsed body of a ```` ```media ```` block. Carries the media reference
+/// plus optional OMC concept tag and server-authoritative provenance.
+///
+/// `omc` and `provenance` are `#[serde(default)]` so existing blocks without
+/// them still parse and render — just without the OMC-driven "Explain" and
+/// "I disagree" affordances. This is the additive contract: the media widget
+/// gains affordances when the block carries OMC + provenance, and falls back
+/// to transport-only display when it doesn't.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MediaBlockBody {
+    /// Media kind discriminator ("image", "svg", "audio", "video").
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// Source URL/path/data-URI.
+    pub src: String,
+    /// OMC concept URI (e.g. `omc:CreativeWork`). Drives the "Explain"
+    /// affordance's tool selection (the "I" pattern — ontology-bounded
+    /// affordances). `None` on older blocks → the widget falls back to
+    /// `describe_image`.
+    #[serde(default)]
+    pub omc: Option<String>,
+    /// Server-authoritative provenance for re-issuing the originating tool
+    /// (Explain) or composing a revision request (I disagree). `None` on
+    /// older blocks → the widget renders without dispatch/compose-back
+    /// affordances.
+    #[serde(default)]
+    pub provenance: BlockProvenance,
+}
+
+fn default_kind() -> String {
+    "image".to_string()
+}
+
+impl MediaBlockBody {
+    /// Parse a ```` ```media ```` block body. Tolerant: missing `kind` defaults
+    /// to `"image"`; missing `omc`/`provenance` default to `None`/empty so
+    /// older blocks still parse and render without the new affordances.
+    pub fn parse(body: &str) -> anyhow::Result<Self> {
+        Ok(serde_json::from_str(body.trim())?)
+    }
+
+    /// Resolve to a `MediaRef` for the widget's media loader.
+    pub fn to_media_ref(&self) -> anyhow::Result<MediaRef> {
+        let kind = match self.kind.as_str() {
+            "image" | "img" => MediaKind::Image,
+            "svg" => MediaKind::Svg,
+            "audio" => MediaKind::Audio,
+            "video" => MediaKind::Video,
+            other => {
+                return Err(anyhow::anyhow!(
+                    "unknown media kind '{other}' — expected image, svg, audio, or video"
+                ));
+            }
+        };
+        Ok(MediaRef::new(SharedString::from(self.src.as_str()), kind))
+    }
+}
+
+#[cfg(test)]
+mod block_body_tests {
+    use super::*;
+
+    #[test]
+    fn parses_minimal_body_with_only_kind_and_src() {
+        let body = MediaBlockBody::parse(r##"{"kind":"image","src":"/a.png"}"##)
+            .expect("minimal body parses");
+        assert_eq!(body.kind, "image");
+        assert_eq!(body.src, "/a.png");
+        assert!(body.omc.is_none());
+        assert!(!body.provenance.is_dispatchable());
+    }
+
+    #[test]
+    fn parses_body_with_omc_and_provenance() {
+        let json = r##"{"kind":"image","src":"/a.png","omc":"omc:CreativeWork","provenance":{"tool":"generate_image","server":"hkask-mcp-media","args":{"prompt":"a cat"}}}"##;
+        let body = MediaBlockBody::parse(json).expect("full body parses");
+        assert_eq!(body.omc.as_deref(), Some("omc:CreativeWork"));
+        assert!(body.provenance.is_dispatchable());
+        assert_eq!(body.provenance.tool.as_deref(), Some("generate_image"));
+    }
+
+    #[test]
+    fn parses_body_with_default_kind_when_absent() {
+        let body = MediaBlockBody::parse(r##"{"src":"/a.png"}"##).expect("parses");
+        assert_eq!(body.kind, "image");
+    }
+
+    #[test]
+    fn to_media_ref_resolves_kind_and_src() {
+        let body = MediaBlockBody::parse(r##"{"kind":"video","src":"/c.mp4"}"##).unwrap();
+        let reference = body.to_media_ref().expect("resolves");
+        assert_eq!(reference.src(), "/c.mp4");
+        assert_eq!(reference.kind(), Some(MediaKind::Video));
+    }
+
+    #[test]
+    fn to_media_ref_rejects_unknown_kind() {
+        let body = MediaBlockBody::parse(r##"{"kind":"hologram","src":"/x"}"##).unwrap();
+        assert!(body.to_media_ref().is_err());
     }
 }

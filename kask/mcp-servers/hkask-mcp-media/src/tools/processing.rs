@@ -24,13 +24,19 @@ impl MediaServer {
                 image_url: Some(image_url.clone()),
                 ..Default::default()
             };
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             self.vision_port
                 .media_generate("remove_background", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Background removal failed: {}", e)))
                 .map(|result| {
-                    let display_hint = crate::media_block::image_hint_from_result(&result);
-                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                    crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "image_remove_background",
+                        "image",
+                        args,
+                        None,
+                    )
                 })
         })
         .await
@@ -63,13 +69,19 @@ impl MediaServer {
                 strength,
                 ..Default::default()
             };
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             self.vision_port
                 .media_generate("image_to_image", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Style transfer failed: {}", e)))
                 .map(|result| {
-                    let display_hint = crate::media_block::image_hint_from_result(&result);
-                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                    crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "image_apply_style",
+                        "image",
+                        args,
+                        None,
+                    )
                 })
         })
         .await
@@ -258,8 +270,17 @@ impl MediaServer {
                 "spacing": spacing,
                 "output": output_path.display().to_string(),
             });
-                let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-                Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+            let args = serde_json::json!({
+                "layout": layout,
+                "image_count": images.len(),
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
+                result,
+                "image_create_collage",
+                "image",
+                args,
+                None,
+            ))
         })
         .await
     }
@@ -306,10 +327,17 @@ impl MediaServer {
                 "duration": end_sec - start_sec,
                 "output": output.display().to_string(),
             });
-            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::json!({
+                "video_url": video_url,
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "video_clip",
+                "video",
+                args,
+                None,
             ))
         })
         .await
@@ -365,10 +393,19 @@ impl MediaServer {
                 "fps": f,
                 "output": output.display().to_string(),
             });
-            let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::json!({
+                "video_url": video_url,
+                "start_sec": start,
+                "duration_sec": dur,
+                "width": w,
+                "fps": f,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "video_to_gif",
+                "image",
+                args,
+                None,
             ))
         })
         .await
@@ -402,13 +439,19 @@ impl MediaServer {
                 duration,
                 ..Default::default()
             };
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             self.vision_port
                 .media_generate("image_to_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
                 .map(|result| {
-                    let display_hint = crate::media_block::video_hint_from_result(&result);
-                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                    crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "image_to_video",
+                        "video",
+                        args,
+                        None,
+                    )
                 })
         })
         .await
@@ -451,10 +494,18 @@ impl MediaServer {
                 "font_size": size,
                 "output": output.display().to_string(),
             });
-            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::json!({
+                "video_url": video_url,
+                "text": text,
+                "position": pos,
+                "font_size": size,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "video_add_caption",
+                "video",
+                args,
+                None,
             ))
         })
         .await
@@ -523,10 +574,18 @@ impl MediaServer {
                 "caption": caption_text,
                 "output": gif.display().to_string(),
             });
-            let display_hint = crate::media_block::hint_from_output_path(&result, "image");
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::json!({
+                "video_url": video_url,
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "caption_text": caption_text,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "video_remix",
+                "image",
+                args,
+                None,
             ))
         })
         .await
@@ -575,10 +634,17 @@ impl MediaServer {
                 "format": fmt,
                 "output": output.display().to_string(),
             });
-            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::json!({
+                "image_indices": image_indices,
+                "fps": fps,
+                "format": fmt,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "video_from_images",
+                "video",
+                args,
+                None,
             ))
         })
         .await
@@ -613,10 +679,13 @@ impl MediaServer {
                 "clip_count": video_urls.len(),
                 "output": output.display().to_string(),
             });
-            let display_hint = crate::media_block::hint_from_output_path(&result, "video");
-            Ok(crate::media_block::enrich_with_display_hint(
+            let args = serde_json::json!({ "video_urls": video_urls });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
                 result,
-                display_hint,
+                "video_concat",
+                "video",
+                args,
+                None,
             ))
         })
         .await
@@ -768,13 +837,20 @@ impl MediaServer {
                 duration,
                 ..Default::default()
             };
+            let args = serde_json::to_value(&media_params)
+                .unwrap_or(serde_json::Value::Null);
             self.vision_port
                 .media_generate("image_to_video", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Image-to-video failed: {}", e)))
                 .map(|result| {
-                    let display_hint = crate::media_block::video_hint_from_result(&result);
-                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                    crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "video_meme",
+                        "video",
+                        args,
+                        None,
+                    )
                 })
         })
         .await

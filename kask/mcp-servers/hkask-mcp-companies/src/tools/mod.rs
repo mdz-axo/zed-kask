@@ -5,4 +5,5 @@ pub mod economic_profit;
 pub mod expectations;
 pub mod financial_data;
 pub mod portfolio;
+pub mod transcript;
 pub mod valuation;

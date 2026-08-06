@@ -80,13 +80,19 @@ impl MediaServer {
                 voice: Some(voice.clone()),
                 ..Default::default()
             };
+            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
             self.vision_port
                 .media_generate("generate_speech", &media_params)
                 .await
                 .map_err(|e| McpToolError::unavailable(format!("Speech generation failed: {}", e)))
                 .map(|result| {
-                    let display_hint = crate::media_block::audio_hint_from_result(&result);
-                    crate::media_block::enrich_with_display_hint(result, display_hint)
+                    crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "generate_speech",
+                        "audio",
+                        args,
+                        None,
+                    )
                 })
         })
         .await
@@ -232,18 +238,24 @@ impl MediaServer {
                 .await
                 .map_err(map_media_error)?;
 
-            Ok(serde_json::json!({
-                "status": "captured",
+            let args = serde_json::json!({
                 "duration_secs": duration_secs,
-                "output": path.display().to_string(),
-                "format": "wav",
-                "sample_rate": 16000,
-                "channels": 1,
-            }))
-            .map(|result| {
-                let display_hint = crate::media_block::hint_from_output_path(&result, "audio");
-                crate::media_block::enrich_with_display_hint(result, display_hint)
-            })
+                "output_path": output_path,
+            });
+            Ok(crate::media_block::enrich_with_omc_and_provenance(
+                serde_json::json!({
+                    "status": "captured",
+                    "duration_secs": duration_secs,
+                    "output": path.display().to_string(),
+                    "format": "wav",
+                    "sample_rate": 16000,
+                    "channels": 1,
+                }),
+                "audio_capture",
+                "audio",
+                args,
+                None,
+            ))
         })
         .await
     }
@@ -355,8 +367,17 @@ impl MediaServer {
                     let result = serde_json::to_value(&bundle).unwrap_or_else(|_| {
                         serde_json::json!({"error": "Failed to serialize bundle"})
                     });
-                    let display_hint = crate::media_block::audio_hint_from_path(&result);
-                    Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+                    let args = serde_json::json!({
+                        "duration_secs": duration_secs,
+                        "language": language,
+                    });
+                    Ok(crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "record_and_transcribe",
+                        "audio",
+                        args,
+                        None,
+                    ))
                 }
                 Err(e) => {
                     let result = serde_json::json!({
@@ -369,8 +390,17 @@ impl MediaServer {
                         "transcript_error": e.to_json_string(),
                         "message": "Audio captured successfully but transcription failed. The audio file is saved and can be transcribed later."
                     });
-                    let display_hint = crate::media_block::audio_hint_from_path(&result);
-                    Ok(crate::media_block::enrich_with_display_hint(result, display_hint))
+                    let args = serde_json::json!({
+                        "duration_secs": duration_secs,
+                        "language": language,
+                    });
+                    Ok(crate::media_block::enrich_with_omc_and_provenance(
+                        result,
+                        "record_and_transcribe",
+                        "audio",
+                        args,
+                        None,
+                    ))
                 }
             }
         })
