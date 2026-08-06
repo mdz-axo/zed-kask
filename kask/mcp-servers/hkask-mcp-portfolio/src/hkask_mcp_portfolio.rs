@@ -855,52 +855,74 @@ impl PortfolioStore {
     ) -> Result<(), PortfolioError> {
         let conn = self.open()?;
         self.check_exists(&conn, name)?;
-        // Walk each day in the range. We use the transaction dates as the
-        // evaluation grid: returns are only meaningful on days the portfolio
-        // changed (or the price changed). For simplicity and determinism,
-        // we evaluate on every calendar day in [from, to].
         let from_date = parse_ymd(from, "from")?;
         let to_date = parse_ymd(to, "to")?;
         if to_date < from_date {
             return Err(format!("from ({from}) is after to ({to})").into());
         }
 
+        // Read the ledger once and walk it incrementally. This is O(N + D)
+        // where N = transactions, D = days — not O(N × D) from re-scanning
+        // the ledger per day via snapshot().
         let txs = self.ledger(name, LedgerFilter::all())?;
-        let mut symbols: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+        // Group transactions by date for the cash-flow computation.
+        let mut txs_by_date: std::collections::BTreeMap<String, Vec<&Transaction>> =
+            std::collections::BTreeMap::new();
         for tx in &txs {
-            if let Some(ref sym) = tx.symbol {
-                symbols.insert(sym.clone());
+            txs_by_date.entry(tx.date.clone()).or_default().push(tx);
+        }
+
+        // Running state: positions (symbol → shares) and cash balance.
+        let mut positions: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        let mut cash: f64 = 0.0;
+
+        // Apply all transactions before `from` to initialize the running state.
+        for tx in &txs {
+            if tx.date.as_str() >= from {
+                break;
             }
+            apply_tx_to_running_state(tx, &mut positions, &mut cash);
         }
 
         let mut prev_total: Option<f64> = None;
         let mut current_date = from_date;
         while current_date <= to_date {
             let date_str = current_date.format("%Y-%m-%d").to_string();
-            // Holdings + cash at this date.
-            let snap = self.snapshot(name, &date_str)?;
+
+            // Apply transactions on this date to the running state.
+            if let Some(day_txs) = txs_by_date.get(&date_str) {
+                for tx in day_txs {
+                    apply_tx_to_running_state(tx, &mut positions, &mut cash);
+                }
+            }
+
             // Market value: sum(shares * price) using the resolver.
-            let market_value: f64 = snap
-                .holdings
+            let market_value: f64 = positions
                 .iter()
-                .map(|h| {
-                    let price = prices.resolve(&h.symbol, &date_str).unwrap_or(0.0);
-                    h.shares * price
+                .filter(|(_, shares)| shares.abs() > 0.0001)
+                .map(|(symbol, shares)| {
+                    let price = prices.resolve(symbol, &date_str).unwrap_or(0.0);
+                    shares * price
                 })
                 .sum();
-            let cash = snap.cash_balance;
             let total = market_value + cash;
 
             // Cash flow on this date: sum of deposit/withdrawal amounts.
-            let cash_flow: f64 = txs
-                .iter()
-                .filter(|t| t.date == date_str)
-                .map(|t| match t.tx_type {
-                    TxType::Deposit => t.amount.unwrap_or(0.0),
-                    TxType::Withdrawal => -t.amount.unwrap_or(0.0),
-                    _ => 0.0,
+            let cash_flow: f64 = txs_by_date
+                .get(&date_str)
+                .map(|day_txs| {
+                    day_txs
+                        .iter()
+                        .map(|t| match t.tx_type {
+                            TxType::Deposit => t.amount.unwrap_or(0.0),
+                            TxType::Withdrawal => -t.amount.unwrap_or(0.0),
+                            _ => 0.0,
+                        })
+                        .sum()
                 })
-                .sum();
+                .unwrap_or(0.0);
 
             let daily_return = match prev_total {
                 Some(prev) if prev.abs() > 1e-9 => (total - prev - cash_flow) / prev,
@@ -915,7 +937,10 @@ impl PortfolioStore {
             .map_err(|e| format!("materialize daily_returns: {e}"))?;
 
             prev_total = Some(total);
-            current_date = current_date.succ_opt().unwrap_or(current_date);
+            match current_date.succ_opt() {
+                Some(next) => current_date = next,
+                None => break,
+            }
         }
         Ok(())
     }
@@ -1044,6 +1069,47 @@ impl PortfolioStore {
 }
 
 // ── Free functions: pure projections over the ledger ────────────────
+
+/// Apply a transaction to the running positions + cash state (used by
+/// `materialize_returns` for incremental computation).
+fn apply_tx_to_running_state(
+    tx: &Transaction,
+    positions: &mut std::collections::HashMap<String, f64>,
+    cash: &mut f64,
+) {
+    match tx.tx_type {
+        TxType::Buy => {
+            let qty = tx.quantity.unwrap_or(0.0);
+            let price = tx.price.unwrap_or(0.0);
+            let comm = tx.commission.unwrap_or(0.0);
+            if let Some(ref sym) = tx.symbol {
+                *positions.entry(sym.clone()).or_insert(0.0) += qty;
+            }
+            *cash -= qty * price + comm;
+        }
+        TxType::Sell => {
+            let qty = tx.quantity.unwrap_or(0.0);
+            let price = tx.price.unwrap_or(0.0);
+            let comm = tx.commission.unwrap_or(0.0);
+            if let Some(ref sym) = tx.symbol {
+                *positions.entry(sym.clone()).or_insert(0.0) -= qty;
+            }
+            *cash += qty * price - comm;
+        }
+        TxType::Roll => {
+            if let Some(ref sym) = tx.symbol {
+                *positions.entry(sym.clone()).or_insert(0.0) += tx.quantity.unwrap_or(0.0);
+            }
+        }
+        TxType::WeightAdjust | TxType::Dividend => {}
+        TxType::Deposit => {
+            *cash += tx.amount.unwrap_or(0.0);
+        }
+        TxType::Withdrawal => {
+            *cash -= tx.amount.unwrap_or(0.0);
+        }
+    }
+}
 
 /// Validate a ledger slice up to `date`, returning issue strings. Used by
 /// [`PortfolioStore::snapshot`] to populate the `issues` field without

@@ -1668,7 +1668,7 @@ impl ScenariosServer {
                     let event_outcome = outcome_pairs.iter().find(|(eid, _)| eid == &event.id);
                     if store.get(&key).is_none() {
                         store.insert(key.clone(), types::StoredForecastRecord {
-                            schema_version: 1,
+                            schema_version: 2,
                             forecast_id: req.forecast_id.clone(),
                             event_id: event.id.clone(),
                             event_name: event.name.clone(),
@@ -1677,6 +1677,7 @@ impl ScenariosServer {
                             created_at: now,
                             outcome: None,
                             resolved_at: None,
+                            category: None,
                         });
                     }
                     if let Some((_, occurred)) = event_outcome

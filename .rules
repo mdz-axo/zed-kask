@@ -733,3 +733,15 @@ convention is load-bearing, not advisory. This generalizes the
 "Trait-with-one-impl is speculative generality" rule from traits to
 functions: a public function whose only callers are tests is dead surface
 regardless of whether it pins a convention.
+
+## Ontology tag field-drop trap
+
+A new MCP server that emits an `"ontology"` tag in its tool output must add
+an S4 sensor test in the corresponding widget crate asserting the widget's
+block body struct parses the field. Without the test, `serde`'s `Deserialize`
+silently drops unknown fields — the server emits, the widget ignores, no
+error surfaces, the "I" pattern dispatch never fires. The `dead_surface_pins`
+test catches a module with zero call sites, but not a widget that drops a
+field the server emits. The failure mode is silent: the widget renders
+without affordances and the operator cannot distinguish "block has no ontology
+tag" from "widget dropped the tag."

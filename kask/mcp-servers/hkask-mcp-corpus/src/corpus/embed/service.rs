@@ -110,6 +110,8 @@ async fn classify_and_extract(
     config: &CorpusConfig,
     registry_dir: &Path,
     inference_port: &Arc<dyn InferencePort>,
+    db_path: &str,
+    db_passphrase: &str,
 ) -> Result<(), ServiceError> {
     let passage_count = all_passages.len();
     let texts: Vec<String> = all_passages.iter().map(|p| p.text.clone()).collect();
@@ -135,9 +137,43 @@ async fn classify_and_extract(
         "Starting section type classification"
     );
 
-    let classify_results =
-        crate::runtime::classify_batch(&texts, classifier_config, Arc::clone(inference_port))
-            .await?;
+    // Construct a cost-tracking driver from the same DB the semantic store
+    // will use, so classify-batch costs are posted to the ledger (1 rJoule =
+    // 1 USD). Best-effort: if the DB can't be opened for cost tracking,
+    // classify proceeds without cost posting (the warn is emitted inside
+    // `record_cost_best_effort` on post failure; here we just pass None).
+    let cost_driver: Option<Arc<dyn hkask_storage::database::driver::DatabaseDriver>> =
+        match hkask_storage::Database::open(db_path, db_passphrase) {
+            Ok(db) => match db.sqlite_pool() {
+                Ok(pool) => Some(Arc::new(
+                    hkask_storage::database::sqlite::SqliteDriver::new(pool),
+                )),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.corpus.cost",
+                        error = %e,
+                        "Failed to get sqlite pool for cost tracking — classify will proceed without cost posting"
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    target: "hkask.corpus.cost",
+                    error = %e,
+                    "Failed to open DB for cost tracking — classify will proceed without cost posting"
+                );
+                None
+            }
+        };
+
+    let classify_results = crate::runtime::classify_batch(
+        &texts,
+        classifier_config,
+        Arc::clone(inference_port),
+        cost_driver,
+    )
+    .await?;
 
     for (passage, result) in all_passages.iter_mut().zip(classify_results.iter()) {
         passage.section_type = result.category.clone();
@@ -617,7 +653,15 @@ impl EmbedService {
             .and_then(|p| p.parent())
             .unwrap_or_else(|| Path::new("registry"));
 
-        classify_and_extract(&mut all_passages, &config, registry_dir, &inference_port).await?;
+        classify_and_extract(
+            &mut all_passages,
+            &config,
+            registry_dir,
+            &inference_port,
+            db_path,
+            db_passphrase,
+        )
+        .await?;
 
         // ── Compute batch salience (graph centrality) ────────────────
         {

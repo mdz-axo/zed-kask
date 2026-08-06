@@ -141,9 +141,9 @@ pub struct MarketCmpPortfolioStoreRequest {
     /// When omitted, defaults to the reference → Stable orientation.
     pub predicted_level: Option<f64>,
     /// Whether the contract predicts the factor ends above its strike
-    /// (true) or below (false). When omitted, defaults to false.
-    #[serde(default)]
-    pub direction_up: bool,
+    /// (true) or below (false). When omitted, the tool extracts the direction
+    /// from the market title or uses the curated default.
+    pub direction_up: Option<bool>,
     /// Observation date (YYYY-MM-DD). Defaults to today's UTC date.
     pub date: Option<String>,
 }
@@ -1365,15 +1365,18 @@ impl PredictionMarketsServer {
                     }
                 });
                 // direction_up: operator override, else extracted from title, else default.
-                let direction_up = if direction_up {
-                    true
-                } else if let Some(m) = markets.first()
-                    && let Some(be) = base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
-                    && let Some((_, up)) = be.extract_strike(&m.title)
-                {
-                    up
-                } else {
-                    default_ctx.direction_up
+                let direction_up = match direction_up {
+                    Some(up) => up,
+                    None => {
+                        if let Some(m) = markets.first()
+                            && let Some(be) = base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
+                            && let Some((_, up)) = be.extract_strike(&m.title)
+                        {
+                            up
+                        } else {
+                            default_ctx.direction_up
+                        }
+                    }
                 };
                 let context_rationale = default_ctx.rationale.clone();
 

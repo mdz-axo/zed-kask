@@ -394,10 +394,26 @@ impl SelfTrackedProvider {
     }
 
     /// Count transactions referencing this provider's cost account.
+    ///
+    /// Warns on ledger error (the `.rules` "unwrap_or(0) on regulation sense
+    /// inputs" trap: a silent zero would mask a DB outage as "no usage").
+    /// The outer `Ledger::from_driver` match already warns on open failure;
+    /// this warns on the `transaction_count` query failure specifically.
     fn ledger_call_count(&self) -> u64 {
         let account = format!("cost:api/{}", self.config.id);
         match hkask_ledger::Ledger::from_driver(self.driver.clone()) {
-            Ok(ledger) => ledger.transaction_count(&account).unwrap_or(0),
+            Ok(ledger) => match ledger.transaction_count(&account) {
+                Ok(count) => count,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.provider",
+                        provider = %self.config.id,
+                        error = %e,
+                        "Failed to read transaction_count from ledger — returning 0 (signal stale)"
+                    );
+                    0
+                }
+            },
             Err(e) => {
                 tracing::warn!(
                     target: "hkask.provider",
@@ -530,10 +546,30 @@ impl ProviderIntelligence for FirecrawlProvider {
                 })
             }
             Err(_) => {
-                // Fallback: count ledger transactions
+                // Fallback: count ledger transactions. Warns on ledger error
+                // (the `.rules` "unwrap_or(0) on regulation sense inputs" trap).
                 let consumed = match hkask_ledger::Ledger::from_driver(self.driver.clone()) {
-                    Ok(ledger) => ledger.transaction_count("cost:api/firecrawl").unwrap_or(0),
-                    Err(_) => 0,
+                    Ok(ledger) => match ledger.transaction_count("cost:api/firecrawl") {
+                        Ok(count) => count,
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "hkask.provider",
+                                provider = "firecrawl",
+                                error = %e,
+                                "Failed to read firecrawl transaction_count — returning 0 (signal stale)"
+                            );
+                            0
+                        }
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "hkask.provider",
+                            provider = "firecrawl",
+                            error = %e,
+                            "Failed to open ledger for firecrawl call count — returning 0"
+                        );
+                        0
+                    }
                 };
                 Ok(UsageStatus {
                     consumed,

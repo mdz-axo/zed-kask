@@ -103,8 +103,7 @@ mod tests {
     use hkask_storage::database::sqlite::SqliteDriver;
 
     fn test_driver() -> Arc<dyn DatabaseDriver> {
-        let pool = hkask_storage::database::sqlite::SqlitePool::in_memory();
-        Arc::new(SqliteDriver::new(pool))
+        SqliteDriver::in_memory_driver()
     }
 
     #[test]
