@@ -133,6 +133,9 @@ Canonical concept URIs for media-production workflows.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/omc.rs`
 
+**Helpers:**
+- `explain_tool_for(omc: &str) -> &'static str` — the "I" pattern dispatch: maps an OMC concept to the explain tool (`omc:Scene`/`omc:Asset` → `gallery_analyze`; others → `describe_image`).
+
 ### `mlschema` — ML-Schema (ML training domain)
 
 Canonical concept URIs for machine-learning experiments.
@@ -147,6 +150,43 @@ Canonical concept URIs for machine-learning experiments.
 
 Full list: `kask/crates/hkask-bridge-ontology/src/mlschema.rs`
 
+### `five_w_one_h` — 5W1H interrogative ontology (universal core)
+
+The six interrogative pronouns (Who/What/When/Where/Why/How) as a first-class
+ontology vocabulary. The universal ground — every artifact answers at least
+one interrogative. Maps to the state axis (Who/What/When/Where → Dublin Core)
+and the process axis (Why/How → PKO).
+
+| Concept | URI |
+|--------|-----|
+| `WHO` | `5w1h:Who` |
+| `WHAT` | `5w1h:What` |
+| `WHEN` | `5w1h:When` |
+| `WHERE` | `5w1h:Where` |
+| `WHY` | `5w1h:Why` |
+| `HOW` | `5w1h:How` |
+
+Full list: `kask/crates/hkask-bridge-ontology/src/five_w_one_h.rs`
+
+### `sumo` — SUMO upper ontology (universal fallback)
+
+The Suggested Upper Merged Ontology — the general-purpose fallback for
+domains that don't map to a specific supplement. Provides foundational
+categories (Entity, Process, Object, Agent, Relation) that all domain
+supplements specialize. Unknown domains route to SUMO rather than the bare
+5W1H core, so they get formal categorization.
+
+| Concept | URI |
+|--------|-----|
+| `ENTITY` | `sumo:Entity` |
+| `OBJECT` | `sumo:Object` |
+| `PROCESS` | `sumo:Process` |
+| `AGENT` | `sumo:Agent` |
+| `RELATION` | `sumo:Relation` |
+| `PROPOSITION` | `sumo:Proposition` |
+
+Full list: `kask/crates/hkask-bridge-ontology/src/sumo.rs`
+
 ### `axis` — Domain-selection logic
 
 The core of the system: maps a domain hint to its axis anchoring.
@@ -156,14 +196,14 @@ The core of the system: maps a domain hint to its axis anchoring.
 | Type | Description |
 |------|-------------|
 | `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework |
-| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Sumo`, `MlSchema`, `Omc` — which domain supplement |
+| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Sumo`, `MlSchema`, `Omc` — which domain supplement (6 supplements; SUMO is the universal fallback) |
 | `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier ontology tier |
 
 **Functions:**
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `select_ontology_anchor` | `(domain: &str) -> OntologyAnchor` | Select the ontology anchoring for a domain. State axis always DC; process axis is the domain ontology or PKO; unknown → Core fallback. |
+| `select_ontology_anchor` | `(domain: &str) -> OntologyAnchor` | Select the ontology anchoring for a domain. State axis always DC; process axis is the domain ontology or PKO; unknown → SUMO (universal fallback); empty → Core (5W1H ground). |
 | `OntologyNamespace::dc_concept` | `(&self) -> DcConcept` | Map namespace to its canonical DC concept. |
 | `OntologyNamespace::pko_concept` | `(&self) -> PkoConcept` | Map namespace to its canonical PKO concept. |
 | `OntologyAnchor::confidence_modifier` | `(&self) -> f64` | Confidence modifier for saliency weighting. |
@@ -183,7 +223,51 @@ The core of the system: maps a domain hint to its axis anchoring.
 | `memory`, `cognitive`, `episodic` | SUMO | DC | SUMO |
 | `kanban`, `task`, `spec`, `skill`, `curator` | (PKO) | DC | PKO |
 | `file`, `web`, `registry`, `wallet` | (DC+BIBO) | DC | DC+BIBO |
-| (unknown) | (Core) | DC | PKO |
+| (unknown, non-empty) | SUMO | DC | SUMO |
+| (empty) | (Core) | DC | PKO |
+
+## Unified ontology tag shape
+
+Every MCP server emits a single top-level `"ontology"` key in each tool output
+JSON, carrying a concept URI string (e.g. `"omc:CreativeWork"`,
+`"pko:Step"`, `"fibo:Portfolio"`, `"dcterms:Dataset"`). Every widget parses
+an `ontology: Option<String>` field on its block body struct. This is the
+unified contract — one key name, one value shape, across all servers and
+widgets.
+
+| Server | JSON key | Value example |
+|---|---|---|
+| companies | `"ontology"` | `"fibo:Portfolio"` |
+| scenarios | `"ontology"` | `"pko:Procedure"` or `"dcterms:Dataset"` |
+| kata-kanban | `"ontology"` | `"pko:Step"` |
+| media | `"ontology"` | `"omc:CreativeWork"` |
+
+The companies server also emits a `"fibo": {...}` map for per-field display
+metadata — that's a separate concern (display vocabulary, not dispatch
+metadata). The `"ontology"` field is the dispatch concept; the `"fibo"` map
+is the per-field vocabulary.
+
+### The "I" pattern (ontology-bounded affordances)
+
+The crate root exports `explain_tool_for(ontology: &str) -> &'static str` —
+the unified dispatch function that maps an ontology concept to the explain
+tool a widget should invoke. Widgets call this single function instead of
+reimplementing their own ontology-specific dispatch.
+
+| Concept prefix | Explain tool |
+|---|---|
+| `omc:Scene` / `omc:Asset` | `gallery_analyze` |
+| `omc:*` (other) | `describe_image` |
+| `fibo:*` | `research_search` |
+| `pko:*` | `kanban_task_list` |
+| `dcterms:*` / `dublin-core` | `research_search` |
+| empty / unknown | `research_search` (general fallback) |
+
+The media widget's "Explain" affordance is the first implementation: the
+OMC concept in the block body drives which explain tool the widget
+dispatches. The portfolio widget's "Explain" uses provenance-based dispatch
+(server → tool) which is already context-appropriate; the ontology tag is
+in the compose-back body for agent correlation.
 
 ## Dependencies
 

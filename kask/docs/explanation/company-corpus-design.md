@@ -1,7 +1,7 @@
 ---
 title: Company Corpus — Design (discovery → ontology-anchored KG → RAG for MAIA analysis)
-last_updated: 2026-08-05
-status: design (no implementation)
+last_updated: 2026-08-06
+status: implemented (slices 0-7 complete, see §B6)
 depends_on:
   - kask/docs/explanation/earnings-transcript-analysis-design.md (Phase A provider findings, seam model, listening template)
   - kask/docs/explanation/ontology-anchored-embedding.md (tag→embed pipeline)

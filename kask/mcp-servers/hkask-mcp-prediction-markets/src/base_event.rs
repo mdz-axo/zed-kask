@@ -358,6 +358,130 @@ impl BaseEvent {
             BaseEvent::Ethereum => "CoinGecko",
         }
     }
+
+    /// Extract the predicted level (strike) and direction from a Kalshi
+    /// market title. Returns `(predicted_level, direction_up)` when a strike
+    /// is parseable, or `None` when the title has no extractable numeric
+    /// strike (e.g. "Will the Fed cut the policy rate?" — directional only).
+    ///
+    /// The extractor handles the common Kalshi title patterns:
+    /// - "... above $X" / "... at or above $X" → strike X, direction up
+    /// - "... below $X" / "... at or below $X" → strike X, direction down
+    /// - "... exceed $X" / "... exceed X%" → strike X, direction up
+    /// - "... at $X" → strike X, direction up (default)
+    /// - "... $X or more" → strike X, direction up
+    /// - "... $X or less" → strike X, direction down
+    ///
+    /// The unit suffix ($, %, k, M) is stripped and the value normalized to
+    /// the family's native units (e.g. $85 → 85.0 for oil, 5.50% → 5.50 for
+    /// rates). The `k` suffix multiplies by 1,000; `M` by 1,000,000.
+    pub fn extract_strike(self, title: &str) -> Option<(f64, bool)> {
+        let lower = title.to_lowercase();
+        // Direction keywords.
+        let direction_up = !(lower.contains("below") || lower.contains("or less"));
+        // Find a numeric value preceded by $ or followed by %, or a bare
+        // number after a strike keyword. We scan for patterns like "$X",
+        // "X%", "Xk", "XM".
+        let strike = self.find_strike_in_text(&lower)?;
+        Some((strike, direction_up))
+    }
+
+    /// Find the first parseable strike value in a lowercased title.
+    fn find_strike_in_text(self, lower: &str) -> Option<f64> {
+        // Try $-prefixed numbers first (e.g. "$85", "$150k", "$6k").
+        if let Some(v) = find_dollar_number(lower) {
+            return Some(v);
+        }
+        // Try %-suffixed numbers (e.g. "3%", "5.5%").
+        if let Some(v) = find_percent_number(lower) {
+            return Some(v);
+        }
+        // Try bare numbers after "exceed" / "above" / "below" / "at".
+        for keyword in [
+            "exceed",
+            "above",
+            "below",
+            "at or above",
+            "at or below",
+            "at",
+        ] {
+            if let Some(v) = find_number_after_keyword(lower, keyword) {
+                return Some(v);
+            }
+        }
+        None
+    }
+}
+
+/// Find a $-prefixed number in the text, handling k/M suffixes.
+/// e.g. "$85" → 85.0, "$150k" → 150000.0, "$6k" → 6000.0.
+fn find_dollar_number(text: &str) -> Option<f64> {
+    let dollar_pos = text.find('$')?;
+    let after = &text[dollar_pos + 1..];
+    parse_leading_number(after)
+}
+
+/// Find a %-suffixed number in the text.
+/// e.g. "3%" → 3.0, "5.5%" → 5.5.
+fn find_percent_number(text: &str) -> Option<f64> {
+    let pct_pos = text.find('%')?;
+    let before = &text[..pct_pos];
+    // Scan backward for the number.
+    let mut end = before.len();
+    while end > 0 && before.as_bytes()[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 {
+        let b = before.as_bytes()[start - 1];
+        if b.is_ascii_digit() || b == b'.' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    if start < end {
+        before[start..end].parse::<f64>().ok()
+    } else {
+        None
+    }
+}
+
+/// Find a number immediately after a keyword.
+fn find_number_after_keyword(text: &str, keyword: &str) -> Option<f64> {
+    let pos = text.find(keyword)?;
+    let after = &text[pos + keyword.len()..];
+    parse_leading_number(after.trim_start())
+}
+
+/// Parse a leading number from a string, handling k/M suffixes and
+/// trailing non-numeric characters.
+fn parse_leading_number(s: &str) -> Option<f64> {
+    let mut end = 0;
+    let bytes = s.as_bytes();
+    // Skip leading whitespace.
+    while end < bytes.len() && bytes[end].is_ascii_whitespace() {
+        end += 1;
+    }
+    let start = end;
+    // Consume digits and dots.
+    while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+        end += 1;
+    }
+    if end == start {
+        return None;
+    }
+    let num_str = &s[start..end];
+    let mut value = num_str.parse::<f64>().ok()?;
+    // Check for k/M suffix.
+    if end < bytes.len() {
+        match bytes[end] {
+            b'k' => value *= 1_000.0,
+            b'm' => value *= 1_000_000.0,
+            _ => {}
+        }
+    }
+    Some(value)
 }
 
 #[cfg(test)]
@@ -482,5 +606,87 @@ mod tests {
             ctx.rationale.contains("Fed funds"),
             "rationale should mention Fed funds"
         );
+    }
+
+    // ── Strike extraction tests ──────────────────────────────────────
+
+    #[test]
+    fn extract_strike_dollar_above() {
+        // "Will WTI crude close above $85?" → strike 85, direction up
+        let (strike, up) = BaseEvent::Oil
+            .extract_strike("Will WTI crude close above $85?")
+            .unwrap();
+        assert!((strike - 85.0).abs() < 1e-9, "strike = {}", strike);
+        assert!(up, "direction up");
+    }
+
+    #[test]
+    fn extract_strike_dollar_below() {
+        // "Will WTI crude close below $80?" → strike 80, direction down
+        let (strike, up) = BaseEvent::Oil
+            .extract_strike("Will WTI crude close below $80?")
+            .unwrap();
+        assert!((strike - 80.0).abs() < 1e-9, "strike = {}", strike);
+        assert!(!up, "direction down");
+    }
+
+    #[test]
+    fn extract_strike_dollar_with_k_suffix() {
+        // "Will Bitcoin exceed $150k?" → strike 150000, direction up
+        let (strike, up) = BaseEvent::Bitcoin
+            .extract_strike("Will Bitcoin exceed $150k?")
+            .unwrap();
+        assert!((strike - 150_000.0).abs() < 1e-6, "strike = {}", strike);
+        assert!(up);
+    }
+
+    #[test]
+    fn extract_strike_dollar_with_k_suffix_small() {
+        // "Ethereum above $6k by June?" → strike 6000, direction up
+        let (strike, up) = BaseEvent::Ethereum
+            .extract_strike("Ethereum above $6k by June?")
+            .unwrap();
+        assert!((strike - 6_000.0).abs() < 1e-6, "strike = {}", strike);
+        assert!(up);
+    }
+
+    #[test]
+    fn extract_strike_percent() {
+        // "Will CPI inflation exceed 3%?" → strike 3.0, direction up
+        let (strike, up) = BaseEvent::Inflation
+            .extract_strike("Will CPI inflation exceed 3%?")
+            .unwrap();
+        assert!((strike - 3.0).abs() < 1e-9, "strike = {}", strike);
+        assert!(up);
+    }
+
+    #[test]
+    fn extract_strike_rate_at_or_above() {
+        // "Will the Fed funds rate be at or above 5.50%?" → strike 5.5, up
+        let (strike, up) = BaseEvent::InterestRates
+            .extract_strike("Will the Fed funds rate be at or above 5.50%?")
+            .unwrap();
+        assert!((strike - 5.5).abs() < 1e-9, "strike = {}", strike);
+        assert!(up);
+    }
+
+    #[test]
+    fn extract_strike_no_strike_returns_none() {
+        // "Will the Fed cut the policy rate?" — no numeric strike.
+        assert!(
+            BaseEvent::InterestRates
+                .extract_strike("Will the Fed cut the policy rate?")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn extract_strike_or_less_is_down() {
+        // "Crude oil at $70 or less?" → strike 70, direction down
+        let (strike, up) = BaseEvent::Oil
+            .extract_strike("Crude oil at $70 or less?")
+            .unwrap();
+        assert!((strike - 70.0).abs() < 1e-9, "strike = {}", strike);
+        assert!(!up, "or less → down");
     }
 }

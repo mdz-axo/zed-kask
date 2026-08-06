@@ -1869,6 +1869,7 @@ fn test_market_record(
             realized_variance: None,
             structural_flag: StructuralFlag::None,
             interpretation: Cow::Borrowed("low"),
+            dras_forecast: None,
         },
         status: MarketStatus::Open,
         resolved_outcome: None,

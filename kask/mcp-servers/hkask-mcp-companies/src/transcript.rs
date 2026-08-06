@@ -1223,7 +1223,7 @@ mod proptests {
     proptest! {
         /// P4 (panic-freedom): the parser never panics on arbitrary string input.
         #[test]
-        fn parse_never_panics(body in r"\PC*") {
+        fn parse_never_panics(body in r"[^[:cntrl:]]*") {
             let _ = parse_fmp_body(&body, "TEST", 2024, 1);
             emit_trace("parse_never_panics", "pass", 0, "");
         }
@@ -1390,7 +1390,7 @@ mod proptests {
             quarter in 1u8..=4,
             period in "Q[1-4]",
             date in "[0-9]{4}-[0-9]{2}-[0-9]{2}",
-            content in r"\PC{0,100}",
+            content in r"[^[:cntrl:]]{0,100}",
         ) {
             let record = TranscriptRecord {
                 symbol: symbol.clone(),

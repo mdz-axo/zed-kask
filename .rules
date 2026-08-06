@@ -715,3 +715,21 @@ guarded here — they are an accepted, scoped risk (a blanket adapter-level
 normalize in `language_model_core::adapt_schema_to_format` was considered and
 reverted to avoid an upstream D-seam; revisit only if a non-kask tool
 reintroduces the break).
+
+## Convention helpers with only test callers are dead code
+
+A `pub fn` that pins a convention (e.g., an entity-ref prefix format) but has
+no production caller is the function-level analog of "trait-with-one-impl."
+The function exists, tests pass, the convention is pinned — but the
+enforcement point (the agent constructing the prefix at runtime, or the tool
+returning the prefix in its output) is not the function. The convention drifts
+just as effectively if pinned by a doc + a single test on the format string.
+Wire the convention into the tool's output (a field on the result struct, e.g.
+`TranscriptRecord.entity_ref_prefix`), not a standalone function. If the
+convention is only consumed by the agent at runtime (not by Rust code),
+annotate with `#[allow(dead_code)]` and document that it's an agent-runtime
+convention helper — but prefer wiring it into the tool's output so the
+convention is load-bearing, not advisory. This generalizes the
+"Trait-with-one-impl is speculative generality" rule from traits to
+functions: a public function whose only callers are tests is dead surface
+regardless of whether it pins a convention.

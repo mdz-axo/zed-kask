@@ -1352,8 +1352,31 @@ impl PredictionMarketsServer {
                     });
                 let reference = reference.unwrap_or(default_ctx.reference);
                 let volatility = volatility.or(default_ctx.volatility);
-                let predicted_level = predicted_level.unwrap_or(default_ctx.predicted_level);
-                let direction_up = direction_up || default_ctx.direction_up;
+                // When the operator didn't supply a predicted_level, try to
+                // extract a strike from the first market's title. If a strike
+                // is found, use it (directional index); otherwise fall back to
+                // the curated default (predicted_level = reference → Stable).
+                let predicted_level = predicted_level.unwrap_or_else(|| {
+                    if let Some(m) = markets.first()
+                        && let Some(be) = base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
+                        && let Some((strike, _)) = be.extract_strike(&m.title)
+                    {
+                        strike
+                    } else {
+                        default_ctx.predicted_level
+                    }
+                });
+                // direction_up: operator override, else extracted from title, else default.
+                let direction_up = if direction_up {
+                    true
+                } else if let Some(m) = markets.first()
+                    && let Some(be) = base_event::classify_base_event_text(&m.title, &m.subtitle, &series, "")
+                    && let Some((_, up)) = be.extract_strike(&m.title)
+                {
+                    up
+                } else {
+                    default_ctx.direction_up
+                };
                 let context_rationale = default_ctx.rationale.clone();
 
                 // Build OrientedConstituents from fetched markets + operator
