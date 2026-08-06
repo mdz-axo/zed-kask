@@ -475,7 +475,7 @@ pub fn build_constellations(events: &[MappedEvent]) -> Vec<EventConstellation> {
                 .collect(),
         });
     }
-    constellations.sort_by(|a, b| a.base_object.cmp(&b.base_object));
+    constellations.sort_by_key(|a| a.base_object);
     constellations
 }
 

@@ -560,7 +560,7 @@ pub struct CmpIndexSet {
 /// 1. Select available maturity buckets (≥ `min_constituents_per_bucket`
 ///    constituents in each bucket's eligibility window).
 /// 2. For each available bucket, filter constituents into the bucket's
-    ///    maturity window and group by orientation (increase, decline, stable).
+///    maturity window and group by orientation (increase, decline, stable).
 /// 3. For each (bucket, orientation) pair, solve the portfolio weights so
 ///    the weighted-average maturity matches the bucket's target.
 /// 4. Withhold any index that can't be solved (no bracket, tolerance failure)
@@ -578,8 +578,7 @@ pub fn construct_cmp_index_set(
     // Step 1: select available buckets from all constituents regardless of
     // orientation — the bucket is available if the object has enough contracts
     // in the maturity window, even if they split across orientations.
-    let all_constituents: Vec<Constituent> =
-        oriented.iter().map(|oc| oc.constituent).collect();
+    let all_constituents: Vec<Constituent> = oriented.iter().map(|oc| oc.constituent).collect();
     let available = select_available_buckets(&all_constituents, config);
 
     let withheld: Vec<MaturityBucket> = MaturityBucket::ALL
@@ -598,13 +597,16 @@ pub fn construct_cmp_index_set(
         let in_window: Vec<&OrientedConstituent> = oriented
             .iter()
             .filter(|oc| {
-                oc.constituent.days_to_expiration >= lo
-                    && oc.constituent.days_to_expiration <= hi
+                oc.constituent.days_to_expiration >= lo && oc.constituent.days_to_expiration <= hi
             })
             .collect();
 
         // For each orientation, collect the constituents and solve the portfolio.
-        for orientation in [Orientation::Increase, Orientation::Decline, Orientation::Stable] {
+        for orientation in [
+            Orientation::Increase,
+            Orientation::Decline,
+            Orientation::Stable,
+        ] {
             let orientation_constituents: Vec<Constituent> = in_window
                 .iter()
                 .filter(|oc| oc.orientation == orientation)
@@ -1013,5 +1015,129 @@ mod tests {
         assert_eq!(MaturityBucket::TwoMonth.label(), "2m");
         assert_eq!(MaturityBucket::ThreeMonth.label(), "3m");
         assert_eq!(MaturityBucket::SixMonth.label(), "6m");
+    }
+
+    // ── construct_cmp_index_set tests ────────────────────────────────────
+
+    fn oriented(
+        days: f64,
+        prob: f64,
+        quality: f64,
+        orientation: Orientation,
+    ) -> OrientedConstituent {
+        OrientedConstituent {
+            constituent: Constituent {
+                days_to_expiration: days,
+                probability: prob,
+                quality,
+            },
+            orientation,
+            market_index: 0,
+        }
+    }
+
+    #[test]
+    fn construct_index_set_builds_all_orientations_for_available_bucket() {
+        // 3m bucket [68, 112]: enough contracts for increase + decline.
+        let oriented_constituents = vec![
+            // Increase contracts bracketing 90d
+            oriented(80.0, 0.60, 1.0, Orientation::Increase),
+            oriented(100.0, 0.55, 1.0, Orientation::Increase),
+            oriented(90.0, 0.50, 1.0, Orientation::Increase),
+            // Decline contracts bracketing 90d
+            oriented(75.0, 0.40, 1.0, Orientation::Decline),
+            oriented(105.0, 0.45, 1.0, Orientation::Decline),
+            oriented(90.0, 0.35, 1.0, Orientation::Decline),
+        ];
+        let set = construct_cmp_index_set(&oriented_constituents, &config());
+        assert!(set.available_buckets.contains(&MaturityBucket::ThreeMonth));
+        // Should have increase + decline indices for 3m.
+        let has_increase = set.indices.iter().any(|i| {
+            i.bucket == MaturityBucket::ThreeMonth && i.orientation == Orientation::Increase
+        });
+        let has_decline = set.indices.iter().any(|i| {
+            i.bucket == MaturityBucket::ThreeMonth && i.orientation == Orientation::Decline
+        });
+        assert!(has_increase, "3m increase index should be constructed");
+        assert!(has_decline, "3m decline index should be constructed");
+    }
+
+    #[test]
+    fn construct_index_set_withholds_bucket_with_no_orientation() {
+        // 3m bucket has enough total contracts, but all are Increase — no
+        // Decline or Stable index can be built for 3m.
+        let oriented_constituents = vec![
+            oriented(80.0, 0.60, 1.0, Orientation::Increase),
+            oriented(90.0, 0.55, 1.0, Orientation::Increase),
+            oriented(100.0, 0.50, 1.0, Orientation::Increase),
+        ];
+        let set = construct_cmp_index_set(&oriented_constituents, &config());
+        assert!(set.available_buckets.contains(&MaturityBucket::ThreeMonth));
+        // Only increase index for 3m.
+        assert_eq!(set.indices.len(), 1);
+        assert_eq!(set.indices[0].orientation, Orientation::Increase);
+        assert_eq!(set.indices[0].bucket, MaturityBucket::ThreeMonth);
+    }
+
+    #[test]
+    fn construct_index_set_withholds_unavailable_buckets() {
+        // Only short-dated contracts — 1m and 2m available, 3m and 6m withheld.
+        let oriented_constituents = vec![
+            oriented(25.0, 0.50, 1.0, Orientation::Increase),
+            oriented(30.0, 0.50, 1.0, Orientation::Increase),
+            oriented(35.0, 0.50, 1.0, Orientation::Increase),
+            oriented(50.0, 0.50, 1.0, Orientation::Decline),
+            oriented(55.0, 0.50, 1.0, Orientation::Decline),
+            oriented(60.0, 0.50, 1.0, Orientation::Decline),
+        ];
+        let set = construct_cmp_index_set(&oriented_constituents, &config());
+        assert!(set.available_buckets.contains(&MaturityBucket::OneMonth));
+        assert!(set.available_buckets.contains(&MaturityBucket::TwoMonth));
+        assert!(!set.available_buckets.contains(&MaturityBucket::ThreeMonth));
+        assert!(!set.available_buckets.contains(&MaturityBucket::SixMonth));
+        assert!(set.withheld_buckets.contains(&MaturityBucket::ThreeMonth));
+        assert!(set.withheld_buckets.contains(&MaturityBucket::SixMonth));
+    }
+
+    #[test]
+    fn construct_index_set_contracts_reused_across_buckets() {
+        // A contract at 70d is in both 2m [45,75] and 3m [68,112].
+        // With enough contracts in each window, both buckets should form.
+        let oriented_constituents = vec![
+            // 1m [22, 38]: 3 increase contracts
+            oriented(25.0, 0.50, 1.0, Orientation::Increase),
+            oriented(30.0, 0.50, 1.0, Orientation::Increase),
+            oriented(35.0, 0.50, 1.0, Orientation::Increase),
+            // 2m [45, 75]: 3 increase contracts (70d also in 3m window)
+            oriented(50.0, 0.50, 1.0, Orientation::Increase),
+            oriented(60.0, 0.50, 1.0, Orientation::Increase),
+            oriented(70.0, 0.50, 1.0, Orientation::Increase),
+            // 3m [68, 112]: 3 decline contracts (70d is also here but it's increase)
+            oriented(80.0, 0.50, 1.0, Orientation::Decline),
+            oriented(90.0, 0.50, 1.0, Orientation::Decline),
+            oriented(100.0, 0.50, 1.0, Orientation::Decline),
+        ];
+        let set = construct_cmp_index_set(&oriented_constituents, &config());
+        assert!(set.available_buckets.contains(&MaturityBucket::OneMonth));
+        assert!(set.available_buckets.contains(&MaturityBucket::TwoMonth));
+        assert!(set.available_buckets.contains(&MaturityBucket::ThreeMonth));
+    }
+
+    #[test]
+    fn construct_index_set_withholds_when_no_bracket() {
+        // 3m bucket has 3 increase contracts but none bracket 90d — all below.
+        let oriented_constituents = vec![
+            oriented(70.0, 0.50, 1.0, Orientation::Increase),
+            oriented(72.0, 0.50, 1.0, Orientation::Increase),
+            oriented(75.0, 0.50, 1.0, Orientation::Increase),
+        ];
+        let set = construct_cmp_index_set(&oriented_constituents, &config());
+        // 3m bucket is available (3 contracts in window [68,112])
+        assert!(set.available_buckets.contains(&MaturityBucket::ThreeMonth));
+        // But no index can be solved (no bracket spans 90d)
+        assert!(
+            set.indices.is_empty(),
+            "no index should be constructed without a bracket"
+        );
     }
 }
