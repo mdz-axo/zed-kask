@@ -86,54 +86,9 @@ pub fn fmp_field_to_fibo(field: &str) -> Option<FiboConcept> {
     }
 }
 
-/// Portfolio characteristics aggregation — FIBO-defined concepts that can be
-/// aggregated across holdings as weighted averages.
-pub const PORTFOLIO_AGGREGATABLE_FIELDS: &[(&str, FiboConcept)] = &[
-    ("peRatio", PRICE_EARNINGS_RATIO),
-    ("priceToBookRatio", PRICE_TO_BOOK_RATIO),
-    ("priceToSalesRatio", PRICE_TO_SALES_RATIO),
-    ("roic", RETURN_ON_INVESTED_CAPITAL),
-    ("roe", RETURN_ON_EQUITY),
-    ("grossProfitMargin", GROSS_PROFIT_MARGIN),
-    ("operatingProfitMargin", OPERATING_PROFIT_MARGIN),
-    ("netProfitMargin", NET_PROFIT_MARGIN),
-    ("debtToEquity", DEBT_TO_EQUITY_RATIO),
-    ("dividendYield", DIVIDEND_YIELD),
-    ("revenueGrowth", REVENUE_GROWTH_RATE),
-    ("epsGrowth", EPS_GROWTH_RATE),
-];
-
-/// Portfolio categorical breakdown fields — FIBO-defined concepts that are
-/// aggregated as category → weight maps (not numeric weighted averages).
-pub const PORTFOLIO_CATEGORICAL_FIELDS: &[(&str, FiboConcept)] = &[
-    ("sector", INDUSTRY_SECTOR),
-    ("industry", INDUSTRY_CLASSIFICATION),
-    ("country", COUNTRY_OF_INCORPORATION),
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fmp_to_fibo_maps_all_aggregatable_fields() {
-        for (field, _concept) in PORTFOLIO_AGGREGATABLE_FIELDS {
-            assert!(
-                fmp_field_to_fibo(field).is_some(),
-                "aggregatable field '{field}' must have FIBO mapping"
-            );
-        }
-    }
-
-    #[test]
-    fn fmp_to_fibo_maps_all_categorical_fields() {
-        for (field, _concept) in PORTFOLIO_CATEGORICAL_FIELDS {
-            assert!(
-                fmp_field_to_fibo(field).is_some(),
-                "categorical field '{field}' must have FIBO mapping"
-            );
-        }
-    }
 
     #[test]
     fn financial_leverage_maps_to_its_ratio_concept() {

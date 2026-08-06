@@ -176,6 +176,7 @@ hkask_mcp_server::mcp_server!(
         pub exa_api_key: Option<String>,
         pub tavily_api_key: Option<String>,
         pub brave_api_key: Option<String>,
+        pub serpapi_key: Option<String>,
         pub portfolio: PortfolioManager,
         pub learning: std::sync::Arc<std::sync::Mutex<LearningState>>,
         pub fermi_defaults: superforecast::FermiDefaults,
@@ -302,6 +303,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             let exa_api_key = ctx.credentials.get("HKASK_EXA_API_KEY").cloned();
             let tavily_api_key = ctx.credentials.get("HKASK_TAVILY_API_KEY").cloned();
             let brave_api_key = ctx.credentials.get("HKASK_BRAVE_API_KEY").cloned();
+            let serpapi_key = ctx.credentials.get("HKASK_SERPAPI_KEY").cloned();
             Ok(CompaniesServer::new(
                 ctx.webid,
                 reqwest::Client::new(),
@@ -310,6 +312,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 exa_api_key,
                 tavily_api_key,
                 brave_api_key,
+                serpapi_key,
                 PortfolioManager::new(ctx.webid)?,
                 std::sync::Arc::new(std::sync::Mutex::new(
                     match std::env::var("HKASK_CHRONIC_STALENESS_DAYS")

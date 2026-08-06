@@ -6,6 +6,7 @@
 //!
 //! Reference: Schwartz, "The Art of the Long View"
 
+use crate::fibo::{GROSS_PROFIT_MARGIN, REVENUE_GROWTH_RATE};
 use crate::financial_model::{self, HistoricalSnapshot, ProjectedModel, ProjectionAssumptions};
 
 // ── 2x2 Matrix ────────────────────────────────────────────────────────────
@@ -49,14 +50,14 @@ impl ScenarioMatrix {
     pub fn growth_x_margin(hist_revenue_growth: f64, gross_margin: f64) -> Self {
         let axis1 = ScenarioAxis {
             name: "Revenue Growth",
-            fibo_concept: "fibo-fbc-fct-ra:RevenueGrowthRate",
+            fibo_concept: REVENUE_GROWTH_RATE,
             baseline: hist_revenue_growth,
             high_multiplier: 1.5,
             low_multiplier: 0.5,
         };
         let axis2 = ScenarioAxis {
             name: "Gross Margin",
-            fibo_concept: "fibo-fbc-fct-ra:GrossProfitMargin",
+            fibo_concept: GROSS_PROFIT_MARGIN,
             baseline: gross_margin,
             high_multiplier: 1.2,
             low_multiplier: 0.8,

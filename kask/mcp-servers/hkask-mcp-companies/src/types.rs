@@ -601,32 +601,68 @@ pub struct ResearchSearchRequest {
     pub query: String,
 }
 
-// ── Company transcript request (earnings mode) ──────────────────────
+// ── Company transcript request (earnings + corpus modes) ──────────────
 
-/// Request for `company_transcript` (earnings mode).
+/// Fetch mode for `company_transcript`.
+///
+/// `earnings` fetches FMP earnings-call transcripts (the existing behavior).
+/// `corpus` fetches non-earnings company transcripts (investor-day keynotes,
+/// executive interviews) via SerpAPI YouTube, channel-allowlisted per the
+/// company manifest. Corpus mode does NOT segment — it normalizes to
+/// pipeline-ready records and hands off to the corpus pipeline.
+#[derive(Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum TranscriptMode {
+    /// FMP earnings-call transcript: fetch + coverage-honest.
+    #[default]
+    Earnings,
+    /// Non-earnings company transcripts via SerpAPI YouTube (channel-allowlisted).
+    /// Normalize-only, no segmentation. Pipeline-ready JSONL output.
+    Corpus,
+}
+
+/// Request for `company_transcript`.
 ///
 /// Temporal key is `(year, quarter)` — the FMP `date` field is unreliable
 /// (probe-verified: AAPL 2023Q1 returns `date: "2012-03-19"`). Callers must
 /// not rely on `date` for ordering or deduplication.
-///
-/// Corpus/combined modes are reserved for the company-corpus design slices;
-/// they will be added as a mode enum when that design lands, not speculatively.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompanyTranscriptRequest {
     pub symbol: String,
-    /// Calendar year (e.g. 2024). Required when `quarters_back` is not used.
+    /// Fetch mode. `earnings` (default) hits FMP; `corpus` hits SerpAPI YouTube.
+    #[serde(default)]
+    pub mode: TranscriptMode,
+    /// Calendar year (e.g. 2024). Required for `earnings` mode when
+    /// `quarters_back` is not used. Ignored for `corpus` mode.
     pub year: Option<u32>,
-    /// Calendar quarter 1–4. Required when `quarters_back` is not used.
+    /// Calendar quarter 1–4. Required for `earnings` mode when `quarters_back`
+    /// is not used. Ignored for `corpus` mode.
     pub quarter: Option<u8>,
     /// Fetch the last N quarters ending at `(year, quarter)`. Default 1.
     /// Per-quarter failures are collected into `coverage.missing`, not
-    /// propagated as whole-tool failure.
+    /// propagated as whole-tool failure. Ignored for `corpus` mode.
     #[serde(default = "default_transcript_quarters_back")]
     pub quarters_back: u32,
+    /// Search query for `corpus` mode (e.g. "Satya Nadella keynote").
+    /// Required for `corpus` mode; ignored for `earnings` mode.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Channel allowlist for `corpus` mode (e.g. ["Microsoft", "Microsoft Investor Relations"]).
+    /// Videos from channels NOT on this list are excluded and logged, never silently kept.
+    /// Required for `corpus` mode; ignored for `earnings` mode.
+    #[serde(default)]
+    pub channels_allowlist: Vec<String>,
+    /// Max results for `corpus` mode (default 5). Ignored for `earnings` mode.
+    #[serde(default = "default_corpus_max_results")]
+    pub max_results: u32,
 }
 
 fn default_transcript_quarters_back() -> u32 {
     1
+}
+
+fn default_corpus_max_results() -> u32 {
+    5
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

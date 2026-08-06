@@ -77,6 +77,12 @@ pub struct TaskBody {
     pub assignee: Option<String>,
     #[serde(default)]
     pub gas_remaining: Option<u64>,
+    /// PKO concept URI (e.g. `pko:Step`). Emitted by the kata-kanban server
+    /// on every `TaskInfo` response. The widget carries it so the compose-back
+    /// body can reference it and a future "explain this task" affordance can
+    /// dispatch on it. `None` on older blocks.
+    #[serde(default)]
+    pub pko: Option<String>,
 }
 
 impl KanbanBlockBody {

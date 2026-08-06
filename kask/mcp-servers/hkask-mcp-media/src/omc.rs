@@ -1,16 +1,19 @@
 //! Media-server OMC dispatch — server-specific mapping from media-tool names
-//! to OMC concepts, and from OMC concepts to explain-tool dispatch.
+//! to OMC concepts.
 //!
-//! The OMC concept vocabulary (the canonical `omc:*` URIs) lives in the
-//! shared `hkask-bridge-ontology` crate. This module holds only the
-//! media-server-specific dispatch: which tool name produces which OMC
-//! concept, and which explain tool the widget should dispatch on for a
-//! given OMC tag. That is the server's business, not the ontology's.
+//! The OMC concept vocabulary and the shared concept→explain-tool dispatch
+//! function both live in the shared `hkask-bridge-ontology` crate. This module
+//! holds only the media-server-specific mapping: which tool name produces
+//! which OMC concept. That is the server's business, not the ontology's.
 
 use hkask_bridge_ontology::omc::OmcConcept;
 use hkask_bridge_ontology::omc::{
     ASSET, CREATIVE_WORK, MEDIA_SOURCE, SCENE, SEQUENCE, TASK, VERSION,
 };
+
+// Re-export the shared explain-tool dispatch so the media server's tests and
+// any in-server consumers reference the single source of truth.
+pub use hkask_bridge_ontology::omc::explain_tool_for;
 
 /// Map a media-tool name to its OMC concept URI.
 ///
@@ -39,23 +42,6 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "image_create_collage" | "extract_object" => Some(CREATIVE_WORK),
         // Not covered by OMC (pure metadata / registry tools).
         _ => None,
-    }
-}
-
-/// The OMC concept that the "Explain" affordance should dispatch on, given the
-/// block's OMC tag. This is the "I" pattern (ontology-bounded affordances):
-/// the OMC concept determines which explain tool the widget dispatches.
-///
-/// - `omc:CreativeWork` / `omc:Version` → `describe_image` (vision caption).
-/// - `omc:Scene` → `gallery_analyze` (scene analysis pipeline).
-/// - `omc:Asset` → `gallery_analyze` (asset inspection).
-/// - Others → `describe_image` (the general vision fallback).
-pub fn explain_tool_for(omc: &str) -> &'static str {
-    match omc {
-        SCENE | ASSET => "gallery_analyze",
-        // CreativeWork, Version, MediaSource, Sequence, Shot, Participant, Task
-        // — all describe-able via the vision caption tool.
-        _ => "describe_image",
     }
 }
 

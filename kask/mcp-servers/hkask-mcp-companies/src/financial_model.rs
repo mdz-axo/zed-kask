@@ -18,6 +18,10 @@
 //!  10. Shares outstanding         key_metrics.weightedAverageShsOut or profile
 //!  11. Tax rate                   incomeTaxExpense / incomeBeforeTax
 
+use crate::fibo::{
+    CAPITAL_EXPENDITURE, DEPRECIATION_AND_AMORTIZATION, DISCOUNT_RATE, GROSS_PROFIT_MARGIN,
+    NET_WORKING_CAPITAL, REVENUE_GROWTH_RATE,
+};
 use crate::types::ProjectionAssumptionOverrides;
 use serde::{Deserialize, Serialize};
 
@@ -881,42 +885,42 @@ pub fn sensitivity_analysis(
             "Revenue Growth",
             &|a| a.revenue_growth,
             &|a, v| a.revenue_growth = v.clamp(-0.50, 1.00),
-            "fibo-fbc-fct-ra:RevenueGrowthRate",
+            REVENUE_GROWTH_RATE,
         ),
         (
             "gross_margin",
             "Gross Margin",
             &|a| a.gross_margin,
             &|a, v| a.gross_margin = v.clamp(0.05, 0.95),
-            "fibo-fbc-fct-ra:GrossProfitMargin",
+            GROSS_PROFIT_MARGIN,
         ),
         (
             "da_to_revenue",
             "D&A / Revenue",
             &|a| a.da_to_revenue,
             &|a, v| a.da_to_revenue = v.clamp(0.0, 0.20),
-            "fibo-fbc-fct-ra:DepreciationAndAmortization",
+            DEPRECIATION_AND_AMORTIZATION,
         ),
         (
             "capex_to_revenue",
             "Capex / Revenue",
             &|a| a.capex_to_revenue,
             &|a, v| a.capex_to_revenue = v.clamp(0.0, 0.30),
-            "fibo-fbc-fct-ra:CapitalExpenditure",
+            CAPITAL_EXPENDITURE,
         ),
         (
             "nwc_to_revenue",
             "NWC / Revenue",
             &|a| a.nwc_to_revenue,
             &|a, v| a.nwc_to_revenue = v.clamp(-0.20, 0.50),
-            "fibo-fbc-fct-ra:NetWorkingCapital",
+            NET_WORKING_CAPITAL,
         ),
         (
             "discount_rate",
             "Discount Rate",
             &|a| a.discount_rate,
             &|a, v| a.discount_rate = v.clamp((a.terminal_growth + 0.0001).max(0.05), 0.30),
-            "fibo-fbc-fct-ra:DiscountRate",
+            DISCOUNT_RATE,
         ),
     ];
 

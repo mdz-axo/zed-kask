@@ -280,6 +280,271 @@ fn parse_fmp_body(
 // `TranscriptRecord` — the agent reads it from the tool output and passes it
 // to `corpus_chunk`, so the convention can't drift.
 
+// ── Corpus mode (non-earnings transcripts via SerpAPI YouTube) ──────────────
+//
+// Design: company-corpus-design.md §B1 corpus mode + §B6 slice 3.
+// Fetches non-earnings company transcripts (investor-day keynotes, executive
+// interviews) via SerpAPI YouTube, channel-allowlisted. Does NOT segment —
+// normalizes to pipeline-ready records and hands off to the corpus pipeline.
+// Probe-verified (corpus doc A3): SerpAPI `youtube_video_transcript` engine
+// returns timestamped segments with generic `SPEAKER n` labels (not named);
+// `youtube` search engine returns channel names (allowlist filtering is
+// feasible at discovery time).
+
+/// One fetched non-earnings transcript (corpus mode).
+///
+/// Pipeline-ready: the `entity_ref_prefix` follows the convention
+/// `company:{symbol}:{kind}:{date}` so the corpus pipeline can chunk/tag/embed
+/// with consistent provenance.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CorpusTranscriptRecord {
+    pub symbol: String,
+    /// Source tier (1 = self-description, 2 = executive voice). YouTube
+    /// transcripts are tier-2 (executives speaking, unmediated).
+    pub source_tier: u8,
+    /// Document kind (e.g. "youtube", "investor_day", "keynote").
+    pub kind: String,
+    /// Video title from SerpAPI.
+    pub title: String,
+    /// Video URL.
+    pub url: String,
+    /// Channel name from SerpAPI (for allowlist verification).
+    pub channel: String,
+    /// Transcript content (concatenated snippets from SerpAPI).
+    pub content: String,
+    /// Entity ref prefix for the corpus pipeline.
+    pub entity_ref_prefix: String,
+}
+
+/// A video that was excluded because its channel is not on the allowlist.
+/// Logged in `coverage.excluded`, never silently kept.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ExcludedVideo {
+    pub title: String,
+    pub url: String,
+    pub channel: String,
+    pub reason: String,
+}
+
+/// Coverage for corpus mode: included + excluded (the exclusion log is the
+/// honesty surface — non-allowlisted channels are reported, never silently dropped).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CorpusTranscriptResult {
+    pub transcripts: Vec<CorpusTranscriptRecord>,
+    pub excluded: Vec<ExcludedVideo>,
+}
+
+const SERPAPI_BASE: &str = "https://serpapi.com/search";
+
+/// Fetch non-earnings company transcripts via SerpAPI YouTube, filtered by
+/// channel allowlist. Non-allowlisted channels are excluded and logged.
+///
+/// Returns `Err` if the SerpAPI key is missing or the search fails entirely;
+/// returns `Ok` with partial results (some transcripts, some excluded) if
+/// individual video fetches fail.
+pub async fn fetch_corpus_transcripts(
+    client: &reqwest::Client,
+    symbol: &str,
+    query: &str,
+    channels_allowlist: &[String],
+    max_results: u32,
+    serpapi_key: &str,
+) -> Result<CorpusTranscriptResult, McpToolError> {
+    // Step 1: Search YouTube for videos matching the query.
+    let search_params: Vec<(&str, String)> = vec![
+        ("q", query.to_string()),
+        ("api_key", serpapi_key.to_string()),
+        ("engine", "youtube".to_string()),
+        ("num", max_results.to_string()),
+    ];
+
+    let search_response = client
+        .get(SERPAPI_BASE)
+        .query(&search_params)
+        .send()
+        .await
+        .map_err(|error| {
+            McpToolError::unavailable(format!("SerpAPI YouTube search failed: {error}"))
+        })?;
+
+    let search_body = search_response.text().await.map_err(|error| {
+        McpToolError::unavailable(format!("SerpAPI search body read failed: {error}"))
+    })?;
+
+    let search_json: serde_json::Value = serde_json::from_str(&search_body).map_err(|error| {
+        McpToolError::unavailable(format!("SerpAPI search returned malformed JSON: {error}"))
+    })?;
+
+    let video_results = search_json["video_results"]
+        .as_array()
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|video| {
+                    let title = video["title"].as_str()?.to_string();
+                    let link = video["link"].as_str()?.to_string();
+                    let channel = video["channel"]
+                        .as_str()
+                        .or_else(|| video["channel"]["name"].as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    Some((title, link, channel))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    // Step 2: Filter by channel allowlist + fetch transcripts for allowed videos.
+    let mut transcripts = Vec::new();
+    let mut excluded = Vec::new();
+
+    for (title, url, channel) in video_results {
+        let channel_allowed = channels_allowlist
+            .iter()
+            .any(|allowed| channel.contains(allowed.as_str()));
+
+        if !channel_allowed {
+            excluded.push(ExcludedVideo {
+                title,
+                url,
+                channel,
+                reason: "channel not on allowlist".to_string(),
+            });
+            continue;
+        }
+
+        // Extract video ID from the URL.
+        let Some(video_id) = extract_youtube_id(&url) else {
+            excluded.push(ExcludedVideo {
+                title,
+                url,
+                channel,
+                reason: "could not extract video ID".to_string(),
+            });
+            continue;
+        };
+
+        // Fetch the transcript.
+        match fetch_youtube_transcript(client, &video_id, serpapi_key).await {
+            Ok(Some(content)) => {
+                let entity_ref_prefix = format!("company:{symbol}:youtube:{video_id}");
+                transcripts.push(CorpusTranscriptRecord {
+                    symbol: symbol.to_string(),
+                    source_tier: 2,
+                    kind: "youtube".to_string(),
+                    title,
+                    url,
+                    channel,
+                    content,
+                    entity_ref_prefix,
+                });
+            }
+            Ok(None) => {
+                excluded.push(ExcludedVideo {
+                    title,
+                    url,
+                    channel,
+                    reason: "no transcript available".to_string(),
+                });
+            }
+            Err(error) => {
+                excluded.push(ExcludedVideo {
+                    title,
+                    url,
+                    channel,
+                    reason: format!("transcript fetch failed: {error}"),
+                });
+            }
+        }
+    }
+
+    Ok(CorpusTranscriptResult {
+        transcripts,
+        excluded,
+    })
+}
+
+/// Extract the 11-character YouTube video ID from a URL.
+fn extract_youtube_id(url: &str) -> Option<String> {
+    if let Some(position) = url.find("v=") {
+        let id: String = url[position + 2..].chars().take(11).collect();
+        if id.len() == 11
+            && id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            })
+        {
+            return Some(id);
+        }
+    }
+    if let Some(position) = url.find("youtu.be/") {
+        let id: String = url[position + 9..].chars().take(11).collect();
+        if id.len() == 11
+            && id.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            })
+        {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// Fetch a YouTube video transcript via SerpAPI's `youtube_video_transcript` engine.
+/// Returns `Ok(None)` if no transcript is available.
+async fn fetch_youtube_transcript(
+    client: &reqwest::Client,
+    video_id: &str,
+    serpapi_key: &str,
+) -> Result<Option<String>, String> {
+    let params: Vec<(&str, String)> = vec![
+        ("v", video_id.to_string()),
+        ("api_key", serpapi_key.to_string()),
+        ("engine", "youtube_video_transcript".to_string()),
+    ];
+
+    let response = client
+        .get(SERPAPI_BASE)
+        .query(&params)
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("body read failed: {error}"))?;
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|error| format!("malformed JSON: {error}"))?;
+
+    // The transcript comes as an array of snippets with `snippet` text fields.
+    let snippets = parsed["transcripts"]
+        .as_array()
+        .or_else(|| parsed["organic_results"].as_array())
+        .or_else(|| parsed["results"].as_array());
+
+    let Some(snippets) = snippets else {
+        return Ok(None);
+    };
+
+    let content: String = snippets
+        .iter()
+        .filter_map(|snippet| {
+            snippet["snippet"]
+                .as_str()
+                .or_else(|| snippet["text"].as_str())
+                .map(|text| text.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if content.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(content))
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

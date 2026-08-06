@@ -20,6 +20,7 @@ use gpui::{
     Subscription, Task, Window, div, img, px,
 };
 use gpui_util::ResultExt as _;
+use hkask_bridge_ontology::omc::explain_tool_for;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use smallvec::SmallVec;
 use theme::ActiveTheme;
@@ -575,7 +576,7 @@ impl MediaWidget {
         };
         // The "I" pattern: OMC concept drives the explain tool.
         let omc_tag = self.omc.as_deref().unwrap_or("");
-        let tool = explain_tool_for_omc(omc_tag);
+        let tool = explain_tool_for(omc_tag);
         // Build the args from the block's provenance + src. `describe_image`
         // takes `image_url`; `gallery_analyze` takes `mode`/`image_indices`.
         // We pass the provenance args through (merged with the src) so the
@@ -654,18 +655,6 @@ impl MediaWidget {
             self.disagree_draft = Some(body);
         }
         cx.notify();
-    }
-}
-
-/// The OMC concept → explain tool mapping (the "I" pattern). Mirrors the
-/// `omc::explain_tool_for` function in the MCP server crate, but lives here
-/// so the widget doesn't depend on the MCP server crate. Kept in sync by
-/// convention — the widget only needs the dispatch decision, not the full
-/// OMC concept set.
-fn explain_tool_for_omc(omc: &str) -> &'static str {
-    match omc {
-        "omc:Scene" | "omc:Asset" => "gallery_analyze",
-        _ => "describe_image",
     }
 }
 
@@ -1212,12 +1201,13 @@ mod tests {
     #[test]
     fn explain_tool_for_omc_dispatches_correctly() {
         // The "I" pattern: OMC concept drives the explain tool.
-        assert_eq!(explain_tool_for_omc("omc:Scene"), "gallery_analyze");
-        assert_eq!(explain_tool_for_omc("omc:Asset"), "gallery_analyze");
-        assert_eq!(explain_tool_for_omc("omc:CreativeWork"), "describe_image");
-        assert_eq!(explain_tool_for_omc("omc:Version"), "describe_image");
-        assert_eq!(explain_tool_for_omc("omc:MediaSource"), "describe_image");
-        assert_eq!(explain_tool_for_omc("omc:Sequence"), "describe_image");
-        assert_eq!(explain_tool_for_omc(""), "describe_image");
+        // Uses the shared `hkask_bridge_ontology::omc::explain_tool_for`.
+        assert_eq!(explain_tool_for("omc:Scene"), "gallery_analyze");
+        assert_eq!(explain_tool_for("omc:Asset"), "gallery_analyze");
+        assert_eq!(explain_tool_for("omc:CreativeWork"), "describe_image");
+        assert_eq!(explain_tool_for("omc:Version"), "describe_image");
+        assert_eq!(explain_tool_for("omc:MediaSource"), "describe_image");
+        assert_eq!(explain_tool_for("omc:Sequence"), "describe_image");
+        assert_eq!(explain_tool_for(""), "describe_image");
     }
 }

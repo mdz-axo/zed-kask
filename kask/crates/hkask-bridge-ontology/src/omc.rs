@@ -98,4 +98,20 @@ mod tests {
     fn omc_creative_work_is_root() {
         assert_eq!(CREATIVE_WORK, "omc:CreativeWork");
     }
+
+    #[test]
+    fn explain_tool_dispatches_on_omc_concept() {
+        // The "I" pattern: OMC concept drives the explain tool.
+        assert_eq!(explain_tool_for(SCENE), "gallery_analyze");
+        assert_eq!(explain_tool_for(ASSET), "gallery_analyze");
+        assert_eq!(explain_tool_for(CREATIVE_WORK), "describe_image");
+        assert_eq!(explain_tool_for(VERSION), "describe_image");
+        assert_eq!(explain_tool_for(MEDIA_SOURCE), "describe_image");
+        assert_eq!(explain_tool_for(SEQUENCE), "describe_image");
+        assert_eq!(explain_tool_for(SHOT), "describe_image");
+        assert_eq!(explain_tool_for(TASK), "describe_image");
+        assert_eq!(explain_tool_for(PARTICIPANT), "describe_image");
+        assert_eq!(explain_tool_for(""), "describe_image");
+        assert_eq!(explain_tool_for("omc:Unknown"), "describe_image");
+    }
 }

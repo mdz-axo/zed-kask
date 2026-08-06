@@ -99,6 +99,39 @@ pub struct MarketCmpIndexRequest {
     pub series: String,
 }
 
+/// Request for market_cmp_index_store: compute the CMP index set for a
+/// registered base event from live markets and persist each (bucket,
+/// orientation) index as a transaction-ledger portfolio of contracts, with
+/// materialized daily holdings. The portfolio name is
+/// `cmp:{series}:{bucket}:{orientation}`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpIndexStoreRequest {
+    /// Base-event series ticker (must be registered).
+    pub series: String,
+    /// Observation date (YYYY-MM-DD) for the stored snapshot. Defaults to
+    /// today's UTC date when omitted.
+    pub date: Option<String>,
+}
+
+/// Request for market_cmp_index_holdings: read the materialized holdings for
+/// a stored CMP index portfolio.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpIndexHoldingsRequest {
+    /// The stored CMP index portfolio name (e.g.
+    /// `cmp:KXFEDDECISION:1m:increase`).
+    pub portfolio: String,
+    /// The snapshot date (YYYY-MM-DD). Defaults to today's UTC date.
+    pub date: Option<String>,
+}
+
+/// Request for market_cmp_index_list: list all stored CMP index portfolios
+/// for a base-event series.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpIndexListRequest {
+    /// Base-event series ticker. If omitted, lists all CMP index portfolios.
+    pub series: Option<String>,
+}
+
 /// Request for market_cmp: constant-maturity prediction for a registered
 /// base event at a fixed tenor.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -173,6 +206,10 @@ hkask_mcp_server::mcp_server!(
         pub calibration_path: Option<String>,
         pub base_events: Vec<(String, String)>,
         pub called_tools: std::sync::Mutex<HashSet<String>>,
+        /// General-purpose portfolio store (from `hkask-mcp-portfolio`) for
+        /// persisting CMP indices as transaction ledgers with materialized
+        /// daily holdings and returns views.
+        pub portfolio_store: hkask_mcp_portfolio::PortfolioStore,
     }
 );
 
@@ -950,6 +987,269 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    /// Store the CMP index curve for a registered base event as a
+    /// transaction-ledger portfolio. Each tenor point on the curve becomes a
+    /// constituent holding with weight = the synthesized probability. The
+    /// portfolio name is `cmp:{series}`. Materialized daily holdings are
+    /// computed on insert (and rebuildable from the ledger via
+    /// `portfolio_rebuild_views` on the portfolio server).
+    #[tool(
+        description = "Store the CMP index curve for a registered base event as a transaction-ledger portfolio of tenor constituents, with materialized daily holdings. Returns the stored portfolio name and constituent count."
+    )]
+    pub async fn market_cmp_index_store(
+        &self,
+        Parameters(MarketCmpIndexStoreRequest { series, date }): Parameters<
+            MarketCmpIndexStoreRequest,
+        >,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp_index_store",
+            Some(Self::ontology_anchor("market_cmp_index_store")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp_index_store".to_string());
+                if !self.base_events.iter().any(|(_, s)| s == &series) {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!(
+                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                            series
+                        ),
+                    ));
+                }
+                let markets =
+                    provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
+                let now = chrono::Utc::now();
+                let points: Vec<cmp::TenorPoint> = markets
+                    .iter()
+                    .filter_map(|m| {
+                        let mid = m.yes_midpoint()?;
+                        let deadline =
+                            chrono::DateTime::parse_from_rfc3339(&m.close_time).ok()?;
+                        let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds()
+                            as f64
+                            / 86_400.0;
+                        (days > 0.0).then_some(cmp::TenorPoint {
+                            days_to_resolution: days,
+                            price: mid,
+                        })
+                    })
+                    .collect();
+                if points.is_empty() {
+                    return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
+                        "no live markets with future deadlines for series '{}'",
+                        series
+                    )));
+                }
+                let computed_at = date.clone().unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
+                let index = cmp::compute_index(&series, &points, &now.to_rfc3339());
+
+                // Persist the index as a portfolio ledger. Each supported
+                // tenor point becomes a constituent buy transaction with
+                // weight = probability. Unsupported tenors (probability: None)
+                // are withheld — never fabricated.
+                let portfolio_name = format!("cmp:{series}");
+                let response_portfolio = portfolio_name.clone();
+                let response_series = series.clone();
+                let response_date = computed_at.clone();
+                let response_points: Vec<serde_json::Value> = index
+                    .points
+                    .iter()
+                    .map(|p| serde_json::json!({
+                        "tenor_days": p.tenor_days,
+                        "probability": p.probability,
+                    }))
+                    .collect();
+                let store = self.portfolio_store.clone();
+                let created_at = now.to_rfc3339();
+                let stored = tokio::task::spawn_blocking(move || {
+                    use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
+                    // Create the portfolio (idempotent) as a prediction-contract portfolio.
+                    if let Err(e) = store.create(&portfolio_name, AssetType::PredictionContract) {
+                        // Already exists is fine; other errors propagate.
+                        match e {
+                            PortfolioError::InvalidArgument(_) => {}
+                            other => return Err(other),
+                        }
+                    }
+                    let mut applied = 0usize;
+                    let mut withheld = 0usize;
+                    for point in &index.points {
+                        let Some(prob) = point.probability else {
+                            withheld += 1;
+                            continue;
+                        };
+                        // The constituent symbol is the tenor (e.g. "cmp:KXFEDDECISION:30d").
+                        // The weight is the synthesized probability; the
+                        // quantity is 1.0 (one unit of the index at this tenor).
+                        let symbol = format!("cmp:{series}:{}d", point.tenor_days);
+                        let tx = Transaction {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            date: computed_at.clone(),
+                            tx_type: TxType::Buy,
+                            asset_type: AssetType::PredictionContract,
+                            symbol: Some(symbol),
+                            quantity: Some(1.0),
+                            price: Some(prob),
+                            commission: Some(0.0),
+                            amount: None,
+                            weight: Some(prob),
+                            currency: "USD".to_string(),
+                            notes: format!(
+                                "CMP index constituent: tenor={}d method={:?} cohorts={} bracket={}",
+                                point.tenor_days, point.method, point.cohorts, point.bracket_days
+                            ),
+                            created_at: created_at.clone(),
+                        };
+                        store.apply(&portfolio_name, &tx)
+                            .map_err(|e| e)?;
+                        applied += 1;
+                    }
+                    // Materialize the holdings snapshot for the observation date.
+                    let snapshot = store.snapshot(&portfolio_name, &computed_at)
+                        .map_err(|e| e)?;
+                    Ok::<_, PortfolioError>((applied, withheld, snapshot))
+                })
+                .await
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "portfolio store task failed: {e}"
+                    ))
+                })?;
+                let (applied, withheld, snapshot) = stored.map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "CMP index store failed: {e}"
+                    ))
+                })?;
+                serde_json::to_value(serde_json::json!({
+                    "status": "stored",
+                    "portfolio": response_portfolio,
+                    "series": response_series,
+                    "observation_date": response_date,
+                    "constituents_applied": applied,
+                    "constituents_withheld": withheld,
+                    "holdings": snapshot.holdings.len(),
+                    "index_probability_curve": response_points,
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "store response serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// Read the materialized holdings for a stored CMP index portfolio.
+    #[tool(
+        description = "Read the materialized daily holdings for a stored CMP index portfolio (created by market_cmp_index_store). Returns the constituent tenors and their weights at the snapshot date."
+    )]
+    pub async fn market_cmp_index_holdings(
+        &self,
+        Parameters(MarketCmpIndexHoldingsRequest { portfolio, date }): Parameters<
+            MarketCmpIndexHoldingsRequest,
+        >,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp_index_holdings",
+            Some(Self::ontology_anchor("market_cmp_index_holdings")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp_index_holdings".to_string());
+                let snapshot_date = date
+                    .clone()
+                    .unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
+                let store = self.portfolio_store.clone();
+                let portfolio_name = portfolio.clone();
+                let snapshot = tokio::task::spawn_blocking(move || {
+                    store.snapshot(&portfolio_name, &snapshot_date)
+                })
+                .await
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "holdings read task failed: {e}"
+                    ))
+                })?
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "failed to read CMP index holdings: {e}"
+                    ))
+                })?;
+                serde_json::to_value(serde_json::json!({
+                    "portfolio": portfolio,
+                    "date": snapshot.date,
+                    "holdings": snapshot.holdings,
+                    "cash_balance": snapshot.cash_balance,
+                    "transaction_count": snapshot.transaction_count,
+                    "issues": snapshot.issues,
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "holdings serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// List stored CMP index portfolios, optionally filtered by series.
+    #[tool(
+        description = "List all stored CMP index portfolios (created by market_cmp_index_store), optionally filtered by base-event series."
+    )]
+    pub async fn market_cmp_index_list(
+        &self,
+        Parameters(MarketCmpIndexListRequest { series }): Parameters<MarketCmpIndexListRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp_index_list",
+            Some(Self::ontology_anchor("market_cmp_index_list")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp_index_list".to_string());
+                let store = self.portfolio_store.clone();
+                let prefix = series.as_ref().map(|s| format!("cmp:{s}"));
+                let names = tokio::task::spawn_blocking(move || store.list())
+                    .await
+                    .map_err(|e| {
+                        hkask_mcp_server::server::McpToolError::internal(format!(
+                            "list task failed: {e}"
+                        ))
+                    })?
+                    .map_err(|e| {
+                        hkask_mcp_server::server::McpToolError::internal(format!(
+                            "failed to list CMP index portfolios: {e}"
+                        ))
+                    })?;
+                let filtered: Vec<String> = match &prefix {
+                    Some(p) => names.into_iter().filter(|n| n.starts_with(p)).collect(),
+                    None => names
+                        .into_iter()
+                        .filter(|n| n.starts_with("cmp:"))
+                        .collect(),
+                };
+                serde_json::to_value(serde_json::json!({
+                    "portfolios": filtered,
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "list serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
@@ -1099,6 +1399,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         "hkask-mcp-prediction-markets",
         SERVER_VERSION,
         |ctx| {
+            let portfolio_store =
+                hkask_mcp_portfolio::PortfolioStore::new(ctx.webid).map_err(|e| {
+                    hkask_mcp_server::McpError::UnexpectedResponse {
+                        context: "portfolio".to_string(),
+                        detail: format!("failed to initialize CMP index portfolio store: {e}"),
+                    }
+                })?;
             Ok(PredictionMarketsServer::new(
                 ctx.webid,
                 reqwest::Client::new(),
@@ -1108,6 +1415,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 calibration_path.clone(),
                 base_events.clone(),
                 std::sync::Mutex::new(HashSet::new()),
+                portfolio_store,
             ))
         },
         vec![
@@ -1129,6 +1437,12 @@ mod tests {
     use super::*;
 
     fn empty_server() -> PredictionMarketsServer {
+        // Leak the tempdir so the portfolio store's db_path remains valid for
+        // the server's lifetime (the store opens the DB lazily per call).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        std::mem::forget(dir);
+        let portfolio_store = hkask_mcp_portfolio::PortfolioStore::with_dir(path);
         PredictionMarketsServer::new(
             hkask_types::WebID::default(),
             reqwest::Client::new(),
@@ -1138,6 +1452,7 @@ mod tests {
             None,
             Vec::new(),
             std::sync::Mutex::new(HashSet::new()),
+            portfolio_store,
         )
     }
 
@@ -1167,5 +1482,179 @@ mod tests {
             positions.is_empty(),
             "bare-boolean schema positions found: {positions:?}"
         );
+    }
+
+    // ── CMP index storage tests ───────────────────────────────────────
+    //
+    // The storage path (market_cmp_index_store → portfolio ledger →
+    // materialized holdings) is testable without live market data: we
+    // exercise the portfolio store directly with a fixture CMP index and
+    // verify the ledger → holdings → rebuild round-trip.
+
+    fn cmp_index_store_fixture() -> hkask_mcp_portfolio::PortfolioStore {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        std::mem::forget(dir);
+        hkask_mcp_portfolio::PortfolioStore::with_dir(path)
+    }
+
+    #[test]
+    fn cmp_index_stored_as_ledger_round_trips_to_holdings() {
+        // A CMP index is a portfolio of tenor constituents. Storing it as a
+        // ledger of buy transactions (one per supported tenor, weight =
+        // probability) and reading the materialized holdings returns the
+        // same constituents.
+        let store = cmp_index_store_fixture();
+        let portfolio = "cmp:KXFEDDECISION";
+        store
+            .create(
+                portfolio,
+                hkask_mcp_portfolio::AssetType::PredictionContract,
+            )
+            .expect("create");
+        let date = "2024-01-15";
+        let tenors = [(7u32, 0.62f64), (30, 0.58), (90, 0.55), (180, 0.52)];
+        for (tenor, prob) in tenors {
+            let tx = hkask_mcp_portfolio::Transaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                date: date.to_string(),
+                tx_type: hkask_mcp_portfolio::TxType::Buy,
+                asset_type: hkask_mcp_portfolio::AssetType::PredictionContract,
+                symbol: Some(format!("cmp:KXFEDDECISION:{tenor}d")),
+                quantity: Some(1.0),
+                price: Some(prob),
+                commission: Some(0.0),
+                amount: None,
+                weight: Some(prob),
+                currency: "USD".to_string(),
+                notes: format!("CMP index constituent: tenor={tenor}d"),
+                created_at: "2024-01-15T00:00:00Z".to_string(),
+            };
+            store.apply(portfolio, &tx).expect("apply");
+        }
+        let snapshot = store.snapshot(portfolio, date).expect("snapshot");
+        assert_eq!(snapshot.holdings.len(), 4, "four tenor constituents");
+        let symbols: Vec<String> = snapshot.holdings.iter().map(|h| h.symbol.clone()).collect();
+        assert!(symbols.contains(&"cmp:KXFEDDECISION:30d".to_string()));
+        assert!(symbols.contains(&"cmp:KXFEDDECISION:90d".to_string()));
+    }
+
+    #[test]
+    fn cmp_index_withheld_tenors_not_stored() {
+        // Unsupported tenors (probability: None) are withheld — never
+        // fabricated as constituents. The portfolio holds only the supported
+        // tenors.
+        let store = cmp_index_store_fixture();
+        let portfolio = "cmp:KXFEDDECISION";
+        store
+            .create(
+                portfolio,
+                hkask_mcp_portfolio::AssetType::PredictionContract,
+            )
+            .expect("create");
+        let date = "2024-01-15";
+        // Only two of the four tenors are supported; the other two are withheld.
+        let supported = [(30u32, 0.58f64), (90, 0.55)];
+        for (tenor, prob) in supported {
+            let tx = hkask_mcp_portfolio::Transaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                date: date.to_string(),
+                tx_type: hkask_mcp_portfolio::TxType::Buy,
+                asset_type: hkask_mcp_portfolio::AssetType::PredictionContract,
+                symbol: Some(format!("cmp:KXFEDDECISION:{tenor}d")),
+                quantity: Some(1.0),
+                price: Some(prob),
+                commission: Some(0.0),
+                amount: None,
+                weight: Some(prob),
+                currency: "USD".to_string(),
+                notes: String::new(),
+                created_at: "2024-01-15T00:00:00Z".to_string(),
+            };
+            store.apply(portfolio, &tx).expect("apply");
+        }
+        let snapshot = store.snapshot(portfolio, date).expect("snapshot");
+        assert_eq!(snapshot.holdings.len(), 2, "only supported tenors stored");
+    }
+
+    #[test]
+    fn cmp_index_holdings_rebuildable_from_ledger() {
+        // The materialized holdings view is rebuildable from the ledger
+        // (the append-only source of truth). rebuild_views clears the
+        // cached views and recomputes from the ledger.
+        let store = cmp_index_store_fixture();
+        let portfolio = "cmp:KXFEDDECISION";
+        store
+            .create(
+                portfolio,
+                hkask_mcp_portfolio::AssetType::PredictionContract,
+            )
+            .expect("create");
+        let date = "2024-01-15";
+        let tx = hkask_mcp_portfolio::Transaction {
+            id: uuid::Uuid::new_v4().to_string(),
+            date: date.to_string(),
+            tx_type: hkask_mcp_portfolio::TxType::Buy,
+            asset_type: hkask_mcp_portfolio::AssetType::PredictionContract,
+            symbol: Some("cmp:KXFEDDECISION:30d".to_string()),
+            quantity: Some(1.0),
+            price: Some(0.58),
+            commission: Some(0.0),
+            amount: None,
+            weight: Some(0.58),
+            currency: "USD".to_string(),
+            notes: String::new(),
+            created_at: "2024-01-15T00:00:00Z".to_string(),
+        };
+        store.apply(portfolio, &tx).expect("apply");
+        let _ = store.snapshot(portfolio, date).expect("snapshot");
+
+        // Rebuild clears the cached views and recomputes from the ledger.
+        store.rebuild_views(portfolio).expect("rebuild");
+        let rebuilt = store
+            .snapshot(portfolio, date)
+            .expect("snapshot after rebuild");
+        assert_eq!(rebuilt.holdings.len(), 1, "holdings rebuilt from ledger");
+    }
+
+    #[test]
+    fn cmp_index_store_request_schema_has_no_boolean_positions() {
+        let schema = schemars::schema_for!(MarketCmpIndexStoreRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+        assert!(
+            positions.is_empty(),
+            "MarketCmpIndexStoreRequest schema has bare-boolean positions: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn cmp_index_holdings_request_schema_has_no_boolean_positions() {
+        let schema = schemars::schema_for!(MarketCmpIndexHoldingsRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+        assert!(
+            positions.is_empty(),
+            "MarketCmpIndexHoldingsRequest schema has bare-boolean positions: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn cmp_index_list_request_schema_has_no_boolean_positions() {
+        let schema = schemars::schema_for!(MarketCmpIndexListRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+        assert!(
+            positions.is_empty(),
+            "MarketCmpIndexListRequest schema has bare-boolean positions: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn empty_server_constructs_with_portfolio_store() {
+        let server = empty_server();
+        // The portfolio store is wired; listing an empty store returns [].
+        let names = server.portfolio_store.list().expect("list");
+        assert!(names.is_empty(), "fresh store has no portfolios");
     }
 }

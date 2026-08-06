@@ -978,6 +978,15 @@ impl ScenariosServer {
                         serde_json::json!("Prior answers from a previous framing session. Use these to skip turns already covered. If a prior answer seems stale or incomplete, revisit that turn naturally. Don't reference the prior answer directly — just ask the turn's opening question again."),
                     );
                 }
+            // Emit the ontology anchor at the top level (consistent with
+            // scenario_status and scenario_build). scenario_frame classifies
+            // as "pko" (it's a procedural coaching protocol).
+            if let Some(obj) = output.as_object_mut() {
+                obj.insert(
+                    "ontology_anchor".to_string(),
+                    serde_json::json!(Self::ontology_anchor("scenario_frame")),
+                );
+            }
 
             self.record_experience(
                 "scenario_frame",
@@ -1244,7 +1253,7 @@ impl ScenariosServer {
                     "possible": {"range": "0-32%", "description": "Could happen but unlikely"}
                 },
                 "methodology": {
-                    "ontology_anchor": "dublin-core",
+                    "ontology_anchor": Self::ontology_anchor("scenario_build"),
                     "framework": "MAIA event-based scenario planning (Tetlock Superforecasting + Schwartz imagination)",
                     "research_pipeline": "1. Web search (brave/firecrawl/tavily) → 2. scenario_build (this tool) → 3. scenario_quantify (resolve tree) → 4. scenario_calibrate (Fermi probabilities)",
                     "tetlock_commandments": [
@@ -1260,7 +1269,8 @@ impl ScenariosServer {
                         "10. Master error-balancing"
                     ],
                     "reference": "Tetlock & Gardner, Superforecasting (2015); Schwartz, The Art of the Long View (1991)"
-                }
+                },
+                "ontology_anchor": Self::ontology_anchor("scenario_build")
             });
 
             self.record_experience(

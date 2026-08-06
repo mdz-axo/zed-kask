@@ -23,6 +23,7 @@ path = "src/bin/fetch_contracts.rs"
 
 [dependencies]
 hkask-mcp-server.workspace = true
+hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
 hkask-forecast.workspace = true
 hkask-bridge-ontology.workspace = true
@@ -33,9 +34,13 @@ schemars = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+uuid.workspace = true
 reqwest.workspace = true
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots", "tokio-runtime"] }
 futures.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

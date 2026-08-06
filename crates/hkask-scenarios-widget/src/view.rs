@@ -615,8 +615,17 @@ impl ScenariosWidget {
             .tool
             .as_deref()
             .unwrap_or("scenario_status");
+        // Reference the ontology anchor when available so the agent can
+        // correlate the revision to the ontology-anchored artifact.
+        let anchor_clause = self
+            .body
+            .ontology_anchor
+            .as_deref()
+            .filter(|a| !a.is_empty())
+            .map(|a| format!(" [{a}]"))
+            .unwrap_or_default();
         format!(
-            "Re: the scenario assessment for {subject} (via {tool}).\n\
+            "Re: the scenario assessment for {subject} (via {tool}){anchor_clause}.\n\
              I believe this scenario assessment is incorrect. Please re-check the framing, events, and probabilities.\n\n\
              My concern: "
         )
@@ -861,7 +870,7 @@ fn build_dispatch_args(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::block::{CalibrationSummary, PipelineOverview};
+    use crate::block::{CalibrationSummary, PipelineOverview, parse_scenarios_body};
 
     #[test]
     fn scaffolding_empty_pipeline_suggests_frame() {
@@ -1267,6 +1276,7 @@ mod tests {
                 args: serde_json::json!({}),
                 span_id: None,
             },
+            ontology_anchor: None,
         }
     }
 
@@ -1354,6 +1364,42 @@ mod tests {
         assert!(
             body.contains("scenario_status"),
             "absent provenance tool falls back to the default tool"
+        );
+    }
+
+    #[test]
+    fn block_body_parses_ontology_anchor_field() {
+        // The server emits `"ontology_anchor": "pko"` or `"dublin-core"`.
+        // The widget must parse it (additive `#[serde(default)]`).
+        let json = r##"{"viz":"scenarios","ontology_anchor":"pko"}"##;
+        let body = parse_scenarios_body(json).expect("parses");
+        assert_eq!(body.ontology_anchor.as_deref(), Some("pko"));
+    }
+
+    #[test]
+    fn block_body_parses_without_ontology_anchor_field() {
+        // Older blocks without the field still parse (defaults to None).
+        let json = r##"{"viz":"scenarios"}"##;
+        let body = parse_scenarios_body(json).expect("parses");
+        assert!(body.ontology_anchor.is_none());
+    }
+
+    #[gpui::test]
+    async fn disagree_body_includes_ontology_anchor_when_present(cx: &mut gpui::TestAppContext) {
+        // When the block carries an ontology_anchor, the compose-back body
+        // references it so the agent can correlate the revision.
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+
+        let mut body = body_with_subject_and_provenance();
+        body.ontology_anchor = Some("pko".to_string());
+        let widget = cx.update(|cx| cx.new(|cx| ScenariosWidget::new(body, cx)));
+        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
+        assert!(
+            body.contains("[pko]"),
+            "compose-back body must reference the ontology anchor: {body}"
         );
     }
 }

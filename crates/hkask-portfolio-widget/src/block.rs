@@ -14,13 +14,14 @@ use std::collections::HashMap;
 use hkask_tool_invoker::BlockProvenance;
 use serde::Deserialize;
 
-// ── FIBO concept URIs (from `hkask-mcp-companies/src/fibo.rs`) ────────────
-/// Anchors displayed metrics to the FIBO ontology. These match the `fibo` map
-/// entries the MCP server includes in its responses.
-pub const FIBO_PORTFOLIO: &str = "fibo-sec-sec-ast:Portfolio";
-pub const FIBO_TRANSACTION_LEDGER: &str = "fibo-sec-sec-ast:TransactionLedger";
-pub const FIBO_TIME_WEIGHTED_RETURN: &str = "fibo-fbc-fct-ra:TimeWeightedReturn";
-pub const FIBO_INTERNAL_RATE_OF_RETURN: &str = "fibo-fbc-fct-ra:InternalRateOfReturn";
+// Re-export the FIBO constants from the shared `hkask_bridge_ontology` crate
+// — the single source of truth — so existing call sites (`crate::block::FIBO_*`)
+// keep resolving. These are NOT duplicated here.
+pub use hkask_bridge_ontology::fibo::{
+    INTERNAL_RATE_OF_RETURN as FIBO_INTERNAL_RATE_OF_RETURN, PORTFOLIO as FIBO_PORTFOLIO,
+    TIME_WEIGHTED_RETURN as FIBO_TIME_WEIGHTED_RETURN,
+    TRANSACTION_LEDGER as FIBO_TRANSACTION_LEDGER,
+};
 
 /// The discriminator-tagged body of a ```` ```portfolio ```` block.
 ///
@@ -39,6 +40,12 @@ pub struct PortfolioBlockBody {
     /// without returns still render the characteristics/attribution sections.
     #[serde(default)]
     pub returns: Option<ReturnsBody>,
+    /// Materialized holdings — mirrors `portfolio_snapshot` from
+    /// `hkask-mcp-portfolio`. Present for any portfolio type (stock,
+    /// prediction-event, CMP index). Optional so bodies without holdings
+    /// still render the returns/characteristics sections.
+    #[serde(default)]
+    pub holdings: Option<HoldingsBody>,
     /// Field-name → characteristic, mirrors `portfolio_characteristics`.
     /// Defaults to empty when absent.
     #[serde(default)]
@@ -85,6 +92,42 @@ pub struct ReturnsBody {
     pub positions_at_start: usize,
     #[serde(default)]
     pub positions_at_end: usize,
+}
+
+/// Materialized holdings mirroring the `portfolio_snapshot` tool response
+/// from `hkask-mcp-portfolio`. Renders for any portfolio type (stock,
+/// prediction-event, CMP index). All fields default so partial bodies parse.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HoldingsBody {
+    #[serde(default)]
+    pub portfolio: Option<String>,
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub holdings: Vec<HoldingRow>,
+    #[serde(default)]
+    pub cash_balance: f64,
+    #[serde(default)]
+    pub transaction_count: usize,
+    #[serde(default)]
+    pub issues: Vec<String>,
+}
+
+/// One holding row in a materialized holdings snapshot. `asset_type`
+/// discriminates stocks, prediction contracts, and nested portfolios.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HoldingRow {
+    pub symbol: String,
+    #[serde(default)]
+    pub asset_type: Option<String>,
+    #[serde(default)]
+    pub shares: f64,
+    #[serde(default)]
+    pub total_buys: f64,
+    #[serde(default)]
+    pub total_sells: f64,
+    #[serde(default)]
+    pub cost_basis: f64,
 }
 
 /// A single characteristic field from `portfolio_characteristics`.
@@ -224,5 +267,42 @@ mod tests {
         );
         assert_eq!(body.provenance.args["portfolio"], "main");
         assert_eq!(body.provenance.args["from"], "2020-01-01");
+    }
+
+    #[test]
+    fn holdings_body_parses() {
+        // A CMP index portfolio body with materialized holdings from
+        // `portfolio_snapshot` on `hkask-mcp-portfolio`.
+        let json = r#"{
+            "viz": "portfolio",
+            "portfolio": "cmp:KXFEDDECISION",
+            "holdings": {
+                "portfolio": "cmp:KXFEDDECISION",
+                "date": "2024-01-15",
+                "holdings": [
+                    {"symbol": "cmp:KXFEDDECISION:30d", "asset_type": "prediction_contract", "shares": 1.0, "cost_basis": 0.58},
+                    {"symbol": "cmp:KXFEDDECISION:90d", "asset_type": "prediction_contract", "shares": 1.0, "cost_basis": 0.55}
+                ],
+                "cash_balance": 0.0,
+                "transaction_count": 2,
+                "issues": []
+            }
+        }"#;
+        let body = parse_portfolio_body(json).expect("valid body");
+        let holdings = body.holdings.expect("holdings present");
+        assert_eq!(holdings.holdings.len(), 2);
+        assert_eq!(holdings.holdings[0].symbol, "cmp:KXFEDDECISION:30d");
+        assert_eq!(
+            holdings.holdings[0].asset_type.as_deref(),
+            Some("prediction_contract")
+        );
+        assert!((holdings.holdings[0].cost_basis - 0.58).abs() < 1e-9);
+        assert_eq!(holdings.transaction_count, 2);
+    }
+
+    #[test]
+    fn holdings_body_defaults_empty_when_absent() {
+        let body = parse_portfolio_body(r#"{"viz":"portfolio"}"#).expect("valid body");
+        assert!(body.holdings.is_none());
     }
 }

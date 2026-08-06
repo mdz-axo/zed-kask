@@ -349,6 +349,82 @@ impl PortfolioWidget {
             .into_any_element()
     }
 
+    /// Render the materialized holdings table for any portfolio type (stock,
+    /// prediction-event, CMP index). Renders nothing when the body carries no
+    /// holdings (so stock portfolios without a `holdings` field keep their
+    /// existing returns/characteristics/attribution display unchanged).
+    fn render_holdings(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let holdings = self.body.holdings.as_ref()?;
+        if holdings.holdings.is_empty() {
+            return None;
+        }
+        let border_color = cx.theme().colors().border;
+
+        let rows: Vec<AnyElement> = holdings
+            .holdings
+            .iter()
+            .map(|row| {
+                let asset_label = row
+                    .asset_type
+                    .as_deref()
+                    .unwrap_or("stock")
+                    .replace('_', " ");
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(row.symbol.clone())
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!("{asset_label}"))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!("shares {:.4}", row.shares))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!("cost {:.4}", row.cost_basis))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+
+        let header = format!(
+            "Holdings ({}) — {}",
+            holdings.holdings.len(),
+            holdings.date.as_deref().unwrap_or("latest")
+        );
+
+        Some(
+            div()
+                .p_3()
+                .gap_1()
+                .rounded_md()
+                .border_1()
+                .border_color(border_color)
+                .child(
+                    Label::new(header)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .children(rows)
+                .when(!holdings.issues.is_empty(), |this| {
+                    this.child(
+                        Label::new(format!("issues: {}", holdings.issues.join("; ")))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Warning),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     /// The T5 date-range scrub affordance. When provenance is dispatchable (or
     /// empty — the fallback path), renders two editable date chips plus an
     /// Apply control. When provenance is partial / non-dispatchable, renders a
@@ -749,6 +825,11 @@ impl Render for PortfolioWidget {
             .when_some(self.render_returns_detail(cx), |this, detail| {
                 this.child(detail)
             })
+            // Materialized holdings table (any portfolio type: stock,
+            // prediction-event, CMP index).
+            .when_some(self.render_holdings(cx), |this, holdings| {
+                this.child(holdings)
+            })
             // Characteristics table
             .child(self.render_characteristics(cx))
             // Attribution ranking
@@ -794,6 +875,7 @@ impl Render for PortfolioWidget {
             })
             .when(
                 self.body.returns.is_none()
+                    && self.body.holdings.is_none()
                     && self.body.characteristics.is_empty()
                     && self.body.attribution.is_empty(),
                 |this| {
@@ -1167,6 +1249,7 @@ mod tests {
             viz: Some("portfolio".into()),
             portfolio: Some("main".into()),
             returns: None,
+            holdings: None,
             characteristics: std::collections::HashMap::new(),
             attribution: Vec::new(),
             provenance,
@@ -1337,6 +1420,7 @@ mod tests {
             viz: Some("portfolio".into()),
             portfolio: Some("main".into()),
             returns: None,
+            holdings: None,
             characteristics: std::collections::HashMap::new(),
             attribution: vec![crate::block::AttributionRow {
                 symbol: symbol.to_string(),
@@ -1571,6 +1655,7 @@ mod tests {
             viz: Some("portfolio".into()),
             portfolio: Some("main".into()),
             returns: Some(returns),
+            holdings: None,
             characteristics: std::collections::HashMap::new(),
             attribution: Vec::new(),
             provenance,
@@ -1650,6 +1735,7 @@ mod tests {
             viz: Some("portfolio".into()),
             portfolio: None,
             returns: None,
+            holdings: None,
             characteristics: std::collections::HashMap::new(),
             attribution: Vec::new(),
             provenance: BlockProvenance::default(),

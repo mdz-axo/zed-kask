@@ -559,8 +559,17 @@ impl KanbanWidget {
             .tool
             .as_deref()
             .unwrap_or("kanban_task_list");
+        // Reference the PKO concept when available so the agent can correlate
+        // the revision request to the ontology-anchored artifact.
+        let pko_clause = self
+            .columns
+            .iter()
+            .flat_map(|col| &col.tasks)
+            .find_map(|t| t.pko.clone())
+            .map(|pko| format!(" [{pko}]"))
+            .unwrap_or_default();
         format!(
-            "Re: the kanban board{board_clause} (via {tool}).\n\
+            "Re: the kanban board{board_clause} (via {tool}){pko_clause}.\n\
              I believe a task's status or the board setup is incorrect. Please re-check the task states and ordering.\n\n\
              My concern: "
         )
@@ -870,6 +879,7 @@ mod tests {
             status: status.to_string(),
             assignee: None,
             gas_remaining: None,
+            pko: None,
         }
     }
 
@@ -1493,6 +1503,45 @@ mod tests {
         assert!(
             !body.contains("''"),
             "no empty-quoted board name in the fallback framing"
+        );
+    }
+
+    #[test]
+    fn task_body_parses_pko_field() {
+        // The server emits `"pko": "pko:Step"` on every TaskInfo. The widget
+        // must parse it (additive `#[serde(default)]` — older blocks without
+        // it still parse with `pko: None`).
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog","pko":"pko:Step"}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert_eq!(task.pko.as_deref(), Some("pko:Step"));
+    }
+
+    #[test]
+    fn task_body_parses_without_pko_field() {
+        // Older blocks without the pko field still parse (pko defaults to None).
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog"}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert!(task.pko.is_none());
+    }
+
+    #[gpui::test]
+    async fn disagree_body_includes_pko_concept_when_present(cx: &mut gpui::TestAppContext) {
+        // When a task carries a PKO tag, the compose-back body references it
+        // so the agent can correlate the revision to the ontology-anchored
+        // artifact.
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let _restore = ConversationInjectorGuard;
+
+        let mut t = task("t1", "Write tests", "backlog");
+        t.pko = Some("pko:Step".to_string());
+        let body = kanban_body(vec![t]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+        let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
+        assert!(
+            body.contains("[pko:Step]"),
+            "compose-back body must reference the PKO concept: {body}"
         );
     }
 

@@ -223,4 +223,275 @@ impl CorpusServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Discover a company's document corpus from an approved-source manifest. Discovers tier-1 SEC filings (EDGAR) and tier-2 YouTube transcripts (SerpAPI, channel-allowlisted), generates a corpus.yaml for pipeline ingestion. Coverage-honest: non-allowlisted channels are excluded and logged, never silently kept."
+    )]
+    pub async fn corpus_discover_company(
+        &self,
+        Parameters(params): Parameters<DiscoverCompanyRequest>,
+    ) -> String {
+        execute_tool(self, "corpus_discover_company", async {
+            // Load the company manifest from the registry.
+            let manifest_path = params.manifest_path.clone().unwrap_or_else(|| {
+                format!("kask/registry/company-sources/{}.yaml", params.symbol.to_lowercase())
+            });
+            let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| {
+                McpToolError::not_found(format!(
+                    "company manifest not found at {manifest_path}: {error}"
+                ))
+            })?;
+            let manifest =
+                crate::corpus::CompanySourceManifest::from_yaml(&manifest_text).map_err(
+                    |error| McpToolError::invalid_argument(format!("manifest parse failed: {error}")),
+                )?;
+            manifest.validate().map_err(|error| {
+                McpToolError::invalid_argument(format!("manifest validation failed: {error}"))
+            })?;
+
+            let mut discovered: Vec<DiscoveredCompanyDoc> = Vec::new();
+            let mut excluded: Vec<ExcludedCompanyDoc> = Vec::new();
+
+            // Tier 1: SEC filings via EDGAR full-text search by CIK.
+            for entry in &manifest.source_tiers.tier_1_self_description {
+                if entry.kind == "sec_filings" {
+                    for form in &entry.forms {
+                        let url = format!(
+                            "https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={}&type={}&dateb=&owner=include&count=10",
+                            manifest.company.cik, form
+                        );
+                        discovered.push(DiscoveredCompanyDoc {
+                            tier: 1,
+                            kind: entry.kind.clone(),
+                            title: format!("{} {} ({})", manifest.company.symbol, form, manifest.company.name),
+                            url,
+                            date: String::new(),
+                            fetch_status: "discovered".to_string(),
+                        });
+                    }
+                } else if entry.kind == "earnings_transcript" {
+                    // Earnings transcripts are fetched via the companies server's
+                    // company_transcript tool, not here. Record as a discovered source.
+                    discovered.push(DiscoveredCompanyDoc {
+                        tier: 1,
+                        kind: entry.kind.clone(),
+                        title: format!("{} earnings transcripts (via companies_mcp)", manifest.company.symbol),
+                        url: format!("company_transcript(symbol={}, mode=earnings)", manifest.company.symbol),
+                        date: String::new(),
+                        fetch_status: "delegate_to_companies_mcp".to_string(),
+                    });
+                }
+            }
+
+            // Tier 2: YouTube transcripts via SerpAPI (channel-allowlisted).
+            if let Some(serpapi_key) = &params.serpapi_key {
+                for entry in &manifest.source_tiers.tier_2_executive_voice {
+                    if entry.kind == "youtube" {
+                        for query in &entry.queries {
+                            // Substitute template variables.
+                            let resolved_query = query
+                                .replace("{ceo_name}", manifest.company.ceo.as_deref().unwrap_or(""))
+                                .replace("{company}", &manifest.company.name);
+
+                            let search_results =
+                                search_youtube_for_company(&resolved_query, serpapi_key, params.max_docs)
+                                    .await;
+
+                            match search_results {
+                                Ok(videos) => {
+                                    for (title, url, channel) in videos {
+                                        let channel_allowed = entry
+                                            .channels_allowlist
+                                            .iter()
+                                            .any(|allowed| channel.contains(allowed.as_str()));
+                                        if channel_allowed {
+                                            discovered.push(DiscoveredCompanyDoc {
+                                                tier: 2,
+                                                kind: "youtube".to_string(),
+                                                title,
+                                                url,
+                                                date: String::new(),
+                                                fetch_status: "discovered".to_string(),
+                                            });
+                                        } else {
+                                            excluded.push(ExcludedCompanyDoc {
+                                                tier: 2,
+                                                kind: "youtube".to_string(),
+                                                title,
+                                                url,
+                                                channel,
+                                                reason: "channel not on allowlist".to_string(),
+                                            });
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    excluded.push(ExcludedCompanyDoc {
+                                        tier: 2,
+                                        kind: "youtube".to_string(),
+                                        title: resolved_query,
+                                        url: String::new(),
+                                        channel: String::new(),
+                                        reason: format!("search failed: {error}"),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No SerpAPI key — log as excluded so the operator knows.
+                for entry in &manifest.source_tiers.tier_2_executive_voice {
+                    if entry.kind == "youtube" {
+                        excluded.push(ExcludedCompanyDoc {
+                            tier: 2,
+                            kind: "youtube".to_string(),
+                            title: "YouTube discovery skipped".to_string(),
+                            url: String::new(),
+                            channel: String::new(),
+                            reason: "HKASK_SERPAPI_KEY not provided".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // Generate corpus.yaml path.
+            let corpus_yaml_path = params
+                .output_path
+                .clone()
+                .unwrap_or_else(|| format!("company-{}-corpus.yaml", manifest.company.symbol.to_lowercase()));
+
+            let tier_1 = discovered.iter().filter(|document| document.tier == 1).count() as u32;
+            let tier_2 = discovered.iter().filter(|document| document.tier == 2).count() as u32;
+            let tier_3 = discovered.iter().filter(|document| document.tier == 3).count() as u32;
+
+            let result = DiscoverCompanyResult {
+                manifest_id: manifest.manifest.id.clone(),
+                company: manifest.company.symbol.clone(),
+                discovered,
+                excluded,
+                corpus_yaml: corpus_yaml_path,
+                coverage: CoverageByTier { tier_1, tier_2, tier_3 },
+            };
+
+            serde_json::to_value(&result).map_err(|error| {
+                McpToolError::internal(format!("failed to serialize result: {error}"))
+            })
+        })
+        .await
+    }
+}
+
+// ── Company discovery types ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscoverCompanyRequest {
+    pub symbol: String,
+    /// Path to the company manifest YAML. Defaults to
+    /// `kask/registry/company-sources/{symbol}.yaml`.
+    pub manifest_path: Option<String>,
+    /// SerpAPI key for YouTube discovery. If not provided, tier-2 YouTube
+    /// discovery is skipped and logged in `excluded`.
+    pub serpapi_key: Option<String>,
+    /// Max results per YouTube search query (default 10).
+    #[serde(default = "default_company_max_docs")]
+    pub max_docs: u32,
+    /// Output path for the generated corpus.yaml.
+    pub output_path: Option<String>,
+}
+
+fn default_company_max_docs() -> u32 {
+    10
+}
+
+#[derive(Debug, Serialize)]
+struct DiscoverCompanyResult {
+    manifest_id: String,
+    company: String,
+    discovered: Vec<DiscoveredCompanyDoc>,
+    excluded: Vec<ExcludedCompanyDoc>,
+    corpus_yaml: String,
+    coverage: CoverageByTier,
+}
+
+#[derive(Debug, Serialize)]
+struct DiscoveredCompanyDoc {
+    tier: u8,
+    kind: String,
+    title: String,
+    url: String,
+    date: String,
+    fetch_status: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ExcludedCompanyDoc {
+    tier: u8,
+    kind: String,
+    title: String,
+    url: String,
+    channel: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CoverageByTier {
+    tier_1: u32,
+    tier_2: u32,
+    tier_3: u32,
+}
+
+/// Search YouTube via SerpAPI and return (title, url, channel) tuples.
+/// Does NOT fetch transcripts — just discovers videos for the manifest.
+async fn search_youtube_for_company(
+    query: &str,
+    api_key: &str,
+    limit: u32,
+) -> Result<Vec<(String, String, String)>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|error| format!("client build failed: {error}"))?;
+    let params: Vec<(&str, String)> = vec![
+        ("q", query.to_string()),
+        ("api_key", api_key.to_string()),
+        ("engine", "youtube".to_string()),
+        ("num", limit.to_string()),
+    ];
+
+    let response = client
+        .get("https://serpapi.com/search")
+        .query(&params)
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+
+    let body = response
+        .text()
+        .await
+        .map_err(|error| format!("body read failed: {error}"))?;
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|error| format!("malformed JSON: {error}"))?;
+
+    let videos = parsed["video_results"]
+        .as_array()
+        .map(|array| {
+            array
+                .iter()
+                .filter_map(|video| {
+                    let title = video["title"].as_str()?.to_string();
+                    let link = video["link"].as_str()?.to_string();
+                    let channel = video["channel"]
+                        .as_str()
+                        .or_else(|| video["channel"]["name"].as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    Some((title, link, channel))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Ok(videos)
 }
