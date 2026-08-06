@@ -232,6 +232,22 @@ impl CorpusServer {
         Parameters(params): Parameters<DiscoverCompanyRequest>,
     ) -> String {
         execute_tool(self, "corpus_discover_company", async {
+            // Validate the mode parameter.
+            let mode = match params.mode.as_str() {
+                "agentic" | "curated" => params.mode.clone(),
+                other => {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "Invalid mode '{other}'. Use 'agentic' or 'curated'."
+                    )));
+                }
+            };
+            let is_curated = mode == "curated";
+
+            // In curated mode, discovered items are marked "proposed" (awaiting
+            // human review) rather than "discovered". The caller accepts/rejects
+            // each proposed source before it enters the corpus.yaml.
+            let fetch_status = if is_curated { "proposed" } else { "discovered" };
+
             // Load the company manifest from the registry.
             let manifest_path = params.manifest_path.clone().unwrap_or_else(|| {
                 format!("kask/registry/company-sources/{}.yaml", params.symbol.to_lowercase())
@@ -266,7 +282,7 @@ impl CorpusServer {
                             title: format!("{} {} ({})", manifest.company.symbol, form, manifest.company.name),
                             url,
                             date: String::new(),
-                            fetch_status: "discovered".to_string(),
+                            fetch_status: fetch_status.to_string(),
                         });
                     }
                 } else if entry.kind == "earnings_transcript" {
@@ -311,7 +327,7 @@ impl CorpusServer {
                                                 title,
                                                 url,
                                                 date: String::new(),
-                                                fetch_status: "discovered".to_string(),
+                                                fetch_status: fetch_status.to_string(),
                                             });
                                         } else {
                                             excluded.push(ExcludedCompanyDoc {
@@ -398,6 +414,15 @@ pub struct DiscoverCompanyRequest {
     pub max_docs: u32,
     /// Output path for the generated corpus.yaml.
     pub output_path: Option<String>,
+    /// Discovery mode: `agentic` (default, fully automated) or `curated`
+    /// (returns proposals for human review; the caller accepts/rejects each
+    /// discovered source before it enters the corpus.yaml).
+    #[serde(default = "default_discovery_mode")]
+    pub mode: String,
+}
+
+fn default_discovery_mode() -> String {
+    "agentic".to_string()
 }
 
 fn default_company_max_docs() -> u32 {

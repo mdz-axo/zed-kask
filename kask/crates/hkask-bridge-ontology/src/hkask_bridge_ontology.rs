@@ -75,3 +75,80 @@ pub mod sumo;
 // access (`hkask_bridge_ontology::DcConcept`, `::PkoConcept`).
 pub use dc_bibo::DcConcept;
 pub use pko::PkoConcept;
+
+/// The unified ontology → explain-tool dispatch (the "I" pattern —
+/// ontology-bounded affordances). Every widget that has an "Explain"
+/// affordance calls this single function instead of each reimplementing
+/// its own ontology-specific dispatch.
+///
+/// The dispatch is driven by the concept URI prefix (the ontology
+/// namespace). Each ontology contributes its own match arm:
+/// - `omc:Scene` / `omc:Asset` → `gallery_analyze` (media scene/asset)
+/// - `omc:*` → `describe_image` (media vision fallback)
+/// - `fibo:*` → `research_search` (financial research)
+/// - `pko:*` → `kanban_task_list` (process step inspection)
+/// - `dcterms:*` / `dublin-core` → `research_search` (general research)
+/// - empty / unknown → `research_search` (the general fallback)
+///
+/// Widgets that already have a domain-specific explain tool (e.g. the
+/// scenarios widget's rung dispatch) don't call this — they dispatch by
+/// pipeline position, not by ontology concept. This function is for widgets
+/// that dispatch *because* of the ontology tag.
+pub fn explain_tool_for(ontology: &str) -> &'static str {
+    if ontology.starts_with("omc:") {
+        return omc::explain_tool_for(ontology);
+    }
+    if ontology.starts_with("fibo:") || ontology == "dublin-core" {
+        return "research_search";
+    }
+    if ontology.starts_with("pko:") {
+        return "kanban_task_list";
+    }
+    if ontology.starts_with("dcterms:") {
+        return "research_search";
+    }
+    // Empty or unknown — the general fallback.
+    "research_search"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explain_tool_for_omc_concepts() {
+        assert_eq!(explain_tool_for("omc:Scene"), "gallery_analyze");
+        assert_eq!(explain_tool_for("omc:Asset"), "gallery_analyze");
+        assert_eq!(explain_tool_for("omc:CreativeWork"), "describe_image");
+        assert_eq!(explain_tool_for("omc:Version"), "describe_image");
+    }
+
+    #[test]
+    fn explain_tool_for_fibo_concepts() {
+        assert_eq!(explain_tool_for("fibo:Corporation"), "research_search");
+        assert_eq!(explain_tool_for("fibo:Portfolio"), "research_search");
+        assert_eq!(
+            explain_tool_for("fibo:TransactionLedger"),
+            "research_search"
+        );
+    }
+
+    #[test]
+    fn explain_tool_for_pko_concepts() {
+        assert_eq!(explain_tool_for("pko:Step"), "kanban_task_list");
+        assert_eq!(explain_tool_for("pko:Procedure"), "kanban_task_list");
+        assert_eq!(explain_tool_for("pko:ChangeOfStatus"), "kanban_task_list");
+    }
+
+    #[test]
+    fn explain_tool_for_dublin_core() {
+        assert_eq!(explain_tool_for("dcterms:Dataset"), "research_search");
+        assert_eq!(explain_tool_for("dublin-core"), "research_search");
+    }
+
+    #[test]
+    fn explain_tool_for_empty_and_unknown() {
+        assert_eq!(explain_tool_for(""), "research_search");
+        assert_eq!(explain_tool_for("unknown:Thing"), "research_search");
+    }
+}

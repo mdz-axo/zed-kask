@@ -545,6 +545,50 @@ async fn fetch_youtube_transcript(
     }
 }
 
+// ── Full-document entity-ref conventions (C5) ──────────────────────────────────
+//
+// Design: company-corpus-design.md §B3 + §B6 slice 5. The corpus pipeline
+// ingests documents of different kinds (earnings calls, 10-Ks, YouTube
+// transcripts). Each kind has its own entity-ref convention so cross-document
+// linkage works via shared entity prefixes.
+
+/// Build the `entity_ref_prefix` for a SEC filing (10-K, 10-Q, 8-K, DEF-14A).
+/// Convention: `company:{symbol}:sec_filing:{form}:{year}`.
+pub fn sec_filing_entity_ref_prefix(symbol: &str, form: &str, year: u32) -> String {
+    format!("company:{symbol}:sec_filing:{form}:{year}")
+}
+
+/// Build the `entity_ref_prefix` for a YouTube transcript (investor day, keynote).
+/// Convention: `company:{symbol}:youtube:{video_id}`.
+pub fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
+    format!("company:{symbol}:youtube:{video_id}")
+}
+
+/// Extract the company symbol from any entity_ref_prefix (the second component).
+/// Returns `None` if the prefix doesn't follow the `company:{symbol}:...` convention.
+pub fn symbol_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
+    let mut parts = prefix.split(':');
+    let _ = parts.next()?; // "company"
+    let symbol = parts.next()?;
+    if symbol.is_empty() {
+        return None;
+    }
+    Some(symbol)
+}
+
+/// Extract the document kind from any entity_ref_prefix (the third component).
+/// Returns `None` if the prefix doesn't follow the `company:{symbol}:{kind}:...` convention.
+pub fn kind_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
+    let mut parts = prefix.split(':');
+    let _ = parts.next()?; // "company"
+    let _ = parts.next()?; // symbol
+    let kind = parts.next()?;
+    if kind.is_empty() {
+        return None;
+    }
+    Some(kind)
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -758,6 +802,133 @@ mod tests {
         .expect("record");
         assert!(q1_2023.entity_ref_prefix < q4_2023.entity_ref_prefix);
         assert!(q4_2023.entity_ref_prefix < q1_2024.entity_ref_prefix);
+    }
+
+    // ── Corpus mode (non-earnings transcripts) ───────────────────────────────
+
+    #[test]
+    fn extract_youtube_id_from_watch_url() {
+        assert_eq!(
+            extract_youtube_id("https://www.youtube.com/watch?v=ceV3RsG946s").as_deref(),
+            Some("ceV3RsG946s")
+        );
+    }
+
+    #[test]
+    fn extract_youtube_id_from_short_url() {
+        assert_eq!(
+            extract_youtube_id("https://youtu.be/ceV3RsG946s").as_deref(),
+            Some("ceV3RsG946s")
+        );
+    }
+
+    #[test]
+    fn extract_youtube_id_rejects_invalid_urls() {
+        assert!(extract_youtube_id("https://example.com").is_none());
+        assert!(extract_youtube_id("not a url").is_none());
+        assert!(extract_youtube_id("").is_none());
+    }
+
+    #[test]
+    fn corpus_transcript_record_has_pipeline_ready_shape() {
+        let record = CorpusTranscriptRecord {
+            symbol: "MSFT".to_string(),
+            source_tier: 2,
+            kind: "youtube".to_string(),
+            title: "Microsoft Build 2024 Keynote".to_string(),
+            url: "https://www.youtube.com/watch?v=abc12345678".to_string(),
+            channel: "Microsoft".to_string(),
+            content: "Satya Nadella: Welcome to Build.".to_string(),
+            entity_ref_prefix: "company:MSFT:youtube:abc12345678".to_string(),
+        };
+        assert_eq!(record.source_tier, 2);
+        assert_eq!(record.kind, "youtube");
+        assert!(record.entity_ref_prefix.starts_with("company:MSFT:"));
+    }
+
+    #[test]
+    fn excluded_video_records_the_reason() {
+        let excluded = ExcludedVideo {
+            title: "Random Video".to_string(),
+            url: "https://youtube.com/watch?v=xyz".to_string(),
+            channel: "Random Channel".to_string(),
+            reason: "channel not on allowlist".to_string(),
+        };
+        assert_eq!(excluded.reason, "channel not on allowlist");
+    }
+
+    #[test]
+    fn corpus_transcript_result_serializes_with_excluded() {
+        let result = CorpusTranscriptResult {
+            transcripts: vec![],
+            excluded: vec![ExcludedVideo {
+                title: "Excluded".to_string(),
+                url: "https://youtube.com/watch?v=xyz".to_string(),
+                channel: "NotAllowlisted".to_string(),
+                reason: "channel not on allowlist".to_string(),
+            }],
+        };
+        let json = serde_json::to_value(&result).expect("serialize");
+        assert!(json["excluded"].is_array());
+        assert_eq!(json["excluded"][0]["reason"], "channel not on allowlist");
+    }
+
+    // ── Full-document entity-ref conventions (C5) ──────────────────────────
+
+    #[test]
+    fn sec_filing_entity_ref_prefix_format() {
+        assert_eq!(
+            sec_filing_entity_ref_prefix("MSFT", "10-K", 2024),
+            "company:MSFT:sec_filing:10-K:2024"
+        );
+    }
+
+    #[test]
+    fn youtube_entity_ref_prefix_format() {
+        assert_eq!(
+            youtube_entity_ref_prefix("MSFT", "ceV3RsG946s"),
+            "company:MSFT:youtube:ceV3RsG946s"
+        );
+    }
+
+    #[test]
+    fn symbol_from_entity_ref_prefix_extracts_symbol() {
+        assert_eq!(
+            symbol_from_entity_ref_prefix("company:MSFT:earnings:2024_Q4"),
+            Some("MSFT")
+        );
+        assert_eq!(
+            symbol_from_entity_ref_prefix("company:AAPL:sec_filing:10-K:2024"),
+            Some("AAPL")
+        );
+        assert_eq!(
+            symbol_from_entity_ref_prefix("company:MSFT:youtube:abc12345678"),
+            Some("MSFT")
+        );
+    }
+
+    #[test]
+    fn kind_from_entity_ref_prefix_extracts_kind() {
+        assert_eq!(
+            kind_from_entity_ref_prefix("company:MSFT:earnings:2024_Q4"),
+            Some("earnings")
+        );
+        assert_eq!(
+            kind_from_entity_ref_prefix("company:MSFT:sec_filing:10-K:2024"),
+            Some("sec_filing")
+        );
+        assert_eq!(
+            kind_from_entity_ref_prefix("company:MSFT:youtube:abc12345678"),
+            Some("youtube")
+        );
+    }
+
+    #[test]
+    fn entity_ref_prefix_extractors_reject_malformed() {
+        assert!(symbol_from_entity_ref_prefix("").is_none());
+        assert!(symbol_from_entity_ref_prefix("company").is_none());
+        assert!(symbol_from_entity_ref_prefix("company:").is_none());
+        assert!(kind_from_entity_ref_prefix("company:MSFT").is_none());
     }
 }
 

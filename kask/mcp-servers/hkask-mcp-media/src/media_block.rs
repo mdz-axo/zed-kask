@@ -16,13 +16,13 @@ use crate::omc;
 
 /// Format a ```media fenced block for inclusion in tool responses.
 ///
-/// The block body is a JSON object: `{"kind","src","omc","provenance"}`.
-/// `omc` and `provenance` are optional — older blocks without them still
+/// The block body is a JSON object: `{"kind","src","ontology","provenance"}`.
+/// `ontology` and `provenance` are optional — older blocks without them still
 /// parse (the widget uses `#[serde(default)]`).
 ///
 /// ```text
 /// ```media
-/// {"kind":"image","src":"/path/to/image.png","omc":"omc:CreativeWork","provenance":{"tool":"generate_image","server":"hkask-mcp-media","args":{}}}
+/// {"kind":"image","src":"/path/to/image.png","ontology":"omc:CreativeWork","provenance":{"tool":"generate_image","server":"hkask-mcp-media","args":{}}}
 /// ```
 /// ```
 pub fn media_block(kind: &str, src: &str) -> String {
@@ -32,7 +32,7 @@ pub fn media_block(kind: &str, src: &str) -> String {
 /// Format a ```media block with an OMC concept tag and provenance.
 ///
 /// `omc` is the OMC concept URI (e.g. `omc:CreativeWork`) — `None` omits the
-/// field (the widget falls back to its default explain tool). `provenance` is
+/// `ontology` field (the widget falls back to its default explain tool). `provenance` is
 /// the server-authoritative record of which tool produced this artifact, with
 /// which args, under which regulation span — `None` omits the field (the widget
 /// renders without dispatch/compose-back affordances).
@@ -44,7 +44,7 @@ pub fn media_block_with_omc(
 ) -> String {
     let mut body = format!("{{\"kind\":\"{kind}\",\"src\":\"{src}\"");
     if let Some(omc) = omc {
-        body.push_str(&format!(",\"omc\":\"{omc}\""));
+        body.push_str(&format!(",\"ontology\":\"{omc}\""));
     }
     if let Some(prov) = provenance {
         body.push_str(",\"provenance\":");
@@ -372,7 +372,7 @@ mod tests {
         );
         assert!(block.contains("\"kind\":\"image\""));
         assert!(block.contains("/tmp/img.png"));
-        assert!(block.contains("\"omc\":\"omc:CreativeWork\""));
+        assert!(block.contains("\"ontology\":\"omc:CreativeWork\""));
         assert!(block.contains("\"tool\":\"generate_image\""));
         assert!(block.contains("\"server\":\"hkask-mcp-media\""));
         assert!(block.contains("\"span_id\":\"span-1\""));
@@ -398,7 +398,7 @@ mod tests {
             None,
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
-        assert!(hint.contains("\"omc\":\"omc:CreativeWork\""));
+        assert!(hint.contains("\"ontology\":\"omc:CreativeWork\""));
         assert!(hint.contains("\"tool\":\"generate_image\""));
         assert!(hint.contains("\"kind\":\"image\""));
     }

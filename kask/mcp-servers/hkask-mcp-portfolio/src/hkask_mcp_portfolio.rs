@@ -399,6 +399,18 @@ pub struct HoldingsSnapshot {
     pub issues: Vec<String>,
 }
 
+/// One row of the materialized daily returns view. `daily_return` is the
+/// day-over-day total return: `(total_D - total_{D-1} - cash_flow_D) /
+/// total_{D-1}`. Zero for the first day in the range (no prior total).
+#[derive(Debug, Clone, Serialize)]
+pub struct DailyReturnRow {
+    pub date: String,
+    pub market_value: f64,
+    pub cash: f64,
+    pub total: f64,
+    pub daily_return: f64,
+}
+
 /// Filter for reading a slice of the ledger.
 #[derive(Debug, Clone, Default)]
 pub struct LedgerFilter<'a> {
@@ -860,11 +872,141 @@ impl PortfolioStore {
         for tx in &txs {
             dates.insert(tx.date.clone());
         }
-        for date in dates {
+        for date in &dates {
             // Recompute and cache the holdings snapshot for each transaction date.
-            self.snapshot(name, &date)?;
+            self.snapshot(name, date)?;
+        }
+        // Materialize daily returns across the full date span. Uses the
+        // price cache (seeded by the consumer) for market values; days
+        // without cached prices report market_value = 0 and daily_return
+        // derived from cash flows only.
+        if let Some(first) = dates.iter().next()
+            && let Some(last) = dates.iter().next_back()
+        {
+            let resolver = CachedPriceResolver::new(self, name);
+            self.materialize_returns(name, first, last, &resolver)?;
         }
         Ok(())
+    }
+
+    /// Materialize the daily returns view for a date range. For each day
+    /// in `[from, to]`, computes the portfolio's total value (market value
+    /// of holdings at that day's prices + cash) and the day-over-day return,
+    /// then writes a row to `daily_returns`. Reads prices via the supplied
+    /// resolver (typically [`CachedPriceResolver`] over the `price_cache`
+    /// table). Days without prices contribute market_value = 0.
+    ///
+    /// This is the realization of the `daily_returns` materialized view
+    /// declared in the schema. Idempotent: re-running over the same range
+    /// replaces existing rows.
+    pub fn materialize_returns(
+        &self,
+        name: &str,
+        from: &str,
+        to: &str,
+        prices: &dyn PriceResolver,
+    ) -> Result<(), PortfolioError> {
+        let conn = self.open()?;
+        self.check_exists(&conn, name)?;
+        // Walk each day in the range. We use the transaction dates as the
+        // evaluation grid: returns are only meaningful on days the portfolio
+        // changed (or the price changed). For simplicity and determinism,
+        // we evaluate on every calendar day in [from, to].
+        let from_date = parse_ymd(from, "from")?;
+        let to_date = parse_ymd(to, "to")?;
+        if to_date < from_date {
+            return Err(format!("from ({from}) is after to ({to})").into());
+        }
+
+        let txs = self.ledger(name, LedgerFilter::all())?;
+        let mut symbols: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for tx in &txs {
+            if let Some(ref sym) = tx.symbol {
+                symbols.insert(sym.clone());
+            }
+        }
+
+        let mut prev_total: Option<f64> = None;
+        let mut current_date = from_date;
+        while current_date <= to_date {
+            let date_str = current_date.format("%Y-%m-%d").to_string();
+            // Holdings + cash at this date.
+            let snap = self.snapshot(name, &date_str)?;
+            // Market value: sum(shares * price) using the resolver.
+            let market_value: f64 = snap
+                .holdings
+                .iter()
+                .map(|h| {
+                    let price = prices.resolve(&h.symbol, &date_str).unwrap_or(0.0);
+                    h.shares * price
+                })
+                .sum();
+            let cash = snap.cash_balance;
+            let total = market_value + cash;
+
+            // Cash flow on this date: sum of deposit/withdrawal amounts.
+            let cash_flow: f64 = txs
+                .iter()
+                .filter(|t| t.date == date_str)
+                .map(|t| match t.tx_type {
+                    TxType::Deposit => t.amount.unwrap_or(0.0),
+                    TxType::Withdrawal => -t.amount.unwrap_or(0.0),
+                    _ => 0.0,
+                })
+                .sum();
+
+            let daily_return = match prev_total {
+                Some(prev) if prev.abs() > 1e-9 => (total - prev - cash_flow) / prev,
+                _ => 0.0,
+            };
+
+            conn.execute(
+                "INSERT OR REPLACE INTO daily_returns (portfolio_name, date, market_value, cash, total, daily_return)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![name, date_str, market_value, cash, total, daily_return],
+            )
+            .map_err(|e| format!("materialize daily_returns: {e}"))?;
+
+            prev_total = Some(total);
+            current_date = current_date.succ_opt().unwrap_or(current_date);
+        }
+        Ok(())
+    }
+
+    /// Read the materialized daily returns for a portfolio over a date range.
+    /// Returns `(date, market_value, cash, total, daily_return)` rows ordered
+    /// by date ascending. Empty when the view has not been materialized
+    /// (call [`materialize_returns`] or [`rebuild_views`] first).
+    pub fn daily_returns(
+        &self,
+        name: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<DailyReturnRow>, PortfolioError> {
+        let conn = self.open()?;
+        self.check_exists(&conn, name)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT date, market_value, cash, total, daily_return FROM daily_returns
+                 WHERE portfolio_name = ?1 AND date >= ?2 AND date <= ?3 ORDER BY date ASC",
+            )
+            .map_err(|e| format!("query daily_returns: {e}"))?;
+        let rows = stmt
+            .query_map(params![name, from, to], |row| {
+                Ok(DailyReturnRow {
+                    date: row.get(0)?,
+                    market_value: row.get(1)?,
+                    cash: row.get(2)?,
+                    total: row.get(3)?,
+                    daily_return: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("query daily_returns: {e}"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| format!("row: {e}"))?);
+        }
+        Ok(out)
     }
 
     // ── Internal helpers ────────────────────────────────────────────

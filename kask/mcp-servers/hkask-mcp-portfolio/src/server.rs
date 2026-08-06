@@ -378,6 +378,70 @@ impl PortfolioServer {
         })
         .await
     }
+
+    #[tool(
+        description = "Materialize the daily returns view for a portfolio over a date range. Reads prices from the portfolio's price cache. Call portfolio_seed_price first."
+    )]
+    pub async fn portfolio_materialize_returns(
+        &self,
+        Parameters(PortfolioReturnsRequest {
+            portfolio,
+            from,
+            to,
+        }): Parameters<PortfolioReturnsRequest>,
+    ) -> String {
+        execute_tool(self, "portfolio_materialize_returns", async {
+            parse_ymd(&from, "from").map_err(map_portfolio_error)?;
+            parse_ymd(&to, "to").map_err(map_portfolio_error)?;
+            let response_portfolio = portfolio.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let resolver = CachedPriceResolver::new(&self.store, &portfolio);
+            run_store(self.store.clone(), move |store| {
+                store.materialize_returns(&portfolio, &from, &to, &resolver)
+            })
+            .await?;
+            Ok(serde_json::json!({
+                "status": "materialized",
+                "portfolio": response_portfolio,
+                "from": response_from,
+                "to": response_to,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read the materialized daily returns for a portfolio over a date range. Returns one row per day with market value, cash, total, and daily return. Empty until portfolio_materialize_returns or portfolio_rebuild_views is called."
+    )]
+    pub async fn portfolio_daily_returns(
+        &self,
+        Parameters(PortfolioReturnsRequest {
+            portfolio,
+            from,
+            to,
+        }): Parameters<PortfolioReturnsRequest>,
+    ) -> String {
+        execute_tool(self, "portfolio_daily_returns", async {
+            parse_ymd(&from, "from").map_err(map_portfolio_error)?;
+            parse_ymd(&to, "to").map_err(map_portfolio_error)?;
+            let response_portfolio = portfolio.clone();
+            let response_from = from.clone();
+            let response_to = to.clone();
+            let rows = run_store(self.store.clone(), move |store| {
+                store.daily_returns(&portfolio, &from, &to)
+            })
+            .await?;
+            Ok(serde_json::json!({
+                "portfolio": response_portfolio,
+                "from": response_from,
+                "to": response_to,
+                "rows": rows,
+                "count": rows.len(),
+            }))
+        })
+        .await
+    }
 }
 
 #[tool_handler(router = Self::portfolio_router())]

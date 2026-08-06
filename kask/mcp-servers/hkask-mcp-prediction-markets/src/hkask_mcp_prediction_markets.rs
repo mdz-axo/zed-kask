@@ -132,6 +132,43 @@ pub struct MarketCmpIndexListRequest {
     pub series: Option<String>,
 }
 
+/// Request for market_cmp_portfolio_store: compute the solved-portfolio CMP
+/// index set (maturity-bucketed, orientation-tagged portfolios of contracts
+/// with maturity-matched weights) for a registered base event and persist
+/// each (bucket, orientation) index as a transaction-ledger portfolio.
+///
+/// This is the contract-portfolio CMP index (from `cmp_portfolio`), distinct
+/// from the curve-based `market_cmp_index_store` (from `cmp`). It requires
+/// operator-supplied economic context (reference level, volatility, predicted
+/// level, direction) because strike extraction from market titles is not yet
+/// automated.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpPortfolioStoreRequest {
+    /// Base-event series ticker (must be registered).
+    pub series: String,
+    /// The current level of the underlying factor (e.g. 5.375 for Fed funds
+    /// at 5.25-5.50%, 80.0 for WTI crude). Required — orientation
+    /// classification needs a reference to measure the move size against.
+    pub reference: f64,
+    /// The trailing volatility of the underlying in the family's type units
+    /// (absolute: bp/pp/$; relative: as a fraction). Required — the
+    /// materiality level is `k × volatility × scaling(target)` unless an
+    /// override is set. None disables materiality-gated indices (only
+    /// override-level families produce indices).
+    pub volatility: Option<f64>,
+    /// The predicted level (strike) the contracts are structured around.
+    /// Required — orientation classification compares this to `reference`.
+    /// For rate-decision families, this is the strike (e.g. 5.50). For
+    /// directional families without a strike, supply the reference and the
+    /// orientation will classify as Stable.
+    pub predicted_level: f64,
+    /// Whether the contract predicts the factor ends above its strike
+    /// (true) or below (false). Determines Increase vs Decline orientation.
+    pub direction_up: bool,
+    /// Observation date (YYYY-MM-DD). Defaults to today's UTC date.
+    pub date: Option<String>,
+}
+
 /// Request for market_cmp: constant-maturity prediction for a registered
 /// base event at a fixed tenor.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1250,7 +1287,230 @@ impl PredictionMarketsServer {
         )
         .await
     }
-}
+
+    /// Compute the solved-portfolio CMP index set for a registered base event
+    /// and persist each (bucket, orientation) index as a transaction-ledger
+    /// portfolio of contracts with maturity-matched weights. This is the
+    /// contract-portfolio CMP index (from `cmp_portfolio`), distinct from the
+    /// curve-based `market_cmp_index_store`.
+    #[tool(
+        description = "Compute the solved-portfolio CMP index set (maturity-bucketed, orientation-tagged portfolios of contracts with maturity-matched weights) for a registered base event and persist each (bucket, orientation) index as a transaction-ledger portfolio. Requires operator-supplied economic context (reference level, volatility, predicted level, direction)."
+    )]
+    pub async fn market_cmp_portfolio_store(
+        &self,
+        Parameters(MarketCmpPortfolioStoreRequest {
+            series,
+            reference,
+            volatility,
+            predicted_level,
+            direction_up,
+            date,
+        }): Parameters<MarketCmpPortfolioStoreRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp_portfolio_store",
+            Some(Self::ontology_anchor("market_cmp_portfolio_store")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp_portfolio_store".to_string());
+                if !self.base_events.iter().any(|(_, s)| s == &series) {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!(
+                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                            series
+                        ),
+                    ));
+                }
+                let markets =
+                    provider_kalshi::fetch_markets(&self.http, Some(&series), 200).await?;
+                let now = chrono::Utc::now();
+                let observation_date =
+                    date.clone().unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
+
+                // Build OrientedConstituents from fetched markets + operator
+                // economic context. Each market becomes a candidate
+                // constituent; eligibility filters by base event, materiality,
+                // orientation, and maturity window inside construct_cmp_index_set.
+                let config = cmp_portfolio::CmpConfig::default();
+                let mut oriented: Vec<cmp_portfolio::OrientedConstituent> = Vec::new();
+                let mut market_ids: Vec<String> = Vec::new();
+                for (idx, market) in markets.iter().enumerate() {
+                    let Some(probability) = market.yes_midpoint() else {
+                        continue;
+                    };
+                    let Some(deadline) = chrono::DateTime::parse_from_rfc3339(&market.close_time).ok() else {
+                        continue;
+                    };
+                    let days = (deadline.with_timezone(&chrono::Utc) - now).num_seconds() as f64
+                        / 86_400.0;
+                    if days <= 0.0 {
+                        continue;
+                    }
+                    // Build a minimal MarketRecord for base-event classification.
+                    // The full MarketRecord requires calibration data we don't
+                    // have here; classify_base_event only reads question/description/
+                    // series/category, so we construct a record with just those
+                    // fields and defaults for the rest.
+                    let record = types::MarketRecord {
+                        source: types::Source::Kalshi,
+                        event_id: market.event_ticker.clone(),
+                        market_id: market.ticker.clone(),
+                        question: market.title.clone(),
+                        description: market.subtitle.clone(),
+                        category: String::new(),
+                        series: series.clone(),
+                        deadline: market.close_time.clone(),
+                        time_to_maturity: Some(days / 365.0),
+                        probability,
+                        probability_method: types::ProbabilityMethod::Midpoint,
+                        spread: None,
+                        volume: 0.0,
+                        volume_grain: types::VolumeGrain::Market,
+                        liquidity: None,
+                        open_interest: None,
+                        last_update: now.to_rfc3339(),
+                        volatility: types::Volatility::default(),
+                        status: types::MarketStatus::Open,
+                        resolved_outcome: None,
+                        resolution_source: std::borrow::Cow::Borrowed("kalshi"),
+                        calibration: types::Calibration::default(),
+                        reliability_tier: types::ReliabilityTier::Tier1,
+                        ontology: types::OntologyBlock::default(),
+                    };
+                    let Some(base_event) = base_event::classify_base_event(&record) else {
+                        continue;
+                    };
+                    // Orientation: classify using the operator-supplied
+                    // predicted_level + reference + the materiality level for
+                    // this family at the 30d tenor (a representative target).
+                    let setting = base_event.default_materiality();
+                    let level = cmp_portfolio::materiality_level(
+                        &setting,
+                        volatility,
+                        30,
+                        &config,
+                    );
+                    let orientation = match level {
+                        Some(level) => cmp_portfolio::classify_orientation(
+                            predicted_level,
+                            reference,
+                            level,
+                            direction_up,
+                        ),
+                        None => cmp_portfolio::Orientation::Stable,
+                    };
+                    oriented.push(cmp_portfolio::OrientedConstituent {
+                        constituent: cmp_portfolio::Constituent {
+                            days_to_expiration: days,
+                            probability,
+                            quality: 1.0,
+                        },
+                        orientation,
+                        market_index: idx,
+                    });
+                    market_ids.push(market.ticker.clone());
+                }
+                if oriented.is_empty() {
+                    return Err(hkask_mcp_server::server::McpToolError::not_found(format!(
+                        "no eligible markets for series '{}' with the supplied economic context",
+                        series
+                    )));
+                }
+
+                let index_set = cmp_portfolio::construct_cmp_index_set(&oriented, &config);
+
+                // Persist each solved CmpIndex as a portfolio ledger of
+                // WeightAdjust transactions (one per constituent, weight =
+                // the solved portfolio weight). The portfolio name is
+                // `cmp:{series}:{bucket}:{orientation}`.
+                let store = self.portfolio_store.clone();
+                let created_at = now.to_rfc3339();
+                let response_series = series.clone();
+                let response_date = observation_date.clone();
+                let stored = tokio::task::spawn_blocking(move || {
+                    use hkask_mcp_portfolio::{AssetType, PortfolioError, Transaction, TxType};
+                    let mut stored_indices: Vec<(String, usize)> = Vec::new();
+                    for index in &index_set.indices {
+                        let portfolio_name = format!(
+                            "cmp:{series}:{}:{}",
+                            index.bucket.label(),
+                            index.orientation
+                        );
+                        if let Err(e) = store.create(&portfolio_name, AssetType::PredictionContract) {
+                            match e {
+                                PortfolioError::InvalidArgument(_) => {}
+                                other => return Err(other),
+                            }
+                        }
+                        for constituent in &index.portfolio.constituents {
+                            let symbol = market_ids
+                                .get(constituent.market_index)
+                                .cloned()
+                                .unwrap_or_else(|| format!("market_{}", constituent.market_index));
+                            let tx = Transaction {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                date: observation_date.clone(),
+                                tx_type: TxType::WeightAdjust,
+                                asset_type: AssetType::PredictionContract,
+                                symbol: Some(symbol),
+                                quantity: Some(1.0),
+                                price: Some(constituent.probability),
+                                commission: Some(0.0),
+                                amount: None,
+                                weight: Some(constituent.weight),
+                                currency: "USD".to_string(),
+                                notes: format!(
+                                    "CMP portfolio constituent: bucket={} orientation={} weight={:.4} dte={:.1}",
+                                    index.bucket.label(),
+                                    index.orientation,
+                                    constituent.weight,
+                                    constituent.days_to_expiration
+                                ),
+                                created_at: created_at.clone(),
+                            };
+                            store.apply(&portfolio_name, &tx)?;
+                        }
+                        // Materialize the holdings snapshot.
+                        let snap = store.snapshot(&portfolio_name, &observation_date)?;
+                        stored_indices.push((portfolio_name, snap.holdings.len()));
+                    }
+                    Ok::<_, PortfolioError>((stored_indices, index_set.withheld_buckets.len()))
+                })
+                .await
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "portfolio store task failed: {e}"
+                    ))
+                })?
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "CMP portfolio store failed: {e}"
+                    ))
+                })?;
+                let (stored_indices, withheld) = stored;
+                serde_json::to_value(serde_json::json!({
+                    "status": "stored",
+                    "series": response_series,
+                    "observation_date": response_date,
+                    "indices_stored": stored_indices.len(),
+                    "withheld_buckets": withheld,
+                    "indices": stored_indices.iter().map(|(name, holdings)| serde_json::json!({
+                        "portfolio": name,
+                        "holdings": holdings,
+                    })).collect::<Vec<_>>(),
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "store response serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
 
 impl PredictionMarketsServer {
     /// Fetch and annotate all candidate markets from both platforms.

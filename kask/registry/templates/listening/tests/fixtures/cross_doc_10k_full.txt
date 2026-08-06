@@ -1,0 +1,23 @@
+// Document: MSFT 10-K Annual Report (full excerpt for pipeline ingestion)
+// Entity ref: company:MSFT:sec_filing:10-K:2024
+// Source: SEC EDGAR filing, tier-1 self-description
+//
+// This fixture is a representative 10-K excerpt for testing the corpus pipeline's
+// full-document ingestion path (slice C5). It contains the sections the pipeline
+// should chunk, tag (FIBO/PKO), embed, and extract triples from.
+
+Item 1. Business.
+
+Microsoft Corporation develops, licenses, and supports software, services, devices, and solutions worldwide. The company operates through three segments: Productivity and Business Processes, Intelligent Cloud, and More Personal Computing.
+
+The Intelligent Cloud segment includes Azure, which provides a comprehensive set of cloud computing services including compute, network, storage, and database. Our long-term strategy is to double Azure AI infrastructure capacity by fiscal year 2027 to meet enterprise demand for AI workloads. This capacity expansion depends on new datacenter regions coming online, including the Germany region scheduled for Q3 of fiscal year 2025. We believe the pricing model for Azure AI workloads reflects the platform value, not raw compute cost, and we expect gross margins to remain stable through the investment cycle.
+
+Item 1A. Risk Factors.
+
+The company faces risks related to competition, regulatory scrutiny, cybersecurity threats, and the pace of AI adoption. If AI demand does not materialize as expected, the capital expenditure on datacenter infrastructure may not generate adequate returns. The Germany datacenter coming online in Q3 fiscal 2025 is a key checkpoint on the path to the fiscal 2027 capacity doubling goal.
+
+Item 7. Management's Discussion and Analysis.
+
+Revenue for fiscal 2024 was $245.1 billion, an increase of 16% compared to fiscal 2023. Gross margin was 69.8%, a decrease of 60 basis points due to AI infrastructure investment. Operating income was $88.5 billion. We returned $9.7 billion to shareholders through dividends and share repurchases. Capital expenditure was $44.5 billion for the full year, up from $28.1 billion in fiscal 2023, reflecting the investment in AI infrastructure.
+
+We are increasing capital expenditure to support AI demand. The return on incremental capex is improving as Azure utilization rises. We are draining capital from underperforming legacy segments and reallocating to AI infrastructure where returns are highest. The three-year return profile is the key — we are investing ahead of demand, but the utilization curve is steepening.

@@ -658,6 +658,148 @@ fn apply_to_missing_portfolio_errors() {
 }
 
 #[test]
+fn daily_returns_materialized_from_ledger() {
+    // The daily_returns view is populated by materialize_returns: each
+    // day in the range gets a row with market_value, cash, total, and
+    // the day-over-day return.
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
+        )
+        .unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx(
+                "2024-01-15",
+                "buy",
+                Some("AAPL"),
+                Some(100.0),
+                Some(150.0),
+                None,
+            ),
+        )
+        .unwrap();
+
+    // Seed prices so market value is non-zero.
+    let resolver = CachedPriceResolver::new(&store, "test");
+    resolver
+        .seed_cache("AAPL", "2024-01-02", 150.0, "test")
+        .unwrap();
+    resolver
+        .seed_cache("AAPL", "2024-01-15", 150.0, "test")
+        .unwrap();
+    resolver
+        .seed_cache("AAPL", "2024-01-16", 165.0, "test")
+        .unwrap();
+
+    store
+        .materialize_returns("test", "2024-01-02", "2024-01-16", &resolver)
+        .unwrap();
+    let rows = store
+        .daily_returns("test", "2024-01-02", "2024-01-16")
+        .unwrap();
+    assert!(!rows.is_empty(), "daily_returns view populated");
+    // First row: deposit day, no prior total → daily_return = 0.
+    assert!(
+        (rows[0].daily_return - 0.0).abs() < 1e-9,
+        "first day return = 0"
+    );
+    // The 2024-01-16 row should reflect the price appreciation.
+    let last = rows.last().unwrap();
+    // total on 01-16 = 100*165 + 5000 cash = 21500.
+    assert!(
+        (last.total - 21500.0).abs() < 0.01,
+        "total = {}",
+        last.total
+    );
+}
+
+#[test]
+fn rebuild_views_materializes_both_holdings_and_returns() {
+    // rebuild_views recomputes daily_holdings AND daily_returns from the
+    // ledger. After a simulated corruption (drop both tables), rebuild
+    // repopulates them.
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx("2024-01-02", "deposit", None, None, None, Some(20000.0)),
+        )
+        .unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx(
+                "2024-01-15",
+                "buy",
+                Some("AAPL"),
+                Some(100.0),
+                Some(150.0),
+                None,
+            ),
+        )
+        .unwrap();
+    let resolver = CachedPriceResolver::new(&store, "test");
+    resolver
+        .seed_cache("AAPL", "2024-01-02", 150.0, "test")
+        .unwrap();
+    resolver
+        .seed_cache("AAPL", "2024-01-15", 150.0, "test")
+        .unwrap();
+
+    // Simulate corruption: drop both materialized views.
+    {
+        let conn = store.open().unwrap();
+        conn.execute("DELETE FROM daily_holdings", []).unwrap();
+        conn.execute("DELETE FROM daily_returns", []).unwrap();
+    }
+    // rebuild_views repopulates both.
+    store.rebuild_views("test").unwrap();
+    let snap = store.snapshot("test", "2024-01-16").unwrap();
+    assert_eq!(snap.holdings.len(), 1, "holdings rebuilt");
+    let returns = store
+        .daily_returns("test", "2024-01-02", "2024-01-16")
+        .unwrap();
+    assert!(!returns.is_empty(), "daily_returns rebuilt");
+}
+
+#[test]
+fn daily_returns_empty_before_materialization() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    store
+        .apply(
+            "test",
+            &sample_tx("2024-01-02", "deposit", None, None, None, Some(1000.0)),
+        )
+        .unwrap();
+    let rows = store
+        .daily_returns("test", "2024-01-02", "2024-01-03")
+        .unwrap();
+    assert!(rows.is_empty(), "daily_returns empty before materialize");
+}
+
+#[test]
+fn materialize_returns_rejects_inverted_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("test", AssetType::Stock).unwrap();
+    let resolver = NoPrices;
+    let err = store
+        .materialize_returns("test", "2024-01-16", "2024-01-02", &resolver)
+        .unwrap_err();
+    assert!(err.to_string().contains("after to"));
+}
+
+#[test]
 fn cmp_index_storage_as_ledger() {
     // A CMP index is stored as a transaction ledger: buys, rolls, weight
     // adjustments. The materialized holdings view is the index composition.
