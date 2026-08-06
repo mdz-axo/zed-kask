@@ -261,9 +261,9 @@ impl CorpusServer {
     /// The `docproc_*` tools (chunk, tag_chunks, embed, extract_triples) are the
     /// **QA training output branch** — they use token-count chunking, LLM-based
     /// ontology tagging, INSTRUCTOR-method ontology-anchored embedding, and
-    /// hallucination-guarded triple extraction. Both branches share the same
-    /// chunking operation (declared via `ChunkingStrategy`) but use different
-    /// implementations appropriate for their output type.
+    /// hallucination-guarded triple extraction. Both branches chunk text
+    /// (the persona branch via `WordCountChunker`, the QA branch via
+    /// `crate::text::chunk_text` directly).
     ///
     /// The centroid computation (mean vector over passages) is persona-specific
     /// and has no docproc equivalent.

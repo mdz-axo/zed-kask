@@ -25,6 +25,8 @@ classDiagram
         +calibration: Option~CalibrationSummary~
         +event_tree: Option~EventTreeSummary~
         +recent_forecasts: Vec~RecentForecast~
+        +provenance: BlockProvenance
+        +ontology: Option~String~
     }
     class PipelineOverview {
         +forecast_count: usize

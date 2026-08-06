@@ -26,13 +26,10 @@
 //! from the ledger (the append-only source of truth) via
 //! [`PortfolioStore::rebuild_views`].
 
-use hkask_ledger::{Ledger, LedgerError, LedgerTransaction, Posting};
-use hkask_storage::database::driver::DatabaseDriver;
 use hkask_types::{WebID, agent_paths::sanitize_name, time::now_rfc3339};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use chrono::Datelike;
 
@@ -111,8 +108,6 @@ pub enum PortfolioError {
     Database(String),
     #[error("serialize error: {0}")]
     Serialize(String),
-    #[error("ledger error: {0}")]
-    Ledger(String),
 }
 
 impl From<rusqlite::Error> for PortfolioError {
@@ -145,12 +140,6 @@ impl From<PortfolioError> for hkask_mcp_server::McpError {
             context: "portfolio".to_string(),
             detail: e.to_string(),
         }
-    }
-}
-
-impl From<LedgerError> for PortfolioError {
-    fn from(e: LedgerError) -> Self {
-        Self::Ledger(e.to_string())
     }
 }
 
@@ -422,14 +411,6 @@ impl<'a> LedgerFilter<'a> {
     pub fn all() -> Self {
         Self::default()
     }
-}
-
-/// A price observation for a symbol on a date, used by [`returns`].
-#[derive(Debug, Clone)]
-pub struct PricePoint {
-    pub symbol: String,
-    pub date: String,
-    pub close: f64,
 }
 
 /// Resolves prices for a set of (symbol, date) pairs. Implemented by the

@@ -6,7 +6,7 @@
 //! (synchronous OS keychain I/O). In zed-kask, API keys for inference
 //! providers are handled by zed's own `CredentialsProvider` through the
 //! `LanguageModelRegistry` — the kask keystore only handles sovereignty
-//! keys (a2a_secret, db_passphrase, ocap_secret).
+//! keys (db_passphrase).
 //!
 //! Inference keys (`DEEPINFRA_API_KEY`, `OPENROUTER_API_KEY`, etc.) are
 //! **never** read from this keystore. They are injected into MCP server

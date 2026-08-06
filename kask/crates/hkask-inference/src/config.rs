@@ -310,7 +310,7 @@ impl InferenceConfig {
 ///
 /// This function reads **only** the environment variable. It does **not**
 /// fall back to the `hkask` keychain namespace — that namespace is reserved
-/// for sovereignty keys (db_passphrase, ocap_secret) per the
+/// for sovereignty keys (db_passphrase) per the
 /// `hkask_keystore` module contract. Reading inference keys from the `hkask`
 /// namespace was a spec violation: the settings UI writes to zed's
 /// `CredentialsProvider` (`kask://credentials/<key>`), not the `hkask`
@@ -547,7 +547,7 @@ mod tests {
     /// Regression test for the two-namespace split. `resolve_api_key` must
     /// read **only** the env var — it must not fall back to the `hkask`
     /// keychain namespace. The `hkask` namespace is reserved for sovereignty
-    /// keys (db_passphrase, ocap_secret) per the `hkask_keystore`
+    /// keys (db_passphrase) per the `hkask_keystore`
     /// module contract. Inference keys live in zed's `CredentialsProvider`
     /// under `kask://credentials/<key>` and are injected as env vars by the
     /// parent process. This test pins that contract: with the env var unset,

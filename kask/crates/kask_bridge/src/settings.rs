@@ -751,7 +751,7 @@ impl KaskSettings {
                 self.corpus.embedding_dim.to_string(),
             );
         }
-        if !self.corpus.embedding_model.is_empty() {
+        if self.corpus.embedding_model != corpus_default.embedding_model {
             env.insert(
                 "HKASK_EMBEDDING_MODEL".to_string(),
                 self.corpus.embedding_model.clone(),
@@ -1625,6 +1625,10 @@ mod tests {
             "default template_root must not be emitted"
         );
         assert!(
+            !env.contains_key("HKASK_EMBEDDING_MODEL"),
+            "default embedding_model must not be emitted — the `is_empty()` check was a drift bug; the default is non-empty"
+        );
+        assert!(
             !env.contains_key("HKASK_CONDENSE_SALIENCY_WINDOW"),
             "default saliency_window must not be emitted"
         );
@@ -1641,6 +1645,21 @@ mod tests {
         assert_eq!(
             env.get("HKASK_EMBEDDING_DIM").map(String::as_str),
             Some("2048")
+        );
+    }
+
+    // The `embedding_model` field has a non-empty `Default`
+    // (`DeepInfra/Qwen/Qwen3-Embedding-0.6B`), so the comparison must be
+    // against `Default`, not `is_empty()`. A user override must be emitted;
+    // the default must not.
+    #[test]
+    fn mcp_env_emits_embedding_model_when_overridden() {
+        let mut settings = KaskSettings::default();
+        settings.corpus.embedding_model = "OpenAI/text-embedding-3-large".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_EMBEDDING_MODEL").map(String::as_str),
+            Some("OpenAI/text-embedding-3-large")
         );
     }
 

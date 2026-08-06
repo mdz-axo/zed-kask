@@ -1,22 +1,10 @@
-//! Chunking strategy for the corpus embedding pipeline.
+//! Chunking for the corpus embedding pipeline.
 //!
-//! `ChunkingStrategy` makes the relationship between `EmbedService`
-//! (persona/style pipeline) and the `docproc_*` tools (QA training pipeline)
-//! visible in the semantic graph. Both pipelines chunk text, but with
-//! different implementations: word-count chunking for `EmbedService` and
-//! token-count chunking for `corpus_chunk`.
-
-/// A chunking strategy — splits text into passages.
-///
-/// Implementations:
-/// - `WordCountChunker` — used by `EmbedService` (persona pipeline)
-/// - `TokenCountChunker` — used by `corpus_chunk` (QA training pipeline)
-pub trait ChunkingStrategy: Send + Sync {
-    /// Chunk `text` into passages, returning `(entity_ref, text)` pairs.
-    fn chunk(&self, text: &str, entity_ref_prefix: &str) -> Vec<(String, String)>;
-}
-
-// ── Concrete strategy implementations ──────────────────────────────────────
+//! `WordCountChunker` splits text at sentence boundaries within min/max word
+//! count constraints. It is used by `EmbedService` (persona/style pipeline).
+//! The `docproc_*` tools (QA training pipeline) call `crate::text::chunk_text`
+//! directly — both paths share the same underlying chunker, just reached
+//! differently.
 
 /// Word-count-based chunking — used by `EmbedService` for persona/style
 /// corpus embedding. Splits at sentence boundaries within min/max word
@@ -27,8 +15,9 @@ pub struct WordCountChunker {
     pub sentence_boundary: String,
 }
 
-impl ChunkingStrategy for WordCountChunker {
-    fn chunk(&self, text: &str, entity_ref_prefix: &str) -> Vec<(String, String)> {
+impl WordCountChunker {
+    /// Chunk `text` into passages, returning `(entity_ref, text)` pairs.
+    pub fn chunk(&self, text: &str, entity_ref_prefix: &str) -> Vec<(String, String)> {
         crate::text::chunk_text(
             text,
             entity_ref_prefix,

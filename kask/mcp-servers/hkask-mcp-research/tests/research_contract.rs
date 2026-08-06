@@ -167,11 +167,10 @@ fn test_server() -> ResearchServer {
     )
 }
 
-/// Parse the success envelope `{"content": <value>}`; falls back to the raw
-/// value for non-envelope outputs.
+/// Parse the success envelope `{"content": <value>}` via the canonical
+/// `hkask_types::tool_response::parse_tool_response` seam.
 fn parse_content(out: &str) -> serde_json::Value {
-    let v: serde_json::Value = serde_json::from_str(out).expect("tool output is JSON");
-    v.get("content").cloned().unwrap_or(v)
+    hkask_types::tool_response::parse_tool_response(out).expect("tool output is JSON")
 }
 
 /// Extract the `kind` field from an error envelope, if present.

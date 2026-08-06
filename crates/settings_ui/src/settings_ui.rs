@@ -4412,7 +4412,6 @@ impl SettingsWindow {
             // zed-kask: Drain the visibility queue when navigating off the
             // Skills sub-page. The drain task is a no-op in Phase 2 (logs
             // intent); the actual publish/unpublish pipelines land in Phase 5.
-            // Pinned by `test_drain_fires_on_skills_page_leave` (Phase 7).
             if popped.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH)
                 && !self.skill_visibility_queue.is_empty()
             {

@@ -654,7 +654,8 @@ mod tests {
         );
 
         // `execute_tool` wraps the tool result under a `content` key (the MCP
-        // response envelope), so the assertions unwrap `v["content"]`.
+        // response envelope); assertions unwrap via the canonical
+        // `hkask_types::tool_response::parse_tool_response` seam.
 
         // 1. Exact-name lookup returns the symbol directly.
         let req = QueryRequest {
@@ -663,8 +664,8 @@ mod tests {
             name: Some(target.to_string()),
         };
         let out = server.codegraph_query(Parameters(req)).await;
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        let payload = &v["content"];
+        let payload =
+            hkask_types::tool_response::parse_tool_response(&out).expect("valid envelope");
         assert_eq!(
             payload["name"].as_str(),
             Some(target),
@@ -682,9 +683,10 @@ mod tests {
             name: Some("nonexistent_symbol".to_string()),
         };
         let out = server.codegraph_query(Parameters(req)).await;
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let payload =
+            hkask_types::tool_response::parse_tool_response(&out).expect("valid envelope");
         assert!(
-            v["content"].get("error").is_some(),
+            payload.get("error").is_some(),
             "missing exact name must return an error envelope: {out}"
         );
 
@@ -696,9 +698,10 @@ mod tests {
             name: None,
         };
         let out = server.codegraph_query(Parameters(req)).await;
-        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let payload =
+            hkask_types::tool_response::parse_tool_response(&out).expect("valid envelope");
         assert!(
-            v["content"].is_array(),
+            payload.is_array(),
             "query without a name must return a search-results array: {out}"
         );
     }

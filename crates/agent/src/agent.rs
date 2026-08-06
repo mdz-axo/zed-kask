@@ -1330,7 +1330,11 @@ impl NativeAgent {
                         // are harmless when body injection is off.
                         //
                         // (Original zed checks skill_file.size > MAX_SKILL_FILE_SIZE
-                        // and pushes a SkillLoadError. We skip that check entirely.)
+                        // and pushes a SkillLoadError. The size check is enforced
+                        // at the parse layer — `extract_skill_frontmatter` /
+                        // `load_skill_frontmatter` in `agent_skills` reject
+                        // oversized files before they reach this loop — so this
+                        // call site no longer repeats the check.)
 
                         let buffer = match project
                             .update(cx, |project, cx| {

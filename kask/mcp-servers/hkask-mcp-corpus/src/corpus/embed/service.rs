@@ -2,7 +2,6 @@
 
 use super::hmems::store_passage_h_mems;
 use super::passage::TaggedPassage;
-use super::strategies::ChunkingStrategy;
 use super::types::{
     CURATOR_PERSONA, CorpusConfig, DimensionCentroidResult, EmbedPhase, EmbedProgress, EmbedResult,
     ProgressFn,

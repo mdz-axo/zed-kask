@@ -134,14 +134,10 @@ fn persist_regulation_event(store: &RegulationArchive, operation: &str) {
     store.persist(&record).expect("regulation event persist");
 }
 
-/// Parse a tool's JSON string response, unwrapping the rmcp `content` envelope.
+/// Parse a tool's JSON string response, unwrapping the rmcp `content` envelope
+/// via the canonical `hkask_types::tool_response::parse_tool_response` seam.
 fn parse(out: &str) -> serde_json::Value {
-    let v: serde_json::Value = serde_json::from_str(out).expect("tool output must be valid JSON");
-    if let Some(content) = v.get("content") {
-        content.clone()
-    } else {
-        v
-    }
+    hkask_types::tool_response::parse_tool_response(out).expect("tool output must be valid JSON")
 }
 
 // ── Self-healing ────────────────────────────────────────────────────────────

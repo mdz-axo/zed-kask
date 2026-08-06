@@ -1839,9 +1839,7 @@ mod tests {
         let response = server
             .prediction_markets_status(Parameters(StatusRequest {}))
             .await;
-        let parsed: serde_json::Value = serde_json::from_str(&response).expect("response is JSON");
-        let content = parsed
-            .get("content")
+        let content = hkask_types::tool_response::parse_tool_response(&response)
             .expect("MCP tool responses are {\"content\": ...} envelopes");
         assert_eq!(content["server"], "hkask-mcp-prediction-markets");
         assert_eq!(
