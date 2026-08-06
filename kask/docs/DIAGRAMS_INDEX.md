@@ -32,6 +32,8 @@ The Diataxis documentation set (`docs/diataxis/`) carries ~40 per-crate diagrams
 | DIAG-IC-INVOKE | MCP Runtime Invoke — Simplified Gate Flow (capability-match → per-agent `CallCap` `can_proceed`+`charge_call` → dispatch → span) | `diagrams/flowchart-mcp-runtime-invoke.md` | `crates/hkask-mcp/src/runtime.rs` (`ToolPort::invoke`), `crates/hkask-regulation/src/energy.rs` (`CallCapManager`) | ✅ SURVIVES 2026-08-03 (updated for the gas→call-cap refactor) |
 | DIAG-IC-BRIDGE | Composition root sequence — main.rs → kask_bridge → agent.rs hooks → kask panel | `diataxis/kask_bridge/explanation.md` | `crates/kask_bridge/`, `crates/zed/src/main.rs` | ✅ SURVIVES 2026-08-03 (diataxis) |
 | DIAG-IC-TYPES | hkask-types composition-root sequence — GuardedInferencePort / LanguageModelInferencePort / OnceLock hooks / BridgeManifestExecutor | `diataxis/hkask-types/explanation.md` | `crates/hkask-types/`, `crates/kask_bridge/` | ✅ SURVIVES 2026-08-03 (diataxis) |
+| DIAG-ONT-001 | Ontology Bridge Architecture — single shared crate `hkask-bridge-ontology` owning all vocabulary + domain-selection logic; all MCP servers depend on it; no ontology lives inside a server | `diagrams/architecture-ontology-bridge.md` | `crates/hkask-bridge-ontology/src/hkask_bridge_ontology.rs`, `crates/hkask-bridge-ontology/src/axis.rs` | ✅ VERIFIED 2026-08-05 |
+| DIAG-ONT-002 | Ontology Domain-Selection Flow — `select_ontology_anchor(domain)` → FIBO/ESO/GOLEM/OMC/ML-Schema/CogAT/PKO/Core | `diagrams/architecture-ontology-bridge.md` | `crates/hkask-bridge-ontology/src/axis.rs:select_ontology_anchor` | ✅ VERIFIED 2026-08-05 |
 
 ## 3. Trust & Observability Diagrams
 

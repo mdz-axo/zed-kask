@@ -7,6 +7,14 @@
 - [ ] **C0.4** 1m/3m/6m CMP indices per (family, orientation), per-venue; publish probability + weights + maturity error + reliability floor
 - [ ] **CP-CMP** rates family produces continuous 1m/3m/6m series on both venues; ≥90% of days within tolerance; eligibility classifications human-reviewed
 
+## Ontology bridge refactor (prerequisite for C0.2 FIBO-anchored mapping)
+- [x] **ONT-1** Single shared crate `hkask-bridge-ontology` created 2026-08-05: owns all ontology vocabulary (DC/BIBO/CiTO, PKO, FIBO union, ESO, GOLEM, OMC, ML-Schema) + the dual-axis domain-selection logic (`select_ontology_anchor`). No ontology vocabulary lives inside any MCP server. 31 tests pass.
+- [x] **ONT-2** Condenser migrated 2026-08-05: `OntologyNamespace`/`OntologyAxis`/`OntologyAnchor` moved to the shared crate; `derive_ontology_anchor` replaced by `select_ontology_anchor`; 83 tests pass.
+- [x] **ONT-3** Corpus, media, companies, training, prediction-markets migrated 2026-08-05: all server-local bridge modules deleted; servers depend on the shared crate; server-specific dispatch helpers kept in servers. Workspace `cargo check` + all crate tests pass.
+- [x] **ONT-4** PRINCIPLES.md P5.4/P8.1 updated 2026-08-05: single-crate architecture documented; `prediction-markets` added to the server table.
+- [x] **ONT-5** Documentation 2026-08-05: architecture diagram, API reference, how-to guide, and ontology-anchored-embedding explanation updated.
+- [ ] **ONT-6** Rewire `economic_object.rs` and `base_event.rs` onto the FIBO-anchored classification through the corpus pipeline (delete the substring synonym-closure loop). This is the next step.
+
 ## Phase 1 — Re-point machinery at CMP inputs
 - [ ] **R1** Composition over CMP (T4a re-pointed; provenance = index, not decaying contract)
 - [ ] **R2** Duration matching vs constant maturity (H2 made testable)

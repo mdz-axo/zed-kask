@@ -39,6 +39,25 @@ H-tests run only on CMP-controlled inputs
 
 ## Phase 0 — CMP foundation (the new base layer; see cmp-foundation.md)
 
+### ONT — Ontology bridge refactor (prerequisite for C0.2 FIBO-anchored mapping)
+
+**Status: complete 2026-08-05.** The ontology bridges were refactored into a
+single shared crate `hkask-bridge-ontology` that owns all vocabulary (DC/BIBO/CiTO,
+PKO, FIBO union, ESO, GOLEM, OMC, ML-Schema) and the dual-axis domain-selection
+logic (`select_ontology_anchor`). No ontology vocabulary lives inside any MCP
+server; every server that does tagging depends on the shared crate. The former
+`hkask-bridge-dublincore` crate and all server-local bridge modules were deleted
+(rip-and-replace). The condenser's `OntologyNamespace`/`OntologyAxis`/
+`OntologyAnchor` and `derive_ontology_anchor` substring classifier moved to the
+shared crate; `derive_ontology_anchor` is now a thin wrapper around
+`select_ontology_anchor`. PRINCIPLES.md P5.4/P8.1 updated. Documentation:
+architecture diagram, API reference, how-to guide.
+
+- AC: workspace `cargo check` passes; all crate tests pass (31 bridge + 83
+  condenser + 195 corpus + 10 media + 174 companies + 26 training + 165
+  prediction-markets = 684 tests); clippy clean.
+- Deps: none (was a prerequisite, now complete).
+
 ### C0.1 — Base-event registry — S
 - Define the six initial base-event families (oil, gas, bitcoin, ethereum, inflation,
   interest rates) with their systematic-factor rationale.

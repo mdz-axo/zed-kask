@@ -99,18 +99,26 @@ This produces an embedding vector that encodes both:
 | OntoKG (2024) | Ontology schemas guide LLM extraction → higher quality | Ontology templates guide triple extraction |
 | RAG with ontology-guided KGs (2024) | One-time ontology learning reduces LLM cost | Tag once, all downstream steps benefit |
 
-## Bridge Crates
+## Bridge Crate
 
-Three ontology bridge crates provide canonical predicate constants:
+The single shared `hkask-bridge-ontology` crate provides canonical concept
+constants for all ontologies. No ontology vocabulary lives inside any MCP
+server.
 
-| Crate | Ontology | Constants |
-|-------|----------|-----------|
-| `hkask-mcp-corpus::bridge::golem` | Narrative/literary | 16 predicates (hasCharacter, illustrates, metaphorFor, ...) |
-| `hkask-mcp-corpus::bridge::fibo` | Financial/business | 12 concepts (competitiveAdvantage, returnOnCapital, ...) |
-| `hkask-mcp-corpus::bridge::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
+| Module | Ontology | Constants |
+|-------|----------|------------|
+| `hkask_bridge_ontology::golem` | Narrative/literary | 16 predicates (hasCharacter, illustrates, metaphorFor, ...) |
+| `hkask_bridge_ontology::fibo` | Financial/business | union of the former companies + corpus subsets (competitiveAdvantage, returnOnCapital, ROIC, DCF, ...) |
+| `hkask_bridge_ontology::eso` | Epistemic/scientific | 16 predicates (hasHypothesis, falsifiedBy, implies, ...) |
+| `hkask_bridge_ontology::omc` | Media creation | scene, sequence, creative work, asset, version |
+| `hkask_bridge_ontology::mlschema` | ML training | model, run, data, hyperparameter, evaluation |
+| `hkask_bridge_ontology::dc_bibo` | Dublin Core + BIBO + CiTO | title, creator, subject, identifier, Article, Document, cites, supports |
+| `hkask_bridge_ontology::pko` | Procedural Knowledge | procedure, step, step_execution, verification |
 
-These follow the pattern of `hkask-bridge-ontology`:
-type alias + const strings, no dependencies, no reasoners.[^dublin-core][^fibo-spec]
+The crate also owns the domain-selection logic (`axis` module):
+`select_ontology_anchor(domain)` maps a domain hint to its axis anchoring,
+with the invariant that one axis is always DC or PKO. See the
+[Ontology Bridge API Reference](../reference/ontology-bridge.md) for the full API.
 
 ## Why Not Embed → Tag?
 
