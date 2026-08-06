@@ -462,8 +462,40 @@ pub struct PortfolioStore {
     db_path: PathBuf,
 }
 
+/// Open the portfolio DB at `path` and apply [`SCHEMA_DDL`].
+///
+/// If schema initialization fails on an existing DB created by an older
+/// schema (e.g. a missing `asset_type` column that the index DDL references),
+/// the stale file is deleted and recreated from scratch. No migration path is
+/// maintained — portfolio data is treated as disposable across schema changes.
+fn open_with_schema_recovery(path: &std::path::Path) -> Result<PathBuf, PortfolioError> {
+    let conn =
+        Connection::open(path).map_err(|e| format!("failed to open portfolio database: {e}"))?;
+    if let Err(e) = conn.execute_batch(SCHEMA_DDL) {
+        eprintln!(
+            "portfolio schema initialization failed on existing DB at {} — \
+             discarding stale file and recreating from scratch: {e}",
+            path.display()
+        );
+        drop(conn);
+        std::fs::remove_file(path)
+            .map_err(|e| format!("failed to remove stale portfolio database: {e}"))?;
+        let conn = Connection::open(path)
+            .map_err(|e| format!("failed to reopen portfolio database: {e}"))?;
+        conn.execute_batch(SCHEMA_DDL)
+            .map_err(|e| format!("failed to initialize portfolio schema: {e}"))?;
+    }
+    Ok(path.to_path_buf())
+}
+
 impl PortfolioStore {
     /// Creates storage scoped to the authenticated server owner.
+    ///
+    /// If the existing database was created by an older schema that the current
+    /// DDL cannot reconcile (e.g. a missing `asset_type` column on `transactions`
+    /// that the index DDL references), the stale file is deleted and recreated
+    /// from scratch. No backward-compatibility/migration path is maintained —
+    /// portfolio data is treated as disposable across schema changes.
     pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("hkask");
@@ -472,11 +504,8 @@ impl PortfolioStore {
         std::fs::create_dir_all(&path)
             .map_err(|e| format!("failed to create portfolio directory: {e}"))?;
         path.push("master.db");
-        let conn = Connection::open(&path)
-            .map_err(|e| format!("failed to open portfolio database: {e}"))?;
-        conn.execute_batch(SCHEMA_DDL)
-            .map_err(|e| format!("failed to initialize portfolio schema: {e}"))?;
-        Ok(Self { db_path: path })
+        let db_path = open_with_schema_recovery(&path)?;
+        Ok(Self { db_path })
     }
 
     /// Test constructor: create a store backed by a DB at `base_dir/master.db`.
@@ -485,8 +514,7 @@ impl PortfolioStore {
     pub fn with_dir(base_dir: PathBuf) -> Self {
         std::fs::create_dir_all(&base_dir).expect("failed to create test portfolio directory");
         let db_path = base_dir.join("master.db");
-        let conn = Connection::open(&db_path).expect("failed to open test portfolio database");
-        conn.execute_batch(SCHEMA_DDL)
+        let db_path = open_with_schema_recovery(&db_path)
             .expect("failed to initialize test portfolio schema");
         Self { db_path }
     }
@@ -1558,7 +1586,7 @@ pub fn export_csv(store: &PortfolioStore, name: &str) -> Result<String, Portfoli
 
 pub mod server;
 
-pub use server::run;
+pub use server::{map_portfolio_error, run};
 
 #[cfg(test)]
 mod tests;

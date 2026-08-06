@@ -10,8 +10,6 @@ path = "src/hkask_conversation_injector.rs"
 
 [dependencies]
 gpui.workspace = true
-log.workspace = true
-tracing.workspace = true
 
 [lints]
 workspace = true

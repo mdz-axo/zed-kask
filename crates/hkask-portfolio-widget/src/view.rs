@@ -381,7 +381,7 @@ impl PortfolioWidget {
                             .color(Color::Muted),
                     )
                     .child(
-                        Label::new(format!("{asset_label}"))
+                        Label::new(asset_label)
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
@@ -680,19 +680,19 @@ impl PortfolioWidget {
                 "ledger_read",
                 serde_json::json!({
                     "portfolio": self.body.portfolio.clone().unwrap_or_default(),
-                    "symbol": symbol.clone(),
+                    "symbol": symbol,
                 }),
             ),
             Some("hkask-mcp-prediction-markets") => (
                 "hkask-mcp-prediction-markets",
                 "market_lookup",
-                serde_json::json!({ "query": symbol.clone(), "limit": 5 }),
+                serde_json::json!({ "query": symbol, "limit": 5 }),
             ),
             // Default (companies or no provenance): research_search.
             _ => (
                 "hkask-mcp-companies",
                 "research_search",
-                serde_json::json!({ "query": symbol.clone() }),
+                serde_json::json!({ "query": symbol }),
             ),
         };
         let task = invoker.invoke_tool(server, tool, args);

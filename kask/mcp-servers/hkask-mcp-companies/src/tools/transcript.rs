@@ -55,7 +55,7 @@ impl CompaniesServer {
                     }
 
                     serde_json::to_value(&result).map_err(|error| {
-                        McpToolError::internal(format!(
+                        McpToolError::internal(format!( // rr0044-ok: serialize-own-struct
                             "failed to serialize transcript result: {error}"
                         ))
                     })
@@ -84,7 +84,7 @@ impl CompaniesServer {
                     .await?;
 
                     serde_json::to_value(&result).map_err(|error| {
-                        McpToolError::internal(format!(
+                        McpToolError::internal(format!( // rr0044-ok: serialize-own-struct
                             "failed to serialize corpus transcript result: {error}"
                         ))
                     })
@@ -116,10 +116,10 @@ fn resolve_window_end(
             let month = now.month();
             let quarter = ((month - 1) / 3) + 1;
             let current = transcript::YearQuarter::new(year, quarter as u8)
-                .ok_or_else(|| McpToolError::internal("failed to infer current quarter"))?;
+                .ok_or_else(|| McpToolError::internal("failed to infer current quarter"))?; // rr0044-ok: calendar-invariant
             current
                 .previous()
-                .ok_or_else(|| McpToolError::internal("failed to infer previous quarter"))
+                .ok_or_else(|| McpToolError::internal("failed to infer previous quarter")) // rr0044-ok: calendar-invariant
         }
     }
 }

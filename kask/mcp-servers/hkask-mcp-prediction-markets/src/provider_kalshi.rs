@@ -125,7 +125,7 @@ async fn get_json<T: for<'de> Deserialize<'de>>(
         return Err(classify_http_error("Kalshi", status, &body));
     }
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("Kalshi parse failed: {e}")))
+        .map_err(|e| McpToolError::unavailable(format!("Kalshi parse failed: {e}")))
 }
 
 /// Fetch markets by status, optionally scoped to a series.

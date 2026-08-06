@@ -14,7 +14,6 @@ name = "hkask-mcp-companies"
 path = "src/main.rs"
 
 [dependencies]
-hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-mcp-server.workspace = true
 hkask-mcp-portfolio.workspace = true
 hkask-types.workspace = true
@@ -35,7 +34,6 @@ chrono.workspace = true
 base64.workspace = true
 regex.workspace = true
 dirs.workspace = true
-hkask-ledger.workspace = true
 hkask-forecast.workspace = true
 thiserror.workspace = true
 

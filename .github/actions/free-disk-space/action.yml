@@ -1,0 +1,26 @@
+name: "Free disk space"
+description: >-
+  Clears stale build artifacts that accumulate on self-hosted runners between
+  jobs. The target/ directory is gitignored so actions/checkout does not remove
+  it — each job's build (different cache key, different profile) leaves behind
+  10+ GB that persists until the disk fills. The runner's own _diag logs are
+  the first to fail with "No space left on device" when the disk is exhausted.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Free disk space
+      shell: bash
+      run: |
+        # Remove stale target/ from previous jobs/runs (gitignored, persists
+        # across runs on self-hosted runners because actions/checkout only
+        # manages tracked files). The rust-cache step that follows restores the
+        # correct cached target/ for this job's key.
+        rm -rf target/ || true
+        # Prune runner diagnostic logs older than 1 day — these are the first
+        # files the runner fails to write when the disk is full.
+        find "$HOME/actions-runner/_diag" -name '*.log' -mtime +1 -delete 2>/dev/null || true
+        # Prune apt cache (frees ~500 MB on Ubuntu runners).
+        apt-get clean 2>/dev/null || true
+        echo "--- disk usage after cleanup ---"
+        df -h / | tail -1

@@ -174,7 +174,7 @@ pub async fn fetch_markets(
         return Err(classify_http_error("Polymarket Gamma", status, &body));
     }
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("Gamma markets parse failed: {e}")))
+        .map_err(|e| McpToolError::unavailable(format!("Gamma markets parse failed: {e}")))
 }
 
 /// One point on a CLOB price-history series.
@@ -212,7 +212,7 @@ pub async fn fetch_prices_history(
         history: Vec<ClobPricePoint>,
     }
     let parsed: History = serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("CLOB prices-history parse failed: {e}")))?;
+        .map_err(|e| McpToolError::unavailable(format!("CLOB prices-history parse failed: {e}")))?;
     Ok(parsed.history)
 }
 
@@ -241,5 +241,5 @@ pub async fn fetch_events(
         return Err(classify_http_error("Polymarket Gamma", status, &body));
     }
     serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("Gamma events parse failed: {e}")))
+        .map_err(|e| McpToolError::unavailable(format!("Gamma events parse failed: {e}")))
 }

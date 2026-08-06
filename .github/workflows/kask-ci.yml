@@ -36,10 +36,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux dependencies
         run: ./script/linux
       - name: Clippy
@@ -49,10 +52,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: kask-test-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux dependencies
         run: ./script/linux
       - name: Install nextest
@@ -86,10 +91,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: kask-build-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux dependencies
         run: ./script/linux
       - name: Build all binaries
@@ -134,6 +141,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
       # The gate runs `cargo test -p <crate> --lib` for cargo-test-kind
       # entries, so it needs an explicit toolchain + cache (without these it
       # only worked via rustup auto-install of rust-toolchain.toml — slow and
@@ -142,6 +150,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: kask-kali-regressions-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux dependencies
         run: ./script/linux
       - name: "Enforce security regression library (status: enforced entries)"
@@ -168,10 +177,12 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: kask-deps-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-machete
         uses: taiki-e/install-action@v2
         with:

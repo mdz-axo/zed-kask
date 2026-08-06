@@ -24,10 +24,10 @@ hkask_mcp_server::mcp_server!(
 
 /// Classify PortfolioError for MCP dispatch: user errors → invalid_argument,
 /// system errors → internal.
-fn map_portfolio_error(e: PortfolioError) -> McpToolError {
+pub fn map_portfolio_error(e: PortfolioError) -> McpToolError {
     match &e {
         PortfolioError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
-        _ => McpToolError::internal(e.to_string()),
+        _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
     }
 }
 
@@ -247,7 +247,7 @@ impl PortfolioServer {
             })
             .await?;
             serde_json::to_value(snapshot)
-                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))
+                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}"))) // rr0044-ok: serialize-own-struct
         })
         .await
     }

@@ -877,3 +877,66 @@ fn _datelike_used(_: &chrono::NaiveDate) -> i32 {
         .unwrap()
         .num_days_from_ce()
 }
+
+#[test]
+fn new_discards_stale_db_when_schema_init_fails() {
+    // Simulate a legacy DB created by an older schema: the `transactions` table
+    // exists but lacks the `asset_type` column the current DDL's index references.
+    // `PortfolioStore::new` must detect the schema-init failure, delete the stale
+    // file, and recreate from scratch rather than leaving the server to crash.
+    let dir = tempfile::tempdir().unwrap();
+    let owner_dir = dir.path().join(sanitize_name(
+        &WebID::from_persona(b"anonymous").to_string(),
+    ));
+    std::fs::create_dir_all(&owner_dir).unwrap();
+    let db_path = owner_dir.join("master.db");
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE portfolios (name TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+             CREATE TABLE transactions (
+                 id TEXT PRIMARY KEY,
+                 portfolio_name TEXT NOT NULL,
+                 date TEXT NOT NULL,
+                 type TEXT NOT NULL,
+                 symbol TEXT,
+                 quantity REAL,
+                 price REAL,
+                 commission REAL,
+                 amount REAL,
+                 weight REAL,
+                 currency TEXT,
+                 notes TEXT,
+                 created_at TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+        // Stale data that should NOT survive the schema reset.
+        conn.execute(
+            "INSERT INTO portfolios (name, created_at) VALUES ('legacy', '2020-01-01')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let store = PortfolioStore::with_dir_for_owner(
+        dir.path().to_path_buf(),
+        WebID::from_persona(b"anonymous"),
+    );
+
+    // The stale DB was replaced; the legacy portfolio is gone, and the current
+    // schema (with asset_type) is in place.
+    assert_eq!(store.list().unwrap(), Vec::<String>::new());
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let has_asset_type: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='asset_type'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        has_asset_type, 1,
+        "asset_type column should exist after reset"
+    );
+}

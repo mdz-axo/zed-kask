@@ -9132,8 +9132,6 @@ name = "hkask-conversation-injector"
 version = "0.33.0"
 dependencies = [
  "gpui",
- "log",
- "tracing",
 ]
 
 [[package]]
@@ -9321,10 +9319,8 @@ dependencies = [
  "dirs",
  "hkask-bridge-ontology",
  "hkask-forecast",
- "hkask-ledger",
  "hkask-mcp-portfolio",
  "hkask-mcp-server",
- "hkask-storage",
  "hkask-test-harness",
  "hkask-types",
  "proptest",
@@ -9487,8 +9483,6 @@ dependencies = [
 name = "hkask-mcp-portfolio"
 version = "0.33.0"
 dependencies = [
- "anyhow",
- "base64 0.22.1",
  "chrono",
  "dirs",
  "hkask-mcp-server",
@@ -9503,7 +9497,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
- "tracing",
  "uuid",
 ]
 

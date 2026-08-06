@@ -78,14 +78,14 @@ jobs:
         run: |
           set -euo pipefail
           # Materialize --package args from mcp-servers.txt (single source of truth).
-          packages="--package zed"
+          packages=(--package zed)
           while IFS= read -r server; do
             case "$server" in
               ''|\#*) continue ;;
             esac
-            packages="$packages --package $server"
+            packages+=(--package "$server")
           done < kask/scripts/build/mcp-servers.txt
-          cargo build --release --target ${{ matrix.target }} $packages
+          cargo build --release --target "${{ matrix.target }}" "${packages[@]}"
 
       - name: Collect and archive binaries
         shell: bash
@@ -103,7 +103,7 @@ jobs:
           strip release-artifacts/* 2>/dev/null || true
           # Create the archive from inside release-artifacts so paths are flat
           cd release-artifacts
-          ${{ matrix.archive_cmd }} "../${{ matrix.archive }}" *
+          ${{ matrix.archive_cmd }} "../${{ matrix.archive }}" ./*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -149,7 +149,7 @@ jobs:
           cp kask/scripts/build/mcp-servers.txt release-artifacts/
           # Generate checksums over every asset (archives + scripts).
           cd release-artifacts
-          sha256sum * > SHA256SUMS
+          sha256sum ./* > SHA256SUMS
           ls -lR .
 
       - name: Determine tag
