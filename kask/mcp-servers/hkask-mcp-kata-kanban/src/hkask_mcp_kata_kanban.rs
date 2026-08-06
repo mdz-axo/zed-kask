@@ -136,7 +136,7 @@ impl KanbanServer {
                                 status: c.status.to_string(),
                             })
                             .collect(),
-                        pko: kanban_type_to_pko("Board").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -164,7 +164,7 @@ impl KanbanServer {
                                 board_id: b.id.to_string(),
                                 name: b.name,
                                 column_count: b.columns.len(),
-                                pko: kanban_type_to_pko("Board").map(|s| s.to_string()),
+                                ontology: kanban_type_to_pko("Board").map(|s| s.to_string()),
                             })
                             .collect(),
                     })
@@ -222,7 +222,7 @@ impl KanbanServer {
                         board_id: task.board_id.to_string(),
                         title: task.title,
                         status: task.status.to_string(),
-                        pko: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -274,7 +274,7 @@ impl KanbanServer {
                                 criteria_count: t.criteria.len(),
                                 gas_remaining: t.gas_remaining,
                                 rjoule_remaining: t.rjoule_remaining,
-                                pko: kanban_type_to_pko("Task").map(|s| s.to_string()),
+                                ontology: kanban_type_to_pko("Task").map(|s| s.to_string()),
                             })
                             .collect(),
                     })
@@ -331,7 +331,7 @@ impl KanbanServer {
                         task_id: task.id.to_string(),
                         previous_status,
                         new_status: task.status.to_string(),
-                        pko: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_move").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -363,7 +363,7 @@ impl KanbanServer {
                     Ok(task) => Ok(serde_json::to_value(TaskAssignResponse {
                         task_id: task.id.to_string(),
                         assignee: task.assignee.map(|a| a.to_string()).unwrap_or_default(),
-                        pko: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_assign").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -402,7 +402,7 @@ impl KanbanServer {
                         passed: verification.passed,
                         reasoning: verification.reasoning,
                         new_status: task.status.to_string(),
-                        pko: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_verify").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -439,7 +439,7 @@ impl KanbanServer {
                     Ok(task) => Ok(serde_json::to_value(TaskAddGasResponse {
                         task_id: task.id.to_string(),
                         new_gas_remaining: task.gas_remaining.unwrap_or(0),
-                        pko: kanban_type_to_pko("kanban_task_add_gas").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_add_gas").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -474,7 +474,7 @@ impl KanbanServer {
                     Ok(task) => Ok(serde_json::to_value(TaskAddRjoulesResponse {
                         task_id: task.id.to_string(),
                         new_rjoule_remaining: task.rjoule_remaining.unwrap_or(0),
-                        pko: kanban_type_to_pko("kanban_task_add_rjoules").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_add_rjoules").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -516,7 +516,7 @@ impl KanbanServer {
                         author: comment.author.to_string(),
                         body: comment.body,
                         created_at: comment.created_at.to_rfc3339(),
-                        pko: kanban_type_to_pko("Comment").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -560,7 +560,7 @@ impl KanbanServer {
                                 author: c.author.to_string(),
                                 body: c.body,
                                 created_at: c.created_at.to_rfc3339(),
-                                pko: kanban_type_to_pko("Comment").map(|s| s.to_string()),
+                                ontology: kanban_type_to_pko("Comment").map(|s| s.to_string()),
                             })
                             .collect();
                         Ok(serde_json::to_value(TaskCommentsSinceResponse {
@@ -604,7 +604,7 @@ impl KanbanServer {
                     Ok(task) => Ok(serde_json::to_value(TaskAddDeliverableResponse {
                         task_id: task.id.to_string(),
                         deliverable_count: task.deliverables.len(),
-                        pko: kanban_type_to_pko("kanban_task_add_deliverable")
+                        ontology: kanban_type_to_pko("kanban_task_add_deliverable")
                             .map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
@@ -664,7 +664,7 @@ impl KanbanServer {
                     new_status: task.status.to_string(),
                     gas_remaining: task.gas_remaining,
                     rjoule_remaining: task.rjoule_remaining,
-                    pko: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
+                    ontology: kanban_type_to_pko("kanban_task_reopen").map(|s| s.to_string()),
                 })
                 .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },
@@ -696,7 +696,7 @@ impl KanbanServer {
                     Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
                         task_id: tid.to_string(),
                         prompt,
-                        pko: kanban_type_to_pko("kanban_task_kata_coaching").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_kata_coaching").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -728,7 +728,7 @@ impl KanbanServer {
                     Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
                         task_id: tid.to_string(),
                         prompt,
-                        pko: kanban_type_to_pko("kanban_task_kata_improvement")
+                        ontology: kanban_type_to_pko("kanban_task_kata_improvement")
                             .map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
@@ -764,7 +764,7 @@ impl KanbanServer {
                     Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
                         task_id: tid.to_string(),
                         prompt,
-                        pko: kanban_type_to_pko("kanban_task_kata_practice").map(|s| s.to_string()),
+                        ontology: kanban_type_to_pko("kanban_task_kata_practice").map(|s| s.to_string()),
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
@@ -931,7 +931,7 @@ impl KanbanServer {
                         "Spawned agent '{}' for task '{}' ({} credits, {} tokens). Response recorded.",
                         result.agent_id, task.title, result.cost, result.tokens_used
                     ),
-                    pko: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
+                    ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
                 })
                 .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },

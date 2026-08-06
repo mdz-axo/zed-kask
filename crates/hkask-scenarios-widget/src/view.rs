@@ -619,7 +619,7 @@ impl ScenariosWidget {
         // correlate the revision to the ontology-anchored artifact.
         let anchor_clause = self
             .body
-            .ontology_anchor
+            .ontology
             .as_deref()
             .filter(|a| !a.is_empty())
             .map(|a| format!(" [{a}]"))
@@ -1276,7 +1276,7 @@ mod tests {
                 args: serde_json::json!({}),
                 span_id: None,
             },
-            ontology_anchor: None,
+            ontology: None,
         }
     }
 
@@ -1368,25 +1368,25 @@ mod tests {
     }
 
     #[test]
-    fn block_body_parses_ontology_anchor_field() {
-        // The server emits `"ontology_anchor": "pko"` or `"dublin-core"`.
+    fn block_body_parses_ontology_field() {
+        // The server emits `"ontology": "pko:Procedure"` or `"dcterms:Dataset"`.
         // The widget must parse it (additive `#[serde(default)]`).
-        let json = r##"{"viz":"scenarios","ontology_anchor":"pko"}"##;
+        let json = r##"{"viz":"scenarios","ontology":"pko:Procedure"}"##;
         let body = parse_scenarios_body(json).expect("parses");
-        assert_eq!(body.ontology_anchor.as_deref(), Some("pko"));
+        assert_eq!(body.ontology.as_deref(), Some("pko:Procedure"));
     }
 
     #[test]
-    fn block_body_parses_without_ontology_anchor_field() {
+    fn block_body_parses_without_ontology_field() {
         // Older blocks without the field still parse (defaults to None).
         let json = r##"{"viz":"scenarios"}"##;
         let body = parse_scenarios_body(json).expect("parses");
-        assert!(body.ontology_anchor.is_none());
+        assert!(body.ontology.is_none());
     }
 
     #[gpui::test]
-    async fn disagree_body_includes_ontology_anchor_when_present(cx: &mut gpui::TestAppContext) {
-        // When the block carries an ontology_anchor, the compose-back body
+    async fn disagree_body_includes_ontology_when_present(cx: &mut gpui::TestAppContext) {
+        // When the block carries an ontology tag, the compose-back body
         // references it so the agent can correlate the revision.
         let _guard = GLOBAL_TEST_LOCK
             .lock()
@@ -1394,12 +1394,12 @@ mod tests {
         let _restore = ConversationInjectorGuard;
 
         let mut body = body_with_subject_and_provenance();
-        body.ontology_anchor = Some("pko".to_string());
+        body.ontology = Some("pko:Procedure".to_string());
         let widget = cx.update(|cx| cx.new(|cx| ScenariosWidget::new(body, cx)));
         let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
         assert!(
-            body.contains("[pko]"),
-            "compose-back body must reference the ontology anchor: {body}"
+            body.contains("[pko:Procedure]"),
+            "compose-back body must reference the ontology concept: {body}"
         );
     }
 }

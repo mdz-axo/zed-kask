@@ -358,13 +358,16 @@ hkask_mcp_server::mcp_server!(
 );
 
 impl ScenariosServer {
-    /// Map a tool name to its ontology anchor tier.
+    /// Map a tool name to its ontology concept URI. The concept URI is used
+    /// both as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`)
+    /// and as the `"ontology"` field in the tool output JSON.
+    ///
     /// PKO = Procedural Knowledge Ontology (process/experience — agent's actions)
     /// Dublin Core = factual/computed outputs (probabilities, scores, trees)
     fn ontology_anchor(tool: &str) -> &'static str {
         match tool {
-            "scenario_frame" | "scenario_brainstorm" | "scenario_build" => "pko",
-            _ => "dublin-core",
+            "scenario_frame" | "scenario_brainstorm" | "scenario_build" => "pko:Procedure",
+            _ => "dcterms:Dataset",
         }
     }
 
@@ -534,7 +537,7 @@ impl ScenariosServer {
                     "span_id": provenance_span_id,
                     "version": SERVER_VERSION
                 },
-                "ontology_anchor": "dublin-core"
+                "ontology": "dcterms:Dataset"
             });
 
             self.record_experience("scenario_status", &format!("forecasts={}, resolved={}", total, resolved_count), "success", output.clone());
@@ -655,7 +658,7 @@ impl ScenariosServer {
                     "pipeline_steps": ["triage", "quantify", "sensitivity", "calibrate", "synthesize", "assess"],
                     "delegates_to": ["triage_question", "build_event_tree", "sensitivity_ranking", "calibrate_from_fermi", "outside_view_adjustment", "synthesize_perspectives", "assess_project"]
                 },
-                "ontology_anchor": "dublin-core"
+                "ontology": "dcterms:Dataset"
             });
 
             self.record_experience("scenario_full", &format!("subject={}", req.subject), "success", output.clone());
@@ -707,7 +710,7 @@ impl ScenariosServer {
                     "ontology_identifier": record.ontology.state.identifier,
                 },
                 "bridge_note": "The prediction-markets server supplies annotated market-implied probabilities; this bridge anchors a trackable ScenarioEvent on them. base_rate is None when the reliability/match gates refuse the anchor — do not substitute the raw price.",
-                "ontology_anchor": "dublin-core"
+                "ontology": "dcterms:Dataset"
             });
 
             Ok(output)
@@ -788,7 +791,7 @@ impl ScenariosServer {
                     "dependency_edge_count": specs.len(),
                 },
                 "bridge_note": "Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities. base_rate is None on records refused by the per-market gates.",
-                "ontology_anchor": "dublin-core"
+                "ontology": "dcterms:Dataset"
             });
 
             Ok(output)
@@ -849,9 +852,9 @@ impl ScenariosServer {
                     "server": "hkask-mcp-scenarios",
                     "version": SERVER_VERSION,
                     "source": "hkask-mcp-companies calibrate_forecast",
-                    "ontology_anchor": "fibo-to-dublin-core"
+                    "ontology": "fibo-fbc-fct-ra:ForecastIdentifier"
                 },
-                "ontology_anchor": "dublin-core"
+                "ontology": "dcterms:Dataset"
             });
 
             self.record_experience(
@@ -928,7 +931,7 @@ impl ScenariosServer {
                     "1. Feed the aggregated estimate into scenario_synthesize for dragonfly-eye integration. 2. Use scenario_quantify for downstream computation. 3. Track via scenario_score."
                 },
                 "methodology": {
-                    "ontology_anchor": "dublin-core",
+                    "ontology": "dcterms:Dataset",
                     "framework": "Cross-validation between LLM reasoning (superforecasting skill) and computational verification (scenarios server)",
                     "threshold_rationale": "0.15 divergence threshold based on Tetlock's incremental belief updating (Commandment 4): superforecasters typically move probabilities in 0.05-0.10 increments. A 0.15 divergence suggests fundamentally different assumptions, not just calibration noise.",
                     "reference": "Tetlock & Gardner, Superforecasting (2015), Ch. 5-6"
@@ -983,7 +986,7 @@ impl ScenariosServer {
             // as "pko" (it's a procedural coaching protocol).
             if let Some(obj) = output.as_object_mut() {
                 obj.insert(
-                    "ontology_anchor".to_string(),
+                    "ontology".to_string(),
                     serde_json::json!(Self::ontology_anchor("scenario_frame")),
                 );
             }
@@ -1136,7 +1139,7 @@ impl ScenariosServer {
                     "step_8": "Use scenario_calibrate for Fermi decomposition per event, scenario_synthesize for multi-analyst aggregation, and scenario_assess for project evaluation."
                 },
                 "methodology": {
-                    "ontology_anchor": "dublin-core",
+                    "ontology": "dcterms:Dataset",
                     "framework": "Cognitive Process Model for Scenario Construction",
                     "divergent_phase": "High-temperature ideation from multiple personas (Schwartz: imagination + Chermack: stakeholder diversity)",
                     "grounding_phase": "Evidence anchoring and base rate calibration (Tetlock Commandments 2-3: Fermi-ize + outside view)",
@@ -1253,7 +1256,7 @@ impl ScenariosServer {
                     "possible": {"range": "0-32%", "description": "Could happen but unlikely"}
                 },
                 "methodology": {
-                    "ontology_anchor": Self::ontology_anchor("scenario_build"),
+                    "ontology": Self::ontology_anchor("scenario_build"),
                     "framework": "MAIA event-based scenario planning (Tetlock Superforecasting + Schwartz imagination)",
                     "research_pipeline": "1. Web search (brave/firecrawl/tavily) → 2. scenario_build (this tool) → 3. scenario_quantify (resolve tree) → 4. scenario_calibrate (Fermi probabilities)",
                     "tetlock_commandments": [
@@ -1270,7 +1273,7 @@ impl ScenariosServer {
                     ],
                     "reference": "Tetlock & Gardner, Superforecasting (2015); Schwartz, The Art of the Long View (1991)"
                 },
-                "ontology_anchor": Self::ontology_anchor("scenario_build")
+                "ontology": Self::ontology_anchor("scenario_build")
             });
 
             self.record_experience(
@@ -1388,7 +1391,7 @@ impl ScenariosServer {
                     "step_5": "Use scenario_score to Brier-score outcomes and close the calibration loop"
                 },
                 "methodology": {
-                    "ontology_anchor": "dublin-core",
+                    "ontology": "dcterms:Dataset",
                     "framework": "MAIA event-based scenario planning — research → events → tree → calibrate → track",
                     "reference": "Tetlock & Gardner, Superforecasting (2015) — Commandments 1-4"
                 }
@@ -1520,7 +1523,7 @@ impl ScenariosServer {
                     "changed_nodes": result.journal.len(),
                 },
                 "framework": "Tree-level Bayesian propagation: the named event's prior is revised; every descendant marginal is recomputed via CPT marginalization under parent independence; the journal records each changed node (one tâtonnement round, Bhattacharya Prop. 6, arXiv:2211.03244).",
-                "ontology_anchor": "dublin-core"
+                "ontology": "dcterms:Dataset"
             });
 
             Ok(output)
@@ -2085,7 +2088,7 @@ impl ScenariosServer {
                     "interpretation": c.interpretation,
                 })),
                 "methodology": {
-                    "ontology_anchor": "dublin-core",
+                    "ontology": "dcterms:Dataset",
                     "framework": "Chermack's Performance-Based Scenario System (2011)",
                     "five_phases": [
                         "Phase 1: Project Preparation — scope, stakeholders, resources (Chermack, Ch. 5)",

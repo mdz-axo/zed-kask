@@ -60,6 +60,12 @@ pub struct PortfolioBlockBody {
     /// the widget falls back to its read-only display.
     #[serde(default)]
     pub provenance: BlockProvenance,
+    /// Ontology concept URI (e.g. `fibo:Portfolio`, `fibo:Corporation`).
+    /// Emitted by the companies server as the top-level `"ontology"` key.
+    /// Drives the "Explain" affordance's tool selection (the "I" pattern).
+    /// `None` on older blocks → the widget falls back to `research_search`.
+    #[serde(default)]
+    pub ontology: Option<String>,
 }
 
 /// Returns summary mirroring the `portfolio_returns` tool response. All numeric

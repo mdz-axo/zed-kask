@@ -137,36 +137,45 @@ pub struct MarketCmpIndexListRequest {
 /// with maturity-matched weights) for a registered base event and persist
 /// each (bucket, orientation) index as a transaction-ledger portfolio.
 ///
-/// This is the contract-portfolio CMP index (from `cmp_portfolio`), distinct
-/// from the curve-based `market_cmp_index_store` (from `cmp`). It requires
-/// operator-supplied economic context (reference level, volatility, predicted
-/// level, direction) because strike extraction from market titles is not yet
-/// automated.
+/// All economic-context fields are optional — when omitted, the tool uses
+/// the curated default for the base-event family (see
+/// `BaseEvent::default_economic_context`). This follows the zed-kask design
+/// pattern: never present a blank field — always provide a reasonable default
+/// the user can accept or override. Use `market_cmp_context_suggest` for an
+/// AI-assisted proposal with reasoning.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarketCmpPortfolioStoreRequest {
     /// Base-event series ticker (must be registered).
     pub series: String,
     /// The current level of the underlying factor (e.g. 5.375 for Fed funds
-    /// at 5.25-5.50%, 80.0 for WTI crude). Required — orientation
-    /// classification needs a reference to measure the move size against.
-    pub reference: f64,
+    /// at 5.25-5.50%, 80.0 for WTI crude). When omitted, uses the curated
+    /// default for the family.
+    pub reference: Option<f64>,
     /// The trailing volatility of the underlying in the family's type units
-    /// (absolute: bp/pp/$; relative: as a fraction). Required — the
-    /// materiality level is `k × volatility × scaling(target)` unless an
-    /// override is set. None disables materiality-gated indices (only
-    /// override-level families produce indices).
+    /// (absolute: bp/pp/$; relative: as a fraction). When omitted, uses the
+    /// curated default. None disables materiality-gated indices.
     pub volatility: Option<f64>,
     /// The predicted level (strike) the contracts are structured around.
-    /// Required — orientation classification compares this to `reference`.
-    /// For rate-decision families, this is the strike (e.g. 5.50). For
-    /// directional families without a strike, supply the reference and the
-    /// orientation will classify as Stable.
-    pub predicted_level: f64,
+    /// When omitted, defaults to the reference → Stable orientation.
+    pub predicted_level: Option<f64>,
     /// Whether the contract predicts the factor ends above its strike
-    /// (true) or below (false). Determines Increase vs Decline orientation.
+    /// (true) or below (false). When omitted, defaults to false.
+    #[serde(default)]
     pub direction_up: bool,
     /// Observation date (YYYY-MM-DD). Defaults to today's UTC date.
     pub date: Option<String>,
+}
+
+/// Request for market_cmp_context_suggest: propose a curated economic
+/// context (reference, volatility, predicted level, direction) for a
+/// base-event family, with reasoning. Read-only aid — no ledger debit, no
+/// storage. The operator accepts, overrides, or rejects the proposal before
+/// calling `market_cmp_portfolio_store`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MarketCmpContextSuggestRequest {
+    /// Base-event series ticker (must be registered). The tool classifies the
+    /// family from the series and returns the curated default context.
+    pub series: String,
 }
 
 /// Request for market_cmp: constant-maturity prediction for a registered
@@ -1330,6 +1339,35 @@ impl PredictionMarketsServer {
                 let observation_date =
                     date.clone().unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
+                // Resolve economic context: use operator-supplied values when
+                // present, otherwise fall back to the curated default for the
+                // base-event family. This follows the zed-kask pattern — never
+                // a blank field, always a reasonable default.
+                //
+                // We classify the base event from the first fetched market's
+                // text to pick the right default family. If classification
+                // fails (no signature match), we use a generic stable default.
+                let default_ctx = markets
+                    .first()
+                    .and_then(|m| {
+                        base_event::classify_base_event_text(
+                            &m.title, &m.subtitle, &series, "",
+                        )
+                    })
+                    .map(|be| be.default_economic_context())
+                    .unwrap_or_else(|| base_event::EconomicContext {
+                        reference: 0.0,
+                        volatility: None,
+                        predicted_level: 0.0,
+                        direction_up: false,
+                        rationale: "no base-event match — generic stable default".into(),
+                    });
+                let reference = reference.unwrap_or(default_ctx.reference);
+                let volatility = volatility.or(default_ctx.volatility);
+                let predicted_level = predicted_level.unwrap_or(default_ctx.predicted_level);
+                let direction_up = direction_up || default_ctx.direction_up;
+                let context_rationale = default_ctx.rationale.clone();
+
                 // Build OrientedConstituents from fetched markets + operator
                 // economic context. Each market becomes a candidate
                 // constituent; eligibility filters by base event, materiality,
@@ -1473,6 +1511,13 @@ impl PredictionMarketsServer {
                     "status": "stored",
                     "series": response_series,
                     "observation_date": response_date,
+                    "economic_context": {
+                        "reference": reference,
+                        "volatility": volatility,
+                        "predicted_level": predicted_level,
+                        "direction_up": direction_up,
+                        "rationale": context_rationale,
+                    },
                     "indices_stored": stored_indices.len(),
                     "withheld_buckets": withheld,
                     "indices": stored_indices.iter().map(|(name, holdings)| serde_json::json!({
@@ -1483,6 +1528,78 @@ impl PredictionMarketsServer {
                 .map_err(|e| {
                     hkask_mcp_server::server::McpToolError::internal(format!(
                         "store response serialization failed: {e}"
+                    ))
+                })
+            },
+        )
+        .await
+    }
+
+    /// Propose a curated economic context for a base-event family, with
+    /// reasoning. Read-only aid — the operator accepts, overrides, or rejects
+    /// the proposal before calling `market_cmp_portfolio_store`. This follows
+    /// the zed-kask design pattern: never present a blank field — always
+    /// provide a reasonable default with reasoning the user can accept or
+    /// override.
+    #[tool(
+        description = "Propose a curated economic context (reference level, volatility, predicted level, direction) for a base-event family, with reasoning. Read-only aid for the market_cmp_portfolio_store tool — the operator accepts, overrides, or rejects the proposal."
+    )]
+    pub async fn market_cmp_context_suggest(
+        &self,
+        Parameters(MarketCmpContextSuggestRequest { series }): Parameters<
+            MarketCmpContextSuggestRequest,
+        >,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_cmp_context_suggest",
+            Some(Self::ontology_anchor("market_cmp_context_suggest")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_cmp_context_suggest".to_string());
+                if !self.base_events.iter().any(|(_, s)| s == &series) {
+                    return Err(hkask_mcp_server::server::McpToolError::invalid_argument(
+                        format!(
+                            "series '{}' is not a registered base event (HKASK_PREDICTION_MARKETS_BASE_EVENTS)",
+                            series
+                        ),
+                    ));
+                }
+                // Classify the family from the series ticker to pick the
+                // curated default. If classification fails, return a generic
+                // stable default with an explanation.
+                let base_event = base_event::classify_base_event_text(&series, "", &series, "");
+                let (context, family) = match base_event {
+                    Some(be) => (be.default_economic_context(), be.factor().to_string()),
+                    None => (base_event::EconomicContext {
+                        reference: 0.0,
+                        volatility: None,
+                        predicted_level: 0.0,
+                        direction_up: false,
+                        rationale: format!(
+                            "series '{series}' did not match a known base-event family \
+                             signature; returning a generic stable default. Override with \
+                             live data before storing an index."
+                        ),
+                    }, "unknown".to_string()),
+                };
+                serde_json::to_value(serde_json::json!({
+                    "series": series,
+                    "family": family,
+                    "proposed_context": {
+                        "reference": context.reference,
+                        "volatility": context.volatility,
+                        "predicted_level": context.predicted_level,
+                        "direction_up": context.direction_up,
+                    },
+                    "rationale": context.rationale,
+                    "usage": "Pass these values to market_cmp_portfolio_store, or override with live data. All fields are optional in market_cmp_portfolio_store — omitting them uses these curated defaults.",
+                }))
+                .map_err(|e| {
+                    hkask_mcp_server::server::McpToolError::internal(format!(
+                        "context suggest serialization failed: {e}"
                     ))
                 })
             },
@@ -1906,6 +2023,34 @@ mod tests {
             positions.is_empty(),
             "MarketCmpPortfolioStoreRequest schema has bare-boolean positions: {positions:?}"
         );
+    }
+
+    #[test]
+    fn cmp_context_suggest_request_schema_has_no_boolean_positions() {
+        let schema = schemars::schema_for!(MarketCmpContextSuggestRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+        assert!(
+            positions.is_empty(),
+            "MarketCmpContextSuggestRequest schema has bare-boolean positions: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn default_economic_context_provides_reasonable_defaults_for_each_family() {
+        // Every base-event family has a curated default with a non-zero
+        // reference and a rationale — never a blank field.
+        use base_event::{BaseEvent, EconomicContext};
+        for be in BaseEvent::ALL {
+            let ctx: EconomicContext = be.default_economic_context();
+            assert!(!ctx.rationale.is_empty(), "{:?} has no rationale", be);
+            // predicted_level defaults to reference → Stable orientation.
+            assert!(
+                (ctx.predicted_level - ctx.reference).abs() < 1e-9,
+                "{:?} predicted_level should default to reference",
+                be
+            );
+        }
     }
 
     #[test]

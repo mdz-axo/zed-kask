@@ -244,8 +244,12 @@ impl CorpusServer {
             let is_curated = mode == "curated";
 
             // In curated mode, discovered items are marked "proposed" (awaiting
-            // human review) rather than "discovered". The caller accepts/rejects
-            // each proposed source before it enters the corpus.yaml.
+            // human review) rather than "discovered". The tool's job is discovery;
+            // the accept/reject is the caller's job — the caller reviews the
+            // proposed sources and decides which enter the corpus.yaml. This is
+            // a labeling convention, not a full human-in-the-loop mechanism: the
+            // tool returns the same result either way, just with a different
+            // fetch_status label so the caller knows to review before ingesting.
             let fetch_status = if is_curated { "proposed" } else { "discovered" };
 
             // Load the company manifest from the registry.
@@ -446,6 +450,15 @@ struct DiscoveredCompanyDoc {
     title: String,
     url: String,
     date: String,
+    /// Discovery status: "discovered" (agentic mode, auto-discovered),
+    /// "proposed" (curated mode, awaiting human accept/reject), or
+    /// "delegate_to_companies_mcp" (earnings transcripts are fetched via
+    /// the companies server's company_transcript tool, not here).
+    /// This is the DISCOVERY status, not the fetch status — the actual
+    /// fetch happens in a separate step (company_transcript corpus mode
+    /// for YouTube, corpus_chunk for SEC filings). The feedback loop from
+    /// fetch → discovery is closed when the caller reports fetch outcomes
+    /// back to the discovery tool on the next run.
     fetch_status: String,
 }
 

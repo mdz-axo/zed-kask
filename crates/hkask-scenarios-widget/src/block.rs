@@ -37,12 +37,12 @@ pub struct ScenariosBlockBody {
     /// the widget falls back to its hardcoded dispatch.
     #[serde(default)]
     pub provenance: BlockProvenance,
-    /// Ontology anchor emitted by the scenarios server ("pko" or "dublin-core").
-    /// The widget carries it so the compose-back body can reference it and a
-    /// future "explain this scenario" affordance can dispatch on it. `None`
-    /// on older blocks or when the server doesn't emit the anchor.
+    /// Ontology concept URI emitted by the scenarios server (e.g. `pko:Procedure`,
+    /// `dcterms:Dataset`). The widget carries it so the compose-back body can
+    /// reference it and a future "explain this scenario" affordance can
+    /// dispatch on it. `None` on older blocks or when the server doesn't emit it.
     #[serde(default)]
-    pub ontology_anchor: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

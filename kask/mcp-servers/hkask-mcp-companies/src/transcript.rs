@@ -551,21 +551,29 @@ async fn fetch_youtube_transcript(
 // ingests documents of different kinds (earnings calls, 10-Ks, YouTube
 // transcripts). Each kind has its own entity-ref convention so cross-document
 // linkage works via shared entity prefixes.
+//
+// These are convention helpers invoked by the agent/skill at runtime when
+// constructing corpus_chunk calls or querying the KG — not called from Rust
+// production code. The tests pin the conventions (format, extractability) so
+// the agent's runtime usage can't drift from the design.
 
 /// Build the `entity_ref_prefix` for a SEC filing (10-K, 10-Q, 8-K, DEF-14A).
 /// Convention: `company:{symbol}:sec_filing:{form}:{year}`.
+#[allow(dead_code)]
 pub fn sec_filing_entity_ref_prefix(symbol: &str, form: &str, year: u32) -> String {
     format!("company:{symbol}:sec_filing:{form}:{year}")
 }
 
 /// Build the `entity_ref_prefix` for a YouTube transcript (investor day, keynote).
 /// Convention: `company:{symbol}:youtube:{video_id}`.
+#[allow(dead_code)]
 pub fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
     format!("company:{symbol}:youtube:{video_id}")
 }
 
 /// Extract the company symbol from any entity_ref_prefix (the second component).
 /// Returns `None` if the prefix doesn't follow the `company:{symbol}:...` convention.
+#[allow(dead_code)]
 pub fn symbol_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
     let mut parts = prefix.split(':');
     let _ = parts.next()?; // "company"
@@ -578,6 +586,7 @@ pub fn symbol_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
 
 /// Extract the document kind from any entity_ref_prefix (the third component).
 /// Returns `None` if the prefix doesn't follow the `company:{symbol}:{kind}:...` convention.
+#[allow(dead_code)]
 pub fn kind_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
     let mut parts = prefix.split(':');
     let _ = parts.next()?; // "company"
