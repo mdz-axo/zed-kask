@@ -28,7 +28,7 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -85,6 +85,12 @@ jobs:
             esac
             packages+=(--package "$server")
           done < kask/scripts/build/mcp-servers.txt
+          # Guard against a malformed/empty mcp-servers.txt producing a partial release.
+          # 13 servers + zed = 14 packages expected.
+          if [ "${#packages[@]}" -lt 14 ]; then
+            echo "expected ≥14 packages, got ${#packages[@]} — mcp-servers.txt may be malformed"
+            exit 1
+          fi
           cargo build --release --target "${{ matrix.target }}" "${packages[@]}"
 
       - name: Collect and archive binaries

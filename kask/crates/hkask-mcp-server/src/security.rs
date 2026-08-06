@@ -2,8 +2,9 @@
 //!
 //! Provides SSRF protection for MCP tool invocations:
 //! - URL validation (scheme, credentials, private IP, loopback)
+//! - DNS resolution to defeat hostname-based SSRF bypasses (CWE-918/441)
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 /// URL validation error types
 #[derive(Debug, thiserror::Error)]
@@ -100,6 +101,95 @@ pub(crate) fn validate_url(
         }
         if is_private_ip(&ip) && !config.allow_private_ips {
             return Err(SecurityError::PrivateIpNotAllowed(ip.to_string()));
+        }
+    }
+
+    // Return the hostname so callers that want DNS-level SSRF protection
+    // (defeating hostname-based bypasses where a non-literal hostname
+    // resolves to a private/loopback IP) can resolve it via
+    // [`validate_url_with_dns`]. The sync [`validate_url`] only checks
+    // literal-IP hostnames; a hostname like `attacker.example` resolving to
+    // 127.0.0.1 or 169.254.169.254 bypasses the literal check above.
+    let _ = hostname;
+    Ok(())
+}
+
+/// DNS-resolved SSRF validation (CWE-918/441).
+///
+/// This is the async, defense-in-depth companion to [`validate_url`]. It runs
+/// the sync checks first (scheme, embedded credentials, literal-IP blocklist),
+/// then resolves the hostname via `tokio::net::lookup_host` and rejects if any
+/// resolved address is loopback or private (unless the config permits it).
+///
+/// This closes the hostname-bypass gap in [`validate_url`]: a non-literal
+/// hostname (e.g. `attacker.example` resolving to `127.0.0.1` or
+/// `169.254.169.254`) passes the literal-IP check but is caught here.
+///
+/// A TOCTOU remains between this resolve and the downstream `reqwest` connect
+/// (DNS rebinding), but the gap closed here is the absence of any DNS step at
+/// all — the pre-fix code never resolved the hostname. A custom reqwest
+/// connector that re-checks the resolved IP at connect time would close the
+/// TOCTOU; that is future hardening, not in scope for this fix.
+pub(crate) async fn validate_url_with_dns(
+    raw_url: &str,
+    config: &UrlValidationConfig,
+) -> Result<(), SecurityError> {
+    // Run the sync checks first (scheme, credentials, literal-IP blocklist).
+    validate_url(raw_url, config)?;
+
+    // Re-parse to extract the hostname for DNS resolution. This mirrors the
+    // parsing in validate_url; if validate_url succeeded, this parse is safe.
+    let scheme_end = raw_url
+        .find("://")
+        .ok_or_else(|| SecurityError::InvalidUrl("No scheme separator '://' found".to_string()))?;
+    let after_scheme = &raw_url[scheme_end + 3..];
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    let host_part = authority.split('@').next_back().unwrap_or(authority);
+    let host = host_part.split(':').next().unwrap_or(host_part);
+    let hostname = if host.starts_with('[') {
+        let bracket_close = host
+            .rfind(']')
+            .ok_or_else(|| SecurityError::InvalidUrl("Malformed IPv6 address".to_string()))?;
+        &host[1..bracket_close]
+    } else {
+        host
+    };
+
+    // Literal-IP hostnames were already checked by validate_url. Only resolve
+    // non-literal hostnames (DNS names) — resolving a literal IP is redundant
+    // and would re-check what validate_url already covered.
+    if hostname.parse::<IpAddr>().is_ok() {
+        return Ok(());
+    }
+
+    // Resolve the hostname. `lookup_host` requires a `host:port` pair; use a
+    // dummy port (the resolved IPs are what we check, not the port). If DNS
+    // fails, treat it as an invalid URL (the fetch would fail anyway).
+    let resolve_target: String = format!("{hostname}:0");
+    let resolved: Vec<SocketAddr> = tokio::net::lookup_host(&resolve_target)
+        .await
+        .map_err(|e| {
+            SecurityError::InvalidUrl(format!("DNS resolution failed for {hostname}: {e}"))
+        })?
+        .collect();
+
+    if resolved.is_empty() {
+        return Err(SecurityError::InvalidUrl(format!(
+            "DNS returned no addresses for {hostname}"
+        )));
+    }
+
+    for addr in &resolved {
+        let ip = addr.ip();
+        if ip.is_loopback() && !config.allow_loopback {
+            return Err(SecurityError::LoopbackNotAllowed(format!(
+                "{hostname} resolves to loopback {ip}"
+            )));
+        }
+        if is_private_ip(&ip) && !config.allow_private_ips {
+            return Err(SecurityError::PrivateIpNotAllowed(format!(
+                "{hostname} resolves to private IP {ip}"
+            )));
         }
     }
 

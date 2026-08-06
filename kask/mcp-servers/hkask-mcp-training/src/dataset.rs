@@ -966,17 +966,6 @@ impl DatasetPipeline {
     }
 }
 
-// ── Provider-specific format converters ────────────────────────────────────
-
-/// Convert canonical ChatML JSONL to axolotl-compatible ChatML format.
-///
-/// Axolotl expects ChatML with explicit `type: chatml` in config.
-/// The path returned is the cached normalized file — the provider's
-/// config YAML references it directly.
-pub fn to_axolotl_format(normalized_path: &std::path::Path) -> PathBuf {
-    normalized_path.to_path_buf()
-}
-
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

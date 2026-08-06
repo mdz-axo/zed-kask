@@ -188,6 +188,15 @@ pub fn recompute_posteriors(
     if n == 0 {
         return Vec::new();
     }
+    // Precondition: this function is only exact on polytrees (singly-connected
+    // DAGs). The caller (`GraphWidget::repropagate`) guards with `is_polytree`;
+    // this debug_assert catches test-time misuse by a future caller. On a
+    // multiply-connected DAG the fixpoint below would double-count evidence
+    // along multiple paths.
+    debug_assert!(
+        is_polytree(body),
+        "recompute_posteriors called on a non-polytree; backward inference is exact only on polytrees"
+    );
     // Forward pass: compute causal marginals (same as recompute_marginals).
     let mut marginals = recompute_marginals(body, topo_order, evidence);
 

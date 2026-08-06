@@ -1,9 +1,9 @@
-//! HuggingFace infrastructure — canonical model-ID resolution and training-artifact publishing.
+//! HuggingFace infrastructure — training-artifact publishing.
 //!
 //! The prior `ModelRegistry` / `AdapterRegistry` / `DatasetRegistry` traits and
 //! their `HfModelRegistry` impl were removed as dead code: zero production
-//! callers and `HfModelRegistry::new` was never constructed (callers use the free
-//! `resolve_model_id` below). Dataset/adapter Hub operations live in `HuggingFaceTraining`.
+//! callers and `HfModelRegistry::new` was never constructed. Dataset/adapter
+//! Hub operations live in `HuggingFaceTraining`.
 
 use hf_hub::HFClient;
 use hf_hub::repository::{AddSource, RepoTypeDataset, RepoTypeModel};
@@ -25,55 +25,6 @@ pub enum HuggingFaceError {
     Download(String),
     #[error("Authentication failed (set HF_TOKEN)")]
     AuthRequired,
-}
-
-// ── Default implementation for model ID resolution ─────────────────────────
-
-/// Strip known provider prefixes to extract the raw HuggingFace model ID.
-///
-/// This is the canonical resolution logic used by removed provider.
-/// Provider prefixes: DeepInfra/, fal.ai/, OpenRouter/ (zed syntax).
-pub fn resolve_model_id(base_model: &str) -> String {
-    let known_prefixes = ["DeepInfra/", "fal.ai/", "OpenRouter/"];
-    let mut model = base_model;
-    for prefix in &known_prefixes {
-        if model.starts_with(prefix) {
-            model = &model[prefix.len()..];
-            break;
-        }
-    }
-    model.to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolve_provider_prefix() {
-        assert_eq!(resolve_model_id("DeepInfra/some-model"), "some-model");
-    }
-
-    #[test]
-    fn resolve_no_prefix_passthrough() {
-        assert_eq!(resolve_model_id("Qwen/Qwen3.5-9B"), "Qwen/Qwen3.5-9B");
-    }
-
-    #[test]
-    fn resolve_deepinfra_prefix() {
-        assert_eq!(
-            resolve_model_id("DeepInfra/meta-llama/Llama-3.3-70B-Instruct"),
-            "meta-llama/Llama-3.3-70B-Instruct"
-        );
-    }
-
-    #[test]
-    fn resolve_fireworks_prefix() {
-        assert_eq!(
-            resolve_model_id("fal.ai/accounts/fireworks/models/my-model"),
-            "accounts/fireworks/models/my-model"
-        );
-    }
 }
 
 // ── Model provenance ──────────────────────────────────────────────────────

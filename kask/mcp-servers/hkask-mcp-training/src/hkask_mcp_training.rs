@@ -75,7 +75,6 @@ pub mod adapters;
 pub mod dataset;
 pub mod huggingface;
 pub mod lora_validation;
-pub mod mlschema;
 pub mod providers;
 pub mod types;
 

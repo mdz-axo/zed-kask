@@ -274,15 +274,20 @@ impl CorpusServer {
         &self,
         Parameters(params): Parameters<BuildRequest>,
     ) -> String {
-        let config_path = PathBuf::from(&params.config_path);
-
         execute_tool(self, "corpus_build_persona", async {
-            if !config_path.exists() {
-                return Err(McpToolError::invalid_argument(format!(
-                    "Config file not found: {}",
-                    params.config_path
-                )));
-            }
+            // The config_path is LLM-reachable (params.config_path), so
+            // contain it under the project root before reading or passing
+            // it to EmbedService (CWE-22/200). contain_for_read canonicalizes
+            // the path (collapsing symlink escapes) and rejects anything
+            // outside the root; the size cap is enforced inside embed_corpus
+            // via the YAML parse, but the path itself is bounded here.
+            let config_path =
+                crate::path_safety::contain_for_read(&params.config_path).map_err(|error| {
+                    McpToolError::invalid_argument(format!(
+                        "Config file not found or outside the project root at {}: {error}",
+                        params.config_path
+                    ))
+                })?;
 
             let progress = Arc::new(|p: &crate::corpus::EmbedProgress| {
                 tracing::info!(

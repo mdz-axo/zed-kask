@@ -69,6 +69,11 @@ pub struct GraphWidget {
     /// Index into `branches` for the inline compare diff panel; `None` = no
     /// panel. Cleared by `revert_to_base` and `load_branch`.
     compare_branch: Option<usize>,
+    /// Whether the DAG is a polytree, enabling backward inference (Pearl π-λ).
+    /// Computed once in `new` from the body; used by `repropagate` to choose
+    /// between `recompute_posteriors` (polytree) and `recompute_marginals`
+    /// (multiply-connected fallback).
+    backward_inference_available: bool,
     focus_handle: FocusHandle,
     /// Surfaced when no conversation injector is active so the composed "I
     /// disagree" body is still copyable — visible, not a silent no-op (repo
@@ -86,6 +91,8 @@ impl GraphWidget {
                 LayeredLayout::empty()
             }
         };
+        // Compute polytree status before `body` is moved into the struct.
+        let backward_inference_available = crate::propagate::is_polytree(&body);
         // T7: raw signal for the reask/what-if measurement gate. Counted via
         // tracing target `reg.widget.graph_render`. See
         // tasks/widget-interactivity/plan.md (Track 3, decision 10).
@@ -109,6 +116,7 @@ impl GraphWidget {
             selected: None,
             branches: Vec::new(),
             compare_branch: None,
+            backward_inference_available,
             focus_handle: cx.focus_handle(),
             disagree_draft: None,
         }
@@ -135,9 +143,24 @@ impl GraphWidget {
 
     /// Recompute every node's marginal from the body + evidence and refresh the
     /// display values (marginal probability + certainty tier) on the layout.
+    ///
+    /// Uses backward inference (`recompute_posteriors`, Pearl π-λ) when the DAG
+    /// is a polytree and evidence is set — so evidence on a leaf propagates to
+    /// its parents. Falls back to forward-only `recompute_marginals` for
+    /// multiply-connected DAGs, with a `tracing::warn!` so an operator can
+    /// distinguish "no evidence" from "backward inference unavailable."
     fn repropagate(&mut self, cx: &mut Context<Self>) {
-        let marginals =
-            propagate::recompute_marginals(&self.body, &self.layout.topo_order, &self.evidence);
+        let marginals = if self.backward_inference_available && !self.evidence.is_empty() {
+            propagate::recompute_posteriors(&self.body, &self.layout.topo_order, &self.evidence)
+        } else if !self.evidence.is_empty() && !self.backward_inference_available {
+            tracing::warn!(
+                target: "hkask-graph-widget",
+                "DAG is multiply-connected; backward inference requires a polytree, falling back to forward-only marginalization"
+            );
+            propagate::recompute_marginals(&self.body, &self.layout.topo_order, &self.evidence)
+        } else {
+            propagate::recompute_marginals(&self.body, &self.layout.topo_order, &self.evidence)
+        };
         for (i, marginal) in marginals.iter().enumerate() {
             if let Some(node) = self.layout.nodes.get_mut(i) {
                 node.marginal_probability = Some(*marginal);
@@ -664,6 +687,14 @@ impl Render for GraphWidget {
             .when_some(self.joint_probability_for_header(), |t, joint| {
                 t.child(format!("   joint = {}%", (joint * 100.0).round() as u32))
             })
+            .when(
+                !self.backward_inference_available && !self.evidence.is_empty(),
+                |t| {
+                    t.child(
+                        "   (backward inference unavailable for this graph shape — evidence propagates forward only)",
+                    )
+                },
+            )
             // C: "I disagree" affordance — composes a revision request back
             // into the active conversation (D21). Board-level (the whole
             // tree); optionally references the selected node in the body.

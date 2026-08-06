@@ -42,6 +42,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
+          key: kask-clippy-ubuntu-24.04
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install Linux dependencies
         run: ./script/linux
@@ -172,6 +173,28 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check unsafe-gating attributes on kask crate roots (RR-0020)
         run: cd kask && bash scripts/check-unsafe-forbid.sh
+
+  # CI-05: pure-shell invariant gates that need no toolchain. Each script
+  # greps the kask tree for a specific contract violation. ci-contract-check.sh
+  # is intentionally omitted here — it shells out to cargo, so it belongs in
+  # a job with a Rust toolchain (it is currently run as part of the test job
+  # via kask/scripts/check-kali-regressions.sh's cargo-test-kind entries).
+  invariants:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check string errors (no Result<_, String>)
+        run: cd kask && bash scripts/check-string-errors.sh
+      - name: Check forecast conformance
+        run: cd kask && bash scripts/check-forecast-conformance.sh
+      - name: Check convergence weights
+        run: cd kask && bash scripts/check-convergence-weights.sh
+      - name: Check reg creep
+        run: cd kask && bash scripts/check-reg-creep.sh
+      - name: Check MCP tool tests
+        run: cd kask && bash scripts/check-mcp-tool-tests.sh
+      - name: Check LoRA training regressions
+        run: cd kask && bash scripts/check-lora-training-regressions.sh
 
   deps:
     runs-on: ubuntu-24.04

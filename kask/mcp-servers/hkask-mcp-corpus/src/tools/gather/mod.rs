@@ -252,13 +252,26 @@ impl CorpusServer {
             // fetch_status label so the caller knows to review before ingesting.
             let fetch_status = if is_curated { "proposed" } else { "discovered" };
 
-            // Load the company manifest from the registry.
+            // Load the company manifest from the registry. The path is
+            // LLM-reachable (params.manifest_path), so route it through
+            // path_safety::read_capped for containment under the project root
+            // and a MAX_READ_BYTES cap (CWE-22/200/400). The default path
+            // points into the shipped registry and is also contained for
+            // uniformity — a relative default is already under the root, but
+            // the cap still bounds a malformed shipped manifest.
             let manifest_path = params.manifest_path.clone().unwrap_or_else(|| {
                 format!("kask/registry/company-sources/{}.yaml", params.symbol.to_lowercase())
             });
-            let manifest_text = std::fs::read_to_string(&manifest_path).map_err(|error| {
-                McpToolError::not_found(format!(
-                    "company manifest not found at {manifest_path}: {error}"
+            let manifest_bytes =
+                crate::path_safety::read_capped(&manifest_path, crate::path_safety::MAX_READ_BYTES)
+                    .map_err(|error| {
+                        McpToolError::not_found(format!(
+                            "company manifest not found or outside the project root at {manifest_path}: {error}"
+                        ))
+                    })?;
+            let manifest_text = String::from_utf8(manifest_bytes).map_err(|error| {
+                McpToolError::invalid_argument(format!(
+                    "company manifest at {manifest_path} is not valid UTF-8: {error}"
                 ))
             })?;
             let manifest =

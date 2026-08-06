@@ -79,11 +79,22 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         id: "condenser",
         binary: "hkask-mcp-condenser",
         description: "Condenser — context condensation and summarization",
-        credentials: Some(&[]),
+        credentials: Some(&[
+            // DB encryption passphrase — read by the condenser server's
+            // `run()` for its episodic + semantic SQLite stores. Without
+            // this, the condenser cannot open an encrypted DB under governed
+            // launch and falls back to in-memory mode (no persistence).
+            "HKASK_DB_PASSPHRASE",
+        ]),
         config_env: Some(&[
             "HKASK_CONDENSER_PERSONA_KEYWORDS",
             "HKASK_CONDENSE_SALIENCY_WINDOW",
             "HKASK_DEFAULT_MODEL",
+            // Condenser DB path — read by `run()` to locate the episodic +
+            // semantic SQLite store. Without this, an operator override via
+            // kask settings is silently dropped by the per-server filter and
+            // the condenser falls back to in-memory mode.
+            "HKASK_DB_PATH",
         ]),
     },
     BuiltinMcpServer {

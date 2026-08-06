@@ -13,7 +13,7 @@ use std::time::Duration;
 use base64::Engine;
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
-    validate_tool_url,
+    validate_tool_url_with_dns,
 };
 use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
