@@ -383,7 +383,7 @@ mod tests {
         let block = media_block_with_omc("image", "/tmp/img.png", None, None);
         assert!(block.contains("\"kind\":\"image\""));
         assert!(block.contains("/tmp/img.png"));
-        assert!(!block.contains("\"omc\""));
+        assert!(!block.contains("\"ontology\""));
         assert!(!block.contains("\"provenance\""));
     }
 
@@ -414,7 +414,7 @@ mod tests {
             None,
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
-        assert!(hint.contains("\"omc\":\"omc:Version\""));
+        assert!(hint.contains("\"ontology\":\"omc:Version\""));
     }
 
     #[test]
@@ -430,7 +430,7 @@ mod tests {
         let hint = enriched["display_hint"].as_str().expect("hint attached");
         assert!(hint.contains("\"kind\":\"audio\""));
         assert!(hint.contains("/tmp/rec.wav"));
-        assert!(hint.contains("\"omc\":\"omc:MediaSource\""));
+        assert!(hint.contains("\"ontology\":\"omc:MediaSource\""));
     }
 
     #[test]
@@ -459,7 +459,7 @@ mod tests {
         );
         let hint = enriched["display_hint"].as_str().expect("hint attached");
         assert!(hint.contains("\"tool\":\"some_unknown_tool\""));
-        assert!(!hint.contains("\"omc\""));
+        assert!(!hint.contains("\"ontology\""));
     }
 
     #[test]

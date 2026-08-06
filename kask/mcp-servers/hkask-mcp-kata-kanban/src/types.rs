@@ -31,9 +31,9 @@ pub struct BoardCreateResponse {
     pub board_id: String,
     pub name: String,
     pub columns: Vec<ColumnInfo>,
-    /// PKO concept: <https://w3id.org/pko#Procedure>
+    /// Ontology concept: <https://w3id.org/pko#Procedure>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -56,9 +56,9 @@ pub struct BoardInfo {
     pub board_id: String,
     pub name: String,
     pub column_count: usize,
-    /// PKO concept: <https://w3id.org/pko#Procedure>
+    /// Ontology concept: <https://w3id.org/pko#Procedure>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 // ── Task tools ─────────────────────────────────────────────────────────────
@@ -84,9 +84,9 @@ pub struct TaskCreateResponse {
     pub board_id: String,
     pub title: String,
     pub status: String,
-    /// PKO concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: <https://w3id.org/pko#Step>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -114,9 +114,9 @@ pub struct TaskInfo {
     /// Remaining rJoules for inference/API calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rjoule_remaining: Option<u64>,
-    /// PKO concept: <https://w3id.org/pko#Step>
+    /// Ontology concept: <https://w3id.org/pko#Step>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -130,9 +130,9 @@ pub struct TaskMoveResponse {
     pub task_id: String,
     pub previous_status: String,
     pub new_status: String,
-    /// PKO concept: <https://w3id.org/pko#ChangeOfStatus>
+    /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -144,9 +144,9 @@ pub struct TaskAssignRequest {
 pub struct TaskAssignResponse {
     pub task_id: String,
     pub assignee: String,
-    /// PKO concept: <https://www.w3.org/ns/prov#wasAssociatedWith>
+    /// Ontology concept: <https://www.w3.org/ns/prov#wasAssociatedWith>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -161,9 +161,9 @@ pub struct TaskVerifyResponse {
     pub passed: bool,
     pub reasoning: String,
     pub new_status: String,
-    /// PKO concept: <https://w3id.org/pko#StepVerification>
+    /// Ontology concept: <https://w3id.org/pko#StepVerification>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 // ── Gas management ──────────────────────────────────────────────────────────
@@ -179,9 +179,9 @@ pub struct TaskAddGasRequest {
 pub struct TaskAddGasResponse {
     pub task_id: String,
     pub new_gas_remaining: u64,
-    /// PKO concept: <https://www.w3.org/ns/prov#used>
+    /// Ontology concept: <https://www.w3.org/ns/prov#used>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -195,9 +195,9 @@ pub struct TaskAddRjoulesRequest {
 pub struct TaskAddRjoulesResponse {
     pub task_id: String,
     pub new_rjoule_remaining: u64,
-    /// PKO concept: <https://www.w3.org/ns/prov#used>
+    /// Ontology concept: <https://www.w3.org/ns/prov#used>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 // ── Comments ────────────────────────────────────────────────────────────────
@@ -215,9 +215,9 @@ pub struct TaskCommentResponse {
     pub author: String,
     pub body: String,
     pub created_at: String,
-    /// PKO concept: <https://w3id.org/pko#UserFeedbackOccurrence>
+    /// Ontology concept: <https://w3id.org/pko#UserFeedbackOccurrence>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -249,9 +249,9 @@ pub struct TaskAddDeliverableRequest {
 pub struct TaskAddDeliverableResponse {
     pub task_id: String,
     pub deliverable_count: usize,
-    /// PKO concept: <https://www.w3.org/ns/prov#wasGeneratedBy>
+    /// Ontology concept: <https://www.w3.org/ns/prov#wasGeneratedBy>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 // ── Reopen ──────────────────────────────────────────────────────────────────
@@ -273,9 +273,9 @@ pub struct TaskReopenResponse {
     pub new_status: String,
     pub gas_remaining: Option<u64>,
     pub rjoule_remaining: Option<u64>,
-    /// PKO concept: <https://w3id.org/pko#ChangeOfStatus>
+    /// Ontology concept: <https://w3id.org/pko#ChangeOfStatus>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 // ── Contract proposals ──────────────────────────────────────────────────────
@@ -315,9 +315,9 @@ pub struct TaskKataPracticeRequest {
 pub struct TaskKataResponse {
     pub task_id: String,
     pub prompt: String,
-    /// PKO concept: <https://w3id.org/pko#UserQuestionOccurrence>
+    /// Ontology concept: <https://w3id.org/pko#UserQuestionOccurrence>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }
 
 // ── Spawn ───────────────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ pub struct TaskSpawnRequest {
 pub struct TaskSpawnResponse {
     pub task_id: String,
     pub message: String,
-    /// PKO concept: <https://w3id.org/pko#StepExecution>
+    /// Ontology concept: <https://w3id.org/pko#StepExecution>
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pko: Option<String>,
+    pub ontology: Option<String>,
 }

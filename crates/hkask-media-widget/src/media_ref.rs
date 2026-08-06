@@ -121,12 +121,12 @@ impl MediaStorage for PathMediaStorage {
 }
 
 /// The parsed body of a ```` ```media ```` block. Carries the media reference
-/// plus optional OMC concept tag and server-authoritative provenance.
+/// plus optional ontology concept tag and server-authoritative provenance.
 ///
-/// `omc` and `provenance` are `#[serde(default)]` so existing blocks without
-/// them still parse and render — just without the OMC-driven "Explain" and
+/// `ontology` and `provenance` are `#[serde(default)]` so existing blocks without
+/// them still parse and render — just without the ontology-driven "Explain" and
 /// "I disagree" affordances. This is the additive contract: the media widget
-/// gains affordances when the block carries OMC + provenance, and falls back
+/// gains affordances when the block carries ontology + provenance, and falls back
 /// to transport-only display when it doesn't.
 #[derive(Debug, Clone, Deserialize)]
 pub struct MediaBlockBody {
@@ -135,12 +135,12 @@ pub struct MediaBlockBody {
     pub kind: String,
     /// Source URL/path/data-URI.
     pub src: String,
-    /// OMC concept URI (e.g. `omc:CreativeWork`). Drives the "Explain"
-    /// affordance's tool selection (the "I" pattern — ontology-bounded
-    /// affordances). `None` on older blocks → the widget falls back to
-    /// `describe_image`.
+    /// Ontology concept URI (e.g. `omc:CreativeWork`, `fibo:Corporation`,
+    /// `pko:Step`). Drives the "Explain" affordance's tool selection (the
+    /// "I" pattern — ontology-bounded affordances). `None` on older blocks
+    /// → the widget falls back to the default explain tool.
     #[serde(default)]
-    pub omc: Option<String>,
+    pub ontology: Option<String>,
     /// Server-authoritative provenance for re-issuing the originating tool
     /// (Explain) or composing a revision request (I disagree). `None` on
     /// older blocks → the widget renders without dispatch/compose-back
@@ -155,7 +155,7 @@ fn default_kind() -> String {
 
 impl MediaBlockBody {
     /// Parse a ```` ```media ```` block body. Tolerant: missing `kind` defaults
-    /// to `"image"`; missing `omc`/`provenance` default to `None`/empty so
+    /// to `"image"`; missing `ontology`/`provenance` default to `None`/empty so
     /// older blocks still parse and render without the new affordances.
     pub fn parse(body: &str) -> anyhow::Result<Self> {
         Ok(serde_json::from_str(body.trim())?)
@@ -188,15 +188,15 @@ mod block_body_tests {
             .expect("minimal body parses");
         assert_eq!(body.kind, "image");
         assert_eq!(body.src, "/a.png");
-        assert!(body.omc.is_none());
+        assert!(body.ontology.is_none());
         assert!(!body.provenance.is_dispatchable());
     }
 
     #[test]
-    fn parses_body_with_omc_and_provenance() {
-        let json = r##"{"kind":"image","src":"/a.png","omc":"omc:CreativeWork","provenance":{"tool":"generate_image","server":"hkask-mcp-media","args":{"prompt":"a cat"}}}"##;
+    fn parses_body_with_ontology_and_provenance() {
+        let json = r##"{"kind":"image","src":"/a.png","ontology":"omc:CreativeWork","provenance":{"tool":"generate_image","server":"hkask-mcp-media","args":{"prompt":"a cat"}}}"##;
         let body = MediaBlockBody::parse(json).expect("full body parses");
-        assert_eq!(body.omc.as_deref(), Some("omc:CreativeWork"));
+        assert_eq!(body.ontology.as_deref(), Some("omc:CreativeWork"));
         assert!(body.provenance.is_dispatchable());
         assert_eq!(body.provenance.tool.as_deref(), Some("generate_image"));
     }

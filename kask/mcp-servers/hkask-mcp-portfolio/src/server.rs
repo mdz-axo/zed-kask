@@ -118,6 +118,20 @@ pub struct PriceSeedRequest {
     pub source: String,
 }
 
+/// Request for portfolio_roll: roll a constituent from one contract to its
+/// successor at the same tenor (CMP index maintenance). Emits a `roll`
+/// transaction recording the move; the caller is responsible for the
+/// corresponding sell/buy legs.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PortfolioRollRequest {
+    pub portfolio: String,
+    pub from_symbol: String,
+    pub to_symbol: String,
+    pub date: String,
+    pub quantity: f64,
+    pub price: Option<f64>,
+}
+
 // ── Tool router ─────────────────────────────────────────────────────
 
 #[tool_router(router = portfolio_router, vis = "pub")]
@@ -365,6 +379,56 @@ impl PortfolioServer {
     }
 
     #[tool(
+        description = "Roll a constituent from one contract to its successor at the same tenor (CMP index maintenance). Emits a roll transaction recording the move."
+    )]
+    pub async fn portfolio_roll(
+        &self,
+        Parameters(PortfolioRollRequest {
+            portfolio,
+            from_symbol,
+            to_symbol,
+            date,
+            quantity,
+            price,
+        }): Parameters<PortfolioRollRequest>,
+    ) -> String {
+        execute_tool(self, "portfolio_roll", async {
+            parse_ymd(&date, "date").map_err(map_portfolio_error)?;
+            let response_portfolio = portfolio.clone();
+            let response_from = from_symbol.clone();
+            let response_to = to_symbol.clone();
+            let tx = crate::Transaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                date: date.clone(),
+                tx_type: crate::TxType::Roll,
+                asset_type: crate::AssetType::PredictionContract,
+                symbol: Some(to_symbol.clone()),
+                quantity: Some(quantity),
+                price,
+                commission: Some(0.0),
+                amount: None,
+                weight: None,
+                currency: "USD".to_string(),
+                notes: format!("Roll from {from_symbol} to {to_symbol}"),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+            run_store(self.store.clone(), move |store| {
+                store.apply(&portfolio, &tx)
+            })
+            .await?;
+            Ok(serde_json::json!({
+                "status": "rolled",
+                "portfolio": response_portfolio,
+                "from_symbol": response_from,
+                "to_symbol": response_to,
+                "date": date,
+                "quantity": quantity,
+            }))
+        })
+        .await
+    }
+
+    #[tool(
         description = "Rebuild all materialized views (daily holdings, daily returns) from the ledger. Use after a corruption or a bulk ledger edit."
     )]
     pub async fn portfolio_rebuild_views(
@@ -531,6 +595,7 @@ mod tests {
             ("LedgerImportRequest", schema_for!(LedgerImportRequest)),
             ("LedgerExportRequest", schema_for!(LedgerExportRequest)),
             ("PriceSeedRequest", schema_for!(PriceSeedRequest)),
+            ("PortfolioRollRequest", schema_for!(PortfolioRollRequest)),
         ] {
             let value = serde_json::to_value(&schema).expect("schema serializes");
             let violations = find_boolean_schema_positions(&value);

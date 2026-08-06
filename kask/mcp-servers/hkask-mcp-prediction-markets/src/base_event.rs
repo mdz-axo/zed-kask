@@ -114,11 +114,25 @@ impl BaseEvent {
 /// refinement) can tighten it, but the signature is deliberately readable and
 /// auditable so eligibility decisions are explainable.
 pub fn classify_base_event(record: &MarketRecord) -> Option<BaseEvent> {
-    let haystack = format!(
-        "{} {} {} {}",
-        record.question, record.description, record.series, record.category
+    classify_base_event_text(
+        &record.question,
+        &record.description,
+        &record.series,
+        &record.category,
     )
-    .to_lowercase();
+}
+
+/// Text-only base-event classification. Same matching as
+/// [`classify_base_event`] but without constructing a full [`MarketRecord`] —
+/// for call sites that have the raw text fields (e.g. a Kalshi market's
+/// title/subtitle/series) and don't need the full annotated record.
+pub fn classify_base_event_text(
+    question: &str,
+    description: &str,
+    series: &str,
+    category: &str,
+) -> Option<BaseEvent> {
+    let haystack = format!("{question} {description} {series} {category}").to_lowercase();
     BaseEvent::ALL.into_iter().find(|event| {
         event
             .signature()

@@ -352,6 +352,35 @@ fn cmp_index_roll_and_weight_adjust() {
 }
 
 #[test]
+fn roll_transaction_round_trips_through_ledger() {
+    // A roll transaction is persisted and readable via the ledger filter.
+    let dir = tempfile::tempdir().unwrap();
+    let store = PortfolioStore::with_dir(dir.path().to_path_buf());
+    store.create("cmp", AssetType::PredictionContract).unwrap();
+    let mut roll = sample_tx(
+        "2024-02-01",
+        "roll",
+        Some("NEW-YES"),
+        Some(10.0),
+        None,
+        None,
+    );
+    roll.asset_type = AssetType::PredictionContract;
+    store.apply("cmp", &roll).unwrap();
+    let rolls = store
+        .ledger(
+            "cmp",
+            LedgerFilter {
+                tx_type: Some("roll"),
+                ..LedgerFilter::all()
+            },
+        )
+        .unwrap();
+    assert_eq!(rolls.len(), 1);
+    assert_eq!(rolls[0].symbol.as_deref(), Some("NEW-YES"));
+}
+
+#[test]
 fn returns_with_cached_prices() {
     let dir = tempfile::tempdir().unwrap();
     let store = PortfolioStore::with_dir(dir.path().to_path_buf());

@@ -33,7 +33,11 @@ use crate::block::{
 };
 
 /// Server that hosts the portfolio tools. Fallback dispatch target when a
-/// block carries no dispatchable provenance.
+/// block carries no dispatchable provenance. The companies server still
+/// hosts `portfolio_returns` (delegating to `hkask-mcp-portfolio`); CMP
+/// index blocks carry provenance pointing at `hkask-mcp-portfolio` or
+/// `hkask-mcp-prediction-markets`, which the widget honors via
+/// `BlockProvenance`.
 const DEFAULT_SERVER: &str = "hkask-mcp-companies";
 /// Tool the widget re-issues to scrub a date range.
 const DEFAULT_TOOL: &str = "portfolio_returns";
@@ -630,10 +634,12 @@ impl PortfolioWidget {
         }
     }
 
-    /// F — inline drill-down handler. Dispatches `research_search` on the
-    /// `hkask-mcp-companies` server with the row's symbol as the query and
-    /// surfaces the result inline as an explanation panel below the
-    /// attribution section.
+    /// F — inline drill-down handler. Dispatches a research/explain tool on
+    /// the server that produced the block (from provenance), falling back to
+    /// `hkask-mcp-companies` / `research_search` for stock portfolios without
+    /// provenance. For CMP index portfolios from `hkask-mcp-portfolio` or
+    /// `hkask-mcp-prediction-markets`, dispatches `ledger_read` / `market_lookup`
+    /// respectively so the drill-down is context-appropriate.
     ///
     /// Surfaced states (never silent per repo `.rules`):
     /// - `INVOKER_NOT_WIRED_MSG` when `shared_tool_invoker()` returns `None`.
@@ -655,8 +661,32 @@ impl PortfolioWidget {
         self.explain_error = None;
         self.explain_symbol = Some(symbol.clone());
         self.explain_result = None;
-        let args = serde_json::json!({ "query": symbol });
-        let task = invoker.invoke_tool("hkask-mcp-companies", "research_search", args);
+
+        // Provenance-aware dispatch: use the block's origin server when
+        // available, falling back to the companies server for stock
+        // portfolios. The tool is context-appropriate per server.
+        let (server, tool, args) = match self.body.provenance.server.as_deref() {
+            Some("hkask-mcp-portfolio") => (
+                "hkask-mcp-portfolio",
+                "ledger_read",
+                serde_json::json!({
+                    "portfolio": self.body.portfolio.clone().unwrap_or_default(),
+                    "symbol": symbol.clone(),
+                }),
+            ),
+            Some("hkask-mcp-prediction-markets") => (
+                "hkask-mcp-prediction-markets",
+                "market_lookup",
+                serde_json::json!({ "query": symbol.clone(), "limit": 5 }),
+            ),
+            // Default (companies or no provenance): research_search.
+            _ => (
+                "hkask-mcp-companies",
+                "research_search",
+                serde_json::json!({ "query": symbol.clone() }),
+            ),
+        };
+        let task = invoker.invoke_tool(server, tool, args);
         cx.spawn(async move |this, cx| {
             let outcome = task.await;
             this.update(cx, |this, cx| {

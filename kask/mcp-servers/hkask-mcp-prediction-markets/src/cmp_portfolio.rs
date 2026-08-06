@@ -205,6 +205,16 @@ pub enum Orientation {
     Stable,
 }
 
+impl std::fmt::Display for Orientation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Increase => write!(f, "increase"),
+            Self::Decline => write!(f, "decline"),
+            Self::Stable => write!(f, "stable"),
+        }
+    }
+}
+
 /// Classify a contract's orientation from its predicted level relative to the
 /// reference, given the materiality level (in the family's type units).
 ///

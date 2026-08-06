@@ -1349,38 +1349,16 @@ impl PredictionMarketsServer {
                     if days <= 0.0 {
                         continue;
                     }
-                    // Build a minimal MarketRecord for base-event classification.
-                    // The full MarketRecord requires calibration data we don't
-                    // have here; classify_base_event only reads question/description/
-                    // series/category, so we construct a record with just those
-                    // fields and defaults for the rest.
-                    let record = types::MarketRecord {
-                        source: types::Source::Kalshi,
-                        event_id: market.event_ticker.clone(),
-                        market_id: market.ticker.clone(),
-                        question: market.title.clone(),
-                        description: market.subtitle.clone(),
-                        category: String::new(),
-                        series: series.clone(),
-                        deadline: market.close_time.clone(),
-                        time_to_maturity: Some(days / 365.0),
-                        probability,
-                        probability_method: types::ProbabilityMethod::Midpoint,
-                        spread: None,
-                        volume: 0.0,
-                        volume_grain: types::VolumeGrain::Market,
-                        liquidity: None,
-                        open_interest: None,
-                        last_update: now.to_rfc3339(),
-                        volatility: types::Volatility::default(),
-                        status: types::MarketStatus::Open,
-                        resolved_outcome: None,
-                        resolution_source: std::borrow::Cow::Borrowed("kalshi"),
-                        calibration: types::Calibration::default(),
-                        reliability_tier: types::ReliabilityTier::Tier1,
-                        ontology: types::OntologyBlock::default(),
-                    };
-                    let Some(base_event) = base_event::classify_base_event(&record) else {
+                    // Base-event classification from the market's text fields
+                    // (no full MarketRecord construction needed —
+                    // classify_base_event_text reads just the haystack).
+                    let base_event = base_event::classify_base_event_text(
+                        &market.title,
+                        &market.subtitle,
+                        &series,
+                        "", // category unknown without the event lookup
+                    );
+                    let Some(base_event) = base_event else {
                         continue;
                     };
                     // Orientation: classify using the operator-supplied
@@ -1453,7 +1431,7 @@ impl PredictionMarketsServer {
                             let tx = Transaction {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 date: observation_date.clone(),
-                                tx_type: TxType::WeightAdjust,
+                                tx_type: TxType::Buy,
                                 asset_type: AssetType::PredictionContract,
                                 symbol: Some(symbol),
                                 quantity: Some(1.0),
@@ -1511,6 +1489,7 @@ impl PredictionMarketsServer {
         )
         .await
     }
+}
 
 impl PredictionMarketsServer {
     /// Fetch and annotate all candidate markets from both platforms.
@@ -1916,5 +1895,64 @@ mod tests {
         // The portfolio store is wired; listing an empty store returns [].
         let names = server.portfolio_store.list().expect("list");
         assert!(names.is_empty(), "fresh store has no portfolios");
+    }
+
+    #[test]
+    fn cmp_portfolio_store_request_schema_has_no_boolean_positions() {
+        let schema = schemars::schema_for!(MarketCmpPortfolioStoreRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+        assert!(
+            positions.is_empty(),
+            "MarketCmpPortfolioStoreRequest schema has bare-boolean positions: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn cmp_portfolio_solved_index_persists_as_weight_adjust_ledger() {
+        // The solved-portfolio CMP index path (construct_cmp_index_set)
+        // produces CmpIndex entries with weighted constituents. Persisting
+        // each as a WeightAdjust ledger and reading the materialized holdings
+        // returns the constituents with their weights.
+        use hkask_mcp_portfolio::{AssetType, PortfolioStore, Transaction, TxType};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().to_path_buf();
+        std::mem::forget(dir);
+        let store = PortfolioStore::with_dir(path);
+
+        // Build a fixture solved index: two constituents at 30d, increase orientation.
+        let portfolio_name = "cmp:KXFEDDECISION:1m:increase";
+        store
+            .create(portfolio_name, AssetType::PredictionContract)
+            .expect("create");
+        let date = "2024-01-15";
+        let constituents = [
+            ("KXFED-DEC25-YES", 0.6, 0.55, 28.0),
+            ("KXFED-JAN26-YES", 0.4, 0.58, 33.0),
+        ];
+        for (symbol, weight, prob, dte) in constituents {
+            let tx = Transaction {
+                id: uuid::Uuid::new_v4().to_string(),
+                date: date.to_string(),
+                tx_type: TxType::Buy,
+                asset_type: AssetType::PredictionContract,
+                symbol: Some(symbol.to_string()),
+                quantity: Some(1.0),
+                price: Some(prob),
+                commission: Some(0.0),
+                amount: None,
+                weight: Some(weight),
+                currency: "USD".to_string(),
+                notes: format!("CMP portfolio constituent: weight={weight:.4} dte={dte:.1}"),
+                created_at: "2024-01-15T00:00:00Z".to_string(),
+            };
+            store.apply(portfolio_name, &tx).expect("apply");
+        }
+        let snap = store.snapshot(portfolio_name, date).expect("snapshot");
+        assert_eq!(snap.holdings.len(), 2, "two constituents");
+        let symbols: Vec<String> = snap.holdings.iter().map(|h| h.symbol.clone()).collect();
+        assert!(symbols.contains(&"KXFED-DEC25-YES".to_string()));
+        assert!(symbols.contains(&"KXFED-JAN26-YES".to_string()));
     }
 }
