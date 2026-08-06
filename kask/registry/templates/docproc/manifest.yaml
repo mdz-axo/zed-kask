@@ -44,7 +44,7 @@ templates:
     name: "Extract multi-dimensional ontology tags (5W1H, Dublin Core, PKO,…"
     path: tag-chunks.j2
     type: KnowAct
-    description: Extract multi-dimensional ontology tags (5W1H, Dublin Core, PKO, FIBO, GOLEM, expertise level) from text passages for corpus annotation.
+    description: Extract multi-dimensional ontology tags (5W1H, Dublin Core, PKO, FIBO, GOLEM, SUMO, expertise level) from text passages for corpus annotation.
 
   - id: docproc/build-prompts
     name: "Build QA generation prompts with KNN context scaffold, ontology…"

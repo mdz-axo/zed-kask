@@ -1,0 +1,4 @@
+// Document: MSFT 10-K Annual Report (excerpt)
+// Entity ref: company:MSFT:sec_filing:10-K:2024
+Item 1. Business.
+Microsoft operates through three segments: Productivity and Business Processes, Intelligent Cloud, and More Personal Computing. The Intelligent Cloud segment includes Azure, which provides a comprehensive set of cloud computing services. Our long-term strategy is to double Azure AI infrastructure capacity by fiscal year 2027 to meet enterprise demand for AI workloads. This capacity expansion depends on new datacenter regions coming online, including the Germany region scheduled for Q3 of fiscal year 2025. We believe the pricing model for Azure AI workloads reflects the platform value, not raw compute cost, and we expect gross margins to remain stable through the investment cycle.

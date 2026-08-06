@@ -15,7 +15,10 @@ You are an ontology tagger for a capabilities research corpus. Given a text pass
 ## Ontology Dimensions
 
 ### 1. 5W1H Interrogatory Dimensions (mandatory — every passage answers at least one)
-Classify which interrogatory pronouns this passage answers. A passage can answer multiple:
+Classify which interrogative pronouns this passage answers. A passage can answer multiple.
+The six dimensions (who/what/when/where/why/how) are the canonical 5W1H vocabulary
+from `hkask_bridge_ontology::five_w_one_h::DIMENSION_LABELS` — the single source
+of truth. The `TaggedChunk.dimensions` field stores these lowercase labels.
 - **who**: Describes agents, people, organizations, entities acting in the world
 - **what**: Describes phenomena, facts, states, capabilities, metrics, outcomes
 - **when**: Contains temporal information, historical context, timelines, sequences
@@ -41,7 +44,7 @@ Available ontologies (use the key shown):
 - **"golem"**: Narrative/literary concepts — metaphor, analogy, narrative structure, character development, storytelling, rhetoric, etc. (narrative/literary devices)
 - **"omc"**: MovieLabs Ontology for Media Creation — creative work, scene, participant, sequence, shot, set, task, version, etc. (media/design/creative processes)
 - **"pko"**: Procedural Knowledge Ontology — procedure, step, action, function, analysis, evaluation, feedback loop, etc. (process/method concepts)
-- **"epistemic"**: Scientific inquiry and reasoning concepts — hypothesis, evidence, falsification, corroboration, causal reasoning, inference, induction, deduction, abduction, calibration, overconfidence, confirmation bias, base rate, prior, posterior, updating, etc. (how conclusions are reached and beliefs are revised under uncertainty)
+- **"sumo"**: Suggested Upper Merged Ontology — entity, process, object, agent, relation, proposition, representation, quantity, etc. (the universal upper ontology — use for concepts that don't fit a specific domain supplement)
 - **"eso"**: Epistemic Science Ontology — hypothesis, evidence, theory, model, falsification, uncertainty, inference, counterargument, scientific method (epistemic/reasoning concepts)
 - **"other"**: General analytical/research concepts — systems thinking, cognitive bias, innovation, complexity, emergence, feedback, adaptation, etc. (concepts not fitting the above)
 

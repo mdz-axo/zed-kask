@@ -89,6 +89,10 @@ pub struct CmpConfig {
     pub roll_handoff_days: u32,
     /// Weakest constituent tier allowed.
     pub min_tier: ReliabilityTier,
+    /// Minimum number of eligible contracts required to form a maturity
+    /// bucket. Buckets with fewer contracts are withheld (never-fabricate
+    /// posture). Default 3 — enough for a bracket pair plus one tie-breaker.
+    pub min_constituents_per_bucket: u32,
 }
 
 impl Default for CmpConfig {
@@ -104,8 +108,90 @@ impl Default for CmpConfig {
             stable_preference: StablePreference::DirectFirst,
             roll_handoff_days: 3,
             min_tier: ReliabilityTier::Medium,
+            min_constituents_per_bucket: 3,
         }
     }
+}
+
+// ── Maturity buckets ─────────────────────────────────────────────────────
+
+/// The constant-maturity targets a CMP index can be built for.
+///
+/// The bucket structure adapts per base object: front-loaded objects (oil,
+/// gas, crypto) may only have enough contracts for 1m/2m; longer-horizon
+/// objects (rates, GDP) populate 3m/6m. A bucket is only formed when enough
+/// eligible contracts exist (see `select_available_buckets`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaturityBucket {
+    /// 1-month forward (≈30 days).
+    OneMonth,
+    /// 2-month forward (≈60 days).
+    TwoMonth,
+    /// 3-month forward (≈90 days).
+    ThreeMonth,
+    /// 6-month forward (≈180 days).
+    SixMonth,
+}
+
+impl MaturityBucket {
+    /// All buckets, ordered from shortest to longest maturity.
+    pub const ALL: [MaturityBucket; 4] = [
+        MaturityBucket::OneMonth,
+        MaturityBucket::TwoMonth,
+        MaturityBucket::ThreeMonth,
+        MaturityBucket::SixMonth,
+    ];
+
+    /// Target maturity in days.
+    pub fn target_days(self) -> u32 {
+        match self {
+            MaturityBucket::OneMonth => 30,
+            MaturityBucket::TwoMonth => 60,
+            MaturityBucket::ThreeMonth => 90,
+            MaturityBucket::SixMonth => 180,
+        }
+    }
+
+    /// Human-readable label.
+    pub fn label(self) -> &'static str {
+        match self {
+            MaturityBucket::OneMonth => "1m",
+            MaturityBucket::TwoMonth => "2m",
+            MaturityBucket::ThreeMonth => "3m",
+            MaturityBucket::SixMonth => "6m",
+        }
+    }
+}
+
+/// Select which maturity buckets can be formed from a set of eligible
+/// constituents.
+///
+/// A bucket is available when at least `min_constituents_per_bucket`
+/// constituents fall within its eligibility window. Contracts can be re-used
+/// across multiple buckets — a 45-day contract is eligible for both the 1m
+/// and 2m buckets if both windows contain it.
+///
+/// Returns the available buckets in maturity order (shortest first). Empty
+/// buckets are withheld, not fabricated.
+pub fn select_available_buckets(
+    constituents: &[Constituent],
+    config: &CmpConfig,
+) -> Vec<MaturityBucket> {
+    let min = config.min_constituents_per_bucket as usize;
+    MaturityBucket::ALL
+        .iter()
+        .filter(|bucket| {
+            let target = bucket.target_days();
+            let (lo, hi) = maturity_window(target, config);
+            let count = constituents
+                .iter()
+                .filter(|c| c.days_to_expiration >= lo && c.days_to_expiration <= hi)
+                .count();
+            count >= min
+        })
+        .copied()
+        .collect()
 }
 
 // ── Orientation ─────────────────────────────────────────────────────────────
@@ -425,6 +511,130 @@ pub fn solve_portfolio(
     })
 }
 
+// ── CMP index construction (ties buckets + orientation + portfolio) ────────
+
+/// A constituent tagged with its orientation, for per-orientation index
+/// construction. The orientation is computed by `classify_orientation`
+/// during eligibility; this struct carries the result so the index builder
+/// can filter by orientation without re-classifying.
+#[derive(Debug, Clone, Copy)]
+pub struct OrientedConstituent {
+    pub constituent: Constituent,
+    pub orientation: Orientation,
+    /// Index into the original market-records slice, for provenance.
+    pub market_index: usize,
+}
+
+/// One CMP index — a single (base object, maturity bucket, orientation)
+/// triple with its solved portfolio. This is the publishable unit: the daily
+/// index probability, constituent weights, and maturity-matching error.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CmpIndex {
+    /// The maturity bucket this index is built for.
+    pub bucket: MaturityBucket,
+    /// The orientation (increase, decline, stable).
+    pub orientation: Orientation,
+    /// The solved portfolio.
+    pub portfolio: IndexPortfolio,
+}
+
+/// The full set of CMP indices for one base object across all available
+/// maturity buckets and all three orientations. This is what gets published
+/// daily per base object.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CmpIndexSet {
+    /// Which maturity buckets were available (had enough contracts).
+    pub available_buckets: Vec<MaturityBucket>,
+    /// The constructed indices, one per (bucket, orientation) that could be
+    /// solved. Indices that couldn't be solved (no bracket, tolerance
+    /// failure) are omitted — withheld, not fabricated.
+    pub indices: Vec<CmpIndex>,
+    /// Buckets that were withheld because they had fewer than
+    /// `min_constituents_per_bucket` eligible contracts.
+    pub withheld_buckets: Vec<MaturityBucket>,
+}
+
+/// Construct the full CMP index set for one base object.
+///
+/// The procedure:
+/// 1. Select available maturity buckets (≥ `min_constituents_per_bucket`
+///    constituents in each bucket's eligibility window).
+/// 2. For each available bucket, filter constituents into the bucket's
+    ///    maturity window and group by orientation (increase, decline, stable).
+/// 3. For each (bucket, orientation) pair, solve the portfolio weights so
+///    the weighted-average maturity matches the bucket's target.
+/// 4. Withhold any index that can't be solved (no bracket, tolerance failure)
+///    — never fabricate.
+///
+/// Contracts are re-used across buckets and across orientations: the same
+/// contract may appear in the 1m increase index and the 2m increase index,
+/// or in the 1m increase and 1m decline indices (though a single contract
+/// has exactly one orientation, so it appears in at most one orientation per
+/// bucket).
+pub fn construct_cmp_index_set(
+    oriented: &[OrientedConstituent],
+    config: &CmpConfig,
+) -> CmpIndexSet {
+    // Step 1: select available buckets from all constituents regardless of
+    // orientation — the bucket is available if the object has enough contracts
+    // in the maturity window, even if they split across orientations.
+    let all_constituents: Vec<Constituent> =
+        oriented.iter().map(|oc| oc.constituent).collect();
+    let available = select_available_buckets(&all_constituents, config);
+
+    let withheld: Vec<MaturityBucket> = MaturityBucket::ALL
+        .iter()
+        .filter(|b| !available.contains(b))
+        .copied()
+        .collect();
+
+    let mut indices: Vec<CmpIndex> = Vec::new();
+
+    for bucket in &available {
+        let target = bucket.target_days();
+        let (lo, hi) = maturity_window(target, config);
+
+        // Filter constituents into this bucket's maturity window.
+        let in_window: Vec<&OrientedConstituent> = oriented
+            .iter()
+            .filter(|oc| {
+                oc.constituent.days_to_expiration >= lo
+                    && oc.constituent.days_to_expiration <= hi
+            })
+            .collect();
+
+        // For each orientation, collect the constituents and solve the portfolio.
+        for orientation in [Orientation::Increase, Orientation::Decline, Orientation::Stable] {
+            let orientation_constituents: Vec<Constituent> = in_window
+                .iter()
+                .filter(|oc| oc.orientation == orientation)
+                .map(|oc| oc.constituent)
+                .collect();
+
+            if orientation_constituents.is_empty() {
+                continue; // no contracts for this orientation in this bucket
+            }
+
+            // Solve the portfolio for this (bucket, orientation).
+            if let Some(portfolio) = solve_portfolio(&orientation_constituents, target, config) {
+                indices.push(CmpIndex {
+                    bucket: *bucket,
+                    orientation,
+                    portfolio,
+                });
+            }
+            // If solve_portfolio returns None (no bracket, tolerance failure),
+            // the index is withheld — not fabricated.
+        }
+    }
+
+    CmpIndexSet {
+        available_buckets: available,
+        indices,
+        withheld_buckets: withheld,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,5 +852,166 @@ mod tests {
         );
         let err = result.expect_err("no level");
         assert!(err.reason.contains("no materiality level"));
+    }
+
+    // ── Maturity bucket selection tests ──────────────────────────────────
+
+    fn constituent(days: f64, quality: f64) -> Constituent {
+        Constituent {
+            days_to_expiration: days,
+            probability: 0.5,
+            quality,
+        }
+    }
+
+    #[test]
+    fn bucket_1m_available_with_3_contracts_near_30d() {
+        // 3 contracts within the 1m eligibility window.
+        let constituents = vec![
+            constituent(25.0, 1.0),
+            constituent(30.0, 1.0),
+            constituent(35.0, 1.0),
+        ];
+        let buckets = select_available_buckets(&constituents, &config());
+        assert!(buckets.contains(&MaturityBucket::OneMonth));
+    }
+
+    #[test]
+    fn bucket_withheld_with_fewer_than_3_contracts() {
+        // Only 2 contracts near 30d — 1m bucket must be withheld.
+        let constituents = vec![
+            constituent(28.0, 1.0),
+            constituent(32.0, 1.0),
+            // 3 contracts near 90d — 3m bucket is available.
+            constituent(85.0, 1.0),
+            constituent(90.0, 1.0),
+            constituent(95.0, 1.0),
+        ];
+        let buckets = select_available_buckets(&constituents, &config());
+        assert!(
+            !buckets.contains(&MaturityBucket::OneMonth),
+            "1m must be withheld with only 2 contracts"
+        );
+        assert!(
+            buckets.contains(&MaturityBucket::ThreeMonth),
+            "3m must be available with 3 contracts"
+        );
+    }
+
+    #[test]
+    fn contracts_reused_across_multiple_buckets() {
+        // The 1m window is [22, 38] and the 2m window is [45, 75] with
+        // default config — they don't overlap. But a contract at 38d is in
+        // 1m, and a contract at 45d is in 2m. Test that both buckets form
+        // when each has enough contracts. Contract reuse happens at the
+        // 2m/3m boundary (2m window [45,75], 3m window [68,112] — overlap
+        // at [68,75]).
+        let constituents = vec![
+            // 1m window [22, 38]: 3 contracts
+            constituent(25.0, 1.0),
+            constituent(30.0, 1.0),
+            constituent(35.0, 1.0),
+            // 2m window [45, 75]: 3 contracts (70d also in 3m window)
+            constituent(50.0, 1.0),
+            constituent(60.0, 1.0),
+            constituent(70.0, 1.0),
+        ];
+        let buckets = select_available_buckets(&constituents, &config());
+        assert!(
+            buckets.contains(&MaturityBucket::OneMonth),
+            "1m should be available"
+        );
+        assert!(
+            buckets.contains(&MaturityBucket::TwoMonth),
+            "2m should be available"
+        );
+    }
+
+    #[test]
+    fn front_loaded_object_gets_1m_2m_only() {
+        // Oil/gas pattern: lots of short-dated contracts, nothing beyond 150d.
+        let constituents = vec![
+            // 1m window [22, 38]: 3+ contracts
+            constituent(25.0, 1.0),
+            constituent(30.0, 1.0),
+            constituent(35.0, 1.0),
+            // 2m window [45, 75]: 3+ contracts
+            constituent(50.0, 1.0),
+            constituent(55.0, 1.0),
+            constituent(60.0, 1.0),
+            constituent(65.0, 1.0),
+        ];
+        let buckets = select_available_buckets(&constituents, &config());
+        assert!(
+            buckets.contains(&MaturityBucket::OneMonth),
+            "1m should be available"
+        );
+        assert!(
+            buckets.contains(&MaturityBucket::TwoMonth),
+            "2m should be available"
+        );
+        assert!(
+            !buckets.contains(&MaturityBucket::SixMonth),
+            "6m should be withheld (no long-dated contracts)"
+        );
+    }
+
+    #[test]
+    fn long_horizon_object_gets_3m_6m() {
+        // Rates/GDP pattern: contracts out to 380+ days.
+        let constituents = vec![
+            constituent(85.0, 1.0),
+            constituent(90.0, 1.0),
+            constituent(95.0, 1.0),
+            constituent(170.0, 1.0),
+            constituent(180.0, 1.0),
+            constituent(190.0, 1.0),
+        ];
+        let buckets = select_available_buckets(&constituents, &config());
+        assert!(
+            buckets.contains(&MaturityBucket::ThreeMonth),
+            "3m should be available"
+        );
+        assert!(
+            buckets.contains(&MaturityBucket::SixMonth),
+            "6m should be available"
+        );
+        assert!(
+            !buckets.contains(&MaturityBucket::OneMonth),
+            "1m should be withheld (no short-dated contracts)"
+        );
+    }
+
+    #[test]
+    fn min_constituents_threshold_configurable() {
+        // With min=5, 3 contracts is not enough.
+        let mut cfg = config();
+        cfg.min_constituents_per_bucket = 5;
+        let constituents = vec![
+            constituent(28.0, 1.0),
+            constituent(30.0, 1.0),
+            constituent(32.0, 1.0),
+        ];
+        let buckets = select_available_buckets(&constituents, &cfg);
+        assert!(
+            buckets.is_empty(),
+            "no buckets should be available with min=5 and only 3 contracts"
+        );
+    }
+
+    #[test]
+    fn maturity_bucket_target_days() {
+        assert_eq!(MaturityBucket::OneMonth.target_days(), 30);
+        assert_eq!(MaturityBucket::TwoMonth.target_days(), 60);
+        assert_eq!(MaturityBucket::ThreeMonth.target_days(), 90);
+        assert_eq!(MaturityBucket::SixMonth.target_days(), 180);
+    }
+
+    #[test]
+    fn maturity_bucket_labels() {
+        assert_eq!(MaturityBucket::OneMonth.label(), "1m");
+        assert_eq!(MaturityBucket::TwoMonth.label(), "2m");
+        assert_eq!(MaturityBucket::ThreeMonth.label(), "3m");
+        assert_eq!(MaturityBucket::SixMonth.label(), "6m");
     }
 }

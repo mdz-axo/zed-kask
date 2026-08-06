@@ -1,11 +1,11 @@
-# Listening Template Process Manifest
-# ℏKask v0.33.0 — MAIA v3 listening template as a single-pass KnowAct
+# Listening Process Manifest
+# ℏKask v0.33.0 — MAIA v3 listening skill as a single-pass KnowAct
 # Design: kask/docs/explanation/earnings-transcript-analysis-design.md §(b), §(c)
 
 manifest:
-  id: listening-template
+  id: listening
   category: skill
-  name: Listening Template
+  name: Listening
   description: >
     Applies the MAIA v3 listening template to an earnings-call transcript.
     Single-pass extraction: per-section verdicts with verbatim evidence quotes,
@@ -52,7 +52,7 @@ inputs:
     required: false
 
 ledger:
-  span_namespace: reg.skill.listening-template
+  span_namespace: reg.skill.listening
 
 steps:
   - ordinal: 1
@@ -62,7 +62,7 @@ steps:
       verdicts with verbatim evidence, classify claims by horizon, emit the
       checkpoint map and ignored_short_term.
     renderer: minijinja
-    template_ref: listening-template/apply-template
+    template_ref: listening/apply-template
     gas_cap: 100000
     timeout_seconds: 60
     input_mapping:

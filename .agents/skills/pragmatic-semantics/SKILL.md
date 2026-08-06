@@ -26,7 +26,7 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 4. Identify both the process axis (PKO) and state axis (DC+BIBO) if the statement is dual-axis.
 5. Map the statement to its constraint force (Prohibition, Guardrail, Guideline, Evidence, or Hypothesis) based on its ontological and epistemic modes.
 6. Classify the provenance of the statement (Specification, Implementation, Observation, Inference, External, or Unknown).
-7. Calculate the confidence score from 0.0 to 1.0, applying tier-specific modifiers (e.g., +0.10 for FIBO, -0.10 for CogAT, -0.15 for unanchored). For Specification provenance, confidence should be ≥ 0.8, but verify the spec is current before applying this floor — specs can be stale.
+7. Calculate the confidence score from 0.0 to 1.0, applying tier-specific modifiers (e.g., +0.10 for FIBO, +0.05 for SUMO, -0.15 for unanchored). For Specification provenance, confidence should be ≥ 0.8, but verify the spec is current before applying this floor — specs can be stale.
 
 ### semantics-provenance-trace
 
@@ -45,7 +45,7 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 3. Break ties within the same ontological mode by epistemic certainty (Declarative > Probabilistic > Subjunctive).
 4. Break ties within the same epistemic mode by constraint force (Prohibition > Guardrail > Guideline > Evidence > Hypothesis).
 5. Break ties within the same constraint force by provenance authority (Specification > Design > Implementation > Runtime > Memory > Inference > Unknown).
-6. Use ontology anchoring as the final tiebreaker, prioritizing higher-confidence ontologies (e.g., FIBO over CogAT, unanchored as lowest priority).
+6. Use ontology anchoring as the final tiebreaker, prioritizing higher-confidence ontologies (e.g., FIBO over SUMO, unanchored as lowest priority).
 7. Determine the winning statement and select a resolution strategy (Override, Scope, Defer, Escalate, or Confirm if no conflict exists).
 8. Escalate to human review if two Prohibitions conflict or if all five tiers result in a genuine tie.
 
@@ -55,11 +55,11 @@ Epistemic discipline for classifying statements by certainty level, constraint f
 |----------|------|---------|
 | `semantics-classify-statement.j2` | KnowAct | Classify a statement on three axes: ontological (IS/OUGHT), epistemic (declarative/probabilistic/subjunctive), and domain ontology anchoring (core/dual_axis/domain_supplement). Determine its constraint force, provenance, and confidence with tier-specific modifiers. |
 | `semantics-provenance-trace.j2` | KnowAct | Trace the provenance of a claim through hKask's data layers including ontology tier confidence modifiers. Identify evidence sources, confidence level, and verification recommendations. |
-| `semantics-conflict-resolve.j2` | KnowAct | Resolve a conflict between statements using 5-tier OT ranking. Rank by ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring (FIBO > CogAT > unanchored). |
+| `semantics-conflict-resolve.j2` | KnowAct | Resolve a conflict between statements using 5-tier OT ranking. Rank by ontological type, epistemic mode, constraint force, evidence provenance, and ontology anchoring (FIBO > SUMO > unanchored). |
 
 ## Constraints
 
-- `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, CogAT -0.10, unanchored -0.15.
+- `semantics-classify-statement.j2`: Public. IS-statements are never Prohibitions. Declarative OUGHT-statements map to Prohibition or Guardrail. Unknown provenance → confidence ≤ 0.3. Specification provenance → confidence ≥ 0.8 (verify spec is current). FIBO +0.10, SUMO +0.05, unanchored -0.15.
 - `semantics-provenance-trace.j2`: Public. Every step must identify a concrete location. Unknown source → confidence ≤ 0.2. Direct spec quotes → confidence ≥ 0.9. Inference steps reduce confidence by ≥ 0.1.
 - `semantics-conflict-resolve.j2`: Public. OUGHT never loses to IS. Two Prohibitions conflicting → escalate. Resolution enum: override, scope, defer, escalate, confirm.
 - Step 3 (conflict-resolve) is conditional — it only runs when `step_2_result.conflicts_detected == true`. Downstream steps must use `step_3_result | default({})` to handle the skipped case.

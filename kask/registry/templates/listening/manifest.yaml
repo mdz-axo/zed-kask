@@ -1,9 +1,9 @@
-# Template crate manifest for listening-template skill
+# Template crate manifest for listening skill
 # hKask v0.33.0
 # Design: kask/docs/explanation/earnings-transcript-analysis-design.md §(b)
 
 crate:
-  name: listening-template
+  name: listening
   version: "0.33.0"
   description: >
     Applies the MAIA v3 listening template to an earnings-call transcript.
@@ -13,7 +13,7 @@ crate:
     evidence field is a verbatim substring of the source transcript.
 
 templates:
-  - id: listening-template/apply-template
+  - id: listening/apply-template
     name: "Apply the v3 listening template to an earnings transcript"
     path: apply-template.j2
     type: KnowAct
@@ -23,3 +23,16 @@ templates:
       verbatim evidence quotes, the checkpoint map, and ignored_short_term
       entries. The no-fabrication invariant is enforced: every evidence field
       is a verbatim substring of the source transcript.
+
+  - id: listening/apply-template-rag
+    name: "Apply the v3 listening template over RAG-retrieved corpus passages"
+    path: apply-template-rag.j2
+    type: KnowAct
+    description: >
+      Apply the MAIA v3 listening template over a company knowledge graph.
+      Takes RAG-retrieved passages from multiple documents (earnings calls,
+      10-Ks, investor days) plus KG triples linking them. Emits per-section
+      verdicts with cross-source citations — a verdict can cite evidence from
+      document A and document B. The no-fabrication invariant extends to the
+      full corpus: every evidence field is a verbatim substring of one of the
+      source passages.

@@ -1,5 +1,5 @@
 ---
-name: listening-template
+name: listening
 description: >
   Apply the MAIA v3 listening template to an earnings-call transcript. Extracts
   per-section verdicts with verbatim evidence quotes, classifies claims by
@@ -11,7 +11,7 @@ description: >
   2026-08-05 seam clarification (12–36mo = tactical→strategic transition zone).
 ---
 
-# Listening Template
+# Listening
 
 Applies the MAIA v3 listening template to an earnings-call transcript. The
 template is a semantic evaluation procedure over text — it extracts claims,
@@ -48,7 +48,8 @@ field is a verbatim substring of the source transcript.
 
 | Template | Type | Purpose |
 |----------|------|---------|
-| `listening-template/apply-template.j2` | KnowAct | Apply the v3 listening template to a transcript; emit per-section verdicts + checkpoint map. |
+| `listening/apply-template.j2` | KnowAct | Apply the v3 listening template to a single transcript; emit per-section verdicts + checkpoint map. |
+| `listening/apply-template-rag.j2` | KnowAct | Apply the v3 listening template over RAG-retrieved corpus passages + KG triples; emit per-section verdicts with cross-source citations. |
 
 ## Constraints
 

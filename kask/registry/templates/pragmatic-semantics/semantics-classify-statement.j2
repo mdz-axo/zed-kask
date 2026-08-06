@@ -53,14 +53,14 @@ Every statement in hKask exists within a 3-tier ontology architecture. The tier 
 |------|----------|-------|--------------------|
 | **core** | 5W1H (Who, What, When, Where, Why, How) | Universal — every artifact must answer at least one | Default ground — no domain precision assumed |
 | **dual_axis** | PKO (process) + DC+BIBO (state) | Cross-cutting — every MCP server depends on both axes | Standard — process/entity semantics are well-defined |
-| **domain_supplement** | FIBO, GOLEM, CogAT, ML-Schema, OMC | Server-local — layered where DC+BIBO is insufficient | Variable — depends on the supplement's adoption and mapping fidelity |
+| **domain_supplement** | FIBO, GOLEM, SUMO, ML-Schema, OMC | Server-local — layered where DC+BIBO is insufficient | Variable — depends on the supplement's adoption and mapping fidelity |
 
 ### Tier-Specific Confidence Modifiers
 
 | Domain Supplement | Confidence Modifier | Rationale |
 |-----------------|--------------------|-----------|
 | **FIBO** (financial) | +0.10 | OMG standard, built by Goldman Sachs/Citigroup/Bloomberg/Fed — high adoption, precise semantics |
-| **CogAT** (cognitive) | -0.10 | Explicitly metaphorical mapping — software inspired by but not identical to cognitive science |
+| **SUMO** (upper ontology) | +0.05 | Actively maintained upper ontology (Ontology Portal), broad coverage — formal categorization for unknown domains |
 | **GOLEM** (narrative) | ±0.00 | ERC-funded academic ontology, aligned with CIDOC-CRM — well-defined but domain-narrow |
 | **ML-Schema** (ML experiments) | ±0.00 | W3C Community Group — less adoption than FIBO, provisional bridge |
 | **OMC** (media creation) | ±0.00 | MovieLabs v2.8 standard, Hollywood consortium — domain-specific but well-adopted |
@@ -120,7 +120,7 @@ System Context: "hkask-mcp-companies — company_profile tool output"
 
 Statement: "The agent encoded the experience and is now consolidating it to semantic memory."
 System Context: "hkask-mcp-memory — episodic_consolidate_status tool output"
-{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"cogat:memory_consolidation","constraint_force":"Evidence","provenance":"observation","confidence":0.75,"reasoning":"Descriptive observation (IS) from tool output (declarative). CogAT domain supplement — memory_consolidation is a cognitive concept. CogAT carries -0.10 confidence penalty because the mapping is explicitly metaphorical ('software system inspired by but not identical to cognitive episodic memory'). Combined with observation provenance, confidence is 0.75."}
+{"ontological_mode":"IS","epistemic_mode":"declarative","ontology_tier":"domain_supplement","ontology_anchor":"sumo:Process","constraint_force":"Evidence","provenance":"observation","confidence":0.80,"reasoning":"Descriptive observation (IS) from tool output (declarative). SUMO domain supplement — Process is an upper-ontology concept. SUMO carries +0.05 confidence boost because it is an actively maintained upper ontology with broad coverage. Combined with observation provenance, confidence is 0.80."}
 
 ## Output Requirements
 
@@ -131,7 +131,7 @@ Respond with a JSON object:
   "ontological_mode": "IS|OUGHT",
   "epistemic_mode": "declarative|probabilistic|subjunctive",
   "ontology_tier": "core|dual_axis|domain_supplement",
-  "ontology_anchor": "5W1H-Who|5W1H-What|5W1H-When|5W1H-Where|5W1H-Why|5W1H-How|pko:ConceptName|bibo:ConceptName|dcterms:ConceptName|fibo:ConceptName|golem:ConceptName|cogat:ConceptName|mls:ConceptName|omc:ConceptName|unanchored",
+  "ontology_anchor": "5w1h:Who|5w1h:What|5w1h:When|5w1h:Where|5w1h:Why|5w1h:How|pko:ConceptName|bibo:ConceptName|dcterms:ConceptName|fibo:ConceptName|golem:ConceptName|sumo:ConceptName|mls:ConceptName|omc:ConceptName|unanchored",
   "constraint_force": "Prohibition|Guardrail|Guideline|Evidence|Hypothesis",
   "provenance": "specification|implementation|observation|inference|external|unknown",
   "confidence": 0.0,
@@ -139,7 +139,7 @@ Respond with a JSON object:
 }
 ```
 
-`confidence` ranges from 0.0 to 1.0. Higher = more certain the classification is correct. Apply tier-specific modifiers (FIBO +0.10, CogAT -0.10) to the base confidence.
+`confidence` ranges from 0.0 to 1.0. Higher = more certain the classification is correct. Apply tier-specific modifiers (FIBO +0.10, SUMO +0.05) to the base confidence.
 
 ## Constraints
 
@@ -149,7 +149,7 @@ Respond with a JSON object:
 - If provenance is Unknown, confidence must be ≤ 0.3.
 - If provenance is Specification, confidence should be ≥ 0.8 (spec is authoritative within hKask, but may be stale — verify the spec is current before applying this floor).
 - FIBO-anchored statements: apply +0.10 confidence modifier (OMG standard, high adoption).
-- CogAT-anchored statements: apply -0.10 confidence penalty (metaphorical mapping).
+- SUMO-anchored statements: apply +0.05 confidence boost (upper ontology, broad coverage).
 - Unanchored statements (no ontology tier): flag as ontological noise per P5.2, reduce confidence by 0.15.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Preserve the original prompt structure and formatting.

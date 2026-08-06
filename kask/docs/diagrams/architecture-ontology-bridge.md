@@ -82,7 +82,7 @@ flowchart LR
     select -->|"narrative/corpus"| golem_anchor["GOLEM + DC"]
     select -->|"media/generate"| omc_anchor["OMC + DC"]
     select -->|"training/ml"| ml_anchor["ML-Schema + DC"]
-    select -->|"memory/cognitive"| cogat_anchor["CogAT + DC"]
+    select -->|"memory/cognitive"| sumo_anchor["SUMO + DC"]
     select -->|"kanban/task/process"| pko_anchor["PKO + DC"]
     select -->|"file/web/registry"| dc_anchor["DC + BIBO"]
     select -->|"unknown"| core_anchor["5W1H Core<br/>(DC + PKO fallback)"]

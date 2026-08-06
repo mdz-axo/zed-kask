@@ -152,6 +152,37 @@ pub const HAS_RISK: FiboConcept = "fibo:hasRisk";
 /// Uncertainty in estimates or forecasts.
 pub const HAS_UNCERTAINTY: FiboConcept = "fibo:hasUncertainty";
 
+// ── Economic indicators (FIBO ind-ir / ind-ei modules) ─────────────────────
+//
+// These are the FIBO concepts for the economic factors the CMP base events
+// track: policy interest rates, Treasury yields, inflation, commodity
+// prices, and crypto asset prices. They anchor the semantic mapping from
+// prediction-market contracts to FIBO concepts so the dual-axis graph
+// proximity can identify constellations of related events.
+
+/// A central bank's short-term policy interest rate (Fed funds, ECB refi,
+/// BoE bank rate). FIBO: `fibo-ind-ir-ir:PolicyInterestRate`.
+pub const POLICY_INTEREST_RATE: FiboConcept = "fibo-ind-ir-ir:PolicyInterestRate";
+/// A Treasury yield at a specific maturity (2Y, 5Y, 10Y, 30Y). FIBO:
+/// `fibo-ind-ir-ir:YieldCurvePoint` (hKask extension — FIBO models the yield
+/// curve as a whole; this is the per-point concept).
+pub const TREASURY_YIELD: FiboConcept = "fibo-ind-ir-ir:YieldCurvePoint";
+/// The Fed funds target rate specifically. FIBO:
+/// `fibo-ind-ir-ir:FederalFundsRate`.
+pub const FEDERAL_FUNDS_RATE: FiboConcept = "fibo-ind-ir-ir:FederalFundsRate";
+/// A consumer price index (CPI) — the headline inflation measure. FIBO:
+/// `fibo-ind-ei-ei:ConsumerPriceIndex`.
+pub const CONSUMER_PRICE_INDEX: FiboConcept = "fibo-ind-ei-ei:ConsumerPriceIndex";
+/// A producer price index (PPI). FIBO: `fibo-ind-ei-ei:ProducerPriceIndex`.
+pub const PRODUCER_PRICE_INDEX: FiboConcept = "fibo-ind-ei-ei:ProducerPriceIndex";
+/// A commodity price index (WTI, Brent, Henry Hub). FIBO:
+/// `fibo-ind-ei-ei:CommodityPriceIndex`.
+pub const COMMODITY_PRICE_INDEX: FiboConcept = "fibo-ind-ei-ei:CommodityPriceIndex";
+/// A market index (Bitcoin, Ethereum). FIBO: `fibo-ind-ei-ei:MarketIndex`.
+pub const MARKET_INDEX: FiboConcept = "fibo-ind-ei-ei:MarketIndex";
+/// Gross domestic product. FIBO: `fibo-ind-ei-ei:GrossDomesticProduct`.
+pub const GROSS_DOMESTIC_PRODUCT: FiboConcept = "fibo-ind-ei-ei:GrossDomesticProduct";
+
 /// All FIBO concepts, for validation or iteration.
 pub const ALL_CONCEPTS: &[FiboConcept] = &[
     COMPETITIVE_ADVANTAGE,

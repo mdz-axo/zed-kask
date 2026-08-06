@@ -9,7 +9,7 @@
 #
 # Provenance invariant: every discovered document carries source_tier +
 # dc:source + retrieval date. tier_3 may inform context but can never be cited
-# as the company's own position in a listening-template verdict. Generated
+# as the company's own position in a listening verdict. Generated
 # content (corpus_generate_qa output) is never tier_1/tier_2 evidence.
 
 manifest:
@@ -84,7 +84,7 @@ ingestion:
   chunking:
     multi_tier: true
   tagging:
-    ontologies: [FIBO, PKO, DublinCore, FiveW1H]
+    ontologies: [FIBO, PKO, DublinCore, FiveW1H, SUMO]
   embedding:
     dim: 1024                           # matches EmbeddingStore contract (corpus_config_parse_test)
   centroids:

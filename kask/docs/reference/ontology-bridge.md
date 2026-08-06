@@ -156,7 +156,7 @@ The core of the system: maps a domain hint to its axis anchoring.
 | Type | Description |
 |------|-------------|
 | `OntologyAxis` | `Pko` or `DcBibo` — which axis of the dual-axis framework |
-| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Cogat`, `MlSchema`, `Omc` — which domain supplement |
+| `OntologyNamespace` | `Fibo`, `Eso`, `Golem`, `Sumo`, `MlSchema`, `Omc` — which domain supplement |
 | `OntologyAnchor` | `Core`, `DualAxis { axis, concept }`, or `DomainSupplement { namespace, concept }` — the 3-tier ontology tier |
 
 **Functions:**
@@ -180,7 +180,7 @@ The core of the system: maps a domain hint to its axis anchoring.
 | `narrative`, `corpus`, `persona`, `author` | GOLEM | DC | GOLEM |
 | `media`, `image`, `video`, `generate`, `face` | OMC | DC | OMC |
 | `training`, `ml`, `adapter`, `lora` | ML-Schema | DC | ML-Schema |
-| `memory`, `cognitive`, `episodic` | CogAT | DC | CogAT |
+| `memory`, `cognitive`, `episodic` | SUMO | DC | SUMO |
 | `kanban`, `task`, `spec`, `skill`, `curator` | (PKO) | DC | PKO |
 | `file`, `web`, `registry`, `wallet` | (DC+BIBO) | DC | DC+BIBO |
 | (unknown) | (Core) | DC | PKO |

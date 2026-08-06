@@ -61,7 +61,7 @@ status: VERIFIED (v2 — learning loop removed; static default_for selection onl
 The `derive_ontology_anchor` function (`algorithms.rs:680`) maps a tool name
 to an `OntologyAnchor` (`types.rs:23`). This anchor connects compression to
 the dual-axis ontology (PKO + DC+BIBO) plus domain supplements (FIBO, GOLEM,
-CogAT, ML-Schema, OMC). The anchor provides the keywords that the
+SUMO, ML-Schema, OMC). The anchor provides the keywords that the
 `domain_saliency` function (`algorithms.rs:231`) uses to score lines.
 
 Without ontology anchoring, the condenser would score lines by generic word

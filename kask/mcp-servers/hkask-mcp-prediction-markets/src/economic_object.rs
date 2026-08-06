@@ -7,25 +7,28 @@
 //! object, at the right granularity) through an explicit ontology, not
 //! substring luck.
 //!
-//! Structure (a real ontology, not a keyword list):
-//! - `EconomicObject` — the thing a contract is about (its referent).
-//! - Each object carries a FIBO-anchored concept URI (the same OMG standard
-//!   the companies server uses) and a `synonym_closure`: the set of surface
-//!   forms that refer to the object. Synonym closure is the ontological
-//!   operation — it maps many names to ONE referent, so "FOMC" and "Fed
-//!   funds" and "rate decision" are the same node.
-//! - `resolve_object` maps a contract to its object via the closure. A
-//!   contract about a Fed meeting where short-term rates are set resolves to
-//!   `PolicyInterestRate` — full stop, regardless of which surface form the
-//!   venue happened to use.
+//! The mechanism is now ontological mapping through the shared
+//! `hkask-bridge-ontology` crate (see `semantic_mapping.rs`). Each base
+//! object carries a FIBO concept URI (the process axis) and is paired with
+//! Dublin Core state identity (the state axis). Graph proximity over the
+//! two axes identifies constellations of related events — not substring
+//! matching.
+//!
+//! This module defines the base objects (the systematic factors CMP indices
+//! are built over) and their FIBO anchors. The actual event → object
+//! mapping lives in `semantic_mapping.rs`, which uses the venue's curated
+//! taxonomy (Kalshi `series_ticker`, Gamma `tags`) as the primary signal.
 
-use crate::types::MarketRecord;
+use hkask_bridge_ontology::fibo;
 
 /// The economic object a contract is about — its referent at the granularity
-/// CMP indices are built over.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+/// CMP indices are built over. This is the "base event" — the systematic
+/// factor family.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum EconomicObject {
+pub enum BaseEconomicObject {
     /// A central bank's short-term policy interest rate (Fed funds, ECB refi,
     /// BoE bank rate). The object of "Fed decision", "FOMC", "rate cut",
     /// "rate hike", "Fed funds target", "how many cuts" — all the same node.
@@ -44,215 +47,117 @@ pub enum EconomicObject {
     RealGdpGrowth,
 }
 
-impl EconomicObject {
-    /// All registered objects.
-    pub const ALL: [EconomicObject; 7] = [
-        EconomicObject::PolicyInterestRate,
-        EconomicObject::ConsumerPriceInflation,
-        EconomicObject::CrudeOilPrice,
-        EconomicObject::NaturalGasPrice,
-        EconomicObject::BitcoinPrice,
-        EconomicObject::EthereumPrice,
-        EconomicObject::RealGdpGrowth,
+impl BaseEconomicObject {
+    /// All registered base objects.
+    pub const ALL: [BaseEconomicObject; 7] = [
+        BaseEconomicObject::PolicyInterestRate,
+        BaseEconomicObject::ConsumerPriceInflation,
+        BaseEconomicObject::CrudeOilPrice,
+        BaseEconomicObject::NaturalGasPrice,
+        BaseEconomicObject::BitcoinPrice,
+        BaseEconomicObject::EthereumPrice,
+        BaseEconomicObject::RealGdpGrowth,
     ];
 
-    /// FIBO-anchored concept URI for this object (the OMG financial ontology
-    /// the companies server anchors to). Where FIBO has no exact class, the
-    /// nearest indicator/index concept is used and noted.
-    pub fn fibo_concept(self) -> &'static str {
-        match self {
-            EconomicObject::PolicyInterestRate => "fibo-ind-ir-ir:PolicyInterestRate",
-            EconomicObject::ConsumerPriceInflation => "fibo-ind-ei-ei:ConsumerPriceIndex",
-            EconomicObject::CrudeOilPrice => "fibo-ind-ei-ei:CommodityPriceIndex",
-            EconomicObject::NaturalGasPrice => "fibo-ind-ei-ei:CommodityPriceIndex",
-            EconomicObject::BitcoinPrice => "fibo-ind-ei-ei:MarketIndex",
-            EconomicObject::EthereumPrice => "fibo-ind-ei-ei:MarketIndex",
-            EconomicObject::RealGdpGrowth => "fibo-ind-ei-ei:GrossDomesticProduct",
-        }
-    }
-
-    /// Synonym closure: the surface forms that refer to this object.
+    /// FIBO-anchored concept URI for this object (the process axis).
     ///
-    /// This is the ontological core. A contract whose text contains ANY of
-    /// these forms is ABOUT this object. The closure is deliberately
-    /// exhaustive for the object — it includes the institutions (Fed, FOMC,
-    /// ECB), the instruments (Fed funds, refi rate), the actions (rate cut,
-    /// rate hike, rate decision), and the colloquial forms (cuts, hikes)
-    /// because they all denote the same referent.
-    fn synonym_closure(self) -> &'static [&'static str] {
+    /// Returns the canonical FIBO concept from the shared
+    /// `hkask-bridge-ontology` crate. Where FIBO has no exact class, the
+    /// nearest indicator/index concept is used.
+    pub fn fibo_concept(self) -> fibo::FiboConcept {
         match self {
-            EconomicObject::PolicyInterestRate => &[
-                // institutions that set the policy rate
-                "federal reserve",
-                "fomc",
-                "federal open market",
-                "the fed",
-                "fed ",
-                "central bank",
-                "ecb",
-                "european central bank",
-                "bank of england",
-                "bank of japan",
-                "boj",
-                // the instruments / rates
-                "interest rate",
-                "fed funds",
-                "federal funds",
-                "policy rate",
-                "bank rate",
-                "refi rate",
-                "discount rate",
-                "overnight rate",
-                "base rate",
-                "key rate",
-                // the actions on the rate
-                "rate cut",
-                "rate hike",
-                "rate decision",
-                "rate increase",
-                "rate decrease",
-                "rate change",
-                "cut rates",
-                "hike rates",
-                "raise rates",
-                "lower rates",
-                "cuts",
-                "hikes",
-                // units of rate change
-                "basis point",
-                "bps",
-            ],
-            EconomicObject::ConsumerPriceInflation => &[
-                "inflation",
-                "cpi",
-                "consumer price",
-                "pce",
-                "price index",
-                "cost of living",
-                "deflation",
-                "disinflation",
-            ],
-            EconomicObject::CrudeOilPrice => &[
-                "crude oil",
-                "wti",
-                "brent",
-                "oil price",
-                "price of oil",
-                "oil futures",
-                "barrel of oil",
-            ],
-            EconomicObject::NaturalGasPrice => &["natural gas", "natgas", "henry hub", "gas price"],
-            EconomicObject::BitcoinPrice => &["bitcoin", "btc", "xbt"],
-            EconomicObject::EthereumPrice => &["ethereum", "ether", "eth "],
-            EconomicObject::RealGdpGrowth => &[
-                "gdp",
-                "gross domestic product",
-                "economic growth",
-                "real growth",
-            ],
+            BaseEconomicObject::PolicyInterestRate => fibo::POLICY_INTEREST_RATE,
+            BaseEconomicObject::ConsumerPriceInflation => fibo::CONSUMER_PRICE_INDEX,
+            BaseEconomicObject::CrudeOilPrice => fibo::COMMODITY_PRICE_INDEX,
+            BaseEconomicObject::NaturalGasPrice => fibo::COMMODITY_PRICE_INDEX,
+            BaseEconomicObject::BitcoinPrice => fibo::MARKET_INDEX,
+            BaseEconomicObject::EthereumPrice => fibo::MARKET_INDEX,
+            BaseEconomicObject::RealGdpGrowth => fibo::GROSS_DOMESTIC_PRODUCT,
         }
     }
-}
 
-/// Resolve a contract to its economic object via synonym closure over the
-/// contract's question, description, series, and category.
-///
-/// Returns the object the contract is ABOUT, or None when it is not about a
-/// registered economic object. This is the semantic mapping: a contract about
-/// a Federal Reserve meeting where short-term interest rates are set resolves
-/// to `PolicyInterestRate` whether the venue wrote "FOMC decision", "Fed
-/// funds target", or "how many rate cuts".
-pub fn resolve_object(record: &MarketRecord) -> Option<EconomicObject> {
-    let text = format!(
-        "{} {} {} {}",
-        record.question, record.description, record.series, record.category
-    )
-    .to_lowercase();
-    EconomicObject::ALL.into_iter().find(|object| {
-        object
-            .synonym_closure()
-            .iter()
-            .any(|form| text.contains(form))
-    })
-}
-
-/// All contracts in a catalog that are about a given economic object — the
-/// interest-rate-related list that must NOT exclude obvious rate contracts.
-pub fn contracts_about<'a>(
-    records: &'a [MarketRecord],
-    object: EconomicObject,
-) -> Vec<&'a MarketRecord> {
-    records
-        .iter()
-        .filter(|record| resolve_object(record) == Some(object))
-        .collect()
+    /// Human-readable label for the base object.
+    pub fn label(self) -> &'static str {
+        match self {
+            BaseEconomicObject::PolicyInterestRate => "policy_interest_rate",
+            BaseEconomicObject::ConsumerPriceInflation => "consumer_price_inflation",
+            BaseEconomicObject::CrudeOilPrice => "crude_oil_price",
+            BaseEconomicObject::NaturalGasPrice => "natural_gas_price",
+            BaseEconomicObject::BitcoinPrice => "bitcoin_price",
+            BaseEconomicObject::EthereumPrice => "ethereum_price",
+            BaseEconomicObject::RealGdpGrowth => "real_gdp_growth",
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn record(question: &str, series: &str) -> MarketRecord {
-        let mut record = crate::types::test_utils::market_record_fixture();
-        record.question = question.into();
-        record.series = series.into();
-        record
+    #[test]
+    fn fibo_concept_anchors_to_correct_uri() {
+        assert_eq!(
+            BaseEconomicObject::PolicyInterestRate.fibo_concept(),
+            "fibo-ind-ir-ir:PolicyInterestRate"
+        );
+        assert_eq!(
+            BaseEconomicObject::ConsumerPriceInflation.fibo_concept(),
+            "fibo-ind-ei-ei:ConsumerPriceIndex"
+        );
+        assert_eq!(
+            BaseEconomicObject::CrudeOilPrice.fibo_concept(),
+            "fibo-ind-ei-ei:CommodityPriceIndex"
+        );
+        assert_eq!(
+            BaseEconomicObject::BitcoinPrice.fibo_concept(),
+            "fibo-ind-ei-ei:MarketIndex"
+        );
+        assert_eq!(
+            BaseEconomicObject::RealGdpGrowth.fibo_concept(),
+            "fibo-ind-ei-ei:GrossDomesticProduct"
+        );
     }
 
     #[test]
-    fn fed_decision_is_policy_interest_rate() {
-        // The exact failure case: a Fed meeting where short-term rates are
-        // set MUST resolve to PolicyInterestRate.
-        for question in [
-            "Will the Fed cut rates at the March FOMC meeting?",
-            "Fed funds rate at end of 2027?",
-            "How many Fed rate cuts in 2026?",
-            "Will the FOMC raise the policy rate?",
-            "Federal Reserve interest rate decision",
-            "Will there be a rate hike in June?",
-        ] {
-            let record = record(question, "KXFED");
+    fn all_objects_have_distinct_fibo_modules() {
+        // PolicyInterestRate is fibo-ind-ir-ir; all others are fibo-ind-ei-ei.
+        // This is correct: rates are in the interest-rate module; inflation,
+        // commodities, crypto, and GDP are in the economic-indicators module.
+        let rate_module = BaseEconomicObject::PolicyInterestRate
+            .fibo_concept()
+            .split(':')
+            .next()
+            .unwrap();
+        assert_eq!(rate_module, "fibo-ind-ir-ir");
+        for object in BaseEconomicObject::ALL {
+            if object == BaseEconomicObject::PolicyInterestRate {
+                continue;
+            }
+            let module = object.fibo_concept().split(':').next().unwrap();
             assert_eq!(
-                resolve_object(&record),
-                Some(EconomicObject::PolicyInterestRate),
-                "failed to resolve: {question}"
+                module, "fibo-ind-ei-ei",
+                "{object:?} should be in the economic-indicators module"
             );
         }
     }
 
     #[test]
-    fn distinct_objects_do_not_collide() {
-        assert_eq!(
-            resolve_object(&record("Will CPI inflation exceed 3%?", "KXCPI")),
-            Some(EconomicObject::ConsumerPriceInflation)
-        );
-        assert_eq!(
-            resolve_object(&record("Will WTI crude close above $85?", "KXOIL")),
-            Some(EconomicObject::CrudeOilPrice)
-        );
-        assert_eq!(
-            resolve_object(&record("Will Bitcoin exceed $150k?", "KXBTC")),
-            Some(EconomicObject::BitcoinPrice)
-        );
-        assert_eq!(
-            resolve_object(&record("Will the mayor win?", "KXMAYOR")),
-            None
-        );
-    }
-
-    #[test]
-    fn contracts_about_collects_all_rate_contracts() {
-        let records = vec![
-            record("Will the Fed cut rates?", "KXFEDDECISION"),
-            record("Fed funds rate at end of 2027?", "KXFEDFUNDSYEAR"),
-            record("How many rate cuts in 2026?", "FEDCUTS"),
-            record("Will CPI exceed 3%?", "KXCPI"),
+    fn objects_are_orderable_for_constellation_sorting() {
+        let mut objects = vec![
+            BaseEconomicObject::BitcoinPrice,
+            BaseEconomicObject::PolicyInterestRate,
+            BaseEconomicObject::CrudeOilPrice,
         ];
-        let rate_contracts = contracts_about(&records, EconomicObject::PolicyInterestRate);
+        objects.sort();
+        // Derived enum order: PolicyInterestRate < ConsumerPriceInflation < CrudeOilPrice < ...
+        // So after sorting: PolicyInterestRate, CrudeOilPrice, BitcoinPrice.
         assert_eq!(
-            rate_contracts.len(),
-            3,
-            "must not exclude obvious rate contracts"
+            objects,
+            vec![
+                BaseEconomicObject::PolicyInterestRate,
+                BaseEconomicObject::CrudeOilPrice,
+                BaseEconomicObject::BitcoinPrice,
+            ]
         );
     }
 }

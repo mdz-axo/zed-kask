@@ -51,7 +51,10 @@ impl KalshiMarket {
     /// The market object carries both sides (the bids-only shape is specific
     /// to the `/orderbook` endpoint — T0 §4 narrowed R13 accordingly).
     pub fn yes_midpoint(&self) -> Option<f64> {
-        match (parse_fp(&self.yes_bid_dollars), parse_fp(&self.yes_ask_dollars)) {
+        match (
+            parse_fp(&self.yes_bid_dollars),
+            parse_fp(&self.yes_ask_dollars),
+        ) {
             (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
             (bid, ask) => bid.or(ask),
         }
@@ -59,7 +62,10 @@ impl KalshiMarket {
 
     /// Quoted spread on the yes leg.
     pub fn spread(&self) -> Option<f64> {
-        match (parse_fp(&self.yes_bid_dollars), parse_fp(&self.yes_ask_dollars)) {
+        match (
+            parse_fp(&self.yes_bid_dollars),
+            parse_fp(&self.yes_ask_dollars),
+        ) {
             (Some(bid), Some(ask)) => Some(ask - bid),
             _ => None,
         }
@@ -129,10 +135,7 @@ pub async fn fetch_markets_by_status(
     status: &str,
     limit: u32,
 ) -> Result<Vec<KalshiMarket>, McpToolError> {
-    let mut query = vec![
-        ("limit", limit.to_string()),
-        ("status", status.to_string()),
-    ];
+    let mut query = vec![("limit", limit.to_string()), ("status", status.to_string())];
     if let Some(series) = series_ticker {
         query.push(("series_ticker", series.to_string()));
     }
@@ -147,13 +150,28 @@ pub async fn fetch_markets(
     series_ticker: Option<&str>,
     limit: u32,
 ) -> Result<Vec<KalshiMarket>, McpToolError> {
-    let mut query = vec![
-        ("limit", limit.to_string()),
-        ("status", "open".to_string()),
-    ];
+    let mut query = vec![("limit", limit.to_string()), ("status", "open".to_string())];
     if let Some(series) = series_ticker {
         query.push(("series_ticker", series.to_string()));
     }
+    let response: KalshiMarketsResponse =
+        get_json(client, &format!("{KALSHI_BASE}/markets"), &query).await?;
+    Ok(response.markets)
+}
+
+/// Fetch all markets scoped to a single event ticker — the stage-2 contract
+/// fetch. One small, targeted, independently-retryable request per matched
+/// event. Returns markets of any status (open + closed + resolved) so the
+/// caller can inventory expirations across the full contract ladder.
+pub async fn fetch_markets_for_event(
+    client: &reqwest::Client,
+    event_ticker: &str,
+    limit: u32,
+) -> Result<Vec<KalshiMarket>, McpToolError> {
+    let query = vec![
+        ("limit", limit.to_string()),
+        ("event_ticker", event_ticker.to_string()),
+    ];
     let response: KalshiMarketsResponse =
         get_json(client, &format!("{KALSHI_BASE}/markets"), &query).await?;
     Ok(response.markets)
@@ -209,8 +227,12 @@ pub async fn fetch_price_history(
         ("end_ts", end_ts.to_string()),
         ("period_interval", "1440".to_string()),
     ];
-    let response: KalshiCandlesticksResponse =
-        get_json(client, &format!("{KALSHI_BASE}/markets/candlesticks"), &query).await?;
+    let response: KalshiCandlesticksResponse = get_json(
+        client,
+        &format!("{KALSHI_BASE}/markets/candlesticks"),
+        &query,
+    )
+    .await?;
     let mut points = Vec::new();
     for series in &response.markets {
         for candle in &series.candlesticks {
@@ -237,10 +259,7 @@ pub async fn fetch_events(
     client: &reqwest::Client,
     limit: u32,
 ) -> Result<Vec<KalshiEvent>, McpToolError> {
-    let query = vec![
-        ("limit", limit.to_string()),
-        ("status", "open".to_string()),
-    ];
+    let query = vec![("limit", limit.to_string()), ("status", "open".to_string())];
     let response: KalshiEventsResponse =
         get_json(client, &format!("{KALSHI_BASE}/events"), &query).await?;
     Ok(response.events)

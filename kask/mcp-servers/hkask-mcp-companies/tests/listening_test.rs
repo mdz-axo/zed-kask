@@ -1,4 +1,4 @@
-//! Golden-file test for the listening-template skill (slice 5).
+//! Golden-file test for the listening skill (slice 5).
 //!
 //! Design: `kask/docs/explanation/earnings-transcript-analysis-design.md` §(d) slice 5.
 //!
@@ -20,11 +20,11 @@
 
 use std::path::PathBuf;
 
-/// Path to the listening-template registry crate, resolved from this crate's
+/// Path to the listening registry crate, resolved from this crate's
 /// manifest dir (the companies server is the natural home for transcript tests;
 /// the template lives in the registry).
 fn template_crate_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/templates/listening-template")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../registry/templates/listening")
 }
 
 fn fixture_path() -> PathBuf {
@@ -214,7 +214,7 @@ fn template_uses_guidebook_certainty_vocabulary() {
 fn manifest_references_template() {
     let manifest = read_manifest();
     assert!(
-        manifest.contains("listening-template/apply-template"),
+        manifest.contains("listening/apply-template"),
         "manifest must reference the apply-template template"
     );
     assert!(

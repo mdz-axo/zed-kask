@@ -13,6 +13,14 @@ path = "src/hkask_mcp_prediction_markets.rs"
 name = "hkask-mcp-prediction-markets"
 path = "src/main.rs"
 
+[[bin]]
+name = "semantic_map_catalogs"
+path = "src/bin/semantic_map_catalogs.rs"
+
+[[bin]]
+name = "fetch_contracts"
+path = "src/bin/fetch_contracts.rs"
+
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true

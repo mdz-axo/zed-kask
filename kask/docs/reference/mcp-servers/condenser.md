@@ -49,7 +49,7 @@ flowchart TD
         AnchorFn["derive_ontology_anchor\ntool_name to OntologyAnchor"]
         SaliencyFn["domain_saliency\nline + anchor to f64"]
         SaliencyModule["saliency module\nscore_against_persona\nextract_query_words\nscore_memory_results"]
-        OntologyGraph["OntologyGraph\nFIBO/CogAT/GOLEM/ML-Schema/OMC/PKO/DC+BIBO"]
+        OntologyGraph["OntologyGraph\nFIBO/SUMO/GOLEM/ML-Schema/OMC/PKO/DC+BIBO"]
     end
 
     subgraph Algos["Compression Algorithms"]

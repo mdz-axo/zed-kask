@@ -21,11 +21,13 @@ pub mod cache;
 pub mod calibration;
 pub mod cmp;
 pub mod cmp_portfolio;
+pub mod economic_object;
 pub mod matcher;
 pub mod ontology;
 pub mod provider_kalshi;
 pub mod provider_polymarket;
 pub mod residual;
+pub mod semantic_mapping;
 mod streaming;
 pub mod types;
 

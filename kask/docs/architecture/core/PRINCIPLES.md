@@ -100,7 +100,7 @@ The 5W1H core is grounded in Ontology Design Pattern (ODP) methodology as descri
 
 Every artifact in hKask has both a state identity and a process identity — it is simultaneously a noun AND a verb. This is the Planck constant at the architectural level: you cannot reduce one axis to the other. And per Heisenberg, the more precisely you measure state (DC typing), the less you can know about process position (PKO flow), and vice versa. You are always sampling, never arriving at truth. The bridges are sampling instruments, not truth claims.
 
-**Every MCP server uses BOTH axes.** Domain-specific bridges (FIBO, GOLEM, CogAT, ML-Schema, OMC) are layered on top where DC+BIBO's state axis isn't specific enough for a domain. They are NOT alternatives to the dual-axis core — they supplement it.
+**Every MCP server uses BOTH axes.** Domain-specific bridges (FIBO, GOLEM, SUMO, ML-Schema, OMC) are layered on top where DC+BIBO's state axis isn't specific enough for a domain. They are NOT alternatives to the dual-axis core — they supplement it.
 
 | MCP Server | Process Axis | State Axis | Domain Bridge |
 |---|---|---|---|

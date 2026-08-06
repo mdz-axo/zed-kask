@@ -117,7 +117,7 @@ status: VERIFIED (v2 — learning subsystem removed; select_by_name/recommend_al
 
 The `domain_saliency` function (`algorithms.rs:231`) scores a text line
 against an optional `OntologyAnchor`. It returns `direct + graph_bonus`:
-`direct` is a per-namespace keyword-containment score (FIBO, CogAT, PKO,
+`direct` is a per-namespace keyword-containment score (FIBO, SUMO, PKO,
 GOLEM, ML-Schema), and `graph_bonus` is computed via
 `OntologyGraph::graph_adjacency_bonus` using `anchor_keywords`
 (`ontology_graph.rs:316`). The `score_against_persona` function

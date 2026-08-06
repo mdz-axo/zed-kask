@@ -1,0 +1,4 @@
+// Document: MSFT Q1 FY2025 Earnings Call (excerpt)
+// Entity ref: company:MSFT:earnings:2024_Q4
+Satya Nadella: Thank you for joining us. We had a strong quarter, with revenue of $65.6 billion, up 16% year-over-year. Our three-year plan to double Azure AI capacity by fiscal 2027 remains on track. The new datacenter region in Germany will come online in Q3 fiscal 2025, which is a key checkpoint on that plan.
+Amy Hood: For the next quarter, we are raising revenue guidance to $68.5 to $69.1 billion. Gross margin this quarter was 69.8%, down 60 basis points year-over-year due to AI infrastructure investment. We expect gross margin to remain stable in the 69-70% range through fiscal 2025.

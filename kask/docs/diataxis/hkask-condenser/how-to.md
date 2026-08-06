@@ -68,7 +68,7 @@ aggressive compression); `Light` retains the most.
 
 The `derive_ontology_anchor` function (`algorithms.rs:680`) maps a tool name
 to an `OntologyAnchor` (`types.rs:23`) — `Core`, `DualAxis` (PKO/DC+BIBO), or
-`DomainSupplement` (FIBO, GOLEM, CogAT, ML-Schema, OMC). The anchor is derived
+`DomainSupplement` (FIBO, GOLEM, SUMO, ML-Schema, OMC). The anchor is derived
 automatically from the tool name; you do not set it directly. To influence it,
 name your tool with a domain-signaling prefix (e.g. `company_fundamentals`,
 `memory_recall`).
