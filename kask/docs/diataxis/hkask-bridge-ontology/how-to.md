@@ -147,6 +147,50 @@ let anchor = select_ontology_anchor("some-unknown-domain");
 // This is correct behavior, not an error.
 ```
 
+## Emit the unified ontology tag
+
+Every MCP server emits a top-level `"ontology"` key in each tool output
+JSON, carrying a concept URI string. Every widget parses an
+`ontology: Option<String>` field on its block body. This is the unified
+contract — one key name, one value shape, across all servers and widgets.
+
+```rust
+// In your server's tool output:
+use crate::fibo;  // or omc, pko, etc.
+
+let output = serde_json::json!({
+    "status": "ok",
+    // ... tool-specific fields ...
+});
+Ok(fibo::enrich_with_ontology(output, "portfolio_list"))
+// → {"status": "ok", "ontology": "fibo:Portfolio", ...}
+```
+
+The `enrich_with_ontology` helper (or its equivalent in each server's
+ontology module) injects the `"ontology"` key if the tool has a concept
+mapping. Tools without a mapping are returned unchanged.
+
+## Dispatch the explain tool from the ontology tag (the "I" pattern)
+
+The crate root exports `explain_tool_for(ontology: &str) -> &'static str` —
+the unified dispatch function that maps an ontology concept to the explain
+tool a widget should invoke. Widgets call this single function instead of
+reimplementing their own ontology-specific dispatch.
+
+```rust
+use hkask_bridge_ontology::explain_tool_for;
+
+let tool = explain_tool_for("omc:Scene");      // → "gallery_analyze"
+let tool = explain_tool_for("omc:CreativeWork"); // → "describe_image"
+let tool = explain_tool_for("fibo:Corporation");  // → "research_search"
+let tool = explain_tool_for("pko:Step");           // → "kanban_task_list"
+let tool = explain_tool_for("");                    // → "research_search"
+```
+
+The media widget's "Explain" affordance is the first implementation: the
+OMC concept in the block body drives which explain tool the widget
+dispatches.
+
 ## See also
 
 - [Ontology Bridge API Reference](../../reference/ontology-bridge.md) — the full API.

@@ -684,10 +684,14 @@ impl ScenariosServer {
                 serde_json::from_str(&req.market_record)
                     .map_err(|e| McpToolError::invalid_argument(format!("invalid market record JSON: {e}")))?;
 
-            let (event, warnings) = superforecast::convert_market_record(
-                &record,
-                req.match_confidence.as_deref(),
-            )
+            let (event, warnings) = {
+                let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+                superforecast::convert_market_record(
+                    &record,
+                    req.match_confidence.as_deref(),
+                    Some(&store),
+                )
+            }
             .map_err(map_scenario_error)?;
 
             let output = serde_json::json!({
@@ -755,8 +759,11 @@ impl ScenariosServer {
                 })
                 .collect();
 
-            let (tree, warnings) = superforecast::compose_market_tree(&records, &confidences, &specs)
-                .map_err(map_scenario_error)?;
+            let (tree, warnings) = {
+                let store = self.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+                superforecast::compose_market_tree(&records, &confidences, &specs, Some(&store))
+            }
+            .map_err(map_scenario_error)?;
 
             let nodes: Vec<serde_json::Value> = tree
                 .nodes

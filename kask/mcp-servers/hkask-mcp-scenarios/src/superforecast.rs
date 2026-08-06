@@ -1225,6 +1225,23 @@ impl ForecastStore {
             .collect()
     }
 
+    /// Resolved forecasts matching a domain category (case-insensitive
+    /// substring match, mirroring the old `domain_bias_delta` matcher).
+    /// Used by per-domain calibration: the bias for a category is computed
+    /// only from resolved forecasts in that category.
+    pub fn resolved_by_category(&self, category: &str) -> Vec<&StoredForecastRecord> {
+        let normalized = category.to_ascii_lowercase();
+        self.records
+            .values()
+            .filter(|r| r.outcome.is_some())
+            .filter(|r| {
+                r.category
+                    .as_deref()
+                    .is_some_and(|c| c.to_ascii_lowercase().contains(&normalized))
+            })
+            .collect()
+    }
+
     pub(crate) fn filtered_by_subject(&self, subject: &str) -> Self {
         Self {
             records: self
@@ -1477,15 +1494,72 @@ pub fn convert_companies_output(
     Ok(events)
 }
 
-/// Static per-domain de-compression strength δ (seeded from arXiv:2602.19520:
-/// politics markets are chronically underconfident — prices compressed
-/// toward 0.5). Domains measured as already-calibrated (sports, per
-/// 2604.20421 §6.1) get δ = 0 — correction is identity. Replaced by
-/// data-derived estimates when the calibration loop accrues outcomes.
-fn domain_bias_delta(category: &str) -> f64 {
-    let normalized = category.to_ascii_lowercase();
-    if normalized.contains("politic") || normalized.contains("election") {
-        0.3
+/// Per-domain de-compression strength δ, derived from measured calibration.
+///
+/// Returns the weighted bias (expected_rate − hit_rate) over resolved
+/// forecasts in `store` matching `category` (case-insensitive substring
+/// match). A bias of 0.0 means the domain is well-calibrated (or there is
+/// insufficient data — fewer than `MIN_DOMAIN_SAMPLE` resolved forecasts —
+/// in which case no correction is applied, the honest default per Tetlock's
+/// superforecasting discipline: corrections must come from measured
+/// calibration, not hardcoded magic numbers).
+///
+/// Positive δ de-compresses probabilities away from 0.5 (corrects
+/// underconfidence — forecasts cluster too close to 50/50). Negative δ is
+/// clamped to 0.0 by `domain_bias_correction` (overconfidence is corrected
+/// by a different mechanism — the calibration feedback loop, not a static
+/// de-compression).
+pub fn domain_bias_delta(store: Option<&ForecastStore>, category: &str) -> f64 {
+    /// Minimum resolved forecasts in a domain before a data-derived bias
+    /// correction is applied. Below this, the sample is too small for a
+    /// reliable bias estimate (Tetlock: calibration requires "enough
+    /// forecasts to make the statistics work").
+    const MIN_DOMAIN_SAMPLE: usize = 5;
+
+    let Some(store) = store else {
+        return 0.0;
+    };
+    let resolved = store.resolved_by_category(category);
+    if resolved.len() < MIN_DOMAIN_SAMPLE {
+        return 0.0;
+    }
+
+    // Reuse the calibration-curve logic: weighted bias across bins with
+    // enough samples. This is the same computation as
+    // `compute_calibration_curve`'s `overconfidence_score`, but filtered to
+    // the domain category.
+    let mut bins: Vec<(u64, u64, f64)> = vec![(0, 0, 0.0); 10];
+    for record in &resolved {
+        let occurred = record.outcome.unwrap_or(false);
+        let bin_idx = ((record.probability * 10.0) as usize).min(9);
+        bins[bin_idx].0 += 1;
+        if occurred {
+            bins[bin_idx].1 += 1;
+        }
+        bins[bin_idx].2 += record.probability;
+    }
+
+    let mut weighted_bias = 0.0;
+    let mut bias_weight = 0.0;
+    for &(count, hits, probability_sum) in &bins {
+        if count >= 5 {
+            let hit_rate = hits as f64 / count as f64;
+            let expected = probability_sum / count as f64;
+            // bias = expected − hit_rate: positive = overconfident (forecasts
+            // say X% but reality is lower), negative = underconfident.
+            // For de-compression δ we want the magnitude of underconfidence
+            // (forecasts compressed toward 0.5). A negative bias (underconfident)
+            // maps to a positive δ; a positive bias (overconfident) maps to δ=0
+            // (de-compression would make it worse).
+            let bias = expected - hit_rate;
+            if bias < 0.0 {
+                weighted_bias += (-bias) * count as f64;
+                bias_weight += count as f64;
+            }
+        }
+    }
+    if bias_weight > 0.0 {
+        (weighted_bias / bias_weight).clamp(0.0, 0.5)
     } else {
         0.0
     }
@@ -1504,10 +1578,16 @@ fn domain_bias_delta(category: &str) -> f64 {
 ///
 /// The domain-bias correction (hkask_forecast::domain_bias_correction) is
 /// applied deterministically here — the LLM consumer never sees an
-/// uncorrected politics price as the default anchor.
+/// uncorrected politics price as the default anchor. The correction δ is
+/// derived from measured per-domain calibration in `store` (when provided);
+/// when `store` is `None` or has insufficient resolved forecasts for the
+/// domain, δ=0.0 (no correction — the honest default per Tetlock's
+/// discipline: corrections come from measured calibration, not hardcoded
+/// magic numbers).
 pub fn convert_market_record(
     record: &hkask_mcp_prediction_markets::types::MarketRecord,
     match_confidence: Option<&str>,
+    store: Option<&ForecastStore>,
 ) -> Result<(ScenarioEvent, Vec<String>), ScenarioError> {
     let mut warnings = Vec::new();
 
@@ -1522,7 +1602,7 @@ pub fn convert_market_record(
     }
 
     let raw = record.probability;
-    let delta = domain_bias_delta(&record.category);
+    let delta = domain_bias_delta(store, &record.category);
     let corrected = hkask_forecast::domain_bias_correction(raw, delta);
     if delta > 0.0 {
         warnings.push(format!(
@@ -1647,6 +1727,7 @@ pub fn compose_market_tree(
     records: &[hkask_mcp_prediction_markets::types::MarketRecord],
     match_confidences: &[Option<String>],
     dependency_specs: &[DependencySpec],
+    store: Option<&ForecastStore>,
 ) -> Result<(EventTree, Vec<CompositionWarning>), ScenarioError> {
     if records.is_empty() {
         return Err(ScenarioError::EmptyInput(
@@ -1667,7 +1748,7 @@ pub fn compose_market_tree(
     let mut events: Vec<ScenarioEvent> = Vec::with_capacity(records.len());
     let mut seen_ids: HashSet<String> = HashSet::new();
     for (record, confidence) in records.iter().zip(match_confidences.iter()) {
-        let (event, record_warnings) = convert_market_record(record, confidence.as_deref())?;
+        let (event, record_warnings) = convert_market_record(record, confidence.as_deref(), store)?;
         for warning in record_warnings {
             warnings.push(CompositionWarning {
                 kind: "bridge_gate",
@@ -1907,25 +1988,112 @@ mod tests {
     use hkask_mcp_prediction_markets::types::ReliabilityTier;
 
     #[test]
-    fn politics_record_is_decompressed_away_from_half() {
-        // 2602.19520: politics δ=0.3 → 0.62 becomes 0.656, applied in the
-        // bridge, never left to the LLM consumer.
+    fn politics_record_passes_through_uncorrected_without_store() {
+        // No store ⇒ no measured calibration ⇒ δ=0.0 (identity). The honest
+        // default per Tetlock: corrections come from measured calibration,
+        // not hardcoded magic numbers. The old hardcoded δ=0.3 for politics
+        // was removed — it was a magic number with no enforcement point.
         let record = test_market_record("Elections", 0.62, ReliabilityTier::High);
-        let (event, warnings) = convert_market_record(&record, Some("high")).expect("converts");
+        let (event, warnings) =
+            convert_market_record(&record, Some("high"), None).expect("converts");
         let base = event.base_rate.expect("high reliability anchors");
-        assert!(base > 0.62, "correction must move the anchor: {base}");
-        assert!((base - 0.656).abs() < 1e-9);
+        assert!((base - 0.62).abs() < 1e-12, "δ=0 is identity: {base}");
         assert!(
             warnings
                 .iter()
-                .any(|w| w.contains("domain-bias correction"))
+                .all(|w| !w.contains("domain-bias correction")),
+            "no correction warning when δ=0"
         );
+    }
+
+    #[test]
+    fn domain_bias_delta_zero_when_store_none() {
+        assert_eq!(domain_bias_delta(None, "Elections"), 0.0);
+    }
+
+    #[test]
+    fn domain_bias_delta_zero_when_insufficient_samples() {
+        // MIN_DOMAIN_SAMPLE = 5; 4 resolved forecasts is below the threshold.
+        let mut store = ForecastStore::default();
+        for i in 0..4 {
+            store.insert(
+                format!("f{i}"),
+                StoredForecastRecord {
+                    schema_version: 2,
+                    forecast_id: format!("f{i}"),
+                    event_id: format!("e{i}"),
+                    event_name: format!("e{i}"),
+                    subject: "test".into(),
+                    probability: 0.7,
+                    created_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                    outcome: Some(false),
+                    resolved_at: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+                    category: Some("Elections".into()),
+                },
+            );
+        }
+        assert_eq!(domain_bias_delta(Some(&store), "Elections"), 0.0);
+    }
+
+    #[test]
+    fn domain_bias_delta_data_derived_when_underconfident() {
+        // 6 resolved forecasts at p=0.7, all missed (outcome=false). The
+        // domain is underconfident (forecasts say 70% but reality is 0%).
+        // bias = expected − hit_rate = 0.7 − 0.0 = 0.7 (underconfident).
+        // δ = |bias| = 0.7, clamped to 0.5.
+        let mut store = ForecastStore::default();
+        for i in 0..6 {
+            store.insert(
+                format!("f{i}"),
+                StoredForecastRecord {
+                    schema_version: 2,
+                    forecast_id: format!("f{i}"),
+                    event_id: format!("e{i}"),
+                    event_name: format!("e{i}"),
+                    subject: "test".into(),
+                    probability: 0.7,
+                    created_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                    outcome: Some(false),
+                    resolved_at: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+                    category: Some("Elections".into()),
+                },
+            );
+        }
+        let delta = domain_bias_delta(Some(&store), "Elections");
+        assert!(delta > 0.0, "underconfident domain must get δ > 0: {delta}");
+        assert!(delta <= 0.5, "δ must be clamped to 0.5: {delta}");
+    }
+
+    #[test]
+    fn domain_bias_delta_zero_when_overconfident() {
+        // 6 resolved forecasts at p=0.3, all hit (outcome=true). The domain
+        // is overconfident (forecasts say 30% but reality is 100%). De-compression
+        // would make overconfidence worse, so δ=0.0.
+        let mut store = ForecastStore::default();
+        for i in 0..6 {
+            store.insert(
+                format!("f{i}"),
+                StoredForecastRecord {
+                    schema_version: 2,
+                    forecast_id: format!("f{i}"),
+                    event_id: format!("e{i}"),
+                    event_name: format!("e{i}"),
+                    subject: "test".into(),
+                    probability: 0.3,
+                    created_at: chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                    outcome: Some(true),
+                    resolved_at: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+                    category: Some("Elections".into()),
+                },
+            );
+        }
+        assert_eq!(domain_bias_delta(Some(&store), "Elections"), 0.0);
     }
 
     #[test]
     fn economics_record_passes_through_uncorrected() {
         let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
-        let (event, _) = convert_market_record(&record, Some("high")).expect("converts");
+        let (event, _) = convert_market_record(&record, Some("high"), None).expect("converts");
         let base = event.base_rate.expect("anchors");
         assert!((base - 0.62).abs() < 1e-12, "δ=0 is identity");
     }
@@ -1933,7 +2101,7 @@ mod tests {
     #[test]
     fn low_reliability_withholds_base_rate() {
         let record = test_market_record("Economics", 0.62, ReliabilityTier::Low);
-        let (event, warnings) = convert_market_record(&record, Some("high")).expect("converts");
+        let (event, warnings) = convert_market_record(&record, Some("high"), None).expect("converts");
         assert_eq!(event.base_rate, None);
         assert!(warnings.iter().any(|w| w.contains("reliability")));
     }
@@ -1941,7 +2109,7 @@ mod tests {
     #[test]
     fn low_match_confidence_withholds_base_rate() {
         let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
-        let (event, warnings) = convert_market_record(&record, Some("low")).expect("converts");
+        let (event, warnings) = convert_market_record(&record, Some("low"), None).expect("converts");
         assert_eq!(event.base_rate, None);
         assert!(warnings.iter().any(|w| w.contains("match confidence")));
     }
@@ -1950,13 +2118,13 @@ mod tests {
     fn resolved_market_is_rejected() {
         let mut record = test_market_record("Economics", 0.62, ReliabilityTier::High);
         record.status = hkask_mcp_prediction_markets::types::MarketStatus::Resolved;
-        assert!(convert_market_record(&record, Some("high")).is_err());
+        assert!(convert_market_record(&record, Some("high"), None).is_err());
     }
 
     #[test]
     fn event_carries_market_provenance() {
         let record = test_market_record("Economics", 0.62, ReliabilityTier::High);
-        let (event, _) = convert_market_record(&record, None).expect("converts");
+        let (event, _) = convert_market_record(&record, None, None).expect("converts");
         assert!(
             event
                 .basis
@@ -1999,7 +2167,7 @@ mod tests {
             record_with("M1", "Will the Fed cut rates in January 2027?", 0.60),
             record_with("M2", "Will CPI exceed 3 percent in 2027?", 0.40),
         ];
-        let (tree, warnings) = compose_market_tree(&records, &[None, None], &[]).expect("composes");
+        let (tree, warnings) = compose_market_tree(&records, &[None, None], &[], None).expect("composes");
         assert_eq!(tree.nodes.len(), 2);
         assert_eq!(tree.root_ids.len(), 2);
         for node in &tree.nodes {
@@ -2030,7 +2198,7 @@ mod tests {
             parent_market_ids: vec!["M1".into()],
             conditionals: vec![0.2, 0.9],
         }];
-        let (tree, _) = compose_market_tree(&records, &[None, None], &specs).expect("composes");
+        let (tree, _) = compose_market_tree(&records, &[None, None], &specs, None).expect("composes");
         let child = tree
             .nodes
             .iter()
@@ -2059,7 +2227,7 @@ mod tests {
                 conditionals: vec![0.3, 0.8],
             },
         ];
-        let result = compose_market_tree(&records, &[None, None], &specs);
+        let result = compose_market_tree(&records, &[None, None], &specs, None);
         assert!(matches!(result, Err(ScenarioError::CycleDetected)));
     }
 
@@ -2071,7 +2239,7 @@ mod tests {
             parent_market_ids: (0..5).map(|i| format!("P{i}")).collect(),
             conditionals: vec![0.5; 32],
         }];
-        let result = compose_market_tree(&records, &[None], &specs);
+        let result = compose_market_tree(&records, &[None], &specs, None);
         assert!(matches!(result, Err(ScenarioError::InvalidDependency(..))));
     }
 
@@ -2083,7 +2251,7 @@ mod tests {
             parent_market_ids: vec!["GHOST".into()],
             conditionals: vec![0.4, 0.7],
         }];
-        let result = compose_market_tree(&records, &[None], &specs);
+        let result = compose_market_tree(&records, &[None], &specs, None);
         assert!(matches!(result, Err(ScenarioError::UnknownParent(..))));
     }
 
@@ -2093,7 +2261,7 @@ mod tests {
             record_with("M1", "Will the Fed hold rates in December 2027?", 0.60),
             record_with("M2", "Will the Fed hold rates in December 2027?", 0.62),
         ];
-        let (_, warnings) = compose_market_tree(&records, &[None, None], &[]).expect("composes");
+        let (_, warnings) = compose_market_tree(&records, &[None, None], &[], None).expect("composes");
         assert!(
             warnings.iter().any(|w| w.kind == "possible_duplicate"),
             "identical questions must be flagged: {warnings:?}"
@@ -2110,7 +2278,7 @@ mod tests {
             record_with("M1", "Will the Fed cut rates in 2027?", 0.60),
             low,
         ];
-        let (tree, warnings) = compose_market_tree(&records, &[None, None], &[]).expect("composes");
+        let (tree, warnings) = compose_market_tree(&records, &[None, None], &[], None).expect("composes");
         let gated = tree
             .nodes
             .iter()
@@ -2214,7 +2382,7 @@ mod tests {
             record_with("M1", "Will the Fed cut rates in 2027?", 0.60),
             record_with("M1", "Will something else happen in 2027?", 0.40),
         ];
-        let result = compose_market_tree(&records, &[None, None], &[]);
+        let result = compose_market_tree(&records, &[None, None], &[], None);
         assert!(matches!(result, Err(ScenarioError::InvalidDependency(..))));
     }
 

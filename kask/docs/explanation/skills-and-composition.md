@@ -622,7 +622,7 @@ dotenvy = { workspace = true }
 
 ### Step 1: Define the Server Struct
 
-Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with a mandatory `webid` field plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The former `userpod`/`daemon` fields were removed when the daemon transport was deleted; semantic-memory recording now goes through `ToolContext::record_tool_outcome` (default: `reg.memory` warning; the macro's `impl_tool_context!` override: in-process `reg.memory` debug log). Thread-level memory via `RealMemoryPort` (D6) is the richer path.
+Use the `mcp_server!` macro from `hkask-mcp-server`. It generates the struct with a mandatory `webid` field plus your domain-specific fields, along with a `new()` constructor and a `ToolContext` implementation. The former `userpod`/`daemon` fields were removed when the daemon transport was deleted; the `reg.tool` span (emitted by `ToolSpanGuard` in `execute_tool`/`execute_tool_semantic`) is the production recording surface. Thread-level memory via `RealMemoryPort` (D6) is the richer path; per-tool debug logging is available via `tracing::debug!` at the call site if a server needs it.
 
 ```rust
 // mcp-servers/<your-mcp-package>/src/lib.rs

@@ -26,6 +26,7 @@ classDiagram
         +tasks: Vec~TaskBody~
         +boards: Vec~BoardBody~
         +tasks_by_board: Vec~BoardTasksBody~
+        +provenance: BlockProvenance
         +boards_with_tasks() Vec of board tuples
     }
     class BoardBody {
@@ -42,6 +43,7 @@ classDiagram
         +status: String
         +assignee: Option~String~
         +gas_remaining: Option~u64~
+        +ontology: Option~String~
     }
     class KanbanColumn {
         +status: String

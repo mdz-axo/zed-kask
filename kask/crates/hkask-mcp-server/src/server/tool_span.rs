@@ -169,30 +169,20 @@ fn emit_tool_span(
 /// Trait for MCP server types that want framework-level tool execution.
 ///
 /// Implement this on your server struct to enable `execute_tool()`, which
-/// handles Regulation span emission, error serialization, and semantic memory
-/// recording automatically.
+/// handles Regulation span emission and error serialization automatically.
 ///
-/// Override `record_tool_outcome` to wire richer semantic-memory recording.
-/// The default implementation emits a Regulation warning so the Curator knows memory
-/// recording is not configured; the `impl_tool_context!` macro overrides it with
-/// an in-process `reg.memory` debug log.
+/// The `reg.tool` span (emitted by `ToolSpanGuard`) is the production
+/// recording surface — it carries tool name, outcome, duration, and caller
+/// to the Regulation loop. There is no separate per-tool semantic-memory
+/// recording hook; thread-level memory via `RealMemoryPort` (D6) is the
+/// richer path, and per-tool debug logging is available via `tracing::debug!`
+/// at the call site if a server needs it.
 pub trait ToolContext {
     /// The WebID of the caller serving this tool (for Regulation span attribution).
     fn webid(&self) -> &hkask_types::WebID;
-
-    /// Record a tool outcome to semantic memory.
-    /// Override this to wire richer per-server recording (e.g. the condenser's
-    /// `record_experience` → `EpisodicMemory::store`). Default: emits a Regulation
-    /// warning — memory not configured for this server; the `impl_tool_context!`
-    /// macro overrides this with an in-process `reg.memory` debug log.
-    fn record_tool_outcome(&self, tool: &str, outcome: &str) {
-        tracing::warn!(target: "reg.memory", tool = %tool, outcome = %outcome,
-            "Tool outcome not persisted — ToolContext::record_tool_outcome not overridden");
-    }
 }
 
-/// Execute a tool with automatic Regulation span emission, error serialization,
-/// and optional semantic memory recording via [`ToolContext`].
+/// Execute a tool with automatic Regulation span emission and error serialization.
 ///
 /// The tool's business logic goes in the `fut` async block, which returns
 /// `Result<Value, McpToolError>`. The framework handles everything else.
@@ -216,10 +206,6 @@ pub async fn execute_tool<C: ToolContext>(
 ) -> String {
     let span = ToolSpanGuard::new(tool_name, ctx.webid());
     let result = fut.await;
-    match &result {
-        Ok(_) => ctx.record_tool_outcome(tool_name, "success"),
-        Err(_) => ctx.record_tool_outcome(tool_name, "error"),
-    }
     span.finish(result)
 }
 
@@ -237,10 +223,6 @@ pub async fn execute_tool_semantic<C: ToolContext>(
         span = span.with_ontology(concept);
     }
     let result = fut.await;
-    match &result {
-        Ok(_) => ctx.record_tool_outcome(tool_name, "success"),
-        Err(_) => ctx.record_tool_outcome(tool_name, "error"),
-    }
     span.finish(result)
 }
 

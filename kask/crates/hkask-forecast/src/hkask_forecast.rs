@@ -361,8 +361,11 @@ pub fn volatility_regime(prices: &[f64]) -> VolatilityRegime {
 ///
 /// `delta` is the signed de-compression strength in [0, 0.5]; values beyond
 /// are clamped (a correction must never invert or saturate a probability).
-/// Callers source δ from measured per-domain calibration (seeded from the
-/// paper until the calibration loop accumulates resolved outcomes).
+/// Callers source δ from measured per-domain calibration (the
+/// `superforecast::domain_bias_delta` function reads the calibration loop's
+/// resolved forecasts for the domain; when there is insufficient data, δ=0.0
+/// — no correction — the honest default per Tetlock's discipline: corrections
+/// come from measured calibration, not hardcoded magic numbers).
 #[must_use = "corrected probability should replace the face-value price"]
 pub fn domain_bias_correction(probability: f64, delta: f64) -> f64 {
     let delta = delta.clamp(0.0, 0.5);

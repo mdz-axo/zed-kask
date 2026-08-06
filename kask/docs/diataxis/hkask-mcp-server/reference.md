@@ -51,7 +51,11 @@ server holds. It carries the resolved `credentials` map, the `webid`
 startup from the resolved credentials — it is not configured. The
 `CredentialRequirement` (`context.rs:14`) declares what a server needs.
 The `ToolContext` trait (`tool_span.rs:216`) provides `webid()` for span
-attribution and `record_tool_outcome()` for semantic memory recording.
+attribution. The `reg.tool` span (emitted by `ToolSpanGuard` in
+`execute_tool`/`execute_tool_semantic`) is the production recording surface;
+thread-level memory via `RealMemoryPort` (D6) is the richer path, and
+per-tool debug logging is available via `tracing::debug!` at the call site
+if a server needs it.
 
 ```mermaid
 classDiagram
@@ -78,7 +82,6 @@ classDiagram
     class ToolContext {
         <<interface>>
         +webid() WebID
-        +record_tool_outcome(tool, outcome)
     }
     class ToolSpanGuard {
         -tool_name: String

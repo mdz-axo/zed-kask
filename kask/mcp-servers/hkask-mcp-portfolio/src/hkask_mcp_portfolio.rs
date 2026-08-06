@@ -452,33 +452,19 @@ pub struct ReturnsReport {
 // ── PortfolioStore ───────────────────────────────────────────────────
 
 /// The deepened portfolio store. Seven public methods hide all storage
-/// mechanics (SQLite, schema, FK cascades, the optional double-entry ledger
-/// mirror). Callers apply transactions, read the ledger, and query
-/// materialized projections.
+/// mechanics (SQLite, schema, FK cascades). Callers apply transactions,
+/// read the ledger, and query materialized projections.
 ///
-/// The store is `Clone` (it holds only a path + an optional driver handle),
-/// so an MCP server can clone it into a `spawn_blocking` task per request.
+/// The store is `Clone` (it holds only a path), so an MCP server can clone
+/// it into a `spawn_blocking` task per request.
 #[derive(Clone)]
 pub struct PortfolioStore {
     db_path: PathBuf,
-    /// Optional cost ledger for double-entry accounting (companies server
-    /// wires this; the portfolio crate itself does not require it).
-    ledger_driver: Option<Arc<dyn DatabaseDriver>>,
 }
 
 impl PortfolioStore {
     /// Creates storage scoped to the authenticated server owner.
     pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
-        Self::new_with_asset_type(owner, AssetType::Stock)
-    }
-
-    /// Creates storage scoped to an owner, marking new portfolios with the
-    /// given asset type (e.g. `PredictionContract` for a CMP-index store).
-    pub fn new_with_asset_type(
-        owner: WebID,
-        default_asset_type: AssetType,
-    ) -> Result<Self, PortfolioError> {
-        let _ = default_asset_type; // recorded per-portfolio at create time
         let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
         path.push("hkask");
         path.push("portfolios");
@@ -490,17 +476,7 @@ impl PortfolioStore {
             .map_err(|e| format!("failed to open portfolio database: {e}"))?;
         conn.execute_batch(SCHEMA_DDL)
             .map_err(|e| format!("failed to initialize portfolio schema: {e}"))?;
-        Ok(Self {
-            db_path: path,
-            ledger_driver: None,
-        })
-    }
-
-    /// Attach a double-entry cost ledger driver. Subsequent [`apply`] calls
-    /// mirror cash/fee postings to the ledger.
-    pub fn with_ledger_driver(mut self, driver: Arc<dyn DatabaseDriver>) -> Self {
-        self.ledger_driver = Some(driver);
-        self
+        Ok(Self { db_path: path })
     }
 
     /// Test constructor: create a store backed by a DB at `base_dir/master.db`.
@@ -512,10 +488,7 @@ impl PortfolioStore {
         let conn = Connection::open(&db_path).expect("failed to open test portfolio database");
         conn.execute_batch(SCHEMA_DDL)
             .expect("failed to initialize test portfolio schema");
-        Self {
-            db_path,
-            ledger_driver: None,
-        }
+        Self { db_path }
     }
 
     /// Test constructor: create a store for a specific owner under `base_dir`.
@@ -617,10 +590,6 @@ impl PortfolioStore {
             params![name, tx.date],
         )
         .map_err(|e| format!("invalidate returns: {e}"))?;
-
-        if let Some(ref driver) = self.ledger_driver {
-            self.commit_to_ledger(driver, name, tx)?;
-        }
 
         Ok(())
     }
@@ -1070,142 +1039,6 @@ impl PortfolioStore {
             )
             .map_err(|e| format!("cache holdings: {e}"))?;
         }
-        Ok(())
-    }
-
-    /// Commit a transaction to the double-entry ledger as postings.
-    fn commit_to_ledger(
-        &self,
-        driver: &Arc<dyn DatabaseDriver>,
-        portfolio_name: &str,
-        tx: &Transaction,
-    ) -> Result<(), PortfolioError> {
-        let ledger =
-            Ledger::from_driver(driver.clone()).map_err(|e| format!("ledger from_driver: {e}"))?;
-
-        ledger
-            .ensure_account("portfolio:cash/main", "portfolio")
-            .map_err(|e| format!("ledger ensure cash account: {e}"))?;
-        ledger
-            .ensure_account("cost:brokerage/fees", "cost")
-            .map_err(|e| format!("ledger ensure fee account: {e}"))?;
-        if let Some(ref sym) = tx.symbol {
-            let pos_account = format!("portfolio:position/{sym}");
-            ledger
-                .ensure_account(&pos_account, "portfolio")
-                .map_err(|e| format!("ledger ensure position account: {e}"))?;
-        }
-
-        let now = chrono::Utc::now().to_rfc3339();
-        let reference = format!("portfolio:{portfolio_name}:tx:{}", tx.id);
-
-        let amount_cents = (tx.amount.unwrap_or(0.0) * 100.0).round() as i64;
-        let commission_cents = (tx.commission.unwrap_or(0.0) * 100.0).round() as i64;
-
-        let ledger_tx = match tx.tx_type {
-            TxType::Buy => {
-                let symbol = tx.symbol.as_deref().unwrap_or("UNKNOWN");
-                let pos_account = format!("portfolio:position/{symbol}");
-                LedgerTransaction {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    timestamp: now,
-                    reference: format!("{reference}/buy"),
-                    postings: vec![
-                        Posting {
-                            source: "portfolio:cash/main".into(),
-                            destination: pos_account,
-                            asset: "USD".into(),
-                            amount: amount_cents,
-                        },
-                        Posting {
-                            source: "portfolio:cash/main".into(),
-                            destination: "cost:brokerage/fees".into(),
-                            asset: "USD".into(),
-                            amount: commission_cents,
-                        },
-                    ],
-                    metadata: serde_json::json!({
-                        "portfolio": portfolio_name,
-                        "tx_id": tx.id,
-                        "type": "buy",
-                        "symbol": symbol,
-                        "quantity": tx.quantity,
-                        "price": tx.price,
-                    }),
-                }
-            }
-            TxType::Sell => {
-                let symbol = tx.symbol.as_deref().unwrap_or("UNKNOWN");
-                let pos_account = format!("portfolio:position/{symbol}");
-                LedgerTransaction {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    timestamp: now,
-                    reference: format!("{reference}/sell"),
-                    postings: vec![
-                        Posting {
-                            source: pos_account,
-                            destination: "portfolio:cash/main".into(),
-                            asset: "USD".into(),
-                            amount: amount_cents,
-                        },
-                        Posting {
-                            source: "portfolio:cash/main".into(),
-                            destination: "cost:brokerage/fees".into(),
-                            asset: "USD".into(),
-                            amount: commission_cents,
-                        },
-                    ],
-                    metadata: serde_json::json!({
-                        "portfolio": portfolio_name,
-                        "tx_id": tx.id,
-                        "type": "sell",
-                        "symbol": symbol,
-                        "quantity": tx.quantity,
-                        "price": tx.price,
-                    }),
-                }
-            }
-            TxType::Dividend | TxType::Deposit => LedgerTransaction {
-                id: uuid::Uuid::new_v4().to_string(),
-                timestamp: now,
-                reference: format!("{reference}/{}", tx.tx_type),
-                postings: vec![Posting {
-                    source: "external:income".into(),
-                    destination: "portfolio:cash/main".into(),
-                    asset: "USD".into(),
-                    amount: amount_cents,
-                }],
-                metadata: serde_json::json!({
-                    "portfolio": portfolio_name,
-                    "tx_id": tx.id,
-                    "type": tx.tx_type,
-                }),
-            },
-            TxType::Withdrawal => LedgerTransaction {
-                id: uuid::Uuid::new_v4().to_string(),
-                timestamp: now,
-                reference: format!("{reference}/withdrawal"),
-                postings: vec![Posting {
-                    source: "portfolio:cash/main".into(),
-                    destination: "external:income".into(),
-                    asset: "USD".into(),
-                    amount: amount_cents,
-                }],
-                metadata: serde_json::json!({
-                    "portfolio": portfolio_name,
-                    "tx_id": tx.id,
-                    "type": "withdrawal",
-                }),
-            },
-            // Rolls and weight adjustments are non-cash index operations;
-            // they don't post to the cash ledger.
-            TxType::Roll | TxType::WeightAdjust => {
-                return Ok(());
-            }
-        };
-        ledger
-            .commit(&ledger_tx)
-            .map_err(|e| format!("ledger commit: {e}"))?;
         Ok(())
     }
 }

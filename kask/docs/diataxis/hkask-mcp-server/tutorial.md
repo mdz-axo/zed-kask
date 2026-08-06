@@ -56,8 +56,10 @@ Register each tool with its name, description, and parameter schema. Wrap
 each tool invocation via `execute_tool` (`tool_span.rs:249`) or
 `execute_tool_semantic` (`tool_span.rs:266`) to emit `reg.tool.*` spans
 automatically. The `ToolContext` trait (`tool_span.rs:216`) provides
-`webid()` for span attribution and `record_tool_outcome()` for semantic
-memory recording.
+`webid()` for span attribution. The `reg.tool` span is the production
+recording surface; thread-level memory via `RealMemoryPort` (D6) is the
+richer path, and per-tool debug logging is available via `tracing::debug!`
+at the call site if a server needs it.
 
 ## Step 5: Call run_server
 

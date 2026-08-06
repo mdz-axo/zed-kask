@@ -107,14 +107,6 @@ macro_rules! impl_tool_context {
             fn webid(&self) -> &hkask_types::WebID {
                 &self.webid
             }
-            fn record_tool_outcome(&self, tool: &str, outcome: &str) {
-                tracing::debug!(
-                    target: "reg.memory",
-                    tool = %tool,
-                    outcome = %outcome,
-                    "Tool outcome recorded (in-process only)",
-                );
-            }
         }
     };
 }

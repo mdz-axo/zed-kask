@@ -67,9 +67,11 @@ protection).
 
 Wrap the handler body in `execute_tool` (`tool_span.rs:249`) or
 `execute_tool_semantic` (`tool_span.rs:266`) for ontology-tagged spans.
-These construct a `ToolSpanGuard` (`tool_span.rs:17`) internally, emit a
-`reg.tool.*` span on completion, and call `record_tool_outcome` on the
-`ToolContext` for semantic memory recording.
+These construct a `ToolSpanGuard` (`tool_span.rs:17`) internally and emit a
+`reg.tool.*` span on completion; the `reg.tool` span is the production
+recording surface. Thread-level memory via `RealMemoryPort` (D6) is the
+richer path; per-tool debug logging is available via `tracing::debug!` at
+the call site if a server needs it.
 
 ### Step 4: Return McpToolError on failure
 

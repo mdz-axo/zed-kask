@@ -345,8 +345,9 @@ pub struct DragonflySynthesis {
 /// A single stored forecast awaiting or having received an outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredForecastRecord {
-    /// Schema version for forward-compatible deserialization (current: 1).
+    /// Schema version for forward-compatible deserialization (current: 2).
     /// Old files without this field default to 0.
+    /// v2 adds `category` for per-domain calibration.
     #[serde(default)]
     pub schema_version: u32,
     pub forecast_id: String,
@@ -358,6 +359,12 @@ pub struct StoredForecastRecord {
     /// None = still pending, Some = outcome known
     pub outcome: Option<bool>,
     pub resolved_at: Option<NaiveDate>,
+    /// Domain category (e.g. "Politics", "Sports") for per-domain calibration.
+    /// `None` for records that predate the field (schema v0/v1) or for
+    /// forecasts with no natural category. Per-domain bias correction
+    /// only applies when enough resolved forecasts share a category.
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 /// One bin in a calibration curve — forecasts in a probability range

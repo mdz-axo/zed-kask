@@ -355,6 +355,7 @@ pub async fn classify_batch(
     texts: &[String],
     config: ClassifierConfig,
     inference_port: Arc<dyn InferencePort>,
+    cost_driver: Option<Arc<dyn hkask_storage::database::driver::DatabaseDriver>>,
 ) -> Result<Vec<ClassifyResult>, ServiceError> {
     // P9: Regulation span
     tracing::info!(target: "hkask.classify", operation = "classify_batch", item_count = texts.len(), "REG");
@@ -417,7 +418,7 @@ pub async fn classify_batch(
         }
     }
 
-    Ok(results
+    let results: Vec<ClassifyResult> = results
         .into_iter()
         .map(|r| {
             r.unwrap_or(ClassifyResult {
@@ -430,7 +431,50 @@ pub async fn classify_batch(
                 provider: config.model.clone(),
             })
         })
-        .collect())
+        .collect();
+
+    // Post the aggregate rJoule cost to the ledger so the corpus server can
+    // find efficiencies in LLM interactions. 1 rJoule = 1 USD; `cost_urj` is
+    // in µrJ. Best-effort: a failed post warns but does not block the result.
+    if let Some(driver) = cost_driver {
+        let total_cost_urj: u64 = results.iter().map(|r| r.cost_urj).sum();
+        if total_cost_urj > 0 {
+            let provider = if results
+                .first()
+                .map(|r| r.provider.as_str())
+                .unwrap_or("")
+                .is_empty()
+            {
+                "unknown"
+            } else {
+                // The provider is the model name's namespace prefix (e.g.
+                // "DeepInfra" from "DeepInfra/Qwen/Qwen3-Embedding-0.6B").
+                // Fall back to "classify" if no prefix.
+                results
+                    .first()
+                    .map(|r| r.provider.split('/').next().unwrap_or("classify"))
+                    .unwrap_or("classify")
+            };
+            let reference = format!(
+                "classify-batch-{}-{}",
+                chrono::Utc::now().timestamp_micros(),
+                uuid::Uuid::new_v4()
+            );
+            crate::cost::record_cost_best_effort(
+                &driver,
+                provider,
+                total_cost_urj as i64,
+                &reference,
+                &serde_json::json!({
+                    "operation": "classify_batch",
+                    "item_count": texts.len(),
+                    "model": config.model,
+                }),
+            );
+        }
+    }
+
+    Ok(results)
 }
 
 // ── HMem Extraction ──────────────────────────────────────────────────

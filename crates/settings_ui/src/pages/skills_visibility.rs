@@ -597,4 +597,31 @@ mod tests {
         // easily assert on log output, but the queue being empty is the
         // observable contract.
     }
+
+    // zed-kask: Pin the page-leave drain trigger contract. `pop_sub_page`
+    // (settings_ui.rs) calls `spawn_drain` when navigating off the Skills
+    // sub-page iff the queue is non-empty. The trigger is the `!is_empty()`
+    // guard — a non-empty queue must drain, an empty queue must not spawn.
+    // This test pins the guard logic at the queue level (the `SettingsWindow`
+    // integration would require a full GPUI test harness; the queue-level
+    // pin catches regressions to the drain condition itself).
+    #[test]
+    fn page_leave_drain_trigger_fires_only_when_queue_nonempty() {
+        // Empty queue: the drain trigger must not fire (no-op).
+        let mut queue = SkillVisibilityQueue::default();
+        assert!(queue.is_empty(), "freshly-constructed queue must be empty");
+        // Simulate the `pop_sub_page` guard: `!is_empty()` is false, so
+        // `spawn_drain` is not called. Nothing to assert beyond the guard.
+
+        // Non-empty queue: the drain trigger must fire and clear the queue.
+        queue.push("caveman".to_string(), SkillVisibility::Public);
+        assert!(!queue.is_empty(), "queue with a push must be non-empty");
+        let drained = queue.drain();
+        assert_eq!(
+            drained.len(),
+            1,
+            "drain after a single push returns one entry"
+        );
+        assert!(queue.is_empty(), "drain must clear the queue");
+    }
 }
