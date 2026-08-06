@@ -36,7 +36,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The activity proxy ν(V). The paper found √V statistically best.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityProxy {
     /// ν(V) = 1. Isolates the spread channel.
@@ -86,7 +86,7 @@ pub struct VolatilityInputs {
 /// The DR-AS model configuration. The scale parameter `K` is globally
 /// portable per the paper's Table 7 (category-specific refitting does not
 /// systematically improve out-of-sample performance).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DrasConfig {
     /// The fitted adverse-selection scale parameter K ≥ 0. The paper
     /// estimates this via volume-weighted Gaussian quasi-likelihood on a
@@ -117,7 +117,7 @@ impl Default for DrasConfig {
 }
 
 /// The DR-AS volatility forecast result.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolatilityForecast {
     /// The conditional standard deviation h = √(h²) — the one-step
     /// volatility of the price innovation.

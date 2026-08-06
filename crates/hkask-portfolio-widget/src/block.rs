@@ -311,4 +311,19 @@ mod tests {
         let body = parse_portfolio_body(r#"{"viz":"portfolio"}"#).expect("valid body");
         assert!(body.holdings.is_none());
     }
+
+    #[test]
+    fn block_body_has_ontology_field() {
+        // S4 sensor: the companies server emits `"ontology": "fibo:Portfolio"`
+        // (or another FIBO concept) on every tool output. The widget's
+        // PortfolioBlockBody MUST have an `ontology` field to receive it —
+        // if this field is absent, the server's tag is silently dropped.
+        let json = r#"{"viz":"portfolio","ontology":"fibo:Portfolio"}"#;
+        let body = parse_portfolio_body(json).expect("valid body");
+        assert_eq!(
+            body.ontology.as_deref(),
+            Some("fibo:Portfolio"),
+            "PortfolioBlockBody must parse the ontology field the server emits"
+        );
+    }
 }

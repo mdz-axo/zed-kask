@@ -358,6 +358,29 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 mod poison_tests;
 
 #[cfg(test)]
+mod dead_surface_pins {
+    /// `PORTFOLIO_AGGREGATABLE_FIELDS` and `PORTFOLIO_CATEGORICAL_FIELDS` were
+    /// deleted from `fibo.rs` because they had zero production call sites —
+    /// only the in-module tests referenced them. This test pins their absence
+    /// so a future commit cannot re-add them without a consumer. Per `.rules`
+    /// "Advertised invariants need enforcement points": a constant with no
+    /// consumer is dead surface regardless of its ontological correctness.
+    #[test]
+    fn portfolio_field_tables_not_present() {
+        // The constants must not be re-added without a production consumer.
+        let fibo_source = include_str!("fibo.rs");
+        assert!(
+            !fibo_source.contains("PORTFOLIO_AGGREGATABLE_FIELDS"),
+            "PORTFOLIO_AGGREGATABLE_FIELDS must not be re-added without a consumer — it was dead surface"
+        );
+        assert!(
+            !fibo_source.contains("PORTFOLIO_CATEGORICAL_FIELDS"),
+            "PORTFOLIO_CATEGORICAL_FIELDS must not be re-added without a consumer — it was dead surface"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

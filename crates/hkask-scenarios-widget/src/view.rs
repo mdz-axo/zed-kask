@@ -1384,6 +1384,21 @@ mod tests {
         assert!(body.ontology.is_none());
     }
 
+    #[test]
+    fn block_body_has_ontology_field() {
+        // S4 sensor: the scenarios server emits `"ontology": "pko:Procedure"`
+        // or `"dcterms:Dataset"` on every tool output. The widget's
+        // ScenariosBlockBody MUST have an `ontology` field to receive it —
+        // if this field is absent, the server's tag is silently dropped.
+        let json = r##"{"viz":"scenarios","ontology":"pko:Procedure"}"##;
+        let body = parse_scenarios_body(json).expect("parses");
+        assert_eq!(
+            body.ontology.as_deref(),
+            Some("pko:Procedure"),
+            "ScenariosBlockBody must parse the ontology field the server emits"
+        );
+    }
+
     #[gpui::test]
     async fn disagree_body_includes_ontology_when_present(cx: &mut gpui::TestAppContext) {
         // When the block carries an ontology tag, the compose-back body

@@ -2015,6 +2015,17 @@ mod tests {
     }
 
     #[test]
+    fn market_volatility_request_schema_has_no_boolean_positions() {
+        let schema = schemars::schema_for!(MarketVolatilityRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let positions = hkask_mcp_server::find_boolean_schema_positions(&value);
+        assert!(
+            positions.is_empty(),
+            "MarketVolatilityRequest schema has bare-boolean positions: {positions:?}"
+        );
+    }
+
+    #[test]
     fn default_economic_context_provides_reasonable_defaults_for_each_family() {
         // Every base-event family has a curated default with a non-zero
         // reference and a rationale — never a blank field.

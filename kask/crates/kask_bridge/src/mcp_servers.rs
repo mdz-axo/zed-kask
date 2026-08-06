@@ -235,6 +235,8 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-prediction-markets",
         description: "Prediction markets — annotated Polymarket/Kalshi market-implied probabilities",
         credentials: Some(&["HKASK_FRED_API_KEY"]),
+        config_env: Some(&[
+            "HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS",
             "HKASK_PREDICTION_MARKETS_DATA",
             "HKASK_PREDICTION_MARKETS_BASE_EVENTS",
         ]),
@@ -597,11 +599,15 @@ mod tests {
     #[test]
     fn prediction_markets_allowlist_matches_actual_reads() {
         let s = server_by_id("prediction-markets");
-        // Read sites: none — both platforms expose public market-data reads.
+        // Read site: ctx.credentials.get("HKASK_FRED_API_KEY") in `run()` for
+        // live reference-level fetches (FRED API). Optional — curated static
+        // defaults used when absent.
         assert_eq!(
             s.credentials.unwrap().to_vec(),
-            Vec::<&str>::new(),
-            "prediction-markets credentials allowlist drifted — Polymarket and              Kalshi public market data need no credentials; add one only with a              read site in hkask-mcp-prediction-markets"
+            vec!["HKASK_FRED_API_KEY"],
+            "prediction-markets credentials allowlist drifted — HKASK_FRED_API_KEY \
+             is read in run() for live reference-level fetches; add a credential \
+             only with a read site in hkask-mcp-prediction-markets"
         );
         // Read site: std::env::var("HKASK_PREDICTION_MARKETS_CACHE_TTL_SECS")
         // in `run()` (with a malformed-value warn, not silent fallback).

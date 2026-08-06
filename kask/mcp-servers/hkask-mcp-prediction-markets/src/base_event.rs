@@ -254,107 +254,109 @@ pub fn classify_base_event_text(
 // - Bitcoin: CoinGecko `/simple/price` (no key)
 // - Ethereum: CoinGecko `/simple/price` (no key)
 
-/// The FRED series ID for this base-event family, when available.
-/// Crypto families use CoinGecko instead (no FRED series).
-fn fred_series_id(self) -> Option<&'static str> {
-    match self {
-        BaseEvent::InterestRates => Some("FEDFUNDS"),
-        BaseEvent::Inflation => Some("CPIAUCSL"),
-        BaseEvent::Oil => Some("DCOILWTICO"),
-        BaseEvent::NaturalGas => Some("DHHNGSP"),
-        BaseEvent::Bitcoin | BaseEvent::Ethereum => None,
-    }
-}
-
-/// The CoinGecko coin id for crypto families, when applicable.
-fn coingecko_id(self) -> Option<&'static str> {
-    match self {
-        BaseEvent::Bitcoin => Some("bitcoin"),
-        BaseEvent::Ethereum => Some("ethereum"),
-        _ => None,
-    }
-}
-
-/// Fetch the latest reference level for this base-event family from a live
-/// API. Returns `None` on any failure (network, parse, missing key) — the
-/// caller falls back to the curated static default.
-///
-/// `fred_api_key` is required for FRED series (rates, inflation, oil, natgas);
-/// CoinGecko (crypto) needs no key. A `None` return is never an error for the
-/// caller — it means "use the curated default."
-pub async fn fetch_live_reference(
-    self,
-    http: &reqwest::Client,
-    fred_api_key: Option<&str>,
-) -> Option<f64> {
-    if let Some(series) = self.fred_series_id() {
-        let key = fred_api_key?;
-        let url = format!(
-            "https://api.stlouisfed.org/fred/series/observations?series_id={series}&api_key={key}&file_type=json&limit=1&sort_order=desc"
-        );
-        let resp = http.get(&url).send().await.ok()?;
-        if !resp.status().is_success() {
-            return None;
+impl BaseEvent {
+    /// The FRED series ID for this base-event family, when available.
+    /// Crypto families use CoinGecko instead (no FRED series).
+    fn fred_series_id(self) -> Option<&'static str> {
+        match self {
+            BaseEvent::InterestRates => Some("FEDFUNDS"),
+            BaseEvent::Inflation => Some("CPIAUCSL"),
+            BaseEvent::Oil => Some("DCOILWTICO"),
+            BaseEvent::NaturalGas => Some("DHHNGSP"),
+            BaseEvent::Bitcoin | BaseEvent::Ethereum => None,
         }
-        let body: serde_json::Value = resp.json().await.ok()?;
-        // FRED returns { observations: [ { date, value } ] }
-        let value_str = body
-            .get("observations")?
-            .as_array()?
-            .first()?
-            .get("value")?
-            .as_str()?;
-        value_str.parse::<f64>().ok()
-    } else if let Some(coin_id) = self.coingecko_id() {
-        let url = format!(
-            "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
-        );
-        let resp = http.get(&url).send().await.ok()?;
-        if !resp.status().is_success() {
-            return None;
+    }
+
+    /// The CoinGecko coin id for crypto families, when applicable.
+    fn coingecko_id(self) -> Option<&'static str> {
+        match self {
+            BaseEvent::Bitcoin => Some("bitcoin"),
+            BaseEvent::Ethereum => Some("ethereum"),
+            _ => None,
         }
-        let body: serde_json::Value = resp.json().await.ok()?;
-        body.get(coin_id)?.get("usd")?.as_f64()
-    } else {
-        None
     }
-}
 
-/// Fetch a live `EconomicContext` for this family: the reference level from
-/// a live API (falling back to the curated default), with the curated
-/// volatility and a rationale explaining the source. The `predicted_level`
-/// defaults to the reference (Stable orientation) — the operator overrides
-/// for directional indices.
-pub async fn live_economic_context(
-    self,
-    http: &reqwest::Client,
-    fred_api_key: Option<&str>,
-) -> EconomicContext {
-    let default = self.default_economic_context();
-    match self.fetch_live_reference(http, fred_api_key).await {
-        Some(live_ref) => EconomicContext {
-            reference: live_ref,
-            predicted_level: live_ref, // default → Stable
-            rationale: format!(
-                "{} Live reference fetched from {}. Override predicted_level for directional indices.",
-                default.rationale,
-                self.live_source_label()
-            ),
-            ..default
-        },
-        None => default,
+    /// Fetch the latest reference level for this base-event family from a live
+    /// API. Returns `None` on any failure (network, parse, missing key) — the
+    /// caller falls back to the curated static default.
+    ///
+    /// `fred_api_key` is required for FRED series (rates, inflation, oil, natgas);
+    /// CoinGecko (crypto) needs no key. A `None` return is never an error for the
+    /// caller — it means "use the curated default."
+    pub async fn fetch_live_reference(
+        self,
+        http: &reqwest::Client,
+        fred_api_key: Option<&str>,
+    ) -> Option<f64> {
+        if let Some(series) = self.fred_series_id() {
+            let key = fred_api_key?;
+            let url = format!(
+                "https://api.stlouisfed.org/fred/series/observations?series_id={series}&api_key={key}&file_type=json&limit=1&sort_order=desc"
+            );
+            let resp = http.get(&url).send().await.ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let body: serde_json::Value = resp.json().await.ok()?;
+            // FRED returns { observations: [ { date, value } ] }
+            let value_str = body
+                .get("observations")?
+                .as_array()?
+                .first()?
+                .get("value")?
+                .as_str()?;
+            value_str.parse::<f64>().ok()
+        } else if let Some(coin_id) = self.coingecko_id() {
+            let url = format!(
+                "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+            );
+            let resp = http.get(&url).send().await.ok()?;
+            if !resp.status().is_success() {
+                return None;
+            }
+            let body: serde_json::Value = resp.json().await.ok()?;
+            body.get(coin_id)?.get("usd")?.as_f64()
+        } else {
+            None
+        }
     }
-}
 
-/// Human-readable label for the live data source.
-fn live_source_label(self) -> &'static str {
-    match self {
-        BaseEvent::InterestRates => "FRED FEDFUNDS",
-        BaseEvent::Inflation => "FRED CPIAUCSL",
-        BaseEvent::Oil => "FRED DCOILWTICO",
-        BaseEvent::NaturalGas => "FRED DHHNGSP",
-        BaseEvent::Bitcoin => "CoinGecko",
-        BaseEvent::Ethereum => "CoinGecko",
+    /// Fetch a live `EconomicContext` for this family: the reference level from
+    /// a live API (falling back to the curated default), with the curated
+    /// volatility and a rationale explaining the source. The `predicted_level`
+    /// defaults to the reference (Stable orientation) — the operator overrides
+    /// for directional indices.
+    pub async fn live_economic_context(
+        self,
+        http: &reqwest::Client,
+        fred_api_key: Option<&str>,
+    ) -> EconomicContext {
+        let default = self.default_economic_context();
+        match self.fetch_live_reference(http, fred_api_key).await {
+            Some(live_ref) => EconomicContext {
+                reference: live_ref,
+                predicted_level: live_ref, // default → Stable
+                rationale: format!(
+                    "{} Live reference fetched from {}. Override predicted_level for directional indices.",
+                    default.rationale,
+                    self.live_source_label()
+                ),
+                ..default
+            },
+            None => default,
+        }
+    }
+
+    /// Human-readable label for the live data source.
+    fn live_source_label(self) -> &'static str {
+        match self {
+            BaseEvent::InterestRates => "FRED FEDFUNDS",
+            BaseEvent::Inflation => "FRED CPIAUCSL",
+            BaseEvent::Oil => "FRED DCOILWTICO",
+            BaseEvent::NaturalGas => "FRED DHHNGSP",
+            BaseEvent::Bitcoin => "CoinGecko",
+            BaseEvent::Ethereum => "CoinGecko",
+        }
     }
 }
 

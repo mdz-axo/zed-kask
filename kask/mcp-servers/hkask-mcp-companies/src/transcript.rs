@@ -287,6 +287,7 @@ fn parse_fmp_body(
 // interviews) via SerpAPI YouTube, channel-allowlisted. Does NOT segment.
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[allow(dead_code)]
 pub struct CorpusTranscriptRecord {
     pub symbol: String,
     pub source_tier: u8,
@@ -299,6 +300,7 @@ pub struct CorpusTranscriptRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[allow(dead_code)]
 pub struct ExcludedVideo {
     pub title: String,
     pub url: String,
@@ -307,13 +309,16 @@ pub struct ExcludedVideo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[allow(dead_code)]
 pub struct CorpusTranscriptResult {
     pub transcripts: Vec<CorpusTranscriptRecord>,
     pub excluded: Vec<ExcludedVideo>,
 }
 
+#[allow(dead_code)]
 const SERPAPI_BASE: &str = "https://serpapi.com/search";
 
+#[allow(dead_code)]
 pub async fn fetch_corpus_transcripts(
     client: &reqwest::Client,
     symbol: &str,
@@ -421,6 +426,7 @@ pub async fn fetch_corpus_transcripts(
     })
 }
 
+#[allow(dead_code)]
 async fn fetch_youtube_transcript(
     client: &reqwest::Client,
     video_id: &str,
@@ -505,6 +511,7 @@ pub fn kind_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
 // ── Citation verification (the no-fabrication enforcement point) ──────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[allow(dead_code)]
 pub struct Citation {
     pub chunk_id: usize,
     pub quote: String,
@@ -514,12 +521,14 @@ pub struct Citation {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum CitationVerdict {
     Verified,
     Fabricated { chunk_id: usize, quote: String },
     InvalidChunkId { chunk_id: usize, chunk_count: usize },
 }
 
+#[allow(dead_code)]
 pub fn verify_citation(citation: &Citation, chunks: &[String]) -> CitationVerdict {
     if citation.chunk_id >= chunks.len() {
         return CitationVerdict::InvalidChunkId {
@@ -538,6 +547,7 @@ pub fn verify_citation(citation: &Citation, chunks: &[String]) -> CitationVerdic
     }
 }
 
+#[allow(dead_code)]
 pub fn verify_all_citations(citations: &[Citation], chunks: &[String]) -> Vec<CitationVerdict> {
     citations
         .iter()
@@ -545,6 +555,7 @@ pub fn verify_all_citations(citations: &[Citation], chunks: &[String]) -> Vec<Ci
         .collect()
 }
 
+#[allow(dead_code)]
 pub fn all_citations_verified(citations: &[Citation], chunks: &[String]) -> bool {
     verify_all_citations(citations, chunks)
         .iter()
@@ -1038,7 +1049,6 @@ mod proptests {
         oracle_reference, write_trace,
     };
     use proptest::prelude::*;
-    use std::time::Instant;
 
     // ── Strategies ────────────────────────────────────────────────────────────
 
@@ -1047,6 +1057,7 @@ mod proptests {
     }
 
     /// A valid FMP response body: a JSON array of transcript entries.
+    #[allow(dead_code)]
     fn arb_fmp_response() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("[]".to_string()),
@@ -1385,9 +1396,9 @@ mod proptests {
                 symbol: symbol.clone(),
                 year,
                 quarter,
-                period: period.to_string(),
-                date: date.to_string(),
-                content: content.to_string(),
+                period,
+                date,
+                content,
                 source_endpoint: format!("fmp:/stable/earning-call-transcript?symbol={symbol}&year={year}&quarter={quarter}"),
                 entity_ref_prefix: format!("company:{symbol}:earnings:{year}_Q{quarter}"),
             };

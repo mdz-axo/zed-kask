@@ -1524,6 +1524,21 @@ mod tests {
         assert!(task.ontology.is_none());
     }
 
+    #[test]
+    fn block_body_has_ontology_field() {
+        // S4 sensor: the kata-kanban server emits `"ontology": "pko:Step"` on
+        // every TaskInfo response. The widget's TaskBody MUST have an `ontology`
+        // field to receive it — if this field is absent, the server's tag is
+        // silently dropped (the cybernetic S4 gap — no spec-drift sensor).
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog","ontology":"pko:Step"}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert_eq!(
+            task.ontology.as_deref(),
+            Some("pko:Step"),
+            "TaskBody must parse the ontology field the server emits"
+        );
+    }
+
     #[gpui::test]
     async fn disagree_body_includes_ontology_concept_when_present(cx: &mut gpui::TestAppContext) {
         // When a task carries an ontology tag, the compose-back body references it
