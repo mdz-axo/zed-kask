@@ -640,7 +640,8 @@ impl ConversationView {
     /// gesture). Called from the active-thread-change points
     /// (`navigate_to_thread`, `set_server_state`). When no thread is active the
     /// global is cleared so widgets surface a visible fallback draft rather than
-    /// silently no-op'ing (repo `.rules`). zed-kask D-seam — see DIVERGENCE.md.
+    /// silently no-op'ing (repo `.rules`).
+    // zed-kask: D21 — widget→agent compose-back seam (publish_injector).
     fn publish_injector(&self) {
         let injector = self.active_thread().map(|thread_view| {
             Arc::new(ThreadConversationInjector {

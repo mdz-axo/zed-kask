@@ -1,0 +1,82 @@
+{# goal: Select seed concepts — most central concept by graph degree in the source ontology. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    priority_ranking: array
+    namespaces: array
+  output:
+    seed_concepts: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-select-seeds.j2 #}
+{# Produces: seed_concepts #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Select-Seeds phase of GSR. For each high-priority recombination site, select the seed concept to be recast by CFR.
+
+## Priority Ranking
+
+```json
+{{ priority_ranking | tojson }}
+```
+
+## Namespaces (with key concepts)
+
+```json
+{{ namespaces | tojson }}
+```
+
+## Procedure
+
+1. **For each high-priority site (rank ≤ 5), select the seed concept** as the most central concept in the source ontology — the concept with the highest degree in the ontology's concept graph (most sub- and super-class relations).
+
+2. **Rationale**: central concepts have the richest structure to mutate; peripheral concepts produce trivial mutants. A central concept (e.g., FIBO's `FinancialInstrument`) has many properties, relations, and sub-classes that the recast can restructure. A peripheral concept (e.g., a specific FIBO term with no children) has little to mutate.
+
+3. **For each seed, record:**
+   - `concept`: the concept name
+   - `source_ontology`: the source namespace id
+   - `target_ontology`: the target namespace id (from the priority ranking)
+   - `centrality`: the graph degree (normalized 0-1)
+   - `axiom_graph`: a summary of the concept's structural elements (classes, properties, relations) that CFR will represent as an axiom graph
+
+4. **If the source ontology's concept graph is not available**, select the concept listed as the first `key_concept` in the namespace inventory (a fallback heuristic — the first key concept is usually the root or most central).
+
+## Output
+
+Return JSON only:
+```json
+{
+  "seed_concepts": [
+    {
+      "concept": "FinancialInstrument",
+      "source_ontology": "fibo",
+      "target_ontology": "eso",
+      "centrality": 0.9,
+      "axiom_graph": {
+        "classes": ["FinancialInstrument", "Contract", "FinancialEntity"],
+        "properties": ["hasValue", "hasObligation"],
+        "relations": ["FinancialInstrument ⊑ Contract", "Contract ⊑ FinancialEntity"]
+      }
+    },
+    {
+      "concept": "Event",
+      "source_ontology": "eso",
+      "target_ontology": "fibo",
+      "centrality": 0.95,
+      "axiom_graph": {
+        "classes": ["Event", "Situation", "Role"],
+        "properties": ["hasPreSituation", "hasPostSituation", "hasRole"],
+        "relations": ["Event ⊑ hasPreSituation some Situation", "Event ⊑ hasPostSituation some Situation"]
+      }
+    }
+  ]
+}
+```

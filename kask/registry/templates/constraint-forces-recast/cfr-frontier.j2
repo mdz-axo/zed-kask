@@ -1,0 +1,89 @@
+{# goal: Update the Pareto frontier on (novelty, validity, cost-inverted). #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    current_frontier: array
+    new_variants: array
+    frontier_size: integer
+  output:
+    frontier: array
+    dominated: array
+    new_non_dominated: integer
+    frontier_changed: boolean
+energy_cap: 3072
+visibility: Public
+---
+{# Template: constraint-forces-recast/cfr-frontier.j2 #}
+{# Produces: frontier, dominated, new_non_dominated, frontier_changed #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Frontier phase of CFR. Your job is to update the Pareto frontier on (novelty, validity, cost-inverted).
+
+## Current Frontier
+
+```json
+{{ current_frontier | tojson }}
+```
+
+## New Variants (this iteration's recast + relabel outputs)
+
+```json
+{{ new_variants | tojson }}
+```
+
+## Frontier Size Limit
+
+{{ frontier_size | default(10) }}
+
+## Procedure
+
+1. **Merge the current frontier with newly tested variants** into a single pool.
+
+2. **Perform non-dominated sort.** Variant A dominates variant B if A is at least as good as B on ALL objectives (novelty, validity, cost-inverted) and strictly better on at least ONE.
+
+3. **Keep only non-dominated members** as the new frontier.
+
+4. **Prune by crowding distance** if the frontier exceeds `frontier_size` (default 10): remove variants in the most crowded region of objective space to maintain diversity.
+
+5. **Record which variants were dominated and by whom** for audit.
+
+6. **Count new non-dominated members** not present in the prior frontier — this feeds the convergence check.
+
+## Fitness Dimensions
+
+- **Novelty** = 1 - (max subsumption by A) — how absent the mutant is from A (criterion ii quantified)
+- **Validity** = fraction of B's axioms satisfied (criterion iii quantified)
+- **Cost-inverted** = 1 - (rater/reasoner effort, normalized to [0,1]) — higher is more efficient
+
+## Output
+
+Return JSON only:
+```json
+{
+  "frontier": [
+    {
+      "variant_id": "cell_1_recast",
+      "novelty": 0.9,
+      "validity": 0.9,
+      "cost_inverted": 0.6,
+      "non_dominated": true
+    }
+  ],
+  "dominated": [
+    {
+      "variant_id": "cell_1_relabel",
+      "dominated_by": "cell_1_recast",
+      "reason": "cell_1_recast is strictly better on novelty and validity, equal on cost"
+    }
+  ],
+  "new_non_dominated": 1,
+  "frontier_changed": true
+}
+```

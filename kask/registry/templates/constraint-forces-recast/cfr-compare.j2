@@ -1,0 +1,76 @@
+{# goal: Compare mutant vs relabel structural delta — the discriminating test. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    mutant: object
+    structural_delta: integer
+    relabel: object
+    relabel_delta: integer
+    three_criterion_mutant: boolean
+  output:
+    mutant_delta: integer
+    relabel_delta: integer
+    m1_corroborated: boolean
+    comparison_verdict: string
+energy_cap: 3072
+visibility: Public
+---
+{# Template: constraint-forces-recast/cfr-compare.j2 #}
+{# Produces: mutant_delta, relabel_delta, m1_corroborated, comparison_verdict #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 1024
+thinking_budget = "full"
+
+You are the Compare phase of CFR — the discriminating test (Platt). Your job is to compare the mutant's structural delta to the relabel control's structural delta.
+
+## Mutant
+
+```json
+{{ mutant | tojson }}
+```
+
+## Mutant Structural Delta
+
+{{ structural_delta }}
+
+## Relabel Control
+
+```json
+{{ relabel | tojson }}
+```
+
+## Relabel Structural Delta
+
+{{ relabel_delta }}
+
+## Three-Criterion Mutant?
+
+{{ three_criterion_mutant }}
+
+## Procedure
+
+1. **Compare the structural deltas.** The mutant must have a larger structural delta than the relabel control.
+
+2. **Decide M1 corroboration:**
+   - If `three_criterion_mutant` is true AND `structural_delta > relabel_delta`: M1 (constraint forces) is corroborated for this cell. The recast mutated, not just relabeled.
+   - If `three_criterion_mutant` is true AND `structural_delta ≤ relabel_delta`: the recast did not mutate — it only relabeled. Report falsification of M1 for this cell.
+   - If `three_criterion_mutant` is false: the mutant failed the three-criterion test. The comparison is moot — the mutant is not valid regardless of delta.
+
+3. **Record the verdict.** This is the discriminating test between M1 (constraint forces) and M2 (random perturbation). If the mutant consistently outperforms the relabel across cells, M1 is corroborated and M2 is falsified.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "mutant_delta": 6,
+  "relabel_delta": 1,
+  "m1_corroborated": true,
+  "comparison_verdict": "mutant_delta (6) > relabel_delta (1); three-criterion mutant passes; M1 corroborated for this cell"
+}
+```

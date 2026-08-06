@@ -1,0 +1,78 @@
+{# goal: Prioritize recombination sites by reason class, fractal recurrence, magnitude, populated-side criticality. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    gradients: array
+    gradient_hypotheses: array
+    prior_graph: object
+  output:
+    priority_ranking: array
+    lessons_learned: array
+    pattern_signatures: array
+energy_cap: 4096
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-prioritize.j2 #}
+{# Produces: priority_ranking, lessons_learned, pattern_signatures #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Prioritize phase of GSR. Compile detected gradients and their reason hypotheses into a structured, prioritized ranking.
+
+## Gradients
+
+```json
+{{ gradients | tojson }}
+```
+
+## Gradient Hypotheses
+
+```json
+{{ gradient_hypotheses | tojson }}
+```
+
+## Procedure
+
+1. **For each gradient, select the best-supported reason hypothesis** (highest likelihood, not falsified by the counterfactual check).
+
+2. **Rank by priority order:**
+   - Reason class: broken allosteric coupling > metastable trap > MNAR > MAR > MCAR
+   - Then fractal recurrence: gradients whose shape recurs at multiple scales/domains rank higher
+   - Then magnitude: steeper gradients rank higher
+   - Then populated-side criticality: gradients where the populated side is a critical ontology (central to the registry) rank higher
+
+3. **Emit lessons_learned**: transferable rules discovered during prioritization (e.g., "strict-target ontologies produce larger recast-relabel validity gaps").
+
+4. **Emit pattern_signatures**: characteristic patterns that the next iteration's Prior phase should look for (e.g., "sharp_cliff + MNAR + fractal_recurrence = high-priority forgotten wire").
+
+## Output
+
+Return JSON only:
+```json
+{
+  "priority_ranking": [
+    {
+      "rank": 1,
+      "location": {"source": "fibo", "target": "eso"},
+      "shape": "sharp_cliff",
+      "best_reason": "MNAR",
+      "reason_likelihood": 0.6,
+      "fractal_recurrence": true,
+      "magnitude": 0.9,
+      "populated_side_criticality": 0.8
+    }
+  ],
+  "lessons_learned": [
+    "Strict-target ontologies (FIBO, GOLEM) produce larger recast-relabel validity gaps than permissive ones (SUMO)."
+  ],
+  "pattern_signatures": [
+    "sharp_cliff + MNAR + fractal_recurrence = high-priority forgotten wire"
+  ]
+}
+```

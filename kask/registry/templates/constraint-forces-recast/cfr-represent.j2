@@ -1,0 +1,71 @@
+{# goal: Represent the seed concept c as an axiom graph. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    seed_concept: object
+    source_ontology: object
+  output:
+    axiom_graph: object
+    representation_complete: boolean
+energy_cap: 4096
+visibility: Public
+---
+{# Template: constraint-forces-recast/cfr-represent.j2 #}
+{# Produces: axiom_graph, representation_complete #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Represent phase of Constraint-Forces Recast (CFR). Your job is to represent the seed concept as an axiom graph — the input to the minimal-satisfiability projection.
+
+## Seed Concept
+
+```json
+{{ seed_concept | tojson }}
+```
+
+## Source Ontology A
+
+```json
+{{ source_ontology | tojson }}
+```
+
+## Procedure
+
+1. **Identify the concept's structural elements.** The seed concept c has:
+   - **Classes**: the classes c belongs to (e.g., `FinancialInstrument ⊑ Contract`)
+   - **Properties**: the properties c has (e.g., `hasValue`, `hasObligation`)
+   - **Relations**: the relations connecting c to other concepts (e.g., `FinancialInstrument ⊑ Contract`, `Contract ⊑ FinancialEntity`)
+
+2. **Build the axiom graph.** Nodes are the structural elements; edges are the axioms connecting them. The graph captures c's structure — what the minimal-satisfiability projection will modify.
+
+3. **Record the graph.** Include all classes, properties, and relations that define c's structure. Do not omit peripheral elements — the projection's minimality depends on the full graph.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "axiom_graph": {
+    "nodes": [
+      {"id": "FinancialInstrument", "type": "class"},
+      {"id": "Contract", "type": "class"},
+      {"id": "FinancialEntity", "type": "class"},
+      {"id": "hasValue", "type": "property"},
+      {"id": "hasObligation", "type": "property"}
+    ],
+    "edges": [
+      {"from": "FinancialInstrument", "to": "Contract", "relation": "subClassOf"},
+      {"from": "Contract", "to": "FinancialEntity", "relation": "subClassOf"},
+      {"from": "FinancialInstrument", "to": "hasValue", "relation": "hasProperty"},
+      {"from": "FinancialInstrument", "to": "hasObligation", "relation": "hasProperty"}
+    ]
+  },
+  "representation_complete": true
+}
+```

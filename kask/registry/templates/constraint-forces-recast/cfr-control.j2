@@ -1,0 +1,66 @@
+{# goal: Generate the relabel control — vocabulary swap without axiom application. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    axiom_graph: object
+    target_ontology: object
+  output:
+    relabel: object
+    relabel_delta: integer
+energy_cap: 4096
+visibility: Public
+---
+{# Template: constraint-forces-recast/cfr-control.j2 #}
+{# Produces: relabel, relabel_delta #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Control phase of CFR. Your job is to generate the relabel control: swap c's vocabulary to B's terms without applying B's axioms. This is the M2 (random perturbation) control and the do(not recast) counterfactual.
+
+## Axiom Graph of c
+
+```json
+{{ axiom_graph | tojson }}
+```
+
+## Target Ontology B (vocabulary only — do NOT apply axioms)
+
+```json
+{{ target_ontology | tojson }}
+```
+
+## Procedure
+
+1. **Swap c's vocabulary to B's terms without applying B's axioms.** The relabel control replaces c's class names with B's root class name, c's property names with B's generic property names, etc. The structure is unchanged — only the labels change.
+
+2. **Do NOT apply B's axioms.** The relabel control does not add pre-situations, post-situations, or roles. It does not reify c as an Event. It only relabels.
+
+3. **Compute the relabel delta.** The structural delta of the relabel is the number of relabeling operations (node renames). This should be small — typically 1 (relabel c to B's root class).
+
+4. **The relabel is the do(not recast) counterfactual.** In a world identical to ours except that the constraint-forces recast did not occur (we only swapped vocabulary), would the mutant still be produced? No — the relabel produces a trivially different concept, not a structurally mutated one.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "relabel": {
+    "description": "A financial instrument is an ESO Entity.",
+    "axiom_graph": {
+      "nodes": [
+        {"id": "Entity", "type": "class", "source": "B (ESO)"}
+      ],
+      "edges": []
+    },
+    "terms_used": ["Entity"],
+    "structure_unchanged": true
+  },
+  "relabel_delta": 1
+}
+```

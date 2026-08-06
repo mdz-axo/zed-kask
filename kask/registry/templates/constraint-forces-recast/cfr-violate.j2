@@ -1,0 +1,63 @@
+{# goal: Identify B's axioms that c violates. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    axiom_graph: object
+    target_ontology: object
+  output:
+    violations: array
+    no_violations: boolean
+energy_cap: 4096
+visibility: Public
+---
+{# Template: constraint-forces-recast/cfr-violate.j2 #}
+{# Produces: violations, no_violations #}
+
+[inference]
+temperature = 0.2
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are the Violate phase of CFR. Your job is to identify which of B's axioms the seed concept c violates.
+
+## Axiom Graph of c
+
+```json
+{{ axiom_graph | tojson }}
+```
+
+## Target Ontology B
+
+```json
+{{ target_ontology | tojson }}
+```
+
+## Procedure
+
+1. **For each of B's axioms, check whether c's structure satisfies it.** An axiom is a constraint that c's structure must meet. For example:
+   - If B requires "every dynamic entity ⊑ Event" and c is a static entity, c violates this axiom.
+   - If B requires "every Event has a pre-situation" and c has no pre-situation, c violates this axiom.
+   - If B requires "every Event has participant Roles" and c has no roles, c violates this axiom.
+
+2. **Record each violation.** For each: the axiom violated, why c violates it, what c's structure lacks.
+
+3. **If no violations**: c already satisfies B. The minimal-satisfiability projection is the identity — no mutant. This is the degenerate recast-into-self case. Report `no_violations: true` and do not proceed to projection.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "violations": [
+    {
+      "axiom": "every dynamic entity ⊑ Event",
+      "violated_because": "c (FinancialInstrument) is a static entity, not an Event",
+      "missing_structure": "c lacks Event superclass, pre-situation, post-situation, roles"
+    }
+  ],
+  "no_violations": false
+}
+```

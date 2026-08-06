@@ -1,0 +1,78 @@
+{# goal: Generate reason hypotheses for each gradient using the 7-class taxonomy. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    gradients: array
+    prior_graph: object
+    namespaces: array
+  output:
+    gradient_hypotheses: array
+energy_cap: 6144
+visibility: Public
+---
+{# Template: gradient-seeded-recombination/gsr-hypothesize.j2 #}
+{# Produces: gradient_hypotheses #}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are the Hypothesize phase of GSR. For each detected gradient, generate multiple hypotheses for why it exists, using the seven-class reason taxonomy.
+
+## Detected Gradients
+
+```json
+{{ gradients | tojson }}
+```
+
+## Procedure
+
+1. **For each gradient, generate 2-3 reason hypotheses** from different reason classes:
+   - **Intentional boundary (MCAR)**: the recombination surface is unpopulated by design — the two ontologies are in unrelated domains and recombination was never intended.
+   - **Explainable gap (MAR)**: the recombination surface is unpopulated for a known reason — the two ontologies seem unrelated, but the gradient's steepness is the signal.
+   - **Forgotten wire (MNAR)**: the mapping exists conceptually but was never wired — someone should have recast A into B but didn't.
+   - **Stale refactor (MNAR drift)**: the recombination surface existed but was lost in a refactor.
+   - **Scope creep (MNAR missing abstraction)**: the recombination surface is missing because the abstraction layer that would host it was never created.
+   - **Metastable trap (spin glass non-ergodic)**: the recombination was attempted but the system relaxed back — the ontology landscape traps the recast in a local minimum.
+   - **Broken allosteric coupling**: the recombination surface shifts due to a distal change — the coupling between ontologies is broken, not the recombination itself.
+
+2. **For each hypothesis, state a Platt-form prediction**: "if X is the reason, then observation Y will obtain under condition Z."
+
+3. **For each hypothesis, state a falsifier**: the concrete observation that would prove it wrong.
+
+4. **Rank hypotheses by likelihood**, not by ease of testing.
+
+5. **Delegate to falsifiability** for counterfactual discrimination: "if this desert were intentional, what else would be true?" — if the intentional-boundary hypothesis predicts other deserts that don't exist, it is falsified.
+
+## Output
+
+Return JSON only:
+```json
+{
+  "gradient_hypotheses": [
+    {
+      "gradient_location": {"source": "fibo", "target": "eso"},
+      "hypotheses": [
+        {
+          "reason_class": "MCAR",
+          "hypothesis": "FIBO and ESO are in unrelated domains; recombination was never intended.",
+          "prediction": "If MCAR, then no other FIBO→X recombination surfaces should exist either.",
+          "falsifier": "If FIBO→SUMO recombination exists, MCAR is falsified for FIBO→ESO.",
+          "likelihood": 0.3
+        },
+        {
+          "reason_class": "MNAR",
+          "hypothesis": "The FIBO→ESO mapping exists conceptually (instruments as events) but was never wired.",
+          "prediction": "If MNAR, then a concept-level mapping should be findable in the literature.",
+          "falsifier": "If no concept-level mapping exists in the literature, MNAR is weakened.",
+          "likelihood": 0.6
+        }
+      ]
+    }
+  ]
+}
+```
