@@ -25,7 +25,7 @@ budget; higher-scoring lines are kept, lower-scoring lines are dropped.
 | `WordRankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:119` |
 | `FlashrankAlgorithm` | `kask/crates/hkask-condenser/src/algorithms.rs:429` |
 | `AlgorithmRegistry` | `kask/crates/hkask-condenser/src/algorithms.rs:576` |
-| `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:680` |
+| `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:580` |
 | `anchor_keywords` | `kask/crates/hkask-condenser/src/ontology_graph.rs:316` |
 | `Profile` enum | `kask/crates/hkask-condenser/src/types.rs:217` |
 
@@ -66,7 +66,7 @@ aggressive compression); `Light` retains the most.
 
 ### Step 3: Derive the ontology anchor
 
-The `derive_ontology_anchor` function (`algorithms.rs:680`) maps a tool name
+The `derive_ontology_anchor` function (`algorithms.rs:580`) maps a tool name
 to an `OntologyAnchor` (`types.rs:23`) — `Core`, `DualAxis` (PKO/DC+BIBO), or
 `DomainSupplement` (FIBO, GOLEM, SUMO, ML-Schema, OMC). The anchor is derived
 automatically from the tool name; you do not set it directly. To influence it,

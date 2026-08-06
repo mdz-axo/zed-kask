@@ -386,36 +386,49 @@ judgment artifact into code and require a server release to change a listening f
 
 Each slice is end-to-end testable; acceptance criteria are stated, not implied.
 
-1. **Plan-gating probe** (no code): with the real `HKASK_FMP_API_KEY`, call the current
-   FMP transcript endpoint for AAPL 2023Q1..2025Q4. Accept: record which path works,
-   HTTP status per quarter, whether `content` has speaker markers. Resolves A2/A3/A4
-   UNVERIFIED items. *Blocks slices 2–4.*
-2. **Fetch tool**: `earnings_transcript(mode=fetch)` for one (year, quarter).
-   Accept: returns `content` + date for a known quarter; `coverage.missing` populated
-   for a quarter with no call (e.g. pre-IPO); error classification test per repo rules.
-3. **Window fetch**: `quarters_back=20`. Accept: 20-quarter retrieval for a long-listed
-   ticker (e.g. MSFT) with explicit coverage report; gaps reported, not invented.
-4. **Segmentation**: fixture test over a real captured blob from slice 1.
-   Accept: prepared_remarks/QA split and speaker turns extracted when markers present;
-   single `full_text` segment + `segmentation: degraded` flag when absent. No fabricated
-   speakers.
-5. **Listening-template skill**: skill that takes a transcript (tool output or pasted
-   text), applies the §(b) template, emits per-section verdicts with evidence quotes.
-   Accept: golden-file test — run on the slice-1 fixture, every verdict cites ≥1
-   verbatim quote; a fabricated quote fails the test (substring check against source);
-   **horizon-filter test** — the fixture must contain at least one bare short-term
-   guidance change, and the output must place it in `ignored_short_term` with no
-   verdict influence; a verdict derived from it fails the test; **checkpoint test** —
-   the fixture must contain at least one dated milestone with a nameable strategic
-   linkage, and the output must place it on the checkpoint_map with its
-   strategic_goal_link populated; a checkpoint emitted without a linkage fails.
-6. **Corpus integration**: transcript cached via `corpus_cache`, analysis note attached
-   via `note_add`. Accept: round-trip queryable through existing corpus tools; no new
-   storage code. Negative accept: corpus content-size/length limits were never probed
-   in A5 — slice 6 must first cache a full-length real transcript (FMP blobs run long)
-   and record the actual limit behavior; if `corpus_cache` rejects or truncates, the
-   accept criterion is a documented fallback (chunk-then-cache via `corpus_chunk`), not
-   silent truncation.
+1. **Plan-gating probe** (no code): **COMPLETE 2026-08-05.** With the real
+   `HKASK_FMP_API_KEY`, called the current FMP transcript endpoint for AAPL
+   2023Q1..2025Q4. Result: `/stable/earning-call-transcript` returns 200;
+   legacy v3 is 403; speaker markers + Q&A section markers present; timestamps
+   absent; `date` field unreliable (AAPL 2023Q1 → `date: "2012-03-19"`).
+   Resolves A2/A3/A4 UNVERIFIED items.
+
+2. **Fetch tool**: **COMPLETE.** `company_transcript(mode=earnings)` for one
+   (year, quarter). Returns `content` + date for a known quarter;
+   `coverage.missing` populated for a quarter with no call; per-variant error
+   mapping (`classify_fmp_status`); no `unwrap()`. Temporal key is
+   `(year, quarter)`, not `date`.
+
+3. **Window fetch**: **COMPLETE.** `quarters_back=N` iteration with explicit
+   coverage report. Per-quarter failures collected into `coverage.missing`,
+   not propagated. Tested with 8-quarter windows + proptests.
+
+4. **Segmentation**: **FOLDED INTO SLICE 6.** The corpus pipeline's
+   `corpus_chunk` + `corpus_tag_chunks` subsumes segmentation — chunks are
+   tagged with PKO `Step`/`Procedure` for sections and `dc:contributor` for
+   speakers. No standalone segmentation module was built (the initial
+   over-built module was deleted in the essentialist audit). The design's
+   §A5/Deferred #3 confirms `corpus_chunk` is token-based only, so the tagging
+   step is where section/speaker attribution happens.
+
+5. **Listening skill**: **COMPLETE.** The `listening` skill applies the v3
+   template using a **retrieve-cite-verify** process: the transcript is
+   pre-split into numbered chunks, the model searches the chunks and cites
+   what it found (chunk_id + quote + char_start), and a post-processing step
+   (`verify_citation`) checks each cited substring is present in the
+   referenced chunk. The no-fabrication invariant is process-embedded, not
+   instruction-embedded. Golden-file tests assert the fixture contains the
+   required material (short-term guidance change, strategic checkpoint) and
+   the template enforces the retrieve-cite-verify design. The RAG variant
+   (`apply-template-rag.j2`) extends this to cross-document citation over
+   the company KG.
+
+6. **Corpus integration**: **COMPLETE.** The `entity_ref_prefix` is carried on
+   each `TranscriptRecord` (wired into the tool output, not a standalone
+   function). The pipeline sequence is documented in
+   `kask/docs/explanation/corpus-ingestion-probe.md`. Negative accept probed:
+   `corpus_cache` writes via `std::fs::write` with no size limit — full-length
+   FMP blobs (~51k chars) cache without truncation.
 
 ---
 

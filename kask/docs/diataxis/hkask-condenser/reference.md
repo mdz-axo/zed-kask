@@ -33,7 +33,7 @@ mapping.
 | `AlgorithmRegistry::select` | `kask/crates/hkask-condenser/src/algorithms.rs:596` |
 | `domain_saliency` fn | `kask/crates/hkask-condenser/src/algorithms.rs:231` |
 | `classify_tool` fn | `kask/crates/hkask-condenser/src/algorithms.rs:654` |
-| `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:680` |
+| `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:580` |
 | `OntologyGraph` | `kask/crates/hkask-condenser/src/ontology_graph.rs:43` |
 | `OntologyRelation` enum | `kask/crates/hkask-condenser/src/ontology_graph.rs:28` |
 | `graph()` fn | `kask/crates/hkask-condenser/src/ontology_graph.rs:310` |
@@ -140,7 +140,7 @@ given anchor.
 
 The `classify_tool` function (`algorithms.rs:654`) maps a tool name to a
 `ContextCategory` (`types.rs:298`) via exact token match, then substring
-fallback. The `derive_ontology_anchor` function (`algorithms.rs:680`) derives
+fallback. The `derive_ontology_anchor` function (`algorithms.rs:580`) derives
 an `OntologyAnchor` (`types.rs:23`) from a tool name. These functions connect
 tool invocations to the ontology graph for saliency scoring.
 

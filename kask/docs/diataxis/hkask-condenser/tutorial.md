@@ -42,7 +42,7 @@ that selects the compression algorithm based on the tool's
 
 Call `engine.compress(tool_name, output, category)` (`engine.rs:75`). The
 engine classifies the tool via `classify_tool` (`algorithms.rs:654`), derives
-an `OntologyAnchor` via `derive_ontology_anchor` (`algorithms.rs:680`),
+an `OntologyAnchor` via `derive_ontology_anchor` (`algorithms.rs:580`),
 selects an algorithm, and calls `algorithm.compress(...)` (`algorithms.rs:33`).
 Read the `CompressedOutput` (`types.rs:342`) — it carries `content`,
 `algorithm`, `category`, `original_bytes`, `compressed_bytes`,

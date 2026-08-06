@@ -28,7 +28,7 @@ high-salience ones within a `Profile`-derived budget.
 | `domain_saliency` | `kask/crates/hkask-condenser/src/algorithms.rs:231` |
 | `score_against_persona` | `kask/crates/hkask-condenser/src/saliency.rs:52` |
 | `classify_tool` | `kask/crates/hkask-condenser/src/algorithms.rs:654` |
-| `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:680` |
+| `derive_ontology_anchor` | `kask/crates/hkask-condenser/src/algorithms.rs:580` |
 | `BridgeThreadCondenser` | `kask/crates/kask_bridge/src/condenser_bridge.rs:22` |
 | `set_thread_condenser` hook | `crates/agent/src/agent.rs:3064` |
 | Deferred-task wiring | `crates/zed/src/main.rs:1586` |
@@ -58,7 +58,7 @@ status: VERIFIED (v2 — learning loop removed; static default_for selection onl
 
 ## Why ontology anchoring
 
-The `derive_ontology_anchor` function (`algorithms.rs:680`) maps a tool name
+The `derive_ontology_anchor` function (`algorithms.rs:580`) maps a tool name
 to an `OntologyAnchor` (`types.rs:23`). This anchor connects compression to
 the dual-axis ontology (PKO + DC+BIBO) plus domain supplements (FIBO, GOLEM,
 SUMO, ML-Schema, OMC). The anchor provides the keywords that the

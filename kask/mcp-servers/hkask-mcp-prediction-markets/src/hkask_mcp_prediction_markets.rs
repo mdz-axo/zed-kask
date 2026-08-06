@@ -1244,13 +1244,11 @@ impl PredictionMarketsServer {
                             ),
                             created_at: created_at.clone(),
                         };
-                        store.apply(&portfolio_name, &tx)
-                            .map_err(|e| e)?;
+                        store.apply(&portfolio_name, &tx)?;
                         applied += 1;
                     }
                     // Materialize the holdings snapshot for the observation date.
-                    let snapshot = store.snapshot(&portfolio_name, &computed_at)
-                        .map_err(|e| e)?;
+                    let snapshot = store.snapshot(&portfolio_name, &computed_at)?;
                     Ok::<_, PortfolioError>((applied, withheld, snapshot))
                 })
                 .await

@@ -26,8 +26,11 @@ classDiagram
         +viz: Option~String~
         +portfolio: Option~String~
         +returns: Option~ReturnsBody~
+        +holdings: Option~HoldingsBody~
         +characteristics: HashMap~String, CharacteristicField~
         +attribution: Vec~AttributionRow~
+        +provenance: BlockProvenance
+        +ontology: Option~String~
     }
     class ReturnsBody {
         +portfolio: Option~String~

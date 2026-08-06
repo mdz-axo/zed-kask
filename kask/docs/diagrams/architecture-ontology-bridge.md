@@ -35,8 +35,8 @@ graph TD
     subgraph servers["MCP servers (functional areas)"]
         condenser["hkask-condenser<br/>re-exports axis types"]
         corpus["hkask-mcp-corpus<br/>tagging + triples"]
-        media["hkask-mcp-media<br/>omc dispatch only"]
-        companies["hkask-mcp-companies<br/>fibo dispatch only"]
+        media["hkask-mcp-media<br/>omc dispatch + ontology tag"]
+        companies["hkask-mcp-companies<br/>fibo dispatch + ontology tag"]
         training["hkask-mcp-training<br/>mlschema dispatch only"]
         pm["hkask-mcp-prediction-markets<br/>FIBO-anchored CMP"]
     end
@@ -54,7 +54,7 @@ graph TD
         old_fibo_cu["~~corpus/bridge/fibo.rs~~"]
         old_eso["~~corpus/bridge/eso.rs~~"]
         old_golem["~~corpus/bridge/golem.rs~~"]
-        old_omc["~~media/omc.rs~~"]
+        old_omc["~~media/omc.rs (original, dead surface)~~"]
         old_ml["~~training/mlschema.rs~~"]
     end
 ```
@@ -98,5 +98,5 @@ status: VERIFIED
 ## See also
 
 - [PRINCIPLES.md P5.4/P8.1](../architecture/core/PRINCIPLES.md) — the dual-axis framework and bridging principles.
-- [Ontology Bridge Reference](../reference/ontology-bridge.md) — the API reference for the crate.
+- [Ontology Bridge Reference](../reference/ontology-bridge.md) — the API reference for the crate, including the unified tag shape and `explain_tool_for`.
 - [Using the Ontology Bridge](../diataxis/hkask-bridge-ontology/how-to.md) — a how-to guide for servers.

@@ -36,7 +36,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The activity proxy ν(V). The paper found √V statistically best.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivityProxy {
     /// ν(V) = 1. Isolates the spread channel.
@@ -44,15 +44,10 @@ pub enum ActivityProxy {
     /// ν(V) = log(1+V). Concave; diminishing marginal effect of activity.
     LogOnePlusVolume,
     /// ν(V) = √V. The paper's best-performing activity proxy.
+    #[default]
     SqrtVolume,
     /// ν(V) = V. Linear; volume proportional to information-event arrival.
     LinearVolume,
-}
-
-impl Default for ActivityProxy {
-    fn default() -> Self {
-        Self::SqrtVolume
-    }
 }
 
 impl ActivityProxy {

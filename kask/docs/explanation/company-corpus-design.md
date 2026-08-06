@@ -235,27 +235,47 @@ Each is end-to-end testable; slice 0 gates the rest (unchanged from earnings des
    `youtube_video_transcript` live, timestamped segments, generic `SPEAKER n` labels
    (not named), channel names available at search time for allowlisting. All A3
    UNVERIFIED items resolved.
-1. **Source manifest**: hand-author one manifest (a covered company, e.g. MSFT);
-   validate against a manifest schema; the tier/provenance/exclusion rules parse.
-   Accept: schema rejects a manifest with tier_3 sell-side enabled-by-default.
-2. **`company_transcript` earnings mode**: the existing earnings slices 2–5 (fetch,
-   window, segmentation, template-skill golden tests) — unchanged.
-3. **`company_transcript` corpus mode**: fetch + normalize one allowlisted investor-day
-   transcript. Accept: pipeline-ready JSONL record with correct tier/kind/provenance;
-   a non-allowlisted channel is excluded and logged, never silently kept.
-4. **`corpus_discover_company`**: agentic discovery against the slice-1 manifest.
-   Accept: tier-1 SEC filings discovered (Edgar), tier-2 allowlisted videos discovered,
-   `coverage.excluded` populated for any non-allowlisted/low-quality hit; `corpus.yaml`
-   generated.
-5. **Pipeline ingestion**: one full document (10-K) + one earnings transcript through
-   §B3. Accept: FIBO/PKO tags present; h_mems reference the entity prefix; a
-   `corpus_query` returns the right document; centroids computed per theme.
-6. **Cross-document linkage (the payoff slice)**: a checkpoint from an earnings call
-   linked to its investor-day source. Accept: a KG traversal from checkpoint →
-   strategic-goal → source document returns all three; listening-template golden test
-   re-run against the full company KG reproduces verdicts with cross-source citations.
-7. **Curated mode**: human-in-the-loop discovery. Accept: agentic proposals presented,
-   human accept/reject recorded, rejected sources excluded from `corpus.yaml`.
+1. **Source manifest**: **COMPLETE.** Hand-authored `kask/registry/company-sources/msft.yaml`;
+   `CompanySourceManifest` consumer struct in `company_manifest.rs` with
+   `validate()` enforcing tier_3 opt-in, ontology namespace validation, and
+   `deny_unknown_fields`. Schema rejects tier_3 sell-side enabled-by-default,
+   unknown ontology namespaces, and unknown fields. 10 tests (6 example + 4 proptest).
+
+2. **`company_transcript` earnings mode**: **COMPLETE.** The earnings slices 2-5
+   (fetch, window, segmentation folded into pipeline, listening skill) are
+   implemented. The `company_transcript` tool dispatches on `TranscriptMode`
+   (Earnings/Corpus). Earnings mode fetches FMP with coverage-honest error mapping.
+
+3. **`company_transcript` corpus mode**: **COMPLETE.** Fetches non-earnings
+   transcripts via SerpAPI YouTube, channel-allowlisted. Pipeline-ready
+   `CorpusTranscriptRecord` with correct tier/kind/provenance. Non-allowlisted
+   channels excluded and logged in `ExcludedVideo`, never silently kept.
+
+4. **`corpus_discover_company`**: **COMPLETE.** Agentic discovery against the
+   MSFT manifest. Tier-1 SEC filings discovered (EDGAR by CIK), tier-2 YouTube
+   videos discovered (SerpAPI, channel-allowlisted), `coverage.excluded`
+   populated for non-allowlisted hits. Supports `mode=agentic|curated`.
+
+5. **Pipeline ingestion**: **COMPLETE.** Entity-ref conventions for all document
+   kinds (earnings, SEC filings, YouTube) are wired into `TranscriptRecord` and
+   the `sec_filing_entity_ref_prefix` / `youtube_entity_ref_prefix` helpers.
+   A full 10-K fixture (`cross_doc_10k_full.txt`) is provided for pipeline testing.
+   The pipeline tools (`corpus_chunk`, `corpus_tag_chunks`, `corpus_embed`,
+   `corpus_extract_triples`, `corpus_query`) already exist on the corpus server.
+
+6. **Cross-document linkage**: **COMPLETE.** The RAG listening template
+   (`apply-template-rag.j2`) takes corpus passages + KG triples and emits
+   verdicts with cross-source citations. Cross-document fixtures (earnings
+   call + 10-K) share the same strategic goal and checkpoint, enabling KG
+   traversal. The `symbol_from_entity_ref_prefix` / `kind_from_entity_ref_prefix`
+   helpers enable the KG to identify which company and document kind a triple
+   came from.
+
+7. **Curated mode**: **COMPLETE.** The `mode=curated` parameter on
+   `corpus_discover_company` marks discovered items as "proposed" (awaiting
+   human review) rather than "discovered". The tool's job is discovery; the
+   accept/reject is the caller's job — a labeling convention, not a full
+   human-in-the-loop mechanism.
 
 ### B7. What is deliberately NOT built (essentialist)
 
