@@ -592,6 +592,106 @@ pub fn open_curator_regulation_archive(
     }
 }
 
+/// Open an `EscalationQueue` (reviewable alert backlog) on the curator's
+/// sovereign `pod.db` — the same DB the curator MCP server's
+/// `curator_escalations` / `curator_escalation_resolve` /
+/// `curator_escalation_dismiss` tools read. Returns `None` on any failure;
+/// the caller degrades to no escalation-queue persistence with a warn.
+///
+/// Mirrors `open_curator_regulation_archive` — same DB, same passphrase,
+/// same resolution path. The queue is the primary durable path for alert
+/// review: `CyberneticsLoop` writes escalated alerts here unconditionally so
+/// the Curator/user can review and resolve them.
+pub fn open_curator_escalation_queue(
+    passphrase: &str,
+) -> Option<Arc<hkask_storage::EscalationQueue>> {
+    let db_path = curator_db_path();
+    let db = match Database::open(&db_path, passphrase) {
+        Ok(db) => db,
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.storage",
+                error = %e,
+                db_path = %db_path,
+                "Failed to open curator DB for escalation queue"
+            );
+            return None;
+        }
+    };
+    let pool = match db.sqlite_pool() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(target: "reg.storage", error = %e, "Failed to get SQLite pool for escalation queue");
+            return None;
+        }
+    };
+    let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
+        hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path.as_str()),
+    );
+    match hkask_storage::EscalationQueue::from_driver(driver) {
+        Ok(queue) => Some(Arc::new(queue)),
+        Err(e) => {
+            tracing::warn!(target: "reg.storage", error = %e, "Failed to init EscalationQueue schema");
+            None
+        }
+    }
+}
+
+/// Adapter implementing `hkask_regulation::AlertEscalationSink` by forwarding
+/// algedonic alerts to the `EscalationQueue` (the reviewable backlog on the
+/// curator's `pod.db`).
+///
+/// This closes the Store seam: `CyberneticsLoop` calls
+/// `persist_alert_to_queue` → this adapter → `EscalationQueue::add` → the
+/// `escalations` table → `curator_escalations` MCP tool reads it. The queue
+/// write is best-effort; a failing or missing queue never breaks the
+/// regulation loop.
+#[derive(Debug)]
+pub struct BridgeAlertEscalationSink {
+    queue: Arc<hkask_storage::EscalationQueue>,
+}
+
+impl BridgeAlertEscalationSink {
+    pub fn new(queue: Arc<hkask_storage::EscalationQueue>) -> Self {
+        Self { queue }
+    }
+}
+
+impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
+    fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
+        use hkask_storage::EscalationQueue;
+        // `EscalationQueue::add` requires `template_id` and `bot_id` args that
+        // don't map from a `RuntimeAlert` — use auto-generated defaults (the
+        // same defaults `EscalationEntry::pending` uses). The structured alert
+        // fields are preserved in `error_context` (JSON).
+        let template_id = hkask_types::TemplateID::new();
+        let bot_id = hkask_types::BotID::new();
+        match self.queue.add(
+            template_id,
+            bot_id,
+            output.to_string(),
+            confidence,
+            0,
+            error_context.to_string(),
+        ) {
+            Ok(id) => {
+                tracing::debug!(
+                    target: "reg.alert",
+                    escalation_id = %id,
+                    "Algedonic alert persisted to escalation queue"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "reg.alert",
+                    error = %e,
+                    "Failed to persist algedonic alert to escalation queue"
+                );
+            }
+        }
+    }
+}
+
 /// The curator store pair: first-person episodic + shared semantic, both
 /// backed by the curator's sovereign `pod.db`.
 type CuratorStorePair = (Option<Arc<EpisodicMemory>>, Option<Arc<SemanticMemory>>);

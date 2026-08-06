@@ -517,7 +517,7 @@ mod tests {
         let mut nodes: Vec<NodeBody> = parents.iter().map(|p| node(p, 0.5, &[])).collect();
         let mut high_fan = node("child", 0.3, &[]);
         high_fan.depends_on = vec![DependencyBody {
-            parent_event_ids: parents.clone(),
+            parent_event_ids: parents,
             // Full 2^21 table is intractable; the guard fires before any
             // indexing, so the table contents don't matter for this test.
             conditionals: Vec::new(),

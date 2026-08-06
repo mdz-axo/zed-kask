@@ -44,7 +44,7 @@ You are the Violate phase of CFR. Your job is to identify which of B's axioms th
 
 2. **Record each violation.** For each: the axiom violated, why c violates it, what c's structure lacks.
 
-3. **If no violations**: c already satisfies B. The minimal-satisfiability projection is the identity — no mutant. This is the degenerate recast-into-self case. Report `no_violations: true` and do not proceed to projection.
+3. **If no violations**: c already satisfies B. The minimal-satisfiability projection is the identity — no mutant. This is the degenerate recast-into-self case. Report `no_violations: true`. The project step (ordinal 3) will still run but should produce the identity mutant (c unchanged) — this is correct behavior, not a fabrication.
 
 ## Output
 

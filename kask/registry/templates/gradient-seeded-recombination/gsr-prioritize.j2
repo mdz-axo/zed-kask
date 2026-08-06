@@ -42,7 +42,7 @@ You are the Prioritize phase of GSR. Compile detected gradients and their reason
 1. **For each gradient, select the best-supported reason hypothesis** (highest likelihood, not falsified by the counterfactual check).
 
 2. **Rank by priority order:**
-   - Reason class: broken allosteric coupling > metastable trap > MNAR > MAR > MCAR
+   - Reason class: broken allosteric coupling > metastable trap > mnar > mnar_drift > mnar_missing_abstraction > mar > mcar
    - Then fractal recurrence: gradients whose shape recurs at multiple scales/domains rank higher
    - Then magnitude: steeper gradients rank higher
    - Then populated-side criticality: gradients where the populated side is a critical ontology (central to the registry) rank higher

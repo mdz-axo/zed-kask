@@ -78,6 +78,14 @@ pub struct CyberneticsLoop {
     dampener: Arc<Dampener>,
     /// When present, algedonic alerts are persisted to RegulationArchive for restart durability.
     event_sink: Option<Arc<dyn RegulationSink>>,
+    /// When present, algedonic alerts are persisted to the reviewable escalation
+    /// queue (the `EscalationQueue` on the curator's pod.db). This is the
+    /// primary durable path for alert review — every escalated alert is written
+    /// here unconditionally, so the Curator/user can review pending alerts via
+    /// the `curator_escalations` MCP tool and resolve/dismiss them. The
+    /// `event_sink` (`RegulationArchive`) remains as a secondary fallback for
+    /// restart durability when this queue is unavailable.
+    alert_escalation_sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,
     /// Direct alerts channel: Cybernetics → Curation (CurationInput).
     alerts_tx: Option<mpsc::UnboundedSender<CurationInput>>,
     alert_email_sink: Option<Arc<dyn crate::algedonic::AlertEmailSink>>,
@@ -167,6 +175,7 @@ impl CyberneticsLoop {
             max_iterations,
             dampener,
             event_sink: None,
+            alert_escalation_sink: None,
             alerts_tx: None,
             alert_email_sink: None,
             curator_directive_rx: None,
@@ -190,6 +199,36 @@ impl CyberneticsLoop {
     pub fn with_event_sink(mut self, sink: Arc<dyn RegulationSink>) -> Self {
         self.event_sink = Some(sink);
         self
+    }
+
+    /// Wire the reviewable escalation queue sink for algedonic alerts.
+    ///
+    /// When set, every escalated alert is persisted to the escalation queue
+    /// (the `EscalationQueue` on the curator's pod.db) so the Curator/user can
+    /// review pending alerts via `curator_escalations` and resolve/dismiss them
+    /// with an audit trail. This is the primary durable path for alert review.
+    ///
+    /// expect: "The system provides configurable cybernetic self-regulation"
+    /// post: returns Self for chaining
+    #[must_use = "builder methods must be chained or assigned"]
+    pub fn with_alert_escalation_sink(
+        mut self,
+        sink: Arc<dyn crate::algedonic::AlertEscalationSink>,
+    ) -> Self {
+        self.alert_escalation_sink = Some(sink);
+        self
+    }
+
+    /// Set or clear the alert escalation sink after construction.
+    ///
+    /// Used by the composition root to lazily wire the escalation queue after
+    /// the curator DB passphrase resolves (post-login deferred task), mirroring
+    /// `set_event_sink`. Pass `None` to disable escalation-queue persistence.
+    pub fn set_alert_escalation_sink(
+        &mut self,
+        sink: Option<Arc<dyn crate::algedonic::AlertEscalationSink>>,
+    ) {
+        self.alert_escalation_sink = sink;
     }
 
     /// Wire the direct alerts channel for Cybernetics → Curation CurationInput delivery.
@@ -399,6 +438,35 @@ impl CyberneticsLoop {
         } else {
             tracing::warn!(target: "reg.outcome", span_kind = ?kind, "Regulation span dropped — no event_sink configured. Wire with_event_sink() for durable regulation observability.");
         }
+    }
+
+    /// Persist an algedonic alert to the reviewable escalation queue.
+    ///
+    /// This is the primary durable path for alert review: every escalated
+    /// alert is written here unconditionally (not just as a fallback), so the
+    /// Curator/user can review pending alerts via `curator_escalations` and
+    /// resolve/dismiss them with an audit trail. Best-effort — a failing or
+    /// missing sink never breaks the regulation loop.
+    ///
+    /// The `RuntimeAlert` fields are mapped to `EscalationEntry` columns:
+    /// `output` = `alert.message`, `error_context` = serialized alert JSON
+    /// (domain/deficit/threshold/severity), `confidence` = 1.0 for Critical /
+    /// 0.5 for Warning.
+    fn persist_alert_to_queue(&self, alert: &RuntimeAlert) {
+        let Some(ref sink) = self.alert_escalation_sink else {
+            return;
+        };
+        let confidence = if alert.is_critical() { 1.0 } else { 0.5 };
+        let error_context = serde_json::json!({
+            "domain": alert.domain,
+            "deficit": alert.deficit,
+            "threshold": alert.threshold,
+            "severity": format!("{:?}", alert.severity),
+            "escalated": alert.escalated,
+            "timestamp": alert.timestamp.to_rfc3339(),
+        })
+        .to_string();
+        sink.persist_alert(&alert.message, confidence, &error_context);
     }
 
     /// Check regulation coherence — flag contradictory or suspicious action pairs.
@@ -812,6 +880,11 @@ impl CyberneticsLoop {
                 if !sent {
                     tracing::warn!(target: "reg.alert", domain = %alert.domain, "call-cap exhaustion alert send failed or channel not connected");
                 }
+                // Persist to the reviewable escalation queue unconditionally —
+                // the queue is the primary durable path for alert review, not
+                // a fallback (the RegulationArchive below is the fallback for
+                // restart durability when the live channel is down).
+                self.persist_alert_to_queue(&alert);
                 if !sent && let Some(ref sink) = self.event_sink {
                     let event = RegulationRecord::new(
                         WebID::from_persona(b"regulation"),
@@ -902,6 +975,13 @@ impl CyberneticsLoop {
                         deficit, threshold
                     ),
                 };
+
+                // Persist to the reviewable escalation queue unconditionally —
+                // the queue is the primary durable path for alert review, not
+                // a fallback. The RegulationArchive below remains as a
+                // secondary fallback for restart durability when the live
+                // channel is down.
+                self.persist_alert_to_queue(&alert);
 
                 // Primary path: live channel to Curator's inbox
                 let sent_live = if let Some(ref alerts_tx) = self.alerts_tx {
@@ -1067,20 +1147,22 @@ impl CyberneticsLoop {
                     }),
                 )
                 .await;
+                let alert = RuntimeAlert {
+                    domain: format!("regulatory_plateau:{}", metric.as_str()),
+                    deficit: 1,
+                    threshold: 1,
+                    severity: AlertSeverity::Warning,
+                    escalated: true,
+                    timestamp: chrono::Utc::now(),
+                    message: format!(
+                        "Regulatory plateau: {} via {:?} has been rejected for {threshold} consecutive cycles",
+                        metric.as_str(),
+                        action.action_type,
+                    ),
+                };
+                // Persist to the reviewable escalation queue unconditionally.
+                self.persist_alert_to_queue(&alert);
                 if let Some(ref tx) = self.alerts_tx {
-                    let alert = RuntimeAlert {
-                        domain: format!("regulatory_plateau:{}", metric.as_str()),
-                        deficit: 1,
-                        threshold: 1,
-                        severity: AlertSeverity::Warning,
-                        escalated: true,
-                        timestamp: chrono::Utc::now(),
-                        message: format!(
-                            "Regulatory plateau: {} via {:?} has been rejected for {threshold} consecutive cycles",
-                            metric.as_str(),
-                            action.action_type,
-                        ),
-                    };
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Plateau alert send failed — channel closed");
                     }
@@ -1105,22 +1187,24 @@ impl CyberneticsLoop {
                     }),
                 )
                 .await;
+                let alert = RuntimeAlert {
+                    domain: format!("action_blocked:{}", metric.as_str()),
+                    deficit: 1,
+                    threshold: 1,
+                    severity: AlertSeverity::Critical,
+                    escalated: true,
+                    timestamp: chrono::Utc::now(),
+                    message: format!(
+                        "ActionDecision::Block: {} on {} caused {:.1}% worsening (threshold: {:.1}%)",
+                        action.action_type.as_str(),
+                        metric.as_str(),
+                        worsening * 100.0,
+                        block_worsening_ratio * 100.0,
+                    ),
+                };
+                // Persist to the reviewable escalation queue unconditionally.
+                self.persist_alert_to_queue(&alert);
                 if let Some(ref tx) = self.alerts_tx {
-                    let alert = RuntimeAlert {
-                        domain: format!("action_blocked:{}", metric.as_str()),
-                        deficit: 1,
-                        threshold: 1,
-                        severity: AlertSeverity::Critical,
-                        escalated: true,
-                        timestamp: chrono::Utc::now(),
-                        message: format!(
-                            "ActionDecision::Block: {} on {} caused {:.1}% worsening (threshold: {:.1}%)",
-                            action.action_type.as_str(),
-                            metric.as_str(),
-                            worsening * 100.0,
-                            block_worsening_ratio * 100.0,
-                        ),
-                    };
                     if tx.send(CurationInput::Alert(alert)).is_err() {
                         tracing::warn!(target: "reg.alert", "Block alert send failed — channel closed");
                     }
@@ -1163,6 +1247,16 @@ impl CyberneticsLoop {
         let start = std::time::Instant::now();
 
         let signals = self.sense().await;
+        // Emit a runtime-posture signal span so the runtime-posture-monitor
+        // skill (and any downstream observer) has a production telemetry
+        // substrate even when the skill cascade is not explicitly invoked.
+        // The namespace `reg.runtime.select` is registered in
+        // CANONICAL_NAMESPACES; without this emitter it would be skill-only.
+        tracing::info!(
+            target: "reg.runtime.select",
+            signal_count = signals.len(),
+            "REG"
+        );
         let deviations = self.compare(&signals).await;
         let actions = self.compute(&deviations).await;
         self.act(&actions).await;

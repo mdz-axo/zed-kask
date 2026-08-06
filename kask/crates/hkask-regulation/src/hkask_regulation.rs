@@ -26,7 +26,7 @@ pub mod types; // Loop 6 — regulation loop types
 
 pub mod runtime; // Loop 6 — runtime
 pub mod runtime_policy; // Layer 6 — runtime action policy (VeriGuard + AgentGuard)
-pub use algedonic::{AlertEmailSink, RuntimeAlert};
+pub use algedonic::{AlertEmailSink, AlertEscalationSink, RuntimeAlert};
 pub use cybernetics_loop::CyberneticsLoop;
 pub use energy::{
     AgentCallCapStatus, CallCap, CallCapError, CallCapManager, DEFAULT_CALL_CAP_ALERT_THRESHOLD,

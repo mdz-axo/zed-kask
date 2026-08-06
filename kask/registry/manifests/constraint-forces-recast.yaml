@@ -40,10 +40,18 @@ manifest:
     from random perturbation. Runs an evolutionary loop over a seed set,
     keeping the Pareto frontier on (novelty, validity, cost-inverted) stable
     for ≥2 iterations. The forcing operator is minimal-satisfiability
-    projection. Scope boundary: translational research moves insights into
-    the target vocabulary; CFR keeps the mutant in the source vocabulary.
-    Different operations — CFR operates within translational steps but
-    does not constitute translation.
+    projection — not yet mechanically enforced (the argmin over graph-edit
+    distance is human-approximated in the default rater mode; reasoner mode
+    checks satisfiability but not minimality). When no violations are found
+    (c already satisfies B), the project step produces the identity mutant —
+    this is the degenerate recast-into-self case, not a fabrication. The
+    weakened thesis T1': constraint-forces recasting is *a* mechanism for
+    interdisciplinary concept generation, distinct from retrieval-and-
+    grounding (evidence assembly) and analogy (communication) — not the
+    only interdisciplinary operation. Scope boundary: translational research
+    moves insights into the target vocabulary; CFR keeps the mutant in the
+    source vocabulary. Different operations — CFR operates within
+    translational steps but does not constitute translation.
   functional_role: flowdef
   version: 0.33.0
   editor: curator-or-human-admin

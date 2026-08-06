@@ -297,6 +297,12 @@ impl StagnationDetector {
     /// Used by `compute()` to decide whether to substitute an action
     /// *before* it's produced.
     ///
+    /// Degradation note: a missing entry returns 0 (genuinely no prior
+    /// ineffective actions), which is the correct measurement — this is
+    /// not a sense input read from fallible storage. The `history` map is
+    /// an in-memory `Mutex<HashMap>` populated only by `record_ineffective`,
+    /// so a missing key means "never recorded," not "failed to read."
+    ///
     /// expect: "The system prevents regulation loop stagnation through cooldown dampening and substitution tracking"
     pub(crate) fn ineffective_count(&self, metric_name: &str, action_type: &str) -> u32 {
         let key = (metric_name.to_string(), action_type.to_string());

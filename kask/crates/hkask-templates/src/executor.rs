@@ -406,17 +406,31 @@ impl ManifestExecutor {
                 action_number,
             ) {
                 PolicyVerdict::Block(reason) => {
+                    tracing::warn!(
+                        target: "reg.guard.runtime_policy",
+                        tool = tool_name,
+                        verdict = "block",
+                        %reason,
+                        "REG"
+                    );
                     return Err(TemplateError::Manifest(format!(
                         "Runtime policy blocked tool '{tool_name}': {reason}"
                     )));
                 }
                 PolicyVerdict::RequireHuman(reason) => {
+                    tracing::warn!(
+                        target: "reg.guard.runtime_policy",
+                        tool = tool_name,
+                        verdict = "require_human",
+                        %reason,
+                        "REG"
+                    );
                     return Err(TemplateError::Manifest(format!(
                         "Runtime policy requires human confirmation for '{tool_name}': {reason}"
                     )));
                 }
                 PolicyVerdict::Log(message) => {
-                    info!(target: "reg.guard.runtime_policy", tool = tool_name, %message, "REG");
+                    info!(target: "reg.guard.runtime_policy", tool = tool_name, verdict = "log", %message, "REG");
                 }
                 PolicyVerdict::Allow => {}
             }

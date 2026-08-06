@@ -289,18 +289,43 @@ impl CorpusServer {
                     (text, explicit_path)
                 }
                 None => {
-                    // Default path — resolve against data dir (trusted).
+                    // Default path — not LLM-controlled, so no path_safety
+                    // containment. Two resolution strategies:
+                    //
+                    // 1. Dev (CWD = repo root): try the relative path
+                    //    `kask/registry/company-sources/{symbol}.yaml` —
+                    //    the live source tree.
+                    // 2. Production (CWD ≠ repo root): resolve
+                    //    `agents/registry/company-sources/{symbol}.yaml`
+                    //    under the data dir — where `seed_registry_to_disk`
+                    //    materialises the compiled-in seed payload.
                     let symbol_lower = params.symbol.to_lowercase();
-                    let relative = std::path::Path::new("kask/registry/company-sources")
+                    let dev_path =
+                        std::path::PathBuf::from(format!("kask/registry/company-sources/{symbol_lower}.yaml"));
+                    let prod_relative = std::path::Path::new("agents/registry/company-sources")
                         .join(format!("{symbol_lower}.yaml"));
-                    let resolved = hkask_types::agent_paths::resolve_under_data_dir(&relative);
-                    let text = std::fs::read_to_string(&resolved).map_err(|error| {
-                        McpToolError::not_found(format!(
-                            "company manifest not found for symbol '{symbol_lower}' at {}: {error}. \
-                             Pass an explicit manifest_path or seed the registry to disk.",
-                            resolved.display()
-                        ))
-                    })?;
+                    let prod_path =
+                        hkask_types::agent_paths::resolve_under_data_dir(&prod_relative);
+                    let (resolved, text) = if dev_path.is_file() {
+                        let text = std::fs::read_to_string(&dev_path).map_err(|error| {
+                            McpToolError::not_found(format!(
+                                "company manifest for symbol '{symbol_lower}' found at {} but could not be read: {error}",
+                                dev_path.display()
+                            ))
+                        })?;
+                        (dev_path, text)
+                    } else {
+                        let text = std::fs::read_to_string(&prod_path).map_err(|error| {
+                            McpToolError::not_found(format!(
+                                "company manifest not found for symbol '{symbol_lower}'. \
+                                 Tried dev path {} and production path {}. {error}. \
+                                 Pass an explicit manifest_path.",
+                                dev_path.display(),
+                                prod_path.display()
+                            ))
+                        })?;
+                        (prod_path, text)
+                    };
                     (text, resolved.display().to_string())
                 }
             };
