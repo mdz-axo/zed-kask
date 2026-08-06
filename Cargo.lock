@@ -19144,6 +19144,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "settings",
+ "settings_content",
  "shell_command_parser",
  "strum 0.27.2",
  "telemetry",
