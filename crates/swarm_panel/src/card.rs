@@ -36,7 +36,7 @@ impl SwarmPanel {
                 let remove_name = agent_name.clone();
                 let publish_name = agent_name.clone();
                 let edit_name = agent_name.clone();
-                let edit_source = source.clone();
+                let edit_source = source;
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -78,8 +78,6 @@ impl SwarmPanel {
                                          to view and adjust its details.",
                                     ))
                                     .on_click(cx.listener({
-                                        let edit_name = edit_name.clone();
-                                        let edit_source = edit_source.clone();
                                         move |this, _, window, cx| {
                                             this.load_agent_into_author(
                                                 edit_name.clone(),

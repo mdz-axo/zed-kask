@@ -111,7 +111,16 @@ pub fn agent_adapters_dir(name: &str) -> PathBuf {
 
 // ── Initialization ───────────────────────────────────────────────────────────
 
-/// All subdirectories created by `ensure_agent_dirs`.
+/// All subdirectories created by `ensure_agent_dirs` during agent provisioning.
+///
+/// Only `adapters` has a live accessor (`agent_adapters_dir`, used by
+/// `hkask-mcp-training`). The remaining dirs are scaffolding — created on
+/// disk as part of the agent directory structure but not yet read/written
+/// by any code. They are retained so future features (gallery, documents,
+/// library, sessions, portfolios, artifacts) have a pre-created home without
+/// needing a migration. Removing a name from this list is safe (the dir is
+/// simply not created); adding one requires updating `ensure_agent_dirs`'s
+/// test.
 pub const AGENT_SUBDIRS: &[&str] = &[
     "gallery",
     "documents",

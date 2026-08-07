@@ -4,11 +4,13 @@
 //! module owns the load + save orchestration.
 //!
 //! Two entry points:
-//! - `load_agent_into_author`: fetches the full agent card and populates the
-//!   author form. Mode-aware: cloud/synced agents use `swarm_get_agent`; local
-//!   agents re-fetch via `swarm_list_local_agents` and filter (the list
-//!   response carries the full `LocalAgentCard`, including `system_prompt`).
-//! - `update_agent`: persists edits. Local agents use
+//! - `load_agent_into_author`: fetches the full agent card and stores it in
+//!   `pending_author_load`. The `render` method (which has `&mut Window`,
+//!   required by `Editor::set_text`) applies it to the form on the next frame.
+//!   Mode-aware: cloud/synced agents use `swarm_get_agent`; local agents
+//!   re-fetch via `swarm_list_local_agents` and filter (the list response
+//!   carries the full `LocalAgentCard`, including `system_prompt`).
+//! - `save_agent`: persists edits. Local agents use
 //!   `swarm_reconfigure_local_agent` (updates `system_prompt`/`model`/
 //!   `mcp_tools`/`skills`, preserves `cloud_id` and the rest of the card).
 //!   Cloud agents have no update tool — the form renders read-only with a
@@ -22,17 +24,167 @@ use crate::SwarmPanel;
 
 /// The fields extracted from an agent card that the author form can populate.
 /// Source: `swarm_get_agent` (cloud) or `swarm_list_local_agents` (local).
-struct AgentDetail {
-    agent_id: String,
-    agent_type: String,
-    description: String,
-    system_prompt: String,
-    tags: Vec<String>,
-    visibility: String,
-    valence_arousal: Option<f64>,
-    valence_valence: Option<f64>,
-    valence_primary_affect: Option<String>,
-    valence_personality_traits: Vec<String>,
+/// Stored on `SwarmPanel::pending_author_load` and applied in `render`
+/// (which has `&mut Window`, required by `Editor::set_text` — the spawn
+/// closure does not).
+pub(crate) struct AgentDetail {
+    pub(crate) agent_id: String,
+    pub(crate) agent_type: String,
+    pub(crate) description: String,
+    pub(crate) system_prompt: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) visibility: String,
+    pub(crate) valence_arousal: Option<f64>,
+    pub(crate) valence_valence: Option<f64>,
+    pub(crate) valence_primary_affect: Option<String>,
+    pub(crate) valence_personality_traits: Vec<String>,
+}
+
+impl AgentDetail {
+    /// Parse a local agent card from the `swarm_list_local_agents` response.
+    /// The card is the serialized `LocalAgentCard` struct (see
+    /// `hkask-mcp-swarm/src/local_registry.rs`).
+    fn parse_local(card: &serde_json::Value) -> Self {
+        let agent_id = card
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let agent_type = card
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("research")
+            .to_string();
+        let description = card
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let system_prompt = card
+            .get("capabilities")
+            .and_then(|c| c.get("system_prompt"))
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tags = card
+            .get("tags")
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let visibility = card
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .unwrap_or("private")
+            .to_string();
+        let valence = card.get("valence");
+        let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
+            parse_valence(valence);
+        Self {
+            agent_id,
+            agent_type,
+            description,
+            system_prompt,
+            tags,
+            visibility,
+            valence_arousal,
+            valence_valence,
+            valence_primary_affect,
+            valence_personality_traits,
+        }
+    }
+
+    /// Parse a cloud agent card from the `swarm_get_agent` response. The card
+    /// shape mirrors `CreateAgentRequest`'s output (see
+    /// `hkask-mcp-swarm/src/cloud_tools.rs::build_agent_card`):
+    /// `agent_id`/`agent_type`/`system_prompt`/`visibility` top-level,
+    /// `metadata.description`/`metadata.tags`/`metadata.valence`,
+    /// `capabilities.model`/`capabilities.mcp_tools`/`capabilities.skills`.
+    fn parse_cloud(card: &serde_json::Value) -> Self {
+        let agent_id = card
+            .get("agent_id")
+            .or_else(|| card.get("agent_name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let agent_type = card
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("research")
+            .to_string();
+        let description = card
+            .get("metadata")
+            .and_then(|m| m.get("description"))
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .to_string();
+        let system_prompt = card
+            .get("system_prompt")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tags = card
+            .get("metadata")
+            .and_then(|m| m.get("tags"))
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let visibility = card
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .unwrap_or("private")
+            .to_string();
+        let valence = card.get("metadata").and_then(|m| m.get("valence"));
+        let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
+            parse_valence(valence);
+        Self {
+            agent_id,
+            agent_type,
+            description,
+            system_prompt,
+            tags,
+            visibility,
+            valence_arousal,
+            valence_valence,
+            valence_primary_affect,
+            valence_personality_traits,
+        }
+    }
+}
+
+/// Extract valence fields from a `metadata.valence` (cloud) or top-level
+/// `valence` (local) object. Returns `(arousal, valence, primary_affect,
+/// personality_traits)` with `None`/empty for absent fields.
+fn parse_valence(
+    valence: Option<&serde_json::Value>,
+) -> (Option<f64>, Option<f64>, Option<String>, Vec<String>) {
+    let v = match valence {
+        Some(v) => v,
+        None => return (None, None, None, Vec::new()),
+    };
+    let arousal = v.get("arousal").and_then(|a| a.as_f64());
+    let valence = v.get("valence").and_then(|a| a.as_f64());
+    let primary_affect = v
+        .get("primary_affect")
+        .and_then(|a| a.as_str())
+        .map(String::from);
+    let personality_traits = v
+        .get("personality_traits")
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    (arousal, valence, primary_affect, personality_traits)
 }
 
 impl SwarmPanel {
@@ -42,7 +194,9 @@ impl SwarmPanel {
     ///
     /// Sets `editing_id` on the form so the submit path knows it's an edit,
     /// not a create. The name field is made read-only (renaming would change
-    /// the agent id — a different operation).
+    /// the agent id — a different operation). The actual form population is
+    /// deferred to `render` (which has `&mut Window` for `Editor::set_text`);
+    /// the spawn stores the result in `pending_author_load`.
     pub(crate) fn load_agent_into_author(
         &mut self,
         agent_id: String,
@@ -55,25 +209,18 @@ impl SwarmPanel {
             cx.notify();
             return;
         };
-        // Mark the form as editing and switch to Author mode immediately so
-        // the operator sees the form (with a loading status) while the fetch
-        // is in flight. The name field is read-only during edit.
         self.author.editing_id = Some(agent_id.clone());
         self.author.status = Some("Loading agent details…".into());
         self.author.busy = false;
         self.author.name.update(cx, |e, _| e.set_read_only(true));
+        self.pending_author_load = None;
         self.set_mode(crate::PanelMode::Author, window, cx);
 
         let is_local = source == AgentSource::Local;
         cx.spawn({
             let invoker = invoker.clone();
-            let agent_id = agent_id.clone();
             async move |this, cx| {
                 let result = if is_local {
-                    // Local agents: re-fetch via swarm_list_local_agents and
-                    // filter. The list response carries the full LocalAgentCard
-                    // (including capabilities.system_prompt, tags, visibility,
-                    // valence) — there is no swarm_get_local_agent tool.
                     let list_result = invoker
                         .invoke_tool(
                             crate::SWARM_SERVER,
@@ -82,12 +229,16 @@ impl SwarmPanel {
                         )
                         .await;
                     list_result.and_then(|output| {
-                        let parsed = hkask_types::tool_response::parse_tool_response(&output)?;
+                        let parsed = hkask_types::tool_response::parse_tool_response(&output)
+                            .ok_or_else(|| {
+                                "swarm_list_local_agents: failed to parse tool response"
+                                    .to_string()
+                            })?;
                         let agents = parsed
                             .get("agents")
                             .and_then(|a| a.as_array())
                             .ok_or_else(|| {
-                                anyhow::anyhow!("swarm_list_local_agents: missing agents array")
+                                "swarm_list_local_agents: missing agents array".to_string()
                             })?;
                         let card = agents
                             .iter()
@@ -95,14 +246,13 @@ impl SwarmPanel {
                                 a.get("agent_id").and_then(|v| v.as_str())
                                     == Some(agent_id.as_str())
                             })
+                            .cloned()
                             .ok_or_else(|| {
-                                anyhow::anyhow!("agent '{}' not found in local registry", agent_id)
+                                format!("agent '{}' not found in local registry", agent_id)
                             })?;
-                        Ok(parse_local_agent_card(card))
+                        Ok(AgentDetail::parse_local(&card))
                     })
                 } else {
-                    // Cloud/synced agents: fetch the full card via
-                    // swarm_get_agent. Requires ABW auth.
                     invoker
                         .invoke_tool(
                             crate::SWARM_SERVER,
@@ -111,26 +261,26 @@ impl SwarmPanel {
                         )
                         .await
                         .and_then(|output| {
-                            let parsed = hkask_types::tool_response::parse_tool_response(&output)?;
-                            Ok(parse_cloud_agent_card(&parsed))
+                            let parsed = hkask_types::tool_response::parse_tool_response(&output)
+                                .ok_or_else(|| {
+                                    "swarm_get_agent: failed to parse tool response".to_string()
+                                })?;
+                            Ok(AgentDetail::parse_cloud(&parsed))
                         })
                 };
                 this.update(cx, |this, cx| {
                     this.author.status = None;
                     match result {
                         Ok(detail) => {
-                            this.populate_author_form(detail, window, cx);
-                            this.author.status = if is_local {
-                                None
-                            } else {
-                                // Cloud agents have no update tool — surface
-                                // this so the operator knows edits won't save.
-                                Some(
+                            // Store for `render` to apply (it has `&mut Window`).
+                            this.pending_author_load = Some(detail);
+                            if !is_local {
+                                this.author.status = Some(
                                     "Viewing ABW agent. Edits cannot be saved \
                                      (no ABW update tool). Clone to Local to edit."
                                         .into(),
-                                )
-                            };
+                                );
+                            }
                         }
                         Err(err) => {
                             this.author.editing_id = None;
@@ -146,18 +296,20 @@ impl SwarmPanel {
         .detach();
     }
 
-    /// Populate the author form fields from a loaded agent detail. The name
-    /// field is set but made read-only (the editor's `set_read_only` is not
-    /// used here because the form re-uses the same editors across create and
-    /// edit; instead, the submit path ignores the name when `editing_id` is
-    /// `Some`, and the renderer shows the name as a non-editable label).
-    fn populate_author_form(
+    /// Apply a pending agent load to the author form. Called from `render`
+    /// (which has `&mut Window`, required by `Editor::set_text`). Clears
+    /// `pending_author_load` after applying.
+    pub(crate) fn apply_pending_author_load(
         &mut self,
-        detail: AgentDetail,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.author.name.update(cx, |e, cx| e.set_text(detail.agent_id, window, cx));
+        let Some(detail) = self.pending_author_load.take() else {
+            return;
+        };
+        self.author
+            .name
+            .update(cx, |e, cx| e.set_text(detail.agent_id, window, cx));
         self.author
             .description
             .update(cx, |e, cx| e.set_text(detail.description, window, cx));
@@ -262,149 +414,4 @@ impl SwarmPanel {
         })
         .detach();
     }
-}
-
-/// Parse a local agent card from the `swarm_list_local_agents` response.
-/// The card is the serialized `LocalAgentCard` struct (see
-/// `hkask-mcp-swarm/src/local_registry.rs`).
-fn parse_local_agent_card(card: &serde_json::Value) -> AgentDetail {
-    let agent_id = card
-        .get("agent_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let agent_type = card
-        .get("agent_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("research")
-        .to_string();
-    let description = card
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let system_prompt = card
-        .get("capabilities")
-        .and_then(|c| c.get("system_prompt"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
-    let tags = card
-        .get("tags")
-        .and_then(|t| t.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let visibility = card
-        .get("visibility")
-        .and_then(|v| v.as_str())
-        .unwrap_or("private")
-        .to_string();
-    let valence = card.get("valence");
-    let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
-        parse_valence(valence);
-    AgentDetail {
-        agent_id,
-        agent_type,
-        description,
-        system_prompt,
-        tags,
-        visibility,
-        valence_arousal,
-        valence_valence,
-        valence_primary_affect,
-        valence_personality_traits,
-    }
-}
-
-/// Parse a cloud agent card from the `swarm_get_agent` response. The card
-/// shape mirrors `CreateAgentRequest`'s output (see
-/// `hkask-mcp-swarm/src/cloud_tools.rs::build_agent_card`):
-/// `agent_id`/`agent_type`/`system_prompt`/`visibility` top-level,
-/// `metadata.description`/`metadata.tags`/`metadata.valence`,
-/// `capabilities.model`/`capabilities.mcp_tools`/`capabilities.skills`.
-fn parse_cloud_agent_card(card: &serde_json::Value) -> AgentDetail {
-    let agent_id = card
-        .get("agent_id")
-        .or_else(|| card.get("agent_name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let agent_type = card
-        .get("agent_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("research")
-        .to_string();
-    let description = card
-        .get("metadata")
-        .and_then(|m| m.get("description"))
-        .and_then(|d| d.as_str())
-        .unwrap_or("")
-        .to_string();
-    let system_prompt = card
-        .get("system_prompt")
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
-    let tags = card
-        .get("metadata")
-        .and_then(|m| m.get("tags"))
-        .and_then(|t| t.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    let visibility = card
-        .get("visibility")
-        .and_then(|v| v.as_str())
-        .unwrap_or("private")
-        .to_string();
-    let valence = card.get("metadata").and_then(|m| m.get("valence"));
-    let (valence_arousal, valence_valence, valence_primary_affect, valence_personality_traits) =
-        parse_valence(valence);
-    AgentDetail {
-        agent_id,
-        agent_type,
-        description,
-        system_prompt,
-        tags,
-        visibility,
-        valence_arousal,
-        valence_valence,
-        valence_primary_affect,
-        valence_personality_traits,
-    }
-}
-
-/// Extract valence fields from a `metadata.valence` (cloud) or top-level
-/// `valence` (local) object. Returns `(arousal, valence, primary_affect,
-/// personality_traits)` with `None`/empty for absent fields.
-fn parse_valence(
-    valence: Option<&serde_json::Value>,
-) -> (Option<f64>, Option<f64>, Option<String>, Vec<String>) {
-    let v = match valence {
-        Some(v) => v,
-        None => return (None, None, None, Vec::new()),
-    };
-    let arousal = v.get("arousal").and_then(|a| a.as_f64());
-    let valence = v.get("valence").and_then(|a| a.as_f64());
-    let primary_affect = v
-        .get("primary_affect")
-        .and_then(|a| a.as_str())
-        .map(String::from);
-    let personality_traits = v
-        .get("personality_traits")
-        .and_then(|t| t.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|x| x.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    (arousal, valence, primary_affect, personality_traits)
 }

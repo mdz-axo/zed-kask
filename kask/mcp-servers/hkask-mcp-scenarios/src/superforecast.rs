@@ -1823,6 +1823,113 @@ pub fn compose_market_tree(
     Ok((tree, warnings))
 }
 
+// ── R1: Composition over CMP inputs ─────────────────────────────────────────
+//
+// Re-points the composition machinery at CMP index probabilities instead of
+// raw contract probabilities. A CMP index is a constant-maturity, constant-
+// orientation synthetic portfolio — its probability is controlled (the time
+// axis is taken out), so it's the right input for scenario trees. The tree
+// cites the index (family, orientation, tenor, venue), not a decaying contract.
+
+/// Convert a CMP index into a ScenarioEvent for tree composition.
+///
+/// The CMP index probability becomes the event's prior. Unlike
+/// `convert_market_record`, no domain-bias correction or reliability-tier
+/// gating is applied — the CMP index is already a controlled, portfolio-weighted
+/// probability with its own reliability floor and construction method surfaced
+/// in the provenance. The event ID is `cmp:{family}:{tenor}:{orientation}` —
+/// the index identity, not a decaying contract ID.
+pub fn convert_cmp_index(
+    index: &hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex,
+) -> ScenarioEvent {
+    use hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex;
+    use hkask_mcp_prediction_markets::cmp_portfolio::CmpMethod;
+
+    let family_label = index.family.label();
+    let tenor = index.index.bucket.label();
+    let orientation = index.index.orientation.to_string();
+    let venue = index.venue.to_string();
+    let method = match index.index.portfolio.method {
+        CmpMethod::Interpolated => "interpolated",
+        CmpMethod::BucketedSparse => "bucketed_sparse",
+    };
+    let id = format!("cmp:{family_label}:{tenor}:{orientation}");
+    let name = format!(
+        "{family_label} {tenor} {orientation} ({venue}, {method})"
+    );
+    let question = format!(
+        "CMP index: {family_label} {orientation} at {tenor} forward maturity, \
+         venue={venue}, method={method}, p={:.3}, maturity_error={:.1}d, constituents={}",
+        index.index.portfolio.index_probability,
+        index.index.portfolio.maturity_error_days,
+        index.index.portfolio.constituents.len()
+    );
+    // The deadline is the observation date + the target maturity. We don't
+    // have the observation date here, so use a far-future placeholder — the
+    // CMP index is a rolling synthetic, not a fixed-deadline contract.
+    let deadline = chrono::NaiveDate::from_ymd_opt(2099, 12, 31)
+        .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+    let probability = index.index.portfolio.index_probability;
+    ScenarioEvent {
+        id,
+        name,
+        question,
+        deadline,
+        time_horizon: TimeHorizon::Strategic,
+        scenario_type: ScenarioType::EmergingEconomic,
+        subject: family_label.to_string(),
+        probability,
+        basis: Some(format!("cmp_index:{method}")),
+        depends_on: vec![],
+        sub_questions: vec![],
+        base_rate: Some(probability),
+        reference_class: Some(format!(
+            "CMP {family_label} {orientation} {tenor} ({venue}); \
+             method={method}, maturity_error={:.1}d, constituents={}",
+            index.index.portfolio.maturity_error_days,
+            index.index.portfolio.constituents.len()
+        )),
+        brier_score: None,
+        update_count: 0,
+    }
+}
+
+/// Compose a set of CMP indices into an EventTree (R1).
+///
+/// Each CMP index becomes a root ScenarioEvent with its index probability as
+/// the prior. The tree cites the index (family, orientation, tenor, venue) in
+/// the provenance — not a decaying contract. This is the re-pointed composition
+/// path: same tree machinery, CMP-controlled inputs.
+///
+/// CMP indices are independent root events (no caller-authored dependencies
+/// in the initial implementation — the tree is a flat set of CMP priors).
+/// Dependency edges between CMP indices (e.g. "oil price increase → inflation
+/// increase") are a future refinement (R5 coherence analysis); for now the
+/// tree is a flat prior set that downstream tools (scenario_analysis,
+/// scenario_propagate) consume.
+pub fn compose_cmp_tree(
+    indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
+) -> Result<EventTree, ScenarioError> {
+    if indices.is_empty() {
+        return Err(ScenarioError::EmptyInput(
+            "compose_cmp_tree requires at least one CMP index".into(),
+        ));
+    }
+    let events: Vec<ScenarioEvent> = indices.iter().map(convert_cmp_index).collect();
+    // Check for duplicate IDs (same family/tenor/orientation from different venues).
+    let mut seen = HashSet::new();
+    for event in &events {
+        if !seen.insert(event.id.clone()) {
+            return Err(ScenarioError::InvalidDependency(
+                event.id.clone(),
+                "duplicate CMP index (same family/tenor/orientation) — \
+                 merge venues or filter before composing".into(),
+            ));
+        }
+    }
+    build_event_tree(&events)
+}
+
 // ── Tree-level Bayesian propagation (T5) ────────────────────────────────────
 
 /// One step in a propagation journal: a node's marginal before and after a
@@ -2828,5 +2935,130 @@ mod tests {
             assert_eq!(b.outcome, Some(true));
             assert_eq!(store.resolved().len(), 1);
         }
+    }
+
+    // ── R1: compose_cmp_tree tests ────────────────────────────────────────
+
+    fn cmp_index(
+        family: hkask_mcp_prediction_markets::economic_object::BaseEconomicObject,
+        venue: hkask_mcp_prediction_markets::cmp_index_builder::Venue,
+        bucket: hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket,
+        orientation: hkask_mcp_prediction_markets::cmp_portfolio::Orientation,
+        probability: f64,
+        method: hkask_mcp_prediction_markets::cmp::CmpMethod,
+    ) -> hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex {
+        use hkask_mcp_prediction_markets::cmp_portfolio::{CmpIndex, IndexPortfolio, WeightedConstituent};
+        hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex {
+            family,
+            venue,
+            index: CmpIndex {
+                bucket,
+                orientation,
+                portfolio: IndexPortfolio {
+                    constituents: vec![WeightedConstituent {
+                        market_index: 0,
+                        weight: 1.0,
+                        days_to_expiration: 90.0,
+                        probability,
+                    }],
+                    weighted_maturity_days: 90.0,
+                    maturity_error_days: 0.0,
+                    index_probability: probability,
+                    method,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn compose_cmp_tree_builds_flat_tree_from_indices() {
+        let indices = vec![
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::PolicyInterestRate,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::ThreeMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.65,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+            ),
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::CrudeOilPrice,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::OneMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.40,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::BucketedSparse,
+            ),
+        ];
+        let tree = compose_cmp_tree(&indices).expect("tree");
+        assert_eq!(tree.nodes.len(), 2);
+        assert_eq!(tree.root_ids.len(), 2);
+        // Provenance: the event IDs cite the index, not a contract.
+        assert!(tree.nodes.iter().any(|n| n.event.id == "cmp:policy_interest_rate:3m:increase"));
+        assert!(tree.nodes.iter().any(|n| n.event.id == "cmp:crude_oil_price:1m:increase"));
+        // Probabilities are the CMP index probabilities.
+        let rates = tree.nodes.iter().find(|n| n.event.subject == "policy_interest_rate").unwrap();
+        assert!((rates.marginal_probability - 0.65).abs() < 1e-9);
+        let oil = tree.nodes.iter().find(|n| n.event.subject == "crude_oil_price").unwrap();
+        assert!((oil.marginal_probability - 0.40).abs() < 1e-9);
+        // Basis records the CMP method.
+        assert!(rates.event.basis.as_deref().unwrap().contains("interpolated"));
+        assert!(oil.event.basis.as_deref().unwrap().contains("bucketed_sparse"));
+    }
+
+    #[test]
+    fn compose_cmp_tree_rejects_empty() {
+        let result = compose_cmp_tree(&[]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compose_cmp_tree_rejects_duplicates() {
+        // Same family/tenor/orientation from the same venue → duplicate ID.
+        let indices = vec![
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::PolicyInterestRate,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::ThreeMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.65,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+            ),
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::PolicyInterestRate,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::ThreeMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.70,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+            ),
+        ];
+        let result = compose_cmp_tree(&indices);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compose_cmp_tree_allows_same_family_different_tenor() {
+        // Same family, different tenors → different IDs, no duplicate.
+        let indices = vec![
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::PolicyInterestRate,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::OneMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.60,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::BucketedSparse,
+            ),
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::PolicyInterestRate,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::SixMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.75,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+            ),
+        ];
+        let tree = compose_cmp_tree(&indices).expect("tree");
+        assert_eq!(tree.nodes.len(), 2);
     }
 }

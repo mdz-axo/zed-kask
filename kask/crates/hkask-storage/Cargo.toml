@@ -30,11 +30,10 @@ base64.workspace = true
 aes-gcm.workspace = true
 blake3.workspace = true
 sqlite-vec.workspace = true
-tokio.workspace = true
+
 utoipa.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }

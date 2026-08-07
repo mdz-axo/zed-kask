@@ -417,6 +417,10 @@ pub struct SwarmPanel {
     mode: PanelMode,
     /// Authoring form state.
     author: AuthorForm,
+    /// A loaded agent detail waiting to be applied to the author form on the
+    /// next `render` (which has `&mut Window` for `Editor::set_text`). Set by
+    /// `load_agent_into_author`'s spawn; consumed by `apply_pending_author_load`.
+    pending_author_load: Option<crate::agent_edit::AgentDetail>,
     /// Composition form state.
     compose: ComposeForm,
     /// Lazily-constructed `ConversationView` for Steer mode, scoped to the
@@ -620,6 +624,7 @@ impl SwarmPanel {
                 run_status: None,
                 mode: PanelMode::Browse,
                 author,
+                pending_author_load: None,
                 compose,
                 steer_conversation: None,
                 steer_connection_store: None,
@@ -661,6 +666,36 @@ impl SwarmPanel {
         };
         handle.focus(window, cx);
         cx.notify();
+    }
+
+    /// Reset the author form to a fresh create state (clear `editing_id`,
+    /// make the name field editable again, clear the status). Called when the
+    /// operator clicks the Author mode toggle in the header — distinct from
+    /// `load_agent_into_author`, which sets `editing_id` and read-only before
+    /// calling `set_mode`.
+    fn reset_author_form_for_create(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.author.editing_id = None;
+        self.author.status = None;
+        self.author.name.update(cx, |e, _| e.set_read_only(false));
+        // Clear the text fields so the operator starts fresh.
+        self.author.name.update(cx, |e, cx| e.clear(window, cx));
+        self.author.description.update(cx, |e, cx| e.clear(window, cx));
+        self.author.system_prompt.update(cx, |e, cx| e.clear(window, cx));
+        self.author.tags.update(cx, |e, cx| e.clear(window, cx));
+        self.author.valence_arousal.update(cx, |e, cx| e.clear(window, cx));
+        self.author.valence_valence.update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_primary_affect
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_personality_traits
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author.agent_type = "research".to_string();
+        self.author.visibility = "private".to_string();
     }
 
     /// Read the current swarm mode from `kask.swarm.mode` settings. Returns
@@ -2161,6 +2196,12 @@ impl SwarmPanel {
 
 impl Render for SwarmPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Apply a pending agent load (set by `load_agent_into_author`'s spawn)
+        // to the author form. Deferred to `render` because `Editor::set_text`
+        // requires `&mut Window`, which the spawn closure does not have.
+        if self.pending_author_load.is_some() {
+            self.apply_pending_author_load(window, cx);
+        }
         // If deserialized into Steer mode (or the operator switched via a
         // path that didn't go through the toggle handler), ensure the
         // conversation exists before rendering.

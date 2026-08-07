@@ -19,6 +19,7 @@ use minijinja::UndefinedBehavior;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Default base path for template files relative to the project root.
 pub const DEFAULT_TEMPLATE_BASE_PATH: &str = "registry/templates";
@@ -41,20 +42,33 @@ pub fn safe_template_join(base: &Path, template_ref: &str) -> Option<PathBuf> {
     Some(rv)
 }
 
-/// Template renderer — owns the resolution ladder and minijinja environment.
+/// Template renderer — owns the resolution ladder and a cached minijinja
+/// `Environment`.
 ///
-/// Constructed once with a `base_path` and reused across renders. The renderer
-/// is stateless beyond the base path; it holds no locks, no ports, no mutable
-/// state. Cloning is cheap (one `PathBuf`).
+/// Constructed once with a `base_path` and reused across renders. The
+/// `Environment` (filter registration, undefined behavior, `{% include %}`
+/// loader) is built once in `new` and reused on every render — only the
+/// per-render template string is re-registered via `add_template_owned`.
+/// This eliminates the ~50 `Environment` reconstructions per cascade
+/// iteration that the prior per-render construction incurred.
+///
+/// The `Environment` is behind a `Mutex` because `add_template_owned`
+/// requires `&mut`. The guard is held only for the duration of the
+/// synchronous render (no await points), so contention is negligible —
+/// the executor is single-threaded per cascade.
 #[derive(Clone)]
 pub struct TemplateRenderer {
     base_path: PathBuf,
+    env: Mutex<minijinja::Environment<'static>>,
 }
 
 impl TemplateRenderer {
     /// Construct a renderer rooted at `base_path`.
     pub fn new(base_path: PathBuf) -> Self {
-        Self { base_path }
+        Self {
+            env: Mutex::new(build_environment(&base_path)),
+            base_path,
+        }
     }
 
     /// The base path this renderer resolves template_refs against.
@@ -125,12 +139,37 @@ impl TemplateRenderer {
     /// `template_content` is the raw template string (already loaded via `load`).
     /// `context` provides the template variables. `{% include %}` references
     /// resolve relative to `base_path` using the same resolution ladder.
+    ///
+    /// The cached `Environment` is reused across renders — only the "step"
+    /// template is re-registered per call via `add_template_owned` (which
+    /// replaces any prior "step" registration). This avoids rebuilding the
+    /// Environment, re-registering filters, and re-setting the loader on every
+    /// render.
     pub fn render(
         &self,
         template_content: &str,
         context: &HashMap<String, Value>,
     ) -> Result<String> {
-        render_minijinja(template_content, context, &self.base_path)
+        let mut env = self
+            .env
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        // Register the per-render template under the synthetic name "step".
+        // `add_template_owned` replaces any prior "step" registration (no
+        // accumulation across renders). The loader handles only `{% include %}`
+        // references, not "step".
+        env.add_template_owned("step", template_content)
+            .map_err(|e| TemplateError::Render(format!("Invalid template: {}", e)))?;
+
+        // `Value::from_serialize` accepts any `Serialize` type directly — the
+        // prior code serialized to an intermediate `serde_json::Value` first,
+        // a redundant double-conversion on every render.
+        let minijinja_context = minijinja::Value::from_serialize(context);
+
+        env.get_template("step")
+            .and_then(|tmpl| tmpl.render(minijinja_context))
+            .map_err(|e| TemplateError::Render(format!("Template render error: {}", e)))
     }
 
     /// Render an inline template using simple `{{key}}` substitution.
@@ -152,21 +191,21 @@ impl TemplateRenderer {
     }
 }
 
-/// Render a template using minijinja (full Jinja2 syntax).
+/// Build a minijinja `Environment` configured for the renderer.
 ///
-/// Supports `{% for %}`, `{{ var }}`, `| filter`, `{% if %}`, `{% include %}`
-/// etc. The main template is registered under the synthetic name `"step"`;
-/// `{% include "path/frag.j2" %}` references resolve relative to
-/// `template_base_path` using the same embedded→filesystem ladder.
-pub fn render_minijinja(
-    template: &str,
-    context: &HashMap<String, Value>,
-    template_base_path: &Path,
-) -> Result<String> {
+/// The environment has:
+/// - `UndefinedBehavior::Lenient` (undefined values render as empty).
+/// - The `truncate` custom filter.
+/// - A loader that resolves `{% include %}` references from the filesystem
+///   relative to `base_path`, with `.j2`/`.yaml` extension fallbacks. The
+///   loader does NOT handle the synthetic "step" name — that is registered
+///   per-render via `add_template_owned`.
+///
+/// Built once in `TemplateRenderer::new` and reused across renders.
+fn build_environment(base_path: &Path) -> minijinja::Environment<'static> {
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(UndefinedBehavior::Lenient);
 
-    // Register custom filters
     env.add_filter(
         "truncate",
         |state: &minijinja::State, value: String, max_len: usize| -> String {
@@ -181,23 +220,11 @@ pub fn render_minijinja(
         },
     );
 
-    // Loader: the synthetic "step" name resolves to the in-memory main
-    // template; any other name (from `{% include %}`) resolves from the
-    // filesystem first (so J2 edits take effect without recompilation),
-    // then from the embedded registry as a fallback (for production
-    // deployments where the registry directory may not exist on disk),
-    // mirroring the `template_ref` resolution rules (including the `.j2`
-    // extension fallback).
-    let main_template = template.to_string();
-    let base = template_base_path.to_path_buf();
+    let base = base_path.to_path_buf();
     env.set_loader(
         move |name: &str| -> std::result::Result<Option<String>, minijinja::Error> {
-            if name == "step" {
-                return Ok(Some(main_template.clone()));
-            }
-            // Filesystem first — allows J2/YAML edits without recompilation.
-            // safe_join rejects any segment starting with '.' or containing '\\',
-            // preventing `{% include "../../etc/passwd" %}` path traversal.
+            // The "step" name is registered via `add_template_owned` per-render;
+            // the loader handles only `{% include %}` references here.
             let primary = match safe_template_join(&base, name) {
                 Some(p) => p,
                 None => return Ok(None),
@@ -221,25 +248,31 @@ pub fn render_minijinja(
                     return Ok(Some(content));
                 }
             }
-            // Disk-only — no compiled-in fallback. The shipped templates are
-            // seeded to disk at startup; edits take effect immediately.
             Ok(None)
         },
     );
 
-    // Convert HashMap<String, Value> to minijinja context via serde
-    let context_value = serde_json::to_value(context)
-        .map_err(|e| TemplateError::Render(format!("Failed to serialize context: {}", e)))?;
-    let minijinja_context = minijinja::Value::from_serialize(&context_value);
+    env
+}
 
-    // Validate the main template parses, surfacing syntax errors with a
-    // clear message (the loader resolves "step" lazily on first access).
-    env.add_template("step", template)
-        .map_err(|e| TemplateError::Render(format!("Invalid template: {}", e)))?;
-
-    env.get_template("step")
-        .and_then(|tmpl| tmpl.render(minijinja_context))
-        .map_err(|e| TemplateError::Render(format!("Template render error: {}", e)))
+/// Render a template using minijinja (full Jinja2 syntax).
+///
+/// This is the one-shot entry point for callers that do not own a
+/// `TemplateRenderer` (notably `input_mapping::resolve_mapping_value` and
+/// tests). Production renders go through `TemplateRenderer::render`, which
+/// reuses a cached `Environment` and avoids rebuilding it per call.
+///
+/// Supports `{% for %}`, `{{ var }}`, `| filter`, `{% if %}`, `{% include %}`
+/// etc. The main template is registered under the synthetic name `"step"`;
+/// `{% include "path/frag.j2" %}` references resolve relative to
+/// `template_base_path`.
+pub fn render_minijinja(
+    template: &str,
+    context: &HashMap<String, Value>,
+    template_base_path: &Path,
+) -> Result<String> {
+    let renderer = TemplateRenderer::new(template_base_path.to_path_buf());
+    renderer.render(template, context)
 }
 
 #[cfg(test)]

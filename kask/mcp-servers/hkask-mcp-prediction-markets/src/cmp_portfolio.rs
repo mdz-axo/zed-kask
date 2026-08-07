@@ -16,6 +16,7 @@
 //! numbers are embedded in the logic — adjusting the config adjusts the
 //! composition procedure.
 
+use crate::cmp::CmpMethod;
 use crate::types::{MarketRecord, ReliabilityTier};
 
 // ── Configuration (all passed variables) ────────────────────────────────────
@@ -75,7 +76,7 @@ pub struct CmpConfig {
     pub vol_window_days: u32,
     /// How the materiality level scales with target maturity.
     pub tenor_scaling: TenorScaling,
-    /// Index maturity-matching error tolerance (days).
+    /// Index maturity-matching error tolerance (days) for bracket interpolation.
     pub maturity_tolerance_days: f64,
     /// Eligibility window: absolute floor (days).
     pub maturity_window_abs_days: f64,
@@ -93,6 +94,20 @@ pub struct CmpConfig {
     /// bucket. Buckets with fewer contracts are withheld (never-fabricate
     /// posture). Default 3 — enough for a bracket pair plus one tie-breaker.
     pub min_constituents_per_bucket: u32,
+    /// C0.5: max distance (days) from the nearest cohort to the target for
+    /// single-cohort (`BucketedSparse`) publication. When no bracket spans
+    /// the target but eligible contracts exist in the window, the builder
+    /// publishes a degraded index at the nearest cohort's maturity, with the
+    /// maturity error surfaced. If the nearest cohort is farther than this
+    /// tolerance from the target, the index withholds.
+    ///
+    /// The effective tolerance is `max(cohort_tolerance_days, window_half_width)`
+    /// — any contract in the eligibility window is publishable as a cohort.
+    /// This ensures the cohort fallback fires whenever there are eligible
+    /// contracts in the window, regardless of the bucket's target maturity.
+    /// Set to 0 to disable the fallback (bracket-only publication, the
+    /// pre-C0.5 behavior).
+    pub cohort_tolerance_days: f64,
 }
 
 impl Default for CmpConfig {
@@ -109,6 +124,11 @@ impl Default for CmpConfig {
             roll_handoff_days: 3,
             min_tier: ReliabilityTier::Medium,
             min_constituents_per_bucket: 3,
+            // C0.5: default to the 1m window half-width (7.5 days) so any
+            // contract in the shortest bucket's window is publishable as a
+            // cohort. This is the widest practical tolerance — tighten for
+            // stricter publication.
+            cohort_tolerance_days: 7.5,
         }
     }
 }
@@ -448,6 +468,12 @@ pub struct IndexPortfolio {
     pub maturity_error_days: f64,
     /// The index probability (weighted average of constituent probabilities).
     pub index_probability: f64,
+    /// C0.5: the construction method — `Interpolated` (bracket pair) or
+    /// `BucketedSparse` (single-cohort fallback). Downstream consumers use
+    /// this to weight the index appropriately: a `BucketedSparse` index has
+    /// wider uncertainty (the maturity error is the distance from the cohort
+    /// to the target, not a residual from exact interpolation).
+    pub method: CmpMethod,
 }
 
 /// Solve portfolio weights so the weighted-average maturity matches the
@@ -455,8 +481,9 @@ pub struct IndexPortfolio {
 ///
 /// Construction: choose the pair of constituents bracketing the target with
 /// the highest combined quality and solve the two-weight system exactly;
-/// when no bracket spans the target, withhold (None) — a CMP with
-/// uncontrolled maturity is the disease, not the cure.
+/// when no bracket spans the target, fall back to `solve_portfolio_cohort`
+/// (C0.5 single-cohort publication). Returns `None` only when both the
+/// bracket solver and the cohort solver fail — never fabricates.
 pub fn solve_portfolio(
     constituents: &[Constituent],
     target_days: u32,
@@ -486,38 +513,138 @@ pub fn solve_portfolio(
             }
         }
     }
-    let (lo_i, hi_i, _) = best?;
-    let lo = constituents[lo_i];
-    let hi = constituents[hi_i];
-    let span = hi.days_to_expiration - lo.days_to_expiration;
-    let w_hi = (target - lo.days_to_expiration) / span;
-    let w_lo = 1.0 - w_hi;
+    if let Some((lo_i, hi_i, _)) = best {
+        let lo = constituents[lo_i];
+        let hi = constituents[hi_i];
+        let span = hi.days_to_expiration - lo.days_to_expiration;
+        let w_hi = (target - lo.days_to_expiration) / span;
+        let w_lo = 1.0 - w_hi;
 
-    let weighted_maturity = w_lo * lo.days_to_expiration + w_hi * hi.days_to_expiration;
-    let maturity_error = (weighted_maturity - target).abs();
-    if maturity_error > config.maturity_tolerance_days {
-        return None; // cannot meet tolerance — withhold
+        let weighted_maturity = w_lo * lo.days_to_expiration + w_hi * hi.days_to_expiration;
+        let maturity_error = (weighted_maturity - target).abs();
+        if maturity_error > config.maturity_tolerance_days {
+            // Bracket exists but can't meet tolerance — try the cohort fallback
+            // before withholding. The cohort may be closer to the target than
+            // the bracket's residual.
+            return solve_portfolio_cohort(constituents, target_days, config);
+        }
+        let index_probability = w_lo * lo.probability + w_hi * hi.probability;
+
+        return Some(IndexPortfolio {
+            constituents: vec![
+                WeightedConstituent {
+                    market_index: lo_i,
+                    weight: w_lo,
+                    days_to_expiration: lo.days_to_expiration,
+                    probability: lo.probability,
+                },
+                WeightedConstituent {
+                    market_index: hi_i,
+                    weight: w_hi,
+                    days_to_expiration: hi.days_to_expiration,
+                    probability: hi.probability,
+                },
+            ],
+            weighted_maturity_days: weighted_maturity,
+            maturity_error_days: maturity_error,
+            index_probability,
+            method: CmpMethod::Interpolated,
+        });
     }
-    let index_probability = w_lo * lo.probability + w_hi * hi.probability;
+    // No bracket spans the target — try the single-cohort fallback (C0.5).
+    solve_portfolio_cohort(constituents, target_days, config)
+}
 
+/// C0.5: single-cohort fallback. When no bracket pair spans the target, pick
+/// the highest-quality cohort (group of contracts at the same maturity) and
+/// publish a degraded index at that maturity. The maturity error is the
+/// distance from the cohort to the target — surfaced, not hidden.
+///
+/// This is the honest degraded publication the plan anticipated (cmp-foundation
+/// §5: "sparse coverage degrades honestly"). The `BucketedSparse` method flag
+/// tells downstream consumers the index has wider uncertainty than a bracket-
+/// interpolated index.
+///
+/// Returns `None` when the nearest cohort is farther than
+/// `cohort_tolerance_days` from the target, or when `cohort_tolerance_days` is
+/// 0 (fallback disabled). Never fabricates a probability.
+fn solve_portfolio_cohort(
+    constituents: &[Constituent],
+    target_days: u32,
+    config: &CmpConfig,
+) -> Option<IndexPortfolio> {
+    if config.cohort_tolerance_days <= 0.0 || constituents.is_empty() {
+        return None; // fallback disabled, or no constituents
+    }
+    let target = f64::from(target_days);
+    // The effective cohort tolerance is max(cohort_tolerance_days, window_half_width)
+    // — any contract in the eligibility window is publishable as a cohort.
+    let window_half = config
+        .maturity_window_abs_days
+        .max(config.maturity_window_rel * target);
+    let effective_tolerance = config.cohort_tolerance_days.max(window_half);
+    // Group constituents into cohorts by maturity (within 1 day of each other).
+    // A cohort is a set of contracts at the same maturity — their mean
+    // probability is the cohort value, their combined quality is the tie-break.
+    // Sort indices by maturity so cohorts are contiguous.
+    let mut order: Vec<usize> = (0..constituents.len()).collect();
+    order.sort_by(|&a, &b| {
+        constituents[a]
+            .days_to_expiration
+            .partial_cmp(&constituents[b].days_to_expiration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut cohorts: Vec<(f64, f64, f64, Vec<usize>)> = Vec::new(); // (maturity, prob_sum, quality_sum, indices)
+    for idx in order {
+        let c = &constituents[idx];
+        if let Some(last) = cohorts.last_mut()
+            && (last.0 - c.days_to_expiration).abs() < 1.0
+        {
+            last.1 += c.probability;
+            last.2 += c.quality;
+            last.3.push(idx);
+            continue;
+        }
+        cohorts.push((c.days_to_expiration, c.probability, c.quality, vec![idx]));
+    }
+    // Find the cohort closest to the target.
+    let best_cohort = cohorts
+        .iter()
+        .min_by(|a, b| {
+            let dist_a = (a.0 - target).abs();
+            let dist_b = (b.0 - target).abs();
+            dist_a
+                .partial_cmp(&dist_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+    let cohort_maturity = best_cohort.0;
+    let maturity_error = (cohort_maturity - target).abs();
+    if maturity_error > effective_tolerance {
+        return None; // nearest cohort too far from target — withhold
+    }
+    // Build the portfolio: equal weights within the cohort.
+    let n = best_cohort.3.len();
+    let weight = 1.0 / n as f64;
+    let index_probability = best_cohort.1 / n as f64; // mean probability
+    let constituents_out: Vec<WeightedConstituent> = best_cohort
+        .3
+        .iter()
+        .map(|&idx| {
+            let c = &constituents[idx];
+            WeightedConstituent {
+                market_index: idx,
+                weight,
+                days_to_expiration: c.days_to_expiration,
+                probability: c.probability,
+            }
+        })
+        .collect();
     Some(IndexPortfolio {
-        constituents: vec![
-            WeightedConstituent {
-                market_index: lo_i,
-                weight: w_lo,
-                days_to_expiration: lo.days_to_expiration,
-                probability: lo.probability,
-            },
-            WeightedConstituent {
-                market_index: hi_i,
-                weight: w_hi,
-                days_to_expiration: hi.days_to_expiration,
-                probability: hi.probability,
-            },
-        ],
-        weighted_maturity_days: weighted_maturity,
+        constituents: constituents_out,
+        weighted_maturity_days: cohort_maturity,
         maturity_error_days: maturity_error,
         index_probability,
+        method: CmpMethod::BucketedSparse,
     })
 }
 
@@ -572,9 +699,12 @@ pub struct CmpIndexSet {
 /// 2. For each available bucket, filter constituents into the bucket's
 ///    maturity window and group by orientation (increase, decline, stable).
 /// 3. For each (bucket, orientation) pair, solve the portfolio weights so
-///    the weighted-average maturity matches the bucket's target.
-/// 4. Withhold any index that can't be solved (no bracket, tolerance failure)
-///    — never fabricate.
+///    the weighted-average maturity matches the bucket's target. C0.5: when
+///    the bracket solver fails (no bracket pair), fall back to the single-
+///    cohort solver (`BucketedSparse`) — a degraded but honest publication
+///    with the maturity error surfaced.
+/// 4. Withhold any index that can't be solved (no bracket AND no cohort within
+///    tolerance) — never fabricate.
 ///
 /// Contracts are re-used across buckets and across orientations: the same
 /// contract may appear in the 1m increase index and the 2m increase index,
@@ -742,7 +872,9 @@ mod tests {
 
     #[test]
     fn solve_portfolio_withholds_when_no_bracket() {
-        // All contracts below the target — no bracket, withhold.
+        // All contracts below the target — no bracket. The nearest cohort
+        // (45d) is 45d from the 90d target, beyond the default
+        // cohort_tolerance_days (7.5) → withhold.
         let constituents = [
             Constituent {
                 days_to_expiration: 30.0,
@@ -756,6 +888,107 @@ mod tests {
             },
         ];
         assert!(solve_portfolio(&constituents, 90, &config()).is_none());
+    }
+
+    #[test]
+    fn solve_portfolio_cohort_fallback_when_no_bracket() {
+        // C0.5: no bracket (all contracts at the same maturity), but the
+        // cohort is within tolerance of the target → publish as BucketedSparse.
+        // Target 90d; two contracts both at 88d (within 1d → same cohort).
+        // Nearest cohort distance = |88 - 90| = 2d ≤ 7.5d → publish.
+        let constituents = [
+            Constituent {
+                days_to_expiration: 88.0,
+                probability: 0.40,
+                quality: 1.0,
+            },
+            Constituent {
+                days_to_expiration: 88.0,
+                probability: 0.60,
+                quality: 1.0,
+            },
+        ];
+        let portfolio = solve_portfolio(&constituents, 90, &config()).expect("cohort fallback");
+        assert_eq!(portfolio.method, CmpMethod::BucketedSparse);
+        assert!((portfolio.weighted_maturity_days - 88.0).abs() < 1e-9);
+        assert!((portfolio.maturity_error_days - 2.0).abs() < 1e-9);
+        // Mean probability of the two contracts.
+        assert!((portfolio.index_probability - 0.50).abs() < 1e-9);
+        // Equal weights within the cohort.
+        assert!(portfolio.constituents.iter().all(|c| (c.weight - 0.5).abs() < 1e-9));
+        let weights: Vec<f64> = portfolio.constituents.iter().map(|c| c.weight).collect();
+        assert!((weights.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn solve_portfolio_cohort_withholds_beyond_tolerance() {
+        // C0.5: no bracket, nearest cohort outside the eligibility window
+        // → withhold. Target 90d; contracts at 50d (40d away, outside the
+        // 3m window [67.5, 112.5]). The effective tolerance is the window
+        // half-width (22.5d), so 40d > 22.5d → withhold.
+        let constituents = [
+            Constituent {
+                days_to_expiration: 50.0,
+                probability: 0.40,
+                quality: 1.0,
+            },
+            Constituent {
+                days_to_expiration: 50.0,
+                probability: 0.60,
+                quality: 1.0,
+            },
+        ];
+        assert!(solve_portfolio(&constituents, 90, &config()).is_none());
+    }
+
+    #[test]
+    fn solve_portfolio_cohort_disabled_when_tolerance_zero() {
+        // C0.5: cohort_tolerance_days = 0 disables the fallback (bracket-only).
+        let mut cfg = config();
+        cfg.cohort_tolerance_days = 0.0;
+        // Contracts at 88d (within 2d of 90d target) — would publish as cohort
+        // with default tolerance, but disabled here.
+        let constituents = [
+            Constituent {
+                days_to_expiration: 88.0,
+                probability: 0.40,
+                quality: 1.0,
+            },
+            Constituent {
+                days_to_expiration: 88.0,
+                probability: 0.60,
+                quality: 1.0,
+            },
+        ];
+        assert!(solve_portfolio(&constituents, 90, &cfg).is_none());
+    }
+
+    #[test]
+    fn solve_portfolio_prefers_bracket_over_cohort() {
+        // C0.5: when both a bracket and a cohort exist, the bracket wins
+        // (it's the more precise construction). Target 90d; bracket at 70d
+        // and 110d, plus a cohort at 88d. The bracket should be used.
+        let constituents = [
+            Constituent {
+                days_to_expiration: 70.0,
+                probability: 0.30,
+                quality: 1.0,
+            },
+            Constituent {
+                days_to_expiration: 110.0,
+                probability: 0.70,
+                quality: 1.0,
+            },
+            Constituent {
+                days_to_expiration: 88.0,
+                probability: 0.50,
+                quality: 1.0,
+            },
+        ];
+        let portfolio = solve_portfolio(&constituents, 90, &config()).expect("bracket");
+        assert_eq!(portfolio.method, CmpMethod::Interpolated);
+        assert!((portfolio.weighted_maturity_days - 90.0).abs() < 1e-9);
+        assert!((portfolio.index_probability - 0.50).abs() < 1e-9);
     }
 
     #[test]
@@ -1134,8 +1367,10 @@ mod tests {
     }
 
     #[test]
-    fn construct_index_set_withholds_when_no_bracket() {
-        // 3m bucket has 3 increase contracts but none bracket 90d — all below.
+    fn construct_index_set_cohort_fallback_when_no_bracket() {
+        // C0.5: 3m bucket has 3 increase contracts but none bracket 90d —
+        // all below. The cohort fallback publishes a BucketedSparse index
+        // at the nearest cohort (75d), with maturity_error = 15d.
         let oriented_constituents = vec![
             oriented(70.0, 0.50, 1.0, Orientation::Increase),
             oriented(72.0, 0.50, 1.0, Orientation::Increase),
@@ -1144,10 +1379,15 @@ mod tests {
         let set = construct_cmp_index_set(&oriented_constituents, &config());
         // 3m bucket is available (3 contracts in window [68,112])
         assert!(set.available_buckets.contains(&MaturityBucket::ThreeMonth));
-        // But no index can be solved (no bracket spans 90d)
-        assert!(
-            set.indices.is_empty(),
-            "no index should be constructed without a bracket"
-        );
+        // C0.5: the cohort fallback publishes BucketedSparse indices.
+        assert!(!set.indices.is_empty(), "cohort fallback should publish");
+        // The 3m index should be present as a BucketedSparse cohort.
+        let three_m = set.indices.iter().find(|i| i.bucket == MaturityBucket::ThreeMonth)
+            .expect("3m index should publish via cohort fallback");
+        assert_eq!(three_m.portfolio.method, CmpMethod::BucketedSparse);
+        // Nearest cohort is 75d (the contracts at 70/72/75 form separate
+        // cohorts since they're >1d apart; 75d is closest to 90d).
+        assert!((three_m.portfolio.weighted_maturity_days - 75.0).abs() < 1e-9);
+        assert!((three_m.portfolio.maturity_error_days - 15.0).abs() < 1e-9);
     }
 }

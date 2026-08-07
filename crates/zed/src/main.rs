@@ -4207,9 +4207,11 @@ mod tests {
         // F22: resolve_mcp_binary — must be callable with the documented signature.
         let _ = resolve_mcp_binary("test", "test-binary");
 
-        // F23: kask_server_env — must be callable (returns env vars for MCP servers).
-        // We can't call it without KaskSettings, but the function must exist.
-        let _ = std::any::TypeId::of::<fn(&kask_bridge::KaskSettings) -> Vec<(String, String)>>();
+        // F23: kask_server_env — must be accessible. Referencing the fn
+        // name forces the compiler to resolve it; renaming or deleting it
+        // breaks compilation here. The fn is async so we can't call it
+        // without an AsyncApp, but the name reference pins its existence.
+        let _ = kask_server_env;
 
         // F2: the kask tokio runtime is built via tokio::runtime::Builder —
         // assert the builder type is accessible (the runtime is built in main()).
