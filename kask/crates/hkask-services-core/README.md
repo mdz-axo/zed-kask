@@ -6,12 +6,12 @@ Foundation crate for the hKask service layer. Defines shared types, configuratio
 
 ## Modules
 
-| Module | Purpose |
-|--------|---------|
-| `config` | `ServiceConfig` with `DEFAULT_DB_PATH` |
+| Module          | Purpose                                         |
+| --------------- | ----------------------------------------------- |
+| `config`        | `ServiceConfig` with `DEFAULT_DB_PATH`          |
 | `data_category` | Content classification (`DataCategory` parsing) |
-| `error` | Canonical `ServiceError` enum |
-| `goal` | `GoalState` type (the `hkask-goal` crate was deleted; `Goal`, `GoalArtifact`, `GoalCriterion` types removed) |
+| `error`         | Canonical `ServiceError` enum                   |
+
 | `identity` | WebID, `UserRole`, identity management |
 | `inference_svc` | `InferenceContext`, `InferenceService` trait, `ModelInfo` |
 | `settings` | `HkaskSettings` persistence (`load_settings`, `save_settings`) |
@@ -21,7 +21,7 @@ Foundation crate for the hKask service layer. Defines shared types, configuratio
 
 - `ServiceConfig` — system-wide configuration
 - `ServiceError` — canonical error type for service layer
-- `GoalState` — goal tracking type (the `hkask-goal` crate was deleted; `Goal`/`GoalArtifact`/`GoalCriterion` removed)
+
 - `InferenceContext` — context bundle for inference calls
 - `InferenceService` — port trait for inference dispatch
 

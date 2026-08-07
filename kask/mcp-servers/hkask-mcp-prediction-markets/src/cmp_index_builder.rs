@@ -1232,6 +1232,87 @@ mod tests {
         }
     }
 
+    /// Comprehensive all-families smoke test — runs the builder on every base
+    /// family on both venues and prints the results. This is the full CP-CMP
+    /// probe across the catalog: which families publish which tenors on which
+    /// venues. Run with `--nocapture` to see the full table.
+    #[test]
+    fn all_families_smoke_test() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let catalogs_dir = manifest_dir
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("tasks/bayesian-apt/catalogs/contracts");
+        if !catalogs_dir.exists() {
+            eprintln!("real catalog not present — skipping all-families smoke test");
+            return;
+        }
+        let now = Utc::now();
+        let cfg = config();
+
+        eprintln!("\n=== All-families CMP index probe ===");
+        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:>20}", "family", "venue", "recs", "elig", "idxs", "published tenors");
+        eprintln!("─────────────────────────────────────────────────────────────────────────────────────────");
+
+        for family in BaseEconomicObject::ALL {
+            // Use the family's default economic context (reference + volatility).
+            let base_event = base_event_for(family);
+            let context = match base_event {
+                Some(be) => be.default_economic_context(),
+                None => {
+                    // RealGdpGrowth — no BaseEvent, all tenors withhold.
+                    eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                        family.label(), "-", "-", "-", "-", "no BaseEvent");
+                    continue;
+                }
+            };
+            // Override volatility to percent units for rates (the pre-existing
+            // unit mismatch — see c0.4-decisions.md). Other families use their
+            // defaults (which are already in the right units: relative for
+            // commodities/crypto, absolute for inflation).
+            let context = if family == BaseEconomicObject::PolicyInterestRate {
+                let mut ctx = context;
+                ctx.volatility = Some(0.25); // 25bp = 0.25%
+                ctx
+            } else {
+                context
+            };
+
+            for venue in [Venue::Kalshi, Venue::Polymarket] {
+                let result = build_cmp_indices(&catalogs_dir, family, venue, &context, &cfg, &now);
+                match result {
+                    Ok(set) => {
+                        let tenors: Vec<&str> = set.indices
+                            .iter()
+                            .map(|p| p.index.bucket.label())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect::<Vec<_>>();
+                        let tenors_str = if tenors.is_empty() {
+                            "(none — no bracket)".to_string()
+                        } else {
+                            tenors.join(", ")
+                        };
+                        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                            family.label(), venue.to_string(), set.n_records_read, set.n_eligible, set.indices.len(), tenors_str);
+                    }
+                    Err(CmpError::NoEligibleContracts { n_rejected, .. }) => {
+                        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                            family.label(), venue.to_string(), "?", 0, 0, format!("no eligible ({n_rejected} rejected)"));
+                    }
+                    Err(e) => {
+                        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                            family.label(), venue.to_string(), "?", "?", "?", format!("error: {e}"));
+                    }
+                }
+            }
+        }
+        eprintln!("─────────────────────────────────────────────────────────────────────────────────────────");
+        // This test never panics — it's a diagnostic probe. The assertions are
+        // in the per-family tests above.
+    }
+
     /// Human-review sample: print the eligibility classifications for the
     /// first 20 Kalshi rates contracts, so a human can verify the classifier
     /// is correct (CP-CMP acceptance criterion). This is a print-test, not

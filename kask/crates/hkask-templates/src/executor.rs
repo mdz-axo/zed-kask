@@ -61,7 +61,7 @@ use hkask_capability::{ToolPort, ToolPortError};
 use hkask_guard::{SpotlightMode, Spotlighter};
 use hkask_regulation::SkillFeedbackSpan;
 use hkask_types::NotFound;
-use hkask_types::ToolTaint;
+use hkask_capability::tool_taint::ToolTaint;
 use hkask_types::WebID;
 use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;

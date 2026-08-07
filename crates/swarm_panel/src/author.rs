@@ -18,6 +18,11 @@ pub(crate) struct AuthorForm {
     pub(crate) description: Entity<Editor>,
     pub(crate) system_prompt: Entity<Editor>,
     pub(crate) agent_type: String,
+    /// When `Some`, the form is editing an existing agent (loaded via the
+    /// drill-down from the browse card). The name field is read-only (renaming
+    /// would change the agent id). When `None`, the form is creating a new
+    /// agent. The submit button label and the save path branch on this.
+    pub(crate) editing_id: Option<String>,
     /// Comma-separated tags for catalogue discovery.
     pub(crate) tags: Entity<Editor>,
     /// Visibility level: "public", "private", or "unlisted".

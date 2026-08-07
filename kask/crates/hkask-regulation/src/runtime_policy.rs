@@ -6,7 +6,7 @@
 //! runtime policy. This is Layer 6 (runtime monitoring) in the defense-in-depth
 //! stack.
 
-use hkask_types::tool_taint::ToolTaint;
+use hkask_capability::tool_taint::ToolTaint;
 use std::collections::HashSet;
 
 /// Verdict from the runtime policy check.

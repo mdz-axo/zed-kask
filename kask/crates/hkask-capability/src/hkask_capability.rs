@@ -10,6 +10,7 @@ pub mod auth;
 pub mod resources;
 pub mod token_types;
 pub mod tool_port;
+pub mod tool_taint;
 
 pub use auth::panel_default_token;
 pub use resources::{

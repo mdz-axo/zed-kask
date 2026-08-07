@@ -12,7 +12,7 @@
 //!   the consolidated text, and stores the new embedding in the DB.
 
 use crate::helpers::{map_corpus_io_error, map_memory_store_error, read_text_capped};
-use crate::services::consolidation::{ConsolidationRequest, ConsolidationService};
+use crate::services::consolidation::{ChunkConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
@@ -140,7 +140,7 @@ impl CorpusServer {
     ) -> String {
         execute_tool(self, "corpus_consolidate_chunks", async {
             ConsolidationService::new(Arc::clone(&self.inference_router))
-                .consolidate(ConsolidationRequest {
+                .consolidate(ChunkConsolidationRequest {
                     tagged_jsonl: req.tagged_jsonl,
                     output: req.output,
                     db_path: req.db_path,
