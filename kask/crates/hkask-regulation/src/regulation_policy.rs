@@ -91,6 +91,10 @@ impl RegulationReason {
 /// `target` and `action_type` document the policy's intent; the actual
 /// dispatch in `build_regulation_action` may substitute the action type
 /// via `try_substitute` or skip the action based on mode settings.
+///
+/// `target` and `action_type` are constructed by the policy table and read
+/// by tests, but production dispatch (`build_regulation_action`) reads only
+/// `reason` — the fields are retained as documentation of intent.
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ProposedAction {
@@ -448,7 +452,6 @@ impl RegulationPolicy {
 
 /// Extract (deficit, threshold) from a `RegulationData` variant.
 /// Returns (0, 0) when the variant doesn't carry deficit/threshold.
-#[allow(dead_code)]
 pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
     match data {
         RegulationData::VarietyDeficitExceeded { deficit, threshold } => {
@@ -464,7 +467,6 @@ pub(crate) fn extract_deficit_threshold(data: &RegulationData) -> (u64, u64) {
 /// - `stage_ratio`: below this → Accept (noise).
 /// - `block_ratio`: at or above this → Block (hard reject).
 /// - Between → Stage (escalate for review).
-#[allow(dead_code)]
 pub(crate) fn classify_decision(
     worsening: f64,
     stage_ratio: f64,
@@ -488,7 +490,6 @@ pub(crate) fn classify_decision(
 /// These are the built-in ladders used when no custom ladders are configured
 /// via `SetPoints.action_substitutions`. Each ladder is an ordered list of
 /// action types to try when the primary action is repeatedly ineffective.
-#[allow(dead_code)]
 pub(crate) fn default_substitution_ladder(metric: SignalMetric) -> &'static [ActionType] {
     use ActionType::*;
     match metric {

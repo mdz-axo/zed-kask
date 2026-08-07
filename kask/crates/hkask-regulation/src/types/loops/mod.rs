@@ -1,8 +1,11 @@
-//! hKask 6-Loop Architecture — channel types and re-exports.
+//! hKask 6-Loop Architecture — loop type system and channel types.
 //!
 //! The loop type system (LoopId, Signal, Deviation, RegulatoryAction, etc.)
-//! has been moved to `hkask_types::loops` to break the circular dependency
-//! that prevented extracting Regulation subcrates.
+//! lives here alongside the channel types. The types were previously in
+//! `hkask-types::loops` to break a circular dependency that has since been
+//! resolved by deleting the Regulation subcrates (storage guard, SLO, seam
+//! watcher); they have no Regulation-internal dependencies and their sole
+//! consumer is `hkask-regulation`.
 //!
 //! Channel types (`CurationInput`, `ToolConsumptionEvent`, etc.) remain here
 //! because they depend on `RuntimeAlert` (Regulation-internal).
@@ -31,15 +34,21 @@
 // Channel types stay in hkask-regulation (depend on RuntimeAlert).
 pub mod channels;
 
-// Re-export the full loop type system from hkask-types.
+// Loop type system — actions, core, episodic, signals.
+pub mod actions;
+pub mod core;
+pub mod episodic;
+pub mod signals;
+
+pub use actions::{
+    ActionType, BudgetOption, RegulationData, RegulatoryAction, RegulatoryActionParams,
+};
 pub use channels::{
     CommunicationEvent, CurationInput, GoalLifecycle, GoalTransitionEvent, ToolConsumptionEvent,
 };
-pub use hkask_types::loops::{
-    ActionDecision, ActionType, BudgetOption, Deviation, DeviationDirection,
-    ExperienceClassification, ImpactReport, LoopId, LoopMetrics, RegulationData, RegulatoryAction,
-    RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
-};
+pub use core::{ActionDecision, ImpactReport, LoopId, LoopMetrics, TriggerOrigin};
+pub use episodic::ExperienceClassification;
+pub use signals::{Deviation, DeviationDirection, Signal, SignalMetric};
 
 // Backward-compatible re-exports — CuratorDirective and CuratorHandle were
 // previously re-exported from here but live in hkask_types::curator.

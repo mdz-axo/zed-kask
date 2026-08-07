@@ -168,7 +168,16 @@ impl RealMemoryPort {
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim)
             .map_err(|e| format!("Failed to create EmbeddingStore: {e}"))?;
-        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+        // Wire the `reg.memory.encode` span sink: every `store()` persists a
+        // span to the user's `pod.db` regulation archive. Without this the
+        // span emitter in `MemoryStore::store` is dead code (the `.rules`
+        // "Advertised invariants need enforcement points" trap). `None`
+        // degrades to no span persistence with a warn — the store still works.
+        let regulation_archive = open_regulation_archive(db_path, passphrase, "user");
+        let store = Arc::new(match regulation_archive {
+            Some(archive) => MemoryStore::new(h_mem_store, embedding_store).with_ledger(archive),
+            None => MemoryStore::new(h_mem_store, embedding_store),
+        });
 
         let curator_webid = WebID::from_persona(b"curator");
 
@@ -534,15 +543,32 @@ pub fn curator_db_path() -> String {
 pub fn open_curator_regulation_archive(
     passphrase: &str,
 ) -> Option<Arc<hkask_storage::RegulationArchive>> {
-    let db_path = curator_db_path();
-    let db = match Database::open(&db_path, passphrase) {
+    open_regulation_archive(&curator_db_path(), passphrase, "curator")
+}
+
+/// Open a `RegulationArchive` on an arbitrary SQLCipher DB. Used by both the
+/// user store (`RealMemoryPort::new`, on the user's `pod.db`) and the curator
+/// store (`open_curator_store`, on the curator's `pod.db`) to wire
+/// `reg.memory.encode` span persistence via `MemoryStore::with_ledger`.
+///
+/// Returns `None` on any failure with a `tracing::warn!` naming the DB and the
+/// role, so an operator can distinguish "not configured" from "configured
+/// but broken" (the `.rules` "Process-global hooks set at runtime need a
+/// startup-failure signal" trap). The caller degrades to no span persistence.
+fn open_regulation_archive(
+    db_path: &str,
+    passphrase: &str,
+    role: &str,
+) -> Option<Arc<hkask_storage::RegulationArchive>> {
+    let db = match Database::open(db_path, passphrase) {
         Ok(db) => db,
         Err(e) => {
             tracing::warn!(
                 target: "reg.storage",
                 error = %e,
                 db_path = %db_path,
-                "Failed to open curator DB for regulation archive"
+                role,
+                "Failed to open DB for regulation archive"
             );
             return None;
         }
@@ -550,17 +576,17 @@ pub fn open_curator_regulation_archive(
     let pool = match db.sqlite_pool() {
         Ok(p) => p,
         Err(e) => {
-            tracing::warn!(target: "reg.storage", error = %e, "Failed to get SQLite pool for regulation archive");
+            tracing::warn!(target: "reg.storage", error = %e, role, "Failed to get SQLite pool for regulation archive");
             return None;
         }
     };
     let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
-        hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path.as_str()),
+        hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path),
     );
     match hkask_storage::RegulationArchive::from_driver(driver) {
         Ok(archive) => Some(Arc::new(archive)),
         Err(e) => {
-            tracing::warn!(target: "reg.storage", error = %e, "Failed to init RegulationArchive schema");
+            tracing::warn!(target: "reg.storage", error = %e, role, "Failed to init RegulationArchive schema");
             None
         }
     }
@@ -859,7 +885,17 @@ fn open_curator_store(
             return None;
         }
     };
-    let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+    let store = Arc::new({
+        let base = MemoryStore::new(h_mem_store, embedding_store);
+        // Wire the `reg.memory.encode` span sink on the curator's own DB —
+        // mirrors the user-store wiring in `RealMemoryPort::new`. The
+        // curator's regulation archive is the same one
+        // `open_curator_regulation_archive` opens for the curator MCP server.
+        match open_regulation_archive(&curator_db_path, passphrase, "curator") {
+            Some(archive) => base.with_ledger(archive),
+            None => base,
+        }
+    });
     tracing::info!(
         target: "reg.memory",
         db_path = %curator_db_path,

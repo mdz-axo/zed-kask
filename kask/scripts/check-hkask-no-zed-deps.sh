@@ -12,10 +12,10 @@
 #
 # Per zed-host-architecture-plan.md §13.1 (line 640), the invariant applies to
 # hKask crates — i.e. those under `kask/crates/hkask-*` and
-# `kask/mcp-servers/hkask-*`. The bridge crate `kask_bridge` and the panel
-# `kask_panel` live under `kask/crates/` too but are zed-kask-side (D8/D10),
-# NOT hKask — they are the documented bidirectional seam and are exempt by
-# construction because this scan only visits `hkask-*` paths.
+# `kask/mcp-servers/hkask-*`. The bridge crate `kask_bridge` lives under
+# `kask/crates/` too but is zed-kask-side (D8), NOT hKask — it is the
+# documented bidirectional seam and is exempt by construction because this
+# scan only visits `hkask-*` paths.
 #
 # This gate detects two inversion signals in hKask Cargo.toml files:
 #   1. a `path = "..."` dependency that points into the zed-kask tree; and
@@ -38,12 +38,12 @@ trap 'rm -f "$TMPFILE"' EXIT
 
 # zed-kask-only crate names. hKask uses `hkask-` prefixes, so none of these
 # names can be a legitimate hKask-internal or crates.io dependency here.
-ZED_CRATES='gpui|gpui_tokio|gpui_platform|gpui_macros|language_model|language_model_core|language_models|language_models_cloud|context_server|agent|agent_skills|agent_ui|agent_servers|agent_settings|acp_tools|credentials_provider|zed_credentials_provider|release_channel|paths|editor|workspace|theme|settings|ui|kask_bridge|kask_panel'
+ZED_CRATES='gpui|gpui_tokio|gpui_platform|gpui_macros|language_model|language_model_core|language_models|language_models_cloud|context_server|agent|agent_skills|agent_ui|agent_servers|agent_settings|acp_tools|credentials_provider|zed_credentials_provider|release_channel|paths|editor|workspace|theme|settings|ui|kask_bridge'
 
 # hKask crates only — those under kask/crates/hkask-* and kask/mcp-servers/hkask-*.
-# The bridge (kask_bridge) and panel (kask_panel) live under kask/crates/ but are
-# zed-kask-side (D8/D10), not hKask — scanning them would false-positive on the
-# very bidirectional seam §13.1 exempts. See zed-host-architecture-plan.md:640.
+# The bridge (kask_bridge) lives under kask/crates/ but is zed-kask-side
+# (D8), not hKask — scanning it would false-positive on the very
+# bidirectional seam §13.1 exempts. See zed-host-architecture-plan.md:640.
 manifests=$(find ./crates/hkask-* ./mcp-servers/hkask-* -name Cargo.toml -not -path './target/*' 2>/dev/null)
 
 # 1. Any path-dep into the zed-kask tree (e.g. path = "../../Clones/zed-kask/...").

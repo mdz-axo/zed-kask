@@ -92,12 +92,6 @@ pub fn agent_memory_db(name: &str) -> PathBuf {
     agent_dir(name).join("memory.db")
 }
 
-/// Style database — corpus embeddings and centroids for style composition.
-#[allow(dead_code)]
-pub(crate) fn agent_style_db(name: &str) -> PathBuf {
-    agent_dir(name).join("style.db")
-}
-
 /// Kanban database — tasks, unjam items, board state for the agent.
 pub fn agent_kanban_db(name: &str) -> PathBuf {
     agent_dir(name).join("kanban.db")
@@ -108,59 +102,11 @@ pub fn agent_training_db(name: &str) -> PathBuf {
     agent_dir(name).join("training.db")
 }
 
-/// Wallet database — per-agent rJoule balances, API keys, encumbrances.
-#[allow(dead_code)]
-pub(crate) fn agent_wallet_db(name: &str) -> PathBuf {
-    agent_dir(name).join("wallet.db")
-}
-
 // ── Directory paths ──────────────────────────────────────────────────────────
-
-/// Gallery directory — media server assets (images, video, audio).
-#[allow(dead_code)]
-pub(crate) fn agent_gallery_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("gallery")
-}
-
-/// Documents directory — docproc parsed/extracted documents.
-#[allow(dead_code)]
-pub(crate) fn agent_documents_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("documents")
-}
-
-/// Library directory — research materials, downloaded papers, RSS feeds.
-#[allow(dead_code)]
-pub(crate) fn agent_library_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("library")
-}
-
-/// Sessions directory — MCP session transcripts.
-#[allow(dead_code)]
-pub(crate) fn agent_sessions_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("sessions")
-}
 
 /// Adapters directory — LoRA adapter weight files.
 pub fn agent_adapters_dir(name: &str) -> PathBuf {
     agent_dir(name).join("adapters")
-}
-
-/// Portfolios directory — financial portfolio/watchlist data.
-#[allow(dead_code)]
-pub(crate) fn agent_portfolios_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("portfolios")
-}
-
-/// Artifacts directory — agent-specific styles, bots, templates, bundles.
-#[allow(dead_code)]
-pub(crate) fn agent_artifacts_dir(name: &str) -> PathBuf {
-    agent_dir(name).join("artifacts")
-}
-
-/// Artifact manifest — per-agent index of published artifacts.
-#[allow(dead_code)]
-pub(crate) fn agent_manifest_json(name: &str) -> PathBuf {
-    agent_dir(name).join("manifest.json")
 }
 
 // ── Initialization ───────────────────────────────────────────────────────────
@@ -191,81 +137,6 @@ pub fn ensure_agent_dirs(name: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(dir.join(sub))?;
     }
     Ok(())
-}
-
-/// Publish an artifact to the agent's manifest for Curator indexing.
-///
-/// Called when an agent produces a shareable artifact (style, bot, gallery
-/// item, trained adapter). The CuratorSync reads manifest files to build
-/// the cross-agent artifact index.
-#[allow(dead_code)]
-pub(crate) fn publish_artifact(
-    name: &str,
-    artifact_type: &str,
-    artifact_name: &str,
-    content_hash: &str,
-) -> std::io::Result<()> {
-    let manifest_path = agent_manifest_json(name);
-    let entry = serde_json::json!({
-        "type": artifact_type,
-        "name": artifact_name,
-        "hash": content_hash,
-        "published_at": chrono::Utc::now().to_rfc3339(),
-    });
-
-    // Read existing manifest, append, write back
-    let mut manifest: serde_json::Value = if manifest_path.exists() {
-        match std::fs::read_to_string(&manifest_path) {
-            Ok(content) => {
-                if content.trim().is_empty() {
-                    serde_json::json!({"artifacts": []})
-                } else {
-                    match serde_json::from_str(&content) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "hkask.paths",
-                                error = %e,
-                                manifest_path = %manifest_path.display(),
-                                "Failed to parse existing manifest — \
-                                 starting fresh. The previous manifest was corrupt \
-                                 and its artifact history is lost."
-                            );
-                            serde_json::json!({"artifacts": []})
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "hkask.paths",
-                    error = %e,
-                    manifest_path = %manifest_path.display(),
-                    "Failed to read existing manifest — \
-                     starting fresh. Check file permissions."
-                );
-                serde_json::json!({"artifacts": []})
-            }
-        }
-    } else {
-        serde_json::json!({"artifacts": []})
-    };
-
-    if let Some(artifacts) = manifest.get_mut("artifacts").and_then(|a| a.as_array_mut()) {
-        // Replace existing entry with same type+name, or append new
-        if let Some(existing) = artifacts.iter_mut().find(|a| {
-            a.get("type").and_then(|t| t.as_str()) == Some(artifact_type)
-                && a.get("name").and_then(|n| n.as_str()) == Some(artifact_name)
-        }) {
-            *existing = entry;
-        } else {
-            artifacts.push(entry);
-        }
-    }
-
-    let json = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| std::io::Error::other(format!("Failed to serialize manifest: {e}")))?;
-    std::fs::write(&manifest_path, json)
 }
 
 /// Sanitize an agent name for filesystem use.
@@ -331,22 +202,6 @@ mod tests {
         assert_eq!(
             agent_memory_db("alice"),
             PathBuf::from("agents").join("alice").join("memory.db")
-        );
-        assert_eq!(
-            agent_wallet_db("alice"),
-            PathBuf::from("agents").join("alice").join("wallet.db")
-        );
-    }
-
-    #[test]
-    fn dir_paths() {
-        assert_eq!(
-            agent_gallery_dir("alice"),
-            PathBuf::from("agents").join("alice").join("gallery")
-        );
-        assert_eq!(
-            agent_sessions_dir("alice"),
-            PathBuf::from("agents").join("alice").join("sessions")
         );
     }
 

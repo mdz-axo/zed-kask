@@ -948,4 +948,43 @@ mod tests {
         assert!(store.query_by_pko_procedure("any").expect("query").is_empty());
         assert!(store.query_by_ontology_namespace("fibo").expect("query").is_empty());
     }
+
+    /// `reg.memory.encode` span emission is the enforcement point for the
+    /// `MemoryEncode` canonical span. Without a `RegulationSink` wired via
+    /// `with_ledger`, the span emitter in `store()` is dead code (the `.rules`
+    /// "Advertised invariants need enforcement points" trap). This test pins
+    /// that wiring a `RegulationArchive` causes `store()` to persist a span
+    /// queryable by the `memory` namespace prefix.
+    #[test]
+    fn store_persists_reg_memory_encode_span_when_ledger_wired() {
+        let driver = SqliteDriver::in_memory_driver();
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+        let embedding_store =
+            EmbeddingStore::from_driver(Arc::clone(&driver), 4).expect("embedding init");
+        let archive = hkask_storage::RegulationArchive::from_driver(Arc::clone(&driver))
+            .expect("regulation archive init");
+        let store = MemoryStore::new(h_mem_store, embedding_store).with_ledger(Arc::new(archive));
+
+        let owner = WebID::new();
+        let h_mem = HMem::new("span:entity", "attr", serde_json::json!("v"), owner)
+            .with_visibility(Visibility::Shared);
+        store.store(h_mem).expect("store");
+
+        // Re-open the archive on the same driver to read back the persisted span.
+        // The span_category column stores the short name ("memory.encode"),
+        // so the "memory" prefix matches it.
+        let archive = hkask_storage::RegulationArchive::from_driver(driver)
+            .expect("regulation archive re-open");
+        let since = chrono::Utc::now() - chrono::Duration::seconds(60);
+        let events = archive
+            .query_by_namespace("memory", since, 100)
+            .expect("query_by_namespace");
+        assert_eq!(
+            events.len(),
+            1,
+            "store() should persist exactly one reg.memory.encode span"
+        );
+        assert_eq!(events[0].span.namespace.short_name(), "memory.encode");
+        assert_eq!(events[0].span.path.as_str(), "reg.memory.encode.stored");
+    }
 }

@@ -89,7 +89,7 @@ pub mod superforecast;
 mod transcript;
 pub mod types;
 
-use portfolio::{PersistedForecast, PortfolioError, PortfolioManager};
+use portfolio::{PersistedForecast, PortfolioManager};
 
 pub mod tools;
 pub use transcript::{MissingReason, TranscriptCoverage, TranscriptRecord, TranscriptResult};
@@ -183,13 +183,7 @@ hkask_mcp_server::mcp_server!(
     }
 );
 
-/// Classify PortfolioError for MCP dispatch: user errors → invalid_argument, system errors → internal.
-fn map_portfolio_error(e: PortfolioError) -> McpToolError {
-    match &e {
-        PortfolioError::InvalidArgument(_) => McpToolError::invalid_argument(e.to_string()),
-        _ => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-fallback
-    }
-}
+use hkask_mcp_portfolio::map_portfolio_error;
 
 impl CompaniesServer {
     async fn fetch(

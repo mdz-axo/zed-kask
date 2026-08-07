@@ -18,7 +18,6 @@ pub mod inference_ipc;
 pub mod json_extract;
 pub mod kanban_wire;
 pub mod keychain_keys;
-pub mod loops;
 pub mod macros;
 pub mod observable_span;
 pub mod regulation;
@@ -57,11 +56,6 @@ pub use id::{
 };
 pub use regulation::LedgerHealth;
 
-pub use loops::{
-    ActionDecision, ActionType, BudgetOption, Deviation, DeviationDirection,
-    ExperienceClassification, ImpactReport, LoopId, LoopMetrics, RegulationData, RegulatoryAction,
-    RegulatoryActionParams, Signal, SignalMetric, TriggerOrigin,
-};
 pub use observable_span::ObservableSpan;
 pub use skill::SkillPolarity;
 pub use template::LLMParameters;
