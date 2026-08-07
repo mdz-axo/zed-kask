@@ -35,6 +35,8 @@ impl SwarmPanel {
                 let push_name = agent_name.clone();
                 let remove_name = agent_name.clone();
                 let publish_name = agent_name.clone();
+                let edit_name = agent_name.clone();
+                let edit_source = source.clone();
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
@@ -44,6 +46,19 @@ impl SwarmPanel {
                                 .min_w_0()
                                 .flex_1()
                                 .gap_1()
+                                .id("agent-card-body")
+                                .on_click(cx.listener({
+                                    let edit_name = edit_name.clone();
+                                    let edit_source = edit_source.clone();
+                                    move |this, _event, window, cx| {
+                                        this.load_agent_into_author(
+                                            edit_name.clone(),
+                                            edit_source.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }))
                                 .child(Label::new(agent.id.clone()).color(Color::Default))
                                 .child(Label::new(agent.description).color(Color::Muted)),
                         )
@@ -51,6 +66,30 @@ impl SwarmPanel {
                             v_flex()
                                 .gap_1()
                                 .items_end()
+                                .child(
+                                    Button::new(
+                                        SharedString::from(format!("edit-{edit_name}")),
+                                        "Edit",
+                                    )
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::XSmall)
+                                    .tooltip(Tooltip::text(
+                                        "Open this agent's settings in the author panel \
+                                         to view and adjust its details.",
+                                    ))
+                                    .on_click(cx.listener({
+                                        let edit_name = edit_name.clone();
+                                        let edit_source = edit_source.clone();
+                                        move |this, _, window, cx| {
+                                            this.load_agent_into_author(
+                                                edit_name.clone(),
+                                                edit_source.clone(),
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    })),
+                                )
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("hire-{agent_name}")),

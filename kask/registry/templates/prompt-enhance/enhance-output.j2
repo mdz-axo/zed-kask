@@ -16,17 +16,20 @@ contract:
     output_path_resolved:
       type: string
     phases_run:
-      type: array
-      description: List of phases actually completed
+      type: object
+      description: Routing decision from Phase 1 (which phases were selected)
     audit_findings:
       type: array
-      description: Findings from Phase 2 with constraint_force labels
+      description: Findings from the inline audit with constraint_force labels
     grill_ratings:
       type: array
-      description: Phase 4 ratings per area
+      description: Verify-step ratings per area (empty if verify skipped)
+    grill_verdict:
+      type: string
+      description: Verify-step verdict (pass, rewrite_needed, fail, or skipped)
     mutations_applied:
       type: array
-      description: Mutations applied across all rewrite iterations
+      description: Mutations applied during the rewrite
     mutations_deferred:
       type: array
       description: Hypothesis-tier findings deferred for user verification
@@ -72,9 +75,9 @@ Inline (as above) + write to file (as above).
 
 Always include a change log section with:
 
-1. **Summary** — one line: type, effort, phases run, convergence metric.
+1. **Summary** — one line: type, effort, grill verdict, convergence metric.
 2. **Audit findings table** — by constraint force (Prohibition → Guardrail → Guideline → Evidence → Hypothesis), with the finding, the lens, and whether it was addressed.
-3. **Grill ratings** — per area (Solid/Partial/Gap).
+3. **Grill verdict** — the decoupled critic's verdict (pass, rewrite_needed, fail, or skipped at low tier) with per-area ratings.
 4. **Mutations applied** — list of mutations with the finding they addressed.
 5. **Deferred findings** — Hypothesis-tier findings the user should verify manually.
 6. **Residual risks** — any remaining concerns.
@@ -91,6 +94,7 @@ Always include a change log section with:
   "phases_run": {{ phases_run | tojson }},
   "audit_findings": {{ audit_findings | tojson }},
   "grill_ratings": {{ grill_ratings | tojson }},
+  "grill_verdict": {{ grill_verdict | tojson }},
   "mutations_applied": {{ mutations_applied | tojson }},
   "mutations_deferred": {{ mutations_deferred | tojson }},
   "convergence_metric": {{ convergence_metric | tojson }}
@@ -105,8 +109,9 @@ Return JSON only:
   "delivered_output": "the full formatted output (inline block + change log, or file confirmation, or both)",
   "output_path_written": "path written or empty string",
   "change_log": {
-    "summary": "type=X effort=Y phases=[1,2,3,4] convergence=0.15",
+    "summary": "type=X effort=Y grill_verdict=pass convergence=0.0",
     "audit_findings_table": "markdown table",
+    "grill_verdict": "pass|rewrite_needed|fail|skipped",
     "grill_ratings": "per-area ratings",
     "mutations_applied": ["list"],
     "deferred_findings": ["list"],

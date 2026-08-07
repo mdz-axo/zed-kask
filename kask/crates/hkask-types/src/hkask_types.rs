@@ -29,7 +29,7 @@ pub mod ports;
 pub mod time;
 pub mod tool_response;
 pub mod tool_schema;
-pub mod tool_taint;
+
 pub mod url_utils;
 pub mod visibility;
 pub mod voice;
@@ -58,7 +58,7 @@ pub use skill::SkillPolarity;
 pub use template::LLMParameters;
 pub use template_type::TemplateType;
 pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
-pub use tool_taint::ToolTaint;
+
 pub use visibility::{Confidence, Dimension, Visibility};
 pub use hmem_ontology::HMemOntology;
 pub use voice::VoiceDesign;

@@ -1,28 +1,25 @@
 # Prompt-Enhance Skill Manifest
-# ℏKask v0.33.0 — Typed prompt enhancement as convergent PDCA
+# hKask v0.34.0 — Streamlined typed prompt enhancement
 #
 # General-purpose prompt enhancement for prompts destined for the zed-kask
 # platform. Typed routing over a 7-type prompt taxonomy (coding, reasoning,
 # creative, classification, extraction, agent-task, meta) with a 3-tier
-# effort knob (low/medium/high). Composes pragmatic-semantics (classifier +
-# provenance), pragmatic-cybernetics (loop diagnosis), essentialist (deletion
-# test on prompt sections), grill-me (decoupled critic), and gpa-evolution
-# (high-effort evolutionary optimization) as phase delegates.
+# effort knob (low/medium/high).
 #
-# Specialized leaf of the self-improvement family tree (Σ-pathway,
-# p-component, intrinsic evaluative feedback signal). Borrows the Kata shape
-# (baseline → target → experiment → measure) but not the 10-iteration outer
-# loop — prompt-enhance is a single-shot service skill.
+# Streamlined from the former 15-step / 13-template / PDCA-loop design to a
+# 4-step / 4-template single-pass pipeline. The former design made 6+ LLM
+# calls per iteration with min_iterations=2 (12+ calls minimum) and crashed
+# the host editor. The audit is now folded into the rewrite step; the 7 typed
+# rewrites are unified into one template; the collector, evolve, convergence
+# check, and PDCA loop are removed.
 #
-# EXECUTOR NOTES (learned from reading executor.rs):
-# - Step field is `condition:` (not `skip_condition:`). Step runs when condition
-#   is true. Supported: ==, !=, <, <=, >, >=, AND, OR, NOT, dot-paths.
-# - Loop steps do NOT evaluate `loop_condition`. They check convergence_field
-#   + threshold + max_iterations only. Carried state must be bound via
-#   input_mapping (keys other than loop_target are written into context).
-# - `condition:` on a loop step is evaluated like any other step; if false,
-#   the loop is skipped (treated as a no-op). We use this to gate the PDCA
-#   loop on the convergence-check's next_action verdict.
+# Steps:
+#   1. Classify  — type + effort + output format (select, 1 LLM call)
+#   2. Rewrite   — inline audit + typed rewrite (select, 1 LLM call)
+#   3. Verify    — decoupled grill-me critic (select, 1 LLM call, medium/high only)
+#   4. Output    — format and deliver (select, 1 LLM call)
+#
+# Max LLM calls: 4 (medium/high), 3 (low — verify skipped). No loop.
 
 manifest:
   id: prompt-enhance
@@ -32,32 +29,36 @@ manifest:
     General-purpose prompt enhancement skill for prompts destined for the
     zed-kask platform. Typed routing over a 7-type prompt taxonomy (coding,
     reasoning, creative, classification, extraction, agent-task, meta) with
-    a 3-tier effort knob (low/medium/high). Composes pragmatic-semantics,
-    pragmatic-cybernetics, essentialist, grill-me, and gpa-evolution as
-    phase delegates. Default output is the enhanced prompt returned inline
-    in a copyable code block; optional file save or both.
+    a 3-tier effort knob (low/medium/high). Single-pass pipeline: classify,
+    rewrite (with inline audit), verify (decoupled critic at medium/high),
+    output. Default output is the enhanced prompt returned inline in a
+    copyable code block; optional file save or both.
   functional_role: flowdef
-  version: 0.33.0
+  version: 0.34.0
   editor: curator-or-human-admin
   visibility: Public
 
 convergence:
-  convergence_mode: "cauchy"
-  cauchy_epsilon: 0.03
-  cauchy_window: 3
-  max_iterations: 10
-  min_iterations: 2
-  on_not_reached: escalate
+  # Single-pass skill — no PDCA loop. max_iterations=1 prevents re-entry.
+  # The convergence block is retained because the compliance test requires
+  # it for skill-category manifests (threshold > 0, max_iterations > 0,
+  # non-empty convergence_field, non-empty on_not_reached).
+  convergence_mode: ""
+  max_iterations: 1
+  min_iterations: 1
+  on_not_reached: proceed
   target_artifacts_field: "current_artifacts"
+  threshold: 0.5
+  convergence_field: "composite"
 
 gas:
-  cap: 150000              # High-tier evolutionary runs are gas-heavy. Calibrate after first run.
+  cap: 30000
   cost_per_iteration: 200
   alert_threshold: 0.8
   hard_limit: true
 
 rjoule:
-  cap: 4                   # Reflection + critique + evolution is inference-heavy.
+  cap: 2
   alert_threshold: 0.8
   hard_limit: true
 
@@ -69,7 +70,7 @@ inputs:
   - name: effort
     type: string
     required: false
-    description: 'Effort tier — low (single rewrite), medium (audit + rewrite + 1 grill round), high (full evolution). Defaults to medium.'
+    description: 'Effort tier — low (classify + rewrite + output), medium (+ verify), high (same as medium with deeper verify). Defaults to medium.'
   - name: output_format
     type: string
     required: false
@@ -84,14 +85,15 @@ inputs:
     description: 'Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any.'
 
 steps:
-  # ─── PHASE 1: CLASSIFY ───
-  # Classify prompt type, validate effort tier, resolve output format,
-  # synthesize proxy eval set (medium/high). Produces the routing decision.
+  # ─── STEP 1: CLASSIFY ───
+  # Classify prompt type, validate effort tier, resolve output format.
+  # Produces the routing decision consumed by step 2.
   - ordinal: 1
     action: select
     description: >
-      Phase 1 — Classify prompt against the 7-type taxonomy, validate effort
-      tier and output format, synthesize proxy eval set for medium/high tiers.
+      Classify prompt against the 7-type taxonomy, validate effort tier and
+      output format. Produces prompt_type, effort_tier, output_format_resolved,
+      and type-specific risks.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-classify.j2
     gas_cap: 6000
@@ -103,297 +105,85 @@ steps:
       output_path: "{{ output_path | default('') }}"
       context: "{{ context | default({}) }}"
 
-  # ─── PHASE 2: AUDIT (medium/high only) ───
-  # condition: run when effort is NOT low. Three lenses: pragmatic-semantics
-  # (always at medium/high), pragmatic-cybernetics (high only), essentialist
-  # G1+G2 (medium) / G1+G2+G3 (high).
+  # ─── STEP 2: REWRITE (inline audit + typed rewrite) ───
+  # Folds the former audit (step 2) + 7-way typed rewrite branch (steps 3-9)
+  # + collector (step 10) into a single LLM call. The template performs the
+  # audit internally and applies type-specific moves based on prompt_type.
   - ordinal: 2
     action: select
     description: >
-      Phase 2 — Audit prompt health via pragmatic-semantics (provenance tracing),
-      pragmatic-cybernetics (loop diagnosis, high only), and essentialist
-      (deletion test on prompt sections). Lens 0 (unresolved-placeholder
-      check) runs at all tiers and emits a universal Prohibition finding for
-      any literal `<PLACEHOLDER>` / `{{ mustache }}` token that the consumer
-      cannot bind. Produces constraint-force-labeled findings that drive
-      Phase 3 mutations.
+      Inline audit + typed rewrite. Scans for unresolved placeholders, semantic
+      fragility, and structural accretion, then applies type-specific rewrite
+      moves to produce the enhanced prompt. Single LLM call.
     renderer: minijinja
-    template_ref: prompt-enhance/enhance-audit.j2
-    gas_cap: 7000
-    timeout_seconds: 90
+    template_ref: prompt-enhance/enhance-rewrite.j2
+    gas_cap: 9000
+    timeout_seconds: 120
     input_mapping:
       prompt: "{{ prompt }}"
       prompt_type: "{{ step_1_result.prompt_type }}"
       effort_tier: "{{ step_1_result.effort_tier }}"
-      semantic_classification: "{{ step_1_result.semantic_classification }}"
-      risks: "{{ step_1_result.risks }}"
-    condition: "step_1_result.effort_tier != 'low'"
+      risks: "{{ step_1_result.risks | default([]) }}"
 
-  # ─── PHASE 3: TYPED REWRITE ───
-  # Routes to one of 7 typed templates based on prompt_type from step 1.
-  # Each step has a condition that runs it only when prompt_type matches.
-  # Only one of steps 3-9 will execute per cascade pass.
+  # ─── STEP 3: VERIFY (medium/high only) ───
+  # Decoupled grill-me critic. Skipped at low tier. Single round at medium,
+  # three escalating rounds at high (the template scales internally based on
+  # effort_tier). Verdict is informational — no PDCA re-entry. If the verdict
+  # is fail, the output step surfaces it in the change log.
   - ordinal: 3
     action: select
-    description: "Phase 3 (coding) — Typed rewrite for coding prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-coding.j2
-    gas_cap: 7000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'coding'"
-
-  - ordinal: 4
-    action: select
-    description: "Phase 3 (reasoning) — Typed rewrite for reasoning prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-reasoning.j2
-    gas_cap: 6000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'reasoning'"
-
-  - ordinal: 5
-    action: select
-    description: "Phase 3 (creative) — Typed rewrite for creative prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-creative.j2
-    gas_cap: 6000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'creative'"
-
-  - ordinal: 6
-    action: select
-    description: "Phase 3 (classification) — Typed rewrite for classification prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-classification.j2
-    gas_cap: 6000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'classification'"
-
-  - ordinal: 7
-    action: select
-    description: "Phase 3 (extraction) — Typed rewrite for extraction prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-extraction.j2
-    gas_cap: 6000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'extraction'"
-
-  - ordinal: 8
-    action: select
-    description: "Phase 3 (agent-task) — Typed rewrite for agent task prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-agent-task.j2
-    gas_cap: 7000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'agent-task'"
-
-  - ordinal: 9
-    action: select
-    description: "Phase 3 (meta) — Typed rewrite for meta-prompts."
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-rewrite-meta.j2
-    gas_cap: 7000
-    timeout_seconds: 90
-    input_mapping:
-      prompt: "{{ prompt }}"
-      findings: "{{ step_2_result.findings | default([]) }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      iteration: "{{ pdca_iteration | default(1) }}"
-      grill_feedback: "{{ step_11_result | default({}) }}"
-    condition: "step_1_result.prompt_type == 'meta'"
-
-  # ─── COLLECTOR (step 10) ───
-  # Canonicalizes the rewrite output into a single context key so downstream
-  # steps don't need nested default() chains across steps 3-9. Uses a select
-  # action with a minimal Jinja template that picks the non-empty result.
-  # The executor stores the result as step_10_result.
-  - ordinal: 10
-    action: select
     description: >
-      Collector — canonicalize the active rewrite step's output into
-      enhanced_prompt and acceptance_criteria context keys. Minimal LLM call;
-      pure context coalescing.
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-collector.j2
-    gas_cap: 1024
-    timeout_seconds: 15
-    input_mapping:
-      candidates:
-        - "{{ step_3_result | default({}) }}"
-        - "{{ step_4_result | default({}) }}"
-        - "{{ step_5_result | default({}) }}"
-        - "{{ step_6_result | default({}) }}"
-        - "{{ step_7_result | default({}) }}"
-        - "{{ step_8_result | default({}) }}"
-        - "{{ step_9_result | default({}) }}"
-
-  # ─── PHASE 4: VERIFY (medium/high only) ───
-  # Decoupled grill-me critic. Tier-scaled rounds: 1 (Recall+Mechanism) at
-  # medium, 3 escalating at high. Verdict drives the convergence metric
-  # (step 13 incorporates grill verdict into re-enter decision).
-  - ordinal: 11
-    action: select
-    description: >
-      Phase 4 — Decoupled critic via grill-me self-challenge across Recall,
-      Mechanism, Rationale, Edge Cases, Synthesis. Tier-scaled rounds.
-      Verdict: pass → proceed; rewrite_needed → convergence metric stays
-      high, forcing PDCA re-entry; fail → escalate to user.
+      Decoupled critic via grill-me self-challenge. Verdict: pass, rewrite_needed,
+      or fail. No re-entry — the verdict is surfaced in the output change log.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-verify.j2
     gas_cap: 6000
     timeout_seconds: 90
     input_mapping:
-      enhanced_prompt: "{{ step_10_result.enhanced_prompt }}"
+      enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"
       original_prompt: "{{ prompt }}"
       prompt_type: "{{ step_1_result.prompt_type }}"
       effort_tier: "{{ step_1_result.effort_tier }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      acceptance_criteria: "{{ step_10_result.acceptance_criteria }}"
-      round: "{{ pdca_iteration | default(1) }}"
+      proxy_eval_set: "{{ step_1_result.proxy_eval_set | default([]) }}"
+      acceptance_criteria: "{{ step_2_result.acceptance_criteria | default([]) }}"
+      round: 1
     condition: "step_1_result.effort_tier != 'low'"
 
-  # ─── PHASE 5: EVOLVE (high only) ───
-  # Delegates to gpa-evolution's pattern: sample trajectories → reflect
-  # (textual gradient) → propose mutations + crossover → test → update
-  # Pareto frontier. Min 2 iterations. Returns frontier's best member.
-  - ordinal: 12
-    action: select
-    description: >
-      Phase 5 — Evolutionary optimization via gpa-evolution delegate. Fires
-      only at high tier. Multi-objective (quality, cost). Min 2 iterations.
-    renderer: minijinja
-    template_ref: prompt-enhance/enhance-evolve.j2
-    gas_cap: 8000
-    timeout_seconds: 180
-    input_mapping:
-      enhanced_prompt: "{{ step_10_result.enhanced_prompt }}"
-      prompt_type: "{{ step_1_result.prompt_type }}"
-      proxy_eval_set: "{{ step_1_result.proxy_eval_set }}"
-      objectives:
-        - name: quality
-          maximize: true
-        - name: cost
-          maximize: false
-      iteration: "{{ pdca_iteration | default(1) }}"
-      frontier: "{{ step_12_result.frontier | default([]) }}"
-    condition: "step_1_result.effort_tier == 'high'"
-
-  # ─── CONVERGENCE CHECK (step 13) ───
-  # Cauchy criterion: iterates stabilized. Deterministic compute step —
-  # no LLM, no timeout. Replaces the former tier-scaled self-grade gate.
-  - ordinal: 13
-    action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  # ─── PDCA LOOP (step 14) ───
-  # The executor checks the Cauchy convergence criterion (via
-  # kata_hypotenuse pushed into context) + max_iterations. Carried state is
-  # bound via input_mapping (keys other than loop_target are written into
-  # context by the executor):
-  #   - prior_convergence_metric: feeds the materiality guard next iteration
-  #   - pdca_iteration: increments the iteration counter
-  #   - phases_completed: accumulates which phases have run
-  #   - kata_hypotenuse: the quality signal the Cauchy criterion tracks
-  - ordinal: 14
-    action: loop
-    description: >
-      Re-enter PDCA cycle from Phase 1 if not converged. Carries
-      prior_convergence_metric and increments pdca_iteration. The Cauchy
-      criterion detects when the iterates have stopped moving.
-    gas_cap: 1000
-    timeout_seconds: 30
-    input_mapping:
-      loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_12_result.convergence_metric | default(step_10_result.convergence_metric | default(1.0)) }}"
-      prior_convergence_metric: "{{ step_13_result.hypotenuse | default(1.0) }}"
-      pdca_iteration: "{{ (pdca_iteration | default(1)) + 1 }}"
-
-  # ─── OUTPUT (step 15) ───
+  # ─── STEP 4: OUTPUT ───
   # Format per output_format: inline (fenced code block, default),
   # file (write to path), or both. Always include change log.
-  - ordinal: 15
+  - ordinal: 4
     action: select
     description: >
-      ACT phase — Format and deliver the enhanced prompt per output_format
-      (inline/file/both). Always include a change log with audit findings
-      table, grill ratings, mutations applied, deferred findings, residual
-      risks.
+      Format and deliver the enhanced prompt per output_format
+      (inline/file/both). Always include a change log with audit findings,
+      grill verdict, mutations applied, and deferred findings.
     renderer: minijinja
     template_ref: prompt-enhance/enhance-output.j2
     gas_cap: 4000
     timeout_seconds: 60
     input_mapping:
-      enhanced_prompt: "{{ step_12_result.best_member | default(step_10_result.enhanced_prompt) }}"
+      enhanced_prompt: "{{ step_2_result.enhanced_prompt }}"
       original_prompt: "{{ prompt }}"
       prompt_type: "{{ step_1_result.prompt_type }}"
       effort_tier: "{{ step_1_result.effort_tier }}"
       output_format_resolved: "{{ step_1_result.output_format_resolved }}"
       output_path_resolved: "{{ step_1_result.output_path_resolved }}"
-      phases_run: "{{ phases_completed | default([]) }}"
-      audit_findings: "{{ step_2_result.findings | default([]) }}"
-      grill_ratings: "{{ step_11_result.ratings | default([]) }}"
-      mutations_applied: "{{ step_10_result.mutations_applied | default([]) }}"
-      mutations_deferred: "{{ step_10_result.mutations_deferred | default([]) }}"
-      convergence_metric: "{{ step_13_result.hypotenuse | default(1.0) }}"
+      phases_run: "{{ step_1_result.routing | default({}) }}"
+      audit_findings: "{{ step_2_result.audit_findings | default([]) }}"
+      grill_ratings: "{{ step_3_result.ratings | default([]) }}"
+      grill_verdict: "{{ step_3_result.verdict | default('skipped') }}"
+      mutations_applied: "{{ step_2_result.mutations_applied | default([]) }}"
+      mutations_deferred: "{{ step_2_result.mutations_deferred | default([]) }}"
+      convergence_metric: 0.0
 
 error_handling:
   on_gas_exceeded: abort
-  on_timeout: retry
+  on_timeout: abort
   max_retries: 1
   retry_backoff_seconds: 1
   on_validation_failure: abort
 
-# Regulation: prompt-enhance is a curation activity — the Curator optimizes
-# prompts. Uses the canonical reg.skill namespace. Emits tracing events
-# under reg.skill.prompt-enhance with operation fields specific to the
-# enhancement pipeline.
 ledger:
   emit_spans: true
   span_namespace: reg.skill.prompt-enhance
@@ -405,7 +195,7 @@ ledger:
 audit:
   enabled: true
   log_level: info
-  include_input: true
+  include_input: false
   include_output: true
   include_gas_cost: true
   include_reg_events: true

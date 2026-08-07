@@ -39,6 +39,22 @@ pub(crate) fn evaluate_step_condition(condition: &str, context: &HashMap<String,
         return eval_step_comparison(lhs, op, rhs, context);
     }
 
+    // Literal boolean strings rendered by Jinja/minijinja when a `{{ ... }}`
+    // condition expression evaluates to a boolean. minijinja renders Rust `bool`
+    // via `bool::fmt` (lowercase "true"/"false"), but templates authored against
+    // Python Jinja2 conventions or post-processed may also yield capitalized
+    // "True"/"False". Without this recognition, a rendered boolean string is
+    // treated as a missing context key (the `None => false` arm below) and the
+    // step is silently skipped — every Jinja-boolean condition gate is a no-op.
+    // This mirrors `resolve_operand`'s JSON-literal handling for the comparison
+    // path; context keys (checked below) still take precedence, so a key
+    // literally named "true" is read as that key first.
+    match condition {
+        "true" | "True" => return true,
+        "false" | "False" => return false,
+        _ => {}
+    }
+
     // Simple variable check: is it truthy in context?
     // Also resolve dot-paths like "step_1_result.intervention_needed"
     let key = condition;
@@ -231,5 +247,28 @@ mod tests {
         let mut ctx = HashMap::new();
         ctx.insert("v".into(), Value::Null);
         assert!(evaluate_step_condition("v == null", &ctx));
+    }
+
+    // Rendered-boolean-string gating — a `{{ ... == ... }}` Jinja condition
+    // renders to a boolean string (minijinja emits lowercase "true"/"false";
+    // Python-Jinja2-style "True"/"False" is also accepted for robustness).
+    // Before this fix, the simple-variable branch treated the rendered string
+    // as a missing context key (`None => false`) and skipped every Jinja-
+    // boolean condition gate, regardless of the actual boolean value. This
+    // silently disabled every FlowDef step gated on `{{ mode == '...' }}`,
+    // causing cascades to run all-skipped and bail with "convergence not
+    // reached" (skill-maintenance, graph-audit, etc.).
+    #[test]
+    fn step_condition_recognizes_rendered_boolean_strings() {
+        let empty: HashMap<String, Value> = HashMap::new();
+        // minijinja (Rust bool::fmt) — lowercase.
+        assert!(evaluate_step_condition("true", &empty));
+        assert!(!evaluate_step_condition("false", &empty));
+        // Python-Jinja2-style capitalized — accepted for robustness.
+        assert!(evaluate_step_condition("True", &empty));
+        assert!(!evaluate_step_condition("False", &empty));
+        // Whitespace is trimmed by the executor before evaluation.
+        assert!(evaluate_step_condition("  true  ", &empty));
+        assert!(!evaluate_step_condition("  False  ", &empty));
     }
 }

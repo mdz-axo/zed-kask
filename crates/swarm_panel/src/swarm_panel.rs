@@ -26,6 +26,7 @@
 //! survives panel close and restart, and every turn is ingested into the
 //! curator's sovereign memory for cross-composition learning.
 
+mod agent_edit;
 mod author;
 mod card;
 mod compose;

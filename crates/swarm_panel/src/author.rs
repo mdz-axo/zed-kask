@@ -72,6 +72,7 @@ impl AuthorForm {
                 e
             }),
             agent_type: "research".to_string(),
+            editing_id: None,
             tags: cx.new(|cx| {
                 let mut e = Editor::single_line(window, cx);
                 e.set_placeholder_text("tag1, tag2, tag3 (comma-separated)", window, cx);
@@ -115,8 +116,11 @@ impl SwarmPanel {
     pub(crate) fn render_author(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors().border;
         let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
+        let is_editing = self.author.editing_id.is_some();
         let create_label = if self.author.busy {
-            "Creating…"
+            if is_editing { "Updating…" } else { "Creating…" }
+        } else if is_editing {
+            if is_local { "Update Local Agent" } else { "Update Agent" }
         } else if is_local {
             "Create Local Agent"
         } else {
@@ -448,7 +452,7 @@ impl SwarmPanel {
                                  The catalogue may apply its own validation."
                             }))
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.create_agent(cx);
+                                this.save_agent(cx);
                             })),
                     )
                     .when_some(self.author.status.clone(), |this, status| {

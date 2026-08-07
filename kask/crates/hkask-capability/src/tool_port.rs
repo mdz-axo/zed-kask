@@ -89,5 +89,5 @@ pub struct ToolInfo {
     /// Defaults to `Pure` (no side effects, no external data).
     /// `Source`: returns untrusted data. `Sink`: state-changing.
     /// `Endorser`: trusted extraction from untrusted input.
-    pub taint: hkask_types::ToolTaint,
+    pub taint: crate::tool_taint::ToolTaint,
 }
