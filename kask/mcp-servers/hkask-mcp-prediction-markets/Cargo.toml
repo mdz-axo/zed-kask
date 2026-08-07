@@ -37,6 +37,7 @@ chrono = { workspace = true }
 uuid.workspace = true
 reqwest.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots", "tokio-runtime"] }
 futures.workspace = true
 

@@ -29,6 +29,7 @@ pub mod base_event;
 pub mod cache;
 pub mod calibration;
 pub mod cmp;
+pub mod cmp_index_builder;
 pub mod cmp_portfolio;
 pub mod economic_object;
 pub mod matcher;

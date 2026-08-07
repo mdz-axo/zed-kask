@@ -4220,13 +4220,14 @@ mod tests {
 
         // F4: algedonic threshold → variety_max_deficit mapping. The constant
         // DEFAULT_VARIETY_MAX_DEFICIT is the scaling base; removing it breaks
-        // the F4 wiring in main().
-        let _ = std::any::TypeId::of::<hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT>();
+        // the F4 wiring in main(). Reading the const value pins it (a const
+        // is not a type — `TypeId::of::<CONST>()` does not compile).
+        let _ = hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT;
 
         // F5: swarm-panel gas budget persona. SWARM_PANEL_CALL_CAP is the
         // call cap seeded for the swarm-panel persona; removing it breaks
-        // the F5 wiring in main().
-        let _ = std::any::TypeId::of::<u32>(); // SWARM_PANEL_CALL_CAP is a u32 const — pinned by F5's block reachability.
+        // the F5 wiring in main(). Reading the const value pins it.
+        let _ = SWARM_PANEL_CALL_CAP;
 
         // F6: CyberneticsLoop and MetacognitionLoop must be accessible.
         let _ = std::any::TypeId::of::<hkask_regulation::CyberneticsLoop>();
@@ -4239,14 +4240,18 @@ mod tests {
         let _ = std::any::TypeId::of::<kask_bridge::KaskSettings>();
 
         // F10: curator.always_on gating field — the setting that gates tick cycles.
-        let _ = std::any::TypeId::of::<bool>(); // KaskSettings.curator.always_on is a bool — pinned by F9's KaskSettings reachability.
+        // Pinning the field type via KaskCuratorSettings ensures the struct
+        // and its always_on field exist; removing the field breaks compilation.
+        let _ = std::any::TypeId::of::<kask_bridge::KaskCuratorSettings>();
 
         // F6: McpRuntime must be accessible.
         let _ = std::any::TypeId::of::<hkask_mcp::McpRuntime>();
 
-        // F25: sync_kask_mcp_runtime_servers — must be callable with the documented signature.
-        // This is the governed McpRuntime restart path; removing it breaks the F25 wiring.
-        let _ = std::any::TypeId::of::<fn(
+        // F25: sync_kask_mcp_runtime_servers — must be accessible as a fn
+        // item (not just a function pointer type). Referencing the fn value
+        // pins both its existence and its name; renaming or deleting it
+        // breaks compilation here.
+        let _ = sync_kask_mcp_runtime_servers as fn(
             std::sync::Arc<hkask_mcp::McpRuntime>,
             std::sync::Arc<
                 std::sync::Mutex<
@@ -4254,7 +4259,7 @@ mod tests {
                 >,
             >,
             &mut gpui::App,
-        )>();
+        );
 
         // If this test compiles, the functional units' key symbols are
         // present. Removing any wiring function/type breaks compilation here.
