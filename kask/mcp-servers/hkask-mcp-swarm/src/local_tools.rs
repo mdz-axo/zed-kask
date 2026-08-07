@@ -28,9 +28,8 @@ fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, Mc
         "contains" => Ok(response.contains(spec)),
         "not_contains" => Ok(!response.contains(spec)),
         "regex" => {
-            let re = regex::Regex::new(spec).map_err(|e| {
-                McpToolError::invalid_argument(format!("invalid regex spec: {e}"))
-            })?;
+            let re = regex::Regex::new(spec)
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid regex spec: {e}")))?;
             Ok(re.is_match(response))
         }
         other => Err(McpToolError::invalid_argument(format!(

@@ -1,7 +1,7 @@
 ---
 name: swarm-intelligence
 visibility: public
-description: "Convergent swarm-composition process for agent swarms. Senses swarm state against the Onto4MAT multi-agent teaming ontology and the swarm backend's APIs; orients via Ashby's requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning, ACO pheromone deposition, and Reynolds separation/alignment/cohesion; acts via gated swarm_delegate/swarm_delegate_local calls with a budget gate; checks spend against the algedonic channel; converges via a Cauchy criterion on the swarm-state distance metric. Mode-aware (v2 §15): abw mode fetches from ABW REST and delegates via swarm_delegate; local mode reads the local agent registry + ledger and delegates via swarm_delegate_local. Anchored to Reynolds flocking, Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT, W3C SSN/SOSA, Thagard coherence, and Ashby requisite variety. Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
+description: "Convergent swarm-composition process for agent swarms. Senses swarm state against the Onto4MAT multi-agent teaming ontology and the swarm backend's APIs; orients via Ashby's requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning, ACO pheromone deposition, and Reynolds separation/alignment/cohesion; acts via gated swarm_delegate/swarm_delegate_local calls with a budget gate; checks spend against the algedonic channel; converges via a Cauchy criterion on the swarm-state distance metric. Mode-aware (v2 §15): abw mode fetches from ABW REST and delegates via swarm_delegate; local mode reads the local agent registry + ledger and delegates via swarm_execute_plan_local (batch) or swarm_delegate_local (single). Anchored to Reynolds flocking, Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT, W3C SSN/SOSA, Thagard coherence, and Ashby requisite variety. Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
 ---
 
 # Swarm Intelligence
@@ -27,8 +27,8 @@ workspaces. (Verified live 2026-08-01.)
 ## Surface ontologies
 
 - **Onto4MAT** (Kiesel et al. 2022): `Team { hasAlignmentWithTeam,
-  hasCohesionWithTeam, hasTeamSeparation, hasInfluence }`, `Agent { hasSpeed,
-  hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
+hasCohesionWithTeam, hasTeamSeparation, hasInfluence }`, `Agent { hasSpeed,
+hasHeading, hasEnergy, hasDistanceToGoal }`, `Formation`. The measurable
   substrate for swarm state.
 - **Reynolds (1987) flocking**: separation / alignment / cohesion — three
   local rules sufficient for emergent flocking. Scale-invariant (Labra 2026).
@@ -53,6 +53,7 @@ workspaces. (Verified live 2026-08-01.)
 - Reconcile swarm spend against the ABW wallet (close the algedonic channel)
 
 Do NOT use for:
+
 - Dispatching a single ABW agent without composition intent (use the
   `swarm_panel` UI directly)
 - General multi-agent coordination theory outside ABW (the skill's vocabulary
@@ -86,6 +87,7 @@ LLM template cannot reliably maintain a running set/sum across LOOP iterations.
 ## Target condition (measurable)
 
 A swarm is well-composed for a task when three conditions hold simultaneously:
+
 1. **Requisite variety** (Ashby): `variety_coverage >= 0.9` — the hired
    agents' `accepts[]`/`produces[]` cover the task's required transforms.
 2. **Coherence without premature convergence**: `diversity >= 0.25` (≥¼ of
@@ -117,25 +119,25 @@ The skill integrates the Cybernetic Swarm Plan's deterministic components
 LLM template cannot reliably maintain a running set/sum across LOOP
 iterations, so the enforcement points live in the deterministic math layer.
 
-| Component | What | Enforcement point |
-|-----------|------|--------------------|
-| **C0** task-success `s` | Deterministic evaluator verdict → fourth axis of `d` | CHECK template + manifest `task_success` input |
-| **C1** second-order monitor | Reasoning-loop + sensor-truth-divergence detection over the iteration log | `swarm.second_order_monitor` compute step (9) |
-| **C2** Go See cadence | Scheduled human check every N convergences + event trigger | `cadence_every` param in the monitor; SENSE surfaces `go_see` |
-| **C3** failed-edit memory | Anti-loop set; the FILTER drops moves matching prior failed signatures | `swarm.filter_proposed_moves` compute step (4) |
-| **C4** latency `T_q` | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on) |
-| **C5** fault attribution | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → binary `tool_calls[].ok`/`executed_skills[].ok`; fault-count aggregation | ORIENT template (rules 1-6) + `swarm.converge_accumulate` `fault_count`. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning cascade emits intents, not executed results). See Steering modes below. |
-| **C6** reconfigure_agent | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis) | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode). |
-| **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm | `swarm.filter_proposed_moves` compute step (4) |
-| **C8** task-gated alignment | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port) | SENSE template `alignment` definition |
+| Component                           | What                                                                                                                                                                                                            | Enforcement point                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **C0** task-success `s`             | Deterministic evaluator verdict → fourth axis of `d`                                                                                                                                                            | CHECK template + manifest `task_success` input                                                                                                                                                                                                                                                                                                  |
+| **C1** second-order monitor         | Reasoning-loop + sensor-truth-divergence detection over the iteration log                                                                                                                                       | `swarm.second_order_monitor` compute step (9)                                                                                                                                                                                                                                                                                                   |
+| **C2** Go See cadence               | Scheduled human check every N convergences + event trigger                                                                                                                                                      | `cadence_every` param in the monitor; SENSE surfaces `go_see`                                                                                                                                                                                                                                                                                   |
+| **C3** failed-edit memory           | Anti-loop set; the FILTER drops moves matching prior failed signatures                                                                                                                                          | `swarm.filter_proposed_moves` compute step (4)                                                                                                                                                                                                                                                                                                  |
+| **C4** latency `T_q`                | End-to-end delegation latency measurement → ORIENT surfaces latency outliers → DECIDE reconfigures slow agents                                                                                                  | `LocalDelegateResult.latency_ms` → ORIENT `latency_outliers` → DECIDE `reconfigure_agent` (regulated, audit 2026-08-03; previously sensed but not acted on)                                                                                                                                                                                     |
+| **C5** fault attribution            | Deterministic priority rule over the delegate trace — per-delegation `task_success` (highest fidelity) → whole-task terminal failure → binary `tool_calls[].ok`/`executed_skills[].ok`; fault-count aggregation | ORIENT template (rules 1-6) + `swarm.converge_accumulate` `fault_count`. `task_success` is the Loop B fidelity fix (audit 2026-08-03); `llm_judged` provenance is downgraded (Gap S3). Fires only when `delegate_results` execution telemetry is supplied (the planning cascade emits intents, not executed results). See Steering modes below. |
+| **C6** reconfigure_agent            | Re-prompt a blamed agent in place (Modify-Block / MASS prompt axis)                                                                                                                                             | `swarm_reconfigure_local_agent` tool + DECIDE move type. Active only when C5 has fault telemetry (steering mode).                                                                                                                                                                                                                               |
+| **C7** influence-weighted rejection | Reject re-hire of agent types measured to degrade the swarm                                                                                                                                                     | `swarm.filter_proposed_moves` compute step (4)                                                                                                                                                                                                                                                                                                  |
+| **C8** task-gated alignment         | Task-conditional edge relevance in SENSE (OFA-MAS TAGSE port)                                                                                                                                                   | SENSE template `alignment` definition                                                                                                                                                                                                                                                                                                           |
 
 ## Composed Skills
 
-| Skill | Role | When Invoked |
-|-------|------|-------------|
-| `pragmatic-cybernetics` | 5-property loop assessment + Ashby variety + VSM | ORIENT, when deficit is a loop-break |
-| `kata-improvement` | Cauchy convergence pattern (`kata.convergence_check`) | CONVERGE (compute step) |
-| `essentialist` | Deletion-test proposed phases | Design-time (applied to the skill itself) |
+| Skill                   | Role                                                  | When Invoked                              |
+| ----------------------- | ----------------------------------------------------- | ----------------------------------------- |
+| `pragmatic-cybernetics` | 5-property loop assessment + Ashby variety + VSM      | ORIENT, when deficit is a loop-break      |
+| `kata-improvement`      | Cauchy convergence pattern (`kata.convergence_check`) | CONVERGE (compute step)                   |
+| `essentialist`          | Deletion-test proposed phases                         | Design-time (applied to the skill itself) |
 
 ## Steering modes (the execution boundary)
 
@@ -157,10 +159,13 @@ The Kask Curator (`Agent::Curator`, `CURATOR_AGENT_ID`) is the in-process agent
 that runs zed-kask — it has governed tool access (the MCP servers via
 `McpRuntime`), its own sovereign memory, and the regulation/metacognition
 loops. In steering mode, the Curator executes the plan by calling
-`swarm_delegate_local` for each emitted call, collects the `LocalDelegateResult`
-objects, and re-invokes swarm-intelligence with `delegate_results` set to that
-array — closing the feedback loop without a new FlowDef execution surface (the
-Curator's normal tool-call turn IS the execution).
+`swarm_execute_plan_local` with the emitted_calls as delegations (each with
+an optional deterministic evaluator), which runs all delegations, evaluates
+results, and returns the collected `LocalDelegateResult` array with
+`task_success` verdicts stamped. The Curator re-invokes swarm-intelligence
+with `delegate_results` set to that array — closing the feedback loop without
+a new FlowDef execution surface (the Curator's normal tool-call turn IS the
+execution).
 
 ### Cloud swarms — Xaman Ek
 
@@ -181,10 +186,12 @@ today the Curator can steer with swarm-intelligence in steering mode directly.
 
 ### The `delegate_results` contract (C5/C6 activation)
 
-`delegate_results` is an array of `swarm_delegate_local` results
+`delegate_results` is an array of `swarm_execute_plan_local` results
 (`LocalDelegateResult`-shaped): `agent_id`, `response`, `model`, `tokens_used`,
 `cost`, `balance`, `latency_ms`, `tool_calls[]` (each `{tool, ok, error?}`),
-`executed_skills[]` (each `{skill, ok, error?}`). ORIENT attributes fault from
+`executed_skills[]` (each `{skill, ok, error?}`), `task_success` (optional
+deterministic verdict). ORIENT attributes fault from
+`delegate_results[].task_success.pass` (highest fidelity, when present) and
 `delegate_results[].tool_calls[].ok` / `executed_skills[].ok`; `fault_count`
 accumulates; C6 reconfigures the most-blamed agent. Absent `delegate_results`,
 C5/C6 are inert (the planning cascade has no execution telemetry).

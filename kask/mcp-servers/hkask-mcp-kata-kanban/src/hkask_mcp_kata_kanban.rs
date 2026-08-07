@@ -216,10 +216,7 @@ impl KanbanServer {
                         "board {bid} is not owned by caller — cannot delete"
                     )));
                 }
-                let tasks_deleted = self
-                    .service
-                    .board_delete(bid)
-                    .map_err(map_kanban_error)?;
+                let tasks_deleted = self.service.board_delete(bid).map_err(map_kanban_error)?;
                 serde_json::to_value(BoardDeleteResponse {
                     board_id: bid.to_string(),
                     tasks_deleted,
@@ -1055,7 +1052,7 @@ impl KanbanServer {
                     has_result: task.delegate_result.is_some(),
                     delegate_result: task.delegate_result.clone(),
                     deterministic_verdict: task.deterministic_verdict.clone(),
-                    swarm_id: task.swarm_id.clone(),
+                    swarm_id: task.swarm_id,
                     ontology: kanban_type_to_pko("kanban_task_delegate_result")
                         .map(|s| s.to_string()),
                 })

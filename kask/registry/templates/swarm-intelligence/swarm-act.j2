@@ -108,6 +108,9 @@ For each Proceed decision, emit the corresponding hkask-mcp-swarm local call:
   (`agents/local/curated/<id>/agent_card.json`). No `workspace_id` — the
   workspace is the session (§15.1.9 rejected workspace_id on local tools).
   No consent token — the balance check is the gate.
+  In steering mode, batch all delegate calls into a single
+  `swarm_execute_plan_local` call instead (see Step 5) — the tool runs
+  each delegation, evaluates results, and returns the collected array.
 - `remove` → `swarm_remove_local` with `{ agent_name }` (the local
   counterpart of firing — deletes the card; a synced card's ABW agent is
   untouched).
@@ -182,20 +185,19 @@ emitted_calls and feeds the results back. Emit a `steering_directive` object:
 ```json
 {
   "execute": "<the emitted_calls array — the plan to run>",
-  "via": "swarm_delegate_local" (local) | "swarm_xaman" (cloud),
-  "collect": "LocalDelegateResult per emitted call — feed back as delegate_results on the next swarm-intelligence invocation",
+  "via": "swarm_execute_plan_local" (local) | "swarm_xaman" (cloud),
+  "collect": "LocalDelegateResult array with task_success verdicts stamped — feed back as delegate_results on the next swarm-intelligence invocation",
   "feedback": "re-invoke swarm-intelligence with delegate_results set to the collected results so ORIENT attributes fault and C6 reconfigures"
 }
 ```
 
-The Curator (local) calls `swarm_delegate_local` for each emitted call,
-collects the `LocalDelegateResult` objects, and re-invokes swarm-intelligence
-with `delegate_results` set to that array — closing the feedback loop
-autonomously (Option B). For cloud swarms, delegate to Xaman Ek via
-`swarm_xaman` with the plan as the message; Xaman Ek has steering **built in**
-(cloud-side) and executes the plan. Locally, the Kask Curator steers using
-swarm-intelligence itself, OR a more focused swarm steering skill (a future
-artifact codifying just the execute-and-feed-back loop).
+The Curator (local) calls `swarm_execute_plan_local` with the emitted_calls
+as delegations (each with an optional deterministic evaluator), collects the
+returned `LocalDelegateResult` array (with `task_success` verdicts already
+stamped by the tool), and re-invokes swarm-intelligence with `delegate_results`
+set to that array — closing the feedback loop in one tool call. For cloud
+swarms, delegate to Xaman Ek via `swarm_xaman` with the plan as the message;
+Xaman Ek has steering **built in** (cloud-side) and executes the plan.
 {% else %}
 In advisory mode (the default), the plan IS the final output. Set
 steering_directive = null — the operator executes the emitted_calls manually

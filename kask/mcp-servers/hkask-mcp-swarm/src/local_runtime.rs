@@ -458,7 +458,7 @@ impl LocalSwarmRuntime {
 pub(crate) const MAX_FANOUT: usize = 10;
 
 /// Result of a local delegation.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct LocalDelegateResult {
     pub agent_id: String,
     pub response: String,
@@ -497,7 +497,9 @@ pub struct LocalDelegateResult {
 /// (Cybernetic Swarm Plan C0) requires a deterministic judge; an `llm_judged`
 /// provenance is flagged so ORIENT can warn rather than trust the verdict —
 /// the audit's Gap S3 (advertised determinism, enforced by convention).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskSuccessProvenance {
     /// Deterministic evaluator: test pass/fail, schema validation, exit code,
@@ -517,7 +519,7 @@ pub enum TaskSuccessProvenance {
 /// declared evaluator against the delegation `response`. The server returns
 /// `None`; the executor populates this. ORIENT consumes it for C5/C6 fault
 /// attribution (audit Loop B fidelity fix, 2026-08-03).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct TaskSuccessVerdict {
     /// Whether the delegation's output solved the task per the evaluator.
     pub pass: bool,

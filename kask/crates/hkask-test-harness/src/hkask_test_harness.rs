@@ -96,31 +96,29 @@ where
 ///
 /// Scales best — check properties of the output, not the output itself.
 /// The check function receives `(input, output)` and returns `Ok(())` if the
-/// invariant holds, or `Err(message)` if it is violated. The error type is
-/// generic over any [`Display`](std::fmt::Display) type, so callers may return
-/// `String` or a structured `thiserror` enum — the message is stringified into
-/// [`OracleVerdict::Fail`].
+/// invariant holds, or `Err(message)` if it is violated. The `String` payload
+/// is a human-readable verdict message (fed to [`OracleVerdict::Fail`]), not a
+/// recoverable error — it is never matched on variants, so `String` is the
+/// correct type rather than a structured enum. Exempted from the
+/// `Result<_, String>` gate by the test-harness exclusion in
+/// `scripts/check-string-errors.sh`.
 #[must_use]
-pub fn oracle_invariant<F, E>(check: F) -> Box<dyn Oracle>
+pub fn oracle_invariant<F>(check: F) -> Box<dyn Oracle>
 where
-    F: Fn(&JsonValue, &JsonValue) -> Result<(), E> + Send + Sync + 'static,
-    E: std::fmt::Display + Send + Sync + 'static,
+    F: Fn(&JsonValue, &JsonValue) -> Result<(), String> + Send + Sync + 'static,
 {
-    struct InvariantOracle<F, E>(F, std::marker::PhantomData<E>);
-    impl<F, E> Oracle for InvariantOracle<F, E>
+    struct InvariantOracle<F>(F);
+    impl<F> Oracle for InvariantOracle<F>
     where
-        F: Fn(&JsonValue, &JsonValue) -> Result<(), E> + Send + Sync,
-        E: std::fmt::Display + Send + Sync,
+        F: Fn(&JsonValue, &JsonValue) -> Result<(), String> + Send + Sync,
     {
         fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict {
             match (self.0)(input, output) {
                 Ok(()) => OracleVerdict::Pass,
-                Err(msg) => OracleVerdict::Fail(msg.to_string()),
+                Err(msg) => OracleVerdict::Fail(msg),
             }
         }
     }
-    Box::new(InvariantOracle(check, std::marker::PhantomData))
-}
     Box::new(InvariantOracle(check))
 }
 

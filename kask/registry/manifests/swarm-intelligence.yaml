@@ -149,13 +149,14 @@ inputs:
     required: false
     description: >
       Operator- or Kask-Curator-supplied execution telemetry (Cybernetic Swarm
-      Plan C5): an array of `swarm_delegate_local` results (LocalDelegateResult-
+      Plan C5): an array of `swarm_execute_plan_local` results (LocalDelegateResult-
       shaped: agent_id, response, model, tokens_used, cost, balance, latency_ms,
       tool_calls[] (each {tool, ok, error?}), executed_skills[] (each {skill, ok,
-      error?})). The planning cascade's ACT emits dispatch intents, not executed
-      outcomes; delegate_results is what ORIENT attributes fault from. Absent in
-      the pure planning cascade (C5/C6 inert); present when the operator or the
-      Kask Curator executes the plan via swarm_delegate_local and feeds the
+      error?}), task_success (optional deterministic verdict)). The planning
+      cascade's ACT emits dispatch intents, not executed outcomes;
+      delegate_results is what ORIENT attributes fault from. Absent in the
+      pure planning cascade (C5/C6 inert); present when the operator or the
+      Kask Curator executes the plan via swarm_execute_plan_local and feeds the
       results back (Option A manual feed / Option B Curator-steered execution).
   - name: steering_mode
     type: string
@@ -168,6 +169,19 @@ inputs:
       autonomously (Option B). In steering mode, ACT emits a steering_directive
       the Curator acts on. The skill's planning logic is mode-agnostic; the mode
       governs the output framing and the execution boundary.
+  - name: kanban_board_id
+    type: string
+    required: false
+    description: >
+      Optional kanban board id. When provided, the SENSE phase reads the
+      board's task list via `kanban_task_list` and uses the task statuses +
+      `delegate_result` fields as the durable swarm-state input, alongside
+      the stigmergic memory query. This makes the kanban board the durable,
+      human-inspectable coordination surface for the swarm. When absent, SENSE
+      reads stigmergic memory only (current behavior). The kanban board is the
+      source of truth for task state; SENSE reads it, it does not write it —
+      task state transitions go through `kanban_task_move` / `kanban_task_spawn`,
+      not direct SENSE writes.
 
 steps:
   - ordinal: 1
@@ -198,6 +212,7 @@ steps:
       # the stigmergy read (prior delegation performance annotations). Without
       # this mapping, the SENSE template cannot compute per-agent metrics.
       delegate_results: "{{ delegate_results | default(none) }}"
+      kanban_board_id: "{{ kanban_board_id | default('') }}"
 
   - ordinal: 2
     action: select
@@ -225,11 +240,12 @@ steps:
       # Cybernetic Swarm Plan C5: delegate_results is the operator- or
       # Kask-Curator-supplied execution telemetry — an array of
       # LocalDelegateResult-shaped objects (agent_id, tool_calls[].ok,
-      # executed_skills[].ok, response) from a real swarm_delegate_local run.
-      # The planning cascade's ACT emits intents (emitted_calls), not outcomes;
-      # delegate_results is what ORIENT attributes fault from. Absent in the
-      # pure planning cascade (C5/C6 inert); present when the operator or the
-      # Kask Curator executes the plan and feeds results back (Option A / B).
+      # executed_skills[].ok, response, task_success) from a real
+      # swarm_execute_plan_local run. The planning cascade's ACT emits intents
+      # (emitted_calls), not outcomes; delegate_results is what ORIENT
+      # attributes fault from. Absent in the pure planning cascade (C5/C6
+      # inert); present when the operator or the Kask Curator executes the plan
+      # and feeds results back (Option A / B).
       delegate_results: "{{ delegate_results | default(none) }}"
 
   - ordinal: 3

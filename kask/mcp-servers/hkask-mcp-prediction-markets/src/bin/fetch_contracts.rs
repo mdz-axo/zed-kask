@@ -313,14 +313,19 @@ async fn fetch_kalshi_event_async(
         .await
         .map_err(|e| anyhow::anyhow!("body read failed: {e}"))?;
     if !status.is_success() {
-        return Err(anyhow::anyhow!("HTTP {}: {}", status, &body[..body.len().min(200)]));
+        return Err(anyhow::anyhow!(
+            "HTTP {}: {}",
+            status,
+            &body[..body.len().min(200)]
+        ));
     }
     #[derive(Deserialize)]
     struct Resp {
         #[serde(default)]
         markets: Vec<KalshiMarket>,
     }
-    let resp: Resp = serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
+    let resp: Resp =
+        serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
     Ok(resp.markets)
 }
 

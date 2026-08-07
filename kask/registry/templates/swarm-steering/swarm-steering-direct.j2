@@ -78,16 +78,29 @@ required_credits, agents_present, missing_agents }.
 
 ## Step 2 — Execution sequence
 
-For each emitted call with `move_type: "delegate"`, produce one entry in
-`execution_sequence`:
+The executor calls `swarm_execute_plan_local` once with all delegate entries
+as a single `delegations` array — the tool runs each delegation, evaluates
+each result (when an evaluator is provided), and returns the collected
+`LocalDelegateResult` array with `task_success` verdicts stamped. The
+execution_sequence is the input to that single tool call:
 ```json
 {
-  "tool": "swarm/swarm_delegate_local",
-  "agent_name": "<the emitted call's agent>",
-  "task": "<the task text for this delegation — derived from the plan and the overall task>",
-  "credits_authorized": "<min(the emitted call's credits_authorized, the per-dispatch ceiling)>"
+  "tool": "swarm/swarm_execute_plan_local",
+  "delegations": [
+    {
+      "agent_name": "<the emitted call's agent>",
+      "task": "<the task text for this delegation>",
+      "credits_authorized": "<min(the emitted call's credits_authorized, the per-dispatch ceiling)>",
+      "evaluator": { "evaluator": "contains|not_contains|regex", "spec": "<the deterministic check spec>" }
+    }
+  ]
 }
 ```
+
+The `evaluator` field is optional — omit it for open-ended tasks with no
+oracle (the tool leaves `task_success` null). When provided, the tool stamps
+`provenance: Deterministic` automatically. For a standalone single-delegation
+check, use `swarm_evaluate_local` instead.
 
 Emitted calls that are NOT delegations (`hire`, `remove`, `reconfigure_agent`,
 `create`) are composition changes, not executions — the executor applies them
@@ -102,11 +115,11 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 `delegate_results` array that feeds back to swarm-intelligence:
 ```json
 {
-  "collect": "For each entry in execution_sequence, call swarm_delegate_local and collect the returned LocalDelegateResult object (agent_id, response, model, tokens_used, cost, balance, latency_ms, tool_calls[], executed_skills[], task_success).",
-  "task_success": "After each delegation, if the operator declared a deterministic evaluator for the task (test pass/fail, schema validation, exit code, regex/reference match), run it against the delegation `response` and stamp `task_success = { pass: bool, score?: number, detail?: string, provenance: 'deterministic' }` onto the result. When the task has no oracle (open-ended), leave `task_success = null`. NEVER use an LLM to judge task_success — provenance must be 'deterministic'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3). This is the Loop B fidelity fix: it lets ORIENT attribute fault to an agent that executed cleanly but produced the wrong output.",
+  "collect": "Call swarm_execute_plan_local with the delegations array. The tool returns { results: [LocalDelegateResult], total_cost, total_tokens, balance, failed, succeeded }. The results array is the delegate_results array — each entry has agent_id, response, model, tokens_used, cost, balance, latency_ms, tool_calls[], executed_skills[], task_success (stamped by the tool when an evaluator was provided).",
+  "task_success": "The tool stamps task_success automatically when an evaluator is provided in the delegation. When the task has no oracle (open-ended), omit the evaluator and the tool leaves task_success null. NEVER use an LLM to judge task_success — the tool's provenance is always 'deterministic'; an 'llm_judged' verdict is downgraded by ORIENT (audit Gap S3).",
   "array_field": "delegate_results",
-  "shape": "LocalDelegateResult (per swarm_delegate_local), with task_success stamped by the executor",
-  "order": "same order as execution_sequence"
+  "shape": "LocalDelegateResult array (from swarm_execute_plan_local results)",
+  "order": "same order as delegations"
 }
 ```
 
@@ -117,7 +130,7 @@ telemetry, so they are NOT in the execution_sequence. Record them in
 {
   "re_invoke": "swarm-intelligence",
   "context": { "delegate_results": "<the collected array>", "steering_mode": "steering", "swarm_id": "<the swarm id>", "task": "<the task>" },
-  "purpose": "ORIENT attributes fault from delegate_results[].tool_calls[].ok / executed_skills[].ok; fault_count accumulates; C6 reconfigures the most-blamed agent; the next plan closes the loop"
+  "purpose": "ORIENT attributes fault from delegate_results[].task_success (when stamped) and delegate_results[].tool_calls[].ok / executed_skills[].ok; fault_count accumulates; C6 reconfigures the most-blamed agent; the next plan closes the loop"
 }
 ```
 

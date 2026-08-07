@@ -280,3 +280,129 @@ fn board_isolation() {
     assert_eq!(alice_boards.len(), 1);
     assert_eq!(alice_boards[0].name, "Alice's Board");
 }
+
+// ── Kanban-as-swarm-coordination tests (Slices 1-4) ──────────────────────
+
+#[test]
+fn task_swarm_fields_default_to_none() {
+    // Slice 1: new tasks have swarm_id, delegate_result, deterministic_verdict = None.
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Swarm task".into()), owner)
+        .unwrap();
+    assert!(task.swarm_id.is_none(), "swarm_id should default to None");
+    assert!(
+        task.delegate_result.is_none(),
+        "delegate_result should default to None"
+    );
+    assert!(
+        task.deterministic_verdict.is_none(),
+        "deterministic_verdict should default to None"
+    );
+}
+
+#[test]
+fn task_record_delegation_writes_structured_fields() {
+    // Slice 2: task_record_delegation writes the LocalDelegateResult and
+    // TaskSuccessVerdict to the task's persisted fields.
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Spawn task".into()), owner)
+        .unwrap();
+
+    let delegate_result = hkask_mcp_swarm::LocalDelegateResult {
+        agent_id: "test-agent".to_string(),
+        response: "test response".to_string(),
+        model: "test-model".to_string(),
+        tokens_used: 100,
+        cost: 5,
+        balance: 95,
+        latency_ms: 200,
+        tool_calls: vec![],
+        executed_skills: vec![],
+        task_success: None,
+    };
+    let verdict = hkask_mcp_swarm::TaskSuccessVerdict {
+        pass: true,
+        score: Some(0.9),
+        detail: Some("all checks passed".to_string()),
+        provenance: hkask_mcp_swarm::TaskSuccessProvenance::Deterministic,
+    };
+
+    let updated = svc
+        .task_record_delegation(
+            task.id,
+            Some("swarm-1".to_string()),
+            delegate_result.clone(),
+            Some(verdict.clone()),
+            owner,
+        )
+        .unwrap();
+
+    assert_eq!(updated.swarm_id.as_deref(), Some("swarm-1"));
+    let dr = updated.delegate_result.expect("delegate_result should be set");
+    assert_eq!(dr.agent_id, "test-agent");
+    assert_eq!(dr.response, "test response");
+    assert_eq!(dr.tokens_used, 100);
+    let dv = updated
+        .deterministic_verdict
+        .expect("deterministic_verdict should be set");
+    assert!(dv.pass);
+    assert_eq!(dv.score, Some(0.9));
+    assert_eq!(dv.provenance, hkask_mcp_swarm::TaskSuccessProvenance::Deterministic);
+
+    // Verify persistence: re-read the task from the store.
+    let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
+    assert_eq!(reloaded.swarm_id.as_deref(), Some("swarm-1"));
+    assert!(reloaded.delegate_result.is_some());
+    assert!(reloaded.deterministic_verdict.is_some());
+}
+
+#[test]
+fn task_record_delegation_rejects_non_owner() {
+    // Slice 2: only the task owner can record a delegation result.
+    let (svc, board, owner) = make_service_with_board();
+    let task = svc
+        .task_create(board.id, TaskSpec::new("Owner task".into()), owner)
+        .unwrap();
+    let other = WebID::new();
+    let delegate_result = hkask_mcp_swarm::LocalDelegateResult {
+        agent_id: "test-agent".to_string(),
+        response: "test".to_string(),
+        model: "m".to_string(),
+        tokens_used: 0,
+        cost: 0,
+        balance: 0,
+        latency_ms: 0,
+        tool_calls: vec![],
+        executed_skills: vec![],
+        task_success: None,
+    };
+    let result = svc.task_record_delegation(
+        task.id,
+        None,
+        delegate_result,
+        None,
+        other,
+    );
+    assert!(result.is_err(), "non-owner should not be able to record delegation");
+}
+
+#[test]
+fn board_delete_removes_board_and_tasks() {
+    // Slice 4: board_delete removes the board and all its tasks.
+    let (svc, board, owner) = make_service_with_board();
+    svc.task_create(board.id, TaskSpec::new("T1".into()), owner)
+        .unwrap();
+    svc.task_create(board.id, TaskSpec::new("T2".into()), owner)
+        .unwrap();
+
+    let tasks_deleted = svc.board_delete(board.id).unwrap();
+    assert_eq!(tasks_deleted, 2, "should delete both tasks");
+
+    // Board is gone.
+    assert!(svc.board_get(board.id).unwrap().is_none());
+    // Board list no longer includes it.
+    let boards = svc.board_list(&owner).unwrap();
+    assert!(boards.iter().all(|b| b.id != board.id));
+}

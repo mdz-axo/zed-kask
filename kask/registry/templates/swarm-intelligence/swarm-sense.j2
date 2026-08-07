@@ -7,6 +7,7 @@ contract:
     mode: string
     target_condition: object|null
     prior_iteration: object|null
+    kanban_board_id: string|null
   output:
     workspace_roster: object
     wallet_state: object
@@ -20,6 +21,7 @@ contract:
     trivial_task: boolean
     next_focus_hint: string
     delegate_notes: string
+    kanban_tasks: array|null
 energy_cap: 4096
 visibility: Public
 ---
@@ -95,6 +97,39 @@ This is iteration N+1. The previous iteration produced:
 {% else %}
 ## Prior Iteration Feedback
 No prior iteration — this is a first pass. Measure all axes uniformly.
+{% endif %}
+
+{% if kanban_board_id and kanban_board_id | length > 0 %}
+## Kanban Board (durable coordination source of truth)
+
+A kanban board (`kanban_board_id = {{ kanban_board_id }}`) is the durable
+coordination surface for this swarm. Read its task list to ground the
+swarm-state sensing in persisted task state, not just in-memory telemetry.
+
+Via the hkask-mcp-kata-kanban tools (the agent orchestrates these calls
+between template invocations; in pure FlowDef execution the workspace_roster
+should be pre-populated):
+
+- `kanban_task_list` with `board_id = {{ kanban_board_id }}` → the board's
+  tasks, each with `{ id, title, status, assignee, delegate_result,
+  deterministic_verdict, swarm_id, gas_remaining, rjoule_remaining }`.
+  The `status` field is the durable task state (Backlog → Ready →
+  InProgress → Review → Done); `delegate_result` carries the structured
+  `LocalDelegateResult` from the last `kanban_task_spawn` (agent_id,
+  response, model, tokens_used, cost, balance, latency_ms, tool_calls,
+  executed_skills); `deterministic_verdict` carries the deterministic
+  `TaskSuccessVerdict` (pass, score, detail, provenance) when the executor
+  stamped one.
+- For each task with a `delegate_result`, use the `delegate_result.agent_id`,
+  `delegate_result.latency_ms`, and `deterministic_verdict.pass` as the
+  per-agent fitness signal (Step 5b), alongside the stigmergic memory query.
+  A task with `deterministic_verdict.pass = false` and `provenance =
+  "deterministic"` is a confirmed failure — surface it in `next_focus_hint`.
+- The kanban board is the source of truth for task state; SENSE reads it, it
+  does not write it. Task state transitions go through `kanban_task_move` /
+  `kanban_task_spawn`, not direct SENSE writes.
+
+Record the kanban task list as `kanban_tasks` in the output.
 {% endif %}
 
 ## Step 1 — Fetch Swarm State
@@ -252,3 +287,9 @@ Produce a JSON object with: workspace_roster, wallet_state,
 required_transforms, covered_transforms, variety_coverage, diversity,
 alignment, cohesion, separation, per_agent_metrics, trivial_task, next_focus_hint,
 delegate_notes.
+
+{% if kanban_board_id and kanban_board_id | length > 0 %}
+When a kanban board was read, also include `kanban_tasks`: the list of tasks
+from `kanban_task_list`, with their statuses and `delegate_result` fields, so
+ORIENT and DECIDE can reason over the durable task state.
+{% endif %}

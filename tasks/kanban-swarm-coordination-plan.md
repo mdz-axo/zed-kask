@@ -14,14 +14,14 @@ The kanban MCP surface (`hkask-mcp-kata-kanban`) already has a partial swarm bri
 
 ## 2. Method
 
-| Phase | Skill | What ran |
-|---|---|---|
-| 1 | metacognition | Grasped current condition (R1 kanban IS, R2 swarm IS from prior session), established target (kanban-driven swarm coordination), predicted the Cline pattern transfers the "board as source of truth" but not the "worktree per card" (zed-kask uses governed MCP dispatch, not worktrees). |
-| 2 | idiomatic-rust | Anchored the type design: `Task` gains optional swarm fields; `DelegateResult` is persisted as a structured field, not a comment; the kanban→swarm dependency direction is enforced by the type layer. |
-| 3 | deep-module | Deletion test on the kanban-as-swarm-coordination surface (§4). |
-| 4 | task-breakdown | Vertical slices (§6). |
-| 5 | grill-me | Decoupled critic (§7). |
-| 6 | kata-improvement | Outer frame: Step 1-4 (§5). |
+| Phase | Skill            | What ran                                                                                                                                                                                                                                                                                    |
+| ----- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | metacognition    | Grasped current condition (R1 kanban IS, R2 swarm IS from prior session), established target (kanban-driven swarm coordination), predicted the Cline pattern transfers the "board as source of truth" but not the "worktree per card" (zed-kask uses governed MCP dispatch, not worktrees). |
+| 2     | idiomatic-rust   | Anchored the type design: `Task` gains optional swarm fields; `DelegateResult` is persisted as a structured field, not a comment; the kanban→swarm dependency direction is enforced by the type layer.                                                                                      |
+| 3     | deep-module      | Deletion test on the kanban-as-swarm-coordination surface (§4).                                                                                                                                                                                                                             |
+| 4     | task-breakdown   | Vertical slices (§6).                                                                                                                                                                                                                                                                       |
+| 5     | grill-me         | Decoupled critic (§7).                                                                                                                                                                                                                                                                      |
+| 6     | kata-improvement | Outer frame: Step 1-4 (§5).                                                                                                                                                                                                                                                                 |
 
 **Grounded vs inferred**: R1 (kanban IS) is grounded in file:line from the sub-agent. R2 (swarm IS) is grounded from the prior session's report (`tasks/local-swarm-capabilities-report.md`). R4 (Cline pattern) is grounded in the fetched README; the transferability analysis is inference (marked per-pattern).
 
@@ -36,6 +36,7 @@ The kanban MCP surface (`hkask-mcp-kata-kanban`) already has a partial swarm bri
 **Notably absent**: `kanban_board_delete`, `kanban_task_delete`, `kanban_task_unassign` — these exist as `KanbanService` methods (`service_impl/service.rs:795, 841, 955`) but are **not exposed as MCP tools**.
 
 **Data model** (`kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/`):
+
 - `Board` (`types/board.rs:12-25`): `id, name, owner: WebID, columns, phases, created_at`. **No `swarm_id`.**
 - `Task` (`types/task.rs:9-55`): `id, board_id, title, description, status, owner: WebID, assignee: Option<WebID>, criteria, verification, story_points, estimated_hours, priority, labels, comments, deliverables, phase_id, created_at, updated_at, gas_remaining, rjoule_remaining, gas_spend`. **No `swarm_id`, no `delegate_request`, no `agent_id`.** `assignee` is a `WebID`, not a swarm agent id.
 - `SpawnSpec` (`types/spawn.rs:17-36`): `task_id, delegation_level, delegated_skills, memory_scope, tool_servers, gas_budget, timeout_seconds, registries, artifacts`. **Transient** — not persisted as a task field; `spawn_task` (`service_impl/spawn.rs:4-33`) only appends a config-comment.
@@ -43,6 +44,7 @@ The kanban MCP surface (`hkask-mcp-kata-kanban`) already has a partial swarm bri
 **Persistence**: SQLite (SQLCipher when passphrase set) via `HMemStore`. Default DB: `agents/curator/kanban.db` (`hkask_mcp_kata_kanban.rs:1054-1078`). Per-WebID board scoping at the data layer (`board_list` filters by `owner_webid`, `service_impl/service.rs:231-248`); all callers share the same SQLite file. In-memory fallback with `tracing::warn!` when no passphrase (L1079-1096) — **no persistence across restarts** in that mode.
 
 **Current consumers**:
+
 - `hkask-kanban-widget` (`crates/hkask-kanban-widget/`): passive renderer. The agent (Curator) calls `kanban_board_list` + `kanban_task_list` and emits the combined JSON as a ` ```kanban ` fenced block; the widget parses it (`hkask_kanban_widget.rs:4-8`). The only active dispatch is the T6 move affordance re-issuing `kanban_task_move` via `shared_tool_invoker()` (`view.rs:474-519`).
 - `kata-improvement.yaml` manifest: **does NOT call any kanban MCP tools** (grep returned zero matches). The kata-* MCP tools are a separate surface from the kata-improvement FlowDef cascade.
 - QA smoke manifest (`kask/registry/manifests/qa-mcp-dispatch-smoke.yaml`): calls `kanban_board_list` as a ping-style smoke test.
@@ -63,6 +65,7 @@ From the prior session's report (`tasks/local-swarm-capabilities-report.md`):
 ### R3. The gap (IS → OUGHT)
 
 The gap is a **missing integration**, not a missing capability. Both surfaces exist:
+
 - The kanban surface has `kanban_task_spawn` (delegates to a local agent) but no persisted swarm fields on `Task`.
 - The swarm surface has `swarm_delegate_local` + `swarm_evaluate_local` + stigmergic memory but no durable, human-inspectable coordination surface.
 
@@ -72,14 +75,14 @@ The gap is that `kanban_task_spawn`'s result is recorded as a **free-text commen
 
 Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 
-| Cline pattern | What it does | Transferable to zed-kask? |
-|---|---|---|
-| **Board as source of truth for task state** | A card's column = the task's state; column movement is the state transition | **Yes** — the kanban `Task.status` already does this (`kanban_task_move`). Transfer directly. |
-| **Ephemeral worktree per card** | Each card gets its own git worktree so agents work in parallel without merge conflicts | **No** — zed-kask uses governed MCP dispatch (`swarm_delegate_local`), not worktrees. The parallelism unit is the local agent, not the worktree. Do not transfer. |
-| **Auto-start linked tasks on completion** | When a card completes and moves to trash, linked tasks auto-start | **Partial** — zed-kask could wire `kanban_task_move` to `Done` to auto-start dependent tasks, but the dependency graph is not in the kanban data model today (no `depends_on` field on `Task`). Transfer the pattern, not the worktree mechanism. |
-| **Hooks display latest message/tool call on each card** | The card shows the agent's latest activity so you can monitor hundreds at a glance | **Yes** — zed-kask's `kanban_task_comment` already appends comments; the spawn result could be a structured comment + a structured `DelegateResult` field. The widget could render the latest tool call. Transfer the pattern. |
-| **Commit/PR from the card** | The card's agent ships its work as a commit or PR | **No (out of scope)** — zed-kask's local agents don't work in worktrees; commit/PR is a separate workflow. Do not transfer in this plan. |
-| **Board-management instructions injected into the agent session** | Kanban injects instructions so the agent can add/link/start tasks | **Yes** — zed-kask's Curator already has the kanban tools in its MCP tool list; the system prompt could include board-management instructions. Transfer the pattern. |
+| Cline pattern                                                     | What it does                                                                           | Transferable to zed-kask?                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Board as source of truth for task state**                       | A card's column = the task's state; column movement is the state transition            | **Yes** — the kanban `Task.status` already does this (`kanban_task_move`). Transfer directly.                                                                                                                                                     |
+| **Ephemeral worktree per card**                                   | Each card gets its own git worktree so agents work in parallel without merge conflicts | **No** — zed-kask uses governed MCP dispatch (`swarm_delegate_local`), not worktrees. The parallelism unit is the local agent, not the worktree. Do not transfer.                                                                                 |
+| **Auto-start linked tasks on completion**                         | When a card completes and moves to trash, linked tasks auto-start                      | **Partial** — zed-kask could wire `kanban_task_move` to `Done` to auto-start dependent tasks, but the dependency graph is not in the kanban data model today (no `depends_on` field on `Task`). Transfer the pattern, not the worktree mechanism. |
+| **Hooks display latest message/tool call on each card**           | The card shows the agent's latest activity so you can monitor hundreds at a glance     | **Yes** — zed-kask's `kanban_task_comment` already appends comments; the spawn result could be a structured comment + a structured `DelegateResult` field. The widget could render the latest tool call. Transfer the pattern.                    |
+| **Commit/PR from the card**                                       | The card's agent ships its work as a commit or PR                                      | **No (out of scope)** — zed-kask's local agents don't work in worktrees; commit/PR is a separate workflow. Do not transfer in this plan.                                                                                                          |
+| **Board-management instructions injected into the agent session** | Kanban injects instructions so the agent can add/link/start tasks                      | **Yes** — zed-kask's Curator already has the kanban tools in its MCP tool list; the system prompt could include board-management instructions. Transfer the pattern.                                                                              |
 
 **Transferable patterns**: board-as-source-of-truth (already IS), hooks-display-latest (structured comment + field), auto-start-linked (needs `depends_on` field), board-management-instructions-in-prompt (needs system prompt augmentation).
 
@@ -92,11 +95,13 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 **Dependency direction**: kanban → swarm (the kanban server calls `LazyLocalSwarmRuntime::delegate`, which it already does in `kanban_task_spawn`). The swarm server does **not** call the kanban server — the kanban is the driver, the swarm is the executor. This preserves the existing dependency (`hkask-mcp-kata-kanban` depends on `hkask-mcp-swarm`, per `Cargo.toml:19`; the reverse is not true).
 
 **New fields on `Task`** (`types/task.rs`):
+
 - `swarm_id: Option<String>` — the swarm this task belongs to (for multi-agent coordination).
 - `delegate_result: Option<DelegateResult>` — the structured result of the last `kanban_task_spawn`, replacing the free-text comment.
 - `deterministic_verdict: Option<TaskSuccessVerdict>` — the deterministic verdict from `swarm_evaluate_local`.
 
 **New MCP tools on `hkask-mcp-kata-kanban`**:
+
 - `kanban_task_delegate_result` (read) — returns the structured `DelegateResult` + verdict for a task.
 - `kanban_board_delete` — exposes the existing `KanbanService::board_delete` method as an MCP tool (closes the "no delete via MCP" gap from R1).
 
@@ -134,65 +139,75 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 
 **Integrated with the local swarm agent capability build-out from the prior session.** The slices are ordered: Phase 1 (close feedback loops — already done in prior session, B4 verified wired, B5 pending) → Phase 2 (verification — already done, both gaps closed) → Phase 3 (kanban-as-swarm-coordination + local agent capabilities) → Phase 4 (curator-as-callable-tool).
 
-### Slice 1 — `Task` gains swarm fields (B1-kanban + R5)
+### Slice 1 — `Task` gains swarm fields (B1-kanban + R5) ✅ IMPLEMENTED
 
 **What**: Add `swarm_id: Option<String>`, `delegate_result: Option<DelegateResult>`, `deterministic_verdict: Option<TaskSuccessVerdict>` to the `Task` struct. Add `DelegateResult` and `TaskSuccessVerdict` types to the kanban types (re-export from `hkask-mcp-swarm` or define a kanban-side mirror). Migrate the SQLite schema (the `HMemStore` JSON value carries the fields, so no SQL migration — just a struct change with `#[serde(default)]`).
 
 **Touches**:
+
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/task.rs:9-55` (add fields)
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/kanban/types/mod.rs` (re-export `DelegateResult`, `TaskSuccessVerdict`)
 
 **Acceptance criteria**:
+
 - [ ] `Task` serializes/deserializes with the new fields (backward-compatible — `#[serde(default)]`).
 - [ ] Existing boards/tasks without the fields load correctly (fields are `None`).
 - [ ] Test: create a task, serialize, deserialize, assert fields are `None`.
 
-### Slice 2 — `kanban_task_spawn` writes structured result (R5)
+### Slice 2 — `kanban_task_spawn` writes structured result (R5) ✅ IMPLEMENTED
 
 **What**: After `runtime.delegate(...)` in `kanban_task_spawn` (L891-929), write the `DelegateResult` + verdict to the `Task`'s new fields, not just a comment. Keep the comment for human readability.
 
 **Touches**:
+
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs:891-929` (write structured fields after delegation)
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/service_impl/spawn.rs` (update `spawn_task` to accept the result)
 
 **Acceptance criteria**:
+
 - [ ] After `kanban_task_spawn`, the task has `delegate_result` and `deterministic_verdict` populated.
 - [ ] The comment is still appended (backward-compatible).
 - [ ] Test: spawn a task with a mock runtime, assert the structured fields are populated.
 
-### Slice 3 — `kanban_task_delegate_result` MCP tool (R5)
+### Slice 3 — `kanban_task_delegate_result` MCP tool (R5) ✅ IMPLEMENTED
 
 **What**: Add a read-only MCP tool `kanban_task_delegate_result` that returns the structured `DelegateResult` + verdict for a task.
 
 **Touches**:
+
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs` (new `#[tool]`)
 
 **Acceptance criteria**:
+
 - [ ] The tool returns the structured result.
 - [ ] Returns `None` (or an empty response) for tasks without a delegation.
 - [ ] Test: spawn a task, call `kanban_task_delegate_result`, assert the result matches.
 
-### Slice 4 — `kanban_board_delete` MCP tool (R1 gap)
+### Slice 4 — `kanban_board_delete` MCP tool (R1 gap) ✅ IMPLEMENTED
 
 **What**: Expose the existing `KanbanService::board_delete` method as an MCP tool.
 
 **Touches**:
+
 - `kask/mcp-servers/hkask-mcp-kata-kanban/src/hkask_mcp_kata_kanban.rs` (new `#[tool]` wrapping `service.board_delete`)
 
 **Acceptance criteria**:
+
 - [ ] The tool deletes a board and its tasks.
 - [ ] Returns an error for a non-existent board.
 - [ ] Test: create a board, delete it, assert `kanban_board_list` no longer returns it.
 
-### Slice 5 — swarm-intelligence SENSE reads kanban state (R5)
+### Slice 5 — swarm-intelligence SENSE reads kanban state (R5) ✅ IMPLEMENTED
 
 **What**: Add an optional `kanban_board_id` input to the `swarm-intelligence` manifest. When present, the `swarm-sense.j2` template instructs the agent to call `kanban_task_list` for the board and use the task statuses + `delegate_result` fields as the swarm-state input.
 
 **Touches**:
+
 - `kask/registry/manifests/swarm-intelligence.yaml` (add `kanban_board_id` input)
 - `kask/registry/templates/swarm-intelligence/swarm-sense.j2` (add kanban-read instructions when `kanban_board_id` is present)
 
 **Acceptance criteria**:
+
 - [ ] When `kanban_board_id` is provided, SENSE reads kanban state.
 - [ ] When `kanban_board_id` is absent, SENSE reads stigmergic memory (current behavior, unchanged).
 - [ ] Test: invoke `swarm-intelligence` with a `kanban_board_id`, assert the SENSE output references the board's tasks.
@@ -202,11 +217,13 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 **What**: Inject a trimmed skill catalog (name + description for the card's declared `skills`) into the local agent's system prompt in `agent_executor.rs`. Resolve descriptions by reading SKILL.md frontmatter from `.agents/skills/` (the swarm server has filesystem access; add a `HKASK_SKILLS_DIR` env var for path resolution).
 
 **Touches**:
+
 - `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:180-183` (system prompt construction — inject catalog)
 - `kask/mcp-servers/hkask-mcp-swarm/src/config.rs` (add `skills_dir` config + `HKASK_SKILLS_DIR` env var)
 - `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs` (new helper to read SKILL.md frontmatter for declared skills)
 
 **Acceptance criteria**:
+
 - [ ] A local agent's system prompt includes the name + description of each declared skill.
 - [ ] The card's `skills` list remains the execution allowlist (no runtime discovery).
 - [ ] Test: create a local agent card with `skills: ["grill-me"]`, run the executor, assert the system prompt contains the grill-me description.
@@ -216,11 +233,13 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 **What**: Add `swarm_id` as an optional indexed column on `hmems` (not a storage key) so queries can filter by `swarm_id` without a breaking schema migration. Pass `swarm_id` from the delegation context into the turn record.
 
 **Touches**:
+
 - `kask/crates/hkask-storage/src/hmem.rs:154-167` (schema — add `swarm_id TEXT NULL` + index)
 - `kask/crates/hkask-memory/src/{semantic,episodic}.rs` (write paths — accept optional `swarm_id`)
 - `kask/crates/kask_bridge/src/memory.rs` (ingest path — pass `swarm_id` from the delegation context)
 
 **Acceptance criteria**:
+
 - [ ] Memory writes can carry an optional `swarm_id`.
 - [ ] Queries can filter by `swarm_id` (isolation) or ignore it (transfer).
 - [ ] Existing memory without `swarm_id` loads correctly (field is `NULL`).
@@ -231,11 +250,13 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 **What**: Add a `curator_consult` MCP tool to `hkask-mcp-curator` that dispatches a single turn to the in-process Curator agent (`CuratorAgentServer`) with the calling agent's context. Recursion cap (1 level), separate gas budget.
 
 **Touches**:
+
 - `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs` (new `#[tool] curator_consult`)
 - `crates/agent/src/curator_agent_server.rs:71-150` (single-turn dispatch — add `consult_once`)
 - `kask/crates/hkask-mcp/src/runtime.rs` (recursion cap + gas budget for `curator_consult`)
 
 **Acceptance criteria**:
+
 - [ ] A swarm agent can call `curator_consult` and receive the Curator's response.
 - [ ] A `curator_consult` call from within a Curator turn is rejected (recursion cap).
 - [ ] Test: call `curator_consult` from a mock swarm agent, assert a response; call from within a Curator turn, assert rejection.
@@ -246,7 +267,7 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 
 **Skeptic's strongest objection**: "The swarm-intelligence skill already has a SENSE/ORIENT/DECIDE/ACT/CHECK loop. Adding a kanban layer duplicates that loop — you now have two coordination surfaces (the in-memory swarm-intelligence loop and the durable kanban board) that can disagree. Which is the source of truth? If the kanban board says a task is `InProgress` but the swarm-intelligence loop's iteration log says the agent crashed, which wins? You've created a dual-write consistency problem, not a coordination surface."
 
-**Response (concession)**: The skeptic is right that dual-write is a real risk. The resolution is the dependency direction (R5): **the kanban `Task` is the source of truth for task state; the swarm-intelligence loop reads it.** The swarm-intelligence loop does not write task state independently — it writes to the stigmergic memory (R2) and the `reg.*` span journal, and it *recommends* actions (DECIDE) that the Curator or user executes via `kanban_task_move` / `kanban_task_spawn`. The kanban board is the durable state; the swarm-intelligence loop is the ephemeral reasoning layer. They don't dual-write because they write to different things: the kanban writes task state, the swarm-intelligence loop writes reasoning traces. **Concession accepted**: the plan must make this explicit in the swarm-sense.j2 template — SENSE reads kanban state, it does not write it. If a future slice adds a SENSE-write path, it must go through `kanban_task_move`, not a direct DB write.
+**Response (concession)**: The skeptic is right that dual-write is a real risk. The resolution is the dependency direction (R5): **the kanban `Task` is the source of truth for task state; the swarm-intelligence loop reads it.** The swarm-intelligence loop does not write task state independently — it writes to the stigmergic memory (R2) and the `reg.*` span journal, and it _recommends_ actions (DECIDE) that the Curator or user executes via `kanban_task_move` / `kanban_task_spawn`. The kanban board is the durable state; the swarm-intelligence loop is the ephemeral reasoning layer. They don't dual-write because they write to different things: the kanban writes task state, the swarm-intelligence loop writes reasoning traces. **Concession accepted**: the plan must make this explicit in the swarm-sense.j2 template — SENSE reads kanban state, it does not write it. If a future slice adds a SENSE-write path, it must go through `kanban_task_move`, not a direct DB write.
 
 ---
 

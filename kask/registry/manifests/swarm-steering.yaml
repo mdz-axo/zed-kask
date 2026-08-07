@@ -26,13 +26,14 @@ manifest:
   description: >
     Focused local-swarm steering skill for the Kask Curator or a human in the
     loop. Codifies the execute-and-feed-back loop: take a swarm-intelligence
-    plan (emitted_calls), produce the swarm_delegate_local execution sequence +
-    the delegate_results collection shape (LocalDelegateResult array) + the
-    re-invoke instruction. The Curator/human executes the directive and feeds
-    delegate_results back to swarm-intelligence, closing the C5/C6 feedback
-    loop. Anchored to PKO (procedure execution) and the Conant-Ashby Good
-    Regulator (the actuator must model the swarm it steers). Pairs with
-    swarm-intelligence (the planner). Emits reg.skill.swarm-steering.* spans.
+    plan (emitted_calls), produce the swarm_execute_plan_local delegation
+    sequence + the delegate_results collection shape (LocalDelegateResult
+    array with task_success verdicts) + the re-invoke instruction. The
+    Curator/human calls swarm_execute_plan_local and feeds delegate_results
+    back to swarm-intelligence, closing the C5/C6 feedback loop. Anchored to
+    PKO (procedure execution) and the Conant-Ashby Good Regulator (the actuator
+    must model the swarm it steers). Pairs with swarm-intelligence (the
+    planner). Emits reg.skill.swarm-steering.* spans.
   functional_role: flowdef
   version: 0.33.0
   editor: curator-or-human-admin
@@ -96,10 +97,11 @@ steps:
       swarm-intelligence plan (emitted_calls) + the task + the credit budget,
       and produce a structured steering directive: pre-flight checks (ledger
       funded via swarm_balance_local, agents exist via swarm_list_local_agents),
-      the ordered swarm_delegate_local execution sequence, the delegate_results
-      collection shape (LocalDelegateResult array), and the re-invoke
+      the swarm_execute_plan_local delegation sequence (with optional
+      deterministic evaluators), the delegate_results collection shape
+      (LocalDelegateResult array with task_success verdicts), and the re-invoke
       instruction (re-invoke swarm-intelligence with delegate_results +
-      steering_mode: steering). The Curator/human executes the directive.
+      steering_mode: steering). The Curator/human calls swarm_execute_plan_local.
     renderer: minijinja
     template_ref: swarm-steering/swarm-steering-direct
     gas_cap: 4096
