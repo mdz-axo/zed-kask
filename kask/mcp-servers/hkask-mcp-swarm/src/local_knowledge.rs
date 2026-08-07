@@ -3,14 +3,14 @@
 //!
 //! Where ABW backs these with fermi's per-agent dreaming-memory KG + fermi's
 //! LLM generation, the local analogs back them with the operator's own
-//! `hkask-memory` `SemanticMemory` (the knowledge graph — entity-attribute-value
+//! `hkask-memory` `MemoryStore` (the knowledge graph — entity-attribute-value
 //! triples, scoped per agent by an `agent:<agent_id>:` prefix) and the local
 //! `InferencePort` (Ollama/cloud via the zed IPC bridge). No ABW round-trips.
 //!
 //! Design rationale: `kask/docs/plans/local-swarm-knowledge-tools.md`.
 //!
 //! Graceful degradation: `LazyLocalMemory::get_or_init` opens the
-//! `SemanticMemory` lazily. The SQLCipher passphrase defaults to `"allostery"`
+//! `MemoryStore` lazily. The SQLCipher passphrase defaults to `"allostery"`
 //! (pre-release kask-wide default) so the tools work out of the box; override
 //! via `HKASK_SWARM_MEMORY_PASSPHRASE`. If open fails (e.g., an existing DB was
 //! created under a different passphrase), the search tool returns an empty
@@ -18,9 +18,9 @@
 //! hit — the `.rules` unwrap_or(0) trap), and the generate tools proceed
 //! unseeded (memory is an enhancement, not a dependency).
 
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_storage::HMem;
-use hkask_types::{Visibility, WebID};
+use hkask_types::{HMemOntology, Visibility, WebID};
 use std::sync::Arc;
 
 use crate::error::LocalSwarmError;
@@ -29,10 +29,10 @@ use crate::error::LocalSwarmError;
 /// prefix-scoped slice of the operator's semantic memory.
 pub(crate) const AGENT_PREFIX: &str = "agent:";
 
-/// A lazily-opened `SemanticMemory` for the local swarm knowledge tools.
+/// A lazily-opened `MemoryStore` for the local swarm knowledge tools.
 ///
 /// Mirrors `LazyLocalSwarmRuntime`: the `run_server` factory is sync, so the
-/// async `SemanticMemory::open` is deferred to the first tool call. The store
+/// async `MemoryStore::open` is deferred to the first tool call. The store
 /// is the operator's consolidated semantic memory; per-agent scoping is a
 /// prefix (`agent:<agent_id>:`) on the shared store (one store, many
 /// namespaces — the deep-module choice over a per-agent store).
@@ -40,7 +40,7 @@ pub(crate) struct LazyLocalMemory {
     db_path: String,
     passphrase: String,
     dim: usize,
-    inner: tokio::sync::OnceCell<SemanticMemory>,
+    inner: tokio::sync::OnceCell<MemoryStore>,
 }
 
 impl LazyLocalMemory {
@@ -59,7 +59,7 @@ impl LazyLocalMemory {
     /// `Err` if the passphrase is unset/too short or the store fails to open —
     /// callers degrade gracefully (the `.rules` startup-failure-signal rule: a
     /// missing memory is signaled, not silently empty).
-    pub(crate) async fn get_or_init(&self) -> Result<&SemanticMemory, LocalSwarmError> {
+    pub(crate) async fn get_or_init(&self) -> Result<&MemoryStore, LocalSwarmError> {
         self.inner
             .get_or_try_init(|| async {
                 if self.passphrase.len() < 8 {
@@ -81,8 +81,8 @@ impl LazyLocalMemory {
                         })?;
                     }
                 }
-                SemanticMemory::open(&self.db_path, &self.passphrase, self.dim).map_err(|e| {
-                    LocalSwarmError::Database(format!("failed to open swarm semantic memory: {e}"))
+                MemoryStore::open(&self.db_path, &self.passphrase, self.dim).map_err(|e| {
+                    LocalSwarmError::Database(format!("failed to open swarm memory store: {e}"))
                 })
             })
             .await
@@ -201,13 +201,20 @@ pub(crate) async fn record_delegation(
     let owner = WebID::for_agent_name("swarm_delegate_local");
     let entity = format!("{AGENT_PREFIX}{agent_id}");
 
+    // Process-axis anchoring (P5.4): a stigmergy annotation is a PKO step
+    // execution of the delegation procedure, not a standalone fact. Anchoring
+    // it this way is what lets the SENSE phase distinguish pheromone trails
+    // (process traces) from consolidated agent facts in the same store.
+    let ontology = HMemOntology::episodic("swarm_delegate", "record", agent_id);
+
     // Write the latency annotation.
     let mut h_mem = HMem::new(
         &entity,
         "delegation:latency_ms",
         serde_json::json!(latency_ms),
         owner,
-    );
+    )
+    .with_ontology(ontology.clone());
     h_mem.access.visibility = Visibility::Shared;
     if let Err(e) = store.store(h_mem) {
         tracing::warn!(
@@ -225,7 +232,8 @@ pub(crate) async fn record_delegation(
             "delegation:task_success",
             serde_json::json!(pass),
             owner,
-        );
+        )
+        .with_ontology(ontology);
         h_mem.access.visibility = Visibility::Shared;
         if let Err(e) = store.store(h_mem) {
             tracing::warn!(

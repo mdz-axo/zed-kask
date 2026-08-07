@@ -68,54 +68,54 @@ runtime/              — Section classifier + provider intelligence + adaptive 
 
 ### Gather (2)
 
-| Tool                | Description                                                                                                                                                                                                                                                                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `corpus_discover`   | Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes. |
-| `corpus_cache_work` | Cache an extracted work's content to disk for reuse by corpus_build_persona. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading.                                                                                                                                                                                           |
+| Tool | Description |
+|------|-------------|
+| `corpus_discover` | Discover an academic author's body of work and generate a corpus.yaml for corpus_build_persona. Delegates to the replica-discovery skill manifest which orchestrates multi-source search (Semantic Scholar, arXiv, web, YouTube transcripts), content extraction, and corpus generation. Supports agentic (fully automated) and curated (human-in-the-loop) modes. |
+| `corpus_cache_work` | Cache an extracted work's content to disk for reuse by corpus_build_persona. Writes content to {cache_dir}/{slug}.txt so the embedding pipeline can skip re-downloading. |
 
 ### Process (8)
 
-| Tool                        | Description                                                                                                                                                                                                                                                                                                                                       |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `corpus_convert`            | Extract text from a document. For PDFs: tries fast text extraction first (~50ms for text-native), falls back to typed OCR pipeline (decimate→score→route→OCR→verify) if near-empty. Supports `force_ocr` mode. Formats: PDF, MD, HTML, TXT.                                                                                                       |
-| `corpus_ocr`                | OCR a document using a local vision model. Requires `HKASK_OCR_MODEL` or explicit `model` parameter.                                                                                                                                                                                                                                              |
-| `corpus_chunk`              | Chunk text into passages at configurable token granularity. Accepts raw text or file path. Supports single-tier and multi-tier (coarse/medium/fine). Auto-indexing into in-memory vector store.                                                                                                                                                   |
-| `corpus_tag_chunks`         | Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO/FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template with `validate_ontology_tags` schema enforcement. Computes graph-centrality salience. Input guard is always-on (non-disableable). |
-| `corpus_embed`              | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate.                                                                                                  |
-| `corpus_extract_triples`    | Extract RDF triples with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags.                                                                                                                                    |
-| `corpus_dedup_chunks`       | Deduplicate chunks by semantic embedding similarity (cosine > 0.85 default). Clusters within each source file, keeps highest-salience chunk per cluster.                                                                                                                                                                                          |
-| `corpus_consolidate_chunks` | Consolidate semantically related chunks via LLM synthesis. Clusters by cosine > 0.75, synthesizes each multi-chunk cluster into a single passage, re-embeds. Merges ontology tags with normalization.                                                                                                                                             |
+| Tool | Description |
+|------|-------------|
+| `corpus_convert` | Extract text from a document. For PDFs: tries fast text extraction first (~50ms for text-native), falls back to typed OCR pipeline (decimate→score→route→OCR→verify) if near-empty. Supports `force_ocr` mode. Formats: PDF, MD, HTML, TXT. |
+| `corpus_ocr` | OCR a document using a local vision model. Requires `HKASK_OCR_MODEL` or explicit `model` parameter. |
+| `corpus_chunk` | Chunk text into passages at configurable token granularity. Accepts raw text or file path. Supports single-tier and multi-tier (coarse/medium/fine). Auto-indexing into in-memory vector store. |
+| `corpus_tag_chunks` | Tag chunks with multi-dimensional ontology annotations: 5W1H interrogatory dimensions, Dublin Core metadata, PKO/FIBO/GOLEM domain concepts, and expertise level. Uses LLM-based extraction via Jinja2 template with `validate_ontology_tags` schema enforcement. Computes graph-centrality salience. Input guard is always-on (non-disableable). |
+| `corpus_embed` | Generate embedding vectors via the configured embedding model (`HKASK_EMBEDDING_MODEL` or `~/.config/hkask/settings.json`). Ontology tags prepended as annotation prefixes (INSTRUCTOR method). Reports `degraded` outcome on >10% failure rate. |
+| `corpus_extract_triples` | Extract RDF triples with confidence scores. Uses registry template `docproc/extract-hmems.j2` (falls back to inline prompt). Hallucination guard cross-checks predicate namespace against chunk ontology_tags. |
+| `corpus_dedup_chunks` | Deduplicate chunks by semantic embedding similarity (cosine > 0.85 default). Clusters within each source file, keeps highest-salience chunk per cluster. |
+| `corpus_consolidate_chunks` | Consolidate semantically related chunks via LLM synthesis. Clusters by cosine > 0.75, synthesizes each multi-chunk cluster into a single passage, re-embeds. Merges ontology tags with normalization. |
 
 ### QA Output (5)
 
-| Tool                              | Description                                                                                                                                                                                                           |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `corpus_build_prompts`            | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. Outputs prompts JSONL consumed by `corpus_generate_qa_batch`.                                  |
-| `corpus_generate_qa`              | Generate validated QA pairs from one source chunk or a cited cross-reference set. Accepts an optional provider-prefixed `model`; every accepted response includes model, parameters, template, and source provenance. |
-| `corpus_generate_qa_batch`        | Generate validated QA pairs for a batch under one optional provider-prefixed model. Concurrent processing with 3-attempt retry and `degraded` outcome classification on >10% failure rate.                            |
-| `corpus_ingest_qa`                | Parse, quality-filter, dedup, and store generated QAs as training-ready JSONL. Stores h_mems with ontology provenance.                                                                                                |
-| `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs.                                                                                                                                                                         |
-| `corpus_purge_qa`                 | Purge QA h_mems from the memory DB by dataset name.                                                                                                                                                                   |
+| Tool | Description |
+|------|-------------|
+| `corpus_build_prompts` | Build QA generation prompts from tagged chunks with KNN context scaffold, ontology context, and h_mem knowledge graph. Outputs prompts JSONL consumed by `corpus_generate_qa_batch`. |
+| `corpus_generate_qa` | Generate validated QA pairs from one source chunk or a cited cross-reference set. Accepts an optional provider-prefixed `model`; every accepted response includes model, parameters, template, and source provenance. |
+| `corpus_generate_qa_batch` | Generate validated QA pairs for a batch under one optional provider-prefixed model. Concurrent processing with 3-attempt retry and `degraded` outcome classification on >10% failure rate. |
+| `corpus_ingest_qa` | Parse, quality-filter, dedup, and store generated QAs as training-ready JSONL. Stores h_mems with ontology provenance. |
+| `corpus_prepare_training_dataset` | Prepare a training dataset from ingested QAs. |
+| `corpus_purge_qa` | Purge QA h_mems from the memory DB by dataset name. |
 
 ### Persona/Style Output (7)
 
-| Tool                   | Description                                                                                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `corpus_build_persona` | Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid.         |
-| `corpus_compose`       | Generate prose in an author's style                                                                                                                            |
-| `corpus_rewrite`       | Rewrite a passage or code snippet in an author's style, optimized for a specific Gentle Lovelace quality dimension (gentle/schriver/hopper/lovelace/composite) |
-| `corpus_compare`       | Compare all built author replicas, or evaluate a document against a persona's centroids                                                                        |
-| `corpus_mashup`        | Generate prose blending two authors' styles                                                                                                                    |
-| `corpus_registry`      | Manage the registry of built author replicas                                                                                                                   |
-| `corpus_explain`       | Explain what style centroids are and how the metadata layer works                                                                                              |
+| Tool | Description |
+|------|-------------|
+| `corpus_build_persona` | Embed a style corpus and create an authorial replica. Downloads public domain texts, chunks them, generates embeddings, and computes a style centroid. |
+| `corpus_compose` | Generate prose in an author's style |
+| `corpus_rewrite` | Rewrite a passage or code snippet in an author's style, optimized for a specific Gentle Lovelace quality dimension (gentle/schriver/hopper/lovelace/composite) |
+| `corpus_compare` | Compare all built author replicas, or evaluate a document against a persona's centroids |
+| `corpus_mashup` | Generate prose blending two authors' styles |
+| `corpus_registry` | Manage the registry of built author replicas |
+| `corpus_explain` | Explain what style centroids are and how the metadata layer works |
 
 ### Manage (3)
 
-| Tool                 | Description                                                                                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `corpus_cache`       | Cache processed document text keyed by label in `~/.config/hkask/docproc-cache/`.                                                                                   |
-| `corpus_query`       | Semantic search over indexed passages. Embeds query, computes cosine similarity, returns top-k. Optional LLM-augmented answer via `docproc/rag-answer.j2` template. |
-| `corpus_clear_index` | Clear the in-memory vector index between document sets.                                                                                                             |
+| Tool | Description |
+|------|-------------|
+| `corpus_cache` | Cache processed document text keyed by label in `~/.config/hkask/docproc-cache/`. |
+| `corpus_query` | Semantic search over indexed passages. Embeds query, computes cosine similarity, returns top-k. Optional LLM-augmented answer via `docproc/rag-answer.j2` template. |
+| `corpus_clear_index` | Clear the in-memory vector index between document sets. |
 
 ## OCR Pipeline
 
@@ -134,55 +134,55 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 
 ## Configuration
 
-| Variable                     | Description                                                                                                                                  |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HKASK_OCR_MODEL`            | Vision model for OCR (e.g., `DI/allenai/olmOCR-2-7B-1025`). Required for OCR tools. Fallback: `~/.config/hkask/settings.json` → `ocr_model`. |
-| `HKASK_EMBEDDING_MODEL`      | Embedding model for vectorization and semantic search. Fallback: `~/.config/hkask/settings.json` → `embedding_model`.                        |
-| `HKASK_EMBEDDING_DIM`        | Embedding vector dimension. Default: 1024 (Qwen3-Embedding-0.6B). Malformed values warn and fall back to 1024.                               |
-| `HKASK_TEMPLATE_ROOT`        | Root containing `templates/docproc/`. Default: `registry` (relative to CWD).                                                                 |
-| `HKASK_QA_MODEL`             | Default provider-prefixed QA model. A request-level `model` wins; otherwise the router uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`.    |
-| `HKASK_DEFAULT_MODEL`        | Default generation model for all inference (also used for prose composition).                                                                |
-| `HKASK_CLASSIFIER_MODEL`     | Model for section type classification. Falls back to `HKASK_DEFAULT_MODEL`.                                                                  |
-| `HKASK_DB_PASSPHRASE`        | Passphrase for the semantic memory DB. Default: `"hkask-default-passphrase-2024"` (dev only — set a real passphrase in production).          |
-| `HKASK_USE_FAL_DOCRES`       | Set to `true` to enable fal.ai docres binarization enhancement (opt-in, ~40s latency). Requires `FALAI_API_KEY`.                             |
-| `HKASK_ENABLE_CONTENT_GUARD` | Set to `false` to disable input-guard scanning (output guard is always active). Default: enabled.                                            |
-| `HKASK_WEBID`                | WebID identity for Regulation narrative memory.                                                                                              |
+| Variable | Description |
+|----------|-------------|
+| `HKASK_OCR_MODEL` | Vision model for OCR (e.g., `DI/allenai/olmOCR-2-7B-1025`). Required for OCR tools. Fallback: `~/.config/hkask/settings.json` → `ocr_model`. |
+| `HKASK_EMBEDDING_MODEL` | Embedding model for vectorization and semantic search. Fallback: `~/.config/hkask/settings.json` → `embedding_model`. |
+| `HKASK_EMBEDDING_DIM` | Embedding vector dimension. Default: 1024 (Qwen3-Embedding-0.6B). Malformed values warn and fall back to 1024. |
+| `HKASK_TEMPLATE_ROOT` | Root containing `templates/docproc/`. Default: `registry` (relative to CWD). |
+| `HKASK_QA_MODEL` | Default provider-prefixed QA model. A request-level `model` wins; otherwise the router uses `HKASK_QA_MODEL`, then `HKASK_DEFAULT_MODEL`. |
+| `HKASK_DEFAULT_MODEL` | Default generation model for all inference (also used for prose composition). |
+| `HKASK_CLASSIFIER_MODEL` | Model for section type classification. Falls back to `HKASK_DEFAULT_MODEL`. |
+| `HKASK_DB_PASSPHRASE` | Passphrase for the semantic memory DB. Default: `"hkask-default-passphrase-2024"` (dev only — set a real passphrase in production). |
+| `HKASK_USE_FAL_DOCRES` | Set to `true` to enable fal.ai docres binarization enhancement (opt-in, ~40s latency). Requires `FALAI_API_KEY`. |
+| `HKASK_ENABLE_CONTENT_GUARD` | Set to `false` to disable input-guard scanning (output guard is always active). Default: enabled. |
+| `HKASK_WEBID` | WebID identity for Regulation narrative memory. |
 
 ### OCR Thresholds (via env vars or `settings.json`)
 
-| Variable                 | Default | Description                                                      |
-| ------------------------ | ------- | ---------------------------------------------------------------- |
-| `HKASK_OCR_SIMPLE_MAX`   | 0.05    | Edge-density threshold for Simple tier                           |
-| `HKASK_OCR_MODERATE_MAX` | 0.15    | Edge-density threshold for Moderate tier                         |
-| `HKASK_OCR_SAMPLE_RATE`  | 0.10    | Dual-routing sample rate for Moderate pages                      |
-| `HKASK_OCR_TUNEABLE`     | true    | Whether Regulation calibration may suggest threshold adjustments |
-| `HKASK_OCR_CONCURRENCY`  | 4       | Number of pages sent to the vision model in parallel             |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HKASK_OCR_SIMPLE_MAX` | 0.05 | Edge-density threshold for Simple tier |
+| `HKASK_OCR_MODERATE_MAX` | 0.15 | Edge-density threshold for Moderate tier |
+| `HKASK_OCR_SAMPLE_RATE` | 0.10 | Dual-routing sample rate for Moderate pages |
+| `HKASK_OCR_TUNEABLE` | true | Whether Regulation calibration may suggest threshold adjustments |
+| `HKASK_OCR_CONCURRENCY` | 4 | Number of pages sent to the vision model in parallel |
 
 ### Page Triage Thresholds (per-page pre-OCR complexity detection)
 
-| Variable                             | Default | Description                                                             |
-| ------------------------------------ | ------- | ----------------------------------------------------------------------- |
-| `HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN`   | 20      | Per-page word count at/above which a page is text-native (no OCR)       |
-| `HKASK_OCR_TRIAGE_MIN_IMAGE_PT`      | 25.0    | Min image side (points) to count as a substantial image                 |
-| `HKASK_OCR_TRIAGE_FULL_PAGE_PT`      | 500.0   | Image dims (pt) at/above which a no-text page is classified `Scanned`   |
-| `HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT` | 150.0   | Min image side (pt) to flag `EmbeddedImages` on a text page             |
-| `HKASK_OCR_TRIAGE_TUNEABLE`          | true    | Whether Regulation calibration may suggest triage threshold adjustments |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HKASK_OCR_TRIAGE_TEXT_NATIVE_MIN` | 20 | Per-page word count at/above which a page is text-native (no OCR) |
+| `HKASK_OCR_TRIAGE_MIN_IMAGE_PT` | 25.0 | Min image side (points) to count as a substantial image |
+| `HKASK_OCR_TRIAGE_FULL_PAGE_PT` | 500.0 | Image dims (pt) at/above which a no-text page is classified `Scanned` |
+| `HKASK_OCR_TRIAGE_EMBEDDED_IMAGE_PT` | 150.0 | Min image side (pt) to flag `EmbeddedImages` on a text page |
+| `HKASK_OCR_TRIAGE_TUNEABLE` | true | Whether Regulation calibration may suggest triage threshold adjustments |
 
 ## Regulation Observability
 
 The server emits Regulation spans under these targets for cybernetic feedback:
 
-| Target                                 | When                                         |
-| -------------------------------------- | -------------------------------------------- |
-| `reg.pipeline.ocr`                     | Pipeline verification (every run)            |
-| `reg.pipeline.ocr.verification_failed` | Verification report fails                    |
-| `reg.pipeline.ocr.low_confidence`      | LLM OCR confidence < 0.3                     |
-| `reg.pipeline.ocr.rate_limit`          | Inference rate-limited (429)                 |
-| `reg.pipeline.ocr.collusion`           | Both backends produce empty output           |
-| `reg.pipeline.decimation`              | Page load failures                           |
-| `reg.pipeline.decimation.binarize`     | Otsu produces uniform output                 |
-| `reg.pipeline.calibration`             | Threshold drift detected                     |
-| `reg.docproc.index`                    | Indexing requested but embedding unavailable |
+| Target | When |
+|--------|------|
+| `reg.pipeline.ocr` | Pipeline verification (every run) |
+| `reg.pipeline.ocr.verification_failed` | Verification report fails |
+| `reg.pipeline.ocr.low_confidence` | LLM OCR confidence < 0.3 |
+| `reg.pipeline.ocr.rate_limit` | Inference rate-limited (429) |
+| `reg.pipeline.ocr.collusion` | Both backends produce empty output |
+| `reg.pipeline.decimation` | Page load failures |
+| `reg.pipeline.decimation.binarize` | Otsu produces uniform output |
+| `reg.pipeline.calibration` | Threshold drift detected |
+| `reg.docproc.index` | Indexing requested but embedding unavailable |
 
 ## Shared Infrastructure
 

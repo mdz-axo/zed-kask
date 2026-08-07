@@ -92,7 +92,7 @@ use crate::providers::{
     TrainingHarnessId, TrainingHost, TrainingHostConfig, TrainingHostId, TrainingJobStatus,
     create_host,
 };
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_types::InferencePort;
 
 use rmcp::tool_router;
@@ -104,7 +104,7 @@ use std::sync::Mutex;
 
 hkask_mcp_server::mcp_server!(
     pub struct TrainingServer {
-        pub semantic: Option<SemanticMemory>,
+        pub store: Option<MemoryStore>,
         pub host: Box<dyn TrainingHost>,
         pub host_id: TrainingHostId,
         pub harness_id: TrainingHarnessId,
@@ -350,7 +350,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     .cloned()
                     .or_else(|| hkask_mcp_server::resolve_credential("HKASK_DB_PASSPHRASE").ok());
 
-                let (semantic, adapter_store, job_store) = match passphrase {
+                let (store, adapter_store, job_store) = match passphrase {
                     Some(passphrase) => {
                         let db = hkask_storage::Database::open(&db_path, &passphrase)
                             .map_err(|e| {
@@ -374,17 +374,15 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             1024,
                         )
                         .map_err(|e| anyhow::anyhow!("embedding store init: {e}"))?;
-                        let semantic = Some(hkask_memory::SemanticMemory::new(
-                            h_mem_store,
-                            embedding_store,
-                        ));
+                        let memory_store =
+                            Some(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
                         // Canonical adapter store: crate::adapter::AdapterStore stores
                         // TrainedLoRAAdapter in trained_adapters + active_endpoints + lora_blobs.
                         // Schema initialized by from_driver().
-                        let store = crate::adapter::AdapterStore::from_driver(hmem_driver)
+                        let adapter_store = crate::adapter::AdapterStore::from_driver(hmem_driver)
                             .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
 
-                        (semantic, Arc::new(store), job_store)
+                        (memory_store, Arc::new(adapter_store), job_store)
                     }
                     None => {
                         // No passphrase configured — fall back to an in-memory driver
@@ -393,9 +391,9 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             .map_err(|e| anyhow::anyhow!("in-memory pool: {e}"))?;
                         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
                             Arc::new(hkask_storage::database::sqlite::SqliteDriver::new(pool));
-                        let store = crate::adapter::AdapterStore::from_driver(driver)
+                        let adapter_store = crate::adapter::AdapterStore::from_driver(driver)
                             .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
-                        (None, Arc::new(store), None)
+                        (None, Arc::new(adapter_store), None)
                     }
                 };
 
@@ -430,7 +428,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
                 Ok(TrainingServer::new(
                     ctx.webid,
-                    semantic,
+                    store,
                     host,
                     host_config.host,
                     harness_id,

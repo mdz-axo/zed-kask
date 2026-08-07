@@ -6,7 +6,7 @@ use hkask_mcp_server::server::{
     McpToolError, execute_tool, map_io_error, map_memory_store_error,
 };
 use hkask_storage::HMem;
-use hkask_types::Visibility;
+use hkask_types::{HMemOntology, Visibility};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 use serde_json::json;
@@ -25,7 +25,7 @@ impl TrainingServer {
         }): Parameters<IngestQaRequest>,
     ) -> String {
         execute_tool(self, "training_ingest_qa", async {
-            let Some(semantic) = &self.semantic else {
+            let Some(store) = &self.store else {
                 return Err(McpToolError::permission_denied(
                     "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE",
                 ));
@@ -41,10 +41,20 @@ impl TrainingServer {
                 let entity = format!("training:qa:manual:{ds}:{source}:{i}");
                 let level = qa.bloom_level.as_deref().unwrap_or("factual");
                 let value = json!({"question": qa.question, "answer": qa.answer, "bloom_level": level, "source": source, "dataset": ds});
+                // State-axis anchoring (P5.4): a QA pair is a training-dataset
+                // record, not a process step. The bloom level is the pedagogic
+                // classification, so it belongs on the subject axis alongside
+                // the dataset name.
+                let ontology = HMemOntology::semantic(
+                    "dcterms:Dataset",
+                    vec![ds.to_string(), level.to_string()],
+                    source.clone(),
+                );
                 let h_mem = HMem::new(&entity, "training_qa_pair", value, self.webid)
                     .with_visibility(Visibility::Public)
-                    .with_confidence(1.0);
-                match semantic.store(h_mem) {
+                    .with_confidence(1.0)
+                    .with_ontology(ontology);
+                match store.store(h_mem) {
                     Ok(()) => stored += 1,
                     Err(e) => errors.push(format!("Item {i}: {e}")),
                 }
@@ -74,12 +84,12 @@ impl TrainingServer {
         }): Parameters<AssembleDatasetRequest>,
     ) -> String {
         execute_tool(self, "training_assemble_dataset", async {
-            let Some(semantic) = &self.semantic else {
+            let Some(store) = &self.store else {
                 return Err(McpToolError::permission_denied(
                     "Semantic memory not available — set HKASK_MEMORY_DB and HKASK_DB_PASSPHRASE",
                 ));
             };
-            let h_mems = match semantic.query_by_attribute("training_qa_pair") {
+            let h_mems = match store.query_by_attribute("training_qa_pair") {
                 Ok(t) => t,
                 Err(e) => return Err(map_memory_store_error(e, "semantic memory query")),
             };

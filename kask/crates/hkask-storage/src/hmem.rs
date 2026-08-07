@@ -308,6 +308,15 @@ impl HMemStore {
         } else {
             value_json
         };
+        // Serialize the ontology blob eagerly and propagate failure. A
+        // silent `unwrap_or_default()` here would write an empty string into
+        // a column the ontology queries feed to `json_extract`, and SQLite
+        // raises "malformed JSON" on `''` — which fails the WHOLE query, not
+        // just that row. One bad write would blind every ontology recall.
+        let ontology = match h_mem.ontology.as_ref() {
+            Some(ont) => DbValue::Text(ont.to_json_string()?),
+            None => DbValue::Null,
+        };
         self.exec(
             &format!(
                 "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
@@ -328,10 +337,7 @@ impl HMemStore {
                     .map_or(DbValue::Null, |p| DbValue::Text(p.to_string())),
                 DbValue::Text(h_mem.access.visibility.to_string()),
                 DbValue::Text(h_mem.access.owner_webid.to_string()),
-                h_mem
-                    .ontology
-                    .as_ref()
-                    .map_or(DbValue::Null, |ont| DbValue::Text(ont.to_json_string().unwrap_or_default())),
+                ontology,
             ],
         )?;
         Ok(())
@@ -645,6 +651,148 @@ impl HMemStore {
         )
     }
 
+    // ── Ontology query paths (P5.4 dual-axis anchoring) ──────────────────
+    //
+    // The `ontology` column is a JSON blob, so these queries reach into it
+    // with provider-native JSON extraction. SQLite has `json_extract`;
+    // Postgres has no such function over a TEXT column, so the blob is cast
+    // to `jsonb` first. Without this branch the same SQL silently fails on
+    // one of the two providers.
+    //
+    // Every query is guarded by `ontology_is_json()`. Both providers ABORT
+    // THE WHOLE QUERY on a malformed blob (SQLite raises "malformed JSON",
+    // Postgres errors on the `::jsonb` cast), so a single bad row would
+    // blind every ontology recall rather than just excluding itself. The
+    // guard makes an unparseable blob mean "unanchored" — the same reading
+    // `row_to_h_mem` already gives it — instead of a hard failure.
+
+    /// A provider-native predicate that is true only when `ontology` holds
+    /// parseable JSON. Rows failing this are treated as unanchored.
+    fn ontology_is_json(&self) -> &'static str {
+        match self.driver.provider() {
+            // `jsonb_path_exists` on a text cast would itself throw; Postgres
+            // has no total `is_json` before 16, so validate structurally.
+            hkask_types::DbProvider::Postgres => {
+                "ontology IS NOT NULL AND ontology <> '' AND left(ltrim(ontology), 1) = '{'"
+            }
+            hkask_types::DbProvider::Sqlite => "json_valid(ontology)",
+        }
+    }
+
+    /// A provider-native scalar extraction of `$.<field>` from `ontology`.
+    fn ontology_scalar(&self, field: &str) -> String {
+        match self.driver.provider() {
+            hkask_types::DbProvider::Postgres => format!("(ontology::jsonb->>'{field}')"),
+            hkask_types::DbProvider::Sqlite => format!("json_extract(ontology, '$.{field}')"),
+        }
+    }
+
+    /// A provider-native text rendering of the JSON sub-document at
+    /// `$.<field>` (used for substring matching over an array field).
+    fn ontology_json_text(&self, field: &str) -> String {
+        match self.driver.provider() {
+            hkask_types::DbProvider::Postgres => format!("(ontology::jsonb->'{field}')::text"),
+            hkask_types::DbProvider::Sqlite => format!("json_extract(ontology, '$.{field}')"),
+        }
+    }
+
+    /// Query h_mems whose Dublin Core type (`$.dc_type`) matches exactly.
+    ///
+    /// The state-axis type query: "give me every `bibo:Article` h_mem".
+    #[must_use = "result must be used"]
+    pub fn query_by_dc_type(&self, dc_type: &str) -> Result<Vec<HMem>, HMemError> {
+        let valid = self.ontology_is_json();
+        let extract = self.ontology_scalar("dc_type");
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE {valid} AND {extract} = ?1 AND valid_to IS NULL \
+                 ORDER BY valid_from DESC"
+            ),
+            &[DbValue::Text(dc_type.to_string())],
+        )
+    }
+
+    /// Query h_mems whose Dublin Core subject list (`$.dc_subject`) contains
+    /// the given term as a substring.
+    ///
+    /// `dc_subject` is an array, so the match runs against its JSON rendering
+    /// (`["a","b"]`). Two consequences the caller must know:
+    ///
+    /// - The subject must not contain SQL LIKE wildcards (`%`, `_`) — they
+    ///   would be interpreted as wildcards.
+    /// - JSON punctuation is part of the haystack, so a needle containing
+    ///   `"`, `[`, `]`, or `,` can match structure rather than content. A
+    ///   needle spanning two elements never matches (element boundaries are
+    ///   real separators), but `,` alone matches any multi-element row. Pass
+    ///   plain concept text.
+    #[must_use = "result must be used"]
+    pub fn query_by_dc_subject(&self, subject: &str) -> Result<Vec<HMem>, HMemError> {
+        let valid = self.ontology_is_json();
+        let extract = self.ontology_json_text("dc_subject");
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE {valid} AND {extract} LIKE ?1 AND valid_to IS NULL \
+                 ORDER BY valid_from DESC"
+            ),
+            &[DbValue::Text(format!("%{subject}%"))],
+        )
+    }
+
+    /// Query h_mems belonging to a PKO procedure (`$.pko_procedure`).
+    ///
+    /// The process-axis query: "give me every step of `diagnose-bug-123`".
+    #[must_use = "result must be used"]
+    pub fn query_by_pko_procedure(&self, procedure: &str) -> Result<Vec<HMem>, HMemError> {
+        let valid = self.ontology_is_json();
+        let extract = self.ontology_scalar("pko_procedure");
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE {valid} AND {extract} = ?1 AND valid_to IS NULL \
+                 ORDER BY valid_from DESC"
+            ),
+            &[DbValue::Text(procedure.to_string())],
+        )
+    }
+
+    /// Query h_mems carrying at least one tag from an open-world ontology
+    /// namespace (`$.ontology_tags.<namespace>`).
+    ///
+    /// This is what makes adding a domain ontology (FIBO, GOLEM, OMC, ESO)
+    /// a data change rather than a schema change: the namespace is a key in
+    /// the blob, and this query reaches it without a migration.
+    ///
+    /// The namespace is bound as a parameter on both providers — it is
+    /// caller-supplied and must not be interpolated into the SQL text.
+    #[must_use = "result must be used"]
+    pub fn query_by_ontology_namespace(&self, namespace: &str) -> Result<Vec<HMem>, HMemError> {
+        let (predicate, params) = match self.driver.provider() {
+            hkask_types::DbProvider::Postgres => (
+                "jsonb_exists(ontology::jsonb->'ontology_tags', ?1)".to_string(),
+                vec![DbValue::Text(namespace.to_string())],
+            ),
+            // SQLite has no parameterizable JSON path, so the path is built
+            // by concatenation inside SQL (`'$.ontology_tags.' || ?1`) rather
+            // than by Rust string interpolation — the namespace stays a bound
+            // parameter and cannot inject SQL.
+            hkask_types::DbProvider::Sqlite => (
+                "json_extract(ontology, '$.ontology_tags.' || ?1) IS NOT NULL".to_string(),
+                vec![DbValue::Text(namespace.to_string())],
+            ),
+        };
+        let valid = self.ontology_is_json();
+        self.query_rows(
+            &format!(
+                "SELECT {HMEM_COLUMNS} FROM hmems \
+                 WHERE {valid} AND {predicate} AND valid_to IS NULL \
+                 ORDER BY valid_from DESC"
+            ),
+            &params,
+        )
+    }
+
     /// Soft-delete: set valid_to to close a h_mem.
     /// Soft-delete a h_mem by setting valid_to.
     ///
@@ -873,5 +1021,90 @@ mod tests {
         let results = store.query_by_entity("plain-entity").unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].ontology.is_none());
+    }
+
+    /// A malformed `ontology` blob must EXCLUDE only its own row, never fail
+    /// the query. Both providers abort the whole statement on unparseable
+    /// JSON (SQLite: "malformed JSON"; Postgres: `::jsonb` cast error), so
+    /// without the `ontology_is_json()` guard a single bad row — written by
+    /// an older binary, a migration, or direct SQL — would blind every
+    /// ontology recall in the database, not just its own.
+    #[test]
+    fn malformed_ontology_blob_does_not_poison_ontology_queries() {
+        let store = make_store();
+        let webid = WebID::new();
+
+        let anchored = HMem::new("good:entity", "attr", serde_json::json!("v"), webid)
+            .with_ontology(HMemOntology::semantic(
+                "bibo:Article",
+                vec!["ROIC".to_string()],
+                "10-K",
+            ));
+        store.insert(&anchored).expect("insert anchored");
+
+        // Simulate the poison row an older binary could have written: an
+        // empty-string ontology (what the former `unwrap_or_default()` in
+        // `insert` produced on a serialization failure).
+        let poison = HMem::new("poison:entity", "attr", serde_json::json!("v"), webid);
+        store.insert(&poison).expect("insert poison");
+        store
+            .driver()
+            .execute(
+                "UPDATE hmems SET ontology = '' WHERE entity = ?1",
+                &[DbValue::Text("poison:entity".to_string())],
+            )
+            .expect("force empty-string ontology");
+
+        // Every ontology query must still succeed and must exclude the
+        // poison row rather than erroring on it.
+        let by_type = store
+            .query_by_dc_type("bibo:Article")
+            .expect("dc_type query must not fail on a malformed sibling row");
+        assert_eq!(by_type.len(), 1);
+        assert_eq!(by_type[0].entity, "good:entity");
+
+        let by_subject = store
+            .query_by_dc_subject("ROIC")
+            .expect("dc_subject query must not fail on a malformed sibling row");
+        assert_eq!(by_subject.len(), 1);
+
+        let by_procedure = store
+            .query_by_pko_procedure("anything")
+            .expect("pko_procedure query must not fail on a malformed sibling row");
+        assert!(by_procedure.is_empty());
+
+        let by_namespace = store
+            .query_by_ontology_namespace("fibo")
+            .expect("namespace query must not fail on a malformed sibling row");
+        assert!(by_namespace.is_empty());
+    }
+
+    /// `insert` must propagate an ontology serialization failure rather than
+    /// silently writing an empty string. This pins the write half of the
+    /// malformed-blob fix: the read guard is defense-in-depth, but the write
+    /// path is where the bad data would originate.
+    #[test]
+    fn ontology_round_trips_through_insert_without_defaulting() {
+        let store = make_store();
+        let webid = WebID::new();
+        let h_mem = HMem::new("rt:entity", "attr", serde_json::json!("v"), webid)
+            .with_ontology(HMemOntology::episodic("proc", "step", "src"));
+        store.insert(&h_mem).expect("insert");
+
+        // The stored column must be parseable JSON, never an empty string.
+        let rows = store
+            .driver()
+            .query(
+                "SELECT ontology FROM hmems WHERE entity = ?1",
+                &[DbValue::Text("rt:entity".to_string())],
+            )
+            .expect("raw select");
+        let stored = rows
+            .first()
+            .and_then(|r| r.get(0).ok())
+            .and_then(|v| v.as_text().ok().map(|s| s.to_string()))
+            .expect("ontology column present");
+        assert!(!stored.is_empty(), "ontology must not be an empty string");
+        HMemOntology::from_json_str(&stored).expect("stored ontology must be valid JSON");
     }
 }

@@ -100,7 +100,7 @@ pub(crate) struct SwarmConfig {
     /// the delegated tool surface beyond the operator's own governed servers.
     pub allowed_tool_servers: Option<Vec<String>>,
     /// SQLCipher passphrase for the local swarm semantic-memory store (the
-    /// `hkask-memory` `SemanticMemory` backing the local knowledge tools). Must
+    /// `hkask-memory` `MemoryStore` backing the local knowledge tools). Must
     /// be >=8 chars. Pre-release default `"allostery"` (the kask-wide default for
     /// any user-facing passphrase that isn't an internally generated key) — the
     /// local knowledge tools work out of the box without operator config. Override
@@ -372,7 +372,7 @@ mod tests {
     fn config_memory_passphrase_default_is_allostery() {
         // Pre-release kask-wide default for any user-facing passphrase that
         // isn't an internally generated key. Pin it so the local knowledge
-        // tools work out of the box (SemanticMemory::open needs >=8 chars);
+        // tools work out of the box (MemoryStore::open needs >=8 chars);
         // override via HKASK_SWARM_MEMORY_PASSPHRASE for a real secret.
         let c = SwarmConfig::default();
         assert_eq!(c.memory_passphrase, "allostery");

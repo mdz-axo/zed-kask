@@ -284,20 +284,25 @@ impl CorpusServer {
                     "concepts": qa.concepts,
                     "chunk_ref": qa.chunk_ref,
                     "evidence_quotes": qa.evidence_quotes,
-                    "ontology": {
-                        "dimension": "what",
-                        "anchor": "dual_axis",
-                        "dc_type": "bibo:Document",
-                        "dc_source": qa.source,
-                        "dc_subject": qa.concepts,
-                        "pko_produced_by": "corpus_generate_qa",
-                        "pko_extracted_from": qa.chunk_ref,
-                    },
                 });
+                // Dual-axis anchoring (P5.4) in the first-class `ontology`
+                // column rather than the value blob: a generated QA pair is
+                // both a document (state axis: BIBO type + concepts as
+                // subject) and the product of a procedure (process axis:
+                // `corpus_generate_qa`, with the source chunk as the step).
+                // The value blob's former nested `"ontology"` object was not
+                // queryable — this is.
+                let mut ontology = hkask_types::HMemOntology::semantic(
+                    "bibo:Document",
+                    qa.concepts.clone(),
+                    qa.source.clone(),
+                );
+                ontology.pko_procedure = Some("corpus_generate_qa".to_string());
+                ontology.pko_step = qa.chunk_ref.clone();
                 let h_mem = hkask_storage::HMem::new(&entity, "training_qa_pair", v, webid)
                     .with_visibility(hkask_types::Visibility::Public)
                     .with_confidence(0.8)
-                    .with_dimension(hkask_types::Dimension::What);
+                    .with_ontology(ontology);
                 if store.store(h_mem).is_ok() {
                     stored += 1;
                 }

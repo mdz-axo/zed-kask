@@ -38,6 +38,13 @@ pub struct RegQueryRequest {
 pub struct MemoryRecallRequest {
     pub entity: String,
     pub memory_type: Option<String>,
+    /// Optional ontology axis to recall along instead of the entity (P5.4).
+    /// One of `dc_type`, `dc_subject`, `pko_procedure`, `ontology_namespace`.
+    /// When set, `ontology_value` supplies the term and `entity` is ignored.
+    pub ontology_axis: Option<String>,
+    /// The term to match on `ontology_axis` (e.g. `bibo:Article` for
+    /// `dc_type`, `fibo` for `ontology_namespace`).
+    pub ontology_value: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

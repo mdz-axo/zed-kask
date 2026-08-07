@@ -33,11 +33,10 @@ use hkask_condenser::saliency;
 use hkask_condenser::types::*;
 
 use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
-use hkask_memory::SemanticMemory;
-use hkask_memory::{EpisodicMemory, EpisodicMemoryError};
+use hkask_memory::{MemoryStore, MemoryStoreError};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemError};
-use hkask_types::Visibility;
+use hkask_types::{HMemOntology, Visibility};
 use hkask_types::template::LLMParameters;
 use hkask_types::time::now_rfc3339;
 use hkask_types::{InferenceError, InferencePort};
@@ -48,8 +47,7 @@ use std::sync::{Arc, Mutex};
 hkask_mcp_server::mcp_server!(
     pub struct CondenserServer {
         pub engine: Mutex<CondenserEngine>,
-        pub episodic: Option<Arc<EpisodicMemory>>,
-        pub semantic: Option<Arc<SemanticMemory>>,
+        pub store: Option<Arc<MemoryStore>>,
         pub inference_port: Arc<dyn InferencePort>,
         pub default_model: String,
         pub persona_keywords: Vec<String>,
@@ -75,18 +73,20 @@ fn map_inference_error(e: InferenceError) -> McpToolError {
     }
 }
 
-/// Classify an `EpisodicMemoryError` from `EpisodicMemory::store` into the MCP
-/// wire-level `McpToolError` kind: a missing h_mem is `not_found`, invalid
-/// visibility is a user-input problem (`invalid_argument`), a missing
-/// perspective is a failed precondition, and infrastructure failures remain
-/// `internal`.
-fn map_episodic_error(e: EpisodicMemoryError) -> McpToolError {
+/// Classify a `MemoryStoreError` from `MemoryStore::store` into the MCP
+/// wire-level `McpToolError` kind: a missing h_mem or embedding is
+/// `not_found`, a centroid with no embeddings is a failed precondition, and
+/// infrastructure failures remain `internal`.
+fn map_memory_error(e: MemoryStoreError) -> McpToolError {
     let message = e.to_string();
     match e {
-        EpisodicMemoryError::HMem(HMemError::NotFound(_)) => McpToolError::not_found(message),
-        EpisodicMemoryError::HMem(HMemError::Infra(_)) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
-        EpisodicMemoryError::InvalidVisibility(_) => McpToolError::invalid_argument(message),
-        EpisodicMemoryError::MissingPerspective => McpToolError::failed_precondition(message),
+        MemoryStoreError::HMem(HMemError::NotFound(_)) => McpToolError::not_found(message),
+        MemoryStoreError::HMem(HMemError::Infra(_)) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        MemoryStoreError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
+            McpToolError::not_found(message)
+        }
+        MemoryStoreError::Embedding(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
+        MemoryStoreError::NoEmbeddingsForCentroid(_) => McpToolError::failed_precondition(message),
     }
 }
 
@@ -113,15 +113,15 @@ impl CondenserServer {
     }
 
     pub fn has_persistence(&self) -> bool {
-        self.episodic.is_some()
+        self.store.is_some()
     }
 
-    /// Record a tool call's outcome to episodic memory.
+    /// Record a tool call's outcome to memory.
     ///
-    /// Persists the experience as a first-person `HMem` in the episodic store
-    /// when persistence is configured (`HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`).
-    /// Falls back to a debug log when the episodic store is absent so the
-    /// server still operates in memory-only mode.
+    /// Persists the experience as a first-person, PKO-anchored `HMem` when
+    /// persistence is configured (`HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE`).
+    /// Falls back to a debug log when the store is absent so the server still
+    /// operates in memory-only mode.
     pub fn record_experience(
         &self,
         tool: &str,
@@ -137,18 +137,22 @@ impl CondenserServer {
             "timestamp": now_rfc3339(),
         });
 
-        if let Some(ref episodic) = self.episodic {
+        if let Some(ref store) = self.store {
+            // Process-axis anchoring (P5.4): an experience record is a step
+            // execution of the tool that produced it — the tool name is the
+            // PKO step, `condense` the procedure.
             let h_mem = HMem::new(&entity, "experience", value, self.webid)
                 .with_perspective(self.webid)
                 .with_visibility(Visibility::Private)
-                .with_confidence(1.0);
+                .with_confidence(1.0)
+                .with_ontology(HMemOntology::episodic("condense", tool, "condenser"));
 
-            if let Err(e) = episodic.store(h_mem) {
+            if let Err(e) = store.store(h_mem) {
                 tracing::warn!(
                     target: "hkask.mcp.condenser.memory",
                     tool = %tool,
                     error = %e,
-                    "Failed to persist experience to episodic memory",
+                    "Failed to persist experience to memory",
                 );
             }
         } else {
@@ -159,7 +163,7 @@ impl CondenserServer {
                 outcome = %outcome,
                 detail = ?detail,
                 timestamp = %now_rfc3339(),
-                "Experience logged (no episodic store — memory-only mode)",
+                "Experience logged (no memory store — memory-only mode)",
             );
         }
     }
@@ -185,7 +189,7 @@ impl CondenserServer {
                 "mode": mode,
                 "capabilities": {
                     "persistence": self.has_persistence(),
-                    "semantic_memory": self.semantic.is_some(),
+                    "semantic_memory": self.store.is_some(),
                     "inference": true,
                     "keystore": self.capability_tier.keystore_available,
                     "reg": self.capability_tier.reg_available(),
@@ -207,7 +211,7 @@ impl CondenserServer {
         }): Parameters<PersistRequest>,
     ) -> String {
         execute_tool(self, "condenser_persist", async {
-            let Some(episodic) = &self.episodic else {
+            let Some(store) = &self.store else {
                 return Err(McpToolError::permission_denied(
                     "Persistence not available — set HKASK_DB_PATH and HKASK_DB_PASSPHRASE",
                 ));
@@ -228,16 +232,21 @@ impl CondenserServer {
             )
             .with_perspective(self.webid)
             .with_visibility(Visibility::Private)
-            .with_confidence(confidence.unwrap_or(1.0));
+            .with_confidence(confidence.unwrap_or(1.0))
+            .with_ontology(HMemOntology::episodic(
+                "condense",
+                "persist",
+                format!("tool:{tool_name}"),
+            ));
 
-            match episodic.store(h_mem) {
+            match store.store(h_mem) {
                 Ok(()) => Ok(serde_json::json!({
                     "persisted": true,
                     "entity": entity,
                     "attribute": "content",
                     "perspective": self.webid.to_string(),
                 })),
-                Err(e) => Err(map_episodic_error(e)),
+                Err(e) => Err(map_memory_error(e)),
             }
         })
         .await
@@ -350,16 +359,10 @@ impl CondenserServer {
                 Some("memory") => {
                     // Query memory stores word-by-word, then score via domain crate.
                     let words = saliency::extract_query_words(&req.text);
-                    let total_results = if let Some(ref semantic) = self.semantic {
+                    let total_results = if let Some(ref store) = self.store {
                         words
                             .iter()
-                            .filter_map(|w| semantic.query_deduped(w).ok())
-                            .map(|m| m.len())
-                            .sum::<usize>()
-                    } else if let Some(ref episodic) = self.episodic {
-                        words
-                            .iter()
-                            .filter_map(|w| episodic.query_for_deduped(w, self.webid).ok())
+                            .filter_map(|w| store.query_deduped(w).ok())
                             .map(|m| m.len())
                             .sum::<usize>()
                     } else {
@@ -419,7 +422,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         env!("CARGO_PKG_VERSION"),
         |ctx: hkask_mcp_server::ServerContext| {
             (|| -> anyhow::Result<CondenserServer> {
-                let (episodic, semantic) = {
+                let store = {
                     let db_path = ctx
                         .credentials
                         .get("HKASK_DB_PATH")
@@ -445,30 +448,21 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
                                 Arc::new(SqliteDriver::new(pool));
 
-                            // Episodic memory: first-person experience store.
+                            // One store for both episodic experience records
+                            // and semantic knowledge — the `HMemOntology` blob
+                            // on each h_mem distinguishes them (P5.4).
                             let h_mem_store =
                                 hkask_storage::HMemStore::from_driver(Arc::clone(&driver))
                                     .map_err(|e| anyhow::anyhow!("hmem store init: {e}"))?;
-                            let episodic = hkask_memory::EpisodicMemory::new(h_mem_store);
-
-                            // Semantic memory: shared knowledge graph with embeddings.
-                            // Requires a second HMemStore (separate entity namespace) plus
-                            // an EmbeddingStore for KNN similarity search. Same driver,
-                            // same database — different store handles. Follows the
-                            // pattern established by the curator server.
-                            let h_mem_store2 =
-                                hkask_storage::HMemStore::from_driver(Arc::clone(&driver))
-                                    .map_err(|e| {
-                                        anyhow::anyhow!("hmem store init (semantic): {e}")
-                                    })?;
                             let embedding_store = EmbeddingStore::from_driver(driver, 1024)
                                 .map_err(|e| anyhow::anyhow!("embedding store init: {e}"))?;
-                            let semantic =
-                                hkask_memory::SemanticMemory::new(h_mem_store2, embedding_store);
 
-                            (Some(Arc::new(episodic)), Some(Arc::new(semantic)))
+                            Some(Arc::new(hkask_memory::MemoryStore::new(
+                                h_mem_store,
+                                embedding_store,
+                            )))
                         }
-                        None => (None, None),
+                        None => None,
                     }
                 };
 
@@ -497,8 +491,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 Ok(CondenserServer::new(
                     ctx.webid,
                     Mutex::new(CondenserEngine::new()),
-                    episodic,
-                    semantic,
+                    store,
                     Arc::clone(&inference_port),
                     default_model,
                     persona_keywords,
@@ -513,7 +506,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         vec![
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_DB_PATH",
-                "Path to the condenser episodic + semantic SQLite database (defaults to in-memory when unset)",
+                "Path to the condenser memory SQLite database (defaults to in-memory when unset)",
             ),
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_DB_PASSPHRASE",

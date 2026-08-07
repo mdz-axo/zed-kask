@@ -1,6 +1,13 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
-//! hKask Memory — Semantic and episodic memory pipelines
+//! hKask Memory — one unified memory store, ontology-discriminated.
+//!
+//! The episodic/semantic distinction is carried by the `HMemOntology` blob on
+//! each h_mem (P5.4 dual-axis anchoring), not by separate store structs. A
+//! semantic fact anchors to the state axis (Dublin Core + BIBO: `dc_type`,
+//! `dc_subject`, `dc_source`); an episodic experience anchors to the process
+//! axis (PKO: `pko_procedure`, `pko_step`). Both are stored, recalled, and
+//! queried through the single [`MemoryStore`].
 //!
 //! **Recall deduplication** runs at recall time in `recall_dedup` (BLAKE3 hash
 //! over canonical entity-attribute-value content, first-seen-wins). There is
@@ -10,20 +17,18 @@
 
 pub(crate) mod bayesian; // Loop 2b (semantic confidence combination)
 pub mod chat_turn; // Typed projection of chat episode content
-pub mod consolidation; // Episodic → Semantic bridge
+pub mod consolidation; // Perspective-bound → shared promotion bridge
 pub mod consolidation_service;
-pub mod episodic; // Loop 2a (legacy compat shim — delegates to MemoryStore)
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;
-pub mod semantic; // Loop 2b (legacy compat shim — delegates to MemoryStore)
+pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use chat_turn::ChatTurn;
 pub use consolidation::ConsolidationBridge;
 pub use consolidation_service::ConsolidationService;
-pub use episodic::{EpisodicMemory, EpisodicMemoryError};
 pub use memory_store::{CentroidResult, MemoryStore, MemoryStoreError};
-pub use semantic::{SemanticMemory, SemanticMemoryError};
+pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 
 // ── Canonical span namespace (hoisted from 5 per-call .expect() sites) ──
 //

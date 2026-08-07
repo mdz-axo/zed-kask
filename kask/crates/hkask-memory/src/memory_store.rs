@@ -19,7 +19,7 @@
 //!   consolidation_candidates, expire_h_mem)
 //!
 //! The decay model (Wozniak-Gorzelanczyk, 1995: R(t) = exp(-t/S)) is applied
-//! at recall time, same as the legacy `EpisodicMemory`/`SemanticMemory`.
+//! at recall time.
 
 use std::sync::Arc;
 
@@ -40,7 +40,7 @@ pub enum MemoryStoreError {
     NoEmbeddingsForCentroid(String),
 }
 
-/// Result of computing a style centroid (mirrors `semantic::CentroidResult`).
+/// Result of computing a style centroid over a prefix-scoped embedding set.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CentroidResult {
     pub centroid: Vec<f32>,
@@ -66,6 +66,10 @@ pub(crate) const DEFAULT_STORAGE_BUDGET: usize = 10_000;
 /// Decay (Wozniak-Gorzelanczyk, 1995) is applied at recall time:
 /// `R(t) = exp(-t/S)` where `t` is days since `recalled_at` and `S` is
 /// `memory_life_days` (default 180). `touch_recall` resets the clock.
+///
+/// Text chunking (`chunk_text`, `strip_gutenberg_headers`) is exposed as
+/// associated functions delegating to [`crate::text_chunking`] — they touch
+/// no store state.
 pub struct MemoryStore {
     event_sink: Option<Arc<dyn RegulationSink>>,
     h_mem_store: HMemStore,
@@ -105,17 +109,24 @@ impl MemoryStore {
         Ok(Self::new(h_mem_store, embedding_store))
     }
 
-    /// Create an episodic-only `MemoryStore` (no embedding store).
+    /// Create an `MemoryStore` with no usable embedding capability.
     ///
-    /// For callers that only need h_mem storage (e.g. the condenser's
-    /// episodic path). The embedding store is a no-op stub.
-    pub fn new_episodic_only(h_mem_store: HMemStore) -> Self {
+    /// For callers that recall by entity/EAV only and never embed (the
+    /// condenser's episodic path; the curator when its `EmbeddingStore`
+    /// could not be opened). Embedding calls on the returned store will
+    /// fail at the storage layer rather than being silently accepted.
+    ///
+    /// Fallible because `EmbeddingStore::from_driver` can fail for a
+    /// driver-shape reason (a `Sqlite` provider whose `sqlite_pool()` is
+    /// `None`) that has nothing to do with the dimension. A caller reaching
+    /// here *because* its own `from_driver` call already failed would panic
+    /// on an `expect`, turning a degraded-memory path into a crash.
+    pub fn try_new_without_embeddings(h_mem_store: HMemStore) -> Result<Self, MemoryStoreError> {
         let embedding_store = EmbeddingStore::from_driver(
             Arc::clone(h_mem_store.driver()),
-            1, // dim=1 — never used; episodic-only store doesn't embed
-        )
-        .expect("embedding store with dim=1 always initializes");
-        Self::new(h_mem_store, embedding_store)
+            1, // dim=1 — never used; this store does not embed
+        )?;
+        Ok(Self::new(h_mem_store, embedding_store))
     }
 
     pub fn with_ledger(mut self, sink: Arc<dyn RegulationSink>) -> Self {
@@ -270,6 +281,32 @@ impl MemoryStore {
         Ok(crate::recall_dedup::dedup_h_mems(filtered))
     }
 
+    /// Query by entity for a specific perspective, with deduplication and
+    /// decay, touching `recalled_at` on every survivor.
+    ///
+    /// The touching variant of [`Self::query_for_deduped_untouched`]. Prefer
+    /// the untouched variant for recall paths that inspect many candidates
+    /// but only act on a few — touching every recalled h_mem turns recall
+    /// into a write storm under concurrent load (one UPDATE per row per call).
+    pub fn query_for_deduped(
+        &self,
+        entity: &str,
+        perspective: WebID,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        let deduped = self.query_for_deduped_untouched(entity, perspective)?;
+        for t in &deduped {
+            if let Err(e) = self.h_mem_store.touch_recall(&t.id) {
+                tracing::warn!(
+                    target: "reg.memory.decay",
+                    triple_id = %t.id,
+                    error = %e,
+                    "Failed to touch_recall h_mem — decay clock not reset"
+                );
+            }
+        }
+        Ok(deduped)
+    }
+
     /// Query by entity prefix for a perspective, without touching
     /// `recalled_at`. Caps rows via SQL LIMIT.
     pub fn query_for_deduped_untouched_by_prefix(
@@ -321,7 +358,54 @@ impl MemoryStore {
         Ok(decayed)
     }
 
-    // ── Embedding operations ───────────────────────────────────────────────
+    // ── Ontology recall (P5.4 dual-axis anchoring) ───────────────────────
+    //
+    // These are what make the ontology blob load-bearing rather than
+    // decorative: an h_mem's dual-axis anchoring is a query axis, not just
+    // metadata. All four apply decay without touching `recalled_at` — an
+    // ontology sweep inspects many h_mems and should not reset their decay
+    // clocks wholesale (the same write-storm reasoning as
+    // `query_deduped_untouched`).
+
+    /// Recall by Dublin Core type (`dc_type`) — the state-axis type query.
+    pub fn query_by_dc_type(&self, dc_type: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_dc_type(dc_type)?))
+    }
+
+    /// Recall by Dublin Core subject substring — the state-axis topic query.
+    pub fn query_by_dc_subject(&self, subject: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_dc_subject(subject)?))
+    }
+
+    /// Recall every step of a PKO procedure — the process-axis query.
+    pub fn query_by_pko_procedure(&self, procedure: &str) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self.decayed(self.h_mem_store.query_by_pko_procedure(procedure)?))
+    }
+
+    /// Recall h_mems tagged by an open-world ontology namespace (`fibo`,
+    /// `golem`, `omc`, …) — the domain-supplement query.
+    pub fn query_by_ontology_namespace(
+        &self,
+        namespace: &str,
+    ) -> Result<Vec<HMem>, MemoryStoreError> {
+        Ok(self
+            .decayed(self.h_mem_store.query_by_ontology_namespace(namespace)?))
+    }
+
+    /// Apply the Wozniak-Gorzelanczyk forgetting curve to a recalled batch
+    /// without touching `recalled_at`.
+    fn decayed(&self, h_mems: Vec<HMem>) -> Vec<HMem> {
+        h_mems
+            .into_iter()
+            .map(|mut t| {
+                let days_since = crate::bayesian::days_since(t.recalled_at);
+                t.confidence = t.confidence.memory_decay(days_since, self.memory_life_days);
+                t
+            })
+            .collect()
+    }
+
+    // ── Embedding operations ────────────────────────────────────────
 
     pub fn store_embedding(
         &self,
@@ -586,10 +670,13 @@ impl MemoryStore {
         Ok(())
     }
 
-    // ── Text chunking (delegated to semantic::SemanticMemory for compat) ──
+    // ── Text chunking (pure — no store access) ────────────────────────
+    //
+    // Kept as associated functions rather than moving callers to the free
+    // functions in `text_chunking`: the chunking step is always paired with a
+    // store write, so `MemoryStore::chunk_text` keeps the call site readable.
 
-    /// Chunk text into passages for embedding. Delegates to the legacy
-    /// `SemanticMemory::chunk_text` (pure function, no DB access).
+    /// Chunk text into passages for embedding.
     pub fn chunk_text(
         text: &str,
         entity_ref_prefix: &str,
@@ -597,7 +684,7 @@ impl MemoryStore {
         max_words: usize,
         sentence_boundary: &str,
     ) -> Vec<(String, String)> {
-        crate::semantic::SemanticMemory::chunk_text(
+        crate::text_chunking::chunk_text(
             text,
             entity_ref_prefix,
             min_words,
@@ -608,7 +695,7 @@ impl MemoryStore {
 
     /// Strip Project Gutenberg headers and footers from text.
     pub fn strip_gutenberg_headers(text: &str) -> String {
-        crate::semantic::SemanticMemory::strip_gutenberg_headers(text)
+        crate::text_chunking::strip_gutenberg_headers(text)
     }
 }
 
@@ -682,7 +769,7 @@ mod tests {
     fn decay_applied_on_recall() {
         // With memory_life_days = 0, a freshly-stored h_mem (t≈0) preserves
         // confidence (exp(0/0) = exp(0) = 1.0). The decay only kicks in after
-        // time passes — this matches the legacy SemanticMemory behavior.
+        // time passes.
         let store = make_store().with_memory_life_days(0.0);
         let webid = WebID::new();
         let h_mem = HMem::new("test:entity", "attr", serde_json::json!("val"), webid)
@@ -719,5 +806,146 @@ mod tests {
         let user2_results = store.query_for_deduped_untouched("shared:entity", user2).unwrap();
         assert_eq!(user2_results.len(), 1);
         assert_eq!(user2_results[0].value, serde_json::json!("v2"));
+    }
+
+    /// Populate a store with three ontology-anchored h_mems: two semantic
+    /// facts (one FIBO-tagged) and one episodic step execution.
+    fn store_with_ontologies() -> (MemoryStore, WebID) {
+        let store = make_store();
+        let user = WebID::new();
+
+        let roic = HMem::new("company:Apple", "roic", serde_json::json!(0.32), user)
+            .with_visibility(Visibility::Shared)
+            .with_ontology(
+                HMemOntology::semantic("bibo:Article", vec!["ROIC".to_string()], "10-K 2025")
+                    .with_ontology_tag("fibo", "return on invested capital"),
+            );
+        store.store(roic).expect("store roic");
+
+        let moat = HMem::new("company:Apple", "moat", serde_json::json!("brand"), user)
+            .with_visibility(Visibility::Shared)
+            .with_ontology(HMemOntology::semantic(
+                "bibo:Document",
+                vec!["competitive advantage".to_string()],
+                "analyst note",
+            ));
+        store.store(moat).expect("store moat");
+
+        let step = HMem::new("chat:thread:abc", "chatted", serde_json::json!("reproduced"), user)
+            .with_perspective(user)
+            .with_visibility(Visibility::Private)
+            .with_ontology(HMemOntology::episodic(
+                "diagnose-bug-123",
+                "reproduce",
+                "session-1",
+            ));
+        store.store(step).expect("store step");
+
+        (store, user)
+    }
+
+    #[test]
+    fn query_by_dc_type_selects_only_that_state_axis_type() {
+        let (store, _) = store_with_ontologies();
+
+        let articles = store.query_by_dc_type("bibo:Article").expect("query");
+        assert_eq!(articles.len(), 1);
+        assert_eq!(articles[0].attribute, "roic");
+
+        let steps = store.query_by_dc_type("pko:StepExecution").expect("query");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].entity, "chat:thread:abc");
+
+        assert!(
+            store
+                .query_by_dc_type("dcterms:Dataset")
+                .expect("query")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn query_by_dc_subject_matches_a_term_inside_the_subject_array() {
+        let (store, _) = store_with_ontologies();
+
+        let roic = store.query_by_dc_subject("ROIC").expect("query");
+        assert_eq!(roic.len(), 1);
+        assert_eq!(roic[0].attribute, "roic");
+
+        // Substring match, not exact: "competitive" hits "competitive advantage".
+        let moat = store.query_by_dc_subject("competitive").expect("query");
+        assert_eq!(moat.len(), 1);
+        assert_eq!(moat[0].attribute, "moat");
+
+        assert!(
+            store
+                .query_by_dc_subject("nonexistent-subject")
+                .expect("query")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn query_by_pko_procedure_selects_only_process_axis_steps() {
+        let (store, _) = store_with_ontologies();
+
+        let steps = store
+            .query_by_pko_procedure("diagnose-bug-123")
+            .expect("query");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0].ontology.as_ref().and_then(|o| o.pko_step.as_deref()),
+            Some("reproduce")
+        );
+
+        // Semantic facts carry no PKO procedure, so they never match.
+        assert!(
+            store
+                .query_by_pko_procedure("bibo:Article")
+                .expect("query")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn query_by_ontology_namespace_reaches_the_open_world_map() {
+        let (store, _) = store_with_ontologies();
+
+        let fibo = store.query_by_ontology_namespace("fibo").expect("query");
+        assert_eq!(fibo.len(), 1);
+        assert_eq!(fibo[0].attribute, "roic");
+        assert_eq!(
+            fibo[0]
+                .ontology
+                .as_ref()
+                .map(|o| o.ontology_concepts("fibo")),
+            Some(&["return on invested capital".to_string()][..])
+        );
+
+        // An unpopulated namespace yields nothing rather than erroring — the
+        // open-world map has no schema constraint on which keys exist.
+        assert!(
+            store
+                .query_by_ontology_namespace("golem")
+                .expect("query")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ontology_queries_skip_h_mems_with_no_ontology_blob() {
+        // A h_mem written before the ontology column existed (or by a caller
+        // that sets none) must not match an ontology query — a NULL blob is
+        // "unanchored", not "matches everything".
+        let store = make_store();
+        let user = WebID::new();
+        let bare = HMem::new("bare:entity", "attr", serde_json::json!("v"), user)
+            .with_visibility(Visibility::Shared);
+        store.store(bare).expect("store bare");
+
+        assert!(store.query_by_dc_type("bibo:Article").expect("query").is_empty());
+        assert!(store.query_by_dc_subject("anything").expect("query").is_empty());
+        assert!(store.query_by_pko_procedure("any").expect("query").is_empty());
+        assert!(store.query_by_ontology_namespace("fibo").expect("query").is_empty());
     }
 }
