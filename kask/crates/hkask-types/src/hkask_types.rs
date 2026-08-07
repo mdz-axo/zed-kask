@@ -11,6 +11,7 @@ pub mod document;
 pub mod error;
 pub mod event;
 pub mod goal;
+pub mod hmem_ontology;
 pub mod id;
 pub mod inference_ipc;
 
@@ -69,6 +70,7 @@ pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 pub use tool_taint::ToolTaint;
 pub use transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 pub use visibility::{Confidence, Dimension, Visibility};
+pub use hmem_ontology::HMemOntology;
 pub use voice::VoiceDesign;
 
 pub use ports::*;

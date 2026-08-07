@@ -7,8 +7,10 @@
 --   BLOB → BYTEA
 -- Run via open_postgres() after CREATE EXTENSION vector.
 
-CREATE TABLE IF NOT EXISTS hmems (id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL, value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT, recalled_at TEXT NOT NULL DEFAULT (now()::text), transaction_at TEXT DEFAULT (now()::text), confidence REAL NOT NULL DEFAULT 1.0, perspective TEXT, visibility TEXT NOT NULL DEFAULT 'private', owner_webid TEXT NOT NULL, dimension TEXT, swarm_id TEXT);
-CREATE INDEX IF NOT EXISTS idx_hmems_swarm_id ON hmems(swarm_id);
+CREATE TABLE IF NOT EXISTS hmems (id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL, value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT, recalled_at TEXT NOT NULL DEFAULT (now()::text), transaction_at TEXT DEFAULT (now()::text), confidence REAL NOT NULL DEFAULT 1.0, perspective TEXT, visibility TEXT NOT NULL DEFAULT 'private', owner_webid TEXT NOT NULL, ontology TEXT);
+CREATE INDEX IF NOT EXISTS idx_hmems_entity ON hmems(entity);
+CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
+CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);
 CREATE TABLE IF NOT EXISTS embeddings (id TEXT PRIMARY KEY, entity_ref TEXT NOT NULL, embedding vector($DIM) NOT NULL, dimensions INTEGER NOT NULL, model TEXT NOT NULL, created_at TEXT DEFAULT (now()::text));
 CREATE INDEX IF NOT EXISTS idx_embeddings_entity_ref ON embeddings(entity_ref);
 CREATE INDEX IF NOT EXISTS idx_embeddings_embedding ON embeddings USING ivfflat (embedding vector_cosine_ops);

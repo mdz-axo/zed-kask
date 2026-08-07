@@ -9296,6 +9296,7 @@ dependencies = [
  "gpui_util",
  "hkask-conversation-injector",
  "hkask-tool-invoker",
+ "hkask-types",
  "serde",
  "serde_json",
  "theme",

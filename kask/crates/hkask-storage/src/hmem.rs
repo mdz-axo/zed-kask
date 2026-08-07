@@ -4,6 +4,7 @@ pub mod archive;
 use crate::database::value::{DbRow, DbValue};
 use chrono::{DateTime, Utc};
 use hkask_types::HMemEntry;
+use hkask_types::HMemOntology;
 use hkask_types::id::{HMemId, WebID};
 use hkask_types::time::now_rfc3339;
 use hkask_types::visibility::AccessControl;
@@ -50,16 +51,12 @@ pub struct HMem {
     /// Last time this h_mem was recalled. Starts at creation time.
     /// Updated on each recall — resets the decay clock.
     pub recalled_at: DateTime<Utc>,
-    /// 5W1H dimension — which curator ontology category this h_mem belongs to.
-    /// Maps to `OntologyAnchor::Core` (universal ground). None = unclassified.
-    pub dimension: Option<Dimension>,
-    /// Optional swarm coordination tag — when this h_mem was written by a
-    /// local swarm delegation (`swarm_delegate_local`), this carries the
-    /// `swarm_id` so queries can filter by swarm (isolation) or ignore it
-    /// (cross-swarm transfer). `None` for non-swarm memories (the pre-Slice-7
-    /// behavior). Not an access-control field — it's a coordination tag, not
-    /// a visibility/ownership boundary.
-    pub swarm_id: Option<String>,
+    /// Dual-axis ontological anchoring (P5.4): DC+BIBO state axis + PKO process
+    /// axis + 5W1H universal ground + open-world domain tags. `None` =
+    /// unclassified (the pre-ontology default; legacy h_mems carry no
+    /// ontology). Queryable via `json_extract(ontology, ...)` so h_mems and
+    /// corpus `TaggedChunk`s share a common substrate for graph reasoning.
+    pub ontology: Option<HMemOntology>,
 }
 impl HMem {
     /// Create a new HMem with required fields.
@@ -80,8 +77,7 @@ impl HMem {
             confidence: Confidence::full(),
             access: AccessControl::new(owner_webid),
             recalled_at: now,
-            dimension: None,
-            swarm_id: None,
+            ontology: None,
         }
     }
     /// Set confidence on a HMem.
@@ -111,23 +107,27 @@ impl HMem {
         self.access = self.access.with_visibility(v);
         self
     }
-    /// Set 5W1H dimension on a HMem.
+    /// Set the ontological anchoring on a HMem.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — builder: set ontology
+    /// \[P8\] Constraining: Semantic Grounding — dual-axis anchoring (P5.4)
+    /// post: returns Self with ontology set (builder pattern)
+    pub fn with_ontology(mut self, ontology: HMemOntology) -> Self {
+        self.ontology = Some(ontology);
+        self
+    }
+
+    /// Set 5W1H dimension on a HMem. Convenience builder that initializes
+    /// the ontology blob if absent and adds the dimension to it.
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P3\] Motivating: Generative Space — builder: set dimension
     /// \[P8\] Constraining: Semantic Grounding — anchors to 5W1H ontology tier
-    /// post: returns Self with dimension set (builder pattern)
+    /// post: returns Self with the dimension added to the ontology blob
     pub fn with_dimension(mut self, d: Dimension) -> Self {
-        self.dimension = Some(d);
-        self
-    }
-    /// Set the swarm coordination tag on a HMem.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — builder: set swarm_id
-    /// post: returns Self with swarm_id set (builder pattern)
-    pub fn with_swarm_id(mut self, swarm_id: impl Into<String>) -> Self {
-        self.swarm_id = Some(swarm_id.into());
+        let ont = self.ontology.take().unwrap_or_default();
+        self.ontology = Some(ont.with_dimension(d));
         self
     }
     /// Check if this is an episodic h_mem (has perspective).
@@ -180,13 +180,11 @@ impl HMemStore {
                 perspective TEXT,
                 visibility TEXT NOT NULL DEFAULT 'private',
                 owner_webid TEXT NOT NULL,
-                dimension INTEGER,
-                swarm_id TEXT
+                ontology TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_hmems_entity ON hmems(entity);
             CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
-            CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);
-            CREATE INDEX IF NOT EXISTS idx_hmems_swarm_id ON hmems(swarm_id);",
+            CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);",
         )?;
         Ok(store)
     }
@@ -205,7 +203,7 @@ impl HMemStore {
     }
 }
 
-const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, dimension, swarm_id";
+const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -261,8 +259,13 @@ impl HMemStore {
                 owner_webid: row.get(10)?.as_text()?.parse().map_err(|_| {
                     HMemError::Infra(InfrastructureError::database("invalid webid"))
                 })?,
-                dimension: row.get(11)?.as_text().ok().map(|s| s.to_string()),
-                swarm_id: row.get(12)?.as_text().ok().map(|s| s.to_string()),
+                ontology: row.get(11)?.as_text().ok().and_then(|s| {
+                    if s.is_empty() {
+                        None
+                    } else {
+                        HMemOntology::from_json_str(s).ok()
+                    }
+                }),
             };
         Self::row_to_triple(hrow)
     }
@@ -307,7 +310,7 @@ impl HMemStore {
         };
         self.exec(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
             ),
             &[
                 DbValue::Text(h_mem.id.to_string()),
@@ -326,13 +329,9 @@ impl HMemStore {
                 DbValue::Text(h_mem.access.visibility.to_string()),
                 DbValue::Text(h_mem.access.owner_webid.to_string()),
                 h_mem
-                    .dimension
+                    .ontology
                     .as_ref()
-                    .map_or(DbValue::Null, |d| DbValue::Text(d.as_str().to_string())),
-                h_mem
-                    .swarm_id
-                    .as_ref()
-                    .map_or(DbValue::Null, |s| DbValue::Text(s.clone())),
+                    .map_or(DbValue::Null, |ont| DbValue::Text(ont.to_json_string().unwrap_or_default())),
             ],
         )?;
         Ok(())
@@ -415,22 +414,6 @@ impl HMemStore {
             &[DbValue::Text(perspective.to_string())],
         )
     }
-    /// Query h_mems by swarm coordination tag (Slice 7 — per-swarm memory
-    /// namespace). Returns memories written by a specific swarm delegation.
-    /// `None` swarm_id memories (non-swarm memories) are excluded — query
-    /// without this filter to get all memories.
-    ///
-    /// expect: "The system provides durable storage for h_mem data"
-    /// \[P3\] Motivating: Generative Space — query by swarm_id
-    /// pre:  swarm_id is non-empty
-    /// post: returns Vec of h_mems matching swarm_id
-    #[must_use = "result must be used"]
-    pub fn query_by_swarm_id(&self, swarm_id: &str) -> Result<Vec<HMem>, HMemError> {
-        self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE swarm_id = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
-            &[DbValue::Text(swarm_id.to_string())],
-        )
-    }
     /// Query all h_mems with a given attribute, regardless of entity.
     /// Query h_mems by attribute.
     ///
@@ -472,7 +455,7 @@ impl HMemStore {
                 )
                 .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
             let rows = self.driver.query(
-                "SELECT entity, attribute, perspective, visibility, owner_webid, dimension, swarm_id FROM hmems WHERE id = ?1",
+                "SELECT entity, attribute, perspective, visibility, owner_webid, ontology FROM hmems WHERE id = ?1",
                 &[DbValue::Text(id.to_string())],
             ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
             let row = rows.first().ok_or_else(|| {
@@ -486,11 +469,10 @@ impl HMemStore {
             let perspective: Option<String> = row.get(2)?.as_text().ok().map(|s| s.to_string());
             let visibility = row.get(3)?.as_text()?.to_string();
             let owner_webid = row.get(4)?.as_text()?.to_string();
-            let dimension: Option<String> = row.get(5)?.as_text().ok().map(|s| s.to_string());
-            let swarm_id: Option<String> = row.get(6)?.as_text().ok().map(|s| s.to_string());
+            let ontology: Option<String> = row.get(5)?.as_text().ok().map(|s| s.to_string());
             let new_id = HMemId::new();
             self.driver.execute(
-                &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"),
+                &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
                 &[
                     DbValue::Text(new_id.to_string()), DbValue::Text(entity), DbValue::Text(attribute),
                     DbValue::Text(serde_json::to_string(&new_value)?), DbValue::Text(now.clone()),
@@ -498,8 +480,7 @@ impl HMemStore {
                     DbValue::Real(new_confidence.value()),
                     perspective.map_or(DbValue::Null, DbValue::Text),
                     DbValue::Text(visibility), DbValue::Text(owner_webid),
-                    dimension.map_or(DbValue::Null, DbValue::Text),
-                    swarm_id.map_or(DbValue::Null, DbValue::Text),
+                    ontology.map_or(DbValue::Null, DbValue::Text),
                 ],
             ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
             Ok(())
@@ -734,8 +715,7 @@ impl HMemStore {
                 owner_webid: row.owner_webid,
             },
             recalled_at,
-            dimension: row.dimension.and_then(|s| s.parse().ok()),
-            swarm_id: row.swarm_id,
+            ontology: row.ontology,
         })
     }
 }
@@ -756,7 +736,9 @@ impl From<&HMem> for HMemEntry {
                 .map(|wid| wid.to_string())
                 .unwrap_or_default(),
             visibility: t.access.visibility.as_str().to_string(),
-            dimension: t.dimension.map(|d| d.as_str().to_string()),
+            dimension: t.ontology.as_ref().and_then(|ont| {
+                ont.dimensions.first().map(|s| s.clone())
+            }),
         }
     }
 }
@@ -771,8 +753,7 @@ struct HMemRow {
     perspective: Option<WebID>,
     visibility: Visibility,
     owner_webid: WebID,
-    dimension: Option<String>,
-    swarm_id: Option<String>,
+    ontology: Option<HMemOntology>,
 }
 #[cfg(test)]
 mod tests {
@@ -790,7 +771,7 @@ mod tests {
                     value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
                     recalled_at TEXT NOT NULL DEFAULT (datetime('now')),
                     confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
-                    owner_webid TEXT NOT NULL, dimension TEXT, swarm_id TEXT
+                    owner_webid TEXT NOT NULL, ontology TEXT
                 )",
             )
             .expect("create hmems table");
@@ -853,39 +834,41 @@ mod tests {
     }
 
     #[test]
-    fn swarm_id_round_trips_and_queries() {
-        // Slice 7: a h_mem with swarm_id should round-trip through the store
-        // and be queryable by swarm_id.
+    fn ontology_round_trips_through_store() {
+        // A h_mem with a dual-axis ontology blob should round-trip through
+        // the store — the ontology column preserves the JSON blob.
         let store = make_store();
         let webid = WebID::new();
-        let h_mem = HMem::new("swarm-entity", "attr", serde_json::json!("val"), webid)
-            .with_swarm_id("swarm-1");
+        let ont = hkask_types::HMemOntology::semantic("bibo:Article", vec!["ROIC".to_string()], "10-K 2025")
+            .with_ontology_tag("fibo", "competitive advantage");
+        let h_mem = HMem::new("company:Apple", "roic", serde_json::json!(0.32), webid)
+            .with_ontology(ont);
         store.insert(&h_mem).unwrap();
 
-        // Query by swarm_id returns the h_mem.
-        let results = store.query_by_swarm_id("swarm-1").unwrap();
+        let results = store.query_by_entity("company:Apple").unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].swarm_id.as_deref(), Some("swarm-1"));
-        assert_eq!(results[0].entity, "swarm-entity");
-
-        // Query by a different swarm_id returns nothing.
-        let empty = store.query_by_swarm_id("swarm-2").unwrap();
-        assert!(empty.is_empty());
+        let loaded = &results[0];
+        assert!(loaded.ontology.is_some());
+        let loaded_ont = loaded.ontology.as_ref().unwrap();
+        assert_eq!(loaded_ont.dc_type, "bibo:Article");
+        assert_eq!(loaded_ont.dc_subject, vec!["ROIC".to_string()]);
+        assert_eq!(loaded_ont.dc_source, "10-K 2025");
+        assert!(loaded_ont.has_ontology("fibo"));
+        assert_eq!(loaded_ont.ontology_concepts("fibo"), &["competitive advantage"]);
     }
 
     #[test]
-    fn h_mem_without_swarm_id_has_none() {
-        // Slice 7: a h_mem created without swarm_id should have None and
-        // should not be returned by query_by_swarm_id.
+    fn h_mem_without_ontology_has_none() {
+        // A h_mem created without ontology should have None and round-trip
+        // as None (the legacy/default state).
         let store = make_store();
         let webid = WebID::new();
         let h_mem = HMem::new("plain-entity", "attr", serde_json::json!("val"), webid);
-        assert!(h_mem.swarm_id.is_none());
+        assert!(h_mem.ontology.is_none());
         store.insert(&h_mem).unwrap();
 
-        // Round-trip: the loaded h_mem has swarm_id = None.
         let results = store.query_by_entity("plain-entity").unwrap();
         assert_eq!(results.len(), 1);
-        assert!(results[0].swarm_id.is_none());
+        assert!(results[0].ontology.is_none());
     }
 }

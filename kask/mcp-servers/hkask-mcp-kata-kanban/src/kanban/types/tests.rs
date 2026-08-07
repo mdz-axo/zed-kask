@@ -133,3 +133,33 @@ fn task_filter_by_status() {
     assert_eq!(filter.status, Some(TaskStatus::InProgress));
     assert!(filter.assignee.is_none());
 }
+
+/// Pin the server's `TaskStatus::as_str()` wire output against the shared
+/// `hkask_types::kanban_wire::STANDARD_STATUS_KEYS`. The widget validates move
+/// targets via `kanban_wire::is_standard_status`; if the server's wire strings
+/// drift from the shared constants, the widget would silently reject valid
+/// statuses (or accept invalid ones). This test fails at compile time if the
+/// shared constants change without the server's enum being updated.
+#[test]
+fn task_status_wire_strings_match_shared_constants() {
+    let server_statuses = [
+        TaskStatus::Backlog.as_str(),
+        TaskStatus::Ready.as_str(),
+        TaskStatus::InProgress.as_str(),
+        TaskStatus::Review.as_str(),
+        TaskStatus::Done.as_str(),
+    ];
+    let shared = hkask_types::kanban_wire::STANDARD_STATUS_KEYS;
+    assert_eq!(
+        server_statuses.len(),
+        shared.len(),
+        "server and shared wire constants must have the same number of statuses"
+    );
+    for (server_status, shared_key) in server_statuses.iter().zip(shared.iter()) {
+        assert_eq!(
+            *server_status, *shared_key,
+            "server wire string '{server_status}' does not match shared constant '{shared_key}' \
+             — update hkask_types::kanban_wire::STANDARD_STATUS_KEYS or TaskStatus::as_str"
+        );
+    }
+}

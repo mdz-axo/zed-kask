@@ -1066,7 +1066,7 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
 /// Run the kanban MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
     hkask_mcp_server::run_server(
-        "hkask-mcp-kata-kanban",
+        hkask_types::kanban_wire::KANBAN_SERVER_NAME,
         env!("CARGO_PKG_VERSION"),
         |ctx: ServerContext| {
             (|| -> anyhow::Result<KanbanServer> {
