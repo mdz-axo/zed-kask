@@ -40,6 +40,10 @@ pub struct TranscriptRecord {
     /// to `corpus_chunk`'s `entity_ref_prefix` parameter — this field is the
     /// enforcement point so the agent can't drift from the convention.
     pub entity_ref_prefix: String,
+    /// Lightweight source footnote — a single human-readable attribution string
+    /// (e.g. `"FMP earnings-call transcript — AAPL 2024 Q1"`). Carries the
+    /// provenance the agent surfaces to the user without parsing multiple fields.
+    pub attribution: String,
 }
 
 /// Why a requested quarter is missing.
@@ -265,6 +269,7 @@ fn parse_fmp_body(
             "fmp:/stable{FMP_TRANSCRIPT_PATH}?symbol={symbol}&year={year}&quarter={quarter}"
         ),
         entity_ref_prefix: format!("company:{symbol}:earnings:{year}_Q{quarter}"),
+        attribution: format!("FMP earnings-call transcript — {symbol} {year} Q{quarter}"),
     }))
 }
 
@@ -287,7 +292,6 @@ fn parse_fmp_body(
 // interviews) via SerpAPI YouTube, channel-allowlisted. Does NOT segment.
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[allow(dead_code)]
 pub struct CorpusTranscriptRecord {
     pub symbol: String,
     pub source_tier: u8,
@@ -297,10 +301,11 @@ pub struct CorpusTranscriptRecord {
     pub channel: String,
     pub content: String,
     pub entity_ref_prefix: String,
+    /// Lightweight source footnote (e.g. `"YouTube transcript — CNBC: Satya Nadella keynote"`).
+    pub attribution: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[allow(dead_code)]
 pub struct ExcludedVideo {
     pub title: String,
     pub url: String,
@@ -309,16 +314,13 @@ pub struct ExcludedVideo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[allow(dead_code)]
 pub struct CorpusTranscriptResult {
     pub transcripts: Vec<CorpusTranscriptRecord>,
     pub excluded: Vec<ExcludedVideo>,
 }
 
-#[allow(dead_code)]
 const SERPAPI_BASE: &str = "https://serpapi.com/search";
 
-#[allow(dead_code)]
 pub async fn fetch_corpus_transcripts(
     client: &reqwest::Client,
     symbol: &str,
@@ -392,6 +394,7 @@ pub async fn fetch_corpus_transcripts(
         match fetch_youtube_transcript(client, &video_id, serpapi_key).await {
             Ok(Some(content)) => {
                 transcripts.push(CorpusTranscriptRecord {
+                    attribution: format!("YouTube transcript — {channel}: {title}"),
                     symbol: symbol.to_string(),
                     source_tier: 2,
                     kind: "youtube".to_string(),
@@ -426,7 +429,6 @@ pub async fn fetch_corpus_transcripts(
     })
 }
 
-#[allow(dead_code)]
 async fn fetch_youtube_transcript(
     client: &reqwest::Client,
     video_id: &str,
@@ -481,60 +483,6 @@ async fn fetch_youtube_transcript(
 /// advisory.
 pub fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
     format!("company:{symbol}:youtube:{video_id}")
-}
-
-// ── Citation verification (the no-fabrication enforcement point) ──────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[allow(dead_code)]
-pub struct Citation {
-    pub chunk_id: usize,
-    pub quote: String,
-    #[serde(default)]
-    pub char_start: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-#[allow(dead_code)]
-pub enum CitationVerdict {
-    Verified,
-    Fabricated { chunk_id: usize, quote: String },
-    InvalidChunkId { chunk_id: usize, chunk_count: usize },
-}
-
-#[allow(dead_code)]
-pub fn verify_citation(citation: &Citation, chunks: &[String]) -> CitationVerdict {
-    if citation.chunk_id >= chunks.len() {
-        return CitationVerdict::InvalidChunkId {
-            chunk_id: citation.chunk_id,
-            chunk_count: chunks.len(),
-        };
-    }
-    let chunk = &chunks[citation.chunk_id];
-    if chunk.contains(&citation.quote) {
-        CitationVerdict::Verified
-    } else {
-        CitationVerdict::Fabricated {
-            chunk_id: citation.chunk_id,
-            quote: citation.quote.clone(),
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub fn verify_all_citations(citations: &[Citation], chunks: &[String]) -> Vec<CitationVerdict> {
-    citations
-        .iter()
-        .map(|citation| verify_citation(citation, chunks))
-        .collect()
-}
-
-#[allow(dead_code)]
-pub fn all_citations_verified(citations: &[Citation], chunks: &[String]) -> bool {
-    verify_all_citations(citations, chunks)
-        .iter()
-        .all(|verdict| matches!(verdict, CitationVerdict::Verified))
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -791,6 +739,7 @@ mod tests {
             channel: "Microsoft".to_string(),
             content: "Satya Nadella: Welcome to Build.".to_string(),
             entity_ref_prefix: "company:MSFT:youtube:abc12345678".to_string(),
+            attribution: "YouTube transcript — Microsoft: Microsoft Build 2024 Keynote".to_string(),
         };
         assert_eq!(record.source_tier, 2);
         assert_eq!(record.kind, "youtube");
@@ -832,127 +781,6 @@ mod tests {
             youtube_entity_ref_prefix("MSFT", "ceV3RsG946s"),
             "company:MSFT:youtube:ceV3RsG946s"
         );
-    }
-
-    // ── Citation verification (no-fabrication enforcement) ──────────────────
-
-    #[test]
-    fn verify_citation_passes_for_verbatim_quote() {
-        let chunks = vec!["Satya Nadella: We had a strong quarter.".to_string()];
-        let citation = Citation {
-            chunk_id: 0,
-            quote: "strong quarter".to_string(),
-            char_start: 0,
-        };
-        assert_eq!(
-            verify_citation(&citation, &chunks),
-            CitationVerdict::Verified
-        );
-    }
-
-    #[test]
-    fn verify_citation_fails_for_fabricated_quote() {
-        let chunks = vec!["Satya Nadella: We had a strong quarter.".to_string()];
-        let citation = Citation {
-            chunk_id: 0,
-            quote: "record-breaking year".to_string(),
-            char_start: 0,
-        };
-        assert_eq!(
-            verify_citation(&citation, &chunks),
-            CitationVerdict::Fabricated {
-                chunk_id: 0,
-                quote: "record-breaking year".to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn verify_citation_fails_for_invalid_chunk_id() {
-        let chunks = vec!["chunk 0".to_string()];
-        let citation = Citation {
-            chunk_id: 5,
-            quote: "chunk 0".to_string(),
-            char_start: 0,
-        };
-        assert_eq!(
-            verify_citation(&citation, &chunks),
-            CitationVerdict::InvalidChunkId {
-                chunk_id: 5,
-                chunk_count: 1
-            }
-        );
-    }
-
-    #[test]
-    fn all_citations_verified_passes_when_all_verbatim() {
-        let chunks = vec!["strong quarter".to_string(), "69.8%".to_string()];
-        let citations = vec![
-            Citation {
-                chunk_id: 0,
-                quote: "strong".to_string(),
-                char_start: 0,
-            },
-            Citation {
-                chunk_id: 1,
-                quote: "69.8%".to_string(),
-                char_start: 0,
-            },
-        ];
-        assert!(all_citations_verified(&citations, &chunks));
-    }
-
-    #[test]
-    fn all_citations_verified_fails_when_one_fabricated() {
-        let chunks = vec!["strong quarter".to_string()];
-        let citations = vec![
-            Citation {
-                chunk_id: 0,
-                quote: "strong".to_string(),
-                char_start: 0,
-            },
-            Citation {
-                chunk_id: 0,
-                quote: "record year".to_string(),
-                char_start: 0,
-            },
-        ];
-        assert!(!all_citations_verified(&citations, &chunks));
-    }
-
-    #[test]
-    fn no_fabrication_invariant_holds_against_real_fixture() {
-        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../registry/templates/listening/tests/fixtures/sample_transcript.txt");
-        let Ok(fixture) = std::fs::read_to_string(&fixture_path) else {
-            return;
-        };
-        let chunks: Vec<String> = fixture
-            .lines()
-            .filter(|line| !line.is_empty() && !line.starts_with("//"))
-            .collect::<Vec<_>>()
-            .chunks(3)
-            .map(|chunk| chunk.join("\n"))
-            .collect();
-        let verbatim_citations = vec![
-            Citation {
-                chunk_id: 0,
-                quote: "Operator".to_string(),
-                char_start: 0,
-            },
-            Citation {
-                chunk_id: 0,
-                quote: "Good day".to_string(),
-                char_start: 0,
-            },
-        ];
-        assert!(all_citations_verified(&verbatim_citations, &chunks));
-        let fabricated = Citation {
-            chunk_id: 0,
-            quote: "This quote does not appear.".to_string(),
-            char_start: 0,
-        };
-        assert!(!all_citations_verified(&[fabricated], &chunks));
     }
 }
 
@@ -1337,6 +1165,7 @@ mod proptests {
                 content,
                 source_endpoint: format!("fmp:/stable/earning-call-transcript?symbol={symbol}&year={year}&quarter={quarter}"),
                 entity_ref_prefix: format!("company:{symbol}:earnings:{year}_Q{quarter}"),
+                attribution: format!("FMP earnings-call transcript — {symbol} {year} Q{quarter}"),
             };
             let json = serde_json::to_value(&record).expect("serialize");
             let back: TranscriptRecord = serde_json::from_value(json).expect("deserialize");

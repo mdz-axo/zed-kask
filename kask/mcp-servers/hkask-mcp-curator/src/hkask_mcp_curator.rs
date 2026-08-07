@@ -500,6 +500,104 @@ impl CuratorServer {
         .await
     }
 
+    // ── Consultation (Slice 8 — curator-as-callable-tool) ────────────────
+
+    /// Consult the curator's memory with a question. A swarm agent calls
+    /// this to get the curator's perspective on a topic, grounded in the
+    /// curator's sovereign semantic + episodic memory.
+    ///
+    /// This is a memory-grounded consultation, not a full curator agent
+    /// turn — the curator MCP server has no inference port, so it cannot
+    /// synthesize a response. It returns the raw memory fragments (semantic
+    /// + episodic) matching the query, structured as a consultation. The
+    /// calling agent synthesizes the response from the fragments.
+    ///
+    /// A full inference-grounded response (where the curator agent itself
+    /// synthesizes) requires the in-process `CuratorAgentServer`, which
+    /// lives in the zed process, not in this MCP server. That path is a
+    /// future enhancement (requires a new IPC method + recursion cap +
+    /// gas budget).
+    #[tool(
+        description = "Consult the curator's memory with a question. Returns semantic + episodic memory fragments matching the query. Memory-grounded consultation, not a full curator agent turn."
+    )]
+    pub async fn curator_consult(
+        &self,
+        Parameters(req): Parameters<CuratorConsultRequest>,
+    ) -> String {
+        execute_tool(self, "curator_consult", async {
+            let limit = req.limit.unwrap_or(5);
+            let stores = self.db.get();
+            let mut result = json!({
+                "query": req.query,
+                "note": "Memory-grounded consultation — raw fragments, not a synthesized response. The calling agent synthesizes."
+            });
+
+            // Semantic search — the curator's consolidated knowledge.
+            match stores.semantic() {
+                Ok(sem) => match sem.query_deduped(&req.query) {
+                    Ok(h_mems) => {
+                        let fragments: Vec<serde_json::Value> = h_mems
+                            .iter()
+                            .take(limit)
+                            .map(|t| {
+                                json!({
+                                    "entity": t.entity,
+                                    "attribute": t.attribute,
+                                    "value": t.value,
+                                    "confidence": t.confidence,
+                                })
+                            })
+                            .collect();
+                        result["semantic_fragments"] = json!({
+                            "count": fragments.len(),
+                            "h_mems": fragments,
+                        });
+                    }
+                    Err(e) => {
+                        result["semantic_fragments"] = json!({"error": format!("{e}")});
+                    }
+                },
+                Err(_) => {
+                    result["semantic_fragments"] = json!({"status": "unavailable"});
+                }
+            }
+
+            // Episodic search — the curator's turn history.
+            match stores.episodic() {
+                Ok(ep) => match ep.query_for_deduped(&req.query, self.webid) {
+                    Ok(h_mems) => {
+                        let fragments: Vec<serde_json::Value> = h_mems
+                            .iter()
+                            .take(limit)
+                            .map(|t| {
+                                json!({
+                                    "entity": t.entity,
+                                    "attribute": t.attribute,
+                                    "value": t.value,
+                                    "confidence": t.confidence,
+                                    "valid_from": t.observed_at.to_rfc3339(),
+                                })
+                            })
+                            .collect();
+                        result["episodic_fragments"] = json!({
+                            "count": fragments.len(),
+                            "h_mems": fragments,
+                        });
+                    }
+                    Err(e) => {
+                        result["episodic_fragments"] = json!({"error": format!("{e}")});
+                    }
+                },
+                Err(_) => {
+                    result["episodic_fragments"] = json!({"status": "unavailable"});
+                }
+            }
+
+            Ok(result)
+        })
+        .await
+    }
+
     // ── Algedonic History ──────────────────────────────────────────────
 
     #[tool(description = "Read algedonic event log for a time window")]

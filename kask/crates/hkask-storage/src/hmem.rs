@@ -472,7 +472,7 @@ impl HMemStore {
                 )
                 .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
             let rows = self.driver.query(
-                "SELECT entity, attribute, perspective, visibility, owner_webid, dimension FROM hmems WHERE id = ?1",
+                "SELECT entity, attribute, perspective, visibility, owner_webid, dimension, swarm_id FROM hmems WHERE id = ?1",
                 &[DbValue::Text(id.to_string())],
             ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
             let row = rows.first().ok_or_else(|| {
@@ -487,9 +487,10 @@ impl HMemStore {
             let visibility = row.get(3)?.as_text()?.to_string();
             let owner_webid = row.get(4)?.as_text()?.to_string();
             let dimension: Option<String> = row.get(5)?.as_text().ok().map(|s| s.to_string());
+            let swarm_id: Option<String> = row.get(6)?.as_text().ok().map(|s| s.to_string());
             let new_id = HMemId::new();
             self.driver.execute(
-                &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
+                &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"),
                 &[
                     DbValue::Text(new_id.to_string()), DbValue::Text(entity), DbValue::Text(attribute),
                     DbValue::Text(serde_json::to_string(&new_value)?), DbValue::Text(now.clone()),
@@ -498,6 +499,7 @@ impl HMemStore {
                     perspective.map_or(DbValue::Null, DbValue::Text),
                     DbValue::Text(visibility), DbValue::Text(owner_webid),
                     dimension.map_or(DbValue::Null, DbValue::Text),
+                    swarm_id.map_or(DbValue::Null, DbValue::Text),
                 ],
             ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
             Ok(())
@@ -848,5 +850,42 @@ mod tests {
         let missing = HMemId::new();
         let result = store.get_by_id(&missing).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn swarm_id_round_trips_and_queries() {
+        // Slice 7: a h_mem with swarm_id should round-trip through the store
+        // and be queryable by swarm_id.
+        let store = make_store();
+        let webid = WebID::new();
+        let h_mem = HMem::new("swarm-entity", "attr", serde_json::json!("val"), webid)
+            .with_swarm_id("swarm-1");
+        store.insert(&h_mem).unwrap();
+
+        // Query by swarm_id returns the h_mem.
+        let results = store.query_by_swarm_id("swarm-1").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].swarm_id.as_deref(), Some("swarm-1"));
+        assert_eq!(results[0].entity, "swarm-entity");
+
+        // Query by a different swarm_id returns nothing.
+        let empty = store.query_by_swarm_id("swarm-2").unwrap();
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn h_mem_without_swarm_id_has_none() {
+        // Slice 7: a h_mem created without swarm_id should have None and
+        // should not be returned by query_by_swarm_id.
+        let store = make_store();
+        let webid = WebID::new();
+        let h_mem = HMem::new("plain-entity", "attr", serde_json::json!("val"), webid);
+        assert!(h_mem.swarm_id.is_none());
+        store.insert(&h_mem).unwrap();
+
+        // Round-trip: the loaded h_mem has swarm_id = None.
+        let results = store.query_by_entity("plain-entity").unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].swarm_id.is_none());
     }
 }

@@ -44,3 +44,20 @@ pub struct MemoryRecallRequest {
 pub struct AlgedonicLogRequest {
     pub hours: Option<u32>,
 }
+
+/// Consultation request — a swarm agent asks the curator a question.
+/// The curator searches its semantic + episodic memory for relevant
+/// fragments and returns them as a structured consultation response.
+///
+/// This is a memory-grounded consultation, not a full curator agent turn —
+/// the curator MCP server has no inference port. A full inference-grounded
+/// response requires the in-process Curator agent (`CuratorAgentServer`),
+/// which lives in the zed process, not in this MCP server. The tool's
+/// description makes this clear so the calling agent knows what it gets.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CuratorConsultRequest {
+    /// The question or topic to consult the curator about.
+    pub query: String,
+    /// Maximum number of memory fragments to return per store (default: 5).
+    pub limit: Option<usize>,
+}

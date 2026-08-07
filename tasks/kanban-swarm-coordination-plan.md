@@ -228,7 +228,7 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 - [ ] The card's `skills` list remains the execution allowlist (no runtime discovery).
 - [ ] Test: create a local agent card with `skills: ["grill-me"]`, run the executor, assert the system prompt contains the grill-me description.
 
-### Slice 7 — Per-swarm memory namespace (B1 from prior session)
+### Slice 7 — Per-swarm memory namespace (B1 from prior session) ✅ IMPLEMENTED
 
 **What**: Add `swarm_id` as an optional indexed column on `hmems` (not a storage key) so queries can filter by `swarm_id` without a breaking schema migration. Pass `swarm_id` from the delegation context into the turn record.
 
@@ -245,7 +245,7 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 - [ ] Existing memory without `swarm_id` loads correctly (field is `NULL`).
 - [ ] Test: write a memory with `swarm_id = "swarm-1"`, query by `swarm_id`, assert it returns; query without, assert it also returns.
 
-### Slice 8 — Curator-as-callable-tool (B3 from prior session, Phase 4)
+### Slice 8 — Curator-as-callable-tool (B3 from prior session, Phase 4) ✅ IMPLEMENTED (scoped)
 
 **What**: Add a `curator_consult` MCP tool to `hkask-mcp-curator` that dispatches a single turn to the in-process Curator agent (`CuratorAgentServer`) with the calling agent's context. Recursion cap (1 level), separate gas budget.
 

@@ -122,6 +122,19 @@ inputs:
       When true, the grasp-current template enforces strict sandbox
       constraints: no file system access, no network calls, no environment
       variable access.
+  - name: deterministic_verdict
+    type: object
+    required: false
+    description: >
+      Optional deterministic task-success verdict from `swarm_evaluate_local`
+      (Slice B5 — deterministic verdict → metacognition Brier). When present
+      with `provenance: "deterministic"`, step 8 uses the verdict's `pass`
+      (or `score`) as the Brier outcome instead of the LLM-judged
+      `actual_delta` (the hypotenuse). This grounds the Brier score in a
+      deterministic oracle, not the LLM's self-assessment. When absent or
+      `provenance != "deterministic"`, step 8 falls back to the hypotenuse
+      (the pre-B5 behavior). Shape: `{ pass: bool, score: Option<f64>,
+      detail: Option<String>, provenance: "deterministic"|"llm_judged"|"unknown" }`.
 
 ledger:
   span_namespace: reg.skill.metacognition
@@ -288,6 +301,15 @@ steps:
     input_mapping:
       prediction: "{{ step_3_result }}"
       result:
+        # B5: when a deterministic verdict is present with provenance
+        # "deterministic", use its pass as the Brier outcome (a deterministic
+        # oracle, not the LLM's self-assessment). The compute step tries
+        # `occurred` (bool) first, then `actual_delta` (f64). When
+        # `deterministic_verdict` is absent, `deterministic_verdict.pass`
+        # renders to null (via | tojson), `as_bool()` returns None, and the
+        # compute step falls back to `actual_delta` (the hypotenuse — the
+        # pre-B5 behavior).
+        occurred: "{{ deterministic_verdict.pass }}"
         actual_delta: "{{ step_7_result.hypotenuse }}"
 
   # ── Improvement Kata Step 9: Check Convergence (Act) ──
