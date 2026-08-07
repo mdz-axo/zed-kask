@@ -17,20 +17,20 @@ spend, and the feedback path that closes the loop. Read the
 
 ## Source citations
 
-| Symbol | Location |
-|--------|----------|
-| `steer_system_prompt` | `crates/swarm_panel/src/swarm_panel.rs:100` |
-| `PanelMode` enum | `crates/swarm_panel/src/swarm_panel.rs:289` |
-| `set_mode` / `set_swarm_mode` | `crates/swarm_panel/src/swarm_panel.rs:1798` / `:1834` |
-| `ensure_steer_conversation` | `crates/swarm_panel/src/swarm_panel.rs:1870` |
-| `begin_hire` / `confirm_hire` | `crates/swarm_panel/src/swarm_panel.rs:1441` / `:1543` |
-| `create_swarm` / `ask_xaman` | `crates/swarm_panel/src/swarm_panel.rs:1973` / `:2145` |
-| 51-tool surface (pinned) | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:350` |
-| Consent gate (mint/consume/refund) | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:150`/`:184`/`:227` |
-| Spend gate (hire/delegate/curate) | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` |
-| Debit-before-scan invariant | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:11` |
-| Planner PDCA | `.agents/skills/swarm-intelligence/SKILL.md:62` |
-| Actuator directive | `.agents/skills/swarm-steering/SKILL.md:59` |
+| Symbol                             | Location                                                              |
+| ---------------------------------- | --------------------------------------------------------------------- |
+| `steer_system_prompt`              | `crates/swarm_panel/src/swarm_panel.rs:100`                           |
+| `PanelMode` enum                   | `crates/swarm_panel/src/swarm_panel.rs:289`                           |
+| `set_mode` / `set_swarm_mode`      | `crates/swarm_panel/src/swarm_panel.rs:1798` / `:1834`                |
+| `ensure_steer_conversation`        | `crates/swarm_panel/src/swarm_panel.rs:1870`                          |
+| `begin_hire` / `confirm_hire`      | `crates/swarm_panel/src/swarm_panel.rs:1441` / `:1543`                |
+| `create_swarm` / `ask_xaman`       | `crates/swarm_panel/src/swarm_panel.rs:1973` / `:2145`                |
+| 51-tool surface (pinned)           | `kask/mcp-servers/hkask-mcp-swarm/src/hkask_mcp_swarm.rs:350`         |
+| Consent gate (mint/consume/refund) | `kask/mcp-servers/hkask-mcp-swarm/src/consent.rs:150`/`:184`/`:227`   |
+| Spend gate (hire/delegate/curate)  | `kask/mcp-servers/hkask-mcp-swarm/src/spend_gate.rs:83`/`:253`/`:334` |
+| Debit-before-scan invariant        | `kask/mcp-servers/hkask-mcp-swarm/src/agent_executor.rs:11`           |
+| Planner PDCA                       | `.agents/skills/swarm-intelligence/SKILL.md:62`                       |
+| Actuator directive                 | `.agents/skills/swarm-steering/SKILL.md:59`                           |
 
 ## Procedure map
 
@@ -113,13 +113,18 @@ invokes `swarm-intelligence`. **Always pass the backend and swarm id in the
 context** so the cascade selects the right substrate:
 
 ```json
-{"mode": "local", "swarm_id": "ws-1", "task": "compose a research swarm for X"}
+{ "mode": "local", "swarm_id": "ws-1", "task": "compose a research swarm for X" }
 ```
 
 If your task has a deterministic oracle, also pass `task_success`:
 
 ```json
-{"mode": "local", "swarm_id": "ws-1", "task_success": {"pass": false, "detail": "tests failing"}, "task": "fix the failing tests"}
+{
+  "mode": "local",
+  "swarm_id": "ws-1",
+  "task_success": { "pass": false, "detail": "tests failing" },
+  "task": "fix the failing tests"
+}
 ```
 
 Never use an LLM to produce `task_success` — the judge must be deterministic
@@ -169,8 +174,8 @@ Go See is the gap-cover for open tasks (no oracle). Its closure depends on you
 
 ## How-to 7: Reconcile and wind down
 
-- ABW: `swarm_run_status` + `swarm_search_knowledge` (vector knowledge-graph
-  search) to review; `swarm_fire` to remove from roster (reversible),
+- ABW: `swarm_run_status` + `swarm_search_knowledge` (knowledge-graph
+  search — rules + entities, client-side text match) to review; `swarm_fire` to remove from roster (reversible),
   `swarm_delete_agent` / `swarm_delete_swarm` for permanent deletion
   (verified live 2026-08-02).
 - Local: `swarm_remove_local` deletes the local card (a synced card's ABW
@@ -196,13 +201,13 @@ memory passphrase defaults to `"allostery"` pre-release (override
    has no consolidated memory yet — not an error.
 2. **Author a system prompt for a new local agent:**
    `swarm_generate_prompt_local({description: "a Damodaran-style ROIC analyst",
-   agent_name: "roic_analyst", agent_type: "research"})` → a guard-scanned
+agent_name: "roic_analyst", agent_type: "research"})` → a guard-scanned
    system prompt, seeded with `roic_analyst`'s memory if any. Feed it to
    `swarm_create_local_agent` (the `author_agent` move in `swarm-intelligence`
    does this end-to-end).
 3. **Author a seed ontology for a domain:**
    `swarm_generate_ontology_local({domain_description: "corporate valuation",
-   agent_name: "roic_analyst"})` → a Mermaid `erDiagram` seeded with the
+agent_name: "roic_analyst"})` → a Mermaid `erDiagram` seeded with the
    agent's semantic-memory graph (memory-as-graph).
 
 These are read-only authoring aids — no ledger debit, no consent. They never

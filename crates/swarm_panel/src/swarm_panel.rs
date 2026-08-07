@@ -151,7 +151,7 @@ fn steer_system_prompt(
          from roster), `swarm_create_agent`, `swarm_create_swarm`, \
          `swarm_generate_prompt`, `swarm_generate_ontology`, \
          `swarm_fork_agent` (derivative fork), `swarm_run_status`, \
-         `swarm_search_knowledge` (vector knowledge-graph search), \
+         `swarm_search_knowledge` (knowledge-graph search), \
          `swarm_publish_checks` + `swarm_publish_agent` (catalogue publish, \
          with an audited admin force-publish path), `swarm_xaman`. These \
          route to Agent Bestiary World and require the ABW API key.\n\
@@ -172,6 +172,10 @@ fn steer_system_prompt(
          a `TaskSuccessVerdict` with `provenance: Deterministic` onto a \
          delegation response via a contains/not_contains/regex check; call it \
          after `swarm_delegate_local` to close the C5/C6 fault-attribution loop). \
+         `swarm_execute_plan_local` (execute a full plan: run each delegation, \
+         evaluate each result, return the collected results with verdicts \
+         stamped — ready to feed back to swarm-intelligence as delegate_results; \
+         closes the loop in one call). \
          These run on the local \
          substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
@@ -2577,7 +2581,7 @@ mod tests {
         // of importing the server's canonical list.
         assert_eq!(
             parse::SWARM_TOOLS.len(),
-            52,
+            53,
             "tool count changed — update SWARM_TOOLS to match hkask-mcp-swarm #[tool] fns"
         );
 

@@ -121,8 +121,8 @@ impl SwarmClient {
 
     /// Generalized request carrying a query string and an optional JSON body.
     /// The verb helpers (`get`/`post`/`delete`) take only a path; ABW endpoints
-    /// added after fermi v0.10.15/v0.10.26 take query parameters
-    /// (`/agents/{id}/knowledge/search?q=`, `/agents/{id}/publish?force=…&reason=…`)
+    /// added after fermi v0.10.15 take query parameters
+    /// (`/agents/{id}/publish?force=…&reason=…`, `/agents/{id}/kg/rules?active_only=true`)
     /// that the helpers cannot carry. This is the deep path for those — it keeps
     /// the auth/timeout/error-mapping behavior of `send` without spawning a
     /// one-liner per query-string verb. Existing call sites keep the helpers.

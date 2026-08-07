@@ -1202,4 +1202,119 @@ impl SwarmServer {
         })
         .await
     }
+
+    /// Execute a swarm-intelligence plan: run each delegation, evaluate each
+    /// result (when an evaluator is provided), and return the collected
+    /// `LocalDelegateResult` array with `task_success` verdicts stamped. This
+    /// closes the loop deterministically — the caller passes the plan, the
+    /// tool executes it and stamps verdicts, the caller passes the results
+    /// back to swarm-intelligence. Works in any context: chat, autonomous
+    /// pipeline, or API. Capped at 10 delegations (same as fanout). Each
+    /// delegation runs sequentially to avoid ledger TOCTOU.
+    #[tool(
+        description = "Execute a swarm-intelligence plan: run each delegation via swarm_delegate_local, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially to avoid ledger TOCTOU. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+    )]
+    pub(crate) async fn swarm_execute_plan_local(
+        &self,
+        parameters: Parameters<ExecutePlanLocalRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "swarm_execute_plan_local", Some("pko"), async {
+            let req = parameters.0;
+            if req.delegations.is_empty() {
+                return Err(McpToolError::invalid_argument(
+                    "delegations must be non-empty".to_string(),
+                ));
+            }
+            if req.delegations.len() > MAX_FANOUT {
+                return Err(McpToolError::invalid_argument(format!(
+                    "plan cap is {MAX_FANOUT} delegations, got {}",
+                    req.delegations.len()
+                )));
+            }
+            let runtime = self.local_runtime.get_or_init().await.map_err(map_local_swarm_error)?;
+            let ceiling = self.client.config().max_credits_per_dispatch;
+            let mut results = Vec::new();
+            let mut failed = 0usize;
+            let mut total_cost = 0i64;
+            let mut total_tokens = 0i64;
+            for entry in &req.delegations {
+                let agent = self.local_registry.get(&entry.agent_name);
+                let Some(agent) = agent else {
+                    failed += 1;
+                    results.push(serde_json::json!({
+                        "agent_id": entry.agent_name,
+                        "ok": false,
+                        "error": format!("agent '{}' not found in local registry", entry.agent_name),
+                    }));
+                    continue;
+                };
+                match runtime
+                    .delegate(&agent, &entry.task, entry.credits_authorized, ceiling)
+                    .await
+                {
+                    Ok(mut r) => {
+                        total_cost += r.cost;
+                        total_tokens += r.tokens_used;
+                        // Stamp the deterministic verdict when an evaluator is provided.
+                        if let Some(ev) = &entry.evaluator {
+                            let pass = match ev.evaluator.as_str() {
+                                "contains" => r.response.contains(&ev.spec),
+                                "not_contains" => !r.response.contains(&ev.spec),
+                                "regex" => {
+                                    match regex::Regex::new(&ev.spec) {
+                                        Ok(re) => re.is_match(&r.response),
+                                        Err(_) => false,
+                                    }
+                                }
+                                _ => false,
+                            };
+                            r.task_success = Some(
+                                crate::local_runtime::TaskSuccessVerdict {
+                                    pass,
+                                    score: None,
+                                    detail: Some(format!(
+                                        "evaluator={}, spec_len={}, pass={}",
+                                        ev.evaluator,
+                                        ev.spec.len(),
+                                        pass
+                                    )),
+                                    provenance:
+                                        crate::local_runtime::TaskSuccessProvenance::Deterministic,
+                                },
+                            );
+                        }
+                        // Record stigmergy (same as swarm_delegate_local).
+                        local_knowledge::record_delegation(
+                            &self.local_memory,
+                            &entry.agent_name,
+                            r.latency_ms,
+                            r.task_success.as_ref().map(|t| t.pass),
+                        )
+                        .await;
+                        results.push(serde_json::to_value(&r).unwrap_or_else(|_| {
+                            serde_json::json!({ "error": "failed to serialize result" })
+                        }));
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        results.push(serde_json::json!({
+                            "agent_id": entry.agent_name,
+                            "ok": false,
+                            "error": e.to_string(),
+                        }));
+                    }
+                }
+            }
+            let balance: Option<i64> = runtime.balance();
+            Ok(serde_json::json!({
+                "results": results,
+                "total_cost": total_cost,
+                "total_tokens": total_tokens,
+                "balance": balance,
+                "failed": failed,
+                "succeeded": req.delegations.len() - failed,
+            }))
+        })
+        .await
+    }
 }

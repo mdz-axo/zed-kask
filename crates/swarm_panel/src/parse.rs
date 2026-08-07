@@ -241,6 +241,10 @@ pub(crate) const SWARM_TOOLS: &[&str] = &[
     // calls this after swarm_delegate_local to close the C5/C6 fault-
     // attribution loop.
     "swarm_evaluate_local",
+    // Execute a swarm-intelligence plan: run delegations, evaluate results,
+    // return collected results with verdicts stamped. Closes the loop
+    // deterministically — works in chat, autonomous, or API contexts.
+    "swarm_execute_plan_local",
 ];
 
 /// Extract the algedonic wallet balance from a tool response (the

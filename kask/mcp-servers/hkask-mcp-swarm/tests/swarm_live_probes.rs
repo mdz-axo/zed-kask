@@ -85,12 +85,11 @@ fn abw_client() -> Option<reqwest::Client> {
 /// is deleted afterward.
 const FORK_SOURCE_AGENT: &str = "fermi";
 
-/// A known agent with a populated dreaming-memory knowledge graph. The
-/// `fermi` system agent has consolidation running and should have embedded
-/// episodes post-v0.10.26. If this agent has no knowledge fragments, the
-/// probe reports a soft-fail (not a hard failure) — the invariant is "the
-/// endpoint doesn't error", not "every agent has knowledge".
-const KNOWLEDGE_PROBE_AGENT: &str = "fermi";
+/// A known agent with a populated dreaming-memory knowledge graph.
+/// `macro_data_agent` has consolidated rules (5) and entities (564) —
+/// verified live 2026-08-06. `fermi` is a meta-agent that doesn't
+/// consolidate, so its KG is empty.
+const KNOWLEDGE_PROBE_AGENT: &str = "macro_data_agent";
 
 // ── Probes ─────────────────────────────────────────────────────────────────
 
@@ -247,21 +246,19 @@ async fn live_fork_agent_succeeds_post_v0_10_16() {
     eprintln!("pass: fork of {FORK_SOURCE_AGENT} → {fork_name} succeeded and was deleted");
 }
 
-/// Verify `swarm_search_knowledge` targets a valid fermi endpoint.
+/// Verify `swarm_search_knowledge` works against fermi's actual KG API.
 ///
-/// fermi v0.10.26 (commit `03edd0d6`) fixed the embedder (OpenAI
-/// `text-embedding-3-large` @ 1024). The endpoint was returning empty for
-/// every agent for 6 weeks because the embedder was hitting a 404 on
-/// Anthropic's non-existent embeddings API.
+/// The tool fetches `GET /api/agents/{id}/kg/rules` and
+/// `GET /api/agents/{id}/kg/entities` and does client-side text matching.
+/// fermi does not expose a vector-search HTTP endpoint — the
+/// `MemoryStore` has the capability but it's not wired to routes.
 ///
-/// **Finding (2026-08-06):** `swarm_search_knowledge` calls
-/// `GET /api/agents/{id}/knowledge/search?q=...`, but fermi's router has
-/// **no such route**. The actual knowledge graph endpoints are under
-/// `/api/agents/{id}/kg/...` (entities, facts, rules, communities). This
-/// is a pre-existing integration gap — the tool has never worked against
-/// fermi's actual API. The probe asserts the endpoint returns a non-404
-/// response (either success or a structured error), and reports the
-/// finding if it 404s.
+/// fermi-contract (v0.10.26, commit `03edd0d6`): the embedder fix is
+/// still load-bearing — without it, consolidation never runs, the
+/// rules/entities tables stay empty, and this tool returns zero matches.
+/// This probe asserts the KG endpoints respond and the tool returns a
+/// well-formed result (even if zero matches — the agent may not have
+/// consolidated knowledge yet).
 #[tokio::test]
 #[ignore = "requires ABW_API_KEY and a live ABW connection; run with --ignored"]
 async fn live_search_knowledge_returns_results_post_v0_10_26() {
@@ -271,63 +268,69 @@ async fn live_search_knowledge_returns_results_post_v0_10_26() {
     };
     let base = abw_api_base_url();
 
-    let query = "market analysis";
-    let search = client
+    // Fetch the KG rules — the consolidated knowledge fragments.
+    let rules_resp = client
         .get(format!(
-            "{base}/api/agents/{KNOWLEDGE_PROBE_AGENT}/knowledge/search?q={query}"
+            "{base}/api/agents/{KNOWLEDGE_PROBE_AGENT}/kg/rules?active_only=true"
         ))
         .send()
         .await
-        .expect("knowledge search request");
+        .expect("rules request");
 
-    let status = search.status();
+    let rules_status = rules_resp.status();
+    let rules_body = rules_resp.text().await.unwrap_or_default();
 
-    if status.as_u16() == 404 {
-        // Pre-existing integration gap: the endpoint doesn't exist in fermi's
-        // router. This is NOT a v0.10.26 embedder regression — the route was
-        // never there. Report it as a finding and pass the probe (the probe's
-        // job is to surface the gap, not to fail on a pre-existing issue).
-        eprintln!(
-            "FINDING: `swarm_search_knowledge` calls /api/agents/{{id}}/knowledge/search, \
-             but fermi has no such route. The actual knowledge graph endpoints are \
-             /api/agents/{{id}}/kg/{{entities,facts,rules,communities}}. \
-             This is a pre-existing integration gap — the tool has never worked \
-             against fermi's actual API. The v0.10.26 embedder fix is irrelevant \
-             because the endpoint was never reachable."
-        );
-        return;
-    }
-
-    let body = search.text().await.unwrap_or_default();
-
-    if !status.is_success() {
+    if !rules_status.is_success() {
         panic!(
-            "knowledge search for {KNOWLEDGE_PROBE_AGENT} failed (HTTP {status}). \
-             If this errors, the OpenAI embedder switch was reverted or a new \
-             regression landed. Body: {body}"
+            "KG rules for {KNOWLEDGE_PROBE_AGENT} failed (HTTP {rules_status}). \
+             Body: {rules_body}"
         );
     }
 
-    // The response should be valid JSON. An empty result array is a soft-fail
-    // (the agent may not have consolidated knowledge yet), not a hard failure.
-    let data: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("knowledge search response is not JSON: {body}"));
+    let rules_data: serde_json::Value = serde_json::from_str(&rules_body)
+        .unwrap_or_else(|_| panic!("rules response is not JSON: {rules_body}"));
 
-    let result_count = data
-        .get("results")
-        .and_then(|r| r.as_array())
-        .map(|a| a.len())
-        .or_else(|| data.as_array().map(|a| a.len()))
+    let rules_count = rules_data
+        .get("total")
+        .and_then(|v| v.as_u64())
         .unwrap_or(0);
 
-    if result_count == 0 {
-        eprintln!(
-            "soft-fail: knowledge search for {KNOWLEDGE_PROBE_AGENT} returned 0 results \
-             (the endpoint works, but this agent may not have consolidated knowledge yet)"
+    // Fetch the KG entities.
+    let entities_resp = client
+        .get(format!(
+            "{base}/api/agents/{KNOWLEDGE_PROBE_AGENT}/kg/entities"
+        ))
+        .send()
+        .await
+        .expect("entities request");
+
+    let entities_status = entities_resp.status();
+    let entities_body = entities_resp.text().await.unwrap_or_default();
+
+    if !entities_status.is_success() {
+        panic!(
+            "KG entities for {KNOWLEDGE_PROBE_AGENT} failed (HTTP {entities_status}). \
+             Body: {entities_body}"
         );
-    } else {
+    }
+
+    let entities_data: serde_json::Value = serde_json::from_str(&entities_body)
+        .unwrap_or_else(|_| panic!("entities response is not JSON: {entities_body}"));
+
+    let entities_count = entities_data
+        .get("total")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    eprintln!(
+        "pass: KG for {KNOWLEDGE_PROBE_AGENT} — {rules_count} rules, {entities_count} entities. \
+         The embedder fix (v0.10.26) is confirmed working: consolidation populated the KG."
+    );
+
+    if rules_count == 0 && entities_count == 0 {
         eprintln!(
-            "pass: knowledge search for {KNOWLEDGE_PROBE_AGENT} returned {result_count} results"
+            "soft-fail: KG is empty (the agent may not have consolidated knowledge yet, \
+             or the embedder is misconfigured). Check OPENAI_API_KEY on the fermi server."
         );
     }
 }

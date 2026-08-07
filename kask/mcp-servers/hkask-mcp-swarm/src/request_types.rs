@@ -554,16 +554,22 @@ pub struct DeleteSwarmRequest {
 
 // ── Knowledge search (fermi v0.10.26 embedder fix) ───────────────────────────
 
-/// Search an agent's consolidated dreaming-memory knowledge graph via ABW's
-/// vector search (`GET /api/agents/{id}/knowledge/search?q=`). The embedder was
-/// broken platform-wide for 6 weeks (an Anthropic embeddings endpoint that does
-/// not exist); v0.10.26 fixed it to OpenAI `text-embedding-3-large` @ 1024,
-/// matching the existing pgvector column. Requires API key.
+/// Search an agent's consolidated dreaming-memory knowledge graph. fermi
+/// does not expose a vector-search HTTP endpoint — the `MemoryStore` has
+/// the capability (`search_similar_episodes`, semantic entity/rule search
+/// via pgvector `<=>` cosine distance) but it's not wired to a route. The
+/// tool fetches `GET /api/agents/{id}/kg/rules` + `GET /api/agents/{id}/kg/entities`
+/// and does client-side text matching against the query. The v0.10.26
+/// embedder fix (OpenAI `text-embedding-3-large` @ 1024) is still
+/// load-bearing — without it, consolidation never runs and the KG tables
+/// stay empty. Requires API key.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchKnowledgeRequest {
     /// Agent name (slug) or UUID.
     pub agent_name: String,
-    /// Natural-language query to vector-search the agent's knowledge graph.
+    /// Natural-language query to search the agent's knowledge graph
+    /// (rules + entities). Matched client-side against `rule_content`,
+    /// `rule_description`, `entity_name`, and `entity_summary`.
     pub query: String,
 }
 
@@ -847,11 +853,80 @@ pub struct EvaluateLocalRequest {
     pub spec: String,
 }
 
+/// A single delegation within an execute-plan request. The tool runs each
+/// delegation via `swarm_delegate_local`, then (when an evaluator is provided)
+/// stamps a deterministic `TaskSuccessVerdict` onto the result.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlanDelegation {
+    /// The agent id to delegate to. Must exist in the local registry.
+    pub agent_name: String,
+    /// The task text to send to the agent.
+    pub task: String,
+    /// Maximum credits authorized for this delegation.
+    pub credits_authorized: u32,
+    /// Optional deterministic evaluator. When provided, the tool runs the
+    /// check after the delegation and stamps `task_success` onto the result.
+    /// When absent, `task_success` is left null (open task, no oracle).
+    pub evaluator: Option<PlanEvaluator>,
+}
+
+/// An evaluator spec within a plan delegation.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlanEvaluator {
+    /// The evaluator type: "contains", "not_contains", or "regex".
+    pub evaluator: String,
+    /// The spec: substring (contains/not_contains) or regex pattern. Case-sensitive.
+    pub spec: String,
+}
+
+/// Request for `swarm_execute_plan_local` — runs a swarm-intelligence plan
+/// (a list of delegations), evaluates each result, and returns the collected
+/// `LocalDelegateResult` array ready to feed back to swarm-intelligence. This
+/// closes the loop deterministically: the caller passes the plan, the tool
+/// executes it and stamps verdicts, the caller passes the results back. Works
+/// in any context — chat, autonomous pipeline, or API.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ExecutePlanLocalRequest {
+    /// The delegations to execute, in order. Capped at 10 (same as fanout).
+    pub delegations: Vec<PlanDelegation>,
+}
+
 #[cfg(test)]
 mod schema_tests {
     use super::*;
     use hkask_mcp_server::find_boolean_schema_positions;
     use schemars::schema_for;
+
+    /// `EvaluateLocalRequest` uses only `String` fields, so its schema should
+    /// be free of bare-boolean property values. Asserted to match the pattern
+    /// every other kask MCP tool-input struct follows (the `.rules`
+    /// "AnyJsonValue" trap).
+    #[test]
+    fn evaluate_local_request_schema_has_no_boolean_property_values() {
+        let schema = schema_for!(EvaluateLocalRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let violations = find_boolean_schema_positions(&value);
+        assert!(
+            violations.is_empty(),
+            "EvaluateLocalRequest schema has bare-boolean property values \
+             (Ollama/Gemini would reject): {violations:?}"
+        );
+    }
+
+    /// `ExecutePlanLocalRequest` and its sub-structs use only `String`, `u32`,
+    /// and `Vec` fields, so the schema should be free of bare-boolean property
+    /// values. Asserted to match the `.rules` "AnyJsonValue" trap pattern.
+    #[test]
+    fn execute_plan_local_request_schema_has_no_boolean_property_values() {
+        let schema = schema_for!(ExecutePlanLocalRequest);
+        let value = serde_json::to_value(&schema).expect("schema serializes");
+        let violations = find_boolean_schema_positions(&value);
+        assert!(
+            violations.is_empty(),
+            "ExecutePlanLocalRequest schema has bare-boolean property values \
+             (Ollama/Gemini would reject): {violations:?}"
+        );
+    }
 
     /// `AiAssistRequest` uses only `String` fields, so its schema should be
     /// free of bare-boolean property values. Asserted anyway to match the

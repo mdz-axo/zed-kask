@@ -1498,26 +1498,30 @@ impl SwarmServer {
         .await
     }
 
-    /// Search an agent's consolidated dreaming-memory knowledge graph via ABW
-    /// vector search. The embedder was broken platform-wide for 6 weeks; fixed
-    /// in fermi v0.10.26 (OpenAI `text-embedding-3-large` @ 1024, matching the
-    /// pgvector column). Returns matching knowledge fragments. Requires API key.
+    /// Search an agent's consolidated dreaming-memory knowledge graph.
+    /// Returns matching knowledge fragments (semantic rules + entities)
+    /// whose text matches the query.
     ///
-    /// fermi-contract (v0.10.26, commit `03edd0d6`): the embedder was broken
-    /// from the Spec-22 embedding-portability work until v0.10.26
-    /// (2026-08-03). The server built `AnthropicEmbeddings`, which POSTs to
-    /// `https://api.anthropic.com/v1/embeddings` — an endpoint Anthropic does
-    /// not serve (404). Every embedding call errored/hung; consolidation jobs
-    /// wedged at `episodes_processed=0`; `swarm_search_knowledge` returned
-    /// empty results for every agent. The fix switched to
-    /// `OpenAIEmbeddings` (`text-embedding-3-large`, 1024-dim, matching the
-    /// existing pgvector column + HNSW indices — no schema migration).
-    /// zed-kask's tool just GETs `/agents/{id}/knowledge/search?q=` — the
-    /// server-side fix means the endpoint now returns results where it
-    /// previously errored. A live probe (`live_search_knowledge_returns_results_post_v0_10_26`)
+    /// fermi does not expose a vector-search HTTP endpoint — the
+    /// `MemoryStore` has `search_similar_episodes` and semantic
+    /// entity/rule search (pgvector `<=>` cosine distance), but they
+    /// are not wired to routes. The actual knowledge graph HTTP
+    /// endpoints are `GET /api/agents/{id}/kg/{rules,entities,facts}`
+    /// (list + filter, no text search). This tool fetches the rules
+    /// and entities and does client-side case-insensitive text
+    /// matching against the query — the closest approximation of
+    /// "search the knowledge graph" available against fermi's actual
+    /// API. When fermi adds a vector-search route, this tool should
+    /// switch to it.
+    ///
+    /// fermi-contract: the embedder fix (v0.10.26, commit `03edd0d6`)
+    /// is still load-bearing — without it, consolidation never runs,
+    /// the rules/entities tables stay empty, and this tool returns
+    /// zero matches regardless of the query. The live probe
+    /// (`live_search_knowledge_returns_results_post_v0_10_26`)
     /// is the canary.
     #[tool(
-        description = "Vector-search an Agent Bestiary World agent's consolidated dreaming-memory knowledge graph (GET /api/agents/{id}/knowledge/search?q=). Returns matching knowledge fragments. Requires API key."
+        description = "Search an Agent Bestiary World agent's consolidated dreaming-memory knowledge graph for fragments matching a query. Returns matching semantic rules and entities. Requires API key."
     )]
     pub(crate) async fn swarm_search_knowledge(
         &self,
@@ -1538,21 +1542,100 @@ impl SwarmServer {
                     "query must be non-empty".to_string(),
                 ));
             }
-            let path = format!(
-                "/agents/{}/knowledge/search",
-                url_encode_segment(&req.agent_name)
-            );
-            let data = self
+            let agent_segment = url_encode_segment(&req.agent_name);
+            let query_lower = req.query.to_lowercase();
+            let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+
+            // Fetch semantic rules — the consolidated knowledge fragments
+            // produced by the dreaming/consolidation loop. These are the
+            // closest thing to "knowledge fragments" in fermi's KG.
+            let rules_path = format!("/agents/{agent_segment}/kg/rules");
+            let rules_data = self
                 .client
                 .request(
                     reqwest::Method::GET,
-                    &path,
-                    &[("q", req.query.as_str())],
+                    &rules_path,
+                    &[("active_only", "true")],
                     None,
                 )
                 .await
                 .map_err(SwarmError::into_tool_error)?;
-            Ok(self.client.with_wallet(data).await)
+
+            // Fetch entities — the named nodes in the knowledge graph.
+            let entities_path = format!("/agents/{agent_segment}/kg/entities");
+            let entities_data = self
+                .client
+                .request(reqwest::Method::GET, &entities_path, &[], None)
+                .await
+                .map_err(SwarmError::into_tool_error)?;
+
+            // Client-side text matching: a fragment matches if any query
+            // term appears in its text fields (case-insensitive substring).
+            // This is a fallback for the missing server-side vector search;
+            // it is not semantic, but it surfaces relevant fragments.
+            let matches_any = |text: &str| {
+                let text_lower = text.to_lowercase();
+                query_terms.iter().any(|term| text_lower.contains(term))
+            };
+
+            let mut matching_rules: Vec<serde_json::Value> = Vec::new();
+            if let Some(rules) = rules_data.get("rules").and_then(|r| r.as_array()) {
+                for rule in rules {
+                    let content = rule
+                        .get("rule_content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let description = rule
+                        .get("rule_description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if matches_any(content) || matches_any(description) {
+                        matching_rules.push(rule.clone());
+                    }
+                }
+            }
+
+            let mut matching_entities: Vec<serde_json::Value> = Vec::new();
+            if let Some(entities) = entities_data.get("entities").and_then(|e| e.as_array()) {
+                for entity in entities {
+                    let name = entity
+                        .get("entity_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let summary = entity
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if matches_any(name) || matches_any(summary) {
+                        matching_entities.push(entity.clone());
+                    }
+                }
+            }
+
+            let total_rules = rules_data
+                .get("total")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let total_entities = entities_data
+                .get("total")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            let result = serde_json::json!({
+                "agent_id": req.agent_name,
+                "query": req.query,
+                "matching_rules": matching_rules,
+                "matching_entities": matching_entities,
+                "match_count": matching_rules.len() + matching_entities.len(),
+                "searched_rules": total_rules,
+                "searched_entities": total_entities,
+                "search_method": "client_side_text_match",
+                "note": "fermi does not expose a vector-search HTTP endpoint; \
+                         this tool fetches the KG rules + entities and matches \
+                         client-side. Switch to server-side vector search when \
+                         fermi adds the route.",
+            });
+            Ok(self.client.with_wallet(result).await)
         })
         .await
     }
