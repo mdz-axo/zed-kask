@@ -49,18 +49,56 @@ impl MemoryConsolidator {
     ///    source h_mems; those expirations are reported in `deleted_count`).
     /// 2. Delete shared h_mems at or below confidence floor (if specified).
     /// 3. Delete lowest-confidence shared h_mems until within max count (if
-    ///    specified).
+    ///    specified). When the caller omits `max_semantic_triples`, the
+    ///    store's `storage_budget` acts as the default cap — the Ashby
+    ///    attenuator for unbounded memory growth. A store over budget gets
+    ///    pruned back to the budget; a store under budget is left alone.
     pub fn consolidate(
         &self,
         perspective: &WebID,
         request: ConsolidationRequest,
     ) -> anyhow::Result<ConsolidationOutcome> {
+        // Resolve the effective max-semantic-triples cap. The caller's explicit
+        // request wins; otherwise the store's storage_budget is the default
+        // attenuator. Without this, the budget field is dead config (the
+        // `.rules` "Advertised invariants need enforcement points" trap).
+        let max_semantic_triples = match request.max_semantic_triples {
+            Some(max) => Some(max),
+            None => {
+                let budget = self.store.storage_budget();
+                if budget == 0 {
+                    None
+                } else {
+                    match self.store.h_mem_count() {
+                        Ok(count) if count > budget => {
+                            tracing::info!(
+                                target: "reg.consolidation",
+                                count,
+                                budget,
+                                "Store over storage budget — pruning to budget"
+                            );
+                            Some(budget)
+                        }
+                        Ok(_) => None,
+                        Err(error) => {
+                            tracing::warn!(
+                                target: "reg.consolidation",
+                                %error,
+                                "h_mem_count: signal stale, skipping budget prune"
+                            );
+                            None
+                        }
+                    }
+                }
+            }
+        };
+
         tracing::info!(
             target: "reg.consolidation",
             perspective = %perspective,
             limit = request.limit,
             confidence_floor = ?request.confidence_floor,
-            max_semantic_triples = ?request.max_semantic_triples,
+            max_semantic_triples = ?max_semantic_triples,
             "Consolidation starting"
         );
 
@@ -94,7 +132,7 @@ impl MemoryConsolidator {
             }
         }
 
-        if let Some(max) = request.max_semantic_triples {
+        if let Some(max) = max_semantic_triples {
             match self.store.h_mem_count() {
                 Ok(count) if count > max => {
                     match self.store.lowest_confidence_h_mems(count - max) {

@@ -19,6 +19,7 @@
 
 use hkask_mcp_kata_kanban::KanbanServer;
 use hkask_mcp_kata_kanban::KanbanService;
+use hkask_mcp_kata_kanban::TaskSpec;
 use hkask_mcp_kata_kanban::types::*;
 use hkask_mcp_swarm::{LazyLocalSwarmRuntime, LocalAgentRegistry};
 use hkask_storage::HMemStore;
@@ -1015,5 +1016,98 @@ mod contract_propose_expect {
             v.get("error").is_some(),
             "malformed proposals must produce a structured error, got: {out}"
         );
+    }
+
+    // ── PKO ontology anchoring ─────────────────────────────────────────────
+    //
+    // Boards and tasks are pure PKO: a board is a `pko:Procedure`, a task is a
+    // `pko:Step`. The three `HMem::new` write paths in `KanbanService` must
+    // anchor their h_mems so `query_by_pko_procedure(board_id)` reaches them.
+    // Without anchoring the h_mems are unreachable via the process-axis query
+    // (the `.rules` "Ontology tag field-drop trap" — the ontology blob must be
+    // set at write time, not deferred).
+
+    /// A board's h_mem is anchored as a `pko:Procedure` and reachable via
+    /// `query_by_pko_procedure(board_id)`.
+    #[test]
+    fn board_h_mem_anchored_as_pko_procedure() {
+        let driver = SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver).expect("hmem store init");
+        let query_store = store.clone();
+        let service = KanbanService::new(store);
+        let owner = WebID::new();
+
+        let board = service
+            .board_create(owner, "Test Board", &KanbanService::standard_columns())
+            .expect("board_create");
+
+        let anchored = query_store
+            .query_by_pko_procedure(&board.id.to_string())
+            .expect("query_by_pko_procedure");
+        assert_eq!(
+            anchored.len(),
+            1,
+            "board h_mem should be reachable via query_by_pko_procedure"
+        );
+        let ont = anchored[0]
+            .ontology
+            .as_ref()
+            .expect("board h_mem must carry an ontology blob");
+        assert_eq!(ont.dc_type, "pko:Procedure");
+        assert_eq!(ont.pko_procedure, Some(board.id.to_string()));
+        assert!(ont.pko_step.is_none(), "board is the procedure, not a step");
+    }
+
+    /// A task's h_mem and its board→task index h_mem are both anchored as
+    /// `pko:Step` under the board's procedure and reachable via
+    /// `query_by_pko_procedure(board_id)`.
+    #[test]
+    fn task_and_index_h_mems_anchored_as_pko_steps() {
+        let driver = SqliteDriver::in_memory_driver();
+        let store = HMemStore::from_driver(driver).expect("hmem store init");
+        let query_store = store.clone();
+        let service = KanbanService::new(store);
+        let owner = WebID::new();
+
+        let board = service
+            .board_create(owner, "Test Board", &KanbanService::standard_columns())
+            .expect("board_create");
+        let task = service
+            .task_create(board.id, TaskSpec::new("Test Task".to_string()), owner)
+            .expect("task_create");
+
+        // query_by_pko_procedure reaches the board (Procedure) + task (Step)
+        // + index (Step) = 3 h_mems.
+        let anchored = query_store
+            .query_by_pko_procedure(&board.id.to_string())
+            .expect("query_by_pko_procedure");
+        assert_eq!(
+            anchored.len(),
+            3,
+            "board + task + index h_mems should all be reachable via query_by_pko_procedure"
+        );
+
+        // Every anchored h_mem must carry a PKO procedure matching the board id.
+        for h_mem in &anchored {
+            let ont = h_mem
+                .ontology
+                .as_ref()
+                .expect("every kanban h_mem must carry an ontology blob");
+            assert_eq!(
+                ont.pko_procedure,
+                Some(board.id.to_string()),
+                "h_mem entity {} not anchored to board procedure",
+                h_mem.entity
+            );
+        }
+
+        // The task h_mem itself must be reachable (entity = TASK_ENTITY).
+        let task_h_mem = anchored
+            .iter()
+            .find(|h| h.entity == "kanban:task" && h.attribute == task.id.to_string())
+            .expect("task h_mem must be anchored and reachable");
+        let task_ont = task_h_mem.ontology.as_ref().expect("task ontology");
+        assert_eq!(task_ont.dc_type, "pko:StepExecution");
+        assert_eq!(task_ont.pko_step, Some(task.id.to_string()));
     }
 }

@@ -168,6 +168,34 @@ impl RealMemoryPort {
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim)
             .map_err(|e| format!("Failed to create EmbeddingStore: {e}"))?;
+        // Resolve the per-agent storage budget. `HKASK_MEMORY_STORAGE_BUDGET`
+        // overrides the default (10_000); a malformed value warns and falls
+        // back to the default rather than silently disabling the budget (the
+        // `.rules` "Process-global hooks set at runtime need a startup-failure
+        // signal" trap — a numeric env var that fails to parse must warn).
+        let storage_budget = match std::env::var("HKASK_MEMORY_STORAGE_BUDGET") {
+            Ok(raw) => match raw.trim().parse::<usize>() {
+                Ok(budget) if budget > 0 => budget,
+                Ok(_zero) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        value = %raw,
+                        "HKASK_MEMORY_STORAGE_BUDGET must be > 0 — falling back to default 10_000"
+                    );
+                    hkask_memory::MemoryStore::default_storage_budget()
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        value = %raw,
+                        error = %e,
+                        "HKASK_MEMORY_STORAGE_BUDGET malformed — falling back to default 10_000"
+                    );
+                    hkask_memory::MemoryStore::default_storage_budget()
+                }
+            },
+            Err(_) => hkask_memory::MemoryStore::default_storage_budget(),
+        };
         // Wire the `reg.memory.encode` span sink: every `store()` persists a
         // span to the user's `pod.db` regulation archive. Without this the
         // span emitter in `MemoryStore::store` is dead code (the `.rules`
@@ -175,8 +203,11 @@ impl RealMemoryPort {
         // degrades to no span persistence with a warn — the store still works.
         let regulation_archive = open_regulation_archive(db_path, passphrase, "user");
         let store = Arc::new(match regulation_archive {
-            Some(archive) => MemoryStore::new(h_mem_store, embedding_store).with_ledger(archive),
-            None => MemoryStore::new(h_mem_store, embedding_store),
+            Some(archive) => MemoryStore::new(h_mem_store, embedding_store)
+                .with_storage_budget(storage_budget)
+                .with_ledger(archive),
+            None => MemoryStore::new(h_mem_store, embedding_store)
+                .with_storage_budget(storage_budget),
         });
 
         let curator_webid = WebID::from_persona(b"curator");

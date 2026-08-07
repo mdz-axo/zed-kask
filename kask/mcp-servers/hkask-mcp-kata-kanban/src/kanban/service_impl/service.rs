@@ -13,6 +13,8 @@
 use std::sync::Arc;
 
 use hkask_storage::{HMem, HMemStore};
+use hkask_types::Dimension;
+use hkask_types::HMemOntology;
 use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::id::{BoardId, TaskId};
@@ -134,7 +136,22 @@ impl KanbanService {
         let value = serde_json::to_value(&board)
             .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
 
-        let h_mem = HMem::new(BOARD_ENTITY, &board.id.to_string(), value, owner);
+        // Anchor the board as a PKO Procedure — the process-axis root that
+        // `query_by_pko_procedure(board_id)` reaches. A board is the procedure
+        // itself (no step), so `pko_step` is None; tasks under it carry the
+        // step identifier. Without this anchoring the board's h_mem is
+        // unreachable via the process-axis query (the `.rules` "Ontology tag
+        // field-drop trap" — the ontology blob must be set at write time).
+        let board_ontology = HMemOntology {
+            dimensions: vec![Dimension::How.as_str().to_string()],
+            dc_type: "pko:Procedure".to_string(),
+            dc_source: "kanban".to_string(),
+            pko_procedure: Some(board.id.to_string()),
+            pko_step: None,
+            ..Default::default()
+        };
+        let h_mem = HMem::new(BOARD_ENTITY, &board.id.to_string(), value, owner)
+            .with_ontology(board_ontology);
         self.store
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
@@ -413,20 +430,30 @@ impl KanbanService {
         let value = serde_json::to_value(&task)
             .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
 
-        // Persist the task
-        let h_mem = HMem::new(TASK_ENTITY, &task.id.to_string(), value, owner);
+        // Persist the task — anchored as a PKO Step of the board's procedure.
+        // `query_by_pko_procedure(board_id)` reaches every task under a board.
+        let task_ontology =
+            HMemOntology::episodic(board_id.to_string(), task.id.to_string(), "kanban");
+        let h_mem = HMem::new(TASK_ENTITY, &task.id.to_string(), value, owner)
+            .with_ontology(task_ontology);
         self.store
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;
 
-        // Persist board→task index
+        // Persist board→task index — a step-membership record anchoring the
+        // task under the board's procedure (same PKO anchoring as the task,
+        // distinct dc_source so the index is distinguishable from the task
+        // payload itself).
         let index_entity = format!("{BOARD_TASKS_PREFIX}{board_id}");
+        let index_ontology =
+            HMemOntology::episodic(board_id.to_string(), task.id.to_string(), "kanban:index");
         let index_triple = HMem::new(
             &index_entity,
             &task.id.to_string(),
             Value::String(task.id.to_string()),
             owner,
-        );
+        )
+        .with_ontology(index_ontology);
         self.store
             .insert(&index_triple)
             .map_err(|e| KanbanError::Internal(format!("index h_mem insert failed: {e}")))?;

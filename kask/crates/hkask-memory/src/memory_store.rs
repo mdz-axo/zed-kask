@@ -79,6 +79,17 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
+    /// The default per-agent storage budget (max shared h_mems before
+    /// consolidation prunes). Exposed so callers (`RealMemoryPort::new`)
+    /// can fall back to it when `HKASK_MEMORY_STORAGE_BUDGET` is unset or
+    /// malformed, keeping the default in one place (the `.rules` "Kask
+    /// settings defaults must live in `Default` impls" trap — though this
+    /// is a `const`, not a settings struct, the single-source principle
+    /// still applies).
+    pub fn default_storage_budget() -> usize {
+        DEFAULT_STORAGE_BUDGET
+    }
+
     /// Create a new `MemoryStore` from h_mem and embedding stores.
     pub fn new(h_mem_store: HMemStore, embedding_store: EmbeddingStore) -> Self {
         Self {
@@ -139,6 +150,11 @@ impl MemoryStore {
         self
     }
 
+    /// Set the storage budget (max shared h_mems before consolidation prunes).
+    /// The budget is enforced inside `MemoryConsolidator::consolidate` as the
+    /// default `max_semantic_triples` cap when the caller omits one — the
+    /// Ashby attenuator for unbounded memory growth. `RealMemoryPort::new`
+    /// wires this from `HKASK_MEMORY_STORAGE_BUDGET` (default 10_000).
     pub fn with_storage_budget(mut self, budget: usize) -> Self {
         self.storage_budget = budget;
         self
@@ -150,11 +166,6 @@ impl MemoryStore {
 
     pub fn storage_budget(&self) -> usize {
         self.storage_budget
-    }
-
-    /// Access the underlying `HMemStore` for direct operations.
-    pub fn h_mem_store(&self) -> &HMemStore {
-        &self.h_mem_store
     }
 
     /// Access the underlying `EmbeddingStore` for direct operations.
@@ -622,16 +633,8 @@ impl MemoryStore {
 
     // ── Budget / cleanup ──────────────────────────────────────────────────
 
-    pub fn storage_usage(&self, perspective: &WebID) -> Result<usize, MemoryStoreError> {
-        Ok(self.h_mem_store.count_by_perspective(perspective)?)
-    }
-
     pub fn h_mem_count(&self) -> Result<usize, MemoryStoreError> {
         Ok(self.h_mem_store.count_semantic()?)
-    }
-
-    pub fn h_mem_count_for_entity(&self, entity: &str) -> Result<usize, MemoryStoreError> {
-        Ok(self.h_mem_store.count_semantic_by_entity(entity)?)
     }
 
     pub fn delete_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
@@ -655,19 +658,6 @@ impl MemoryStore {
         Ok(self
             .h_mem_store
             .query_semantic_below_confidence(threshold, limit)?)
-    }
-
-    pub fn h_mems_older_than(
-        &self,
-        days: u32,
-        limit: usize,
-    ) -> Result<Vec<HMem>, MemoryStoreError> {
-        Ok(self.h_mem_store.query_semantic_older_than(days, limit)?)
-    }
-
-    pub fn close_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
-        self.h_mem_store.close_by_id(id)?;
-        Ok(())
     }
 
     // ── Text chunking (pure — no store access) ────────────────────────
@@ -986,5 +976,60 @@ mod tests {
         );
         assert_eq!(events[0].span.namespace.short_name(), "memory.encode");
         assert_eq!(events[0].span.path.as_str(), "reg.memory.encode.stored");
+    }
+
+    /// The storage budget is the Ashby attenuator for unbounded memory growth:
+    /// when `h_mem_count` exceeds `storage_budget` and the caller omits
+    /// `max_semantic_triples`, `MemoryConsolidator::consolidate` prunes the
+    /// lowest-confidence shared h_mems back to the budget. Without this the
+    /// budget field would be dead config (the `.rules` "Advertised invariants
+    /// need enforcement points" trap). This test pins the trigger.
+    #[test]
+    fn storage_budget_triggers_pruning_when_over_budget() {
+        use crate::MemoryConsolidator;
+        use hkask_types::ConsolidationRequest;
+
+        let store = Arc::new(make_store().with_storage_budget(2));
+        let owner = WebID::new();
+
+        // Store three shared h_mems with distinct confidences; budget is 2.
+        for (entity, confidence) in [("high", 0.9), ("mid", 0.5), ("low", 0.1)] {
+            let h_mem = HMem::new(entity, "is", serde_json::json!("v"), owner)
+                .with_visibility(Visibility::Shared)
+                .with_confidence(Confidence::new(confidence));
+            store.store(h_mem).expect("store");
+        }
+        assert_eq!(store.h_mem_count().expect("count"), 3);
+
+        let consolidator = MemoryConsolidator::new(Arc::clone(&store));
+        let outcome = consolidator
+            .consolidate(
+                &owner,
+                ConsolidationRequest {
+                    limit: 100,
+                    confidence_floor: None,
+                    max_semantic_triples: None,
+                },
+            )
+            .expect("consolidate");
+
+        // The budget trigger should have pruned 1 h_mem (3 → 2).
+        assert_eq!(
+            outcome.deleted_count, 1,
+            "budget trigger should prune the excess h_mem"
+        );
+        assert_eq!(store.h_mem_count().expect("count after"), 2);
+
+        // The lowest-confidence h_mem ("low", 0.1) should be the one pruned.
+        let remaining: Vec<String> = store
+            .query_deduped("low")
+            .expect("recall")
+            .into_iter()
+            .map(|h| h.entity)
+            .collect();
+        assert!(
+            remaining.is_empty(),
+            "lowest-confidence h_mem should have been pruned, got {remaining:?}"
+        );
     }
 }
