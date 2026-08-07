@@ -3,7 +3,7 @@ use crate::dataset::DatasetPipeline;
 use crate::tools::error_mapping::map_dataset_error;
 use crate::types::{AssembleDatasetRequest, IngestQaRequest, TrainIngestDatasetRequest};
 use hkask_mcp_server::server::{
-    McpToolError, execute_tool, map_io_error, map_semantic_memory_error,
+    McpToolError, execute_tool, map_io_error, map_memory_store_error,
 };
 use hkask_storage::HMem;
 use hkask_types::Visibility;
@@ -81,7 +81,7 @@ impl TrainingServer {
             };
             let h_mems = match semantic.query_by_attribute("training_qa_pair") {
                 Ok(t) => t,
-                Err(e) => return Err(map_semantic_memory_error(e, "semantic memory query")),
+                Err(e) => return Err(map_memory_store_error(e, "semantic memory query")),
             };
             if h_mems.is_empty() {
                 return Err(McpToolError::invalid_argument("No training_qa_pair h_mems found. Ingest QA pairs first with training_ingest_qa."));

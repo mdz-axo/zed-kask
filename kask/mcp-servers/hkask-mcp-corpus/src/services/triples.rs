@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
+use hkask_types::HMemOntology;
 use hkask_types::InferencePort;
 use hkask_types::Visibility;
 use hkask_types::template::LLMParameters;
@@ -48,7 +49,7 @@ impl TriplesService {
 
     /// Batch extract h_mems from chunks JSONL with concurrent LLM calls.
     ///
-    /// Opens the DB once and shares it across all concurrent tasks via `Arc<SemanticMemory>`.
+    /// Opens the DB once and shares it across all concurrent tasks via `Arc<MemoryStore>`.
     /// Each chunk gets a 3-attempt retry with backoff. Triples are stored as h_mems
     /// with `entity = chunk.entity_ref`.
     ///
@@ -130,11 +131,9 @@ impl TriplesService {
 
         // Open DB once, share across concurrent tasks
         let dim = embedding_dim();
-        let semantic = Arc::new(
-            SemanticMemory::open(&db_path, &passphrase, dim).map_err(|e| {
-                McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-            })?,
-        );
+        let store = Arc::new(MemoryStore::open(&db_path, &passphrase, dim).map_err(|e| {
+            McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
+        })?);
         let webid = owner_webid(&owner);
         let classifier = hkask_inference::model_constants::classifier_model();
         // Namespace is fixed to "doc" for corpus chunk extraction (no longer a request field).
@@ -150,7 +149,7 @@ impl TriplesService {
         for (entity_ref, chunk_text) in chunks {
             let router = Arc::clone(&router);
             let sem = Arc::clone(&sem);
-            let semantic = Arc::clone(&semantic);
+            let store = Arc::clone(&store);
             let classifier = classifier.clone();
             let ns = ns.clone();
             let succeeded = Arc::clone(&succeeded);
@@ -284,6 +283,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             .and_then(|v| v.as_f64())
                             .unwrap_or(0.8);
                         let dimension = predicate_to_dimension(predicate);
+                        let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
 
                         let confidence = triple_confidence(
                             subject,
@@ -294,7 +294,6 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             &chunk_namespaces,
                         );
                         if confidence < raw_confidence {
-                            let pred_ns = predicate.split(':').next().unwrap_or("").to_lowercase();
                             let reason = if !chunk_namespaces.contains(&pred_ns)
                                 && matches!(
                                     pred_ns.as_str(),
@@ -328,11 +327,29 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                             "subject": subject,
                             "object": object,
                         });
+                        // The triple is an assertion about the chunk it was
+                        // extracted from, so `dc_source` is the chunk's
+                        // entity_ref and `dc_subject` is the triple subject.
+                        // The predicate's own namespace is recorded as an
+                        // open-world tag only when the chunk was actually
+                        // tagged with it — the same cross-check that gates the
+                        // confidence cap above, so a hallucinated namespace
+                        // doesn't get an ontology anchor it never earned.
+                        let mut ontology = HMemOntology::semantic(
+                            "dcterms:Assertion",
+                            vec![subject.to_string()],
+                            entity_ref.clone(),
+                        )
+                        .with_dimension(dimension);
+                        if !pred_ns.is_empty() && chunk_namespaces.contains(&pred_ns) {
+                            ontology = ontology.with_ontology_tag(pred_ns.clone(), predicate);
+                        }
+
                         let h_mem = hkask_storage::HMem::new(&entity_ref, predicate, value, webid)
                             .with_visibility(Visibility::Public)
                             .with_confidence(confidence)
-                            .with_dimension(dimension);
-                        match semantic.store(h_mem) {
+                            .with_ontology(ontology);
+                        match store.store(h_mem) {
                             Ok(()) => stored += 1,
                             Err(e) => {
                                 tracing::warn!(

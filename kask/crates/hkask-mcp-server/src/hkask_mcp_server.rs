@@ -24,7 +24,7 @@ pub use server::{
 };
 pub use server::{
     MAX_READ_BYTES, contain_for_read, contain_for_write, map_infra_error, map_io_error,
-    map_join_error, map_semantic_memory_error, read_capped,
+    map_join_error, map_memory_store_error, read_capped,
 };
 
 pub use tool_schema::AnyJsonValue;

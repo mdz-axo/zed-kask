@@ -1,7 +1,7 @@
 //! Storage and query tools — cache, passage query, similarity.
-use crate::helpers::{map_corpus_io_error, map_semantic_memory_error};
+use crate::helpers::{map_corpus_io_error, map_memory_store_error};
 use crate::{
-    CorpusServer, IndexedPassage, LLMParameters, McpToolError, Parameters, SemanticMemory,
+    CorpusServer, IndexedPassage, LLMParameters, McpToolError, MemoryStore, Parameters,
     cosine_similarity, embedding_dim, execute_tool, json, render_docproc_template, tool,
     tool_router,
 };
@@ -259,17 +259,16 @@ impl CorpusServer {
     pub async fn corpus_purge_qa(&self, Parameters(req): Parameters<PurgeQaRequest>) -> String {
         execute_tool(self, "corpus_purge_qa", async {
             let dim = embedding_dim();
-            let semantic =
-                SemanticMemory::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
-                    McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-                })?;
+            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
+                McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
+            })?;
 
-            let embeddings_before = semantic.embedding_count().unwrap_or(0);
+            let embeddings_before = store.embedding_count().unwrap_or(0);
 
             // Purge embeddings with matching entity_ref prefix
-            let purged_embeddings = semantic
+            let purged_embeddings = store
                 .purge_by_prefix(&req.prefix)
-                .map_err(|e| map_semantic_memory_error(e, "Purge embeddings failed"))?;
+                .map_err(|e| map_memory_store_error(e, "Purge embeddings failed"))?;
 
             // Purge h_mems — old schema (entity="corpus:qa") vs new schema (entity starts with prefix)
             let mut purged_h_mems = 0usize;
@@ -277,23 +276,23 @@ impl CorpusServer {
 
             if req.prefix == "corpus:qa" {
                 // Old schema: entity is exactly "corpus:qa"
-                let h_mems = semantic
+                let h_mems = store
                     .query_deduped(&req.prefix)
-                    .map_err(|e| map_semantic_memory_error(e, "Query h_mems failed"))?;
+                    .map_err(|e| map_memory_store_error(e, "Query h_mems failed"))?;
                 for h_mem in &h_mems {
-                    match semantic.delete_h_mem(&h_mem.id) {
+                    match store.delete_h_mem(&h_mem.id) {
                         Ok(()) => purged_h_mems += 1,
                         Err(_) => h_mem_errors += 1,
                     }
                 }
             } else {
                 // New schema: query by attribute "training_qa_pair" and filter by entity prefix
-                let h_mems = semantic
+                let h_mems = store
                     .query_by_attribute("training_qa_pair")
-                    .map_err(|e| map_semantic_memory_error(e, "Query h_mems failed"))?;
+                    .map_err(|e| map_memory_store_error(e, "Query h_mems failed"))?;
                 for h_mem in &h_mems {
                     if h_mem.entity.starts_with(&req.prefix) {
-                        match semantic.delete_h_mem(&h_mem.id) {
+                        match store.delete_h_mem(&h_mem.id) {
                             Ok(()) => purged_h_mems += 1,
                             Err(_) => h_mem_errors += 1,
                         }
@@ -301,7 +300,7 @@ impl CorpusServer {
                 }
             }
 
-            let embeddings_after = semantic.embedding_count().unwrap_or(0);
+            let embeddings_after = store.embedding_count().unwrap_or(0);
 
             let result = json!({
                 "prefix": req.prefix,

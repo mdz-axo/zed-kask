@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore, HMemStore};
 use hkask_types::InferencePort;
@@ -206,7 +206,7 @@ impl ComposeService {
                     source: None,
                     message: e.to_string(),
                 })?;
-        let semantic = SemanticMemory::new(h_mem_store, embedding_store);
+        let store = MemoryStore::new(h_mem_store, embedding_store);
         let driver2 = SqliteDriver::new(pool);
         let embedding_store_direct = EmbeddingStore::from_driver(
             Arc::new(driver2) as Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
@@ -238,7 +238,7 @@ impl ComposeService {
             .ok_or(hkask_types::EmbeddingGenerationError::EmptyResponse)?;
 
         // 3. KNN search for exemplar passages
-        let results = semantic
+        let results = store
             .search_similar(&prompt_vector, request.cognition.embedding.retrieval.k_max)
             .map_err(|e| ServiceError::Domain {
                 kind: ErrorKind::BadRequest,
@@ -278,7 +278,7 @@ impl ComposeService {
             }
 
             // Look up salience from h_mems
-            let salience = match semantic.query_deduped(&r.embedding.entity_ref) {
+            let salience = match store.query_deduped(&r.embedding.entity_ref) {
                 Ok(h_mems) => h_mems
                     .iter()
                     .find(|t| t.attribute == "salience")
@@ -323,7 +323,7 @@ impl ComposeService {
             .into_iter()
             .take(retrieval.k_max)
             .filter_map(|(_distance, entity_ref, _salience)| {
-                match semantic.query_deduped(&entity_ref) {
+                match store.query_deduped(&entity_ref) {
                     Ok(h_mems) => {
                         let text = h_mems
                             .iter()

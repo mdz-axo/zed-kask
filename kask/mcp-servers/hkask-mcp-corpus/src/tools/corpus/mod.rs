@@ -11,14 +11,14 @@
 //!   multi-chunk cluster into a single comprehensive passage, re-embeds
 //!   the consolidated text, and stores the new embedding in the DB.
 
-use crate::helpers::{map_corpus_io_error, map_semantic_memory_error, read_text_capped};
+use crate::helpers::{map_corpus_io_error, map_memory_store_error, read_text_capped};
 use crate::services::consolidation::{ConsolidationRequest, ConsolidationService};
 use crate::services::prompt_builder::{
     BuildPromptsRequest as ServiceBuildPromptsRequest, PromptBuilderService,
 };
 use crate::tools::semantic::default_corpus_passphrase;
 use crate::{
-    Arc, CorpusServer, McpToolError, Parameters, SemanticMemory, default_owner, embedding_dim,
+    Arc, CorpusServer, McpToolError, MemoryStore, Parameters, default_owner, embedding_dim,
     execute_tool, json, normalize_in_place, owner_webid, tool, tool_router,
 };
 use schemars::JsonSchema;
@@ -54,12 +54,12 @@ impl CorpusServer {
             }
 
             let dim = embedding_dim();
-            let semantic = SemanticMemory::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
+            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim).map_err(|e| {
                 McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
             })?;
-            let embeddings = semantic
+            let embeddings = store
                 .embeddings_by_prefix(&req.prefix)
-                .map_err(|e| map_semantic_memory_error(e, "Embedding query failed"))?;
+                .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;
 
             // Pre-normalize all vectors
             let normalized: Vec<(String, Vec<f32>)> = embeddings
@@ -267,7 +267,7 @@ impl CorpusServer {
 
             // Store h_mems + embeddings
             let dim = embedding_dim();
-            let semantic = SemanticMemory::open(&req.db_path, &req.passphrase, dim)
+            let store = MemoryStore::open(&req.db_path, &req.passphrase, dim)
                 .map_err(|e| McpToolError::failed_precondition(format!("Cannot open memory DB: {e}")))?;
             let webid = owner_webid(&req.owner);
             let mut stored = 0usize;
@@ -298,7 +298,7 @@ impl CorpusServer {
                     .with_visibility(hkask_types::Visibility::Public)
                     .with_confidence(0.8)
                     .with_dimension(hkask_types::Dimension::What);
-                if semantic.store(h_mem).is_ok() {
+                if store.store(h_mem).is_ok() {
                     stored += 1;
                 }
             }

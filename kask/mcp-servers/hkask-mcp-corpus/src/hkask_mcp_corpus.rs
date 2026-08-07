@@ -61,7 +61,7 @@ pub(crate) use hkask_types::json_extract::extract_json_from_response;
 
 use crate::ocr::ThresholdConfig;
 use hkask_mcp_server::server::{McpToolError, execute_tool};
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_services_core::settings::HkaskSettings;
 use hkask_types::InferencePort;
 use hkask_types::template::LLMParameters;

@@ -7,14 +7,14 @@
 use std::sync::Arc;
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_types::InferencePort;
 use hkask_types::corpus::{ChunkOntology, ExpertiseLevel, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
 use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
-use crate::helpers::{map_corpus_io_error, map_semantic_memory_error};
+use crate::helpers::{map_corpus_io_error, map_memory_store_error};
 use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
 use crate::tools::semantic::configured_qa_model;
 use crate::{embedding_dim, normalize_concept, normalize_in_place, render_docproc_template};
@@ -74,12 +74,12 @@ impl ConsolidationService {
         }
 
         let dim = embedding_dim();
-        let semantic = SemanticMemory::open(&db_path, &passphrase, dim).map_err(|e| {
+        let store = MemoryStore::open(&db_path, &passphrase, dim).map_err(|e| {
             McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
         })?;
-        let embeddings = semantic
+        let embeddings = store
             .embeddings_by_prefix(&prefix)
-            .map_err(|e| map_semantic_memory_error(e, "Embedding query failed"))?;
+            .map_err(|e| map_memory_store_error(e, "Embedding query failed"))?;
 
         // Pre-normalize all vectors
         let normalized: Vec<(String, Vec<f32>)> = embeddings
@@ -412,8 +412,7 @@ impl ConsolidationService {
                 match self.inference_router.embed(&emb_model, &texts).await {
                     Ok(vectors) => {
                         for ((entity_ref, _), vector) in batch.iter().zip(vectors.iter()) {
-                            if let Err(e) = semantic.store_embedding(entity_ref, vector, &emb_model)
-                            {
+                            if let Err(e) = store.store_embedding(entity_ref, vector, &emb_model) {
                                 tracing::warn!(
                                     entity_ref = %entity_ref,
                                     error = %e,

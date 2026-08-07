@@ -8,7 +8,7 @@ use super::types::{
 };
 use crate::corpus::embed::Entity;
 use crate::runtime::TripleExtraction;
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_memory::salience::{self, EntityTags};
 use hkask_services_core::{DomainKind, ErrorKind, HkaskSettings, ServiceError};
 use hkask_types::InferencePort;
@@ -225,7 +225,7 @@ async fn classify_and_extract(
 fn compute_centroids(
     all_passages: &[TaggedPassage],
     config: &CorpusConfig,
-    semantic: &SemanticMemory,
+    store: &MemoryStore,
     author_prefix: &str,
     centroid_ref: &str,
 ) -> Result<
@@ -241,7 +241,7 @@ fn compute_centroids(
         // ── Single-centroid path ──
         tracing::info!("Computing style centroid (single)");
         let rule_prefix = format!("style:{}:rule:", &config.author);
-        let centroid_result = semantic
+        let centroid_result = store
             .compute_centroid(
                 author_prefix,
                 &rule_prefix,
@@ -275,7 +275,7 @@ fn compute_centroids(
         "Computing per-dimension centroids"
     );
 
-    let centroid_store = semantic.embedding_store();
+    let centroid_store = store.embedding_store();
 
     let mut dim_refs: HashMap<String, Vec<String>> = HashMap::new();
     for passage in all_passages {
@@ -497,8 +497,8 @@ impl EmbedService {
         };
 
         // ── Open DB ────────────────────────────────────────────────────
-        let semantic =
-            SemanticMemory::open(db_path, db_passphrase, config.embedding.dim).map_err(|e| {
+        let store =
+            MemoryStore::open(db_path, db_passphrase, config.embedding.dim).map_err(|e| {
                 ServiceError::Domain {
                     kind: ErrorKind::BadRequest,
                     domain: DomainKind::Storage,
@@ -508,7 +508,7 @@ impl EmbedService {
             })?;
 
         // Purge existing embeddings for idempotent re-ingest
-        let purged = semantic.purge_by_prefix(&author_prefix).map_err(|e| {
+        let purged = store.purge_by_prefix(&author_prefix).map_err(|e| {
             let msg = format!("Failed to purge embeddings: {e}");
             ServiceError::Domain {
                 domain: DomainKind::Wallet,
@@ -766,7 +766,7 @@ impl EmbedService {
                 })?;
 
             for ((entity_ref, _text), vector) in chunk.iter().zip(vectors.iter()) {
-                semantic
+                store
                     .store_embedding(entity_ref, vector, &config.embedding.model)
                     .map_err(|e| ServiceError::Domain {
                         kind: ErrorKind::BadRequest,
@@ -803,7 +803,7 @@ impl EmbedService {
                 continue;
             }
 
-            store_passage_h_mems(&semantic, passage, &author, curator_webid)?;
+            store_passage_h_mems(&store, passage, &author, curator_webid)?;
             triples_stored += passage.triple_count();
             triple_progress += 1;
 
@@ -830,7 +830,7 @@ impl EmbedService {
             compute_centroids(
                 &all_passages,
                 &config,
-                &semantic,
+                &store,
                 &author_prefix,
                 &centroid_ref,
             )?;

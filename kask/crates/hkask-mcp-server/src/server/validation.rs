@@ -128,40 +128,36 @@ pub fn map_infra_error(error: &hkask_types::InfrastructureError, context: &str) 
     }
 }
 
-/// Classify a `SemanticMemoryError` from a memory-DB operation into the
+/// Classify a `MemoryStoreError` from a memory-DB operation into the
 /// appropriate `McpToolError` kind. Infrastructure variants (HMem/Embedding
 /// wrapping an `InfrastructureError`) route through [`map_infra_error`];
-/// domain contract violations (`InvalidVisibility`, `HasPerspective`) are
-/// caller-fixable (`invalid_argument`); missing entities and centroid
-/// embeddings are `not_found`; remaining embedding failures are `internal`.
-/// Canonical mapper shared by the corpus and training servers — reuse it
-/// instead of re-implementing per-crate copies.
+/// missing entities and centroid embeddings are `not_found`; remaining
+/// embedding failures are `internal`. Canonical mapper shared by the corpus
+/// and training servers — reuse it instead of re-implementing per-crate
+/// copies.
 #[must_use = "result must be used"]
-pub fn map_semantic_memory_error(
-    error: hkask_memory::SemanticMemoryError,
+pub fn map_memory_store_error(
+    error: hkask_memory::MemoryStoreError,
     context: &str,
 ) -> McpToolError {
-    use hkask_memory::SemanticMemoryError;
+    use hkask_memory::MemoryStoreError;
     match error {
-        SemanticMemoryError::HMem(hkask_storage::HMemError::NotFound(_)) => {
+        MemoryStoreError::HMem(hkask_storage::HMemError::NotFound(_)) => {
             McpToolError::not_found(format!("{context}: {error}"))
         }
-        SemanticMemoryError::HMem(hkask_storage::HMemError::Infra(ref infra)) => {
+        MemoryStoreError::HMem(hkask_storage::HMemError::Infra(ref infra)) => {
             map_infra_error(infra, context)
         }
-        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
+        MemoryStoreError::Embedding(hkask_storage::EmbeddingError::NotFound(_)) => {
             McpToolError::not_found(format!("{context}: {error}"))
         }
-        SemanticMemoryError::Embedding(hkask_storage::EmbeddingError::Infrastructure(
-            ref infra,
-        )) => map_infra_error(infra, context),
-        SemanticMemoryError::InvalidVisibility(_) | SemanticMemoryError::HasPerspective => {
-            McpToolError::invalid_argument(format!("{context}: {error}"))
+        MemoryStoreError::Embedding(hkask_storage::EmbeddingError::Infrastructure(ref infra)) => {
+            map_infra_error(infra, context)
         }
-        SemanticMemoryError::NoEmbeddingsForCentroid(_) => {
+        MemoryStoreError::NoEmbeddingsForCentroid(_) => {
             McpToolError::not_found(format!("{context}: {error}"))
         }
-        SemanticMemoryError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
+        MemoryStoreError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
     }
 }
 

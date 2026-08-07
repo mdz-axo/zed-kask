@@ -1,9 +1,10 @@
 //! `MemoryPort` adapter — bridges zed's thread completion to hKask memory (D6).
 //!
-//! `RealMemoryPort` — full hKask memory stack. Stores completed turns into
-//! episodic memory (Private, perspective = user WebID) and semantic memory
-//! (Shared, for curator access). Embeds the user prompt for future retrieval.
-//! Used when `HKASK_DB_PATH` + `HKASK_DB_PASSPHRASE` are configured.
+//! `RealMemoryPort` — full hKask memory stack. Stores completed turns as
+//! episodic h_mems (Private, perspective = user WebID, PKO-anchored ontology)
+//! and semantic h_mems (Shared, DC-anchored ontology, for curator access).
+//! Embeds the user prompt for future retrieval. Used when `HKASK_DB_PATH` +
+//! `HKASK_DB_PASSPHRASE` are configured.
 //!
 //! The port is injected via a global hook (`agent::set_memory_port`) so the
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
@@ -11,7 +12,9 @@
 
 use hkask_memory::{ConsolidationBridge, ConsolidationService, MemoryStore};
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
-use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID};
+use hkask_types::{
+    HMemOntology, MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID,
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -25,7 +28,7 @@ use crate::inference::LanguageModelEmbeddingPort;
 
 // ── Real memory port (full hKask memory stack) ─────────────────────────────
 
-/// Real `MemoryPort` implementation backed by hKask's episodic + semantic memory.
+/// Real `MemoryPort` implementation backed by hKask's unified `MemoryStore`.
 ///
 /// Stores each completed turn as:
 /// 1. An episodic h_mem (Private, perspective = user WebID) — the user's
@@ -514,23 +517,8 @@ impl RealMemoryPort {
     }
 }
 
-/// Open the curator's sovereign `pod.db` and construct both an
-/// `EpisodicMemory` and a `SemanticMemory` pointed at it. Returns
-/// `(None, None)` on any failure — the caller treats this as graceful
-/// degradation (curator copies are skipped, user memory still persists).
-///
-/// The DB path defaults to `agents/curator/pod.db` under the hKask data
-/// directory, matching the path the curator MCP server reads from in
-/// `open_curator_stores`. The passphrase is the same as the user's DB —
-/// both are provisioned by `provision_agent` / the keychain.
-///
-/// The episodic store is used for curator-perspective first-person records
-/// (Curator turns ingested with `curator_webid` + `Visibility::Private`),
-/// mirroring the user agent's episodic loop. The semantic store is the
-/// curator-accessible shared copy that `curator_memory_recall` and
-/// `curator_semantic_search` read from.
 /// Resolve the curator's sovereign `pod.db` path (same resolution as
-/// `open_curator_stores`): `HKASK_CURATOR_DB` if set, else
+/// `open_curator_store`): `HKASK_CURATOR_DB` if set, else
 /// `agents/curator/pod.db` under the hKask data dir.
 pub fn curator_db_path() -> String {
     std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
@@ -680,9 +668,11 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
     }
 }
 
-/// The curator store pair: first-person episodic + shared semantic, both
-/// backed by the curator's sovereign `pod.db`.
 /// The curator's sovereign store, with self-healing open.
+///
+/// One store holds both the curator's first-person episodic records and the
+/// shared semantic copies — the `HMemOntology` blob on each h_mem
+/// distinguishes them (P5.4), so no second store struct is needed.
 ///
 /// Wraps the `Option<Arc<MemoryStore>>` in an `RwLock` plus the parameters
 /// needed to re-open it (passphrase, embedding dim). When the initial open
@@ -964,6 +954,12 @@ impl MemoryPort for RealMemoryPort {
             // written only to the curator's sovereign DB — the user had no
             // episodic record of their own curator conversations.
             let entity = format!("chat:thread:{thread_id}");
+            // Process-axis anchoring (P5.4): a chat turn is a PKO step
+            // execution of the `chat` procedure. `dc_source` carries the
+            // thread as the session provenance so recall can distinguish
+            // turns by conversation without re-parsing the entity string.
+            let episodic_ontology =
+                HMemOntology::episodic("chat", "turn", format!("session:{thread_id}"));
             let episodic_h_mem = HMem::new(
                 &entity,
                 "chatted",
@@ -971,7 +967,8 @@ impl MemoryPort for RealMemoryPort {
                 self.user_webid,
             )
             .with_perspective(self.user_webid)
-            .with_visibility(Visibility::Private);
+            .with_visibility(Visibility::Private)
+            .with_ontology(episodic_ontology);
 
             if let Err(e) = self.store.store(episodic_h_mem) {
                 tracing::warn!(
@@ -1000,7 +997,12 @@ impl MemoryPort for RealMemoryPort {
                     self.curator_webid,
                 )
                 .with_perspective(self.curator_webid)
-                .with_visibility(Visibility::Private);
+                .with_visibility(Visibility::Private)
+                .with_ontology(HMemOntology::episodic(
+                    "chat",
+                    "turn",
+                    format!("session:{thread_id}"),
+                ));
 
                 if let Some(ref curator_store) = curator_store {
                     if let Err(e) = curator_store.store(episodic_h_mem) {
@@ -1029,13 +1031,22 @@ impl MemoryPort for RealMemoryPort {
             // turn kinds so `curator_memory_recall` / `curator_semantic_search`
             // see every turn the agent has observed, regardless of speaker.
             let curator_entity = format!("curator:thread:{thread_id}");
+            // State-axis anchoring (P5.4): the curator copy is a document the
+            // curator holds about the conversation, not a step it executed.
+            // `bibo:Document` is the BIBO type for a standalone record.
+            let curator_ontology = HMemOntology::semantic(
+                "bibo:Document",
+                vec!["chat_turn".to_string()],
+                "curator",
+            );
             let curator_h_mem = HMem::new(
                 &curator_entity,
                 "turn",
                 serde_json::Value::String(turn_value.to_string()),
                 self.curator_webid,
             )
-            .with_visibility(Visibility::Shared);
+            .with_visibility(Visibility::Shared)
+            .with_ontology(curator_ontology);
 
             if let Some(ref curator_store) = curator_store {
                 if let Err(e) = curator_store.store(curator_h_mem) {
@@ -1156,7 +1167,6 @@ impl MemoryPort for RealMemoryPort {
             self.recall_from(
                 &self.store,
                 Some(self.user_webid),
-                self.user_webid,
                 query,
                 limit,
                 "recall_context",
@@ -1209,8 +1219,8 @@ impl RealMemoryPort {
 
     /// Recall memory snippets from the **curator's** sovereign stores.
     ///
-    /// This mirrors `recall_context` but reads from `curator_semantic` and
-    /// `curator_episodic` (both in `agents/curator/pod.db`) using the
+    /// This mirrors `recall_context` but reads from the curator's `MemoryStore`
+    /// (`agents/curator/pod.db`) using the
     /// curator's WebID for perspective-scoped episodic queries. Used by the
     /// curator context injector (`BridgeContextInjector::new_curator`) so the
     /// Curator recalls its own memory — a parallel of the user agent's
@@ -1231,7 +1241,6 @@ impl RealMemoryPort {
             self.recall_from(
                 curator_store,
                 Some(self.curator_webid),
-                self.curator_webid,
                 query,
                 limit,
                 "recall_context_curator",
@@ -1270,11 +1279,10 @@ impl RealMemoryPort {
 
     /// Shared recall implementation for both the user and curator stores.
     ///
-    /// `episodic` is `Option` so the curator path (where `curator_episodic`
-    /// may be `None`) can call the same helper without a separate branch.
-    /// `perspective` scopes the episodic keyword search to the owning agent's
-    /// WebID. `log_label` is used in tracing so the user and curator paths
-    /// are distinguishable in logs.
+    /// `episodic_perspective` scopes the episodic keyword search to the owning
+    /// agent's WebID; `None` skips the episodic leg entirely. `log_label` is
+    /// used in tracing so the user and curator paths are distinguishable in
+    /// logs.
     ///
     /// This was previously duplicated verbatim between `recall_context` and
     /// `recall_context_curator`; the duplication was a maintenance hazard
@@ -1283,24 +1291,17 @@ impl RealMemoryPort {
         &'a self,
         store: &'a Arc<MemoryStore>,
         episodic_perspective: Option<WebID>,
-        perspective: WebID,
         query: &'a str,
         limit: usize,
         log_label: &'static str,
     ) -> Result<Vec<MemorySnippet>, MemoryError> {
-        // Collect (snippet, h_mem_id, source) triples so we can sort,
-        // truncate, and touch the correct store for each survivor.
-        // Tracking the source alongside the id avoids double-touching
-        // (episodic + semantic) and keeps id↔snippet correspondence
-        // stable across the sort.
-        enum RecallSource {
-            Episodic,
-            Semantic,
-        }
+        // Collect (snippet, h_mem_id) pairs so we can sort, truncate, and
+        // touch only the survivors. Both the embedding-KNN and keyword paths
+        // read from the same `store`, so no per-candidate source tag is
+        // needed — the touch target is always `store`.
         struct Candidate {
             snippet: MemorySnippet,
             h_mem_id: hkask_storage::HMemId,
-            source: RecallSource,
         }
         let mut candidates: Vec<Candidate> = Vec::new();
 
@@ -1341,7 +1342,6 @@ impl RealMemoryPort {
                                             relevance_score: 1.0 - result.distance,
                                         },
                                         h_mem_id: h_mem.id,
-                                        source: RecallSource::Semantic,
                                     });
                                 }
                             }
@@ -1421,7 +1421,6 @@ impl RealMemoryPort {
                             relevance_score: 0.5, // Base relevance for keyword match
                         },
                         h_mem_id: h_mem.id,
-                        source: RecallSource::Episodic,
                     });
                 }
             }
@@ -1441,10 +1440,8 @@ impl RealMemoryPort {
         // Resets the decay clock on h_mems that actually got used. This
         // is the “memory that gets used stays fresh” semantics, applied
         // post-filter instead of pre-filter — avoids the write storm.
-        // Touch via the correct store for each candidate's source.
         for c in &candidates {
-            let result: Result<(), Box<dyn std::error::Error>> = store.touch_recall(&c.h_mem_id).map_err(Into::into);
-            if let Err(e) = result {
+            if let Err(e) = store.touch_recall(&c.h_mem_id) {
                 tracing::warn!(
                     target: "reg.memory.decay",
                     triple_id = %c.h_mem_id.as_uuid(),
@@ -1661,27 +1658,21 @@ mod tests {
     ) -> RealMemoryPort {
         let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
-        let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
-
-        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
         let embedding_store =
             EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
-        let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
+        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
 
         // Curator store — a separate in-memory driver so the curator copy
         // lands in a different DB, mirroring production where the curator
         // has its own `pod.db`.
         let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
             SqliteDriver::in_memory_driver();
-        let curator_h_mem_store_episodic =
-            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
-        let curator_episodic = Arc::new(EpisodicMemory::new(curator_h_mem_store_episodic));
-        let curator_h_mem_store_semantic =
+        let curator_h_mem_store =
             HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
         let curator_embedding_store =
             EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
-        let curator_semantic = Arc::new(SemanticMemory::new(
-            curator_h_mem_store_semantic,
+        let curator_store_inner = Arc::new(MemoryStore::new(
+            curator_h_mem_store,
             curator_embedding_store,
         ));
 
@@ -1689,13 +1680,10 @@ mod tests {
         let embedding_port = LanguageModelEmbeddingPort::for_tests();
 
         let consolidation = if consolidation_cadence_secs > 0 {
-            let bridge = Arc::new(ConsolidationBridge::new(
-                Arc::clone(&episodic),
-                Arc::clone(&semantic),
-            ));
+            let bridge = Arc::new(ConsolidationBridge::new(Arc::clone(&store)));
             Some(Arc::new(ConsolidationService::new(
                 bridge,
-                Arc::clone(&semantic),
+                Arc::clone(&store),
             )))
         } else {
             None
@@ -1703,27 +1691,13 @@ mod tests {
 
         // Curator consolidation service — mirrors the production construction
         // in `RealMemoryPort::new`. Skipped when cadence is 0 (matches
-        // production). The curator stores are always `Some` in tests.
-        let curator_consolidation = if consolidation_cadence_secs > 0 {
-            let bridge = Arc::new(ConsolidationBridge::new(
-                Arc::clone(&curator_episodic),
-                Arc::clone(&curator_semantic),
-            ));
-            Some(Arc::new(ConsolidationService::new(
-                bridge,
-                Arc::clone(&curator_semantic),
-            )))
-        } else {
-            None
-        };
+        // production). The curator store is always `Some` in tests.
+        let curator_consolidation =
+            build_curator_consolidation(consolidation_cadence_secs, &Some(Arc::clone(&curator_store_inner)));
 
         RealMemoryPort {
-            episodic,
-            semantic,
-            curator_stores: Arc::new(CuratorStores::for_tests(
-                Some(curator_episodic),
-                Some(curator_semantic),
-            )),
+            store,
+            curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
             embedding_port,
             embedding_model: "test-model".to_string(),
             user_webid: test_webid(),
@@ -1756,11 +1730,19 @@ mod tests {
 
         // Verify episodic h_mem was stored
         let h_mems = port
-            .episodic
-            .query_for_deduped("chat:thread:test-thread", webid)
+            .store
+            .query_for_deduped_untouched("chat:thread:test-thread", webid)
             .expect("query should succeed");
         assert_eq!(h_mems.len(), 1, "one episodic h_mem should be stored");
         assert_eq!(h_mems[0].attribute, "chatted");
+        // The ontology blob is what classifies this as episodic — not a
+        // separate store struct (P5.4 dual-axis anchoring).
+        let ontology = h_mems[0]
+            .ontology
+            .as_ref()
+            .expect("episodic h_mem carries an ontology blob");
+        assert_eq!(ontology.pko_procedure.as_deref(), Some("chat"));
+        assert_eq!(ontology.pko_step.as_deref(), Some("turn"));
     }
 
     #[tokio::test]
@@ -1779,10 +1761,9 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify semantic (curator) h_mem was stored in the curator's store,
-        // not the user's semantic store.
-        let (_, curator_semantic) = port.curator_stores.get();
-        let curator_semantic = curator_semantic.expect("curator store");
-        let h_mems = curator_semantic
+        // not the user's store.
+        let curator_store = port.curator_store.get().expect("curator store");
+        let h_mems = curator_store
             .query_deduped("curator:thread:test-thread-2")
             .expect("query should succeed");
         assert_eq!(
@@ -1791,10 +1772,19 @@ mod tests {
             "one curator semantic h_mem should be stored"
         );
         assert_eq!(h_mems[0].attribute, "turn");
+        let ontology = h_mems[0]
+            .ontology
+            .as_ref()
+            .expect("curator copy carries an ontology blob");
+        assert_eq!(ontology.dc_type, "bibo:Document");
+        assert!(
+            ontology.pko_procedure.is_none(),
+            "the curator copy is a semantic fact, not a process step"
+        );
 
-        // The user's semantic store should NOT contain the curator copy.
+        // The user's store should NOT contain the curator copy.
         let user_h_mems = port
-            .semantic
+            .store
             .query_deduped("curator:thread:test-thread-2")
             .expect("query should succeed");
         assert_eq!(
@@ -1806,11 +1796,11 @@ mod tests {
 
     #[tokio::test]
     async fn ingest_turn_skips_curator_copy_when_store_absent() {
-        // Simulate the curator DB being unavailable — curator stores are
+        // Simulate the curator DB being unavailable — the curator store is
         // `None`. Ingestion should still succeed (episodic record persists),
         // and no curator copy should be written.
         let port = in_memory_port();
-        port.curator_stores.set_for_tests(None, None);
+        port.curator_store.set_for_tests(None);
         let webid = port.user_webid;
         let record = TurnRecord {
             thread_id: "test-no-curator".to_string(),
@@ -1829,8 +1819,8 @@ mod tests {
 
         // Episodic record should still be present.
         let h_mems = port
-            .episodic
-            .query_for_deduped("chat:thread:test-no-curator", webid)
+            .store
+            .query_for_deduped_untouched("chat:thread:test-no-curator", webid)
             .expect("query should succeed");
         assert_eq!(h_mems.len(), 1, "episodic h_mem should be stored");
     }
@@ -1852,8 +1842,8 @@ mod tests {
         assert!(result.is_ok(), "empty prompt should not fail ingestion");
 
         let h_mems = port
-            .episodic
-            .query_for_deduped("chat:thread:test-empty", webid)
+            .store
+            .query_for_deduped_untouched("chat:thread:test-empty", webid)
             .expect("query should succeed");
         assert_eq!(h_mems.len(), 1, "episodic h_mem should still be stored");
     }
@@ -1933,8 +1923,8 @@ mod tests {
         // to semantic and expired in episodic (consolidation is a one-way
         // episodic → semantic promotion).
         let h_mems = port
-            .episodic
-            .query_for_deduped("chat:thread:consolidation-test", webid)
+            .store
+            .query_for_deduped_untouched("chat:thread:consolidation-test", webid)
             .expect("query should succeed");
         // The h_mem may or may not have been consolidated depending on
         // confidence decay — we just verify the query succeeds.
@@ -2052,7 +2042,7 @@ mod tests {
 
         // Read the stored recalled_at via the untouched query (no side effects).
         let before = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:touch-test", webid)
             .expect("untouched query succeeds");
         assert_eq!(before.len(), 1);
@@ -2074,7 +2064,7 @@ mod tests {
         );
 
         let after = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:touch-test", webid)
             .expect("untouched query succeeds");
         assert_eq!(after.len(), 1);
@@ -2093,7 +2083,7 @@ mod tests {
         assert_eq!(snippets.len(), 1, "matching query should recall the h_mem");
 
         let after_match = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:touch-test", webid)
             .expect("untouched query succeeds");
         assert_eq!(after_match.len(), 1);
@@ -2142,11 +2132,11 @@ mod tests {
         // Both turns should be stored.
         let webid = port.user_webid;
         let h1 = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:sem-1", webid)
             .expect("query succeeds");
         let h2 = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:sem-2", webid)
             .expect("query succeeds");
         assert_eq!(h1.len(), 1, "first turn should be stored");
@@ -2173,11 +2163,10 @@ mod tests {
         let result = port.ingest_turn(record).await;
         assert!(result.is_ok(), "curator turn ingestion should succeed");
 
-        // The curator's episodic store should have the turn, tagged with the
-        // curator's WebID (Private, curator perspective).
-        let (curator_episodic, curator_semantic) = port.curator_stores.get();
-        let curator_episodic = curator_episodic.expect("curator episodic store");
-        let h_mems = curator_episodic
+        // The curator's store should have the turn, tagged with the curator's
+        // WebID (Private, curator perspective).
+        let curator_store = port.curator_store.get().expect("curator store");
+        let h_mems = curator_store
             .query_for_deduped_untouched("chat:thread:curator-thread-1", curator_webid)
             .expect("curator episodic query should succeed");
         assert_eq!(
@@ -2191,7 +2180,7 @@ mod tests {
         // user perspective) — dual-perspective writes give each party a
         // first-person record of the shared conversation.
         let user_h_mems = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:curator-thread-1", port.user_webid)
             .expect("user episodic query should succeed");
         assert_eq!(
@@ -2200,9 +2189,9 @@ mod tests {
             "curator turn must also land in the user's episodic store"
         );
 
-        // The curator's semantic store should also have the turn (Shared copy).
-        let curator_semantic = curator_semantic.expect("curator semantic store");
-        let semantic_h_mems = curator_semantic
+        // The same curator store also holds the Shared semantic copy — the
+        // ontology blob distinguishes it from the episodic record above.
+        let semantic_h_mems = curator_store
             .query_deduped("curator:thread:curator-thread-1")
             .expect("curator semantic query should succeed");
         assert_eq!(
@@ -2237,7 +2226,7 @@ mod tests {
         // User episodic — the user's first-person record of the curator
         // conversation must be present.
         let user_episodic = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:curator-isolation-test", port.user_webid)
             .expect("user episodic query should succeed");
         assert_eq!(
@@ -2249,7 +2238,7 @@ mod tests {
         // User semantic — should not have the curator entity (per-turn
         // semantic records are sovereign to the curator's DB).
         let user_semantic = port
-            .semantic
+            .store
             .query_deduped("curator:thread:curator-isolation-test")
             .expect("user semantic query should succeed");
         assert_eq!(
@@ -2381,11 +2370,12 @@ mod tests {
         .await
         .expect("ingest succeeds");
 
-        // Verify the curator episodic store has the turn before consolidation.
-        let (curator_episodic, _) = port.curator_stores.get();
-        let curator_episodic =
-            curator_episodic.expect("curator episodic store should be available in tests");
-        let h_mems_before = curator_episodic
+        // Verify the curator store has the turn before consolidation.
+        let curator_store = port
+            .curator_store
+            .get()
+            .expect("curator store should be available in tests");
+        let h_mems_before = curator_store
             .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
             .expect("curator episodic query should succeed");
         assert_eq!(
@@ -2410,7 +2400,7 @@ mod tests {
         // (consolidation is a one-way episodic → semantic promotion). We
         // verify the query succeeds — whether the h_mem was promoted depends
         // on confidence decay, but the consolidation pass itself must not error.
-        let h_mems_after = curator_episodic
+        let h_mems_after = curator_store
             .query_for_deduped_untouched("chat:thread:curator-consolidation-test", curator_webid)
             .expect("curator episodic query should succeed after consolidation");
         // The h_mem may or may not have been consolidated depending on
@@ -2437,20 +2427,18 @@ mod tests {
         port.ingest_turn(record).await.expect("ingest succeeds");
 
         let user_perspective = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.user_webid)
             .expect("user query");
         assert_eq!(user_perspective.len(), 1, "user perspective present");
 
-        let (curator_episodic, curator_semantic) = port.curator_stores.get();
-        let curator_perspective = curator_episodic
-            .expect("curator episodic")
+        let curator_store = port.curator_store.get().expect("curator store");
+        let curator_perspective = curator_store
             .query_for_deduped_untouched("chat:thread:dual-perspective-test", port.curator_webid)
             .expect("curator query");
         assert_eq!(curator_perspective.len(), 1, "curator perspective present");
 
-        let shared = curator_semantic
-            .expect("curator semantic")
+        let shared = curator_store
             .query_deduped("curator:thread:dual-perspective-test")
             .expect("semantic query");
         assert_eq!(shared.len(), 1, "shared semantic copy present");
@@ -2495,8 +2483,8 @@ mod tests {
         );
     }
 
-    /// Memory-health probe pin: reports both curator stores up when healthy,
-    /// degraded when either is down, and — critically — does NOT trigger a
+    /// Memory-health probe pin: reports the curator store up when healthy,
+    /// degraded when it is down, and — critically — does NOT trigger a
     /// heal (a status read must be side-effect-free, or the probe would
     /// drive the re-open path and flap the warn-once signal).
     #[tokio::test]
@@ -2504,39 +2492,33 @@ mod tests {
         let port = in_memory_port();
 
         let healthy = port.memory_health_json();
-        assert_eq!(healthy["curator_episodic"], true);
-        assert_eq!(healthy["curator_semantic"], true);
+        assert_eq!(healthy["curator_store"], true);
         assert_eq!(healthy["degraded"], false);
 
         // Simulate an outage. Healing is disabled in test handles, so if the
         // probe attempted a heal it would fail — the point is it must not
         // attempt one at all.
-        port.curator_stores.set_for_tests(None, None);
+        port.curator_store.set_for_tests(None);
         let degraded = port.memory_health_json();
-        assert_eq!(degraded["curator_episodic"], false);
-        assert_eq!(degraded["curator_semantic"], false);
+        assert_eq!(degraded["curator_store"], false);
         assert_eq!(degraded["degraded"], true);
 
-        // Stores still down after the probe — the probe didn't heal.
-        let (episodic, semantic) = port.curator_stores.get();
-        assert!(episodic.is_none());
-        assert!(semantic.is_none());
+        // Store still down after the probe — the probe didn't heal.
+        assert!(port.curator_store.get().is_none());
     }
 
-    /// Self-healing pin: when the curator stores are down, `get()` returns
-    /// `None`s without healing (heal disabled in tests), and after
-    /// `set_for_tests` restores them, subsequent reads see the healed
-    /// stores. This mirrors the production heal path where a failed open is
+    /// Self-healing pin: when the curator store is down, `get()` returns
+    /// `None` without healing (heal disabled in tests), and after
+    /// `set_for_tests` restores it, subsequent reads see the healed
+    /// store. This mirrors the production heal path where a failed open is
     /// retried on the next access.
     #[tokio::test]
-    async fn curator_stores_heal_after_outage() {
+    async fn curator_store_heals_after_outage() {
         let port = in_memory_port();
 
-        // Simulate an outage — stores go None.
-        port.curator_stores.set_for_tests(None, None);
-        let (episodic, semantic) = port.curator_stores.get();
-        assert!(episodic.is_none(), "stores down");
-        assert!(semantic.is_none(), "stores down");
+        // Simulate an outage — the store goes None.
+        port.curator_store.set_for_tests(None);
+        assert!(port.curator_store.get().is_none(), "store down");
 
         // Ingestion during the outage still succeeds (user record persists,
         // curator writes skip).
@@ -2551,27 +2533,21 @@ mod tests {
         .await
         .expect("ingestion during outage succeeds");
         let user_record = port
-            .episodic
+            .store
             .query_for_deduped_untouched("chat:thread:outage-test", port.user_webid)
             .expect("user query");
         assert_eq!(user_record.len(), 1, "user record persisted during outage");
 
-        // Heal: restore fresh in-memory stores and verify reads see them.
+        // Heal: restore a fresh in-memory store and verify reads see it.
         let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
             SqliteDriver::in_memory_driver();
-        let healed_episodic = Arc::new(EpisodicMemory::new(
-            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("hmem init"),
-        ));
-        let healed_semantic = Arc::new(SemanticMemory::new(
+        let healed = Arc::new(MemoryStore::new(
             HMemStore::from_driver(Arc::clone(&curator_driver)).expect("hmem init"),
             EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init"),
         ));
-        port.curator_stores
-            .set_for_tests(Some(healed_episodic), Some(healed_semantic));
+        port.curator_store.set_for_tests(Some(Arc::clone(&healed)));
 
-        let (episodic, semantic) = port.curator_stores.get();
-        assert!(episodic.is_some(), "stores healed");
-        assert!(semantic.is_some(), "stores healed");
+        assert!(port.curator_store.get().is_some(), "store healed");
 
         // Post-heal ingestion writes curator records again.
         port.ingest_turn(TurnRecord {
@@ -2584,8 +2560,7 @@ mod tests {
         })
         .await
         .expect("post-heal ingestion succeeds");
-        let curator_record = episodic
-            .expect("healed episodic")
+        let curator_record = healed
             .query_for_deduped_untouched("chat:thread:post-heal-test", port.curator_webid)
             .expect("curator query");
         assert_eq!(curator_record.len(), 1, "curator record written after heal");

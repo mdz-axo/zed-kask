@@ -1,22 +1,62 @@
 //! HMem storage helpers for the embedding pipeline.
 
 use super::passage::TaggedPassage;
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
 use hkask_storage::HMem;
+use hkask_types::HMemOntology;
 use hkask_types::Visibility;
 use hkask_types::id::WebID;
 use serde_json::json;
 
+/// State-axis anchoring for the h_mems a single passage produces.
+///
+/// One ontology per passage rather than per h_mem: every h_mem written here
+/// describes the same corpus passage, so they share provenance and subject.
+/// The corpus axis tags (dimension, document type, MDS category, section type)
+/// go under the `corpus` namespace so they stay queryable without becoming
+/// Dublin Core subjects, which are reserved for the passage's actual topics.
+fn passage_ontology(passage: &TaggedPassage, author: &str) -> HMemOntology {
+    let mut dc_subject: Vec<String> = passage.semantic_triples.concepts.clone();
+    for concept in &passage.tags.concepts {
+        if !dc_subject.contains(concept) {
+            dc_subject.push(concept.clone());
+        }
+    }
+
+    let mut ontology = HMemOntology::semantic(
+        "bibo:DocumentPart",
+        dc_subject,
+        format!("{author}:{}", passage.work_slug),
+    );
+    if !passage.dimension.is_empty() {
+        ontology = ontology.with_ontology_tag("corpus", passage.dimension.clone());
+    }
+    if !passage.document_type.is_empty() {
+        ontology = ontology.with_ontology_tag("corpus", passage.document_type.clone());
+    }
+    if !passage.section_type.is_empty() {
+        ontology = ontology.with_ontology_tag("corpus", passage.section_type.clone());
+    }
+    for category in &passage.mds_categories {
+        ontology = ontology.with_ontology_tag("corpus", category.clone());
+    }
+    ontology
+}
+
 pub(crate) fn store_passage_h_mems(
-    semantic: &SemanticMemory,
+    memory: &MemoryStore,
     passage: &TaggedPassage,
     author: &str,
     owner: WebID,
 ) -> Result<(), ServiceError> {
+    let ontology = passage_ontology(passage, author);
+
     let store = |entity: &str, attr: &str, value: serde_json::Value| -> Result<(), ServiceError> {
-        let h_mem = HMem::new(entity, attr, value, owner).with_visibility(Visibility::Shared);
-        semantic.store(h_mem).map_err(|e| {
+        let h_mem = HMem::new(entity, attr, value, owner)
+            .with_visibility(Visibility::Shared)
+            .with_ontology(ontology.clone());
+        memory.store(h_mem).map_err(|e| {
             let msg = format!("Failed to store h_mem ({entity}, {attr}): {e}");
             ServiceError::Domain {
                 domain: DomainKind::Wallet,

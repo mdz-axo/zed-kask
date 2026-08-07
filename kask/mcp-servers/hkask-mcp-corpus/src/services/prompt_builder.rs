@@ -5,7 +5,7 @@
 //! and h_mem knowledge graph sections.
 
 use hkask_mcp_server::server::McpToolError;
-use hkask_memory::SemanticMemory;
+use hkask_memory::MemoryStore;
 use hkask_types::corpus::TaggedChunk;
 use serde_json::json;
 
@@ -112,7 +112,7 @@ impl PromptBuilderService {
 
         // Bulk-load embeddings for in-memory KNN
         let dim = embedding_dim();
-        let semantic = SemanticMemory::open(&db_path, &passphrase, dim).map_err(|e| {
+        let store = MemoryStore::open(&db_path, &passphrase, dim).map_err(|e| {
             McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
         })?;
 
@@ -126,7 +126,7 @@ impl PromptBuilderService {
             .collect();
 
         let emb_map: std::collections::HashMap<String, Vec<f32>> =
-            match semantic.embeddings_by_prefix("corpus:researcher:") {
+            match store.embeddings_by_prefix("corpus:researcher:") {
                 Ok(embs) => {
                     let map: std::collections::HashMap<String, Vec<f32>> = embs
                         .into_iter()
@@ -304,7 +304,7 @@ impl PromptBuilderService {
             };
 
             // h_mem knowledge graph — query all h_mems for this chunk
-            let kg_text = match semantic.query_deduped(&tc.entity_ref) {
+            let kg_text = match store.query_deduped(&tc.entity_ref) {
                 Ok(h_mems) if !h_mems.is_empty() => {
                     let mut lines: Vec<String> = Vec::new();
                     for h_mem in &h_mems {

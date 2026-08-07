@@ -11,12 +11,12 @@ use serde::de::DeserializeOwned;
 /// so existing call sites stay readable.
 pub(crate) use hkask_mcp_server::server::map_io_error as map_corpus_io_error;
 
-/// Classify a `SemanticMemoryError` from a memory-DB operation into the
+/// Classify a `MemoryStoreError` from a memory-DB operation into the
 /// appropriate `McpToolError` kind. Alias of the canonical
-/// `hkask_mcp_server::server::map_semantic_memory_error` (shared with the
+/// `hkask_mcp_server::server::map_memory_store_error` (shared with the
 /// training server) kept under the corpus-local name so existing call sites
 /// stay readable.
-pub(crate) use hkask_mcp_server::server::map_semantic_memory_error;
+pub(crate) use hkask_mcp_server::server::map_memory_store_error;
 
 /// Classify a `TriageError` from the PDF triage pipeline into the appropriate
 /// `McpToolError` kind: an invalid page spec is caller input

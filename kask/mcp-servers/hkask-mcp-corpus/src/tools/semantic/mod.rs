@@ -523,10 +523,9 @@ impl CorpusServer {
         let model_name = model.unwrap_or_else(hkask_inference::model_constants::embedding_model);
 
         let dim = embedding_dim();
-        let semantic =
-            hkask_memory::SemanticMemory::open(db_path, passphrase, dim).map_err(|e| {
-                McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
-            })?;
+        let store = hkask_memory::MemoryStore::open(db_path, passphrase, dim).map_err(|e| {
+            McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
+        })?;
 
         let mut embedded = 0usize;
         let mut failed = 0usize;
@@ -554,7 +553,7 @@ impl CorpusServer {
             for (c, vector) in chunk_batch.iter().zip(vectors.iter()) {
                 // Store embedding vector only — text and provenance h_mems were
                 // removed as orphans (no downstream pipeline tool consumed them).
-                if let Err(e) = semantic.store_embedding(&c.0, vector, &model_name) {
+                if let Err(e) = store.store_embedding(&c.0, vector, &model_name) {
                     failed += 1;
                     if failed <= 5 {
                         tracing::warn!(
