@@ -46,9 +46,7 @@ pub use panel_button::SwarmPanelButton;
 // / `set_tool_invoker` / `shared_tool_invoker` call sites compile unchanged.
 pub use hkask_tool_invoker::{ToolInvoker, set_tool_invoker, shared_tool_invoker};
 
-use parse::{
-    AgentCard, AgentSource, SwarmCard, extract_agent_mentions, extract_wallet_balance,
-};
+use parse::{AgentCard, AgentSource, SwarmCard, extract_agent_mentions, extract_wallet_balance};
 
 use std::ops::Range;
 use std::time::Duration;
@@ -632,9 +630,6 @@ impl SwarmPanel {
     fn visible_error(&self) -> Option<&SharedString> {
         self.agents_error.as_ref().or(self.swarms_error.as_ref())
     }
-
-
-
 
     fn set_mode(&mut self, mode: PanelMode, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = mode;

@@ -23,11 +23,11 @@
 //!   in the output.
 
 use hkask_mcp_swarm::test_utils::{
-    SwarmMode, build_create_agent_card, detect_embedded_error, effective_hire_cost,
-    extract_quoted, filter_declared_skills, filter_mcp_tools, fnv1a, make_swarm_slug, mint_token,
+    CreateAgentRequest, McpServerAuthSpec, McpServerSpec, SwarmMode, ValenceInput,
+    build_create_agent_card, detect_embedded_error, effective_hire_cost, extract_quoted,
+    filter_declared_skills, filter_mcp_tools, fnv1a, make_swarm_slug, mint_token,
     sanitize_abw_response, sanitize_abw_text, sanitize_agent_id, strip_leading_mentions,
-    url_encode_segment, validate_agent_name, CreateAgentRequest, McpServerAuthSpec,
-    McpServerSpec, ValenceInput,
+    url_encode_segment, validate_agent_name,
 };
 use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant, oracle_reference};
 use proptest::prelude::*;
@@ -529,19 +529,23 @@ fn arb_auth_spec() -> impl Strategy<Value = McpServerAuthSpec> {
 fn arb_mcp_server_spec() -> impl Strategy<Value = McpServerSpec> {
     (
         prop::string::string_regex("[a-z][a-z0-9_-]{0,30}").expect("valid regex"),
-        prop::string::string_regex("https://[a-z0-9.]{1,30}/[a-z0-9/]{0,20}")
-            .expect("valid regex"),
-        prop::collection::vec(prop::string::string_regex("[a-z_]{1,20}").expect("valid regex"), 0..4),
+        prop::string::string_regex("https://[a-z0-9.]{1,30}/[a-z0-9/]{0,20}").expect("valid regex"),
+        prop::collection::vec(
+            prop::string::string_regex("[a-z_]{1,20}").expect("valid regex"),
+            0..4,
+        ),
         prop::option::of(1u64..=120),
         prop::option::of(arb_auth_spec()),
     )
-        .prop_map(|(name, endpoint, tool_allowlist, timeout_secs, auth)| McpServerSpec {
-            name,
-            endpoint,
-            tool_allowlist,
-            timeout_secs,
-            auth,
-        })
+        .prop_map(
+            |(name, endpoint, tool_allowlist, timeout_secs, auth)| McpServerSpec {
+                name,
+                endpoint,
+                tool_allowlist,
+                timeout_secs,
+                auth,
+            },
+        )
 }
 
 /// Arbitrary `CreateAgentRequest` with valid-ish fields. The `agent_name` is
@@ -561,8 +565,26 @@ fn arb_create_agent_request() -> impl Strategy<Value = CreateAgentRequest> {
         prop::option::of(arb_string_vec(4, 32)),
     )
         .prop_map(
-            |(agent_name, agent_type, system_prompt, description, model, temperature, tags, sample_queries)| {
-                (agent_name, agent_type, system_prompt, description, model, temperature, tags, sample_queries)
+            |(
+                agent_name,
+                agent_type,
+                system_prompt,
+                description,
+                model,
+                temperature,
+                tags,
+                sample_queries,
+            )| {
+                (
+                    agent_name,
+                    agent_type,
+                    system_prompt,
+                    description,
+                    model,
+                    temperature,
+                    tags,
+                    sample_queries,
+                )
             },
         );
 
@@ -576,7 +598,13 @@ fn arb_create_agent_request() -> impl Strategy<Value = CreateAgentRequest> {
     )
         .prop_map(
             |(dependencies_required, dependencies_optional, mcp_tools, mcp_servers, skills)| {
-                (dependencies_required, dependencies_optional, mcp_tools, mcp_servers, skills)
+                (
+                    dependencies_required,
+                    dependencies_optional,
+                    mcp_tools,
+                    mcp_servers,
+                    skills,
+                )
             },
         );
 
@@ -593,7 +621,16 @@ fn arb_create_agent_request() -> impl Strategy<Value = CreateAgentRequest> {
 
     (core, deps_caps, vis_valence).prop_map(
         |(
-            (agent_name, agent_type, system_prompt, description, model, temperature, tags, sample_queries),
+            (
+                agent_name,
+                agent_type,
+                system_prompt,
+                description,
+                model,
+                temperature,
+                tags,
+                sample_queries,
+            ),
             (dependencies_required, dependencies_optional, mcp_tools, mcp_servers, skills),
             (visibility, valence),
         )| {

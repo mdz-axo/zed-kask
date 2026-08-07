@@ -1006,8 +1006,8 @@ impl CyberneticsLoop {
             return;
         }
 
-        let is_native_escalate = action.action_type == ActionType::Escalate
-            && target_id == LoopId::Curation;
+        let is_native_escalate =
+            action.action_type == ActionType::Escalate && target_id == LoopId::Curation;
         let efferent_action = if is_native_escalate {
             None
         } else {
@@ -1039,7 +1039,10 @@ impl CyberneticsLoop {
             format!("efferent:{}", action.action_type.as_str())
         };
         let message = if is_native_escalate {
-            format!("Variety deficit {} exceeds threshold {}", deficit, threshold)
+            format!(
+                "Variety deficit {} exceeds threshold {}",
+                deficit, threshold
+            )
         } else {
             format!(
                 "Efferent action {} (target: {}) recommended but not wired — reason: {}",
@@ -1841,10 +1844,11 @@ mod tests {
 
     impl crate::algedonic::AlertEscalationSink for CapturingEscalationSink {
         fn persist_alert(&self, output: &str, confidence: f64, error_context: &str) {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((output.to_string(), confidence, error_context.to_string()));
+            self.calls.lock().unwrap().push((
+                output.to_string(),
+                confidence,
+                error_context.to_string(),
+            ));
         }
     }
 
@@ -1856,8 +1860,9 @@ mod tests {
     async fn persist_alert_to_queue_writes_to_escalation_sink() {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let sink = Arc::new(CapturingEscalationSink::new());
-        let loop_instance = CyberneticsLoop::new(ledger)
-            .with_alert_escalation_sink(sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>);
+        let loop_instance = CyberneticsLoop::new(ledger).with_alert_escalation_sink(
+            sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>
+        );
 
         let critical_alert = RuntimeAlert {
             domain: "test_domain".to_string(),
@@ -1886,14 +1891,29 @@ mod tests {
 
         // Critical alert: confidence 1.0, message preserved
         assert_eq!(calls[0].0, "Critical test alert");
-        assert!((calls[0].1 - 1.0).abs() < f64::EPSILON, "critical confidence must be 1.0");
-        assert!(calls[0].2.contains("\"severity\":\"Critical\""), "error_context must carry severity");
-        assert!(calls[0].2.contains("\"domain\":\"test_domain\""), "error_context must carry domain");
+        assert!(
+            (calls[0].1 - 1.0).abs() < f64::EPSILON,
+            "critical confidence must be 1.0"
+        );
+        assert!(
+            calls[0].2.contains("\"severity\":\"Critical\""),
+            "error_context must carry severity"
+        );
+        assert!(
+            calls[0].2.contains("\"domain\":\"test_domain\""),
+            "error_context must carry domain"
+        );
 
         // Warning alert: confidence 0.5
         assert_eq!(calls[1].0, "Warning test alert");
-        assert!((calls[1].1 - 0.5).abs() < f64::EPSILON, "warning confidence must be 0.5");
-        assert!(calls[1].2.contains("\"severity\":\"Warning\""), "error_context must carry severity");
+        assert!(
+            (calls[1].1 - 0.5).abs() < f64::EPSILON,
+            "warning confidence must be 0.5"
+        );
+        assert!(
+            calls[1].2.contains("\"severity\":\"Warning\""),
+            "error_context must carry severity"
+        );
     }
 
     /// When no `AlertEscalationSink` is wired, `persist_alert_to_queue` must
@@ -1943,30 +1963,30 @@ mod tests {
             ]),
             any::<bool>(),
         )
-            .prop_map(|(domain, deficit, threshold, severity, escalated)| RuntimeAlert {
-                domain,
-                deficit,
-                threshold,
-                severity,
-                escalated,
-                timestamp: chrono::Utc::now(),
-                message: format!(
-                    "Variety deficit {} in domain '{}' (threshold: {})",
-                    deficit, "test", threshold
-                ),
-            })
+            .prop_map(
+                |(domain, deficit, threshold, severity, escalated)| RuntimeAlert {
+                    domain,
+                    deficit,
+                    threshold,
+                    severity,
+                    escalated,
+                    timestamp: chrono::Utc::now(),
+                    message: format!(
+                        "Variety deficit {} in domain '{}' (threshold: {})",
+                        deficit, "test", threshold
+                    ),
+                },
+            )
             .boxed()
     }
 
     /// Helper: build a CyberneticsLoop wired with a CapturingEscalationSink.
-    fn loop_with_sink() -> (
-        CyberneticsLoop,
-        Arc<CapturingEscalationSink>,
-    ) {
+    fn loop_with_sink() -> (CyberneticsLoop, Arc<CapturingEscalationSink>) {
         let ledger = Arc::new(RwLock::new(RegulationLedger::with_threshold(100)));
         let sink = Arc::new(CapturingEscalationSink::new());
-        let loop_instance = CyberneticsLoop::new(ledger)
-            .with_alert_escalation_sink(sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>);
+        let loop_instance = CyberneticsLoop::new(ledger).with_alert_escalation_sink(
+            sink.clone() as Arc<dyn crate::algedonic::AlertEscalationSink>
+        );
         (loop_instance, sink)
     }
 

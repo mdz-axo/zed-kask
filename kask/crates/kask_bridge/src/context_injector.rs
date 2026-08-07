@@ -406,6 +406,8 @@ mod tests {
         // long ones — covers both the user and curator recall paths, which
         // share the same gate.
         assert!(!BridgeContextInjector::should_recall("short"));
-        assert!(BridgeContextInjector::should_recall("long enough prompt with words"));
+        assert!(BridgeContextInjector::should_recall(
+            "long enough prompt with words"
+        ));
     }
 }

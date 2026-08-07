@@ -50,8 +50,8 @@ pub use mcp_servers::{
     filter_config_env_for_server, filter_credentials_for_server, find_server,
 };
 pub use memory::{
-    BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort,
-    open_curator_escalation_queue, open_curator_regulation_archive,
+    BridgeAlertEscalationSink, BridgeMemoryPort, RealMemoryPort, open_curator_escalation_queue,
+    open_curator_regulation_archive,
 };
 pub use model_resolution::resolve_model_names;
 pub use settings::{

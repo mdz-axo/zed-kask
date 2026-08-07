@@ -4176,7 +4176,7 @@ mod tests {
         );
     }
 
-       /// zed-kask: pinning test for the kask wiring functional units in `main.rs`.
+    /// zed-kask: pinning test for the kask wiring functional units in `main.rs`.
     ///
     /// The kask wirings (F1–F28, see `kask/docs/upstream-rebase-process.md` §4)
     /// are process-global hooks set during `main()`. Most cannot be exercised

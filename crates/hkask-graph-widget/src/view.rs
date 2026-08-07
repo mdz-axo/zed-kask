@@ -1133,9 +1133,17 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         // P(a) should be 0.75 (Bayesian update, not clamped).
-        assert!((marginals[0] - 0.75).abs() < 1e-6, "P(a) = {}, expected 0.75", marginals[0]);
+        assert!(
+            (marginals[0] - 0.75).abs() < 1e-6,
+            "P(a) = {}, expected 0.75",
+            marginals[0]
+        );
         // P(b) should re-propagate to 0.475.
-        assert!((marginals[1] - 0.475).abs() < 1e-6, "P(b) = {}, expected 0.475", marginals[1]);
+        assert!(
+            (marginals[1] - 0.475).abs() < 1e-6,
+            "P(b) = {}, expected 0.475",
+            marginals[1]
+        );
     }
 
     #[gpui::test]

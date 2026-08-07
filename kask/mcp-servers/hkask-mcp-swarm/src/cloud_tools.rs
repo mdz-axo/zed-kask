@@ -61,8 +61,8 @@ pub fn build_create_agent_card(
     // caller supplied a value. See the struct doc on `CreateAgentRequest`
     // for the None/Some([])/Some([...]) precedence contract.
     if let Some(mcp_servers) = &req.mcp_servers {
-        card["capabilities"]["mcp_servers"] = serde_json::to_value(mcp_servers)
-            .unwrap_or_else(|_| serde_json::json!([]));
+        card["capabilities"]["mcp_servers"] =
+            serde_json::to_value(mcp_servers).unwrap_or_else(|_| serde_json::json!([]));
     }
     // Valence (personality encoding) goes under metadata.valence, matching
     // the ABW agent card shape (verified live 2026-08-04).
@@ -931,7 +931,10 @@ impl SwarmServer {
             // strings, model-consumed fields get the container. The operator-
             // supplied system_prompt is echoed back but `sanitize_workspace_payload`
             // treats it as a display field (plain string), which is correct.
-            Ok(self.client.with_wallet(sanitize_workspace_payload(data)).await)
+            Ok(self
+                .client
+                .with_wallet(sanitize_workspace_payload(data))
+                .await)
         })
         .await
     }
@@ -1602,10 +1605,7 @@ impl SwarmServer {
                         .get("entity_name")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    let summary = entity
-                        .get("summary")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let summary = entity.get("summary").and_then(|v| v.as_str()).unwrap_or("");
                     if matches_any(name) || matches_any(summary) {
                         matching_entities.push(entity.clone());
                     }

@@ -2765,9 +2765,7 @@ mod tests {
         use hkask_storage::database::sqlite::SqliteDriver;
 
         let driver = SqliteDriver::in_memory_driver();
-        let queue = Arc::new(
-            EscalationQueue::from_driver(driver).expect("escalation queue init"),
-        );
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
         let sink = BridgeAlertEscalationSink::new(queue.clone());
 
         // Persist a critical alert
@@ -2781,9 +2779,16 @@ mod tests {
         // `curator_escalations` calls).
         let pending = queue.list_pending().expect("list_pending must succeed");
         assert_eq!(pending.len(), 1, "the alert must reach the queue");
-        assert_eq!(pending[0].output, "Variety deficit 150 exceeds threshold 100");
+        assert_eq!(
+            pending[0].output,
+            "Variety deficit 150 exceeds threshold 100"
+        );
         assert!((pending[0].confidence - 1.0).abs() < f64::EPSILON);
-        assert!(pending[0].error_context.contains("\"severity\":\"Critical\""));
+        assert!(
+            pending[0]
+                .error_context
+                .contains("\"severity\":\"Critical\"")
+        );
         assert_eq!(pending[0].status, hkask_storage::EscalationStatus::Pending);
     }
 
@@ -2797,9 +2802,7 @@ mod tests {
         use hkask_storage::database::sqlite::SqliteDriver;
 
         let driver = SqliteDriver::in_memory_driver();
-        let queue = Arc::new(
-            EscalationQueue::from_driver(driver).expect("escalation queue init"),
-        );
+        let queue = Arc::new(EscalationQueue::from_driver(driver).expect("escalation queue init"));
         // Drop the underlying driver by dropping the queue, then reconstruct
         // a sink over a dangling Arc — this is hard to simulate cleanly, so
         // instead we just verify the happy path doesn't panic on a normal

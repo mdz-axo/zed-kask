@@ -157,8 +157,7 @@ async fn live_hire_own_agent_falls_back_to_add() {
     // Hire an agent the caller owns. Default to `sensor_advisor` (a
     // standard-tier agent the zed-kask operator key owns); override with
     // `ABW_OWN_AGENT_NAME` for a different caller.
-    let own_agent = env::var("ABW_OWN_AGENT_NAME")
-        .unwrap_or_else(|_| "sensor_advisor".to_string());
+    let own_agent = env::var("ABW_OWN_AGENT_NAME").unwrap_or_else(|_| "sensor_advisor".to_string());
 
     let hire = client
         .post(format!("{base}/api/workspaces/{ws_id}/hire"))
@@ -228,8 +227,8 @@ async fn live_fork_agent_succeeds_post_v0_10_16() {
     }
 
     // Extract the forked agent name for cleanup.
-    let fork_data: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("fork response is not JSON: {body}"));
+    let fork_data: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("fork response is not JSON: {body}"));
     let fork_name = fork_data
         .get("agent_name")
         .or_else(|| fork_data.get("name"))

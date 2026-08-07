@@ -9,9 +9,9 @@ use gpui::Context;
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 
+use crate::PendingHire;
 use crate::SWARM_SERVER;
 use crate::SwarmPanel;
-use crate::PendingHire;
 use crate::parse::{extract_wallet_balance, parse_publish_checks};
 
 impl SwarmPanel {

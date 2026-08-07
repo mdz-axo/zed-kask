@@ -31,7 +31,7 @@
 //! `swarm_fire` (roster removal, verified live), `swarm_delete_agent`
 //! (permanent agent deletion, verified live), `swarm_delete_swarm`
 //! (permanent workspace deletion via the team-scoped route, verified live),
-//! `swarm_search_knowledge` (vector knowledge-graph search, fermi v0.10.26),
+//! `swarm_search_knowledge` (knowledge-graph search, fermi v0.10.26),
 //! `swarm_publish_checks` (publish preflight, fermi v0.10.15),
 //! `swarm_publish_agent` (catalogue publish, fermi v0.10.5/v0.10.15),
 //! `swarm_fork_agent` (derivative fork, fermi v0.10.16).

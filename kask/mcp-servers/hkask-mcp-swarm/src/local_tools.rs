@@ -1172,9 +1172,7 @@ impl SwarmServer {
                 "not_contains" => !req.response.contains(&req.spec),
                 "regex" => {
                     let re = regex::Regex::new(&req.spec).map_err(|e| {
-                        McpToolError::invalid_argument(format!(
-                            "invalid regex spec: {e}"
-                        ))
+                        McpToolError::invalid_argument(format!("invalid regex spec: {e}"))
                     })?;
                     re.is_match(&req.response)
                 }
@@ -1196,9 +1194,8 @@ impl SwarmServer {
                 detail: Some(detail),
                 provenance: crate::local_runtime::TaskSuccessProvenance::Deterministic,
             };
-            Ok(serde_json::to_value(&verdict).unwrap_or_else(|_| {
-                serde_json::json!({ "error": "failed to serialize verdict" })
-            }))
+            Ok(serde_json::to_value(&verdict)
+                .unwrap_or_else(|_| serde_json::json!({ "error": "failed to serialize verdict" })))
         })
         .await
     }

@@ -8,11 +8,11 @@ use gpui::Context;
 use hkask_types::tool_response::parse_tool_response;
 use serde_json::json;
 
-use crate::SWARM_SERVER;
-use crate::SwarmPanel;
-use crate::SwarmDetailView;
-use crate::SwarmRosterAgent;
 use crate::RunStatusView;
+use crate::SWARM_SERVER;
+use crate::SwarmDetailView;
+use crate::SwarmPanel;
+use crate::SwarmRosterAgent;
 use crate::parse::{AgentSource, parse_run_status_messages, parse_swarm_roster};
 
 impl SwarmPanel {
@@ -119,7 +119,12 @@ impl SwarmPanel {
 
     /// Fetch and show a swarm's recent run status (item 3):
     /// `swarm_run_status(workspace_id)`. Rendered as a dismissible strip.
-    pub(crate) fn show_run_status(&mut self, workspace_id: String, name: String, cx: &mut Context<Self>) {
+    pub(crate) fn show_run_status(
+        &mut self,
+        workspace_id: String,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
@@ -223,7 +228,12 @@ impl SwarmPanel {
     /// 2026-08-02: `DELETE /workspaces/{id}/agents/{agent}` — removes the
     /// agent from the roster; no credit cost; the agent itself is not
     /// deleted). On success, re-opens the detail so the fired row disappears.
-    pub(crate) fn fire_agent(&mut self, workspace_id: String, agent_id: String, cx: &mut Context<Self>) {
+    pub(crate) fn fire_agent(
+        &mut self,
+        workspace_id: String,
+        agent_id: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
@@ -272,7 +282,12 @@ impl SwarmPanel {
     /// Add a local agent to the open local swarm's roster (item 4 local
     /// management). Calls `swarm_add_agent_local` — idempotent, no cost, no
     /// consent. On success, re-opens the detail so the new member appears.
-    pub(crate) fn add_agent_to_swarm(&mut self, swarm_id: String, agent_name: String, cx: &mut Context<Self>) {
+    pub(crate) fn add_agent_to_swarm(
+        &mut self,
+        swarm_id: String,
+        agent_name: String,
+        cx: &mut Context<Self>,
+    ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
             self.hire_error = Some("Tool invoker not wired.".into());
             cx.notify();
