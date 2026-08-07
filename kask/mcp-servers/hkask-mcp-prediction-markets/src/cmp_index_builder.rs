@@ -282,13 +282,17 @@ pub fn base_event_for(object: BaseEconomicObject) -> Option<BaseEvent> {
 /// needs. Built from either `KalshiCatalogRecord` or `GammaCatalogRecord`.
 struct CatalogAdapter {
     market_id: String,
-    /// The question/title text — the haystack for `classify_base_event` and
-    /// `extract_strike`.
+    /// The question/title text — used for `extract_strike` and as the
+    /// confirmation signal for semantic classification.
     question: String,
     /// The description/rules text — secondary haystack.
     description: String,
-    /// The series ticker or slug — tertiary haystack.
-    series: String,
+    /// The event ticker (Kalshi) or event id (Gamma) — carries the series
+    /// prefix for Kalshi semantic classification.
+    event_ticker_or_id: String,
+    /// The venue source string ("kalshi" or "gamma") — selects the
+    /// semantic mapping path.
+    source: String,
     close_time: String,
     probability: f64,
     volume: f64,
@@ -300,7 +304,8 @@ impl CatalogAdapter {
             market_id: record.market_ticker.clone(),
             question: record.title.clone(),
             description: record.rules_primary.clone(),
-            series: record.event_ticker.clone(),
+            event_ticker_or_id: record.event_ticker.clone(),
+            source: "kalshi".into(),
             close_time: record.close_time.clone(),
             probability: record.yes_probability().unwrap_or(0.0),
             volume: record.volume(),
@@ -312,7 +317,8 @@ impl CatalogAdapter {
             market_id: record.market_id.clone(),
             question: record.question.clone(),
             description: String::new(),
-            series: record.event_id.clone(),
+            event_ticker_or_id: record.event_id.clone(),
+            source: "gamma".into(),
             close_time: record.end_date.clone(),
             probability: record.yes_probability().unwrap_or(0.0),
             volume: record.volume_num,
@@ -341,17 +347,26 @@ fn build_oriented_constituents(
     let mut rejections: Vec<String> = Vec::new();
 
     for (idx, adapter) in adapters.iter().enumerate() {
-        // Base-event classification from the record's text.
-        let base_event = base_event::classify_base_event_text(
+        // Base-event classification via the FIBO-anchored semantic mapping
+        // (ONT-6). The venue's curated taxonomy (Kalshi series prefix, Gamma
+        // title phrasing) is the primary signal, not substring grep. This
+        // replaces the former `classify_base_event_text` call.
+        let base_object = crate::semantic_mapping::classify_base_object_from_catalog(
+            &adapter.source,
+            &adapter.event_ticker_or_id,
             &adapter.question,
-            &adapter.description,
-            &adapter.series,
-            "",
         );
-        let Some(base_event) = base_event else {
+        let Some(base_object) = base_object else {
             rejections.push(format!(
-                "{}: not a base-event contract",
+                "{}: not a base-event contract (semantic mapping)",
                 adapter.market_id
+            ));
+            continue;
+        };
+        let Some(base_event) = base_event_for(base_object) else {
+            rejections.push(format!(
+                "{}: base object {:?} has no BaseEvent materiality setting",
+                adapter.market_id, base_object
             ));
             continue;
         };
@@ -1253,7 +1268,12 @@ mod tests {
                 Err(_) => continue,
             };
             let adapter = CatalogAdapter::from_kalshi(&record);
-            let be = base_event::classify_base_event_text(&adapter.question, &adapter.description, &adapter.series, "");
+            let bo = crate::semantic_mapping::classify_base_object_from_catalog(
+                &adapter.source,
+                &adapter.event_ticker_or_id,
+                &adapter.question,
+            );
+            let be = bo.and_then(base_event_for);
             let days = parse_days_to_expiry(&adapter.close_time, &now);
             let strike = be.and_then(|b| b.extract_strike(&adapter.question));
             eprintln!(

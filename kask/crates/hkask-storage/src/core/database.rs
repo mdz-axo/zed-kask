@@ -92,8 +92,6 @@ pub enum DatabaseError {
     PassphraseMismatch(String),
     #[error("Corrupted database — file is not a valid SQLite database: {0}")]
     Corrupted(String),
-    #[error("PostgreSQL error: {0}")]
-    Postgres(String),
 }
 
 /// Database handle — path, passphrase, and whether it's a new file.
@@ -440,42 +438,6 @@ pub fn open_database(path: &str, passphrase: &str) -> Result<Database, DatabaseE
     } else {
         Database::open(path, passphrase)
     }
-}
-
-/// Open a PostgreSQL database and return a driver ready for store construction.
-///
-/// Creates the `pgvector` extension if missing, then runs the Postgres-compatible
-/// schema (`schema_pg.sql`). The returned `Arc<dyn DatabaseDriver>` can be passed
-/// directly to any store's `from_driver` constructor.
-///
-/// Unlike SQLite's `Database::open`, there is no separate passphrase/salt flow —
-/// encryption at rest is the operator's responsibility (TLS to a remote Postgres
-/// plus disk encryption). The `passphrase` parameter is accepted for API symmetry
-/// with `open_database` but is not used by the Postgres path.
-///
-/// pre:  `url` is a valid PostgreSQL connection string (e.g. `postgres://user:pass@host/db`)
-/// post: returns a connected `PostgresDriver` with schema initialized, or `Err(DatabaseError::Postgres)`
-pub fn open_postgres(
-    url: &str,
-) -> Result<std::sync::Arc<dyn crate::database::driver::DatabaseDriver>, DatabaseError> {
-    let pool = sqlx::PgPool::connect_lazy(url)
-        .map_err(|e| DatabaseError::Postgres(format!("connect: {e}")))?;
-    let driver = crate::database::postgres::PostgresDriver::new(pool);
-    // Bootstrap pgvector extension before schema (schema creates vector columns).
-    driver
-        .execute_batch("CREATE EXTENSION IF NOT EXISTS vector;")
-        .map_err(|e| DatabaseError::Postgres(format!("create extension: {e}")))?;
-    let schema = include_str!("sql/schema_pg.sql");
-    let dim = embedding_dim();
-    driver
-        .execute_batch(&schema.replace("$DIM", &dim.to_string()))
-        .map_err(|e| DatabaseError::Postgres(format!("schema init: {e}")))?;
-    tracing::info!(
-        target: "reg.storage",
-        operation = "open_postgres",
-        "PostgreSQL database opened with pgvector schema"
-    );
-    Ok(std::sync::Arc::new(driver))
 }
 
 fn generate_salt() -> [u8; SQLCIPHER_SALT_SIZE] {

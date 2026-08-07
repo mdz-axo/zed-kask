@@ -13,10 +13,10 @@ pub use core::DatabaseDriverTrait;
 pub use core::database::{Database, DatabaseError};
 pub use core::{
     DEFAULT_EMBEDDING_DIM, check_passphrase, embedding_dim, open_database, open_or_repair,
-    open_postgres, sanitize_path,
+    sanitize_path,
 };
 pub use database::{
-    DatabaseDriver, DbProvider, PostgresDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas,
+    DatabaseDriver, SqliteDriver, WAL_PRAGMA_BATCH, init_wal_pragmas,
 };
 pub use hkask_types::time::now_rfc3339;
 

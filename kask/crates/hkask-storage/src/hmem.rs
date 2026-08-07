@@ -654,46 +654,28 @@ impl HMemStore {
     // ── Ontology query paths (P5.4 dual-axis anchoring) ──────────────────
     //
     // The `ontology` column is a JSON blob, so these queries reach into it
-    // with provider-native JSON extraction. SQLite has `json_extract`;
-    // Postgres has no such function over a TEXT column, so the blob is cast
-    // to `jsonb` first. Without this branch the same SQL silently fails on
-    // one of the two providers.
-    //
-    // Every query is guarded by `ontology_is_json()`. Both providers ABORT
-    // THE WHOLE QUERY on a malformed blob (SQLite raises "malformed JSON",
-    // Postgres errors on the `::jsonb` cast), so a single bad row would
-    // blind every ontology recall rather than just excluding itself. The
-    // guard makes an unparseable blob mean "unanchored" — the same reading
-    // `row_to_h_mem` already gives it — instead of a hard failure.
+    // with SQLite's `json_extract`. Every query is guarded by
+    // `ontology_is_json()`: SQLite raises "malformed JSON" on a bad blob,
+    // which would abort the whole query and blind every ontology recall
+    // rather than just excluding the bad row. The guard makes an unparseable
+    // blob mean "unanchored" — the same reading `row_to_h_mem` already gives
+    // it — instead of a hard failure.
 
-    /// A provider-native predicate that is true only when `ontology` holds
-    /// parseable JSON. Rows failing this are treated as unanchored.
+    /// A predicate that is true only when `ontology` holds parseable JSON.
+    /// Rows failing this are treated as unanchored.
     fn ontology_is_json(&self) -> &'static str {
-        match self.driver.provider() {
-            // `jsonb_path_exists` on a text cast would itself throw; Postgres
-            // has no total `is_json` before 16, so validate structurally.
-            hkask_types::DbProvider::Postgres => {
-                "ontology IS NOT NULL AND ontology <> '' AND left(ltrim(ontology), 1) = '{'"
-            }
-            hkask_types::DbProvider::Sqlite => "json_valid(ontology)",
-        }
+        "json_valid(ontology)"
     }
 
-    /// A provider-native scalar extraction of `$.<field>` from `ontology`.
+    /// Scalar extraction of `$.<field>` from `ontology`.
     fn ontology_scalar(&self, field: &str) -> String {
-        match self.driver.provider() {
-            hkask_types::DbProvider::Postgres => format!("(ontology::jsonb->>'{field}')"),
-            hkask_types::DbProvider::Sqlite => format!("json_extract(ontology, '$.{field}')"),
-        }
+        format!("json_extract(ontology, '$.{field}')")
     }
 
-    /// A provider-native text rendering of the JSON sub-document at
-    /// `$.<field>` (used for substring matching over an array field).
+    /// Text rendering of the JSON sub-document at `$.<field>` (used for
+    /// substring matching over an array field).
     fn ontology_json_text(&self, field: &str) -> String {
-        match self.driver.provider() {
-            hkask_types::DbProvider::Postgres => format!("(ontology::jsonb->'{field}')::text"),
-            hkask_types::DbProvider::Sqlite => format!("json_extract(ontology, '$.{field}')"),
-        }
+        format!("json_extract(ontology, '$.{field}')")
     }
 
     /// Query h_mems whose Dublin Core type (`$.dc_type`) matches exactly.
@@ -764,24 +746,17 @@ impl HMemStore {
     /// a data change rather than a schema change: the namespace is a key in
     /// the blob, and this query reaches it without a migration.
     ///
-    /// The namespace is bound as a parameter on both providers — it is
-    /// caller-supplied and must not be interpolated into the SQL text.
+    /// The namespace is bound as a parameter — it is caller-supplied and
+    /// must not be interpolated into the SQL text. SQLite has no
+    /// parameterizable JSON path, so the path is built by concatenation
+    /// inside SQL (`'$.ontology_tags.' || ?1`) rather than by Rust string
+    /// interpolation — the namespace stays a bound parameter and cannot
+    /// inject SQL.
     #[must_use = "result must be used"]
     pub fn query_by_ontology_namespace(&self, namespace: &str) -> Result<Vec<HMem>, HMemError> {
-        let (predicate, params) = match self.driver.provider() {
-            hkask_types::DbProvider::Postgres => (
-                "jsonb_exists(ontology::jsonb->'ontology_tags', ?1)".to_string(),
-                vec![DbValue::Text(namespace.to_string())],
-            ),
-            // SQLite has no parameterizable JSON path, so the path is built
-            // by concatenation inside SQL (`'$.ontology_tags.' || ?1`) rather
-            // than by Rust string interpolation — the namespace stays a bound
-            // parameter and cannot inject SQL.
-            hkask_types::DbProvider::Sqlite => (
-                "json_extract(ontology, '$.ontology_tags.' || ?1) IS NOT NULL".to_string(),
-                vec![DbValue::Text(namespace.to_string())],
-            ),
-        };
+        let predicate =
+            "json_extract(ontology, '$.ontology_tags.' || ?1) IS NOT NULL".to_string();
+        let params = vec![DbValue::Text(namespace.to_string())];
         let valid = self.ontology_is_json();
         self.query_rows(
             &format!(

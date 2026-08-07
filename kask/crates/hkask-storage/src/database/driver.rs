@@ -5,15 +5,12 @@
 //! functions — they call the trait methods and add type mapping on top.
 
 use super::transaction::TransactionHandle;
-use super::types::{DbError, DbProvider};
+use super::types::DbError;
 use super::value::{DbRow, DbValue};
 
 /// The database driver abstraction.
 ///
 /// Stores use `&dyn DatabaseDriver` instead of raw `rusqlite::Connection`.
-/// Each provider (SQLite, PostgreSQL) implements this trait. New providers
-/// are added without changing store code.
-///
 /// This trait is dyn-compatible — all methods are object-safe.
 /// Ergonomic helpers like `query_map()` are free functions in this module.
 pub trait DatabaseDriver: Send + Sync {
@@ -28,9 +25,6 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Query a single optional row.
     fn query_optional(&self, sql: &str, params: &[DbValue]) -> Result<Option<DbRow>, DbError>;
-
-    /// The provider backing this driver.
-    fn provider(&self) -> DbProvider;
 
     /// Internal: commit current transaction (called by TransactionHandle).
     #[doc(hidden)]
@@ -47,11 +41,6 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Access the SQLite connection pool, if this is a SqliteDriver.
     fn sqlite_pool(&self) -> Option<&r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>> {
-        None
-    }
-
-    /// Access the PostgreSQL connection pool, if this is a PostgresDriver.
-    fn postgres_pool(&self) -> Option<&sqlx::PgPool> {
         None
     }
 

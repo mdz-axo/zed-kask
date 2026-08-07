@@ -11,7 +11,7 @@ pub mod security;
 
 pub use database::{
     DEFAULT_EMBEDDING_DIM, Database, DatabaseError, check_passphrase, embedding_dim, open_database,
-    open_or_repair, open_postgres,
+    open_or_repair,
 };
 pub use security::sanitize_path;
 pub use store_macros::DatabaseDriverTrait;

@@ -75,6 +75,49 @@ pub struct EventConstellation {
     pub events: Vec<MappedEvent>,
 }
 
+/// Classify a catalog record's base economic object using the FIBO-anchored
+/// semantic mapping (ONT-6). This is the bridge between the on-disk catalog
+/// records (written by `fetch_contracts.rs`) and the `BaseEconomicObject`
+/// registry — the venue's curated taxonomy is the primary signal, not
+/// substring grep.
+///
+/// For Kalshi: the `event_ticker` contains the series prefix (`KXFED`,
+/// `KXWTI`, etc.) which `resolve_kalshi_series` matches on. The series prefix
+/// is extracted by taking the prefix before the first `-` in the event ticker
+/// (e.g. `KXFED-26SEP` → `KXFED`). For tickers without a dash, the full ticker
+/// is used.
+///
+/// For Gamma (Polymarket): the `question` is the market-level question text.
+/// It's passed as the title to `resolve_gamma_event`, with empty tags/slug
+/// (the per-family catalog JSONL doesn't carry the event-level tags). The
+/// extended rates coverage in `resolve_gamma_event` handles the full
+/// Polymarket phrasing variety without needing tags.
+///
+/// Returns `None` when the record doesn't map to any base economic object —
+/// never a fabricated classification.
+pub fn classify_base_object_from_catalog(
+    source: &str,
+    event_ticker_or_id: &str,
+    question_or_title: &str,
+) -> Option<BaseEconomicObject> {
+    if source == "kalshi" {
+        // Extract the series prefix from the event ticker (e.g. KXFED-26SEP → KXFED).
+        let series_prefix = event_ticker_or_id
+            .split('-')
+            .next()
+            .unwrap_or(event_ticker_or_id)
+            .to_uppercase();
+        let title_lower = question_or_title.to_lowercase();
+        resolve_kalshi_series(&series_prefix, &title_lower)?
+            .map(|(_, base_object, _)| base_object)
+    } else {
+        // Gamma: use the question as the title, with empty tags/slug.
+        let title_lower = question_or_title.to_lowercase();
+        resolve_gamma_event(&title_lower, &[], "")
+            .map(|(_, base_object, _)| base_object)
+    }
+}
+
 /// Map a Kalshi event to its dual-axis ontological identity.
 ///
 /// The mapping uses the Kalshi `series_ticker` as the primary signal (it's a
@@ -265,19 +308,41 @@ pub fn map_gamma_event(
 /// Gamma has no controlled series ticker like Kalshi; the tags and title
 /// are the semantic signal. The mapping checks for specific economic-object
 /// signals in the title (the venue's curated naming) and the tags.
+///
+/// ONT-6 (2026-08-07): extended rates coverage to handle the full Polymarket
+/// phrasing variety discovered during C0.4 CP-CMP: "upper bound", "federal
+/// funds rate" (full phrase, not just "fed funds"), "rates hit/stay above",
+/// and non-Fed central banks (ECB, BoE, BoC) which are the same economic
+/// object (a central-bank policy rate) under the FIBO `PolicyInterestRate`
+/// concept. The materiality defaults remain Fed-specific (the reference and
+/// volatility are Fed funds); non-Fed central bank contracts will classify
+/// correctly but use Fed-centric economic context until per-bank contexts
+/// are added (a future refinement, not a C0.4 blocker).
 fn resolve_gamma_event(
     title: &str,
     tags: &[String],
     _slug: &str,
 ) -> Option<(fibo::FiboConcept, BaseEconomicObject, Vec<String>)> {
     use BaseEconomicObject::*;
-    // Interest rates: Fed funds / FOMC.
+    // Interest rates: Fed funds / FOMC / policy rate. Covers the full
+    // Polymarket phrasing variety: "fed rate", "fed funds", "fomc",
+    // "rate cut", "rate hike", "interest rate", "upper bound" (Fed's upper
+    // bound), "federal funds rate" (full phrase), "rates hit/stay above",
+    // and non-Fed central banks (ECB, BoE, BoC) — all the same economic
+    // object under FIBO PolicyInterestRate.
     if title.contains("fed rate")
         || title.contains("fed funds")
+        || title.contains("federal funds rate")
         || title.contains("fomc")
         || title.contains("rate cut")
         || title.contains("rate hike")
         || title.contains("interest rate")
+        || title.contains("upper bound")
+        || title.contains("rates hit")
+        || title.contains("rates stay")
+        || title.contains("ecb rate")
+        || title.contains("bank of england rate")
+        || title.contains("bank of canada rate")
     {
         return Some((
             fibo::POLICY_INTEREST_RATE,

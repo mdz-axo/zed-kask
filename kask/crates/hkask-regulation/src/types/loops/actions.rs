@@ -1,7 +1,4 @@
 //! Loop action types — efferent actions and their type classification.
-//!
-//! Moved from hkask-regulation to hkask-types to break the circular dependency
-//! that prevented extracting Regulation subcrates.
 
 use super::core::LoopId;
 

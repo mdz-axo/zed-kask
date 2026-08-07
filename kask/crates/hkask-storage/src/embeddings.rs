@@ -1,17 +1,17 @@
-//! Embedding store — sqlite-vec or pgvector backed KNN similarity search.
+//! Embedding store — sqlite-vec backed KNN similarity search.
 //!
 //! Two tables: `embeddings` (metadata + vector BLOB) + `vec_embeddings`
 //! (sqlite-vec virtual table for KNN, keyed on implicit integer rowid).
 //!
 //! The vector BLOB is intentionally stored in both tables. vec0 requires
 //! the vector for KNN MATCH; `embeddings.vector` provides uniform retrieval
-//! via the backend-agnostic `DatabaseDriver` query path (get/get_all_by_prefix
-//! work without branching on SqliteVec vs PgVector). Deduplicating would
-//! require backend-conditional retrieval (join vec0 for SQLite, read column
-//! for PgVector) — more complexity for ~4 KB/embedding savings. The
-//! redundancy earns its keep by preserving the uniform retrieval abstraction.
-//! If per-pod storage becomes a concern at scale, the escape hatch is a vec0
-//! auxiliary column (`+vector BLOB`) to eliminate the `embeddings.vector` copy.
+//! via the backend-agnostic `DatabaseDriver` query path (get/get_all_by_prefix).
+//! Deduplicating would require backend-conditional retrieval (join vec0 for
+//! the KNN path, read the column for the metadata path) — more complexity
+//! for ~4 KB/embedding savings. The redundancy earns its keep by preserving
+//! the uniform retrieval abstraction. If per-pod storage becomes a concern
+//! at scale, the escape hatch is a vec0 auxiliary column (`+vector BLOB`)
+//! to eliminate the `embeddings.vector` copy.
 use hkask_types::InfrastructureError;
 use hkask_types::NotFound;
 

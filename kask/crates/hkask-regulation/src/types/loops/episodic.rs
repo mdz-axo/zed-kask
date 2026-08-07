@@ -1,7 +1,4 @@
 //! Loop 2a: Episodic Memory — private, agent-scoped experience.
-//!
-//! Moved from hkask-regulation to hkask-types to break the circular dependency
-//! that prevented extracting Regulation subcrates.
 
 /// Classification of an episodic experience for encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

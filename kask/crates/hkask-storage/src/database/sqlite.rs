@@ -5,7 +5,7 @@
 //! via the pool's connection initializer.
 
 use super::driver::DatabaseDriver;
-use super::types::{DbError, DbProvider};
+use super::types::DbError;
 use super::value::{DbRow, DbValue};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -286,10 +286,6 @@ impl DatabaseDriver for SqliteDriver {
                 Err(e)
             }
         }
-    }
-
-    fn provider(&self) -> DbProvider {
-        DbProvider::Sqlite
     }
 
     fn commit_tx(&self) -> Result<(), DbError> {

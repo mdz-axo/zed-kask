@@ -1,8 +1,6 @@
 //! Core loop types — identifiers, the Loop trait, and quality telemetry.
 //!
-//! Moved from hkask-regulation to hkask-types to break the circular dependency
-//! that prevented extracting Regulation subcrates. The Loop trait uses async-trait
-//! for object safety.
+//! The Loop trait uses async-trait for object safety.
 
 use super::actions::{ActionType, RegulatoryAction};
 use super::signals::{Deviation, DeviationDirection, SignalMetric};
