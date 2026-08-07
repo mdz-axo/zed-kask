@@ -168,6 +168,9 @@ impl SwarmPanel {
                 let detail_name = swarm_name.clone();
                 let detail_source = swarm_source;
                 let detail_mission = swarm_mission;
+                let detail_agent_count = swarm.agent_count;
+                let detail_budget = swarm.budget;
+                let detail_remaining = swarm.remaining;
                 let runs_id = swarm_id.clone();
                 let runs_name = swarm_name;
                 MarketplaceCard::new().child(
@@ -204,6 +207,9 @@ impl SwarmPanel {
                                                 detail_name.clone(),
                                                 detail_source.clone(),
                                                 detail_mission.clone(),
+                                                detail_agent_count,
+                                                detail_budget,
+                                                detail_remaining,
                                                 cx,
                                             );
                                         },

@@ -43,32 +43,11 @@ impl std::fmt::Display for DatabaseErrorKind {
     }
 }
 
-// DbProvider — Database provider enum (moved from hkask-database::types)
+// DbError — Database operation errors (moved from hkask-database::types)
 //
 // Relocated to break the circular dependency: hkask-storage -> the wallet types crate
-// -> hkask-database -> hkask-storage. DbError/DbProvider are pure types with no
-// external deps beyond thiserror + serde (already in hkask-types).
-
-/// Supported database providers.
-///
-/// New providers are added as enum variants. The `DatabaseDriver` trait
-/// dispatches to the correct implementation at runtime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DbProvider {
-    /// SQLite / SQLCipher via rusqlite (default, stable).
-    Sqlite,
-    /// PostgreSQL via sqlx + pgvector.
-    Postgres,
-}
-
-impl std::fmt::Display for DbProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sqlite => write!(f, "sqlite"),
-            Self::Postgres => write!(f, "postgres"),
-        }
-    }
-}
+// -> hkask-database -> hkask-storage. DbError is a pure type with no external deps
+// beyond thiserror + serde (already in hkask-types).
 
 /// Database operation errors — provider-agnostic.
 ///

@@ -69,6 +69,37 @@ impl SwarmPanel {
                         .color(Color::Muted),
                 )
             })
+            // Swarm-level budget signals (cloud only; local swarms render
+            // "-" — never a fabricated 0). `agent_count` mirrors the
+            // `SwarmCard.agent_count` contract at `parse.rs:75-77`.
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Label::new(format!(
+                            "agents: {}",
+                            detail.agent_count.map_or("-".to_string(), |c| c.to_string())
+                        ))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!(
+                            "budget: {}",
+                            detail.budget.map_or("-".to_string(), |b| b.to_string())
+                        ))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!(
+                            "remaining: {}",
+                            detail.remaining.map_or("-".to_string(), |r| r.to_string())
+                        ))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                    ),
+            )
             // Add-agent affordance: an input + button. Mode-aware dispatch.
             .child(
                 h_flex()

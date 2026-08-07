@@ -17,14 +17,12 @@ resets — t goes back to 0, R = 1.0.
 
 ## Configuration
 
-| Variable | Description | Default |
-|----------|-------------|--------|
-| `HKASK_MEMORY_LIFE_DAYS` | Memory life S in days | 180 |
-| `HKASK_DB_PROVIDER` | Database provider (`sqlite` or `postgres`) | `sqlite` |
-| `HKASK_DB_PATH` | SQLite database path | — |
-| `HKASK_DB_PASSPHRASE` | SQLite SQLCipher encryption passphrase | — |
-| `HKASK_DATABASE_URL` | PostgreSQL connection URL (required when `HKASK_DB_PROVIDER=postgres`) | — |
-| `HKASK_EMBEDDING_DIM` | Embedding vector dimension | 1024 |
+| Variable                 | Description                            | Default |
+| ------------------------ | -------------------------------------- | ------- |
+| `HKASK_MEMORY_LIFE_DAYS` | Memory life S in days                  | 180     |
+| `HKASK_DB_PATH`          | SQLite database path                   | —       |
+| `HKASK_DB_PASSPHRASE`    | SQLite SQLCipher encryption passphrase | —       |
+| `HKASK_EMBEDDING_DIM`    | Embedding vector dimension             | 1024    |
 
 `ServiceConfig.memory_life_days` also accepts the value programmatically.
 
@@ -40,8 +38,8 @@ classifier model is configured via `HkaskSettings::classifier_model()` (env
 var `HKASK_CLASSIFIER_MODEL`), falling back to the registry's default
 classifier config.
 
-| Setting | Env Var | Default |
-|---|---|---|
+| Setting          | Env Var                  | Default                                        |
+| ---------------- | ------------------------ | ---------------------------------------------- |
 | Classifier model | `HKASK_CLASSIFIER_MODEL` | `DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507` |
 
 ### Content Safety
@@ -55,12 +53,13 @@ secret leakage detection are always active at every classification call.
 Templates invoked via `memory_remember.yaml` FlowDef manifest. Each step
 runs single-model extraction through the configured classifier model.
 
-| Template | Memory Type | Perspective | Extraction Focus |
-|----------|-------------|-------------|-----------------|
-| `remember-episodic.j2` | Episodic | First-person | Process, actions, observations |
-| `remember-semantic.j2` | Semantic | Third-person | Facts, relationships, knowledge |
+| Template               | Memory Type | Perspective  | Extraction Focus                |
+| ---------------------- | ----------- | ------------ | ------------------------------- |
+| `remember-episodic.j2` | Episodic    | First-person | Process, actions, observations  |
+| `remember-semantic.j2` | Semantic    | Third-person | Facts, relationships, knowledge |
 
 ### Content Safety
+
 The FlowDef selector (`operation-selector.j2`) classifies the request and
 routes to the appropriate template.
 

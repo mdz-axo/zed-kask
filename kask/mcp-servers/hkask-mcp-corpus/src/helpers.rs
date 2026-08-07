@@ -38,8 +38,8 @@ pub(crate) fn map_triage_error(error: crate::ocr::triage::TriageError) -> McpToo
 /// Classify a `DatabaseError` from opening a memory DB into the appropriate
 /// `McpToolError` kind: a passphrase mismatch is an auth failure
 /// (`permission_denied`); a corrupted DB file is a caller-fixable data
-/// problem (`invalid_argument`); SQLite/SQLCipher/key-derivation/Postgres
-/// failures are infrastructure (`internal`).
+/// problem (`invalid_argument`); SQLite/SQLCipher/key-derivation failures
+/// are infrastructure (`internal`).
 pub(crate) fn map_database_error(
     error: hkask_storage::DatabaseError,
     context: &str,
@@ -51,8 +51,7 @@ pub(crate) fn map_database_error(
         DatabaseError::Corrupted(_) => McpToolError::invalid_argument(message),
         DatabaseError::Sqlite(_)
         | DatabaseError::SqlCipher(_)
-        | DatabaseError::KeyDerivation(_)
-        | DatabaseError::Postgres(_) => McpToolError::internal(message), // rr0044-ok: infra-db-failure
+        | DatabaseError::KeyDerivation(_) => McpToolError::internal(message), // rr0044-ok: infra-db-failure
         // Non-exhaustive enum: future variants stay internal (conservative).
         _ => McpToolError::internal(message), // rr0044-ok: non-exhaustive-fallback
     }

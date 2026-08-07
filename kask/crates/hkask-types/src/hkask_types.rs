@@ -43,8 +43,7 @@ pub use crypto::{Ed25519PublicKey, Ed25519Signature};
 pub use curator::{CurationThresholdConfig, CuratorDirective, CuratorHandle, EscalationSeverity};
 pub use document::{Block, DocStructure, Page};
 pub use error::{
-    CapabilityDenied, DatabaseErrorKind, DbError, DbProvider, InfrastructureError, McpErrorKind,
-    NotFound,
+    CapabilityDenied, DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound,
 };
 pub use event::{RegulationRecord, RegulationSink};
 pub use goal::GoalState;

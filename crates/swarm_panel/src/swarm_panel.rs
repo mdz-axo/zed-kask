@@ -485,6 +485,18 @@ struct SwarmDetailView {
     /// `swarm_delete_local_swarm`; `Cloud` uses the consent-gated `swarm_hire`
     /// and `swarm_fire`.
     source: AgentSource,
+    /// Number of hired agents, copied from `SwarmCard.agent_count` when the
+    /// detail is opened. `None` for local swarms (no ABW budget signal) and
+    /// when the ABW workspace payload omits the field — rendered as "-",
+    /// never a fabricated "0 agents" (mirrors the `SwarmCard.agent_count`
+    /// contract at `parse.rs:75-77`).
+    agent_count: Option<u64>,
+    /// Total workspace budget (credits), copied from `SwarmCard.budget`.
+    /// `None` for local swarms and when ABW omits the field.
+    budget: Option<u64>,
+    /// Remaining workspace budget (credits), copied from `SwarmCard.remaining`.
+    /// `None` for local swarms and when ABW omits the field.
+    remaining: Option<u64>,
     loading: bool,
     error: Option<SharedString>,
     agents: Vec<SwarmRosterAgent>,

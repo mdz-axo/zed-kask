@@ -14,10 +14,9 @@ SQLite + SQLCipher storage for hKask.
 
 ## Configuration
 
-| Variable | Description |
-|----------|-------------|
-| `HKASK_DB_PROVIDER` | Database provider (`sqlite` or `postgres`) |
-| `HKASK_DB_PATH` | SQLite database path |
+| Variable              | Description                    |
+| --------------------- | ------------------------------ |
+| `HKASK_DB_PATH`       | SQLite database path           |
 | `HKASK_DB_PASSPHRASE` | Database encryption passphrase |
 
 ## Schema

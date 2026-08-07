@@ -2,11 +2,8 @@
 # This workflow is fork-specific and does not replace upstream's run_tests.yml
 # (which is gated on repository_owner == 'zed-industries' and skipped on forks).
 #
-# The test job does NOT spin up a postgres service: kask reads
-# HKASK_DATABASE_URL (not DATABASE_URL) and HKASK_DB_PROVIDER defaults to
-# sqlite, so a postgres service would provide zero kask coverage. Add it back
-# only when a kask crate's tests explicitly require postgres (set
-# HKASK_DB_PROVIDER=postgres + HKASK_DATABASE_URL=... in the env block).
+# The test job does NOT spin up a postgres service: kask storage is SQLite-only,
+# so a postgres service would provide zero kask coverage.
 name: kask-ci
 
 on:

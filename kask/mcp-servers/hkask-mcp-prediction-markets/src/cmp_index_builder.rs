@@ -30,7 +30,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
-use crate::base_event::{self, BaseEvent, EconomicContext};
+use crate::base_event::{BaseEvent, EconomicContext};
 use crate::cmp_portfolio::{
     self, CmpConfig, CmpIndex, Constituent, OrientedConstituent,
 };
@@ -285,8 +285,6 @@ struct CatalogAdapter {
     /// The question/title text — used for `extract_strike` and as the
     /// confirmation signal for semantic classification.
     question: String,
-    /// The description/rules text — secondary haystack.
-    description: String,
     /// The event ticker (Kalshi) or event id (Gamma) — carries the series
     /// prefix for Kalshi semantic classification.
     event_ticker_or_id: String,
@@ -303,7 +301,6 @@ impl CatalogAdapter {
         Self {
             market_id: record.market_ticker.clone(),
             question: record.title.clone(),
-            description: record.rules_primary.clone(),
             event_ticker_or_id: record.event_ticker.clone(),
             source: "kalshi".into(),
             close_time: record.close_time.clone(),
@@ -316,7 +313,6 @@ impl CatalogAdapter {
         Self {
             market_id: record.market_id.clone(),
             question: record.question.clone(),
-            description: String::new(),
             event_ticker_or_id: record.event_id.clone(),
             source: "gamma".into(),
             close_time: record.end_date.clone(),

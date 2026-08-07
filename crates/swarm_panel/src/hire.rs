@@ -225,6 +225,9 @@ impl SwarmPanel {
                                     detail.name,
                                     detail.source,
                                     detail.mission,
+                                    detail.agent_count,
+                                    detail.budget,
+                                    detail.remaining,
                                     cx,
                                 );
                             }

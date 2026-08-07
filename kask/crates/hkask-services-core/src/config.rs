@@ -9,7 +9,6 @@
 
 use crate::error::{DomainKind, ErrorKind, ServiceError};
 use hkask_inference::InferenceConfig;
-use hkask_storage::database::types::DbProvider;
 
 // ── Default values ──────────────────────────────────────────────────────────
 // Centralized here so all three constructors share the same defaults.
@@ -51,11 +50,6 @@ pub struct ServiceConfig {
 
     /// Passphrase for encrypted database access.
     pub db_passphrase: String,
-
-    /// Database provider — `sqlite` (default) or `postgres`.
-    /// Set via `HKASK_DB_PROVIDER` env var. When `postgres`, `HKASK_DATABASE_URL`
-    /// must also be set.
-    pub db_provider: DbProvider,
 
     /// Inference configuration for the multi-provider router.
     pub inference_config: InferenceConfig,
@@ -117,8 +111,6 @@ impl ServiceConfig {
         let data_dir = resolve_data_dir();
         let db_path = std::env::var("HKASK_DB_PATH")
             .unwrap_or_else(|_| data_dir.join(DEFAULT_DB_PATH).to_string_lossy().to_string());
-        let db_provider =
-            parse_db_provider(&std::env::var("HKASK_DB_PROVIDER").unwrap_or_default());
         let inference_config = InferenceConfig::from_env();
         let default_model = inference_config.default_model.clone();
         let template_cache_path = std::env::var("HKASK_TEMPLATE_CACHE_PATH")
@@ -147,7 +139,6 @@ impl ServiceConfig {
         Ok(Self {
             db_path,
             db_passphrase,
-            db_provider,
             default_model,
             inference_config,
             reg_threshold: DEFAULT_REG_THRESHOLD,
@@ -186,7 +177,6 @@ impl ServiceConfig {
         Self {
             db_path,
             db_passphrase,
-            db_provider: parse_db_provider(&std::env::var("HKASK_DB_PROVIDER").unwrap_or_default()),
             inference_config: inference_config.clone(),
             reg_threshold: DEFAULT_REG_THRESHOLD,
             energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
@@ -213,7 +203,6 @@ impl ServiceConfig {
         Self {
             db_path: ":memory:".to_string(),
             db_passphrase: String::new(),
-            db_provider: DbProvider::Sqlite,
             inference_config: inference_config.clone(),
             reg_threshold: DEFAULT_REG_THRESHOLD,
             energy_budget_cap: DEFAULT_ENERGY_BUDGET_CAP,
@@ -224,19 +213,6 @@ impl ServiceConfig {
             template_cache_path: DEFAULT_TEMPLATE_CACHE_PATH.to_string(),
             memory_db_path: None,
             memory_life_days: 180.0,
-        }
-    }
-}
-
-/// Parse the `HKASK_DB_PROVIDER` env var into a `DbProvider`.
-/// Defaults to `Sqlite` for unknown or empty values.
-fn parse_db_provider(raw: &str) -> DbProvider {
-    match raw.to_lowercase().as_str() {
-        "" | "sqlite" => DbProvider::Sqlite,
-        "postgres" | "postgresql" | "pg" => DbProvider::Postgres,
-        other => {
-            tracing::warn!("Unknown HKASK_DB_PROVIDER='{other}' — falling back to sqlite");
-            DbProvider::Sqlite
         }
     }
 }
@@ -264,58 +240,36 @@ impl ServiceConfig {
         )
     }
 
-    /// Open a database driver based on `db_provider`.
+    /// Open a SQLite database driver.
     ///
-    /// - `Sqlite` → opens a SQLCipher database at `db_path` with `db_passphrase`.
-    /// - `Postgres` → connects to `HKASK_DATABASE_URL` and initializes the pgvector schema.
-    ///
+    /// Opens a SQLCipher database at `db_path` with `db_passphrase`.
     /// Returns an `Arc<dyn DatabaseDriver>` ready for store construction.
     ///
-    /// pre:  when `db_provider == Postgres`, `HKASK_DATABASE_URL` must be set.
+    /// pre:  `db_path` is a valid SQLite file path.
     /// post: returns a connected driver with schema initialized.
     pub fn open_driver(
         &self,
     ) -> Result<std::sync::Arc<dyn hkask_storage::DatabaseDriver>, ServiceError> {
-        match self.db_provider {
-            DbProvider::Sqlite => {
-                let db = hkask_storage::open_database(&self.db_path, &self.db_passphrase).map_err(
-                    |e| ServiceError::Domain {
-                        kind: ErrorKind::ServiceUnavailable,
-                        domain: DomainKind::Storage,
-                        message: e.to_string(),
-                        source: Some(Box::new(e)),
-                    },
-                )?;
-                let pool = db.sqlite_pool().map_err(|e| ServiceError::Domain {
-                    kind: ErrorKind::ServiceUnavailable,
-                    domain: DomainKind::Storage,
-                    message: e.to_string(),
-                    source: Some(Box::new(e)),
-                })?;
-                Ok(std::sync::Arc::new(
-                    hkask_storage::database::sqlite::SqliteDriver::new_labeled(
-                        pool,
-                        self.db_path.as_str(),
-                    ),
-                ))
-            }
-            DbProvider::Postgres => {
-                let url =
-                    std::env::var("HKASK_DATABASE_URL").map_err(|_| ServiceError::Domain {
-                        kind: ErrorKind::BadRequest,
-                        domain: DomainKind::Storage,
-                        message: "HKASK_DB_PROVIDER=postgres requires HKASK_DATABASE_URL to be set"
-                            .to_string(),
-                        source: None,
-                    })?;
-                hkask_storage::open_postgres(&url).map_err(|e| ServiceError::Domain {
-                    kind: ErrorKind::ServiceUnavailable,
-                    domain: DomainKind::Storage,
-                    message: e.to_string(),
-                    source: Some(Box::new(e)),
-                })
-            }
-        }
+        let db = hkask_storage::open_database(&self.db_path, &self.db_passphrase).map_err(
+            |e| ServiceError::Domain {
+                kind: ErrorKind::ServiceUnavailable,
+                domain: DomainKind::Storage,
+                message: e.to_string(),
+                source: Some(Box::new(e)),
+            },
+        )?;
+        let pool = db.sqlite_pool().map_err(|e| ServiceError::Domain {
+            kind: ErrorKind::ServiceUnavailable,
+            domain: DomainKind::Storage,
+            message: e.to_string(),
+            source: Some(Box::new(e)),
+        })?;
+        Ok(std::sync::Arc::new(
+            hkask_storage::database::sqlite::SqliteDriver::new_labeled(
+                pool,
+                self.db_path.as_str(),
+            ),
+        ))
     }
 }
 
@@ -330,7 +284,6 @@ mod tests {
             TEST_USER_NAME.to_string(),
         );
         config.db_path = path.to_string();
-        config.db_provider = DbProvider::Sqlite;
         config
     }
 

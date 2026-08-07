@@ -74,12 +74,9 @@ pub(crate) struct SwarmCard {
     pub(crate) description: String,
     /// Number of hired agents. `None` when ABW's workspace payload omits the
     /// field (the field name is NOT part of the verified API surface) — the
-    /// card renders "-" then, never a fabricated "0 agents".
-    #[allow(dead_code)] // retained for future detail-view enrichment
+    /// detail view renders "-" then, never a fabricated "0 agents".
     pub(crate) agent_count: Option<u64>,
-    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) budget: Option<u64>,
-    #[allow(dead_code)] // retained for future detail-view enrichment
     pub(crate) remaining: Option<u64>,
     /// Where this swarm lives: `Cloud` (an ABW workspace) or `Local` (a
     /// `LocalSwarmRegistry` entry). The backend mode toggle filters the

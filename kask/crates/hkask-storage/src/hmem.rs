@@ -999,11 +999,11 @@ mod tests {
     }
 
     /// A malformed `ontology` blob must EXCLUDE only its own row, never fail
-    /// the query. Both providers abort the whole statement on unparseable
-    /// JSON (SQLite: "malformed JSON"; Postgres: `::jsonb` cast error), so
-    /// without the `ontology_is_json()` guard a single bad row — written by
-    /// an older binary, a migration, or direct SQL — would blind every
-    /// ontology recall in the database, not just its own.
+    /// the query. SQLite aborts the whole statement on unparseable JSON
+    /// ("malformed JSON"), so without the `ontology_is_json()` guard a
+    /// single bad row — written by an older binary, a migration, or direct
+    /// SQL — would blind every ontology recall in the database, not just
+    /// its own.
     #[test]
     fn malformed_ontology_blob_does_not_poison_ontology_queries() {
         let store = make_store();

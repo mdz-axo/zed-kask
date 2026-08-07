@@ -94,8 +94,7 @@ pub struct RealMemoryPort {
     /// inference thread's `inject_context` recall.
     ///
     /// Default 1 (fully serial). Override via `HKASK_MEMORY_INGEST_CONCURRENCY`.
-    /// A value of 1 is correct for SQLite (single writer); raise only if the
-    /// store is backed by Postgres.
+    /// A value of 1 is correct for SQLite (single writer).
     ingest_semaphore: tokio::sync::Semaphore,
 }
 

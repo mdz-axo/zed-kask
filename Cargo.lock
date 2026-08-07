@@ -9858,7 +9858,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlite-vec",
- "sqlx",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

@@ -188,8 +188,8 @@ impl KaskInferenceProvidersSettings {
 /// When `enabled` is true, zed-kask launches a local `collab serve api`
 /// process at startup so the kask extensions panel can fetch
 /// `/api/kask-skills` without depending on the deployed `zed.dev` server
-/// having the kask route. The server uses SQLite (no Postgres/S3 needed)
-/// for local dev; S3 is only required for publish/download/vote.
+/// having the kask route. The server uses SQLite for local dev; S3 is
+/// only required for publish/download/vote.
 ///
 /// `Default` is the single source of truth — `From<Content>` reads from it
 /// via `unwrap_or(default.field)`. The defaults launch a server on

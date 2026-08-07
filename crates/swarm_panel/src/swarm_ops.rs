@@ -28,6 +28,9 @@ impl SwarmPanel {
         name: String,
         source: AgentSource,
         mission: String,
+        agent_count: Option<u64>,
+        budget: Option<u64>,
+        remaining: Option<u64>,
         cx: &mut Context<Self>,
     ) {
         let Some(invoker) = crate::shared_tool_invoker() else {
@@ -41,6 +44,9 @@ impl SwarmPanel {
             name,
             mission,
             source,
+            agent_count,
+            budget,
+            remaining,
             loading: true,
             error: None,
             agents: Vec::new(),
@@ -263,6 +269,9 @@ impl SwarmPanel {
                                     detail.name,
                                     detail.source,
                                     detail.mission,
+                                    detail.agent_count,
+                                    detail.budget,
+                                    detail.remaining,
                                     cx,
                                 );
                             }
@@ -315,6 +324,9 @@ impl SwarmPanel {
                                     detail.name,
                                     detail.source,
                                     detail.mission,
+                                    detail.agent_count,
+                                    detail.budget,
+                                    detail.remaining,
                                     cx,
                                 );
                             }
@@ -368,6 +380,9 @@ impl SwarmPanel {
                                     detail.name,
                                     detail.source,
                                     detail.mission,
+                                    detail.agent_count,
+                                    detail.budget,
+                                    detail.remaining,
                                     cx,
                                 );
                             }
