@@ -7,12 +7,7 @@ impl KanbanService {
         author: WebID,
         body: &str,
     ) -> Result<Comment, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_actor(&task, author)?;
         let comment = Comment::new(task_id, author, body.to_string());
         task.comments.push(comment.clone());
@@ -22,12 +17,7 @@ impl KanbanService {
     }
 
     pub fn task_comments(&self, task_id: TaskId) -> Result<Vec<Comment>, KanbanError> {
-        let task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let task = self.require_task(task_id)?;
         Ok(task.comments)
     }
 
@@ -37,12 +27,7 @@ impl KanbanService {
         task_id: TaskId,
         since_index: usize,
     ) -> Result<Vec<Comment>, KanbanError> {
-        let task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let task = self.require_task(task_id)?;
         Ok(task.comments.into_iter().skip(since_index).collect())
     }
 
@@ -52,12 +37,7 @@ impl KanbanService {
         path: &str,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_actor(&task, actor)?;
         task.deliverables.push(path.to_string());
         task.updated_at = chrono::Utc::now();

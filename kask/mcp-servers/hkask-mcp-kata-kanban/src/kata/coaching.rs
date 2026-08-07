@@ -1,14 +1,6 @@
 use super::*;
 
 impl KataEngine {
-    pub(super) async fn run_coaching(
-        &self,
-        manifest: &KataManifest,
-        state: &mut KataState,
-    ) -> Result<KataResult, KataError> {
-        self.run_coaching_from(manifest, state).await
-    }
-
     /// Run a full coaching kata cycle from the given manifest.
     ///
     /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated coaching kata execution
@@ -17,7 +9,7 @@ impl KataEngine {
     /// post: returns KataResult with all questions answered and step experiences recorded
     /// post: if manifest has no questions → Err(KataError::NoSteps)
     /// post: if gas exceeded → Err(KataError::GasExceeded)
-    pub async fn run_coaching_from(
+    pub(super) async fn run_coaching(
         &self,
         manifest: &KataManifest,
         state: &mut KataState,

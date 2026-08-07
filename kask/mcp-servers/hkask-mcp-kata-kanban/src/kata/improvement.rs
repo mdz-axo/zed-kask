@@ -1,14 +1,6 @@
 use super::*;
 
 impl KataEngine {
-    pub(super) async fn run_improvement(
-        &self,
-        manifest: &KataManifest,
-        state: &mut KataState,
-    ) -> Result<KataResult, KataError> {
-        self.run_improvement_from(manifest, state).await
-    }
-
     /// Run an improvement kata cycle from the given manifest.
     ///
     /// \[P9\] Motivating: Homeostatic Self-Regulation — regulated improvement kata execution
@@ -17,7 +9,7 @@ impl KataEngine {
     /// post: returns KataResult with all steps executed, outputs validated against schema
     /// post: if manifest has no steps → Err(KataError::NoSteps)
     /// post: if gas exceeded → Err(KataError::GasExceeded)
-    pub async fn run_improvement_from(
+    pub(super) async fn run_improvement(
         &self,
         manifest: &KataManifest,
         state: &mut KataState,

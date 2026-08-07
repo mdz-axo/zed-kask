@@ -95,6 +95,19 @@ impl KanbanService {
         }
     }
 
+    /// Fetch a task by id or return `KanbanError::NotFound`.
+    ///
+    /// Replaces the repeated `self.task_get(id)?.ok_or_else(|| KanbanError::NotFound(...))`
+    /// preamble across the service_impl submodules.
+    pub(super) fn require_task(&self, task_id: TaskId) -> Result<Task, KanbanError> {
+        self.task_get(task_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "task".to_string(),
+                id: task_id.to_string(),
+            })
+        })
+    }
+
     // ── Board operations ──────────────────────────────────────────────────
 
     /// Create a new kanban board.
@@ -552,12 +565,7 @@ impl KanbanService {
         target: TaskStatus,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
 
         Self::require_task_actor(&task, actor)?;
 
@@ -590,21 +598,7 @@ impl KanbanService {
         task.updated_at = chrono::Utc::now();
         let _ = actor;
 
-        // Update the h_mem value
-        let new_value = serde_json::to_value(&task)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-
-        // Find the h_mem ID and update
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(TASK_ENTITY, &task_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-
-        if let Some(t) = h_mems.into_iter().next() {
-            self.store
-                .update(&t.id, new_value, 1.0f64)
-                .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
-        }
+        self.update_task_triple(&task)?;
 
         // P9: Regulation span
         tracing::info!(
@@ -629,12 +623,7 @@ impl KanbanService {
     /// \[P12\] Constraining: No anonymous agency — the accepted assignment has an actor WebID.
     #[must_use = "result must be used"]
     pub fn task_claim(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
 
         if task.assignee.is_some() {
             return Err(KanbanError::PermissionDenied(
@@ -655,19 +644,7 @@ impl KanbanService {
         task.assignee = Some(actor);
         task.updated_at = chrono::Utc::now();
 
-        let new_value = serde_json::to_value(&task)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(TASK_ENTITY, &task_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-
-        if let Some(t) = h_mems.into_iter().next() {
-            self.store
-                .update(&t.id, new_value, 1.0f64)
-                .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
-        }
+        self.update_task_triple(&task)?;
 
         // P9: Regulation span
         tracing::info!(
@@ -693,12 +670,7 @@ impl KanbanService {
         evidence: &str,
         verifier: WebID,
     ) -> Result<(Task, Verification), KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
 
         Self::require_task_owner(&task, verifier)?;
 
@@ -742,19 +714,7 @@ impl KanbanService {
         }
         task.updated_at = chrono::Utc::now();
 
-        let new_value = serde_json::to_value(&task)
-            .map_err(|e| KanbanError::Internal(format!("serialization failed: {e}")))?;
-
-        let h_mems = self
-            .store
-            .query_by_entity_attribute(TASK_ENTITY, &task_id.to_string())
-            .map_err(|e| KanbanError::Internal(format!("h_mem query failed: {e}")))?;
-
-        if let Some(t) = h_mems.into_iter().next() {
-            self.store
-                .update(&t.id, new_value, 1.0f64)
-                .map_err(|e| KanbanError::Internal(format!("h_mem update failed: {e}")))?;
-        }
+        self.update_task_triple(&task)?;
 
         // P9: Regulation span
         tracing::info!(
@@ -793,12 +753,7 @@ impl KanbanService {
     /// post: task h_mem and index h_mem are soft-deleted
     #[must_use = "result must be used"]
     pub fn task_delete(&self, task_id: TaskId) -> Result<(), KanbanError> {
-        let task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let task = self.require_task(task_id)?;
 
         // Close the task h_mem
         let h_mems = self
@@ -839,12 +794,7 @@ impl KanbanService {
     /// post: task.assignee is set to None; task.updated_at refreshed
     #[must_use = "result must be used"]
     pub fn task_unassign(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
         task.assignee = None;
         task.updated_at = chrono::Utc::now();
@@ -858,12 +808,7 @@ impl KanbanService {
     /// post: task moves to InProgress, verification cleared
     #[must_use = "result must be used"]
     pub fn task_reopen(&self, task_id: TaskId, actor: WebID) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
 
         Self::require_task_owner(&task, actor)?;
 
@@ -893,12 +838,7 @@ impl KanbanService {
         amount: u64,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
         let current = task.gas_remaining.unwrap_or(0);
         task.gas_remaining = Some(current.saturating_add(amount));
@@ -924,12 +864,7 @@ impl KanbanService {
         amount: u64,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
         let current = task.rjoule_remaining.unwrap_or(0);
         task.rjoule_remaining = Some(current.saturating_add(amount));
@@ -968,12 +903,7 @@ impl KanbanService {
         deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
         actor: WebID,
     ) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
         if let Some(sid) = swarm_id {
             task.swarm_id = Some(sid);

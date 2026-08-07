@@ -7,12 +7,7 @@ impl KanbanService {
         spawn_spec: super::SpawnSpec,
         actor: WebID,
     ) -> Result<String, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         Self::require_task_owner(&task, actor)?;
 
         let spawn_note = format!(

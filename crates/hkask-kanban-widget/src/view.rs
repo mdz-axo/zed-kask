@@ -21,28 +21,32 @@ use std::collections::{HashMap, HashSet};
 use gpui::{FocusHandle, Focusable, Hsla};
 use gpui_util::ResultExt as _;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_types::kanban_wire;
 use theme::ActiveTheme;
 use ui::prelude::*;
 
 use crate::block::{KanbanBlockBody, TaskBody};
 
-/// Standard kanban statuses in display order (matches `TaskStatus` in the
-/// kata-kanban service). The string values are the wire-format status strings
-/// used by the MCP server.
+/// Standard kanban statuses in display order. The wire keys (first element)
+/// come from `hkask_types::kanban_wire::STANDARD_STATUS_KEYS` — the shared
+/// contract with the MCP server. The display labels (second element) are
+/// widget-local (the server has no display concern).
 const STANDARD_STATUSES: &[(&str, &str)] = &[
-    ("backlog", "Backlog"),
-    ("ready", "Ready"),
-    ("in_progress", "In Progress"),
-    ("review", "Review"),
-    ("done", "Done"),
+    (kanban_wire::STANDARD_STATUS_KEYS[0], "Backlog"),
+    (kanban_wire::STANDARD_STATUS_KEYS[1], "Ready"),
+    (kanban_wire::STANDARD_STATUS_KEYS[2], "In Progress"),
+    (kanban_wire::STANDARD_STATUS_KEYS[3], "Review"),
+    (kanban_wire::STANDARD_STATUS_KEYS[4], "Done"),
 ];
 
 /// MCP server that hosts the kanban tools. Fallback dispatch target when a
-/// block carries no dispatchable provenance.
-const DEFAULT_SERVER: &str = "hkask-mcp-kata-kanban";
-/// Tool the widget dispatches to move a task. Confirmed against the server's
+/// block carries no dispatchable provenance. Sourced from the shared
+/// `kanban_wire` module so a server rename propagates without a silent break.
+const DEFAULT_SERVER: &str = kanban_wire::KANBAN_SERVER_NAME;
+/// Tool the widget dispatches to move a task. Sourced from the shared
+/// `kanban_wire` module. The args shape is confirmed against the server's
 /// `TaskMoveRequest { task_id, target_status }` schema (no `board_id`).
-const DEFAULT_TOOL: &str = "kanban_task_move";
+const DEFAULT_TOOL: &str = kanban_wire::KANBAN_TASK_MOVE_TOOL;
 /// Surfaced when the process-global `ToolInvoker` is not wired. Visible state,
 /// not a silent no-op (repo `.rules` startup-failure-signal trap).
 const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
@@ -794,8 +798,10 @@ fn status_label(status_key: &str) -> &'static str {
 /// Whether `status` is one of the five standard wire strings the MCP server's
 /// `TaskStatus::parse_str` accepts. The move affordance only offers standard
 /// targets; a non-standard value is rejected up front with a visible error.
+/// Delegates to the shared `kanban_wire::is_standard_status` so the widget and
+/// server agree on the valid set.
 fn is_valid_target_status(status: &str) -> bool {
-    STANDARD_STATUSES.iter().any(|(key, _)| *key == status)
+    kanban_wire::is_standard_status(status)
 }
 
 /// Pure: decide the `(server, tool, args)` dispatch tuple for a move, given the

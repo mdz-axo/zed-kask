@@ -93,16 +93,6 @@ pub fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
     }
 }
 
-/// Map a kanban task status to its PKO ProcedureExecutionStatus concept.
-pub fn task_status_to_pko(status: &str) -> Option<PkoConcept> {
-    match status {
-        "backlog" | "ready" => Some("pko:ProcedureExecutionStatus"), // pending
-        "in_progress" => Some("pko:ProcedureExecutionStatus"),       // active
-        "review" => Some("pko:ProcedureExecutionStatus"),            // under review
-        "done" => Some("pko:ProcedureExecutionStatus"),              // completed
-        _ => None,
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -135,13 +125,4 @@ mod tests {
         assert!(kanban_type_to_pko("").is_none());
     }
 
-    #[test]
-    fn task_status_to_pko_all_statuses() {
-        for status in &["backlog", "ready", "in_progress", "review", "done"] {
-            assert!(
-                task_status_to_pko(status).is_some(),
-                "status '{status}' must map"
-            );
-        }
-    }
 }

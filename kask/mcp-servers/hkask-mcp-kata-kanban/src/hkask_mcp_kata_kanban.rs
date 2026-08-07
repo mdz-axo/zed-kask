@@ -117,7 +117,7 @@ impl KanbanServer {
                             },
                         )
                         .collect::<Result<Vec<_>, _>>(),
-                    None => Ok(default_columns()),
+                    None => Ok(crate::KanbanService::standard_columns()),
                 };
                 let cols = match column_defs {
                     Ok(c) => c,
@@ -196,14 +196,7 @@ impl KanbanServer {
             "kanban_board_delete",
             kanban_type_to_pko("kanban_board_delete"),
             async {
-                let bid = match board_id.parse::<hkask_types::BoardId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid board_id: {e}"
-                        )));
-                    }
-                };
+                let bid = parse_board_id(&board_id)?;
                 // Verify ownership before delete — only the board owner can
                 // delete it (P12).
                 let board = self
@@ -245,14 +238,7 @@ impl KanbanServer {
             "kanban_task_create",
             kanban_type_to_pko("kanban_task_create"),
             async {
-                let bid = match board_id.parse::<hkask_types::BoardId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid board_id: {e}"
-                        )));
-                    }
-                };
+                let bid = parse_board_id(&board_id)?;
                 let mut spec = TaskSpec::new(title);
                 if let Some(d) = description {
                     spec = spec.with_description(d);
@@ -294,14 +280,7 @@ impl KanbanServer {
             "kanban_task_list",
             kanban_type_to_pko("kanban_task_list"),
             async {
-                let bid = match board_id.parse::<hkask_types::BoardId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid board_id: {e}"
-                        )));
-                    }
-                };
+                let bid = parse_board_id(&board_id)?;
                 let filter = match status {
                     Some(s) => match crate::TaskStatus::parse_str(&s) {
                         Some(st) => TaskFilter::by_status(st),
@@ -353,14 +332,7 @@ impl KanbanServer {
             "kanban_task_move",
             kanban_type_to_pko("kanban_task_move"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 let previous_status = match self.service.task_get(tid) {
                     Ok(Some(t)) => t.status.to_string(),
                     Ok(None) => {
@@ -403,14 +375,7 @@ impl KanbanServer {
             "kanban_task_assign",
             kanban_type_to_pko("kanban_task_assign"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 match self.service.task_claim(tid, self.webid) {
                     Ok(task) => Ok(serde_json::to_value(TaskAssignResponse {
                         task_id: task.id.to_string(),
@@ -437,14 +402,7 @@ impl KanbanServer {
             "kanban_task_verify",
             kanban_type_to_pko("kanban_task_verify"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 if evidence.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("evidence must not be empty"));
                 }
@@ -476,14 +434,7 @@ impl KanbanServer {
             "kanban_task_add_gas",
             kanban_type_to_pko("kanban_task_add_gas"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 if amount == 0 {
                     return Err(McpToolError::invalid_argument("amount must be > 0"));
                 }
@@ -511,14 +462,7 @@ impl KanbanServer {
             "kanban_task_add_rjoules",
             kanban_type_to_pko("kanban_task_add_rjoules"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 if amount == 0 {
                     return Err(McpToolError::invalid_argument("amount must be > 0"));
                 }
@@ -549,14 +493,7 @@ impl KanbanServer {
             "kanban_task_comment",
             kanban_type_to_pko("kanban_task_comment"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 if body.trim().is_empty() {
                     return Err(McpToolError::invalid_argument(
                         "comment body must not be empty",
@@ -594,14 +531,7 @@ impl KanbanServer {
             "kanban_task_comments_since",
             kanban_type_to_pko("kanban_task_comments_since"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 match self.service.task_comments_since(tid, since_index) {
                     Ok(comments) => {
                         let total = comments.len() + since_index;
@@ -642,14 +572,7 @@ impl KanbanServer {
             "kanban_task_add_deliverable",
             kanban_type_to_pko("kanban_task_add_deliverable"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 if path.trim().is_empty() {
                     return Err(McpToolError::invalid_argument("path must not be empty"));
                 }
@@ -684,14 +607,7 @@ impl KanbanServer {
             "kanban_task_reopen",
             kanban_type_to_pko("kanban_task_reopen"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 self.service
                     .task_reopen(tid, self.webid)
                     .map_err(map_kanban_error)?;
@@ -737,14 +653,7 @@ impl KanbanServer {
             "kanban_task_kata_coaching",
             kanban_type_to_pko("kanban_task_kata_coaching"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 match self.service.task_coaching_prompt(tid) {
                     Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
                         task_id: tid.to_string(),
@@ -770,14 +679,7 @@ impl KanbanServer {
             "kanban_task_kata_improvement",
             kanban_type_to_pko("kanban_task_kata_improvement"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 match self.service.task_improvement_prompt(tid) {
                     Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
                         task_id: tid.to_string(),
@@ -806,14 +708,7 @@ impl KanbanServer {
             "kanban_task_kata_practice",
             kanban_type_to_pko("kanban_task_kata_practice"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 match self.service.task_practice_prompt(tid, &sub_problem) {
                     Ok(prompt) => Ok(serde_json::to_value(TaskKataResponse {
                         task_id: tid.to_string(),
@@ -848,14 +743,7 @@ impl KanbanServer {
             "kanban_task_spawn",
             kanban_type_to_pko("kanban_task_spawn"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 match delegation_level.as_str() {
                     "minimal" | "standard" | "maximal" => {}
                     other => {
@@ -931,10 +819,18 @@ impl KanbanServer {
                 // capped at the per-dispatch ceiling. The ceiling mirrors
                 // hkask-mcp-swarm (HKASK_ABW_MAX_CREDITS, default 50) — keep in
                 // sync with SwarmConfig::default().max_credits_per_dispatch.
-                let ceiling = std::env::var("HKASK_ABW_MAX_CREDITS")
-                    .ok()
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(50);
+                let ceiling = match std::env::var("HKASK_ABW_MAX_CREDITS") {
+                    Ok(raw) => match raw.parse::<u32>() {
+                        Ok(value) => value,
+                        Err(_) => {
+                            tracing::warn!(
+                                "HKASK_ABW_MAX_CREDITS='{raw}' is not a valid u32; falling back to 50"
+                            );
+                            50
+                        }
+                    },
+                    Err(_) => 50,
+                };
                 let credits_authorized = gas_budget
                     .map(|g| (g.min(u32::MAX as u64) as u32).min(ceiling))
                     .unwrap_or(10)
@@ -1034,14 +930,7 @@ impl KanbanServer {
             "kanban_task_delegate_result",
             kanban_type_to_pko("kanban_task_delegate_result"),
             async {
-                let tid = match task_id.parse::<hkask_types::TaskId>() {
-                    Ok(id) => id,
-                    Err(e) => {
-                        return Err(McpToolError::invalid_argument(format!(
-                            "invalid task_id: {e}"
-                        )));
-                    }
-                };
+                let tid = parse_task_id(&task_id)?;
                 let task = self
                     .service
                     .task_get(tid)
@@ -1086,10 +975,7 @@ impl KanbanServer {
         }): Parameters<ContractProposeExpect>,
     ) -> String {
         execute_tool_semantic(self, "contract_propose_expect", kanban_type_to_pko("contract_propose_expect"), async {
-            let bid = match board_id.parse::<hkask_types::BoardId>() {
-                Ok(id) => id,
-                Err(e) => return Err(McpToolError::invalid_argument(format!("invalid board_id: {e}"))),
-            };
+            let bid = parse_board_id(&board_id)?;
 
             let proposals: Vec<hkask_types::ExpectProposal> =
                 match serde_json::from_value(proposals.into_inner()) {
@@ -1138,6 +1024,23 @@ impl KanbanServer {
     }
 }
 
+/// Parse a task id string or return an `invalid_argument` MCP error.
+///
+/// Replaces the repeated `match task_id.parse::<hkask_types::TaskId>() { Ok(id) => id, Err(e) => return Err(McpToolError::invalid_argument(...)) }`
+/// block across the kanban tool methods.
+fn parse_task_id(task_id: &str) -> Result<hkask_types::TaskId, McpToolError> {
+    task_id.parse::<hkask_types::TaskId>().map_err(|e| {
+        McpToolError::invalid_argument(format!("invalid task_id: {e}"))
+    })
+}
+
+/// Parse a board id string or return an `invalid_argument` MCP error.
+fn parse_board_id(board_id: &str) -> Result<hkask_types::BoardId, McpToolError> {
+    board_id.parse::<hkask_types::BoardId>().map_err(|e| {
+        McpToolError::invalid_argument(format!("invalid board_id: {e}"))
+    })
+}
+
 /// Map a service-layer `KanbanError` to the correct `McpToolError` variant.
 ///
 /// Each `KanbanError` variant maps to a semantically appropriate MCP error kind
@@ -1159,9 +1062,6 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
     }
 }
 
-pub fn default_columns() -> Vec<crate::ColumnDef> {
-    crate::KanbanService::standard_columns()
-}
 
 /// Run the kanban MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {

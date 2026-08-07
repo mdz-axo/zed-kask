@@ -20,12 +20,7 @@ impl KanbanService {
     }
 
     pub fn task_set_phase(&self, task_id: TaskId, phase_id: PhaseId) -> Result<Task, KanbanError> {
-        let mut task = self.task_get(task_id)?.ok_or_else(|| {
-            KanbanError::NotFound(NotFound {
-                entity_type: "task".to_string(),
-                id: task_id.to_string(),
-            })
-        })?;
+        let mut task = self.require_task(task_id)?;
         task.phase_id = Some(phase_id);
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;
