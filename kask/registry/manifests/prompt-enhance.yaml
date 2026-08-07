@@ -255,13 +255,13 @@ steps:
     timeout_seconds: 15
     input_mapping:
       candidates:
-        - step_3_result
-        - step_4_result
-        - step_5_result
-        - step_6_result
-        - step_7_result
-        - step_8_result
-        - step_9_result
+        - "{{ step_3_result | default({}) }}"
+        - "{{ step_4_result | default({}) }}"
+        - "{{ step_5_result | default({}) }}"
+        - "{{ step_6_result | default({}) }}"
+        - "{{ step_7_result | default({}) }}"
+        - "{{ step_8_result | default({}) }}"
+        - "{{ step_9_result | default({}) }}"
 
   # ─── PHASE 4: VERIFY (medium/high only) ───
   # Decoupled grill-me critic. Tier-scaled rounds: 1 (Recall+Mechanism) at
@@ -376,7 +376,7 @@ steps:
       effort_tier: "{{ step_1_result.effort_tier }}"
       output_format_resolved: "{{ step_1_result.output_format_resolved }}"
       output_path_resolved: "{{ step_1_result.output_path_resolved }}"
-      phases_completed: "{{ phases_completed | default([]) }}"
+      phases_run: "{{ phases_completed | default([]) }}"
       audit_findings: "{{ step_2_result.findings | default([]) }}"
       grill_ratings: "{{ step_11_result.ratings | default([]) }}"
       mutations_applied: "{{ step_10_result.mutations_applied | default([]) }}"

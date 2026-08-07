@@ -167,61 +167,12 @@ impl RealMemoryPort {
         let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim)
             .map_err(|e| format!("Failed to create EmbeddingStore: {e}"))?;
-        // Resolve the per-agent storage budget. `HKASK_MEMORY_STORAGE_BUDGET`
-        // overrides the default (10_000); a malformed value warns and falls
-        // back to the default rather than silently disabling the budget (the
-        // `.rules` "Process-global hooks set at runtime need a startup-failure
-        // signal" trap — a numeric env var that fails to parse must warn).
-        let storage_budget = match std::env::var("HKASK_MEMORY_STORAGE_BUDGET") {
-            Ok(raw) => match raw.trim().parse::<usize>() {
-                Ok(budget) if budget > 0 => budget,
-                Ok(_zero) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        value = %raw,
-                        "HKASK_MEMORY_STORAGE_BUDGET must be > 0 — falling back to default 10_000"
-                    );
-                    hkask_memory::MemoryStore::default_storage_budget()
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        value = %raw,
-                        error = %e,
-                        "HKASK_MEMORY_STORAGE_BUDGET malformed — falling back to default 10_000"
-                    );
-                    hkask_memory::MemoryStore::default_storage_budget()
-                }
-            },
-            Err(_) => hkask_memory::MemoryStore::default_storage_budget(),
-        };
-        // Resolve the memory life (decay constant S in R(t) = exp(-t/S)).
-        // `HKASK_MEMORY_LIFE_DAYS` overrides the default (180); a malformed
-        // value warns and falls back to the default (same startup-failure-
-        // signal trap as the storage budget above).
-        let memory_life_days = match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
-            Ok(raw) => match raw.trim().parse::<f64>() {
-                Ok(days) if days >= 0.0 => days,
-                Ok(_negative) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        value = %raw,
-                        "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to default 180.0"
-                    );
-                    hkask_memory::MemoryStore::default_memory_life_days()
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.memory",
-                        value = %raw,
-                        error = %e,
-                        "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default 180.0"
-                    );
-                    hkask_memory::MemoryStore::default_memory_life_days()
-                }
-            },
-            Err(_) => hkask_memory::MemoryStore::default_memory_life_days(),
-        };
+        // Resolve the per-agent storage budget and memory life from env vars.
+        // The parsing is extracted into pure functions (`resolve_storage_budget`,
+        // `resolve_memory_life_days`) so proptests can exercise the
+        // parse/fallback/warn logic without constructing a full `RealMemoryPort`.
+        let storage_budget = resolve_storage_budget();
+        let memory_life_days = resolve_memory_life_days();
         // Wire the `reg.memory.encode` span sink: every `store()` persists a
         // span to the user's `pod.db` regulation archive. Without this the
         // span emitter in `MemoryStore::store` is dead code (the `.rules`
@@ -617,6 +568,80 @@ pub fn open_curator_regulation_archive(
 /// role, so an operator can distinguish "not configured" from "configured
 /// but broken" (the `.rules` "Process-global hooks set at runtime need a
 /// startup-failure signal" trap). The caller degrades to no span persistence.
+/// Parse a raw env-var value into a storage budget (`usize`), falling back
+/// to `MemoryStore::default_storage_budget()` on malformed/zero values.
+///
+/// A malformed or zero value warns (the `.rules` "Process-global hooks set at
+/// runtime need a startup-failure signal" trap). Extracted as a pure function
+/// of the raw string so proptests can exercise the parse/fallback logic
+/// without setting env vars or constructing a full `RealMemoryPort`.
+fn parse_storage_budget(raw: &str) -> usize {
+    match raw.trim().parse::<usize>() {
+        Ok(budget) if budget > 0 => budget,
+        Ok(_zero) => {
+            tracing::warn!(
+                target: "reg.memory",
+                value = %raw,
+                "HKASK_MEMORY_STORAGE_BUDGET must be > 0 — falling back to default 10_000"
+            );
+            hkask_memory::MemoryStore::default_storage_budget()
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                value = %raw,
+                error = %e,
+                "HKASK_MEMORY_STORAGE_BUDGET malformed — falling back to default 10_000"
+            );
+            hkask_memory::MemoryStore::default_storage_budget()
+        }
+    }
+}
+
+/// Resolve `HKASK_MEMORY_STORAGE_BUDGET` from the environment, falling back
+/// to the default when unset.
+fn resolve_storage_budget() -> usize {
+    match std::env::var("HKASK_MEMORY_STORAGE_BUDGET") {
+        Ok(raw) => parse_storage_budget(&raw),
+        Err(_) => hkask_memory::MemoryStore::default_storage_budget(),
+    }
+}
+
+/// Parse a raw env-var value into a memory life in days (`f64`), falling back
+/// to `MemoryStore::default_memory_life_days()` on malformed/negative values.
+/// Same startup-failure-signal trap as `parse_storage_budget`.
+fn parse_memory_life_days(raw: &str) -> f64 {
+    match raw.trim().parse::<f64>() {
+        Ok(days) if days >= 0.0 => days,
+        Ok(_negative) => {
+            tracing::warn!(
+                target: "reg.memory",
+                value = %raw,
+                "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to default 180.0"
+            );
+            hkask_memory::MemoryStore::default_memory_life_days()
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "reg.memory",
+                value = %raw,
+                error = %e,
+                "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default 180.0"
+            );
+            hkask_memory::MemoryStore::default_memory_life_days()
+        }
+    }
+}
+
+/// Resolve `HKASK_MEMORY_LIFE_DAYS` from the environment, falling back to the
+/// default when unset.
+fn resolve_memory_life_days() -> f64 {
+    match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
+        Ok(raw) => parse_memory_life_days(&raw),
+        Err(_) => hkask_memory::MemoryStore::default_memory_life_days(),
+    }
+}
+
 fn open_regulation_archive(
     db_path: &str,
     passphrase: &str,
@@ -2754,5 +2779,61 @@ mod tests {
         // call (the error path is covered by the queue's own tests).
         let sink = BridgeAlertEscalationSink::new(queue);
         sink.persist_alert("test", 0.5, "{}");
+    }
+
+    // ── Env var parsing proptests ─────────────────────────────────────────
+    //
+    // The `HKASK_MEMORY_STORAGE_BUDGET` and `HKASK_MEMORY_LIFE_DAYS` env vars
+    // are parsed by `parse_storage_budget` / `parse_memory_life_days`. The
+    // contract: any string that parses to a valid in-range value is accepted;
+    // any other string falls back to the default. These proptests exercise
+    // the full input space (arbitrary strings, arbitrary integers/floats) so
+    // a malformed value never panics and never silently disables the budget
+    // or decay (the `.rules` "Process-global hooks set at runtime need a
+    // startup-failure signal" trap).
+
+    use proptest::prop_assert_eq;
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config {
+            cases: 256,
+            ..proptest::test_runner::Config::default()
+        })]
+
+        /// Any string that parses to a positive `usize` is accepted verbatim;
+        /// any other string falls back to the default. The parser must never
+        /// panic on arbitrary input.
+        #[test]
+        fn prop_parse_storage_budget_accepts_positive_usize_falls_back_otherwise(
+            raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\- ]{0,32}").unwrap()
+        ) {
+            let result = parse_storage_budget(&raw);
+            match raw.trim().parse::<usize>() {
+                Ok(budget) if budget > 0 => {
+                    prop_assert_eq!(result, budget);
+                }
+                _ => {
+                    prop_assert_eq!(result, hkask_memory::MemoryStore::default_storage_budget());
+                }
+            }
+        }
+
+        /// Any string that parses to a non-negative `f64` is accepted verbatim;
+        /// any other string falls back to the default. The parser must never
+        /// panic on arbitrary input (including NaN, infinity, overflow).
+        #[test]
+        fn prop_parse_memory_life_days_accepts_nonneg_f64_falls_back_otherwise(
+            raw in proptest::string::string_regex(r"[0-9a-zA-Z.+\-eE ]{0,32}").unwrap()
+        ) {
+            let result = parse_memory_life_days(&raw);
+            match raw.trim().parse::<f64>() {
+                Ok(days) if days.is_finite() && days >= 0.0 => {
+                    prop_assert_eq!(result, days);
+                }
+                _ => {
+                    prop_assert_eq!(result, hkask_memory::MemoryStore::default_memory_life_days());
+                }
+            }
+        }
     }
 }

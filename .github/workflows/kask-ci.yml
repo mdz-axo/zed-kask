@@ -207,5 +207,28 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-machete
-      - name: Check for unused dependencies
+      - name: Check for unused dependencies (cargo-machete)
         run: cargo machete
+
+  # The nightly `unused_crate_dependencies` lint catches a class that
+  # `cargo machete` cannot: a dep in `[dependencies]` that the lib target
+  # never `use`s (e.g. `tokio` declared for the bin's `#[tokio::main]`
+  # but not used in the lib). Lib roots with a legitimate bin-needs-dep
+  # case carry `#![allow(unused_crate_dependencies)]` with an explanatory
+  # comment.
+  unused-deps-nightly:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/free-disk-space
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: kask-unused-deps-nightly-ubuntu-24.04
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install Linux dependencies
+        run: ./script/linux
+      - name: Check for unused crate dependencies (nightly lint, kask crates only)
+        run: cd kask && bash scripts/check-unused-deps.sh
