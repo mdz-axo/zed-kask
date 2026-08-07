@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
+// `tokio` is in [dependencies] for the bin target's `#[tokio::main]`; the lib
+// itself does not use it, so the unused_crate_dependencies lint fires on the
+// lib target. This is the legitimate bin-needs-dep case.
+#![allow(unused_crate_dependencies)]
 //! hKask MCP Scenarios — domain-agnostic scenario planning server.
 //!
 //! Event-tree forecasting with conditional dependencies (MAIA methodology).
@@ -1712,7 +1716,7 @@ impl ScenariosServer {
                             created_at: now,
                             outcome: None,
                             resolved_at: None,
-                            category: None,
+                            category: Some(event.scenario_type.as_str().to_string()),
                         });
                     }
                     if let Some((_, occurred)) = event_outcome
@@ -2280,6 +2284,55 @@ mod tests {
         assert!(
             response.contains("at least one scenario event"),
             "empty events must be refused with a clear message, got: {response}"
+        );
+    }
+
+    #[tokio::test]
+    async fn scenario_score_populates_category_for_per_domain_calibration() {
+        // B1: `scenario_score` previously wrote `category: None` on every
+        // `StoredForecastRecord`, so `resolved_by_category` always returned
+        // empty and `domain_bias_delta` was permanently 0.0 — the entire
+        // per-domain calibration subsystem (~90 LOC in superforecast.rs) was
+        // unreachable. This test pins that the stored record carries the
+        // event's `scenario_type` as its category and that ≥5 same-category
+        // resolutions produce a non-zero δ.
+        let server = empty_server();
+
+        // 6 underconfident forecasts: p=0.3, all occurred (outcome=true).
+        // bias = expected − hit_rate = 0.3 − 1.0 = −0.7 (underconfident) → δ > 0.
+        let events_json = (0..6)
+            .map(|i| {
+                format!(
+                    r#"{{"id":"evt-{i}","name":"Event {i}","question":"Will {i} occur?","deadline":"2026-12-31","time_horizon":"strategic","scenario_type":"company_analysis","subject":"TEST","probability":0.3,"basis":null,"depends_on":[],"sub_questions":[],"base_rate":null,"reference_class":null,"brier_score":null,"update_count":0}}"#
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let outcomes_json = (0..6)
+            .map(|i| format!(r#"{{"event_id":"evt-{i}","occurred":true}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let _response = server
+            .scenario_score(Parameters(ScoreRequest {
+                forecast_id: "fcst-1".to_string(),
+                events: format!["[{events_json}]"],
+                outcomes: format!["[{outcomes_json}]"],
+            }))
+            .await;
+
+        let store = server.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+        // Every stored record must carry the scenario_type as its category.
+        assert!(
+            store.records.values().all(|r| r.category.as_deref() == Some("company_analysis")),
+            "scenario_score must populate category from scenario_type; got: {:?}",
+            store.records.values().map(|r| &r.category).collect::<Vec<_>>()
+        );
+        // ≥5 same-category resolved forecasts must yield a non-zero δ.
+        let delta = superforecast::domain_bias_delta(Some(&store), "company_analysis");
+        assert!(
+            delta > 0.0,
+            "underconfident domain with 6 resolved forecasts must get δ > 0, got {delta}"
         );
     }
 }

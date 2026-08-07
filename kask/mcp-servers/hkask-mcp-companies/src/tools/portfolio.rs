@@ -322,7 +322,7 @@ impl CompaniesServer {
                     },
                     "provenance": {
                         "tool": "portfolio_returns",
-                        "server": "hkask-mcp-portfolio",
+                        "server": "hkask-mcp-companies",
                         "args": provenance_args,
                         "span_id": provenance_span_id,
                     },
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(tool, "portfolio_returns");
         assert_eq!(
             provenance.get("server").and_then(|s| s.as_str()),
-            Some("hkask-mcp-portfolio")
+            Some("hkask-mcp-companies")
         );
         // args carries the request the tool was invoked with.
         assert_eq!(provenance["args"]["from"].as_str(), Some("2024-01-03"));

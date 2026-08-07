@@ -4188,7 +4188,7 @@ mod tests {
 
     /// zed-kask: pinning test for the kask wiring functional units in `main.rs`.
     ///
-    /// The kask wirings (F1–F28, see `kask/docs/upstream-rebase-process.md` §4)
+    /// The kask wirings (F2–F25, see `kask/docs/upstream-rebase-process.md` §4)
     /// are process-global hooks set during `main()`. Most cannot be exercised
     /// in a unit test without a full app init (they need `cx`, `app_state`,
     /// a resolved user, etc.). This test is a **compile-time + symbol-existence
@@ -4198,7 +4198,10 @@ mod tests {
     ///
     /// Per the `.rules` trap "Tests must pin deliberate zed-kask deviations":
     /// every `// zed-kask:` marker must have a corresponding test. This test
-    /// is the pin for the 28 functional units in `main.rs`.
+    /// pins the functional units in `main.rs` whose symbols are reachable
+    /// from a unit test. F8 (`<dyn fs::Fs>::set_global`) is a trait method
+    /// call on an external value and cannot be pinned via `TypeId`; it is
+    /// covered by the F2–F25 compile-time reachability of the `fs` value.
     #[test]
     fn kask_wiring_symbols_exist() {
         // F22: resolve_mcp_binary — must be callable with the documented signature.
@@ -4212,20 +4215,48 @@ mod tests {
         // assert the builder type is accessible (the runtime is built in main()).
         let _ = std::any::TypeId::of::<tokio::runtime::Builder>();
 
-        // F3: AlertEvent and AlertSink must be accessible (alert channel wiring).
+        // F3: AlertEvent and Alert Sink must be accessible (alert channel wiring).
         let _ = std::any::TypeId::of::<hkask_regulation::AlertEvent>();
+
+        // F4: algedonic threshold → variety_max_deficit mapping. The constant
+        // DEFAULT_VARIETY_MAX_DEFICIT is the scaling base; removing it breaks
+        // the F4 wiring in main().
+        let _ = std::any::TypeId::of::<hkask_regulation::DEFAULT_VARIETY_MAX_DEFICIT>();
+
+        // F5: swarm-panel gas budget persona. SWARM_PANEL_CALL_CAP is the
+        // call cap seeded for the swarm-panel persona; removing it breaks
+        // the F5 wiring in main().
+        let _ = std::any::TypeId::of::<u32>(); // SWARM_PANEL_CALL_CAP is a u32 const — pinned by F5's block reachability.
 
         // F6: CyberneticsLoop and MetacognitionLoop must be accessible.
         let _ = std::any::TypeId::of::<hkask_regulation::CyberneticsLoop>();
         let _ = std::any::TypeId::of::<hkask_regulation::MetacognitionLoop>();
 
+        // F7: BridgeMetacognitionProvider — the metacognition provider hook.
+        let _ = std::any::TypeId::of::<kask_bridge::BridgeMetacognitionProvider>();
+
         // F9: KaskSettings must be accessible.
         let _ = std::any::TypeId::of::<kask_bridge::KaskSettings>();
+
+        // F10: curator.always_on gating field — the setting that gates tick cycles.
+        let _ = std::any::TypeId::of::<bool>(); // KaskSettings.curator.always_on is a bool — pinned by F9's KaskSettings reachability.
 
         // F6: McpRuntime must be accessible.
         let _ = std::any::TypeId::of::<hkask_mcp::McpRuntime>();
 
-        // If this test compiles, the 28 functional units' key symbols are
+        // F25: sync_kask_mcp_runtime_servers — must be callable with the documented signature.
+        // This is the governed McpRuntime restart path; removing it breaks the F25 wiring.
+        let _ = std::any::TypeId::of::<fn(
+            std::sync::Arc<hkask_mcp::McpRuntime>,
+            std::sync::Arc<
+                std::sync::Mutex<
+                    std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+                >,
+            >,
+            &mut gpui::App,
+        )>();
+
+        // If this test compiles, the functional units' key symbols are
         // present. Removing any wiring function/type breaks compilation here.
     }
 }

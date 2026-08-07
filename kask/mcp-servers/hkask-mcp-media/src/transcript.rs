@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::visibility::Confidence;
+use hkask_types::Confidence;
 
 /// A single timed word in a transcript.
 #[derive(Debug, Clone, Serialize, Deserialize)]

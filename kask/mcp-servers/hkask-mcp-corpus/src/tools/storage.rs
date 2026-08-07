@@ -263,7 +263,17 @@ impl CorpusServer {
                 McpToolError::failed_precondition(format!("Cannot open memory DB: {e}"))
             })?;
 
-            let embeddings_before = store.embedding_count().unwrap_or(0);
+            let embeddings_before = match store.embedding_count() {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.corpus",
+                        error = %e,
+                        "Failed to read embedding_count before purge — returning 0 (signal stale)"
+                    );
+                    0
+                }
+            };
 
             // Purge embeddings with matching entity_ref prefix
             let purged_embeddings = store
@@ -300,7 +310,17 @@ impl CorpusServer {
                 }
             }
 
-            let embeddings_after = store.embedding_count().unwrap_or(0);
+            let embeddings_after = match store.embedding_count() {
+                Ok(n) => n,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.corpus",
+                        error = %e,
+                        "Failed to read embedding_count after purge — returning 0 (signal stale)"
+                    );
+                    0
+                }
+            };
 
             let result = json!({
                 "prefix": req.prefix,

@@ -184,6 +184,20 @@ pub enum ScenarioType {
     EconomicPotential,
 }
 
+impl ScenarioType {
+    /// Snake-case category label matching the serde serialization, used as
+    /// the `category` on `StoredForecastRecord` so per-domain calibration
+    /// (`domain_bias_delta`) can group resolved forecasts by scenario type.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CompanyUpdate => "company_update",
+            Self::CompanyAnalysis => "company_analysis",
+            Self::EmergingEconomic => "emerging_economic",
+            Self::EconomicPotential => "economic_potential",
+        }
+    }
+}
+
 // ── Certainty tiers (MAIA three-level system) ──────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

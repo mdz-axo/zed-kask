@@ -2,7 +2,7 @@
 
 use hkask_types::NotFound;
 use hkask_types::WebID;
-use hkask_types::keychain_keys::KEY_DB_PASSPHRASE;
+use crate::keychain_keys::KEY_DB_PASSPHRASE;
 use hkask_types::secret::SecretRef;
 use keyring::{Entry, Error as KeyringError};
 use thiserror::Error;

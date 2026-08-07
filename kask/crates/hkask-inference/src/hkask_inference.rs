@@ -12,7 +12,6 @@
 //! - `ProviderId` — provider routing enum used by the training adapter router.
 
 // Used via derive macros (serde/thiserror/async_trait) — invisible to unused_crate_dependencies lint
-#![allow(unused_crate_dependencies)]
 //!
 //! # Architecture
 //!

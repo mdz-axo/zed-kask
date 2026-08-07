@@ -1,6 +1,5 @@
 //! Stage-2 contract fetch — fetch contracts per matched event only.
 
-#![allow(unused_crate_dependencies)]
 
 use hkask_mcp_prediction_markets::economic_object::BaseEconomicObject;
 use hkask_mcp_prediction_markets::provider_kalshi::KalshiMarket;

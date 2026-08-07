@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
+// `tokio` is in [dependencies] for the bin target's `#[tokio::main]`; the lib
+// itself does not use it, so the unused_crate_dependencies lint fires on the
+// lib target. This is the legitimate bin-needs-dep case.
+#![allow(unused_crate_dependencies)]
 //! hKask MCP Condenser — Context condensation for tool outputs
 //!
 //! Loop: Episodic (Loop 2) — Confirmed. Context condensation operates on the active
@@ -22,7 +26,6 @@
 //! HTTP client or inference URL configuration is needed — the router handles
 //! provider dispatch (DeepInfra, OpenRouter) automatically.
 
-#![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 

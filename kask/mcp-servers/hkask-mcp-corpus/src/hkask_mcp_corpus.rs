@@ -24,7 +24,6 @@
 //! Helpers in helpers.rs (math/text); LLM JSON parsing comes from
 //! `hkask_types::json_extract` (re-exported below).
 
-#![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 mod backend;
 pub mod batch;

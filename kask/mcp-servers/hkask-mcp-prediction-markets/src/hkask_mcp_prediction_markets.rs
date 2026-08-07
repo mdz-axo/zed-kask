@@ -1,4 +1,9 @@
 #![forbid(unsafe_code)]
+// `tokio` and `anyhow` are in [dependencies] for the bin targets' `#[tokio::main]`
+// and `anyhow::Result` in `src/bin/fetch_contracts.rs`; the lib itself does not
+// use them, so the unused_crate_dependencies lint fires on the lib target.
+// This is the legitimate bin-needs-dep case.
+#![allow(unused_crate_dependencies)]
 //! Prediction-markets data-service MCP server.
 //!
 //! Read-only annotated feed of market-implied probabilities from Polymarket

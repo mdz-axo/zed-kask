@@ -68,7 +68,6 @@
 //! - `HKASK_PODS_FILE` — Path to RunPod pod ID persistence file (default: data/training-pods.json)
 //!   Ensures pod IDs survive restarts so orphaned pods can be terminated.
 
-#![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 pub mod adapter;
 pub mod adapters;

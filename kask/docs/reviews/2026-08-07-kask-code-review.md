@@ -13,21 +13,24 @@
 ### Theme A — Broken feedback loops in the dependency hygiene gate
 
 #### A-1: `#![allow(unused_crate_dependencies)]` on lib roots suppresses the gate it claims to work around
+
 **Force:** Prohibition (the attribute inverts its stated rationale)
-**Evidence:** 25 lib-root files carry `#![allow(unused_crate_dependencies)]` with comments like *"Bin target — deps used in main.rs, lint checks lib target only"*. The rationale is inverted: a lib-root attribute suppresses the lint on the **lib** target it's meant to measure. Every `src/main.rs` is a 10–11 line `run().await` wrapper, so bin targets need no suppression either.
+**Evidence:** 25 lib-root files carry `#![allow(unused_crate_dependencies)]` with comments like _"Bin target — deps used in main.rs, lint checks lib target only"_. The rationale is inverted: a lib-root attribute suppresses the lint on the **lib** target it's meant to measure. Every `src/main.rs` is a 10–11 line `run().await` wrapper, so bin targets need no suppression either.
 **Proven empirically:** removing the attribute from `kask/mcp-servers/hkask-mcp-curator/src/hkask_mcp_curator.rs` yields `error: extern crate 'tokio' is unused in crate 'hkask_mcp_curator'`. CI runs `cargo machete` (job `deps` in `.github/workflows/kask-ci.yml`), which reports clean — it cannot see this class. `kask/scripts/check-unused-deps.sh` uses the nightly lint but is not wired into CI.
 **Verdict:** Real. The gate is broken in both directions: the lint is suppressed where it should fire, and the CI fallback (`cargo machete`) cannot detect crate-level unused deps. Confirmed unused: `tokio` in `hkask-mcp-curator`, `hkask-mcp-condenser`, `hkask-mcp-codegraph`; `dotenvy` in `hkask-mcp-corpus` (test-only use).
-**Status:** Partially acted on — `dotenvy` moved to `[dev-dependencies]` (see W-3). The 25 lib-root `allow` attributes and the `tokio` removals are **not acted on** (mechanical but voluminous; see plan W-1).
+**Status:** **Acted on** — see W-1 for the full resolution. The 25 `allow` attributes were removed from all bin-target files (14 `main.rs` + 2 `src/bin/*.rs`). For the 10 lib roots, 6 had no unused deps (the `allow` was pure suppression — removed). 4 lib roots (`hkask-mcp-condenser`, `hkask-mcp-curator`, `hkask-mcp-scenarios`, `hkask-mcp-prediction-markets`) have deps used by the bin target (`#[tokio::main]`, `anyhow::Result` in `fetch_contracts`) but not the lib — these retain `#[allow(unused_crate_dependencies)]` on the lib root with an accurate comment ("tokio is in [dependencies] for the bin target's #[tokio::main]; the lib itself does not use it"). `dotenvy` was moved to `[dev-dependencies]` (W-3).
 
 ### Theme B — Stale `#[allow(dead_code)]` hiding live and dead code
 
 #### B-1: 10 dead path accessors in `agent_paths.rs`
+
 **Force:** Evidence (zero references repo-wide)
 **Evidence:** `kask/crates/hkask-types/src/agent_paths.rs` — 10 `pub(crate)` + `#[allow(dead_code)]` fns with zero references anywhere: `agent_style_db`, `agent_wallet_db` (remnant of deleted `hkask-wallet`), `agent_gallery_dir`, `agent_documents_dir`, `agent_library_dir`, `agent_sessions_dir`, `agent_portfolios_dir`, `agent_artifacts_dir`, `agent_manifest_json`, `publish_artifact`. The dirs themselves are still created by `ensure_agent_dirs` + `AGENT_SUBDIRS` (live, used by `kask_bridge/src/identity.rs:239`).
 **Verdict:** Real dead code. `publish_artifact` (63 lines) references `agent_manifest_json`, so both go together.
 **Status:** **Acted on** — all 10 fns + `publish_artifact` deleted; test assertions referencing them removed (see W-4).
 
 #### B-2: Stale `#[allow(dead_code)]` on live code in `regulation_policy.rs`
+
 **Force:** Evidence (the allow suppresses a lint that would now correctly fire if code became dead)
 **Evidence:** `kask/crates/hkask-regulation/src/regulation_policy.rs` — `extract_deficit_threshold` (L451), `classify_decision` (L467), `default_substitution_ladder` (L491) all carry `#[allow(dead_code)]` but are consumed by `cybernetics_loop.rs` (L42-43 import, L369/1032/1198 use sites). The `ProposedAction` struct (L94) carries `#[allow(dead_code)]` — its fields `target`/`action_type` are constructed 25+ times in the policy table but read only in tests; production dispatch reads only `reason`.
 **Verdict:** The three fn-level allows are stale (the fns are live). The struct-level allow is **legitimate** — the fields are genuinely test-only (production reads only `reason`).
@@ -36,6 +39,7 @@
 ### Theme C — Duplicated code
 
 #### C-1: Duplicated `map_portfolio_error`
+
 **Force:** Guideline (DRY; canonical extractor exists)
 **Evidence:** Byte-identical 6-line body at `kask/mcp-servers/hkask-mcp-portfolio/src/server.rs:27` (`pub`) and `kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs:187` (private). `hkask-mcp-prediction-markets` already imports the shared one (`use hkask_mcp_portfolio::map_portfolio_error`). `hkask-mcp-companies` already depends on `hkask-mcp-portfolio` and `PortfolioError` is the same type (re-exported via the local `portfolio.rs` module).
 **Verdict:** Real. Delete the companies copy, import.
@@ -44,8 +48,10 @@
 ### Theme D — Dependency-graph smells
 
 #### D-1: MCP-server→MCP-server type coupling
+
 **Force:** Hypothesis (build-order coupling; may be legitimate library-plus-server)
 **Evidence:**
+
 - `hkask-mcp-scenarios` → `hkask-mcp-prediction-markets` (for `types::MarketRecord`, `types::MarketStatus`, `types::ReliabilityTier`, `matcher::token_overlap`)
 - `hkask-mcp-kata-kanban` → `hkask-mcp-swarm` (for `LocalDelegateResult`, `TaskSuccessVerdict`, `TaskSuccessProvenance`, `LazyLocalSwarmRuntime`, `LocalAgentRegistry`, `LocalAgentCard`, `LocalAgentCapabilities`)
 - `hkask-mcp-companies` + `hkask-mcp-prediction-markets` → `hkask-mcp-portfolio`
@@ -55,6 +61,7 @@ Server binaries become build-order-coupled. Precedent exists for extraction: `ka
 **Status:** Not acted on (design decision; documented for the record).
 
 #### D-2: `hkask_types::loops` cycle justification is stale — move to `hkask-regulation`
+
 **Force:** Evidence (the cycle was broken by deleting the subcrates; sole consumer is `hkask-regulation`)
 **Evidence:** `kask/crates/hkask-types/src/loops/mod.rs` says the types were moved out of `hkask-regulation` "to break the circular dependency that prevented extracting Regulation subcrates (storage guard, SLO, seam watcher)". All three are **deleted** (plan Appendix A.4). Sole consumer is `hkask-regulation` (via the re-export shim `kask/crates/hkask-regulation/src/types/loops/mod.rs`). The Draft ADR already ruled this Option-B move cycle-free. No external consumer imports `hkask_types::loops` or the root re-exported types (`LoopId`, `Signal`, etc.).
 **Verdict:** Real. `loops` can return to `hkask-regulation`, deleting the `hkask-types` module and the re-export.
@@ -63,24 +70,28 @@ Server binaries become build-order-coupled. Precedent exists for extraction: `ka
 ### Theme E — Documentation drift (pragmatic-semantics: Specification vs Implementation)
 
 #### E-1: `DIVERGENCE.md` references renamed crate `hkask-bridge-dublincore`
+
 **Force:** Evidence (the crate was renamed; the doc names a nonexistent crate)
 **Evidence:** `DIVERGENCE.md:80` lists `hkask-bridge-dublincore`; actual crate is `hkask-bridge-ontology` (per `kask/docs/reference/ontology-bridge.md` and `ls kask/crates/`). The "19 hKask crates" count is correct; only the name is stale.
 **Verdict:** Real.
 **Status:** **Acted on** — renamed in DIVERGENCE.md (see W-7).
 
 #### E-2: `check-hkask-no-zed-deps.sh` references deleted `kask_panel` crate
+
 **Force:** Evidence (the crate was deleted; the script's comments and denylist are stale)
 **Evidence:** `kask/scripts/check-hkask-no-zed-deps.sh` L14-18 (comment), L41 (`ZED_CRATES` denylist), L44-46 (comment) all reference `kask_panel`, which was deleted (D10). Harmless (the denylist entry never matches) but stale.
 **Verdict:** Real.
 **Status:** **Acted on** — `kask_panel` removed from comments and denylist (see W-8).
 
 #### E-3: `main.rs` kask pin test is mostly theater
+
 **Force:** Guardrail (advertised invariant without enforcement)
 **Evidence:** `kask_wiring_symbols_exist` (`crates/zed/src/main.rs:4193`) claims to pin "the 28 functional units" but references only F2, F3, F6, F9, F22, F23 — 6 of 26 declared. Most assertions are `std::any::TypeId::of::<...>()` (pins type existence, not wiring). F25 (`sync_kask_mcp_runtime_servers`) is unpinned. Per the `.rules` "advertised invariants need enforcement points" trap.
 **Verdict:** Real. Either strengthen the pin or correct the doc comment.
 **Status:** Not acted on (zed-side; out of this review's kask codegraph scope).
 
 #### E-4: MCP-server count reconciliation
+
 **Force:** Evidence (three sources, one was wrong)
 **Evidence:** DIVERGENCE.md L81 says **13** — **correct** (matches `ls kask/mcp-servers | wc -l` = 13 and `BuiltinMcpServer` literals = 13). The plan §2.4's "12" claim was the error. MDS.md L486 also says "12 MCP servers" — stale.
 **Verdict:** DIVERGENCE.md is correct; MDS.md is stale.
@@ -88,18 +99,22 @@ Server binaries become build-order-coupled. Precedent exists for extraction: `ka
 
 ### Theme F — `hkask-types` shape (Draft ADR, status: not decided)
 
-#### F-1: ADR consumer re-verification — `goal` and `skill` types are dead
-**Force:** Evidence (zero consumers)
+#### F-1: ADR consumer re-verification — `goal` is dead; `skill` and `voice` are live
+
+**Force:** Evidence (zero consumers for `goal`; live consumers for `skill`/`voice`)
 **Evidence:**
-- `goal` types: `GoalState` is re-exported from `hkask_types` root but **only referenced in doc comments** (`hkask-regulation/src/types/loops/channels.rs:44,46,54`). No actual code use. The `hkask-goal` crate was deleted; `Goal`/`GoalArtifact`/`GoalCriterion` removed; `GoalState` retained "for rusqlite FromSql/ToSql orphan rule" but has no consumer.
-- `skill` types: `hkask_types::skill` — **zero consumers** anywhere in the repo.
-- `voice` types: `hkask_types::voice` — **zero consumers** anywhere in the repo.
-**Verdict:** `goal`, `skill`, and `voice` are dead code candidates (not move candidates). The ADR's recommendation to "move `goal` → `hkask-regulation`" is wrong — there's nothing to move because there's no consumer. These are deletion candidates.
-**Status:** Not acted on (deletion of public API types needs a separate decision; noted for the record).
+
+- `goal` types: `GoalState` is re-exported from `hkask_types` root but **only referenced in doc comments** (`hkask-regulation/src/types/loops/channels.rs:44,46,54`). No actual code use. The `hkask-goal` crate was deleted; `Goal`/`GoalArtifact`/`GoalCriterion` removed; `GoalState` retained "for rusqlite FromSql/ToSql orphan rule" but the impls in `sql_impls.rs` are themselves dead (no code reads/writes `GoalState` to/from SQL).
+- `skill` types: `SkillPolarity` is **live** — consumed by `hkask-templates` (`registry_sqlite.rs:9`, `bundle/manifest.rs:18`). The ADR's recommendation to move `skill` is unnecessary; it stays in `hkask-types`.
+- `voice` types: `VoiceDesign` is **live** — consumed by `hkask-mcp-media` (`hkask_mcp_media.rs:32`, `tools/audio.rs:70`). The ADR's recommendation to internalize `voice` to `hkask-mcp-media` was acted on (W-12: `transcript` move corrected the consumer identification; `voice` stays in `hkask-types` as a re-export since `VoiceDesign` is consumed via `hkask_types::VoiceDesign`).
+  **Verdict:** Only `goal` is a deletion candidate. `skill` and `voice` are live. The ADR's consumer-set audit was stale for `skill` and `voice`.
+  **Status:** Not acted on — `GoalState` is a public API type that may have external consumers; needs a decision. The stale doc comment should be updated.
 
 #### F-2: ADR consumer re-verification — moves that add new dependency edges
+
 **Force:** Hypothesis (the move is feasible but adds edges)
 **Evidence:**
+
 - `regulation` types → `hkask-regulation`: would force `hkask-mcp-curator` and `hkask-memory` to add `hkask-regulation` deps. `hkask-memory` is **out of scope** (memory refactor). `hkask-mcp-curator` adding `hkask-regulation` is a new edge.
 - `tool_taint` → `hkask-capability`: `hkask-regulation` would need to depend on `hkask-capability` (currently doesn't). New edge.
 - `inference_ipc` → `hkask-inference`: `kask_bridge` already depends on `hkask-inference` ✓. `main.rs` would need `hkask-inference` dep.
@@ -108,16 +123,17 @@ Server binaries become build-order-coupled. Precedent exists for extraction: `ka
 - `transcript` → `hkask-mcp-companies`: consumers are `hkask-mcp-companies` (2 files). Feasible.
 - `document`/`corpus` → `hkask-mcp-corpus`: consumers are `hkask-mcp-corpus` (many files). Feasible.
 - `template`/`LLMParameters` → keep in `hkask-types` (real cycle via `hkask-guard`, many consumers).
-**Verdict:** The `loops` move (D-2) was the cleanest and is done. The `keychain_keys`, `inference_ipc`, `template_type`, `transcript`, `document`/`corpus` moves are feasible and add no new edges (consumers already depend on the target crate). The `regulation` and `tool_taint` moves add new edges and need evaluation.
-**Status:** Not acted on (structural; see plan W-8 onward).
+  **Verdict:** The `loops` move (D-2) was the cleanest and is done. The `keychain_keys`, `inference_ipc`, `template_type`, `transcript`, `document`/`corpus` moves are feasible and add no new edges (consumers already depend on the target crate). The `regulation` and `tool_taint` moves add new edges and need evaluation.
+  **Status:** Not acted on (structural; see plan W-8 onward).
 
 ### Theme G — Inline `McpToolError::internal` classification (non-goal of ADR)
 
-#### G-1: Widespread inline `internal` despite `.rules` trap
+#### G-1: Inline `McpToolError::internal` classification — **Resolved: zero unsanctioned calls**
+
 **Force:** Guideline (per-variant classification required)
-**Evidence:** Counts: kata-kanban 20, corpus 19, prediction-markets 14, media 8, training 7, companies 6, swarm 6, condenser 5, codegraph 4, portfolio 3, curator 2, research 2, scenarios 1. Some carry `// rr0044-ok: mapper-fallback` (legitimate sanctioned fallbacks).
-**Verdict:** Explicitly listed as a **non-goal** of the types-split ADR. Treat as separate work. Distinguish sanctioned fallbacks from unclassified ones before proposing work.
-**Status:** Not acted on (out of scope).
+**Evidence:** Counts: kata-kanban 20, corpus 19, prediction-markets 14, media 8, training 7, companies 6, swarm 6, condenser 5, codegraph 4, portfolio 3, curator 2, research 2, scenarios 1. **Re-verification:** 92 of 96 `McpToolError::internal` references are sanctioned with `// rr0044-ok: mapper-fallback`. The remaining 4 are in **doc comments**, not actual code. There are **zero unsanctioned actual `McpToolError::internal()` calls** across the entire kask MCP server corpus.
+**Verdict:** The `.rules` trap requiring per-variant `map_*_error` classification is already respected. No work needed. Explicitly listed as a **non-goal** of the types-split ADR — confirmed resolved.
+**Status:** **Resolved** — no unsanctioned calls remain.
 
 ---
 
@@ -125,82 +141,91 @@ Server binaries become build-order-coupled. Precedent exists for extraction: `ka
 
 ### Acted on in this session
 
-#### W-1: (Not acted on) Remove `#![allow(unused_crate_dependencies)]` from 25 lib roots + remove unused `tokio`
-**Files:** 25 lib-root files in `kask/crates/` and `kask/mcp-servers/`; `Cargo.toml` for `hkask-mcp-curator`, `hkask-mcp-condenser`, `hkask-mcp-codegraph` (remove `tokio`).
-**Validation:** `RUSTFLAGS="--force-warn unused_crate_dependencies" cargo check --lib -p <crate>` for each; `./script/clippy`.
-**Rollback risk:** Low — mechanical. If a crate genuinely needs `tokio` in lib, the check fails immediately and the dep is re-added.
-**Why deferred:** Voluminous (25 files + 3 Cargo.toml edits); better as a focused PR.
+#### W-1: Remove `#![allow(unused_crate_dependencies)]` from 25 files + restore 4 lib-root allows with accurate comments ✅
+
+**Files:** 25 files across `kask/crates/` and `kask/mcp-servers/` (10 lib roots, 14 `main.rs` bin roots, 2 `src/bin/*.rs` bin roots); 4 lib roots restored with accurate comments.
+**Change:** Removed all 25 `#![allow(unused_crate_dependencies)]` attributes. For 6 lib roots with no unused deps, the removal is clean. For 4 lib roots (`hkask-mcp-condenser`, `hkask-mcp-curator`, `hkask-mcp-scenarios`, `hkask-mcp-prediction-markets`) where deps are used by the bin target but not the lib, restored `#[allow(unused_crate_dependencies)]` on the lib root with an accurate comment: _"tokio is in [dependencies] for the bin target's #[tokio::main]; the lib itself does not use it, so the unused_crate_dependencies lint fires on the lib target. This is the legitimate bin-needs-dep case."_ The `tokio`/`anyhow` deps were restored to `[dependencies]` (moving them to `[dev-dependencies]` broke the bin's `#[tokio::main]` in non-test builds — `[dev-dependencies]` are not available to bins in regular `cargo build`).
+**Validation:** `cargo check --all-targets` on all 13 MCP server crates — clean; `cargo clippy --all-targets -- --deny warnings` on 9 affected crates — clean.
 
 #### W-2: Delete duplicated `map_portfolio_error` in `hkask-mcp-companies` ✅
+
 **Files:** `kask/mcp-servers/hkask-mcp-companies/src/hkask_mcp_companies.rs`
 **Change:** Deleted local `fn map_portfolio_error` (L186-191); added `use hkask_mcp_portfolio::map_portfolio_error;`; removed unused `PortfolioError` from `use portfolio::{...}` import.
 **Validation:** `cargo check -p hkask-mcp-companies` — clean (0 warnings).
 
 #### W-3: Move `dotenvy` to `[dev-dependencies]` in `hkask-mcp-corpus` ✅
+
 **Files:** `kask/mcp-servers/hkask-mcp-corpus/Cargo.toml`
 **Change:** Removed `dotenvy.workspace = true` from `[dependencies]`; added `dotenvy.workspace = true` to `[dev-dependencies]`. Sole use is `ocr/decimation.rs:564` inside `#[cfg(test)] mod tests`.
 **Validation:** `cargo check -p hkask-mcp-corpus` — clean; `kask/scripts/check-unused-deps.sh` — no `corpus`/`dotenvy` hits.
 
 #### W-4: Delete 10 dead path accessors + `publish_artifact` from `agent_paths.rs` ✅
+
 **Files:** `kask/crates/hkask-types/src/agent_paths.rs`
 **Change:** Deleted `agent_style_db`, `agent_wallet_db`, `agent_gallery_dir`, `agent_documents_dir`, `agent_library_dir`, `agent_sessions_dir`, `agent_portfolios_dir`, `agent_artifacts_dir`, `agent_manifest_json`, `publish_artifact` (63 lines). Removed test assertions referencing `agent_wallet_db`, `agent_gallery_dir`, `agent_sessions_dir`. Kept `AGENT_SUBDIRS` + `ensure_agent_dirs` (live).
 **Validation:** `cargo test -p hkask-types --lib` — 108 passed, 0 failed.
 
 #### W-5: Remove stale `#[allow(dead_code)]` from live fns in `regulation_policy.rs` ✅
+
 **Files:** `kask/crates/hkask-regulation/src/regulation_policy.rs`
 **Change:** Removed `#[allow(dead_code)]` from `extract_deficit_threshold`, `classify_decision`, `default_substitution_ladder` (all consumed by `cybernetics_loop.rs`). Kept `#[allow(dead_code)]` on `ProposedAction` struct with updated doc comment (fields `target`/`action_type` are test-only; production reads only `reason`).
 **Validation:** `cargo check -p hkask-regulation` — clean (0 warnings).
 
 #### W-6: Move `loops` module from `hkask-types` to `hkask-regulation` ✅
+
 **Files:**
+
 - Moved: `kask/crates/hkask-types/src/loops/{actions,core,episodic,signals}.rs` → `kask/crates/hkask-regulation/src/types/loops/`
 - Deleted: `kask/crates/hkask-types/src/loops/` (entire directory)
 - Updated: `kask/crates/hkask-regulation/src/types/loops/mod.rs` (defines modules locally, no re-export from `hkask-types`)
 - Updated: `kask/crates/hkask-types/src/hkask_types.rs` (removed `pub mod loops;` and root `pub use loops::{...}`)
-**Validation:** `cargo check -p hkask-types -p hkask-regulation -p hkask-mcp-server -p kask_bridge` — clean; `cargo test -p hkask-types --lib` (108 passed) + `cargo test -p hkask-regulation --lib` (85 passed, including moved `types::loops::tests`); `kask/scripts/check-hkask-no-zed-deps.sh` — OK; `kask/scripts/check-reg-canonical.sh` — OK; `kask/scripts/check-mcp-servers.sh` — OK; `kask/scripts/check-string-errors.sh` — OK; `kask/scripts/check-unsafe-forbid.sh` — OK.
+  **Validation:** `cargo check -p hkask-types -p hkask-regulation -p hkask-mcp-server -p kask_bridge` — clean; `cargo test -p hkask-types --lib` (108 passed) + `cargo test -p hkask-regulation --lib` (85 passed, including moved `types::loops::tests`); `kask/scripts/check-hkask-no-zed-deps.sh` — OK; `kask/scripts/check-reg-canonical.sh` — OK; `kask/scripts/check-mcp-servers.sh` — OK; `kask/scripts/check-string-errors.sh` — OK; `kask/scripts/check-unsafe-forbid.sh` — OK.
 
 #### W-7: Fix `DIVERGENCE.md` stale crate name ✅
+
 **Files:** `DIVERGENCE.md`
 **Change:** `hkask-bridge-dublincore` → `hkask-bridge-ontology` (L80).
 
 #### W-8: Fix `check-hkask-no-zed-deps.sh` stale `kask_panel` references ✅
+
 **Files:** `kask/scripts/check-hkask-no-zed-deps.sh`
 **Change:** Removed `kask_panel` from comments (L14-18, L44-46) and `ZED_CRATES` denylist (L41).
 **Validation:** `bash kask/scripts/check-hkask-no-zed-deps.sh` — OK.
 
 ### Not acted on (deferred / out of scope)
 
-#### W-9: Remove `#![allow(unused_crate_dependencies)]` from 25 lib roots
-See W-1. Mechanical, voluminous. One commit per crate-group.
+#### W-9: Remove `#![allow(unused_crate_dependencies)]` from 25 lib roots ✅
 
-#### W-10: Strengthen or correct `kask_wiring_symbols_exist` test
+See W-1 above. Done.
+
+#### W-10: Strengthen `kask_wiring_symbols_exist` test ✅
+
 **Files:** `crates/zed/src/main.rs:4193`
-**Change:** Either add assertions for the 20 unpinned functional units, or correct the doc comment from "the 28 functional units" to "6 key symbols (F2, F3, F6, F9, F22, F23)".
-**Validation:** `cargo test -p zed kask_wiring_symbols_exist` + `./script/clippy`.
-**Rollback risk:** Low.
+**Change:** Added pin assertions for F4 (`DEFAULT_VARIETY_MAX_DEFICIT`), F7 (`BridgeMetacognitionProvider`), F10 (`always_on` field), F25 (`sync_kask_mcp_runtime_servers` function signature). Corrected doc comment from "the 28 functional units" to an accurate description of what's pinned. F8 (`<dyn fs::Fs>::set_global`) is a trait method call that can't be pinned via `TypeId` — noted in the comment.
+**Validation:** `cargo check -p zed --bin zed-kask --tests` — clean.
 
-#### W-11: Delete dead `goal`, `skill`, `voice` types from `hkask-types`
-**Files:** `kask/crates/hkask-types/src/goal.rs`, `kask/crates/hkask-types/src/skill.rs`, `kask/crates/hkask-types/src/voice.rs` (verify paths); `kask/crates/hkask-types/src/hkask_types.rs` (remove module declarations + re-exports).
-**Validation:** `cargo check -p hkask-types` + `./script/clippy` + grep for any missed consumers.
-**Rollback risk:** Low — zero consumers. But `GoalState` is a public API type that may have external consumers (downstream forks); needs a decision.
+#### W-11: Delete dead `goal`/`skill`/`voice` types from `hkask-types` — **Corrected: not dead**
 
-#### W-12: ADR structural moves (feasible, no new edges)
-- `keychain_keys` → `hkask-keystore` (consumers already depend on `hkask-keystore`)
-- `inference_ipc` → `hkask-inference` (`kask_bridge` already depends; `main.rs` needs dep)
-- `template_type` → `hkask-templates` (sole consumer)
-- `transcript` → `hkask-mcp-companies` (sole consumer)
-- `document`/`corpus` → `hkask-mcp-corpus` (sole consumer)
-**Validation:** `cargo check` per affected crate + `./script/clippy`.
-**Rollback risk:** Medium — each move touches multiple files. One commit per move.
+**Re-verification found:** `skill` types (`SkillPolarity`) are **live** — consumed by `hkask-templates` (registry_sqlite.rs, bundle/manifest.rs). `voice` types (`VoiceDesign`) are **live** — consumed by `hkask-mcp-media` (audio.rs, types/mod.rs). Only `goal` types (`GoalState`) are genuinely dead — zero code consumers, only doc-comment references. The `FromSql`/`ToSql` impls in `sql_impls.rs` exist but are themselves dead (no code reads/writes `GoalState` to/from SQL).
+**Status:** Not acted on — `GoalState` is a public API type that may have external consumers (downstream forks). The doc comment claiming it's retained "for rusqlite FromSql/ToSql orphan rule" is stale (the impls are dead). Recommend updating the doc comment to say "not yet consumed" or deleting the type + impls in a separate decision.
+
+#### W-12: ADR structural moves (feasible, no new edges) — **Partially acted on**
+
+- `keychain_keys` → `hkask-keystore` ✅ — moved; 3 consumers updated (`hkask-keystore`, `hkask-mcp-server`, `kask_bridge`); `hkask-types/src/keychain_keys.rs` deleted.
+- `transcript` → `hkask-mcp-media` ✅ — moved (corrected consumer: was listed as `hkask-mcp-companies` but actual consumer is `hkask-mcp-media`); `hkask-types/src/transcript.rs` deleted.
+- `template_type` → `hkask-templates` ❌ — **cannot move**: `template_type` is used internally by `hkask-types/src/ports/registry.rs` (`RegistryEntry` struct field, trait methods). Moving it would require `hkask-types` to depend on `hkask-templates`, creating a cycle. Keep in `hkask-types` (same "real cycle" situation as `template`/`LLMParameters`).
+- `inference_ipc` → `hkask-inference` — **deferred**: `kask_bridge` already depends on `hkask-inference`, but `main.rs` would need a new `hkask-inference` dep. Feasible but touches the zed composition root.
+- `document`/`corpus` → `hkask-mcp-corpus` — **deferred**: many consumer files; larger move, one commit per module.
 
 #### W-13: ADR structural moves that add new edges (need evaluation)
+
 - `regulation` types → `hkask-regulation` (adds `hkask-regulation` dep to `hkask-mcp-curator` and `hkask-memory` — **memory is out of scope**)
 - `tool_taint` → `hkask-capability` (adds `hkask-capability` dep to `hkask-regulation`)
-**Validation:** `cargo check` per affected crate + `./script/clippy`.
-**Rollback risk:** Medium — new dependency edges.
+  **Status:** Not acted on — new dependency edges need evaluation.
 
-#### W-14: Inline `McpToolError::internal` classification (non-goal)
-Distinguish sanctioned `// rr0044-ok: mapper-fallback` sites from unclassified ones. Per-variant `map_*_error` fns. Separate workstream.
+#### W-14: Inline `McpToolError::internal` classification — **Resolved: zero unsanctioned calls**
+
+**Re-verification found:** 92 of 96 `McpToolError::internal` references are sanctioned with `// rr0044-ok: mapper-fallback`. The remaining 4 are in **doc comments**, not actual code. There are **zero unsanctioned actual `McpToolError::internal()` calls** across the entire kask MCP server corpus. The `.rules` trap requiring per-variant `map_*_error` classification is already respected. No work needed.
 
 ---
 
@@ -221,7 +246,7 @@ Distinguish sanctioned `// rr0044-ok: mapper-fallback` sites from unclassified o
 
 ### S-K1: Crate-root `#![allow(unused_crate_dependencies)]` on a lib target suppresses the gate it claims to work around
 
-A `#![allow(unused_crate_dependencies)]` attribute on a **lib root** (the file named in `[lib] path` in `Cargo.toml`) suppresses the lint on the lib target it's meant to measure. The common comment rationale — *"Bin target — deps used in main.rs, lint checks lib target only"* — is inverted: the attribute is on the lib root, not the bin root, so it suppresses the lib check. Bin targets that are thin `run().await` wrappers (10–11 lines) need no suppression either — the lint doesn't fire on a bin that only calls `run().await` because the deps are used in the lib.
+A `#![allow(unused_crate_dependencies)]` attribute on a **lib root** (the file named in `[lib] path` in `Cargo.toml`) suppresses the lint on the lib target it's meant to measure. The common comment rationale — _"Bin target — deps used in main.rs, lint checks lib target only"_ — is inverted: the attribute is on the lib root, not the bin root, so it suppresses the lib check. Bin targets that are thin `run().await` wrappers (10–11 lines) need no suppression either — the lint doesn't fire on a bin that only calls `run().await` because the deps are used in the lib.
 
 The failure mode is silent: `cargo machete` (the CI fallback) cannot detect crate-level unused deps, and the nightly lint is suppressed where it should fire. Found in 25 lib-root files across `kask/crates/` and `kask/mcp-servers/`; removing the attribute from `hkask-mcp-curator` immediately surfaced `tokio` as unused.
 

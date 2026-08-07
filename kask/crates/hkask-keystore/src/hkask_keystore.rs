@@ -21,6 +21,7 @@
 pub mod encryption;
 pub mod error;
 pub mod keychain;
+pub mod keychain_keys;
 pub mod master_key;
 pub mod signing;
 pub mod version_file;

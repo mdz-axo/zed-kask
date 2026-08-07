@@ -196,6 +196,33 @@ impl RealMemoryPort {
             },
             Err(_) => hkask_memory::MemoryStore::default_storage_budget(),
         };
+        // Resolve the memory life (decay constant S in R(t) = exp(-t/S)).
+        // `HKASK_MEMORY_LIFE_DAYS` overrides the default (180); a malformed
+        // value warns and falls back to the default (same startup-failure-
+        // signal trap as the storage budget above).
+        let memory_life_days = match std::env::var("HKASK_MEMORY_LIFE_DAYS") {
+            Ok(raw) => match raw.trim().parse::<f64>() {
+                Ok(days) if days >= 0.0 => days,
+                Ok(negative) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        value = %raw,
+                        "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to default 180.0"
+                    );
+                    hkask_memory::MemoryStore::default_memory_life_days()
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.memory",
+                        value = %raw,
+                        error = %e,
+                        "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default 180.0"
+                    );
+                    hkask_memory::MemoryStore::default_memory_life_days()
+                }
+            },
+            Err(_) => hkask_memory::MemoryStore::default_memory_life_days(),
+        };
         // Wire the `reg.memory.encode` span sink: every `store()` persists a
         // span to the user's `pod.db` regulation archive. Without this the
         // span emitter in `MemoryStore::store` is dead code (the `.rules`
@@ -205,9 +232,11 @@ impl RealMemoryPort {
         let store = Arc::new(match regulation_archive {
             Some(archive) => MemoryStore::new(h_mem_store, embedding_store)
                 .with_storage_budget(storage_budget)
+                .with_memory_life_days(memory_life_days)
                 .with_ledger(archive),
             None => MemoryStore::new(h_mem_store, embedding_store)
-                .with_storage_budget(storage_budget),
+                .with_storage_budget(storage_budget)
+                .with_memory_life_days(memory_life_days),
         });
 
         let curator_webid = WebID::from_persona(b"curator");

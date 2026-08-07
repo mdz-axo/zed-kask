@@ -23,7 +23,7 @@
 //! 3. Return the resolved DB path and passphrase for `RealMemoryPort::new()`
 
 use hkask_keystore::Keychain;
-use hkask_types::keychain_keys::KEY_DB_PASSPHRASE;
+use hkask_keystore::keychain_keys::KEY_DB_PASSPHRASE;
 use hkask_types::{WebID, agent_paths::sanitize_name};
 
 /// Error type for agent provisioning (directory creation + keychain access).

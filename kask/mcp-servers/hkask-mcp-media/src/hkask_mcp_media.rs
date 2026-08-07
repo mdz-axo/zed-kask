@@ -10,7 +10,6 @@
 //! - Voice: voice_design, generate_speech
 //! - Audio: transcribe, transcribe_bundle, audio_capture, record_and_transcribe
 
-#![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 mod error;
 mod gallery;
@@ -32,7 +31,7 @@ use hkask_storage::{GalleryMode, GalleryStore, GalleryStoreError};
 use hkask_types::InferencePort;
 use hkask_types::VoiceDesign;
 
-use hkask_types::{TimedWord, TranscriptBundle, TranscriptSegment};
+use crate::transcript::{TimedWord, TranscriptBundle, TranscriptSegment};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 pub mod tools;
 
@@ -116,6 +115,7 @@ hkask_mcp_server::mcp_server!(
 );
 
 mod style;
+pub mod transcript;
 pub mod types;
 use types::*;
 

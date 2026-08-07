@@ -90,6 +90,14 @@ impl MemoryStore {
         DEFAULT_STORAGE_BUDGET
     }
 
+    /// The default memory life in days (the decay constant S in
+    /// R(t) = exp(-t/S), Wozniak-Gorzelanczyk 1995). Exposed so
+    /// `RealMemoryPort::new` can fall back to it when
+    /// `HKASK_MEMORY_LIFE_DAYS` is unset or malformed.
+    pub fn default_memory_life_days() -> f64 {
+        DEFAULT_MEMORY_LIFE_DAYS
+    }
+
     /// Create a new `MemoryStore` from h_mem and embedding stores.
     pub fn new(h_mem_store: HMemStore, embedding_store: EmbeddingStore) -> Self {
         Self {

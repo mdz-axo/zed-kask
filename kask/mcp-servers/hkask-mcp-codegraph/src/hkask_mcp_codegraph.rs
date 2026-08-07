@@ -1,6 +1,5 @@
 #![deny(unsafe_code)]
 //! MCP server for hkask-codegraph — code understanding tools.
-#![allow(unused_crate_dependencies)]
 #![warn(clippy::let_underscore_future)]
 
 pub mod codegraph;

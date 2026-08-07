@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 #![warn(clippy::let_underscore_future)]
+// `tokio` is in [dependencies] for the bin target's `#[tokio::main]`; the lib
+// itself does not use it, so the unused_crate_dependencies lint fires on the
+// lib target. This is the legitimate bin-needs-dep case.
+#![allow(unused_crate_dependencies)]
 //! hkask-mcp-curator — Curator MCP server library.
 //!
 //! Exposes the Curator's regulatory surface as MCP tools:
@@ -7,7 +11,6 @@
 //! cross-pod semantic search, memory recall, spec drift detection,
 //! and algedonic event history.
 
-#![allow(unused_crate_dependencies)] // Bin target — deps used in main.rs, lint checks lib target only
 
 pub mod governance;
 pub mod types;
