@@ -17,7 +17,7 @@ fn make_store() -> HMemStore {
                 recalled_at TEXT NOT NULL DEFAULT (datetime('now')),
                 confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
                 owner_webid TEXT NOT NULL,
-                dimension TEXT, swarm_id TEXT
+                ontology TEXT
             )",
         )
         .unwrap();

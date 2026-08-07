@@ -465,9 +465,34 @@ impl ScenariosServer {
             let pending_count = total - resolved_count;
 
             let overall_brier = if !resolved.is_empty() {
-                let probs: Vec<f64> = resolved.iter().map(|r| r.probability).collect();
-                let outs: Vec<bool> = resolved.iter().map(|r| r.outcome.unwrap_or(false)).collect();
-                superforecast::brier_score_multi(&probs, &outs).ok()
+                // A "resolved" forecast should carry an outcome. `None` would
+                // be treated as `false` (event did not occur), inflating the
+                // Brier score. Filter to forecasts with a known outcome and
+                // warn on any `None` so the data-integrity issue is visible.
+                let scored: Vec<_> = resolved
+                    .iter()
+                    .filter(|r| {
+                        if r.outcome.is_none() {
+                            tracing::warn!(
+                                target: "hkask.mcp.scenarios",
+                                forecast_id = r.forecast_id,
+                                event_id = r.event_id,
+                                "resolved forecast has no outcome — excluding from Brier"
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+                if scored.is_empty() {
+                    None
+                } else {
+                    let probs: Vec<f64> = scored.iter().map(|r| r.probability).collect();
+                    let outs: Vec<bool> =
+                        scored.iter().map(|r| r.outcome.unwrap_or(false)).collect();
+                    superforecast::brier_score_multi(&probs, &outs).ok()
+                }
             } else {
                 None
             };

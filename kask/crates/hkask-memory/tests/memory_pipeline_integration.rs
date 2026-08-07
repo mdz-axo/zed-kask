@@ -30,7 +30,7 @@ fn setup() -> (Arc<EpisodicMemory>, Arc<SemanticMemory>) {
                 id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
                 value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
                 recalled_at TEXT NOT NULL, confidence REAL NOT NULL, perspective TEXT,
-                visibility TEXT NOT NULL, owner_webid TEXT NOT NULL, dimension TEXT, swarm_id TEXT
+                visibility TEXT NOT NULL, owner_webid TEXT NOT NULL, ontology TEXT
             )",
         )
         .expect("init schema");

@@ -9564,6 +9564,7 @@ version = "0.33.0"
 dependencies = [
  "chrono",
  "dirs",
+ "hkask-bridge-ontology",
  "hkask-mcp-server",
  "hkask-types",
  "rmcp",

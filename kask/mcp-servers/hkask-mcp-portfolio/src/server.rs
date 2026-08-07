@@ -10,7 +10,7 @@ use crate::{
     ReturnsReport, Transaction, export_csv, export_json, import_csv, import_json, parse_ymd,
     returns,
 };
-use hkask_mcp_server::server::{McpToolError, execute_tool, map_join_error};
+use hkask_mcp_server::server::{McpToolError, execute_tool, execute_tool_semantic, map_join_error};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
@@ -43,6 +43,25 @@ where
         .await
         .map_err(|error| map_join_error(error, "portfolio task failed"))?
         .map_err(map_portfolio_error)
+}
+
+/// Map a tool name to its FIBO ontology concept URI. The concept is used both
+/// as the `reg.tool.*` span ontology tag (via `execute_tool_semantic`) and as
+/// the `"ontology"` field in the tool output JSON. The portfolio widget reads
+/// this field to drive its "Explain" affordance (the "I" pattern).
+fn ontology_anchor(tool: &str) -> Option<&'static str> {
+    use hkask_bridge_ontology::fibo;
+    match tool {
+        "portfolio_snapshot" => Some(fibo::PORTFOLIO),
+        "portfolio_returns" => Some(fibo::TIME_WEIGHTED_RETURN),
+        "portfolio_create" | "portfolio_delete" | "portfolio_list" => Some(fibo::PORTFOLIO),
+        "ledger_apply" | "ledger_read" | "ledger_import" | "ledger_export" => {
+            Some(fibo::TRANSACTION_LEDGER)
+        }
+        "portfolio_seed_price" | "portfolio_roll" | "portfolio_rebuild_views"
+        | "portfolio_materialize_returns" | "portfolio_daily_returns" => Some(fibo::PORTFOLIO),
+        _ => None,
+    }
 }
 
 // ── Request types ───────────────────────────────────────────────────
@@ -237,7 +256,7 @@ impl PortfolioServer {
             PortfolioSnapshotRequest,
         >,
     ) -> String {
-        execute_tool(self, "portfolio_snapshot", async {
+        execute_tool_semantic(self, "portfolio_snapshot", ontology_anchor("portfolio_snapshot"), async {
             // Validate the date up front — never silently epoch-substitute
             // (the SF-4 bug: a malformed date produced garbage projections
             // while callers reported success).
@@ -246,8 +265,17 @@ impl PortfolioServer {
                 store.snapshot(&portfolio, &date)
             })
             .await?;
-            serde_json::to_value(snapshot)
-                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}"))) // rr0044-ok: serialize-own-struct
+            let mut value = serde_json::to_value(&snapshot)
+                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?; // rr0044-ok: serialize-own-struct
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "ontology".to_string(),
+                    serde_json::Value::String(
+                        hkask_bridge_ontology::fibo::PORTFOLIO.to_string(),
+                    ),
+                );
+            }
+            Ok(value)
         })
         .await
     }

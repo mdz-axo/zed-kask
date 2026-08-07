@@ -53,6 +53,12 @@ pub struct GraphBlockBody {
     pub joint_probability: Option<f64>,
     #[serde(default)]
     pub nodes: Vec<NodeBody>,
+    /// Ontology concept URI emitted by the scenarios server (e.g.
+    /// `dcterms:Dataset` from `scenario_quantify`). The widget carries it so a
+    /// future "explain this node" affordance can dispatch on it. `None` on
+    /// older blocks or when the server doesn't emit it.
+    #[serde(default)]
+    pub ontology: Option<String>,
 }
 
 /// One node of the event tree. Edges are child-side: a node lists its parents
@@ -216,6 +222,7 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes,
+            ontology: None,
         }
     }
 
@@ -279,5 +286,21 @@ mod tests {
         };
         let body = body_with_nodes(vec![node]);
         assert!(validate_conditionals(&body).is_empty());
+    }
+
+    #[test]
+    fn block_body_has_ontology_field() {
+        // S4 sensor: the scenarios server emits `"ontology": "dcterms:Dataset"`
+        // on `scenario_quantify` output (which the agent re-emits as a `graph`
+        // block). The widget's GraphBlockBody MUST have an `ontology` field to
+        // receive it — if this field is absent, the server's tag is silently
+        // dropped (the cybernetic S4 gap — no spec-drift sensor).
+        let json = r#"{"viz":"event_tree","ontology":"dcterms:Dataset"}"#;
+        let body = parse_graph_body(json).expect("parses");
+        assert_eq!(
+            body.ontology.as_deref(),
+            Some("dcterms:Dataset"),
+            "GraphBlockBody must parse the ontology field the server emits"
+        );
     }
 }

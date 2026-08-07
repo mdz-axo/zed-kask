@@ -124,8 +124,7 @@ impl ConsolidationBridge {
                     confidence: episodic_c,
                     access: h_mem.access.to_semantic(),
                     recalled_at: now,
-                    dimension: h_mem.dimension,
-                    swarm_id: h_mem.swarm_id.clone(),
+                    ontology: h_mem.ontology.clone(),
                 };
 
                 match self.semantic.store_consolidated(semantic_triple) {

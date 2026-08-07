@@ -315,9 +315,9 @@ impl PromptBuilderService {
                             continue; // skip non-triple h_mems
                         }
                         let dim = h_mem
-                            .dimension
+                            .ontology
                             .as_ref()
-                            .map(|d| d.as_str())
+                            .and_then(|ont| ont.dimensions.first().map(|s| s.as_str()))
                             .unwrap_or("what");
                         let conf = format!("{:.2}", h_mem.confidence.value());
                         // v2: value is {"subject": "...", "object": "..."}
