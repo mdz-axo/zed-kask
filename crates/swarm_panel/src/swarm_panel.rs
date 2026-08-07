@@ -2306,6 +2306,7 @@ impl Render for SwarmPanel {
                                     ToggleButtonSimple::new(
                                         "Author",
                                         cx.listener(|this, _event, window, cx| {
+                                            this.reset_author_form_for_create(window, cx);
                                             this.set_mode(PanelMode::Author, window, cx);
                                         }),
                                     ),

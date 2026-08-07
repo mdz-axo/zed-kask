@@ -47,27 +47,26 @@ pub(crate) fn evaluate_step_condition(condition: &str, context: &HashMap<String,
     // treated as a missing context key (the `None => false` arm below) and the
     // step is silently skipped — every Jinja-boolean condition gate is a no-op.
     // This mirrors `resolve_operand`'s JSON-literal handling for the comparison
-    // path; context keys (checked below) still take precedence, so a key
-    // literally named "true" is read as that key first.
-    match condition {
-        "true" | "True" => return true,
-        "false" | "False" => return false,
-        _ => {}
-    }
-
-    // Simple variable check: is it truthy in context?
-    // Also resolve dot-paths like "step_1_result.intervention_needed"
+    // path. Context keys (checked below) take precedence, so a key literally
+    // named "true" is read as that key first.
     let key = condition;
     let resolved = resolve_dot_path(key, context);
     let val: Option<&Value> = context.get(key).or(resolved.as_ref());
     match val {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-        Some(Value::String(s)) => !s.is_empty() && s != "false" && s != "0",
-        Some(Value::Array(a)) => !a.is_empty(),
-        Some(Value::Object(o)) => !o.is_empty(),
-        Some(Value::Null) => false,
-        None => false,
+        Some(Value::Bool(b)) => return *b,
+        Some(Value::Number(n)) => return n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+        Some(Value::String(s)) => return !s.is_empty() && s != "false" && s != "0",
+        Some(Value::Array(a)) => return !a.is_empty(),
+        Some(Value::Object(o)) => return !o.is_empty(),
+        Some(Value::Null) => return false,
+        None => {}
+    }
+
+    // No context binding — recognize literal boolean strings rendered by Jinja.
+    match condition {
+        "true" | "True" => true,
+        "false" | "False" => false,
+        _ => false,
     }
 }
 

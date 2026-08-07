@@ -130,7 +130,14 @@ impl SwarmPanel {
             .w_full()
             .gap_3()
             .p_4()
-            .child(Headline::new("Author an Agent").size(HeadlineSize::Small))
+            .child(
+                Headline::new(if self.author.editing_id.is_some() {
+                    "Edit Agent"
+                } else {
+                    "Author an Agent"
+                })
+                .size(HeadlineSize::Small),
+            )
             .child(
                 v_flex()
                     .gap_1()
@@ -150,7 +157,15 @@ impl SwarmPanel {
                                  system id used to hire, delegate, and reference the agent.",
                             ))
                             .child(self.author.name.clone()),
-                    ),
+                    )
+                    .when(self.author.editing_id.is_some(), |this| {
+                        this.child(
+                            Label::new("Name is read-only when editing (renaming would \
+                                        create a new agent).")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    }),
             )
             // Agent type selector — previously the type was hardcoded to
             // "research" with no UI control, so the operator could never

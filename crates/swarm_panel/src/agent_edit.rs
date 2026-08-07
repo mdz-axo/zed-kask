@@ -61,6 +61,7 @@ impl SwarmPanel {
         self.author.editing_id = Some(agent_id.clone());
         self.author.status = Some("Loading agent details…".into());
         self.author.busy = false;
+        self.author.name.update(cx, |e, _| e.set_read_only(true));
         self.set_mode(crate::PanelMode::Author, window, cx);
 
         let is_local = source == AgentSource::Local;
