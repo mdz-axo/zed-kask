@@ -42,7 +42,7 @@ fn make_server() -> KanbanServer {
         .join(format!("kata-kanban-spawn-{}.db", std::process::id()))
         .to_string_lossy()
         .to_string();
-    let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+    let local_runtime = Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, None));
     let local_registry = Arc::new(LocalAgentRegistry::new("/nonexistent"));
     KanbanServer::new(WebID::new(), service, local_runtime, local_registry)
 }

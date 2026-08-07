@@ -40,15 +40,17 @@ use hkask_ledger::LedgerError;
 /// by the observer.
 pub struct LazyLocalSwarmRuntime {
     ledger_path: String,
+    skills_dir: Option<String>,
     inner: tokio::sync::OnceCell<LocalSwarmRuntime>,
 }
 
 impl LazyLocalSwarmRuntime {
     /// Store the config without initializing. The runtime is constructed
     /// on first call to `get_or_init`.
-    pub fn lazy(ledger_path: String) -> Self {
+    pub fn lazy(ledger_path: String, skills_dir: Option<String>) -> Self {
         Self {
             ledger_path,
+            skills_dir,
             inner: tokio::sync::OnceCell::new(),
         }
     }
@@ -58,7 +60,9 @@ impl LazyLocalSwarmRuntime {
     /// init). Subsequent calls return the cached runtime.
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
-            .get_or_try_init(|| async { LocalSwarmRuntime::new(&self.ledger_path).await })
+            .get_or_try_init(|| async {
+                LocalSwarmRuntime::new(&self.ledger_path, self.skills_dir.as_deref()).await
+            })
             .await
     }
 }
@@ -90,7 +94,10 @@ impl LocalSwarmRuntime {
     ///
     /// The operator account is ensured in the ledger namespace "local_swarm".
     /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
-    pub(crate) async fn new(db_path: &str) -> Result<Self, LocalSwarmError> {
+    pub(crate) async fn new(
+        db_path: &str,
+        skills_dir: Option<&str>,
+    ) -> Result<Self, LocalSwarmError> {
         // Open the ledger at the file path. Create the directory if needed.
         if let Some(parent) = std::path::Path::new(db_path).parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -124,7 +131,12 @@ impl LocalSwarmRuntime {
         let skill_exec = hkask_inference::resolve_skill_exec_port().await;
         let guard_config = hkask_guard::GuardConfig::from_env();
         let guard = hkask_guard::ContentGuard::mandatory(&guard_config);
-        let executor = AgentExecutor::new(inference, tool_dispatch, skill_exec, guard);
+        // Resolve the skill-corpus directory for `AgentExecutor`'s Slice-6
+        // skill-awareness (None = skill-blind). Passed from
+        // `LazyLocalSwarmRuntime`, which reads `HKASK_SKILLS_DIR` in
+        // `SwarmConfig::from_env`.
+        let skills_dir = skills_dir.map(std::path::PathBuf::from);
+        let executor = AgentExecutor::new(inference, tool_dispatch, skill_exec, guard, skills_dir);
 
         // Ensure the operator account exists.
         let operator_account = "operator".to_string();

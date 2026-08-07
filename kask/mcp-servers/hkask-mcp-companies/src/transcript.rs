@@ -399,7 +399,7 @@ pub async fn fetch_corpus_transcripts(
                     url,
                     channel,
                     content,
-                    entity_ref_prefix: format!("company:{symbol}:youtube:{video_id}"),
+                    entity_ref_prefix: youtube_entity_ref_prefix(symbol, &video_id),
                 });
             }
             Ok(None) => {
@@ -475,37 +475,12 @@ async fn fetch_youtube_transcript(
 
 // ── Full-document entity-ref conventions (C5) ──────────────────────────────────
 
-#[allow(dead_code)]
-pub fn sec_filing_entity_ref_prefix(symbol: &str, form: &str, year: u32) -> String {
-    format!("company:{symbol}:sec_filing:{form}:{year}")
-}
-
-#[allow(dead_code)]
+/// Build the entity-ref prefix for a YouTube transcript. The single source of
+/// truth for the `company:{symbol}:youtube:{video_id}` format — wired into
+/// `fetch_corpus_transcripts` output so the convention is load-bearing, not
+/// advisory.
 pub fn youtube_entity_ref_prefix(symbol: &str, video_id: &str) -> String {
     format!("company:{symbol}:youtube:{video_id}")
-}
-
-#[allow(dead_code)]
-pub fn symbol_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
-    let mut parts = prefix.split(':');
-    let _ = parts.next()?;
-    let symbol = parts.next()?;
-    if symbol.is_empty() {
-        return None;
-    }
-    Some(symbol)
-}
-
-#[allow(dead_code)]
-pub fn kind_from_entity_ref_prefix(prefix: &str) -> Option<&str> {
-    let mut parts = prefix.split(':');
-    let _ = parts.next()?;
-    let _ = parts.next()?;
-    let kind = parts.next()?;
-    if kind.is_empty() {
-        return None;
-    }
-    Some(kind)
 }
 
 // ── Citation verification (the no-fabrication enforcement point) ──────────────
@@ -852,50 +827,11 @@ mod tests {
     // ── Entity-ref conventions ───────────────────────────────────────────
 
     #[test]
-    fn sec_filing_entity_ref_prefix_format() {
-        assert_eq!(
-            sec_filing_entity_ref_prefix("MSFT", "10-K", 2024),
-            "company:MSFT:sec_filing:10-K:2024"
-        );
-    }
-
-    #[test]
     fn youtube_entity_ref_prefix_format() {
         assert_eq!(
             youtube_entity_ref_prefix("MSFT", "ceV3RsG946s"),
             "company:MSFT:youtube:ceV3RsG946s"
         );
-    }
-
-    #[test]
-    fn symbol_from_entity_ref_prefix_extracts_symbol() {
-        assert_eq!(
-            symbol_from_entity_ref_prefix("company:MSFT:earnings:2024_Q4"),
-            Some("MSFT")
-        );
-        assert_eq!(
-            symbol_from_entity_ref_prefix("company:AAPL:sec_filing:10-K:2024"),
-            Some("AAPL")
-        );
-    }
-
-    #[test]
-    fn kind_from_entity_ref_prefix_extracts_kind() {
-        assert_eq!(
-            kind_from_entity_ref_prefix("company:MSFT:earnings:2024_Q4"),
-            Some("earnings")
-        );
-        assert_eq!(
-            kind_from_entity_ref_prefix("company:MSFT:sec_filing:10-K:2024"),
-            Some("sec_filing")
-        );
-    }
-
-    #[test]
-    fn entity_ref_prefix_extractors_reject_malformed() {
-        assert!(symbol_from_entity_ref_prefix("").is_none());
-        assert!(symbol_from_entity_ref_prefix("company").is_none());
-        assert!(kind_from_entity_ref_prefix("company:MSFT").is_none());
     }
 
     // ── Citation verification (no-fabrication enforcement) ──────────────────

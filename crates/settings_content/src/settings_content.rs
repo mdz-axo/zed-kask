@@ -1729,6 +1729,11 @@ pub struct KaskSwarmSettingsContent {
     /// replica of an ABW workspace roster. When empty, uses the default
     /// `agents/local/swarms`.
     pub local_swarms_dir: Option<String>,
+    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
+    /// read by `AgentExecutor::build_skill_catalog` to inject skill
+    /// descriptions into the local agent's system prompt (Slice 6 — local
+    /// agent skill-awareness). When empty/None, skill-awareness is disabled.
+    pub skills_dir: Option<String>,
 }
 
 /// Mirror of `SwarmModeConfig` in the bridge crate, kept separate to avoid a

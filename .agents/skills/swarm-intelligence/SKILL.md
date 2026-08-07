@@ -1,7 +1,7 @@
 ---
 name: swarm-intelligence
 visibility: public
-description: "Convergent swarm-composition process for agent swarms. Senses swarm state against the Onto4MAT multi-agent teaming ontology and the swarm backend's APIs; orients via Ashby's requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning, ACO pheromone deposition, and Reynolds separation/alignment/cohesion; acts via gated swarm_delegate/swarm_delegate_local calls with a budget gate; checks spend against the algedonic channel; converges via a Cauchy criterion on the swarm-state distance metric. Mode-aware (v2 §15): abw mode fetches from ABW REST and delegates via swarm_delegate; local mode reads the local agent registry + ledger and delegates via swarm_execute_plan_local (batch) or swarm_delegate_local (single). Anchored to Reynolds flocking, Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT, W3C SSN/SOSA, Thagard coherence, and Ashby requisite variety. Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
+description: "Convergent swarm-composition process. Senses swarm state against the Onto4MAT multi-agent teaming ontology and the swarm backend's APIs; orients via Ashby's requisite variety and PSO cognitive/social balance; decides composition adjustments isomorphic to PSO velocity tuning, ACO pheromone deposition, and Reynolds separation/alignment/cohesion; acts via gated swarm_delegate/swarm_delegate_local calls with a budget gate; checks spend against the algedonic channel; converges via a Cauchy criterion on the swarm-state distance metric. Mode-aware (v2 §15): abw mode fetches from ABW REST and delegates via swarm_delegate; local mode reads the local agent registry + ledger and delegates via swarm_execute_plan_local (batch) or swarm_delegate_local (single). Anchored to Reynolds flocking, Kennedy-Eberhart PSO, Dorigo ACO, Onto4MAT, W3C SSN/SOSA, Thagard coherence, and Ashby requisite variety. Composes pragmatic-cybernetics, kata-improvement, essentialist. Emits reg.swarm.* spans. Any userpod may invoke this skill."
 ---
 
 # Swarm Intelligence
@@ -178,11 +178,11 @@ capture is Xaman Ek's built-in capability, then `delegate_results` flow back.
 ### Local swarms — the Kask Curator (continued)
 
 Locally, the Kask Curator steers using the `swarm-intelligence` skill itself
-(the cascade plans, the Curator executes), OR a more focused **swarm steering
-skill** (a narrower skill that codifies just the execute-and-feed-back loop:
-run `swarm_delegate_local` per emitted call, collect `LocalDelegateResult`s,
-re-invoke with `delegate_results`). The focused skill is a future artifact;
-today the Curator can steer with swarm-intelligence in steering mode directly.
+(the cascade plans, the Curator executes), OR the focused **swarm-steering**
+skill (a narrower skill that codifies just the execute-and-feed-back loop:
+call `swarm_execute_plan_local` with the plan, collect the returned
+`LocalDelegateResult` array with `task_success` verdicts, re-invoke with
+`delegate_results`).
 
 ### The `delegate_results` contract (C5/C6 activation)
 
@@ -246,7 +246,7 @@ templates, the registry wins.
     `swarm_fire` (roster removal, verified live), `swarm_delete_agent`,
     `swarm_delete_swarm`, `swarm_search_knowledge`, `swarm_publish_checks`,
     `swarm_publish_agent`, `swarm_fork_agent`.
-  - **Local tools (23)**: `swarm_fund_local`, `swarm_balance_local`,
+  - **Local tools (25)**: `swarm_fund_local`, `swarm_balance_local`,
     `swarm_local_history`, `swarm_delegate_local`, `swarm_fanout_local`,
     `swarm_pipeline_local`, `swarm_a2a_send` (A2A protocol message, in-process),
     `swarm_a2a_card` (A2A Agent Card discovery), `swarm_list_local_agents`,
@@ -259,7 +259,12 @@ templates, the registry wins.
     `swarm_search_knowledge_local`, `swarm_generate_prompt_local`,
     `swarm_generate_ontology_local` (local knowledge analogs — search/generate
     over the operator's `hkask-memory` + local inference; no ABW; see
-    [Local Knowledge Tools design](../../../kask/docs/plans/local-swarm-knowledge-tools.md)).
+    [Local Knowledge Tools design](../../../kask/docs/plans/local-swarm-knowledge-tools.md)),
+    `swarm_ai_assist` (authoring aid), `swarm_evaluate_local` (deterministic
+    task-success evaluator — stamps a `TaskSuccessVerdict` with
+    `provenance: Deterministic`), `swarm_execute_plan_local` (batch plan
+    execution — runs delegations, evaluates results, returns collected array
+    with verdicts stamped; closes the loop in one call).
 - Spend-mutating ABW tools (`swarm_hire`, `swarm_delegate`,
   `swarm_delegate_and_wait`, `swarm_fanout`, `swarm_create_swarm`,
   `swarm_xaman`) are consent-gated via `swarm_request_consent` (single-use,

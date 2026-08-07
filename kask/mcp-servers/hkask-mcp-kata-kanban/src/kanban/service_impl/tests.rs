@@ -333,14 +333,16 @@ fn task_record_delegation_writes_structured_fields() {
         .task_record_delegation(
             task.id,
             Some("swarm-1".to_string()),
-            delegate_result.clone(),
-            Some(verdict.clone()),
+            delegate_result,
+            Some(verdict),
             owner,
         )
         .unwrap();
 
     assert_eq!(updated.swarm_id.as_deref(), Some("swarm-1"));
-    let dr = updated.delegate_result.expect("delegate_result should be set");
+    let dr = updated
+        .delegate_result
+        .expect("delegate_result should be set");
     assert_eq!(dr.agent_id, "test-agent");
     assert_eq!(dr.response, "test response");
     assert_eq!(dr.tokens_used, 100);
@@ -349,7 +351,10 @@ fn task_record_delegation_writes_structured_fields() {
         .expect("deterministic_verdict should be set");
     assert!(dv.pass);
     assert_eq!(dv.score, Some(0.9));
-    assert_eq!(dv.provenance, hkask_mcp_swarm::TaskSuccessProvenance::Deterministic);
+    assert_eq!(
+        dv.provenance,
+        hkask_mcp_swarm::TaskSuccessProvenance::Deterministic
+    );
 
     // Verify persistence: re-read the task from the store.
     let reloaded = svc.task_get(task.id).unwrap().expect("task should persist");
@@ -378,14 +383,11 @@ fn task_record_delegation_rejects_non_owner() {
         executed_skills: vec![],
         task_success: None,
     };
-    let result = svc.task_record_delegation(
-        task.id,
-        None,
-        delegate_result,
-        None,
-        other,
+    let result = svc.task_record_delegation(task.id, None, delegate_result, None, other);
+    assert!(
+        result.is_err(),
+        "non-owner should not be able to record delegation"
     );
-    assert!(result.is_err(), "non-owner should not be able to record delegation");
 }
 
 #[test]

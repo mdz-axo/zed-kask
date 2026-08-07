@@ -53,6 +53,13 @@ pub struct HMem {
     /// 5W1H dimension — which curator ontology category this h_mem belongs to.
     /// Maps to `OntologyAnchor::Core` (universal ground). None = unclassified.
     pub dimension: Option<Dimension>,
+    /// Optional swarm coordination tag — when this h_mem was written by a
+    /// local swarm delegation (`swarm_delegate_local`), this carries the
+    /// `swarm_id` so queries can filter by swarm (isolation) or ignore it
+    /// (cross-swarm transfer). `None` for non-swarm memories (the pre-Slice-7
+    /// behavior). Not an access-control field — it's a coordination tag, not
+    /// a visibility/ownership boundary.
+    pub swarm_id: Option<String>,
 }
 impl HMem {
     /// Create a new HMem with required fields.
@@ -74,6 +81,7 @@ impl HMem {
             access: AccessControl::new(owner_webid),
             recalled_at: now,
             dimension: None,
+            swarm_id: None,
         }
     }
     /// Set confidence on a HMem.
@@ -111,6 +119,15 @@ impl HMem {
     /// post: returns Self with dimension set (builder pattern)
     pub fn with_dimension(mut self, d: Dimension) -> Self {
         self.dimension = Some(d);
+        self
+    }
+    /// Set the swarm coordination tag on a HMem.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — builder: set swarm_id
+    /// post: returns Self with swarm_id set (builder pattern)
+    pub fn with_swarm_id(mut self, swarm_id: impl Into<String>) -> Self {
+        self.swarm_id = Some(swarm_id.into());
         self
     }
     /// Check if this is an episodic h_mem (has perspective).
@@ -163,11 +180,13 @@ impl HMemStore {
                 perspective TEXT,
                 visibility TEXT NOT NULL DEFAULT 'private',
                 owner_webid TEXT NOT NULL,
-                dimension INTEGER
+                dimension INTEGER,
+                swarm_id TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_hmems_entity ON hmems(entity);
             CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
-            CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);",
+            CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);
+            CREATE INDEX IF NOT EXISTS idx_hmems_swarm_id ON hmems(swarm_id);",
         )?;
         Ok(store)
     }
@@ -186,7 +205,7 @@ impl HMemStore {
     }
 }
 
-const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, dimension";
+const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, dimension, swarm_id";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -243,6 +262,7 @@ impl HMemStore {
                     HMemError::Infra(InfrastructureError::database("invalid webid"))
                 })?,
                 dimension: row.get(11)?.as_text().ok().map(|s| s.to_string()),
+                swarm_id: row.get(12)?.as_text().ok().map(|s| s.to_string()),
             };
         Self::row_to_triple(hrow)
     }
@@ -287,7 +307,7 @@ impl HMemStore {
         };
         self.exec(
             &format!(
-                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)"
             ),
             &[
                 DbValue::Text(h_mem.id.to_string()),
@@ -309,6 +329,10 @@ impl HMemStore {
                     .dimension
                     .as_ref()
                     .map_or(DbValue::Null, |d| DbValue::Text(d.as_str().to_string())),
+                h_mem
+                    .swarm_id
+                    .as_ref()
+                    .map_or(DbValue::Null, |s| DbValue::Text(s.clone())),
             ],
         )?;
         Ok(())
@@ -389,6 +413,22 @@ impl HMemStore {
         self.query_rows(
             &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
             &[DbValue::Text(perspective.to_string())],
+        )
+    }
+    /// Query h_mems by swarm coordination tag (Slice 7 — per-swarm memory
+    /// namespace). Returns memories written by a specific swarm delegation.
+    /// `None` swarm_id memories (non-swarm memories) are excluded — query
+    /// without this filter to get all memories.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — query by swarm_id
+    /// pre:  swarm_id is non-empty
+    /// post: returns Vec of h_mems matching swarm_id
+    #[must_use = "result must be used"]
+    pub fn query_by_swarm_id(&self, swarm_id: &str) -> Result<Vec<HMem>, HMemError> {
+        self.query_rows(
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE swarm_id = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &[DbValue::Text(swarm_id.to_string())],
         )
     }
     /// Query all h_mems with a given attribute, regardless of entity.
@@ -693,6 +733,7 @@ impl HMemStore {
             },
             recalled_at,
             dimension: row.dimension.and_then(|s| s.parse().ok()),
+            swarm_id: row.swarm_id,
         })
     }
 }
@@ -729,6 +770,7 @@ struct HMemRow {
     visibility: Visibility,
     owner_webid: WebID,
     dimension: Option<String>,
+    swarm_id: Option<String>,
 }
 #[cfg(test)]
 mod tests {
@@ -746,7 +788,7 @@ mod tests {
                     value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
                     recalled_at TEXT NOT NULL DEFAULT (datetime('now')),
                     confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
-                    owner_webid TEXT NOT NULL, dimension TEXT
+                    owner_webid TEXT NOT NULL, dimension TEXT, swarm_id TEXT
                 )",
             )
             .expect("create hmems table");

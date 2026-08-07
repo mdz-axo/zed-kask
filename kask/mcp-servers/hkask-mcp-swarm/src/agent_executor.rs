@@ -57,6 +57,11 @@ pub(crate) struct AgentExecutor {
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
     skill_exec: Arc<dyn hkask_types::SkillExecPort>,
     guard: Arc<hkask_guard::ContentGuard>,
+    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
+    /// used to inject skill descriptions into the local agent's system prompt
+    /// (Slice 6 — local agent skill-awareness). `None` = skill-awareness
+    /// disabled (the agent runs skill-blind).
+    skills_dir: Option<std::path::PathBuf>,
 }
 
 impl AgentExecutor {
@@ -65,12 +70,14 @@ impl AgentExecutor {
         tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
         skill_exec: Arc<dyn hkask_types::SkillExecPort>,
         guard: hkask_guard::ContentGuard,
+        skills_dir: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             inference,
             tool_dispatch,
             skill_exec,
             guard: Arc::new(guard),
+            skills_dir,
         }
     }
 
@@ -107,7 +114,7 @@ impl AgentExecutor {
         skill_exec: Arc<dyn hkask_types::SkillExecPort>,
         guard: hkask_guard::ContentGuard,
     ) -> Self {
-        Self::new(inference, tool_dispatch, skill_exec, guard)
+        Self::new(inference, tool_dispatch, skill_exec, guard, None)
     }
 
     /// Scan input text through the content guard. Returns `Err` if the guard
@@ -159,6 +166,64 @@ impl AgentExecutor {
         Ok(result.output.content(text).to_string())
     }
 
+    /// Build a skill catalog block for the agent's declared skills, reading
+    /// the `name` and `description` fields from each skill's `SKILL.md`
+    /// frontmatter. Returns `None` when `skills_dir` is unset or no declared
+    /// skill has a readable `SKILL.md` — the agent runs skill-blind (the
+    /// pre-Slice-6 behavior). The catalog is injected into the system prompt
+    /// so the agent understands what skills were run for it and why, but the
+    /// card's `skills` list remains the execution allowlist (no runtime
+    /// discovery — the executor pre-runs the declared skills, the model
+    /// cannot invoke new ones).
+    ///
+    /// The frontmatter is parsed with a minimal YAML extractor (the `name`
+    /// and `description` fields only) — the swarm server does not depend on
+    /// the zed-side `agent_skills` crate (which is GPUI-bound). A missing or
+    /// malformed `SKILL.md` is logged and skipped — the catalog is best-effort,
+    /// not a gate.
+    fn build_skill_catalog(&self, declared_skills: &[String]) -> Option<String> {
+        let skills_dir = self.skills_dir.as_ref()?;
+        let mut entries = Vec::new();
+        for skill_id in declared_skills {
+            let skill_md = skills_dir.join(skill_id).join("SKILL.md");
+            match std::fs::read_to_string(&skill_md) {
+                Ok(content) => {
+                    if let Some((name, description)) = parse_skill_frontmatter(&content) {
+                        entries.push(format!(
+                            "  <skill>\n    <name>{name}</name>\n    <description>{description}</description>\n  </skill>"
+                        ));
+                    } else {
+                        tracing::warn!(
+                            target: "hkask.mcp.swarm",
+                            skill = skill_id.as_str(),
+                            path = %skill_md.display(),
+                            "SKILL.md frontmatter missing name/description — skipped from catalog"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "hkask.mcp.swarm",
+                        skill = skill_id.as_str(),
+                        error = %e,
+                        path = %skill_md.display(),
+                        "could not read SKILL.md — skipped from catalog"
+                    );
+                }
+            }
+        }
+        if entries.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "\n<declared_skills>\n  The following skills were pre-executed for this task. \
+             Their cascade outputs appear as context below. You cannot invoke \
+             additional skills at runtime — the card's `skills` list is the \
+             execution allowlist.\n{}\n</declared_skills>",
+            entries.join("\n")
+        ))
+    }
+
     /// Run a local agent: scan the system prompt, execute declared skills
     /// (guard-scanning each output), build the declared tool set, and run
     /// the multi-round inference/tool-dispatch loop (guard-scanning +
@@ -176,11 +241,21 @@ impl AgentExecutor {
         task_clean: &str,
     ) -> Result<RawDelegateResult, SwarmError> {
         // Build the prompt: system prompt + task.
-        let system_prompt = agent
+        // Inject the skill catalog (name + description for declared skills)
+        // into the system prompt when `skills_dir` is configured, so the
+        // agent understands what skills were pre-run for it and why. The
+        // card's `skills` list remains the execution allowlist — the catalog
+        // is awareness, not discovery.
+        let base_system_prompt = agent
             .capabilities
             .system_prompt
             .as_deref()
             .unwrap_or("You are a helpful assistant.");
+        let skill_catalog = self.build_skill_catalog(&agent.capabilities.skills);
+        let system_prompt = match &skill_catalog {
+            Some(catalog) => format!("{base_system_prompt}{catalog}"),
+            None => base_system_prompt.to_string(),
+        };
 
         // Guard-scan the system_prompt before injecting it into the prompt.
         // The task was already scanned by the caller, and each skill output is
@@ -193,7 +268,7 @@ impl AgentExecutor {
         // guard is the advertised enforcement point for the delegate path — it
         // must scan all untrusted text that reaches the model, not just the
         // task.
-        self.scan_input(system_prompt)?;
+        self.scan_input(&system_prompt)?;
 
         // Run the declared skills (capped) against the task BEFORE the LLM
         // call. Each cascade runs on the zed side (`ManifestExecutor`, own
@@ -388,5 +463,100 @@ impl AgentExecutor {
             tool_calls: tool_calls_made,
             executed_skills,
         })
+    }
+}
+
+/// Parse the `name` and `description` fields from a `SKILL.md` frontmatter
+/// block (the YAML between the opening and closing `---` lines). Returns
+/// `None` if either field is missing or the frontmatter is malformed.
+///
+/// This is a minimal extractor — the swarm server does not depend on the
+/// zed-side `agent_skills` crate (which is GPUI-bound) or a full YAML parser.
+/// The `name` field is a plain scalar; the `description` field may be a
+/// quoted scalar, a folded scalar (`>`), or a literal scalar (`|`).
+fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
+    let lines: Vec<&str> = content.lines().collect();
+    if lines.is_empty() || lines[0].trim() != "---" {
+        return None;
+    }
+    // Find the closing `---`.
+    let end = lines.iter().skip(1).position(|l| l.trim() == "---")? + 1;
+    let frontmatter = &lines[1..end];
+    let mut name: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut i = 0;
+    while i < frontmatter.len() {
+        let line = frontmatter[i];
+        if let Some(rest) = line.strip_prefix("name:") {
+            name = Some(rest.trim().trim_matches('"').to_string());
+        } else if let Some(rest) = line.strip_prefix("description:") {
+            let trimmed = rest.trim();
+            if trimmed.starts_with('"') {
+                // Quoted scalar — may span multiple lines (folded quotes).
+                let mut buf = trimmed.trim_start_matches('"').to_string();
+                while !buf.contains('"') && i + 1 < frontmatter.len() {
+                    i += 1;
+                    buf.push('\n');
+                    buf.push_str(frontmatter[i].trim());
+                }
+                // Remove the closing quote.
+                description = Some(buf.trim_end_matches('"').trim().to_string());
+            } else if trimmed == ">" || trimmed == "|" {
+                // Folded/literal scalar — collect indented continuation lines.
+                let mut buf = String::new();
+                i += 1;
+                while i < frontmatter.len() && frontmatter[i].starts_with(' ') {
+                    if !buf.is_empty() {
+                        buf.push(' ');
+                    }
+                    buf.push_str(frontmatter[i].trim());
+                    i += 1;
+                }
+                description = Some(buf.trim().to_string());
+                continue;
+            } else if !trimmed.is_empty() {
+                // Plain scalar.
+                description = Some(trimmed.to_string());
+            }
+        }
+        i += 1;
+    }
+    match (name, description) {
+        (Some(n), Some(d)) if !n.is_empty() && !d.is_empty() => Some((n, d)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_frontmatter_quoted_description() {
+        let content = "---\nname: grill-me\nvisibility: public\ndescription: \"Socratic interrogation skill.\"\n---\n\n# Body";
+        let (name, desc) = parse_skill_frontmatter(content).expect("should parse");
+        assert_eq!(name, "grill-me");
+        assert_eq!(desc, "Socratic interrogation skill.");
+    }
+
+    #[test]
+    fn parse_frontmatter_folded_description() {
+        let content = "---\nname: grill-me\ndescription: >\n  Socratic interrogation skill.\n  Tests deep understanding.\n---\n\n# Body";
+        let (name, desc) = parse_skill_frontmatter(content).expect("should parse");
+        assert_eq!(name, "grill-me");
+        assert!(desc.contains("Socratic interrogation skill."));
+        assert!(desc.contains("Tests deep understanding."));
+    }
+
+    #[test]
+    fn parse_frontmatter_missing_fields() {
+        let content = "---\nvisibility: public\n---\n\n# Body";
+        assert!(parse_skill_frontmatter(content).is_none());
+    }
+
+    #[test]
+    fn parse_frontmatter_no_frontmatter() {
+        let content = "# Grill Me\n\nNo frontmatter here.";
+        assert!(parse_skill_frontmatter(content).is_none());
     }
 }

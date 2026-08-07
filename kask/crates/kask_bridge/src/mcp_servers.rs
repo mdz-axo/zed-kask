@@ -288,10 +288,17 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // LLM04). Without this entry a kask-settings-derived override
             // would be silently dropped (the `.rules` trap: allowlists must
             // align with actual env-var reads). A shell-exported value still
+            // A shell-exported value still
             // reaches the child via parent-env inheritance (no `env_clear`),
             // but the allowlist is the record of what the server is permitted
             // to read.
             "HKASK_GUARD_TOKEN_LIMIT",
+            // Skills corpus dir — read by `AgentExecutor::build_skill_catalog`
+            // via `HKASK_SKILLS_DIR` in `config.rs` (Slice 6 — local agent
+            // skill-awareness). Without this entry, a kask-settings-derived
+            // skills dir override is silently dropped by
+            // `filter_config_env_for_server`.
+            "HKASK_SKILLS_DIR",
         ]),
     },
     BuiltinMcpServer {

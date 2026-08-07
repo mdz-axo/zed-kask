@@ -530,6 +530,7 @@ mod tests {
     fn dispatch(body: &str, registry: &Arc<LocalAgentRegistry>) -> JsonRpcResponse {
         let runtime = Arc::new(LazyLocalSwarmRuntime::lazy(
             "/tmp/hkask-a2a-test-unused-ledger.db".to_string(),
+            None,
         ));
         let handle = tokio::runtime::Runtime::new().unwrap();
         let handle = handle.handle().clone();

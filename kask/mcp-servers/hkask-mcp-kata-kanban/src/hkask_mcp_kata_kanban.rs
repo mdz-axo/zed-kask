@@ -1239,8 +1239,22 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                             .to_string_lossy()
                             .to_string()
                     });
+                let skills_dir = std::env::var("HKASK_SKILLS_DIR")
+                    .ok()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|raw| {
+                        if std::path::Path::new(&raw).is_absolute() {
+                            raw
+                        } else {
+                            hkask_types::agent_paths::resolve_under_data_dir(
+                                std::path::Path::new(&raw),
+                            )
+                            .to_string_lossy()
+                            .to_string()
+                        }
+                    });
                 let local_runtime =
-                    Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+                    Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path, skills_dir));
 
                 // Local agent registry — same dir resolution as hkask-mcp-swarm
                 // (relative paths resolve under the hKask data dir, not CWD).

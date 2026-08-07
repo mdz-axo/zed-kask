@@ -212,7 +212,7 @@ Fetched from https://github.com/cline/kanban (README). The Cline pattern:
 - [ ] When `kanban_board_id` is absent, SENSE reads stigmergic memory (current behavior, unchanged).
 - [ ] Test: invoke `swarm-intelligence` with a `kanban_board_id`, assert the SENSE output references the board's tasks.
 
-### Slice 6 — Local agent skill-awareness (B2 from prior session)
+### Slice 6 — Local agent skill-awareness (B2 from prior session) ✅ IMPLEMENTED
 
 **What**: Inject a trimmed skill catalog (name + description for the card's declared `skills`) into the local agent's system prompt in `agent_executor.rs`. Resolve descriptions by reading SKILL.md frontmatter from `.agents/skills/` (the swarm server has filesystem access; add a `HKASK_SKILLS_DIR` env var for path resolution).
 

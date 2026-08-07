@@ -224,7 +224,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         .to_string_lossy()
                         .to_string()
                 });
-            let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(ledger_path));
+            let local_runtime = std::sync::Arc::new(LazyLocalSwarmRuntime::lazy(
+                ledger_path,
+                config.skills_dir.clone(),
+            ));
 
             // Local swarm registry — the local replica of an ABW workspace
             // roster. A missing directory is not an error (created on first

@@ -24,10 +24,11 @@ visibility: Public
 {#
   Codifies the execute-and-feed-back loop for the Kask Curator or a human in
   the loop. Takes a swarm-intelligence plan (emitted_calls) and produces a
-  structured steering directive: pre-flight checks, the ordered
-  swarm_delegate_local execution sequence, the delegate_results collection
-  shape, and the re-invoke instruction. The executor (Curator or human) runs
-  the directive and feeds delegate_results back to swarm-intelligence.
+  structured steering directive: pre-flight checks, the swarm_execute_plan_local
+  delegation sequence (with optional evaluators), the delegate_results
+  collection shape, and the re-invoke instruction. The executor (Curator or
+  human) calls swarm_execute_plan_local and feeds delegate_results back to
+  swarm-intelligence.
 
   Anchored to PKO (the plan is a Procedure; the directive is the
   StepExecution sequence + result collection) and the Conant-Ashby Good

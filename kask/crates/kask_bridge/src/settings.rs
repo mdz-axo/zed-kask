@@ -498,6 +498,14 @@ pub struct KaskSwarmSettings {
     /// `LocalSwarmRegistry` - the local replica of an ABW workspace roster.
     /// When empty, uses the default `agents/local/swarms`.
     pub local_swarms_dir: String,
+
+    /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
+    /// read by `AgentExecutor::build_skill_catalog` to inject skill
+    /// descriptions into the local agent's system prompt (Slice 6 — local
+    /// agent skill-awareness). When empty, skill-awareness is disabled (the
+    /// agent runs skill-blind). Set from the project's `.agents/skills/`
+    /// directory.
+    pub skills_dir: String,
 }
 
 /// Mirror of `SwarmMode` in the server crate, kept separate to avoid a
@@ -551,6 +559,7 @@ impl Default for KaskSwarmSettings {
             curator_consent_default: false,
             local_agents_dir: String::new(),
             local_swarms_dir: String::new(),
+            skills_dir: String::new(),
         }
     }
 }
@@ -879,6 +888,12 @@ impl KaskSettings {
                 self.swarm.local_swarms_dir.clone(),
             );
         }
+        if !self.swarm.skills_dir.is_empty() {
+            env.insert(
+                "HKASK_SKILLS_DIR".to_string(),
+                self.swarm.skills_dir.clone(),
+            );
+        }
 
         // ── Training ──
         if !self.training.host.is_empty() {
@@ -1205,6 +1220,7 @@ impl From<KaskSwarmSettingsContent> for KaskSwarmSettings {
                 .unwrap_or(default.curator_consent_default),
             local_agents_dir: c.local_agents_dir.unwrap_or(default.local_agents_dir),
             local_swarms_dir: c.local_swarms_dir.unwrap_or(default.local_swarms_dir),
+            skills_dir: c.skills_dir.unwrap_or(default.skills_dir),
         }
     }
 }
@@ -1677,6 +1693,7 @@ mod tests {
         assert!(!env.contains_key("HKASK_SWARM_MODE"));
         assert!(!env.contains_key("HKASK_LOCAL_AGENTS_DIR"));
         assert!(!env.contains_key("HKASK_LOCAL_SWARMS_DIR"));
+        assert!(!env.contains_key("HKASK_SKILLS_DIR"));
         assert!(
             !env.contains_key("HKASK_ABW_API_KEY"),
             "the ABW API key is a credential, not config — it must never appear in mcp_env()"
@@ -1695,6 +1712,7 @@ mod tests {
         settings.swarm.curator_consent_default = true;
         settings.swarm.local_agents_dir = "/custom/agents/dir".to_string();
         settings.swarm.local_swarms_dir = "/custom/swarms/dir".to_string();
+        settings.swarm.skills_dir = "/custom/skills/dir".to_string();
         let env = settings.mcp_env();
         assert_eq!(
             env.get("HKASK_SWARM_MODE").map(String::as_str),
@@ -1720,6 +1738,10 @@ mod tests {
         assert_eq!(
             env.get("HKASK_LOCAL_SWARMS_DIR").map(String::as_str),
             Some("/custom/swarms/dir")
+        );
+        assert_eq!(
+            env.get("HKASK_SKILLS_DIR").map(String::as_str),
+            Some("/custom/skills/dir")
         );
     }
 
