@@ -3,29 +3,31 @@
 use std::sync::Arc;
 
 use crate::consolidation::ConsolidationBridge;
-use crate::semantic::SemanticMemory;
+use crate::memory_store::MemoryStore;
 use hkask_types::WebID;
 use hkask_types::{ConsolidationOutcome, ConsolidationRequest};
 
 pub struct ConsolidationService {
     bridge: Arc<ConsolidationBridge>,
-    semantic: Arc<SemanticMemory>,
+    store: Arc<MemoryStore>,
 }
 
 impl ConsolidationService {
-    pub fn new(bridge: Arc<ConsolidationBridge>, semantic: Arc<SemanticMemory>) -> Self {
-        Self { bridge, semantic }
+    pub fn new(bridge: Arc<ConsolidationBridge>, store: Arc<MemoryStore>) -> Self {
+        Self { bridge, store }
     }
 
     /// Execute a consolidation operation — three phases:
-    /// 1. Promote episodic h_mems to semantic memory (bridge also soft-deletes the
-    ///    episodic source h_mems; those expirations are reported separately by the bridge).
-    /// 2. Delete semantic h_mems at or below confidence floor (if specified).
-    /// 3. Delete lowest-confidence semantic h_mems until within max count (if specified).
+    /// 1. Promote perspective-bound h_mems to shared memory (bridge also
+    ///    soft-deletes the source h_mems; those expirations are reported
+    ///    separately by the bridge).
+    /// 2. Delete shared h_mems at or below confidence floor (if specified).
+    /// 3. Delete lowest-confidence shared h_mems until within max count (if
+    ///    specified).
     ///
-    /// Note: `deleted_count` in the returned outcome counts only the semantic cleanup
-    /// deletions performed by this service. The bridge's own `deleted_count` reports
-    /// episodic source expirations.
+    /// Note: `deleted_count` in the returned outcome counts only the cleanup
+    /// deletions performed by this service. The bridge's own `deleted_count`
+    /// reports source expirations.
     pub fn consolidate(
         &self,
         perspective: &WebID,
@@ -52,10 +54,10 @@ impl ConsolidationService {
         let mut deleted_count = 0usize;
 
         if let Some(floor) = request.confidence_floor {
-            match self.semantic.low_confidence_h_mems(floor, usize::MAX) {
+            match self.store.low_confidence_h_mems(floor, usize::MAX) {
                 Ok(candidates) if !candidates.is_empty() => {
                     for h_mem in &candidates {
-                        match self.semantic.delete_h_mem(&h_mem.id) {
+                        match self.store.delete_h_mem(&h_mem.id) {
                             Ok(()) => deleted_count += 1,
                             Err(e) => tracing::warn!(
                                 target: "reg.consolidation",
@@ -78,12 +80,12 @@ impl ConsolidationService {
         }
 
         if let Some(max) = request.max_semantic_triples {
-            match self.semantic.h_mem_count() {
+            match self.store.h_mem_count() {
                 Ok(count) if count > max => {
-                    match self.semantic.lowest_confidence_h_mems(count - max) {
+                    match self.store.lowest_confidence_h_mems(count - max) {
                         Ok(candidates) => {
                             for h_mem in &candidates {
-                                match self.semantic.delete_h_mem(&h_mem.id) {
+                                match self.store.delete_h_mem(&h_mem.id) {
                                     Ok(()) => deleted_count += 1,
                                     Err(e) => tracing::warn!(
                                         target: "reg.consolidation",
@@ -133,14 +135,14 @@ impl ConsolidationService {
         self.bridge.consolidation_candidate_count(perspective)
     }
 
-    /// Count semantic h_mems at or below a confidence threshold.
+    /// Count shared h_mems at or below a confidence threshold.
     ///
     /// Returns 0 on storage error as documented degradation — the
     /// consolidation loop must not hard-fail on a transient DB error, but
     /// the operator sees a `tracing::warn!` so a stale signal is
     /// distinguishable from a measured zero.
     pub fn semantic_low_confidence_count(&self, threshold: f64) -> usize {
-        match self.semantic.low_confidence_count(threshold) {
+        match self.store.low_confidence_count(threshold) {
             Ok(count) => count,
             Err(error) => {
                 tracing::warn!(
@@ -153,12 +155,12 @@ impl ConsolidationService {
         }
     }
 
-    /// Count all semantic h_mems.
+    /// Count all shared h_mems.
     ///
     /// Returns 0 on storage error as documented degradation — see
     /// `semantic_low_confidence_count` for the rationale.
     pub fn semantic_h_mem_count(&self) -> usize {
-        match self.semantic.h_mem_count() {
+        match self.store.h_mem_count() {
             Ok(count) => count,
             Err(error) => {
                 tracing::warn!(

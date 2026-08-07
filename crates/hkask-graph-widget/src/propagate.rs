@@ -449,6 +449,7 @@ mod tests {
                 subject: None,
                 joint_probability: None,
                 nodes,
+                ontology: None,
             },
             topo,
         )
@@ -602,6 +603,7 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes,
+            ontology: None,
         };
         assert!(is_polytree(&body));
     }
@@ -619,6 +621,7 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes,
+            ontology: None,
         };
         assert!(is_polytree(&body));
     }
@@ -637,6 +640,7 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes,
+            ontology: None,
         };
         assert!(!is_polytree(&body));
     }
@@ -667,6 +671,7 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes: vec![a, b, c],
+            ontology: None,
         };
         let topo = vec![0, 1, 2];
         let mut evidence = HashMap::new();
@@ -747,6 +752,7 @@ mod tests {
             subject: None,
             joint_probability: None,
             nodes: vec![a, b, c],
+            ontology: None,
         };
         let topo = vec![0, 1, 2];
         let mut evidence = HashMap::new();

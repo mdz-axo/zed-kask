@@ -36,7 +36,7 @@ pub const STANDARD_STATUS_KEYS: &[&str] =
 /// accepts the same set via `TaskStatus::parse_str`.
 #[must_use]
 pub fn is_standard_status(status: &str) -> bool {
-    STANDARD_STATUS_KEYS.iter().any(|&key| key == status)
+    STANDARD_STATUS_KEYS.contains(&status)
 }
 
 #[cfg(test)]

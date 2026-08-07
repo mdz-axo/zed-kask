@@ -8,7 +8,8 @@
 //! 5. Semantic recall (deduped, perspective-free)
 
 use hkask_memory::{
-    ConsolidationBridge, EpisodicMemory, EpisodicMemoryError, SemanticMemory, SemanticMemoryError,
+    ConsolidationBridge, EpisodicMemory, EpisodicMemoryError, MemoryStore, SemanticMemory,
+    SemanticMemoryError,
 };
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{EmbeddingStore, HMem, HMemStore};
@@ -42,6 +43,24 @@ fn setup() -> (Arc<EpisodicMemory>, Arc<SemanticMemory>) {
         EmbeddingStore::from_driver(Arc::clone(&driver), 1024).expect("embedding store init"),
     ));
     (episodic, semantic)
+}
+
+fn setup_store() -> Arc<MemoryStore> {
+    let driver = make_driver();
+    driver
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS hmems (
+                id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
+                value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
+                recalled_at TEXT NOT NULL, confidence REAL NOT NULL, perspective TEXT,
+                visibility TEXT NOT NULL, owner_webid TEXT NOT NULL, ontology TEXT
+            )",
+        )
+        .expect("init schema");
+    let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+    let embedding_store =
+        EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
+    Arc::new(MemoryStore::new(h_mem_store, embedding_store))
 }
 
 fn test_perspective() -> WebID {
@@ -131,20 +150,20 @@ fn semantic_store_and_recall_deduped() {
 
 #[test]
 fn consolidation_bridge_counts_candidates() {
-    let (episodic, semantic) = setup();
-    let bridge = ConsolidationBridge::new(Arc::clone(&episodic), Arc::clone(&semantic));
+    let store = setup_store();
+    let bridge = ConsolidationBridge::new(Arc::clone(&store));
     let perspective = test_perspective();
 
     assert_eq!(bridge.consolidation_candidate_count(&perspective), 0);
 
     let h_mem =
         HMem::new("e", "a", serde_json::json!("v"), perspective).with_perspective(perspective);
-    episodic.store(h_mem).expect("store");
+    store.store(h_mem).expect("store");
 
     assert_eq!(
         bridge.consolidation_candidate_count(&perspective),
         1,
-        "should count stored episodic h_mems"
+        "should count stored perspective-bound h_mems"
     );
 }
 
@@ -289,11 +308,11 @@ fn semantic_recall_touches_recalled_at() {
 
 #[test]
 fn consolidation_combines_both_sides_decayed() {
-    let (episodic, semantic) = setup();
-    let bridge = ConsolidationBridge::new(Arc::clone(&episodic), Arc::clone(&semantic));
+    let store = setup_store();
+    let bridge = ConsolidationBridge::new(Arc::clone(&store));
     let perspective = test_perspective();
 
-    // Seed a semantic h_mem with confidence 0.8
+    // Seed a shared h_mem with confidence 0.8
     let sem_triple = HMem::new(
         "tool_x",
         "returns",
@@ -302,9 +321,9 @@ fn consolidation_combines_both_sides_decayed() {
     )
     .with_visibility(hkask_types::Visibility::Shared)
     .with_confidence(Confidence::new(0.8));
-    semantic.store(sem_triple).expect("store semantic");
+    store.store(sem_triple).expect("store shared");
 
-    // Store an episodic h_mem with same EAV and confidence 0.8
+    // Store a perspective-bound h_mem with same EAV and confidence 0.8
     let epi_triple = HMem::new(
         "tool_x",
         "returns",
@@ -313,7 +332,7 @@ fn consolidation_combines_both_sides_decayed() {
     )
     .with_perspective(perspective)
     .with_confidence(Confidence::new(0.8));
-    episodic.store(epi_triple).expect("store episodic");
+    store.store(epi_triple).expect("store perspective-bound");
 
     // Consolidate — should Bayesian-combine both sides after decay
     let outcome = bridge
@@ -337,9 +356,9 @@ fn consolidation_combines_both_sides_decayed() {
     );
     assert!(outcome.failed_count == 0, "no failures expected");
 
-    // Recalling the semantic h_mem should show the combined (strengthened) confidence.
+    // Recalling the shared h_mem should show the combined (strengthened) confidence.
     // Both inputs are 0.8, both near-fresh (decay ≈ 0), Bayesian consensus ≈ 0.941.
-    let recalled = semantic.query_deduped("tool_x").expect("recall semantic");
+    let recalled = store.query_deduped("tool_x").expect("recall shared");
     assert_eq!(recalled.len(), 1);
     assert!(
         recalled[0].confidence.value() > 0.9,

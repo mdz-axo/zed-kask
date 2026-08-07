@@ -56,6 +56,11 @@ pub struct Task {
     /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
     /// or delegated outside a swarm. The kanban board is the durable
     /// coordination source of truth; this field links the task to its swarm.
+    ///
+    /// TODO(memory-refactor): wire this from the delegation context once the
+    /// hive-memory refactoring lands. The memory agent is rebuilding the
+    /// swarm memory model — this field is the kanban-side coordination tag
+    /// that links a task to its swarm's hive memory store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub swarm_id: Option<String>,
     /// Structured result of the last `kanban_task_spawn` delegation, when the

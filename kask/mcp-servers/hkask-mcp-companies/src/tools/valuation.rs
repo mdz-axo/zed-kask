@@ -31,6 +31,31 @@ fn validate_unit_interval(name: &str, value: f64) -> Result<(), McpToolError> {
     }
 }
 
+/// Extract non-empty financial statement arrays and the profile object from
+/// the raw provider responses. Returns `None` if any required array is empty
+/// or missing, so callers can surface an "insufficient data" error without
+/// panicky `unwrap()` calls on guarded `Option<&[Value]>`.
+fn extract_historical_arrays<'a>(
+    income: &'a serde_json::Value,
+    balance: &'a serde_json::Value,
+    cf: &'a serde_json::Value,
+    metrics: &'a serde_json::Value,
+    profile: &'a serde_json::Value,
+) -> Option<(
+    &'a [serde_json::Value],
+    &'a [serde_json::Value],
+    &'a [serde_json::Value],
+    &'a [serde_json::Value],
+    &'a serde_json::Value,
+)> {
+    let income_data = income.as_array().filter(|a| !a.is_empty())?;
+    let balance_data = balance.as_array().filter(|a| !a.is_empty())?;
+    let cf_data = cf.as_array().filter(|a| !a.is_empty())?;
+    let metrics_data: &[serde_json::Value] = metrics.as_array().map_or(&[], |v| v);
+    let profile_data = profile.as_array().and_then(|a| a.first())?;
+    Some((income_data, balance_data, cf_data, metrics_data, profile_data))
+}
+
 #[tool_router(router = valuation_router, vis = "pub")]
 impl CompaniesServer {
     #[tool(
@@ -175,23 +200,9 @@ impl CompaniesServer {
 
                 match (inc_res, bal_res, cf_res, km_res) {
                     (Ok(inc), Ok(bal), Ok(cf), Ok(km)) => {
-                        let income_arr = inc.as_array();
-                        let balance_arr = bal.as_array();
-                        let cf_arr = cf.as_array();
-                        let metrics_arr = km.as_array();
-
-                        if income_arr.is_none_or(|a| a.is_empty())
-                            || balance_arr.is_none_or(|a| a.is_empty())
-                            || cf_arr.is_none_or(|a| a.is_empty())
+                        if let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                            extract_historical_arrays(&inc, &bal, &cf, &km, profile_data)
                         {
-                            serde_json::json!({"error": "insufficient data for DCF"})
-                        } else {
-                            let income_data = income_arr.unwrap();
-                            let balance_data = balance_arr.unwrap();
-                            let cf_data = cf_arr.unwrap();
-                            let metrics_data: &[serde_json::Value] =
-                                metrics_arr.map_or(&[], |v| v);
-
                             let hist = financial_model::HistoricalSnapshot::from_api_json(
                                 income_data,
                                 balance_data,
@@ -230,6 +241,8 @@ impl CompaniesServer {
                                     "margin_of_safety": margin_of_safety,
                                 })
                             }
+                        } else {
+                            serde_json::json!({"error": "insufficient data for DCF"})
                         }
                     }
                     _ => serde_json::json!({"error": "DCF overlay unavailable"}),
@@ -302,25 +315,11 @@ impl CompaniesServer {
                     }
                 };
 
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
-
-            if income_arr.is_none_or(|a| a.is_empty())
-                || balance_arr.is_none_or(|a| a.is_empty())
-                || cf_arr.is_none_or(|a| a.is_empty())
-                || profile_obj.is_none()
-            {
-                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            }
-
-            let income_data = income_arr.unwrap();
-            let balance_data = balance_arr.unwrap();
-            let cf_data = cf_arr.unwrap();
-            let metrics_data: &[serde_json::Value] = metrics_arr.map_or(&[], |v| v);
-            let profile_data = profile_obj.unwrap();
+            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+            else {
+                return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data for sensitivity analysis"}));
+            };
 
             let hist = financial_model::HistoricalSnapshot::from_api_json(
                 income_data, balance_data, cf_data, metrics_data, profile_data,
@@ -415,26 +414,14 @@ impl CompaniesServer {
                     }
                 };
 
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
-
-            if income_arr.is_none_or(|a| a.is_empty())
-                || balance_arr.is_none_or(|a| a.is_empty())
-                || cf_arr.is_none_or(|a| a.is_empty())
-                || profile_obj.is_none()
-            {
+            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+            else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            }
+            };
 
             let hist = financial_model::HistoricalSnapshot::from_api_json(
-                income_arr.unwrap(),
-                balance_arr.unwrap(),
-                cf_arr.unwrap(),
-                metrics_arr.map_or(&[], |v| v),
-                profile_obj.unwrap(),
+                income_data, balance_data, cf_data, metrics_data, profile_data,
             );
 
             if hist.revenue.len() < 2 {
@@ -446,8 +433,7 @@ impl CompaniesServer {
                 types::ProjectionAssumptionOverrides::from(&req),
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-            let current_price = profile_obj
-                .unwrap()
+            let current_price = profile_data
                 .get("price")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
@@ -511,25 +497,11 @@ impl CompaniesServer {
                     }
                 };
 
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
-
-            if income_arr.is_none_or(|a| a.is_empty())
-                || balance_arr.is_none_or(|a| a.is_empty())
-                || cf_arr.is_none_or(|a| a.is_empty())
-                || profile_obj.is_none()
-            {
+            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+            else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            }
-
-            let income_data = income_arr.unwrap();
-            let balance_data = balance_arr.unwrap();
-            let cf_data = cf_arr.unwrap();
-            let metrics_data: &[serde_json::Value] = metrics_arr.map_or(&[], |v| v);
-            let profile_data = profile_obj.unwrap();
+            };
 
             let hist = financial_model::HistoricalSnapshot::from_api_json(
                 income_data, balance_data, cf_data, metrics_data, profile_data,
@@ -539,14 +511,13 @@ impl CompaniesServer {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient historical data — need at least 2 years of revenue"}));
             }
 
+            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
             let assumptions = financial_model::ProjectionAssumptions::from_history_with_overrides(
                 &hist,
                 types::ProjectionAssumptionOverrides::from(&req),
             )
             .map_err(|err| McpToolError::invalid_argument(err.to_string()))?;
-
-            let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
             let ranges = financial_model::McRange {
                 revenue_growth: req.range_revenue_growth,
                 gross_margin: req.range_gross_margin,
@@ -651,25 +622,11 @@ impl CompaniesServer {
                     | (_, _, _, _, Err(e)) => { return Err(e); }
                 };
 
-            let income_arr = income.as_array();
-            let balance_arr = balance.as_array();
-            let cf_arr = cf.as_array();
-            let metrics_arr = metrics.as_array();
-            let profile_obj = profile.as_array().and_then(|a| a.first());
-
-            if income_arr.is_none_or(|a| a.is_empty())
-                || balance_arr.is_none_or(|a| a.is_empty())
-                || cf_arr.is_none_or(|a| a.is_empty())
-                || profile_obj.is_none()
-            {
+            let Some((income_data, balance_data, cf_data, metrics_data, profile_data)) =
+                extract_historical_arrays(&income, &balance, &cf, &metrics, &profile)
+            else {
                 return Ok(serde_json::json!({"symbol": req.symbol, "error": "insufficient data"}));
-            }
-
-            let income_data = income_arr.unwrap();
-            let balance_data = balance_arr.unwrap();
-            let cf_data = cf_arr.unwrap();
-            let metrics_data: &[serde_json::Value] = metrics_arr.map_or(&[], |v| v);
-            let profile_data = profile_obj.unwrap();
+            };
 
             let hist = financial_model::HistoricalSnapshot::from_api_json(
                 income_data, balance_data, cf_data, metrics_data, profile_data,
@@ -890,22 +847,15 @@ impl CompaniesServer {
                     if let (Ok(inc), Ok(bal), Ok(cf), Ok(metrics), Ok(prof)) =
                         (&actual_income, &actual_balance, &actual_cf, &actual_metrics, &actual_profile)
                     {
-                        let inc_arr = inc.as_array();
-                        let bal_arr = bal.as_array();
-                        let cf_arr = cf.as_array();
-                        let met_arr = metrics.as_array();
-                        let prof_obj = prof.as_array().and_then(|a| a.first());
-
-                        if inc_arr.is_some_and(|a| !a.is_empty())
-                            && bal_arr.is_some_and(|a| !a.is_empty())
-                            && cf_arr.is_some_and(|a| !a.is_empty())
+                        if let Some((inc_data, bal_data, cf_data, met_data, prof_data)) =
+                            extract_historical_arrays(inc, bal, cf, metrics, prof)
                         {
                             let actual_hist = financial_model::HistoricalSnapshot::from_api_json(
-                                inc_arr.unwrap(),
-                                bal_arr.unwrap(),
-                                cf_arr.unwrap(),
-                                met_arr.map_or(&[] as &[serde_json::Value], |v| v),
-                                prof_obj.unwrap_or(&serde_json::Value::Null),
+                                inc_data,
+                                bal_data,
+                                cf_data,
+                                met_data,
+                                prof_data,
                             );
 
                             // Run decomposition

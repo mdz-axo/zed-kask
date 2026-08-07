@@ -87,6 +87,10 @@ pub struct HMemEntry {
     pub perspective: String,
     pub visibility: String,
     pub dimension: Option<String>,
+    /// Dual-axis ontological anchoring (P5.4), serialized as JSON.
+    /// `None` for legacy entries created before the ontology column.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
 }
 
 /// A proposal template for a contract missing its user-facing `expect:` annotation.

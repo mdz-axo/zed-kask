@@ -9,7 +9,7 @@
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
 //! wired (pre-login), the thread's ingest call site no-ops on `None`.
 
-use hkask_memory::{ConsolidationBridge, ConsolidationService, EpisodicMemory, SemanticMemory};
+use hkask_memory::{ConsolidationBridge, ConsolidationService, MemoryStore};
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
 use hkask_types::{MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID};
 use std::future::Future;
@@ -40,16 +40,15 @@ use crate::inference::LanguageModelEmbeddingPort;
 /// Construction requires a SQLCipher database path and passphrase. When these
 /// are not available, the port is simply not wired (the hook stays `None`).
 pub struct RealMemoryPort {
-    episodic: Arc<EpisodicMemory>,
-    semantic: Arc<SemanticMemory>,
-    /// The curator's sovereign stores (`agents/curator/pod.db`) behind a
+    store: Arc<MemoryStore>,
+    /// The curator's sovereign store (`agents/curator/pod.db`) behind a
     /// self-healing handle: when the curator DB cannot be opened at startup
-    /// (locked by a previous MCP server instance, transient I/O), the stores
-    /// are `None` and every access re-attempts the open. A successful
+    /// (locked by a previous MCP server instance, transient I/O), the store
+    /// is `None` and every access re-attempts the open. A successful
     /// re-open restores curator memory without an app restart; persistent
     /// failure is signaled with a warn-once per healing attempt, never
     /// silently.
-    curator_stores: Arc<CuratorStores>,
+    curator_store: Arc<CuratorStore>,
     embedding_port: LanguageModelEmbeddingPort,
     embedding_model: String,
     user_webid: WebID,
@@ -121,11 +120,7 @@ impl RealMemoryPort {
             hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, db_path),
         );
 
-        // Episodic store — first-person, Private, perspective-bound
-        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
-        let episodic = Arc::new(EpisodicMemory::new(h_mem_store));
-
-        // Semantic store — shared knowledge graph with embeddings.
+        // Unified memory store — h_mems + embeddings, same SQLCipher DB.
         // The embedding dimension must match the embedding model's output —
         // a mismatch causes `DimensionMismatch` errors on every store call,
         // silently disabling embedding-based recall. The caller resolves
@@ -167,29 +162,25 @@ impl RealMemoryPort {
         } else {
             embedding_dim
         };
-        let h_mem_store2 = HMemStore::from_driver(Arc::clone(&driver))
-            .map_err(|e| format!("Failed to create second HMemStore for semantic memory: {e}"))?;
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).map_err(|e| e.to_string())?;
         let embedding_store = EmbeddingStore::from_driver(driver, embedding_dim)
             .map_err(|e| format!("Failed to create EmbeddingStore: {e}"))?;
-        let semantic = Arc::new(SemanticMemory::new(h_mem_store2, embedding_store));
+        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
 
         let curator_webid = WebID::from_persona(b"curator");
 
-        // Curator stores behind the self-healing handle — see the field docs.
-        let curator_stores = Arc::new(CuratorStores::new(passphrase, embedding_dim));
+        // Curator store behind the self-healing handle — see the field docs.
+        let curator_store = Arc::new(CuratorStore::new(passphrase, embedding_dim));
 
-        // Consolidation service — episodic → semantic promotion.
+        // Consolidation service — perspective-bound → shared promotion.
         // Only constructed when the cadence is non-zero; a zero cadence disables
         // the trigger entirely (the operator can still fire consolidation
         // manually via the curator MCP server).
         let consolidation = if consolidation_cadence_secs > 0 {
-            let bridge = Arc::new(ConsolidationBridge::new(
-                Arc::clone(&episodic),
-                Arc::clone(&semantic),
-            ));
+            let bridge = Arc::new(ConsolidationBridge::new(Arc::clone(&store)));
             Some(Arc::new(ConsolidationService::new(
                 bridge,
-                Arc::clone(&semantic),
+                Arc::clone(&store),
             )))
         } else {
             None
@@ -197,13 +188,12 @@ impl RealMemoryPort {
 
         let curator_consolidation = RwLock::new(build_curator_consolidation(
             consolidation_cadence_secs,
-            &curator_stores.get(),
+            &curator_store.get(),
         ));
 
         Ok(Self {
-            episodic,
-            semantic,
-            curator_stores,
+            store,
+            curator_store,
             embedding_port,
             embedding_model,
             user_webid,
@@ -692,54 +682,32 @@ impl hkask_regulation::AlertEscalationSink for BridgeAlertEscalationSink {
 
 /// The curator store pair: first-person episodic + shared semantic, both
 /// backed by the curator's sovereign `pod.db`.
-type CuratorStorePair = (Option<Arc<EpisodicMemory>>, Option<Arc<SemanticMemory>>);
-
-/// The curator's sovereign stores, with self-healing open.
+/// The curator's sovereign store, with self-healing open.
 ///
-/// Wraps the `(episodic, semantic)` pair in an `RwLock` plus the parameters
-/// needed to re-open them (passphrase, embedding dim). When the initial open
-/// fails — the common causes are transient (DB locked by a previous curator
-/// MCP server instance still shutting down, transient I/O) — the stores are
-/// `None` and every access via `get()` re-attempts the open. A successful
-/// re-open restores curator memory mid-session without an app restart.
-///
-/// Failure is never silent: the initial failure logs `error!` (with the DB
-/// path and remediation), each subsequent healing attempt logs `warn!` once
-/// per attempt, and a successful heal logs `info!`. This is the fail-loud
-/// half of the contract; the lazy re-open is the self-healing half.
-struct CuratorStores {
-    stores: RwLock<CuratorStorePair>,
+/// Wraps the `Option<Arc<MemoryStore>>` in an `RwLock` plus the parameters
+/// needed to re-open it (passphrase, embedding dim). When the initial open
+/// fails, the store is `None` and every access via `get()` re-attempts the
+/// open. A successful re-open restores curator memory mid-session.
+struct CuratorStore {
+    store: RwLock<Option<Arc<MemoryStore>>>,
     passphrase: String,
     embedding_dim: usize,
-    /// Set once the first post-construction failure has been logged, so a
-    /// persistently-broken DB produces one warn per healing *attempt*
-    /// (driven by ingestion cadence) rather than one per skipped write.
     heal_attempt_logged: std::sync::atomic::AtomicBool,
-    /// When false, `get()` never attempts a re-open. Tests construct handles
-    /// over in-memory stores with no valid passphrase/path — a heal attempt
-    /// there would touch the real filesystem.
     heal_enabled: bool,
 }
 
-impl CuratorStores {
+impl CuratorStore {
     fn new(passphrase: &str, embedding_dim: usize) -> Self {
-        let stores = open_curator_stores(passphrase, embedding_dim);
-        if stores.0.is_none() || stores.1.is_none() {
-            // `open_curator_stores` already logged the specific failure at
-            // warn; escalate the operator-facing summary to error since the
-            // curator now runs without memory until a heal succeeds.
+        let store = open_curator_store(passphrase, embedding_dim);
+        if store.is_none() {
             tracing::error!(
                 target: "reg.memory",
                 db_path = %curator_db_path(),
-                "Curator memory stores unavailable — the curator runs WITHOUT \
-                 episodic/semantic memory. Every curator-turn write will be \
-                 attempted again on ingestion (self-healing); check the DB \
-                 path above, that no other process holds the SQLCipher lock, \
-                 and that the passphrase matches the user's hKask keychain entry."
+                "Curator memory store unavailable — the curator runs WITHOUT                  memory. Every curator-turn write will be                  attempted again on ingestion (self-healing); check the DB                  path above, that no other process holds the SQLCipher lock,                  and that the passphrase matches the user's hKask keychain entry."
             );
         }
         Self {
-            stores: RwLock::new(stores),
+            store: RwLock::new(store),
             passphrase: passphrase.to_string(),
             embedding_dim,
             heal_attempt_logged: std::sync::atomic::AtomicBool::new(false),
@@ -747,16 +715,10 @@ impl CuratorStores {
         }
     }
 
-    /// Construct a handle over pre-built stores (tests). Never attempts a
-    /// re-open — the passphrase is empty and healing is disabled. For the
-    /// absent-store case, pass `None`s.
     #[cfg(test)]
-    fn for_tests(
-        episodic: Option<Arc<EpisodicMemory>>,
-        semantic: Option<Arc<SemanticMemory>>,
-    ) -> Self {
+    fn for_tests(store: Option<Arc<MemoryStore>>) -> Self {
         Self {
-            stores: RwLock::new((episodic, semantic)),
+            store: RwLock::new(store),
             passphrase: String::new(),
             embedding_dim: 1024,
             heal_attempt_logged: std::sync::atomic::AtomicBool::new(false),
@@ -764,73 +726,44 @@ impl CuratorStores {
         }
     }
 
-    /// Test helper: replace the stores after construction, simulating an
-    /// outage or a heal.
     #[cfg(test)]
-    fn set_for_tests(
-        &self,
-        episodic: Option<Arc<EpisodicMemory>>,
-        semantic: Option<Arc<SemanticMemory>>,
-    ) {
-        if let Ok(mut guard) = self.stores.write() {
-            *guard = (episodic, semantic);
+    fn set_for_tests(&self, store: Option<Arc<MemoryStore>>) {
+        if let Ok(mut guard) = self.store.write() {
+            *guard = store;
         }
     }
 
-    /// True when the DB-open level failed (both stores `None`) — the case a
-    /// re-open can fix. Partial degradation (one store `Some`, the other
-    /// `None` from a per-store init failure) is NOT healable by re-open and
-    /// must not churn re-opens on every access.
-    fn db_level_down(stores: &CuratorStorePair) -> bool {
-        stores.0.is_none() && stores.1.is_none()
-    }
-
-    /// Read the current store availability WITHOUT attempting a heal — for
-    /// status reporting. A health probe must not have side effects: if the
-    /// probe itself triggered the re-open, the curator's status would flap
-    /// between "down" and "healing" on every poll and the warn-once signal
-    /// would be driven by the probe rather than by real traffic.
-    fn availability(&self) -> (bool, bool) {
-        match self.stores.read() {
-            Ok(guard) => (guard.0.is_some(), guard.1.is_some()),
-            Err(_) => (false, false),
+    fn availability(&self) -> bool {
+        match self.store.read() {
+            Ok(guard) => guard.is_some(),
+            Err(_) => false,
         }
     }
 
-    /// Read the current stores, attempting a re-open when they're down.
-    ///
-    /// The re-open is cheap when it keeps failing (SQLCipher open fails fast
-    /// on a locked/absent DB) and runs at most once per call. Callers get a
-    /// cloned pair of `Arc`s, so a heal mid-ingestion takes effect on the
-    /// next turn.
-    fn get(&self) -> CuratorStorePair {
-        let needs_heal = match self.stores.read() {
-            Ok(guard) => Self::db_level_down(&guard),
-            Err(_) => true, // poisoned — attempt re-open to rebuild state
+    fn get(&self) -> Option<Arc<MemoryStore>> {
+        let needs_heal = match self.store.read() {
+            Ok(guard) => guard.is_none(),
+            Err(_) => true,
         };
         if needs_heal && self.heal_enabled {
             self.try_heal();
         }
-        match self.stores.read() {
+        match self.store.read() {
             Ok(guard) => (*guard).clone(),
-            Err(_) => (None, None),
+            Err(_) => None,
         }
     }
 
-    /// Attempt to (re)open the curator stores. On success, replaces the slot
-    /// and logs the heal; on failure, warns once per attempt round.
     fn try_heal(&self) {
-        let fresh = open_curator_stores(&self.passphrase, self.embedding_dim);
-        let fresh_ok = !Self::db_level_down(&fresh);
-        let replaced = match self.stores.write() {
+        let fresh = open_curator_store(&self.passphrase, self.embedding_dim);
+        let fresh_ok = fresh.is_some();
+        let replaced = match self.store.write() {
             Ok(mut guard) => {
-                let was_down = Self::db_level_down(&guard);
+                let was_down = guard.is_none();
                 if fresh_ok && was_down {
                     *guard = fresh;
                     true
                 } else {
-                    // Already healed by a concurrent caller, or the re-open
-                    // failed — drop our copy.
                     false
                 }
             }
@@ -838,7 +771,7 @@ impl CuratorStores {
                 tracing::warn!(
                     target: "reg.memory",
                     error = %e,
-                    "Curator stores lock poisoned — cannot attempt heal"
+                    "Curator store lock poisoned — cannot attempt heal"
                 );
                 false
             }
@@ -847,13 +780,11 @@ impl CuratorStores {
             tracing::info!(
                 target: "reg.memory",
                 db_path = %curator_db_path(),
-                "Curator memory stores healed — curator memory restored"
+                "Curator memory store healed — curator memory restored"
             );
             self.heal_attempt_logged
                 .store(false, std::sync::atomic::Ordering::Relaxed);
         } else if !fresh_ok {
-            // One warn per attempt round; the flag resets on a successful
-            // heal so a later outage re-arms the signal.
             if !self
                 .heal_attempt_logged
                 .swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -861,41 +792,34 @@ impl CuratorStores {
                 tracing::warn!(
                     target: "reg.memory",
                     db_path = %curator_db_path(),
-                    "Curator memory stores still unavailable after re-open \
-                     attempt — curator-turn writes are being dropped"
+                    "Curator memory store still unavailable after re-open                      attempt — curator-turn writes are being dropped"
                 );
             }
         }
     }
 }
 
-/// Build the curator consolidation service from an already-resolved store
-/// pair. Returns `None` when the cadence is zero (consolidation disabled) or
-/// either store is unavailable. Called at construction and after a heal.
 fn build_curator_consolidation(
     consolidation_cadence_secs: u64,
-    stores: &CuratorStorePair,
+    store: &Option<Arc<MemoryStore>>,
 ) -> Option<Arc<ConsolidationService>> {
     if consolidation_cadence_secs == 0 {
         return None;
     }
-    let (Some(curator_episodic), Some(curator_semantic)) = stores else {
+    let Some(store) = store else {
         return None;
     };
-    let bridge = Arc::new(ConsolidationBridge::new(
-        Arc::clone(curator_episodic),
-        Arc::clone(curator_semantic),
-    ));
+    let bridge = Arc::new(ConsolidationBridge::new(Arc::clone(store)));
     Some(Arc::new(ConsolidationService::new(
         bridge,
-        Arc::clone(curator_semantic),
+        Arc::clone(store),
     )))
 }
 
-fn open_curator_stores(
+fn open_curator_store(
     passphrase: &str,
     embedding_dim: usize,
-) -> (Option<Arc<EpisodicMemory>>, Option<Arc<SemanticMemory>>) {
+) -> Option<Arc<MemoryStore>> {
     let curator_db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
         let p = hkask_types::agent_paths::agent_pod_db("curator");
         let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
@@ -912,11 +836,9 @@ fn open_curator_stores(
                 target: "reg.memory",
                 error = %e,
                 db_path = %curator_db_path,
-                "Failed to open curator DB — curator copies will be skipped. \
-                 Set HKASK_CURATOR_DB to override the path, or ensure the \
-                 curator agent directory exists under the hKask data dir."
+                "Failed to open curator DB — curator copies will be skipped.                  Set HKASK_CURATOR_DB to override the path, or ensure the                  curator agent directory exists under the hKask data dir."
             );
-            return (None, None);
+            return None;
         }
     };
     let pool = match db.sqlite_pool() {
@@ -927,37 +849,21 @@ fn open_curator_stores(
                 error = %e,
                 "Failed to get SQLite pool for curator DB"
             );
-            return (None, None);
+            return None;
         }
     };
     let driver: Arc<dyn hkask_storage::DatabaseDriver> = Arc::new(
         hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, curator_db_path.as_str()),
     );
-    // HMem store for the curator's episodic memory (first-person, Private).
-    let h_mem_store_episodic = match HMemStore::from_driver(Arc::clone(&driver)) {
+    let h_mem_store = match HMemStore::from_driver(Arc::clone(&driver)) {
         Ok(s) => s,
         Err(e) => {
             tracing::warn!(
                 target: "reg.memory",
                 error = %e,
-                "Failed to create HMemStore for curator episodic DB"
+                "Failed to create HMemStore for curator DB"
             );
-            return (None, None);
-        }
-    };
-    // HMem store for the curator's semantic memory (shared, with embeddings).
-    let h_mem_store_semantic = match HMemStore::from_driver(Arc::clone(&driver)) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(
-                target: "reg.memory",
-                error = %e,
-                "Failed to create HMemStore for curator semantic DB"
-            );
-            return (
-                Some(Arc::new(EpisodicMemory::new(h_mem_store_episodic))),
-                None,
-            );
+            return None;
         }
     };
     let embedding_store = match EmbeddingStore::from_driver(driver, embedding_dim) {
@@ -966,23 +872,18 @@ fn open_curator_stores(
             tracing::warn!(
                 target: "reg.memory",
                 error = %e,
-                "Failed to create EmbeddingStore for curator semantic DB"
+                "Failed to create EmbeddingStore for curator DB"
             );
-            return (
-                Some(Arc::new(EpisodicMemory::new(h_mem_store_episodic))),
-                None,
-            );
+            return None;
         }
     };
-    let episodic = Arc::new(EpisodicMemory::new(h_mem_store_episodic));
-    let semantic = Arc::new(SemanticMemory::new(h_mem_store_semantic, embedding_store));
+    let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
     tracing::info!(
         target: "reg.memory",
         db_path = %curator_db_path,
-        "Curator episodic + semantic stores opened — \
-         curator turns will be ingested into curator memory (perspective = curator)"
+        "Curator memory store opened —          curator turns will be ingested into curator memory (perspective = curator)"
     );
-    (Some(episodic), Some(semantic))
+    Some(store)
 }
 
 impl MemoryPort for RealMemoryPort {
@@ -1034,10 +935,10 @@ impl MemoryPort for RealMemoryPort {
             // re-attempts the open when they're down (self-healing) and
             // signals persistent failure with a warn-once, so the writes
             // below can treat `None` as "already signaled, skip".
-            let (curator_episodic, curator_semantic) = self.curator_stores.get();
+            let curator_store = self.curator_store.get();
             // Rebuild the curator consolidation service after a heal so the
-            // timer promotes freshly-ingested curator episodic h_mems.
-            if curator_episodic.is_some() && curator_semantic.is_some() {
+            // timer promotes freshly-ingested curator h_mems.
+            if curator_store.is_some() {
                 let needs_rebuild = match self.curator_consolidation.read() {
                     Ok(guard) => guard.is_none(),
                     Err(_) => true,
@@ -1045,7 +946,7 @@ impl MemoryPort for RealMemoryPort {
                 if needs_rebuild && self.consolidation_cadence_secs > 0 {
                     let rebuilt = build_curator_consolidation(
                         self.consolidation_cadence_secs,
-                        &(curator_episodic.clone(), curator_semantic.clone()),
+                        &curator_store,
                     );
                     if let Ok(mut guard) = self.curator_consolidation.write()
                         && guard.is_none()
@@ -1072,7 +973,7 @@ impl MemoryPort for RealMemoryPort {
             .with_perspective(self.user_webid)
             .with_visibility(Visibility::Private);
 
-            if let Err(e) = self.episodic.store(episodic_h_mem) {
+            if let Err(e) = self.store.store(episodic_h_mem) {
                 tracing::warn!(
                     target: "reg.memory",
                     thread_id = %thread_id,
@@ -1101,8 +1002,8 @@ impl MemoryPort for RealMemoryPort {
                 .with_perspective(self.curator_webid)
                 .with_visibility(Visibility::Private);
 
-                if let Some(ref curator_episodic) = curator_episodic {
-                    if let Err(e) = curator_episodic.store(episodic_h_mem) {
+                if let Some(ref curator_store) = curator_store {
+                    if let Err(e) = curator_store.store(episodic_h_mem) {
                         tracing::warn!(
                             target: "reg.memory",
                             thread_id = %thread_id,
@@ -1119,7 +1020,7 @@ impl MemoryPort for RealMemoryPort {
                     tracing::trace!(
                         target: "reg.memory",
                         thread_id = %thread_id,
-                        "Curator episodic store unavailable — skipping curator episodic write"
+                        "Curator store unavailable — skipping curator episodic write"
                     );
                 }
             }
@@ -1136,8 +1037,8 @@ impl MemoryPort for RealMemoryPort {
             )
             .with_visibility(Visibility::Shared);
 
-            if let Some(ref curator_semantic) = curator_semantic {
-                if let Err(e) = curator_semantic.store(curator_h_mem) {
+            if let Some(ref curator_store) = curator_store {
+                if let Err(e) = curator_store.store(curator_h_mem) {
                     tracing::warn!(
                         target: "reg.memory",
                         thread_id = %thread_id,
@@ -1151,7 +1052,7 @@ impl MemoryPort for RealMemoryPort {
                 tracing::trace!(
                     target: "reg.memory",
                     thread_id = %thread_id,
-                    "Curator semantic store unavailable — skipping curator copy"
+                    "Curator store unavailable — skipping curator copy"
                 );
             }
 
@@ -1181,7 +1082,7 @@ impl MemoryPort for RealMemoryPort {
             match vectors {
                 Ok(Ok(vectors)) => {
                     if let Some(vector) = vectors.into_iter().next() {
-                        if let Err(e) = self.semantic.store_embedding(
+                        if let Err(e) = self.store.store_embedding(
                             &embedding_entity,
                             &vector,
                             &self.embedding_model,
@@ -1194,8 +1095,8 @@ impl MemoryPort for RealMemoryPort {
                             );
                         }
                         if is_curator_turn
-                            && let Some(ref curator_semantic) = curator_semantic
-                            && let Err(e) = curator_semantic.store_embedding(
+                            && let Some(ref curator_store) = curator_store
+                            && let Err(e) = curator_store.store_embedding(
                                 &embedding_entity,
                                 &vector,
                                 &self.embedding_model,
@@ -1253,8 +1154,8 @@ impl MemoryPort for RealMemoryPort {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
             self.recall_from(
-                Some(&self.episodic),
-                &self.semantic,
+                &self.store,
+                Some(self.user_webid),
                 self.user_webid,
                 query,
                 limit,
@@ -1270,15 +1171,15 @@ impl MemoryPort for RealMemoryPort {
         limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            // The semantic copy of a user turn is written to `curator_semantic`
-            // (the curator's sovereign DB) under entity `curator:thread:{id}` —
-            // not to the user's own `semantic` store, which holds consolidated
-            // facts rather than per-turn records. So the semantic leg queries
-            // `curator_semantic`, not `self.semantic`.
-            let (_, curator_semantic) = self.curator_stores.get();
+            // The semantic copy of a user turn is written to the curator's
+            // sovereign DB under entity `curator:thread:{id}` — not to the
+            // user's own store, which holds consolidated facts rather than
+            // per-turn records. So the semantic leg queries the curator
+            // store, not `self.store`.
+            let curator_store = self.curator_store.get();
             self.recall_thread_from(
-                Some(&self.episodic),
-                curator_semantic.as_ref(),
+                &self.store,
+                curator_store.as_ref(),
                 self.user_webid,
                 thread_id,
                 limit,
@@ -1299,12 +1200,10 @@ impl RealMemoryPort {
     /// Side-effect-free: reads availability without triggering a heal, so
     /// polling doesn't drive the re-open path.
     pub fn memory_health_json(&self) -> serde_json::Value {
-        let (curator_episodic_up, curator_semantic_up) = self.curator_stores.availability();
-        let degraded = !curator_episodic_up || !curator_semantic_up;
+        let curator_up = self.curator_store.availability();
         serde_json::json!({
-            "curator_episodic": curator_episodic_up,
-            "curator_semantic": curator_semantic_up,
-            "degraded": degraded,
+            "curator_store": curator_up,
+            "degraded": !curator_up,
         })
     }
 
@@ -1326,13 +1225,12 @@ impl RealMemoryPort {
         limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            let (curator_episodic, curator_semantic) = self.curator_stores.get();
-            let Some(ref curator_semantic) = curator_semantic else {
+            let Some(ref curator_store) = self.curator_store.get() else {
                 return Ok(Vec::new());
             };
             self.recall_from(
-                curator_episodic.as_ref(),
-                curator_semantic,
+                curator_store,
+                Some(self.curator_webid),
                 self.curator_webid,
                 query,
                 limit,
@@ -1355,13 +1253,12 @@ impl RealMemoryPort {
         limit: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<MemorySnippet>, MemoryError>> + Send + 'a>> {
         Box::pin(async move {
-            let (curator_episodic, curator_semantic) = self.curator_stores.get();
-            let Some(ref curator_semantic) = curator_semantic else {
+            let Some(ref curator_store) = self.curator_store.get() else {
                 return Ok(Vec::new());
             };
             self.recall_thread_from(
-                curator_episodic.as_ref(),
-                Some(curator_semantic),
+                curator_store,
+                Some(curator_store),
                 self.curator_webid,
                 thread_id,
                 limit,
@@ -1384,8 +1281,8 @@ impl RealMemoryPort {
     /// (a fix to one had to be manually mirrored in the other).
     async fn recall_from<'a>(
         &'a self,
-        episodic: Option<&'a Arc<EpisodicMemory>>,
-        semantic: &'a Arc<SemanticMemory>,
+        store: &'a Arc<MemoryStore>,
+        episodic_perspective: Option<WebID>,
         perspective: WebID,
         query: &'a str,
         limit: usize,
@@ -1425,14 +1322,14 @@ impl RealMemoryPort {
         if let Ok(Ok(vectors)) = vectors
             && let Some(query_vector) = vectors.into_iter().next()
         {
-            match semantic.search_similar(&query_vector, limit) {
+            match store.search_similar(&query_vector, limit) {
                 Ok(results) => {
                     for result in results {
                         // Retrieve the h_mem associated with this embedding
                         // to get the full text content. Use the untouched
                         // variant — we touch only the injected ones below.
                         let entity_ref = &result.embedding.entity_ref;
-                        if let Ok(h_mems) = semantic.query_deduped_untouched(entity_ref) {
+                        if let Ok(h_mems) = store.query_deduped_untouched(entity_ref) {
                             for h_mem in h_mems {
                                 let text = h_mem.value.as_str().unwrap_or("").to_string();
                                 if !text.is_empty() {
@@ -1480,7 +1377,7 @@ impl RealMemoryPort {
             .collect();
 
         if !query_words.is_empty()
-            && let Some(episodic) = episodic
+            && let Some(episodic_perspective) = episodic_perspective
         {
             // Use a prefix query to load all chat:thread:* episodic h_mems
             // in a single SQL call. The previous implementation queried
@@ -1497,9 +1394,9 @@ impl RealMemoryPort {
             // reasonable pool to filter from without unbounded loading.
             let entity_prefix = "chat:thread:".to_string();
             let recall_budget = limit.saturating_mul(10).max(50);
-            if let Ok(h_mems) = episodic.query_for_deduped_untouched_by_prefix(
+            if let Ok(h_mems) = store.query_for_deduped_untouched_by_prefix(
                 &entity_prefix,
-                perspective,
+                episodic_perspective,
                 recall_budget,
             ) {
                 for h_mem in h_mems {
@@ -1546,16 +1443,7 @@ impl RealMemoryPort {
         // post-filter instead of pre-filter — avoids the write storm.
         // Touch via the correct store for each candidate's source.
         for c in &candidates {
-            let result: Result<(), Box<dyn std::error::Error>> = match c.source {
-                RecallSource::Episodic => {
-                    if let Some(episodic) = episodic {
-                        episodic.touch_recall(&c.h_mem_id).map_err(Into::into)
-                    } else {
-                        Ok(())
-                    }
-                }
-                RecallSource::Semantic => semantic.touch_recall(&c.h_mem_id).map_err(Into::into),
-            };
+            let result: Result<(), Box<dyn std::error::Error>> = store.touch_recall(&c.h_mem_id).map_err(Into::into);
             if let Err(e) = result {
                 tracing::warn!(
                     target: "reg.memory.decay",
@@ -1595,8 +1483,8 @@ impl RealMemoryPort {
     /// injection was dead code for both the user and curator injectors.
     async fn recall_thread_from<'a>(
         &'a self,
-        episodic: Option<&'a Arc<EpisodicMemory>>,
-        semantic: Option<&'a Arc<SemanticMemory>>,
+        episodic_store: &'a Arc<MemoryStore>,
+        semantic_store: Option<&'a Arc<MemoryStore>>,
         perspective: WebID,
         thread_id: &'a str,
         limit: usize,
@@ -1615,8 +1503,7 @@ impl RealMemoryPort {
 
         // ── 1. Episodic: exact entity match, perspective-scoped ─────
         let episodic_entity = format!("chat:thread:{thread_id}");
-        if let Some(episodic) = episodic
-            && let Ok(h_mems) = episodic.query_for_deduped_untouched(&episodic_entity, perspective)
+        if let Ok(h_mems) = episodic_store.query_for_deduped_untouched(&episodic_entity, perspective)
         {
             for h_mem in h_mems {
                 let text = h_mem.value.as_str().unwrap_or("").to_string();
@@ -1639,10 +1526,10 @@ impl RealMemoryPort {
         // ── 2. Semantic: exact entity match (shared copy in curator DB) ─
         // The `curator:thread:{thread_id}` entity is written to the
         // curator's sovereign DB by both user and curator ingestion paths.
-        // `semantic` here is `curator_semantic` for both callers — see the
-        // `recall_thread` and `recall_thread_curator` wrappers.
+        // `semantic_store` here is the curator store for both callers — see
+        // the `recall_thread` and `recall_thread_curator` wrappers.
         let semantic_entity = format!("curator:thread:{thread_id}");
-        if let Some(semantic) = semantic
+        if let Some(semantic) = semantic_store
             && let Ok(h_mems) = semantic.query_deduped_untouched(&semantic_entity)
         {
             for h_mem in h_mems {
@@ -1676,22 +1563,11 @@ impl RealMemoryPort {
 
         // ── 4. Touch only the injected h_mems ────────────────────────
         for c in &candidates {
-            let result: Result<(), Box<dyn std::error::Error>> = match c.source {
-                RecallSource::Episodic => {
-                    if let Some(episodic) = episodic {
-                        episodic.touch_recall(&c.h_mem_id).map_err(Into::into)
-                    } else {
-                        Ok(())
-                    }
-                }
-                RecallSource::Semantic => {
-                    if let Some(semantic) = semantic {
-                        semantic.touch_recall(&c.h_mem_id).map_err(Into::into)
-                    } else {
-                        Ok(())
-                    }
-                }
+            let touch_store: &Arc<MemoryStore> = match c.source {
+                RecallSource::Episodic => episodic_store,
+                RecallSource::Semantic => semantic_store.unwrap_or(episodic_store),
             };
+            let result: Result<(), Box<dyn std::error::Error>> = touch_store.touch_recall(&c.h_mem_id).map_err(Into::into);
             if let Err(e) = result {
                 tracing::warn!(
                     target: "reg.memory.decay",

@@ -340,4 +340,33 @@ mod tests {
     fn viz_factories_cover_four_widgets() {
         assert_eq!(viz_factories().len(), 4);
     }
+
+    // S4 sensor consistency: every viz widget's block body must parse the
+    // `ontology` field the servers emit. If a future widget adds an `ontology`
+    // field, this test will fail until the widget is covered here. Pins the
+    // `.rules` "Ontology tag field-drop trap" at the registry level.
+    #[test]
+    fn all_viz_widgets_parse_ontology_field() {
+        // Graph widget
+        let graph = parse_graph_body(r#"{"viz":"event_tree","ontology":"dcterms:Dataset"}"#)
+            .expect("graph body parses");
+        assert_eq!(graph.ontology.as_deref(), Some("dcterms:Dataset"));
+
+        // Kanban widget — ontology is per-task, not on the block body.
+        let kanban = parse_kanban_body(
+            r#"{"viz":"kanban","tasks":[{"task_id":"t1","title":"T","status":"backlog","ontology":"pko:Step"}]}"#,
+        )
+        .expect("kanban body parses");
+        assert_eq!(kanban.tasks[0].ontology.as_deref(), Some("pko:Step"));
+
+        // Portfolio widget
+        let portfolio = parse_portfolio_body(r#"{"viz":"portfolio","ontology":"fibo:Portfolio"}"#)
+            .expect("portfolio body parses");
+        assert_eq!(portfolio.ontology.as_deref(), Some("fibo:Portfolio"));
+
+        // Scenarios widget
+        let scenarios = parse_scenarios_body(r#"{"viz":"scenarios","ontology":"pko:Procedure"}"#)
+            .expect("scenarios body parses");
+        assert_eq!(scenarios.ontology.as_deref(), Some("pko:Procedure"));
+    }
 }

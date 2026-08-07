@@ -185,6 +185,21 @@ impl AgentExecutor {
         let skills_dir = self.skills_dir.as_ref()?;
         let mut entries = Vec::new();
         for skill_id in declared_skills {
+            // Validate the skill id before joining it into a path — a
+            // malicious cloned ABW card could declare `skills:
+            // ["../../../etc/passwd"]` to read arbitrary files via path
+            // traversal. Skill ids must be lowercase letters, numbers, and
+            // hyphens only (mirrors `agent_skills::validate_name`, which the
+            // swarm server can't depend on — it's GPUI-bound). Reject any id
+            // containing path separators or `..`.
+            if !is_valid_skill_id(skill_id) {
+                tracing::warn!(
+                    target: "hkask.mcp.swarm",
+                    skill = skill_id.as_str(),
+                    "invalid skill id (path traversal or invalid chars) — skipped from catalog"
+                );
+                continue;
+            }
             let skill_md = skills_dir.join(skill_id).join("SKILL.md");
             match std::fs::read_to_string(&skill_md) {
                 Ok(content) => {
@@ -474,6 +489,20 @@ impl AgentExecutor {
 /// zed-side `agent_skills` crate (which is GPUI-bound) or a full YAML parser.
 /// The `name` field is a plain scalar; the `description` field may be a
 /// quoted scalar, a folded scalar (`>`), or a literal scalar (`|`).
+/// Validate a skill id for path safety. Skill ids must be non-empty,
+/// lowercase letters, numbers, and hyphens only — no path separators, no
+/// `..`, no leading/trailing hyphens. Mirrors `agent_skills::validate_name`
+/// (which the swarm server can't depend on — it's GPUI-bound). This is the
+/// path-traversal gate for `build_skill_catalog`: a malicious cloned ABW card
+/// could declare `skills: ["../../../etc/passwd"]` to read arbitrary files.
+fn is_valid_skill_id(id: &str) -> bool {
+    if id.is_empty() || id.starts_with('-') || id.ends_with('-') {
+        return false;
+    }
+    id.chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 fn parse_skill_frontmatter(content: &str) -> Option<(String, String)> {
     let lines: Vec<&str> = content.lines().collect();
     if lines.is_empty() || lines[0].trim() != "---" {
@@ -558,5 +587,33 @@ mod tests {
     fn parse_frontmatter_no_frontmatter() {
         let content = "# Grill Me\n\nNo frontmatter here.";
         assert!(parse_skill_frontmatter(content).is_none());
+    }
+
+    #[test]
+    fn is_valid_skill_id_rejects_path_traversal() {
+        // B1 fix: a malicious cloned ABW card could declare these skill ids
+        // to read arbitrary files via path traversal. All must be rejected.
+        assert!(!is_valid_skill_id("../../../etc/passwd"));
+        assert!(!is_valid_skill_id("../etc/passwd"));
+        assert!(!is_valid_skill_id(".."));
+        assert!(!is_valid_skill_id("a/b"));
+        assert!(!is_valid_skill_id("a\\b"));
+        assert!(!is_valid_skill_id(""));
+        assert!(!is_valid_skill_id("-leading"));
+        assert!(!is_valid_skill_id("trailing-"));
+        assert!(!is_valid_skill_id("UPPERCASE"));
+        assert!(!is_valid_skill_id("has space"));
+        assert!(!is_valid_skill_id("has.special"));
+    }
+
+    #[test]
+    fn is_valid_skill_id_accepts_valid_names() {
+        assert!(is_valid_skill_id("grill-me"));
+        assert!(is_valid_skill_id("bug-hunt"));
+        assert!(is_valid_skill_id("metacognition"));
+        assert!(is_valid_skill_id("kata-improvement"));
+        assert!(is_valid_skill_id("adversarial-red-team"));
+        assert!(is_valid_skill_id("a1"));
+        assert!(is_valid_skill_id("1"));
     }
 }

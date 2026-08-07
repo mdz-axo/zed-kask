@@ -739,6 +739,9 @@ impl From<&HMem> for HMemEntry {
             dimension: t.ontology.as_ref().and_then(|ont| {
                 ont.dimensions.first().map(|s| s.clone())
             }),
+            ontology: t.ontology.as_ref().and_then(|ont| {
+                ont.to_json_string().ok()
+            }),
         }
     }
 }
