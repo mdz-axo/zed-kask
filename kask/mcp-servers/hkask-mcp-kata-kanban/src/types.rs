@@ -349,3 +349,46 @@ pub struct TaskSpawnResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ontology: Option<String>,
 }
+
+// ── Delegation result (kanban-as-swarm-coordination) ──────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskDelegateResultRequest {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TaskDelegateResultResponse {
+    pub task_id: String,
+    /// Whether the task has a recorded delegation result.
+    pub has_result: bool,
+    /// The structured delegation result, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate_result: Option<hkask_mcp_swarm::LocalDelegateResult>,
+    /// The deterministic task-success verdict, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
+    /// The swarm this task belongs to, when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm_id: Option<String>,
+    /// Ontology concept: <https://w3id.org/pko#StepExecution>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}
+
+// ── Board delete ────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardDeleteRequest {
+    pub board_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BoardDeleteResponse {
+    pub board_id: String,
+    /// Number of tasks deleted alongside the board.
+    pub tasks_deleted: usize,
+    /// Ontology concept: <https://w3id.org/pko#Procedure>
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ontology: Option<String>,
+}

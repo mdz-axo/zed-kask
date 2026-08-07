@@ -96,48 +96,57 @@ where
 ///
 /// Scales best — check properties of the output, not the output itself.
 /// The check function receives `(input, output)` and returns `Ok(())` if the
-/// invariant holds, or `Err(message)` if it is violated.
+/// invariant holds, or `Err(message)` if it is violated. The error type is
+/// generic over any [`Display`](std::fmt::Display) type, so callers may return
+/// `String` or a structured `thiserror` enum — the message is stringified into
+/// [`OracleVerdict::Fail`].
 #[must_use]
-pub fn oracle_invariant<F>(check: F) -> Box<dyn Oracle>
+pub fn oracle_invariant<F, E>(check: F) -> Box<dyn Oracle>
 where
-    F: Fn(&JsonValue, &JsonValue) -> Result<(), String> + Send + Sync + 'static,
+    F: Fn(&JsonValue, &JsonValue) -> Result<(), E> + Send + Sync + 'static,
+    E: std::fmt::Display + Send + Sync + 'static,
 {
-    struct InvariantOracle<F>(F);
-    impl<F> Oracle for InvariantOracle<F>
+    struct InvariantOracle<F, E>(F, std::marker::PhantomData<E>);
+    impl<F, E> Oracle for InvariantOracle<F, E>
     where
-        F: Fn(&JsonValue, &JsonValue) -> Result<(), String> + Send + Sync,
+        F: Fn(&JsonValue, &JsonValue) -> Result<(), E> + Send + Sync,
+        E: std::fmt::Display + Send + Sync,
     {
         fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict {
             match (self.0)(input, output) {
                 Ok(()) => OracleVerdict::Pass,
-                Err(msg) => OracleVerdict::Fail(msg),
+                Err(msg) => OracleVerdict::Fail(msg.to_string()),
             }
         }
     }
+    Box::new(InvariantOracle(check, std::marker::PhantomData))
+}
     Box::new(InvariantOracle(check))
 }
 
 /// Oracle 4: reference implementation that may be unable to handle an input.
 ///
 /// Like [`oracle_reference`], but the reference function returns
-/// `Result<JsonValue, String>`. An `Ok` output is compared against the test
-/// output (Pass/Fail); an `Err` means the reference could not evaluate this
-/// input, yielding [`OracleVerdict::Inconclusive`] — the oracle cannot
-/// determine correctness. This is the only constructor that produces
-/// `Inconclusive`, closing the HarnessLLM three-verdict model.
+/// `Option<JsonValue>`. A `Some` output is compared against the test output
+/// (Pass/Fail); a `None` means the reference could not evaluate this input,
+/// yielding [`OracleVerdict::Inconclusive`] — the oracle cannot determine
+/// correctness. This is the only constructor that produces `Inconclusive`,
+/// closing the HarnessLLM three-verdict model. The decline carries no payload
+/// (the verdict is Inconclusive regardless of why), so `Option` is the honest
+/// signature — a `Result<_, _>` error would be discarded.
 #[must_use]
 pub fn oracle_inconclusive<F>(reference: F) -> Box<dyn Oracle>
 where
-    F: Fn(&JsonValue) -> Result<JsonValue, String> + Send + Sync + 'static,
+    F: Fn(&JsonValue) -> Option<JsonValue> + Send + Sync + 'static,
 {
     struct InconclusiveOracle<F>(F);
     impl<F> Oracle for InconclusiveOracle<F>
     where
-        F: Fn(&JsonValue) -> Result<JsonValue, String> + Send + Sync,
+        F: Fn(&JsonValue) -> Option<JsonValue> + Send + Sync,
     {
         fn verify(&self, input: &JsonValue, output: &JsonValue) -> OracleVerdict {
             match (self.0)(input) {
-                Ok(expected) => {
+                Some(expected) => {
                     if output == &expected {
                         OracleVerdict::Pass
                     } else {
@@ -147,7 +156,7 @@ where
                         ))
                     }
                 }
-                Err(_) => OracleVerdict::Inconclusive,
+                None => OracleVerdict::Inconclusive,
             }
         }
     }

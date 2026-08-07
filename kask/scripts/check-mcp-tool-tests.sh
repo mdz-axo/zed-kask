@@ -32,7 +32,17 @@ set -euo pipefail
 
 # Servers known to lack tool-behavior contract tests today. Shrink over time.
 # Remove a name the moment its tests/ contains a `Parameters(` call.
+# Each entry must carry a one-line reason so the gap is auditable.
 ALLOWLIST=(
+  hkask-mcp-codegraph          # tools query a code-graph DB; need a populated graph fixture
+  hkask-mcp-companies          # tools require SerpAPI/external HTTP; need network mocking
+  hkask-mcp-condenser          # tool invokes an LLM condenser; need an inference mock
+  hkask-mcp-corpus             # tools require SQLite + embedding store; need a fixture store
+  hkask-mcp-media              # tools call Fal.ai workflow APIs; need a media-API mock
+  hkask-mcp-portfolio          # no tests dir yet; tools wrap portfolio storage
+  hkask-mcp-prediction-markets # tools fetch live Polymarket/Kalshi data; need network mocking
+  hkask-mcp-swarm              # existing tests use the panel invoke seam / live HTTP, not Parameters<T>
+  hkask-mcp-training           # tools require inference + HF Hub; need mocks
 )
 
 # Servers that are EXEMPT by design (not agent-facing tool surfaces requiring

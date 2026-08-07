@@ -86,7 +86,6 @@ fn inconclusive_oracle_returns_inconclusive_when_reference_errors() {
         input
             .get("x")
             .and_then(|v| v.as_i64())
-            .ok_or_else(|| "missing integer field 'x'".to_string())
             .map(|x| serde_json::json!(x * 2))
     });
     let valid_input = serde_json::json!({"x": 21});

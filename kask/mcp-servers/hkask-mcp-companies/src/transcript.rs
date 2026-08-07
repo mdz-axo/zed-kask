@@ -431,7 +431,7 @@ async fn fetch_youtube_transcript(
     client: &reqwest::Client,
     video_id: &str,
     serpapi_key: &str,
-) -> Result<Option<String>, String> {
+) -> anyhow::Result<Option<String>> {
     let params: Vec<(&str, String)> = vec![
         ("v", video_id.to_string()),
         ("api_key", serpapi_key.to_string()),
@@ -442,13 +442,13 @@ async fn fetch_youtube_transcript(
         .query(&params)
         .send()
         .await
-        .map_err(|error| format!("request failed: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("request failed: {error}"))?;
     let body = response
         .text()
         .await
-        .map_err(|error| format!("body read failed: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("body read failed: {error}"))?;
     let parsed: serde_json::Value =
-        serde_json::from_str(&body).map_err(|error| format!("malformed JSON: {error}"))?;
+        serde_json::from_str(&body).map_err(|error| anyhow::anyhow!("malformed JSON: {error}"))?;
     let snippets = parsed["transcripts"]
         .as_array()
         .or_else(|| parsed["organic_results"].as_array())
@@ -1178,7 +1178,7 @@ mod proptests {
                 let year = input.get("year").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                 let quarter = input.get("quarter").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
                 if year == 0 {
-                    return Err("year 0 — underflow, reference declines".to_string());
+                    return None;
                 }
                 // The reference: compute previous, then next, and return the result.
                 let prev = if quarter == 1 {
@@ -1193,7 +1193,7 @@ mod proptests {
                 } else {
                     serde_json::json!({"year": prev_year, "quarter": prev_quarter + 1})
                 };
-                Ok(next)
+                Some(next)
             });
 
             let input = serde_json::json!({"year": q.year, "quarter": q.quarter});

@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
+
 hkask-memory.workspace = true
 hkask-storage = { path = "../../crates/hkask-storage" }
 hkask-inference = { path = "../../crates/hkask-inference" }

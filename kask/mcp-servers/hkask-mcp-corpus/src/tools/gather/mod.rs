@@ -553,7 +553,7 @@ async fn search_youtube_for_company(
     query: &str,
     api_key: &str,
     limit: u32,
-) -> Result<Vec<(String, String, String)>, String> {
+) -> anyhow::Result<Vec<(String, String, String)>> {
     // CorpusServer doesn't have a shared reqwest::Client field (unlike
     // CompaniesServer), so this helper creates a standalone client with a
     // 30s timeout. The companies server's fetch_corpus_transcripts uses the
@@ -562,7 +562,7 @@ async fn search_youtube_for_company(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .map_err(|error| format!("client build failed: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("client build failed: {error}"))?;
     let params: Vec<(&str, String)> = vec![
         ("q", query.to_string()),
         ("api_key", api_key.to_string()),
@@ -575,15 +575,15 @@ async fn search_youtube_for_company(
         .query(&params)
         .send()
         .await
-        .map_err(|error| format!("request failed: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("request failed: {error}"))?;
 
     let body = response
         .text()
         .await
-        .map_err(|error| format!("body read failed: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("body read failed: {error}"))?;
 
     let parsed: serde_json::Value =
-        serde_json::from_str(&body).map_err(|error| format!("malformed JSON: {error}"))?;
+        serde_json::from_str(&body).map_err(|error| anyhow::anyhow!("malformed JSON: {error}"))?;
 
     let videos = parsed["video_results"]
         .as_array()

@@ -18,6 +18,27 @@ use crate::sanitize::{
 use hkask_mcp_server::server::{McpToolError, execute_tool_semantic};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 
+/// Run a deterministic evaluator check against a response. Shared by
+/// `swarm_evaluate_local` and `swarm_execute_plan_local` so the evaluation
+/// logic lives once — a bad evaluator spec or regex errors propagate to the
+/// caller rather than silently stamping `pass: false` (which would produce a
+/// false fault attribution: the agent gets blamed for a bad evaluator).
+fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, McpToolError> {
+    match evaluator {
+        "contains" => Ok(response.contains(spec)),
+        "not_contains" => Ok(!response.contains(spec)),
+        "regex" => {
+            let re = regex::Regex::new(spec).map_err(|e| {
+                McpToolError::invalid_argument(format!("invalid regex spec: {e}"))
+            })?;
+            Ok(re.is_match(response))
+        }
+        other => Err(McpToolError::invalid_argument(format!(
+            "evaluator must be 'contains', 'not_contains', or 'regex'; got '{other}'"
+        ))),
+    }
+}
+
 #[tool_router(router = local_router, vis = "pub")]
 impl SwarmServer {
     /// Delegate a task to a local agent. The agent must exist in the local
@@ -1167,21 +1188,7 @@ impl SwarmServer {
                     "response and spec must be non-empty".to_string(),
                 ));
             }
-            let pass = match req.evaluator.as_str() {
-                "contains" => req.response.contains(&req.spec),
-                "not_contains" => !req.response.contains(&req.spec),
-                "regex" => {
-                    let re = regex::Regex::new(&req.spec).map_err(|e| {
-                        McpToolError::invalid_argument(format!("invalid regex spec: {e}"))
-                    })?;
-                    re.is_match(&req.response)
-                }
-                other => {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "evaluator must be 'contains', 'not_contains', or 'regex'; got '{other}'"
-                    )));
-                }
-            };
+            let pass = run_evaluator(&req.response, &req.evaluator, &req.spec)?;
             let detail = format!(
                 "evaluator={}, spec_len={}, pass={}",
                 req.evaluator,
@@ -1209,7 +1216,7 @@ impl SwarmServer {
     /// pipeline, or API. Capped at 10 delegations (same as fanout). Each
     /// delegation runs sequentially to avoid ledger TOCTOU.
     #[tool(
-        description = "Execute a swarm-intelligence plan: run each delegation via swarm_delegate_local, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially to avoid ledger TOCTOU. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
+        description = "Execute a swarm-intelligence plan: run each delegation via the local runtime, evaluate each result with a deterministic check (when an evaluator is provided), and return the collected LocalDelegateResult array with task_success verdicts stamped. Capped at 10 delegations. Each delegation runs sequentially to avoid ledger TOCTOU. The returned array is ready to feed back to swarm-intelligence as delegate_results. No consent token — local mode."
     )]
     pub(crate) async fn swarm_execute_plan_local(
         &self,
@@ -1254,17 +1261,11 @@ impl SwarmServer {
                         total_tokens += r.tokens_used;
                         // Stamp the deterministic verdict when an evaluator is provided.
                         if let Some(ev) = &entry.evaluator {
-                            let pass = match ev.evaluator.as_str() {
-                                "contains" => r.response.contains(&ev.spec),
-                                "not_contains" => !r.response.contains(&ev.spec),
-                                "regex" => {
-                                    match regex::Regex::new(&ev.spec) {
-                                        Ok(re) => re.is_match(&r.response),
-                                        Err(_) => false,
-                                    }
-                                }
-                                _ => false,
-                            };
+                            let pass = run_evaluator(
+                                &r.response,
+                                &ev.evaluator,
+                                &ev.spec,
+                            )?;
                             r.task_success = Some(
                                 crate::local_runtime::TaskSuccessVerdict {
                                     pass,

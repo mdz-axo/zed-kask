@@ -297,7 +297,7 @@ async fn main() {
 async fn fetch_kalshi_event_async(
     client: &reqwest::Client,
     event_ticker: &str,
-) -> Result<Vec<KalshiMarket>, String> {
+) -> anyhow::Result<Vec<KalshiMarket>> {
     let url = format!(
         "https://external-api.kalshi.com/trade-api/v2/markets?limit=1000&event_ticker={}",
         event_ticker
@@ -306,21 +306,21 @@ async fn fetch_kalshi_event_async(
         .get(&url)
         .send()
         .await
-        .map_err(|e| format!("request failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("request failed: {e}"))?;
     let status = response.status();
     let body = response
         .text()
         .await
-        .map_err(|e| format!("body read failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("body read failed: {e}"))?;
     if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status, &body[..body.len().min(200)]));
+        return Err(anyhow::anyhow!("HTTP {}: {}", status, &body[..body.len().min(200)]));
     }
     #[derive(Deserialize)]
     struct Resp {
         #[serde(default)]
         markets: Vec<KalshiMarket>,
     }
-    let resp: Resp = serde_json::from_str(&body).map_err(|e| format!("parse failed: {e}"))?;
+    let resp: Resp = serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
     Ok(resp.markets)
 }
 

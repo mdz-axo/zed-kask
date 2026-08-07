@@ -2,7 +2,7 @@
 #![warn(clippy::let_underscore_future)]
 //! hkask-mcp-kata-kanban — Kata-Kanban workflow coordination MCP server.
 //!
-//! Provides 18 MCP tools for kanban board and task management.
+//! Provides 20 MCP tools for kanban board and task management.
 //! All tools carry the caller's WebID for P12 compliance.
 //!
 //! The KanbanServer struct and tool methods are exported from the library
@@ -171,6 +171,61 @@ impl KanbanServer {
                     .map_err(|e| McpToolError::internal(e.to_string()))?), // rr0044-ok: serialize-own-struct
                     Err(e) => Err(map_kanban_error(e)),
                 }
+            },
+        )
+        .await
+    }
+
+    /// Delete a kanban board and all its tasks. Exposes the existing
+    /// `KanbanService::board_delete` method as an MCP tool — closes the gap
+    /// where `board_delete` was service-only and unreachable via MCP.
+    ///
+    /// contract: P3-svc-kanban-011
+    /// expect: "I can delete a kanban board I own via MCP" \[P3\]
+    /// pre:  board_id is a valid board id owned by the caller
+    /// post: the board and all its tasks are deleted; returns the task count
+    #[tool(
+        description = "Delete a kanban board and all its tasks. Exposes KanbanService::board_delete as an MCP tool."
+    )]
+    pub async fn kanban_board_delete(
+        &self,
+        Parameters(BoardDeleteRequest { board_id }): Parameters<BoardDeleteRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_board_delete",
+            kanban_type_to_pko("kanban_board_delete"),
+            async {
+                let bid = match board_id.parse::<hkask_types::BoardId>() {
+                    Ok(id) => id,
+                    Err(e) => {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "invalid board_id: {e}"
+                        )));
+                    }
+                };
+                // Verify ownership before delete — only the board owner can
+                // delete it (P12).
+                let board = self
+                    .service
+                    .board_get(bid)
+                    .map_err(map_kanban_error)?
+                    .ok_or_else(|| McpToolError::not_found(format!("board {bid} not found")))?;
+                if board.owner != self.webid {
+                    return Err(McpToolError::invalid_argument(format!(
+                        "board {bid} is not owned by caller — cannot delete"
+                    )));
+                }
+                let tasks_deleted = self
+                    .service
+                    .board_delete(bid)
+                    .map_err(map_kanban_error)?;
+                serde_json::to_value(BoardDeleteResponse {
+                    board_id: bid.to_string(),
+                    tasks_deleted,
+                    ontology: kanban_type_to_pko("kanban_board_delete").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },
         )
         .await
@@ -899,6 +954,24 @@ impl KanbanServer {
                     .map_err(hkask_mcp_swarm::SwarmError::into_tool_error)?;
 
                 // Record the delegation result on the task (comment + status).
+                // Write the structured `LocalDelegateResult` + verdict to the
+                // task's persisted fields first (the durable coordination
+                // source of truth), then append the human-readable comment.
+                let verdict = result.task_success.clone();
+                if let Err(error) = self.service.task_record_delegation(
+                    tid,
+                    None,
+                    result.clone(),
+                    verdict,
+                    self.webid,
+                ) {
+                    tracing::warn!(
+                        target: "hkask.mcp.kata_kanban",
+                        task_id = %tid,
+                        %error,
+                        "could not record structured delegation result — falling back to comment-only"
+                    );
+                }
                 let result_note = format!(
                     "Spawn executed: agent={agent_id}, model={model}, tokens={tokens}, \
                      cost={cost} credits, balance={balance}, latency={latency_ms}ms\n\
@@ -935,6 +1008,56 @@ impl KanbanServer {
                         result.agent_id, task.title, result.cost, result.tokens_used
                     ),
                     ontology: kanban_type_to_pko("kanban_task_spawn").map(|s| s.to_string()),
+                })
+                .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
+            },
+        )
+        .await
+    }
+
+    /// Read the structured delegation result and deterministic verdict for a
+    /// task that was spawned via `kanban_task_spawn`. Returns the persisted
+    /// `LocalDelegateResult` and `TaskSuccessVerdict` fields, enabling the
+    /// swarm-intelligence SENSE phase and the Curator to query the durable
+    /// coordination state without parsing free-text comments.
+    ///
+    /// contract: P3-svc-kanban-010
+    /// expect: "I can read the structured delegation result for a spawned task" \[P3\]
+    /// pre:  task_id is a valid task id
+    /// post: returns the delegation result + verdict, or `has_result: false`
+    #[tool(
+        description = "Read the structured delegation result and deterministic verdict for a task spawned via kanban_task_spawn. Returns the persisted LocalDelegateResult and TaskSuccessVerdict."
+    )]
+    pub async fn kanban_task_delegate_result(
+        &self,
+        Parameters(TaskDelegateResultRequest { task_id }): Parameters<TaskDelegateResultRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "kanban_task_delegate_result",
+            kanban_type_to_pko("kanban_task_delegate_result"),
+            async {
+                let tid = match task_id.parse::<hkask_types::TaskId>() {
+                    Ok(id) => id,
+                    Err(e) => {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "invalid task_id: {e}"
+                        )));
+                    }
+                };
+                let task = self
+                    .service
+                    .task_get(tid)
+                    .map_err(map_kanban_error)?
+                    .ok_or_else(|| McpToolError::not_found(format!("task {tid} not found")))?;
+                serde_json::to_value(TaskDelegateResultResponse {
+                    task_id: tid.to_string(),
+                    has_result: task.delegate_result.is_some(),
+                    delegate_result: task.delegate_result.clone(),
+                    deterministic_verdict: task.deterministic_verdict.clone(),
+                    swarm_id: task.swarm_id.clone(),
+                    ontology: kanban_type_to_pko("kanban_task_delegate_result")
+                        .map(|s| s.to_string()),
                 })
                 .map_err(|e| McpToolError::internal(e.to_string())) // rr0044-ok: serialize-own-struct
             },

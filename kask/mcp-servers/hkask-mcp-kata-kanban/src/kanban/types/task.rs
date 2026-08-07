@@ -52,6 +52,25 @@ pub struct Task {
     /// Audit trail of gas and rJoule consumption/refills.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gas_spend: Vec<GasEntry>,
+    /// The swarm this task belongs to, when the task is coordinated via a
+    /// local swarm (`kanban_task_spawn`). `None` for tasks not yet delegated
+    /// or delegated outside a swarm. The kanban board is the durable
+    /// coordination source of truth; this field links the task to its swarm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swarm_id: Option<String>,
+    /// Structured result of the last `kanban_task_spawn` delegation, when the
+    /// task has been spawned. Replaces the free-text comment as the
+    /// programmatic record; the comment is kept for human readability. Read
+    /// by `kanban_task_delegate_result` and by the swarm-intelligence SENSE
+    /// phase when `kanban_board_id` is provided.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate_result: Option<hkask_mcp_swarm::LocalDelegateResult>,
+    /// Deterministic task-success verdict stamped by the executor (the Kask
+    /// Curator or a human in the loop) after running a declared evaluator
+    /// against the delegation response. `None` until the executor stamps it;
+    /// the swarm MCP server returns `None` and the executor populates this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
 }
 
 impl Task {
@@ -82,6 +101,9 @@ impl Task {
             gas_remaining: spec.gas_budget,
             rjoule_remaining: spec.rjoule_budget,
             gas_spend: Vec::new(),
+            swarm_id: None,
+            delegate_result: None,
+            deterministic_verdict: None,
         }
     }
 

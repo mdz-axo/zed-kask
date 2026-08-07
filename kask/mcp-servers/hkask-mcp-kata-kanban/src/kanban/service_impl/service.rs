@@ -947,6 +947,56 @@ impl KanbanService {
         Ok(task)
     }
 
+    /// Record the structured result of a `kanban_task_spawn` delegation on the
+    /// task. Writes the `LocalDelegateResult` and optional deterministic
+    /// `TaskSuccessVerdict` to the task's persisted fields (the durable
+    /// coordination source of truth), replacing the free-text comment as the
+    /// programmatic record. The caller is still responsible for appending a
+    /// human-readable comment if desired.
+    ///
+    /// expect: "System types preserve semantic identity and are provenance-aware"
+    /// pre:  task_id refers to an existing task; delegate_result is from a
+    ///       completed `swarm_delegate_local` call.
+    /// post: task.delegate_result and task.deterministic_verdict are populated;
+    ///       the task h_mem is updated.
+    #[must_use = "result must be used"]
+    pub fn task_record_delegation(
+        &self,
+        task_id: TaskId,
+        swarm_id: Option<String>,
+        delegate_result: hkask_mcp_swarm::LocalDelegateResult,
+        deterministic_verdict: Option<hkask_mcp_swarm::TaskSuccessVerdict>,
+        actor: WebID,
+    ) -> Result<Task, KanbanError> {
+        let mut task = self.task_get(task_id)?.ok_or_else(|| {
+            KanbanError::NotFound(NotFound {
+                entity_type: "task".to_string(),
+                id: task_id.to_string(),
+            })
+        })?;
+        Self::require_task_owner(&task, actor)?;
+        if let Some(sid) = swarm_id {
+            task.swarm_id = Some(sid);
+        }
+        task.delegate_result = Some(delegate_result);
+        task.deterministic_verdict = deterministic_verdict;
+        task.updated_at = chrono::Utc::now();
+        self.update_task_triple(&task)?;
+        tracing::info!(
+            target: "hkask.kanban",
+            operation = "task_delegation_recorded",
+            task_id = %task_id,
+            agent_id = %task
+                .delegate_result
+                .as_ref()
+                .map(|r| r.agent_id.as_str())
+                .unwrap_or(""),
+            has_verdict = task.deterministic_verdict.is_some(),
+            "REG"
+        );
+        Ok(task)
+    }
+
     /// Delete a board and all its tasks.
     ///
     /// pre:  board_id is valid

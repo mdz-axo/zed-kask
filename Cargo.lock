@@ -9580,6 +9580,7 @@ dependencies = [
 name = "hkask-mcp-prediction-markets"
 version = "0.33.0"
 dependencies = [
+ "anyhow",
  "async-tungstenite",
  "chrono",
  "futures 0.3.33",
@@ -9705,7 +9706,6 @@ dependencies = [
  "chrono",
  "dirs",
  "hf-hub",
- "hkask-bridge-ontology",
  "hkask-inference",
  "hkask-mcp-server",
  "hkask-memory",
