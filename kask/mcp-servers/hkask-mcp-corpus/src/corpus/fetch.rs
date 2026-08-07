@@ -32,7 +32,29 @@ const USER_AGENT: &str = concat!("hkask-corpus/", env!("CARGO_PKG_VERSION"));
 /// and plain text. Propagates `pdf_extract` errors rather than swallowing them
 /// — the previous `download_and_cache` swallowed extraction errors via
 /// `unwrap_or_default()`, masking failures as empty text.
+///
+/// # SSRF
+///
+/// URLs reaching here originate from tool input and from `corpus_discover`
+/// output, i.e. from untrusted sources. This function is the single choke
+/// point for both `download_and_cache` and the embed path, so the SSRF gate
+/// is applied here rather than at each call site — mirroring the research
+/// server, which validates the equivalent operation at its pool boundary.
+/// Without it, discover output can drive a GET to `169.254.169.254` or
+/// `localhost`.
 pub(crate) async fn fetch_text(url: &str) -> Result<String, ServiceError> {
+    hkask_mcp_server::validate_tool_url_with_dns(url)
+        .await
+        .map_err(|e| {
+            // Rejected before any outbound request; not a transport failure.
+            ServiceError::Domain {
+                kind: ErrorKind::BadRequest,
+                domain: DomainKind::Storage,
+                source: None,
+                message: format!("URL rejected by SSRF validation for '{url}': {e}"),
+            }
+        })?;
+
     let resp = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(std::time::Duration::from_secs(120))
@@ -164,4 +186,46 @@ pub(crate) async fn fetch_text(url: &str) -> Result<String, ServiceError> {
     }
 
     Ok(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The SSRF gate must reject before any outbound request. These addresses
+    /// are the canonical cloud-metadata and loopback targets; reaching the
+    /// transport at all would be the vulnerability.
+    #[tokio::test]
+    async fn fetch_text_rejects_link_local_metadata_address() {
+        let err = fetch_text("http://169.254.169.254/latest/meta-data/")
+            .await
+            .expect_err("link-local metadata address must be rejected");
+        let message = err.to_string();
+        assert!(
+            message.contains("SSRF validation"),
+            "expected an SSRF rejection, got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_text_rejects_loopback() {
+        let err = fetch_text("http://127.0.0.1:8080/")
+            .await
+            .expect_err("loopback must be rejected");
+        assert!(
+            err.to_string().contains("SSRF validation"),
+            "expected an SSRF rejection, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_text_rejects_non_http_scheme() {
+        let err = fetch_text("file:///etc/passwd")
+            .await
+            .expect_err("non-http scheme must be rejected");
+        assert!(
+            err.to_string().contains("SSRF validation"),
+            "expected an SSRF rejection, got: {err}"
+        );
+    }
 }

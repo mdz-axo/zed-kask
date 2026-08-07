@@ -2254,4 +2254,32 @@ mod tests {
             "provenance.span_id present"
         );
     }
+
+    #[tokio::test]
+    async fn scenario_full_refuses_empty_events_without_panicking() {
+        // Two perspectives reach the synthesis step, which anchors on the first
+        // event id. An empty events array previously indexed `events[0]` and
+        // panicked the tool future; it must now be refused as invalid input.
+        let server = empty_server();
+        let response = server
+            .scenario_full(Parameters(FullPipelineRequest {
+                subject: "test".to_string(),
+                events: "[]".to_string(),
+                perspectives: Some(
+                    r#"[{"name":"a","probability":0.5},{"name":"b","probability":0.6}]"#
+                        .to_string(),
+                ),
+                perspective_count: None,
+                strategies_generated: None,
+                strategies_implemented: None,
+                learning_events: None,
+                has_early_warning_indicators: None,
+            }))
+            .await;
+
+        assert!(
+            response.contains("at least one scenario event"),
+            "empty events must be refused with a clear message, got: {response}"
+        );
+    }
 }

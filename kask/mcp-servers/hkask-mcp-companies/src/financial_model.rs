@@ -751,7 +751,7 @@ pub fn implied_growth(
     assumptions: &ProjectionAssumptions,
     current_price: f64,
 ) -> Option<f64> {
-    if !(current_price > 0.0) {
+    if current_price <= 0.0 {
         return None;
     }
 
@@ -760,7 +760,7 @@ pub fn implied_growth(
             hist,
             &ProjectionAssumptions {
                 revenue_growth: growth,
-                ..assumptions.clone()
+                ..*assumptions
             },
             current_price,
         )
@@ -1318,7 +1318,7 @@ mod tests {
             &h,
             &ProjectionAssumptions {
                 revenue_growth: IMPLIED_GROWTH_HI,
-                ..assumptions.clone()
+                ..assumptions
             },
             0.0,
         )

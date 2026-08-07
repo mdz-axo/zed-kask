@@ -699,6 +699,17 @@ fn main() {
         let alert_email_sink: Option<std::sync::Arc<dyn hkask_regulation::AlertEmailSink>> =
             hkask_email::CuratorAlertEmailSink::try_from_env(kask_runtime_handle);
 
+        // zed-kask: install the SettingsStore global before any KaskSettings
+        // read. `KaskSettings::get_global(cx)` below reads from the
+        // SettingsStore (via the `Settings` trait), which `settings::init`
+        // installs via `cx.set_global`. Reading it before `settings::init`
+        // panics with "no state of type settings::settings_store::SettingsStore
+        // exists". The later settings setup (zlog_settings, watch_settings_files,
+        // handle_keymap_file_changes) stays in its original position because
+        // those depend on the `fs` global and the keymap watcher, which are
+        // wired further down.
+        settings::init(cx);
+
         // Determine kask settings once for both the algedonic-threshold wiring
         // below and the MCP-server auto-launch / curator-always-on gating further
         // down. Defined here (before the algedonic block) so the threshold is in
@@ -851,7 +862,6 @@ fn main() {
         // Upstream zed sets this in the same position; the kask fork was
         // missing the call, causing a panic on startup.
         <dyn fs::Fs>::set_global(fs.clone(), cx);
-        settings::init(cx);
         zlog_settings::init(cx);
         zed::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);

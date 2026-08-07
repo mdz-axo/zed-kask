@@ -10,7 +10,7 @@
 //! `agent` crate doesn't depend on `kask_bridge`. When the port is not yet
 //! wired (pre-login), the thread's ingest call site no-ops on `None`.
 
-use hkask_memory::{ConsolidationBridge, ConsolidationService, MemoryStore};
+use hkask_memory::{MemoryConsolidator, MemoryStore};
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemStore};
 use hkask_types::{
     HMemOntology, MemoryError, MemoryPort, MemorySnippet, TurnRecord, Visibility, WebID,
@@ -59,13 +59,13 @@ pub struct RealMemoryPort {
     /// Consolidation service — promotes the user's episodic h_mems to the
     /// user's semantic memory. `None` when consolidation is disabled
     /// (`consolidation_cadence_secs == 0`).
-    consolidation: Option<Arc<ConsolidationService>>,
+    consolidation: Option<Arc<MemoryConsolidator>>,
     /// Consolidation service for the curator's stores — promotes the
     /// curator's episodic h_mems (curator-perspective first-person turns) to
     /// the curator's semantic memory, mirroring the user's consolidation loop.
     /// Rebuilt when the curator stores heal after an open failure; `None`
     /// when consolidation is disabled OR the curator stores are unavailable.
-    curator_consolidation: RwLock<Option<Arc<ConsolidationService>>>,
+    curator_consolidation: RwLock<Option<Arc<MemoryConsolidator>>>,
     /// Consolidation cadence in seconds. `0` disables the trigger for both
     /// the user and curator consolidation services.
     consolidation_cadence_secs: u64,
@@ -180,11 +180,7 @@ impl RealMemoryPort {
         // the trigger entirely (the operator can still fire consolidation
         // manually via the curator MCP server).
         let consolidation = if consolidation_cadence_secs > 0 {
-            let bridge = Arc::new(ConsolidationBridge::new(Arc::clone(&store)));
-            Some(Arc::new(ConsolidationService::new(
-                bridge,
-                Arc::clone(&store),
-            )))
+            Some(Arc::new(MemoryConsolidator::new(Arc::clone(&store))))
         } else {
             None
         };
@@ -274,7 +270,7 @@ impl RealMemoryPort {
     /// own version of this logic because it needs to capture `Send + 'static`
     /// state (the timestamp is shared via `Arc<Mutex<...>>` rather than
     /// `&self.last_consolidation`). Both paths use the same cadence check and
-    /// the same `ConsolidationService::consolidate` call.
+    /// the same `MemoryConsolidator::consolidate` call.
     ///
     /// Kept as a method so tests can fire consolidation directly without
     /// starting a timer.
@@ -792,18 +788,14 @@ impl CuratorStore {
 fn build_curator_consolidation(
     consolidation_cadence_secs: u64,
     store: &Option<Arc<MemoryStore>>,
-) -> Option<Arc<ConsolidationService>> {
+) -> Option<Arc<MemoryConsolidator>> {
     if consolidation_cadence_secs == 0 {
         return None;
     }
     let Some(store) = store else {
         return None;
     };
-    let bridge = Arc::new(ConsolidationBridge::new(Arc::clone(store)));
-    Some(Arc::new(ConsolidationService::new(
-        bridge,
-        Arc::clone(store),
-    )))
+    Some(Arc::new(MemoryConsolidator::new(Arc::clone(store))))
 }
 
 fn open_curator_store(
@@ -1680,11 +1672,7 @@ mod tests {
         let embedding_port = LanguageModelEmbeddingPort::for_tests();
 
         let consolidation = if consolidation_cadence_secs > 0 {
-            let bridge = Arc::new(ConsolidationBridge::new(Arc::clone(&store)));
-            Some(Arc::new(ConsolidationService::new(
-                bridge,
-                Arc::clone(&store),
-            )))
+            Some(Arc::new(MemoryConsolidator::new(Arc::clone(&store))))
         } else {
             None
         };

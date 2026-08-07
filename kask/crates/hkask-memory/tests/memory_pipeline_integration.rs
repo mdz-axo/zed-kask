@@ -14,7 +14,7 @@
 //! `EpisodicMemory`/`SemanticMemory` structs carried are replaced here by
 //! tests pinning that both kinds coexist and stay distinguishable.
 
-use hkask_memory::{ConsolidationBridge, MemoryStore};
+use hkask_memory::{MemoryConsolidator, MemoryStore};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{EmbeddingStore, HMem, HMemStore};
 use hkask_types::ConsolidationRequest;
@@ -161,22 +161,22 @@ fn episodic_and_semantic_coexist_and_stay_distinguishable() {
     assert_eq!(steps[0].entity, "chat:thread:abc");
 }
 
-// ── Consolidation bridge ───────────────────────────────────────────────────
+// ── Consolidation ──────────────────────────────────────────────────────────
 
 #[test]
-fn consolidation_bridge_counts_candidates() {
+fn consolidator_counts_candidates() {
     let store = setup_store();
-    let bridge = ConsolidationBridge::new(Arc::clone(&store));
+    let consolidator = MemoryConsolidator::new(Arc::clone(&store));
     let perspective = test_perspective();
 
-    assert_eq!(bridge.consolidation_candidate_count(&perspective), 0);
+    assert_eq!(consolidator.consolidation_candidate_count(&perspective), 0);
 
     let h_mem =
         HMem::new("e", "a", serde_json::json!("v"), perspective).with_perspective(perspective);
     store.store(h_mem).expect("store");
 
     assert_eq!(
-        bridge.consolidation_candidate_count(&perspective),
+        consolidator.consolidation_candidate_count(&perspective),
         1,
         "should count stored perspective-bound h_mems"
     );
@@ -274,12 +274,12 @@ fn recall_touches_recalled_at() {
     );
 }
 
-// ── Consolidation bridge decay symmetry ──────────────────────────────────
+// ── Consolidation decay symmetry ──────────────────────────────────────────
 
 #[test]
 fn consolidation_combines_both_sides_decayed() {
     let store = setup_store();
-    let bridge = ConsolidationBridge::new(Arc::clone(&store));
+    let consolidator = MemoryConsolidator::new(Arc::clone(&store));
     let perspective = test_perspective();
 
     // Seed a shared h_mem with confidence 0.8
@@ -305,9 +305,9 @@ fn consolidation_combines_both_sides_decayed() {
     store.store(bound).expect("store perspective-bound");
 
     // Consolidate — should Bayesian-combine both sides after decay
-    let outcome = bridge
+    let outcome = consolidator
         .consolidate(
-            perspective,
+            &perspective,
             ConsolidationRequest {
                 limit: 10,
                 ..Default::default()

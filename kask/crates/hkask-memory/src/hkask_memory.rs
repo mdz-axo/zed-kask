@@ -17,16 +17,14 @@
 
 pub(crate) mod bayesian; // Loop 2b (semantic confidence combination)
 pub mod chat_turn; // Typed projection of chat episode content
-pub mod consolidation; // Perspective-bound → shared promotion bridge
-pub mod consolidation_service;
+pub mod consolidation_service; // Memory consolidator (perspective-bound → shared)
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
 pub use chat_turn::ChatTurn;
-pub use consolidation::ConsolidationBridge;
-pub use consolidation_service::ConsolidationService;
+pub use consolidation_service::MemoryConsolidator;
 pub use memory_store::{CentroidResult, MemoryStore, MemoryStoreError};
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
 
