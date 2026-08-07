@@ -155,51 +155,10 @@ fn compute_implied_growth(
 
     let assumptions = financial_model::ProjectionAssumptions::from_history(&hist);
 
-    // Verify price bounds
-    #[allow(clippy::redundant_clone)] // assumptions is moved at the hi_check site below
-    let lo_check = financial_model::project_model(
-        &hist,
-        &financial_model::ProjectionAssumptions {
-            revenue_growth: -0.50,
-            ..assumptions.clone()
-        },
-        current_price,
-    );
-    let hi_check = financial_model::project_model(
-        &hist,
-        &financial_model::ProjectionAssumptions {
-            revenue_growth: 1.00,
-            ..assumptions
-        },
-        current_price,
-    );
-
-    if lo_check.intrinsic_per_share > current_price || hi_check.intrinsic_per_share < current_price
-    {
-        return None;
-    }
-
-    // Binary search for implied growth
-    let mut lo = -0.50_f64;
-    let mut hi = 1.00_f64;
-    let mut implied = 0.0_f64;
-
-    for _ in 0..50 {
-        let mid = (lo + hi) / 2.0;
-        let mut a = assumptions.clone();
-        a.revenue_growth = mid;
-        let model = financial_model::project_model(&hist, &a, current_price);
-        if (model.intrinsic_per_share - current_price).abs() < 0.0001 {
-            implied = mid;
-            break;
-        }
-        if model.intrinsic_per_share > current_price {
-            hi = mid; // intrinsic too high → growth too high → shrink from top
-        } else {
-            lo = mid; // intrinsic too low → growth too low → shrink from bottom
-        }
-        implied = mid;
-    }
+    // Shared bisection — the single source of truth for the search direction,
+    // shared with `reverse_dcf`. Returns `None` when the price is not bracketed
+    // by the growth bounds.
+    let implied = financial_model::implied_growth(&hist, &assumptions, current_price)?;
 
     // Check if implied is near bounds (low-confidence signal)
     if implied <= -0.49 || implied >= 0.99 {

@@ -67,13 +67,17 @@ const MAX_DECODED_ATTACHMENT_BYTES: usize = 6 * 1024 * 1024;
 /// Resolve the SQLite DB path for an owner, mirroring the portfolio crate's
 /// `PortfolioStore::new` path resolution. The companies module opens its
 /// own connection to the same DB for notes/files/forecasts tables.
-fn resolve_db_path(owner: &WebID) -> PathBuf {
+fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     path.push("hkask");
     path.push("portfolios");
     path.push(sanitize_name(&owner.to_string()));
-    std::fs::create_dir_all(&path).expect("failed to create portfolio directory");
-    path.join("master.db")
+    // A read-only config dir, a full disk, or a permissions error must surface
+    // as an error the server can report, not abort the process at startup.
+    // Mirrors `PortfolioStore::new`, which already propagates.
+    std::fs::create_dir_all(&path)
+        .map_err(|e| PortfolioError::from(format!("failed to create portfolio directory {}: {e}", path.display())))?;
+    Ok(path.join("master.db"))
 }
 
 /// Owner-scoped forecast persisted as structured JSON for later reconstruction.
@@ -141,7 +145,7 @@ impl PortfolioManager {
     /// adds the companies-specific tables (notes, files, forecasts) on top.
     pub fn new(owner: WebID) -> Result<Self, PortfolioError> {
         let store = PortfolioStore::new(owner)?;
-        let db_path = resolve_db_path(&owner);
+        let db_path = resolve_db_path(&owner)?;
         let manager = Self { store, db_path };
         manager.ensure_companies_schema()?;
         Ok(manager)

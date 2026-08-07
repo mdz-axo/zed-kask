@@ -656,64 +656,46 @@ impl CompaniesServer {
 
             let current_price = profile_data.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-            // Verify price is within the range that -50%..+100% growth can explain
-            {
-                if current_price <= 0.0 {
-                    return Err(McpToolError::invalid_argument(
-                        "current price must be positive for reverse DCF",
-                    ));
-                }
-                #[allow(clippy::redundant_clone)] // assumptions is moved at the hi_model site below
-                let lo_model = financial_model::project_model(
-                    &hist,
-                    &financial_model::ProjectionAssumptions {
-                        revenue_growth: -0.50,
-                        ..assumptions.clone()
-                    },
-                    current_price,
-                );
-                if lo_model.intrinsic_per_share > current_price {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "price ({:.2}) below intrinsic ({:.2}) at -50% growth - stock may be distressed or data inconsistent",
-                        current_price, lo_model.intrinsic_per_share
-                    )));
-                }
-                let hi_model = financial_model::project_model(
-                    &hist,
-                    &financial_model::ProjectionAssumptions {
-                        revenue_growth: 1.00,
-                        ..assumptions
-                    },
-                    current_price,
-                );
-                if hi_model.intrinsic_per_share < current_price {
-                    return Err(McpToolError::invalid_argument(format!(
-                        "price ({:.2}) implies growth > 100% - intrinsic at +100% growth is {:.2}",
-                        current_price, hi_model.intrinsic_per_share
-                    )));
-                }
+            if current_price <= 0.0 {
+                return Err(McpToolError::invalid_argument(
+                    "current price must be positive for reverse DCF",
+                ));
             }
 
-            // Binary search for implied growth rate: lo=-0.50, hi=1.00, max 50 iterations
-            let mut lo = -0.50_f64;
-            let mut hi = 1.00_f64;
-            let mut implied_growth = 0.0_f64;
-            for _ in 0..50 {
-                let mid = (lo + hi) / 2.0;
-                let mut a = assumptions.clone();
-                a.revenue_growth = mid;
-                let model = financial_model::project_model(&hist, &a, current_price);
-                if (model.intrinsic_per_share - current_price).abs() < 0.0001 {
-                    implied_growth = mid;
-                    break;
+            // Solve via the shared bisection in `financial_model` — the single
+            // source of truth for the search direction, shared with
+            // `expectations_gap`. Report the out-of-bracket cases distinctly so
+            // the caller learns which bound was violated.
+            let implied_growth = match financial_model::implied_growth(
+                &hist,
+                &assumptions,
+                current_price,
+            ) {
+                Some(growth) => growth,
+                None => {
+                    let at = |growth: f64| {
+                        financial_model::project_model(
+                            &hist,
+                            &financial_model::ProjectionAssumptions {
+                                revenue_growth: growth,
+                                ..assumptions.clone()
+                            },
+                            current_price,
+                        )
+                        .intrinsic_per_share
+                    };
+                    let lo_intrinsic = at(financial_model::IMPLIED_GROWTH_LO);
+                    if lo_intrinsic > current_price {
+                        return Err(McpToolError::invalid_argument(format!(
+                            "price ({current_price:.2}) below intrinsic ({lo_intrinsic:.2}) at -50% growth - stock may be distressed or data inconsistent"
+                        )));
+                    }
+                    let hi_intrinsic = at(financial_model::IMPLIED_GROWTH_HI);
+                    return Err(McpToolError::invalid_argument(format!(
+                        "price ({current_price:.2}) implies growth > 100% - intrinsic at +100% growth is {hi_intrinsic:.2}"
+                    )));
                 }
-                if model.intrinsic_per_share > current_price {
-                    lo = mid;
-                } else {
-                    hi = mid;
-                }
-                implied_growth = mid;
-            }
+            };
 
             // Final model at implied growth
             let mut final_a = assumptions.clone();

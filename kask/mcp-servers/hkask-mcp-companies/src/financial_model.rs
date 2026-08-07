@@ -726,6 +726,70 @@ pub fn equity_duration(model: &ProjectedModel, stage1_years: u8) -> Option<Equit
     })
 }
 
+// ── Implied growth (reverse DCF) ───────────────────────────────────────────
+
+/// The growth-rate search bounds used by the reverse DCF. Callers verify the
+/// price is bracketed by these bounds before searching.
+pub const IMPLIED_GROWTH_LO: f64 = -0.50;
+pub const IMPLIED_GROWTH_HI: f64 = 1.00;
+
+/// Solve for the revenue-growth rate at which the projected intrinsic value
+/// equals `current_price` (the Mauboussin reverse DCF).
+///
+/// Bisection is monotone in the right direction because intrinsic value is
+/// increasing in `revenue_growth`: when the model's intrinsic exceeds the
+/// price, the growth guess was too *high*, so the upper bound must shrink.
+/// Getting this comparison backwards makes the search diverge from the root
+/// while still returning a plausible-looking number, so it is expressed once
+/// here rather than at each call site.
+///
+/// Returns `None` when `current_price` is not positive, or when the price is
+/// not bracketed by `[IMPLIED_GROWTH_LO, IMPLIED_GROWTH_HI]` (the root lies
+/// outside the searchable range — never fabricate an in-range answer).
+pub fn implied_growth(
+    hist: &HistoricalSnapshot,
+    assumptions: &ProjectionAssumptions,
+    current_price: f64,
+) -> Option<f64> {
+    if !(current_price > 0.0) {
+        return None;
+    }
+
+    let at_growth = |growth: f64| {
+        project_model(
+            hist,
+            &ProjectionAssumptions {
+                revenue_growth: growth,
+                ..assumptions.clone()
+            },
+            current_price,
+        )
+        .intrinsic_per_share
+    };
+
+    if at_growth(IMPLIED_GROWTH_LO) > current_price || at_growth(IMPLIED_GROWTH_HI) < current_price {
+        return None;
+    }
+
+    let mut lo = IMPLIED_GROWTH_LO;
+    let mut hi = IMPLIED_GROWTH_HI;
+    let mut implied = 0.0_f64;
+    for _ in 0..50 {
+        let mid = (lo + hi) / 2.0;
+        implied = mid;
+        let intrinsic = at_growth(mid);
+        if (intrinsic - current_price).abs() < 0.0001 {
+            break;
+        }
+        if intrinsic > current_price {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Some(implied)
+}
+
 // ── Gap decomposition ──────────────────────────────────────────────────────
 
 /// Result of decomposing a forecast-vs-actual return gap.
@@ -1045,7 +1109,16 @@ impl Default for McRange {
     }
 }
 
+/// The simulation-count bounds enforced by [`monte_carlo_dcf`].
+pub const MC_MIN_SIMULATIONS: usize = 100;
+pub const MC_MAX_SIMULATIONS: usize = 10_000;
+
 /// Run N Monte Carlo simulations with randomized assumptions within +/- range.
+///
+/// `simulations` is clamped to `[MC_MIN_SIMULATIONS, MC_MAX_SIMULATIONS]` here
+/// rather than at the call site, so the non-empty invariant the histogram and
+/// percentile computations rely on holds for every caller of this public
+/// function. `MonteCarloResult::simulations` reports the count actually run.
 pub fn monte_carlo_dcf(
     hist: &HistoricalSnapshot,
     base_assumptions: &ProjectionAssumptions,
@@ -1054,6 +1127,7 @@ pub fn monte_carlo_dcf(
     current_price: f64,
     rng: &mut impl rand::Rng,
 ) -> MonteCarloResult {
+    let simulations = simulations.clamp(MC_MIN_SIMULATIONS, MC_MAX_SIMULATIONS);
     let base = project_model(hist, base_assumptions, current_price);
     let mut values: Vec<f64> = Vec::with_capacity(simulations);
 
@@ -1174,6 +1248,106 @@ mod tests {
             shares_outstanding: 1_000.0,
             tax_rate: 0.21,
         }
+    }
+
+    #[test]
+    fn monte_carlo_dcf_clamps_zero_simulations() {
+        // `simulations = 0` previously panicked on `values[0]` because the
+        // clamp lived at the tool call site, not in this public function.
+        let h = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&h);
+        let ranges = McRange::default();
+        let mut rng = rand::rng();
+        let result = monte_carlo_dcf(&h, &assumptions, 0, &ranges, 100.0, &mut rng);
+        assert_eq!(
+            result.simulations, MC_MIN_SIMULATIONS,
+            "zero simulations must clamp up to the floor, not panic"
+        );
+        assert!(result.max_intrinsic >= result.min_intrinsic);
+    }
+
+    #[test]
+    fn monte_carlo_dcf_clamps_excessive_simulations() {
+        let h = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&h);
+        let ranges = McRange::default();
+        let mut rng = rand::rng();
+        let result = monte_carlo_dcf(&h, &assumptions, usize::MAX, &ranges, 100.0, &mut rng);
+        assert_eq!(result.simulations, MC_MAX_SIMULATIONS);
+    }
+
+    #[test]
+    fn implied_growth_round_trips_through_project_model() {
+        // The defining property of the reverse DCF: projecting at the returned
+        // growth rate must reproduce the price it was solved for. This fails if
+        // the bisection comparison is inverted (the search then converges away
+        // from the root while still returning an in-range number).
+        let h = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&h);
+        let base = project_model(&h, &assumptions, 0.0);
+        // Pick a price the bounds can bracket: the model's own intrinsic value.
+        let price = base.intrinsic_per_share;
+        assert!(price > 0.0, "sample must produce a positive intrinsic");
+
+        let implied = implied_growth(&h, &assumptions, price)
+            .expect("price from the model itself must be bracketed");
+
+        let round_trip = project_model(
+            &h,
+            &ProjectionAssumptions {
+                revenue_growth: implied,
+                ..assumptions
+            },
+            price,
+        )
+        .intrinsic_per_share;
+
+        let relative_error = ((round_trip - price) / price).abs();
+        assert!(
+            relative_error < 0.01,
+            "implied growth {implied} reproduced {round_trip} for price {price} (relative error {relative_error})"
+        );
+    }
+
+    #[test]
+    fn implied_growth_refuses_unbracketed_price() {
+        let h = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&h);
+        // A price far above what +100% growth can justify is not bracketed.
+        let unreachable = project_model(
+            &h,
+            &ProjectionAssumptions {
+                revenue_growth: IMPLIED_GROWTH_HI,
+                ..assumptions.clone()
+            },
+            0.0,
+        )
+        .intrinsic_per_share
+            * 10.0;
+        assert!(
+            implied_growth(&h, &assumptions, unreachable).is_none(),
+            "an unbracketed price must refuse, not return an in-range growth rate"
+        );
+        assert!(
+            implied_growth(&h, &assumptions, 0.0).is_none(),
+            "a non-positive price must refuse"
+        );
+    }
+
+    #[test]
+    fn implied_growth_is_monotone_in_price() {
+        // Higher price ⇒ higher implied growth. An inverted bisection breaks
+        // this ordering even when the round-trip happens to land close.
+        let h = sample_hist();
+        let assumptions = ProjectionAssumptions::from_history(&h);
+        let base = project_model(&h, &assumptions, 0.0).intrinsic_per_share;
+
+        let low = implied_growth(&h, &assumptions, base * 0.8).expect("bracketed");
+        let high = implied_growth(&h, &assumptions, base * 1.2).expect("bracketed");
+        assert!(
+            high > low,
+            "implied growth must increase with price: got {low} at 0.8x and {high} at 1.2x"
+        );
     }
 
     #[test]

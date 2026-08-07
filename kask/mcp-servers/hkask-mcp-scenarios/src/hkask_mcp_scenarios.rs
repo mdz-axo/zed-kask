@@ -581,6 +581,16 @@ impl ScenariosServer {
             let events: Vec<ScenarioEvent> = serde_json::from_str(&req.events)
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid events JSON: {}", e)))?;
 
+            // The pipeline anchors synthesis on the first event, so an empty
+            // array is refused up front rather than indexed later. `build_event_tree`
+            // also rejects empty input, but the synthesis step at step 5 is
+            // reachable independently of it.
+            let Some(first_event_id) = events.first().map(|e| e.id.clone()) else {
+                return Err(McpToolError::invalid_argument(
+                    "events must contain at least one scenario event",
+                ));
+            };
+
             // Step 1: Triage
             let triage_results: Vec<_> = events.iter().map(|e| {
                 let t = superforecast::triage_question(&e.question, true, e.reference_class.is_some(), true);
@@ -624,7 +634,7 @@ impl ScenariosServer {
                             );
                             None
                         } else {
-                            match superforecast::synthesize_perspectives(&events[0].id, &perspectives) {
+                            match superforecast::synthesize_perspectives(&first_event_id, &perspectives) {
                                 Ok(synthesis) => Some(synthesis),
                                 Err(error) => {
                                     tracing::warn!(
