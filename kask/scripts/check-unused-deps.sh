@@ -34,9 +34,11 @@ done
 # Check each kask crate's lib target. The lint fires on the lib target;
 # bin targets that are thin `run().await` wrappers need no suppression.
 # Lib roots with a legitimate bin-needs-dep case carry `#![allow(...)]`.
+# Filter to only kask crate errors — the lint also fires on transitive
+# dependencies (e.g. `perf`) which are not our concern.
 errors=$(RUSTFLAGS="-D unused_crate_dependencies" \
     rustup run nightly cargo check --lib "${kask_crates[@]}" 2>&1 \
-    | grep "^error" || true)
+    | grep "^error: extern crate.*unused in crate 'hkask_\|error: extern crate.*unused in crate 'kask_" || true)
 
 if [ -z "$errors" ]; then
     echo "OK: No unused crate dependencies in kask crates."

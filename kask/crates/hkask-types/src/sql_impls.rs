@@ -18,7 +18,6 @@
 //! (newtype wrappers) because Rust's orphan rules forbid implementing
 //! foreign traits for foreign types.
 
-use crate::goal::GoalState;
 use crate::id::{BotID, EventID, GoalID, HMemId, PodID, TemplateID, UserID, WebID};
 use crate::visibility::Confidence;
 use crate::visibility::Visibility;
@@ -93,24 +92,6 @@ impl FromSql for Visibility {
 }
 
 impl ToSql for Visibility {
-    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
-        self.as_str().to_sql()
-    }
-}
-
-impl FromSql for GoalState {
-    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
-        let s = String::column_result(value)?;
-        GoalState::parse_str(&s).ok_or_else(|| {
-            FromSqlError::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("invalid goal state: {s}"),
-            )))
-        })
-    }
-}
-
-impl ToSql for GoalState {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         self.as_str().to_sql()
     }

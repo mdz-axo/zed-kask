@@ -41,17 +41,18 @@ pub struct GoalTransitionEvent {
 
 /// Derived goal lifecycle signal that Curation reacts to.
 ///
-/// `GoalState` (hkask-types) models canonical states (Pending/Active/…/Abandoned).
-/// "stale" and "expired" are *derived* observational states emitted by goal
-/// lifecycle watchers, not canonical `GoalState` variants. This enum makes the
-/// Curation-relevant classification explicit instead of magic-string matching.
+/// Canonical goal states (Pending/Active/Completed/Blocked/Abandoned) were
+/// modeled by the deleted `GoalState` type. "stale" and "expired" are
+/// *derived* observational states emitted by goal lifecycle watchers, not
+/// canonical variants. This enum makes the Curation-relevant classification
+/// explicit instead of magic-string matching.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalLifecycle {
     /// Goal has been Active past its staleness window — attention recommended.
     Stale,
     /// Goal has passed its deadline without completion.
     Expired,
-    /// Any other (canonical `GoalState` or unknown) — no Curation action.
+    /// Any other (canonical goal state or unknown) — no Curation action.
     Other,
 }
 

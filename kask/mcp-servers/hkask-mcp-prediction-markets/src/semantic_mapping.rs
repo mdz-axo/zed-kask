@@ -637,4 +637,96 @@ mod tests {
             .expect("rate constellation must exist");
         assert_eq!(rate_constellation.events.len(), 2);
     }
+
+    // ── ONT-6: classify_base_object_from_catalog ──────────────────────────
+
+    #[test]
+    fn classify_kalshi_catalog_record_uses_series_prefix() {
+        // KXFED event ticker → PolicyInterestRate (via series prefix KXFED).
+        let bo = classify_base_object_from_catalog(
+            "kalshi",
+            "KXFED-26SEP",
+            "Will the upper bound of the federal funds rate be above 5.25%?",
+        );
+        assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
+    }
+
+    #[test]
+    fn classify_kalshi_catalog_record_treasury_yield() {
+        // KXUST series → PolicyInterestRate (Treasury yields map to the same base object).
+        let bo = classify_base_object_from_catalog(
+            "kalshi",
+            "KXUST10A-26AUG07",
+            "Will the 10Y U.S. Treasury yield be above 4.73%?",
+        );
+        assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
+    }
+
+    #[test]
+    fn classify_kalshi_catalog_record_non_base_event() {
+        // Non-economic series → None.
+        let bo = classify_base_object_from_catalog(
+            "kalshi",
+            "KXELONMARS-99",
+            "Will Elon go to Mars?",
+        );
+        assert_eq!(bo, None);
+    }
+
+    #[test]
+    fn classify_gamma_catalog_record_fed_upper_bound() {
+        // ONT-6: "Fed's upper bound reach X%" — previously missed, now covered.
+        let bo = classify_base_object_from_catalog(
+            "gamma",
+            "84803",
+            "Will the Fed’s upper bound reach 5.0% or higher before 2027?",
+        );
+        assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
+    }
+
+    #[test]
+    fn classify_gamma_catalog_record_federal_funds_rate() {
+        // ONT-6: "upper bound of the target federal funds rate" — previously
+        // missed ("federal funds rate" is not a substring of "fed funds"),
+        // now covered by the full-phrase pattern.
+        let bo = classify_base_object_from_catalog(
+            "gamma",
+            "159954",
+            "Will the upper bound of the target federal funds rate be 2.25% at the end of 2026?",
+        );
+        assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
+    }
+
+    #[test]
+    fn classify_gamma_catalog_record_rates_hit() {
+        // ONT-6: "rates hit X%" — previously missed, now covered.
+        let bo = classify_base_object_from_catalog(
+            "gamma",
+            "176745",
+            "Will Kevin Warsh be confirmed as Fed Chair and will rates hit 2.5% or lower in 2026?",
+        );
+        assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
+    }
+
+    #[test]
+    fn classify_gamma_catalog_record_ecb_rate() {
+        // ONT-6: non-Fed central bank (ECB) — same economic object (policy rate).
+        let bo = classify_base_object_from_catalog(
+            "gamma",
+            "118468",
+            "ECB rate cut in 2026?",
+        );
+        assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
+    }
+
+    #[test]
+    fn classify_gamma_catalog_record_non_base_event() {
+        // Non-economic Gamma question → None.
+        let bo = classify_base_object_from_catalog(
+            "gamma",
+            "99999",
+            "Will the mayor win re-election?",
+        );
+        assert_eq!(bo, None);
+    }
 }

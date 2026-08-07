@@ -16,8 +16,6 @@
 use hkask_keystore::derive_key;
 use thiserror::Error;
 
-use crate::database::driver::DatabaseDriver;
-
 /// Default embedding dimension (configurable via HKASK_EMBEDDING_DIM)
 pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
 pub fn embedding_dim() -> usize {

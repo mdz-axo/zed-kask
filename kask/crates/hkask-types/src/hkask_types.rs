@@ -10,7 +10,7 @@ pub mod curator;
 pub mod document;
 pub mod error;
 pub mod event;
-pub mod goal;
+
 pub mod hmem_ontology;
 pub mod id;
 pub mod inference_ipc;
@@ -46,7 +46,7 @@ pub use error::{
     CapabilityDenied, DatabaseErrorKind, DbError, InfrastructureError, McpErrorKind, NotFound,
 };
 pub use event::{RegulationRecord, RegulationSink};
-pub use goal::GoalState;
+
 pub use id::{
     BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
     IdKind, PhaseId, PodID, TaskId, TemplateID, UserID, WebID,

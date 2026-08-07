@@ -115,15 +115,6 @@ impl EmbeddingStore {
         self.dim
     }
 
-    /// Execute SQL through the driver, mapping errors to EmbeddingError.
-    fn exec(
-        &self,
-        sql: &str,
-        params: &[crate::database::value::DbValue],
-    ) -> Result<usize, EmbeddingError> {
-        Ok(self.driver.execute(sql, params)?)
-    }
-
     /// Query rows through the driver.
     fn query_driver(
         &self,
