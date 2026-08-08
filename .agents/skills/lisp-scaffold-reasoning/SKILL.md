@@ -95,11 +95,12 @@ These constraints are non-obvious and were verified by the
 - `define` inside a _called lambda_ mutates the call_env (a child of the
   closure env), NOT the closure env itself. Recursive helpers must accumulate
   via return values, not by mutating an outer variable.
-- `=` is numeric-only (`num_eq` calls `as_f64`). String equality is done via
-  `assoc` — `(assoc "high" (list (list lk true)))` returns non-nil iff `lk`
-  is the string `"high"` (because `assoc` uses `LispValue::PartialEq`, and
-  `String` vs `String` is structural equality).
-- There is no `append` builtin. A recursive `append2` helper joins two lists.
+- `=` is numeric-only (`num_eq` calls `as_f64`). Use `string=` for string
+  equality: `(string= lk "high")` returns true iff `lk` is the string `"high"`.
+- `append` is a builtin: `(append l1 l2 ...)` joins multiple lists. Nil args
+  are treated as empty lists. No need for a recursive `append2` helper.
+- `concat` is a builtin: `(concat s1 s2 ...)` joins strings. Use this to build
+  defect labels from field names: `(concat "missing_" key)`.
 - Boolean literals are `true`/`false`/`nil` (not `#t`/`#f`).
 - `assoc` tests for key _presence_, not non-empty value. An empty-string
   `falsifier` is a present key — it is a semantic defect the LLM should catch,

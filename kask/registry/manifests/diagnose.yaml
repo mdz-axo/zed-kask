@@ -106,10 +106,96 @@ steps:
       admitted_target: "{{ symptom | default(bug_description, true) }}"
       domain: "bug diagnosis"
       context: "{{ code_context | default({}) }}"
+      # Carry prior Lisp defects forward so the LLM repairs cumulatively.
+      prior_defects: "{{ step_4_result | default([]) }}"
 
+  # ── Step 4: Lisp deterministic step — hypothesis structural invariant check ──
+  # Same four-invariant check as falsifiability/lisp-scaffold-reasoning:
+  # count (3-7), completeness (prediction + falsifier keys), diversity
+  # (>=2 distinct likelihoods), mutual exclusivity (no duplicate text).
+  # Gates the instrumentation step (step 5) on structural validity — no point
+  # instrumenting code for a hypothesis set missing falsifiers or with
+  # insufficient diversity.
   - ordinal: 4
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Lisp hypothesis invariant check. Deterministically evaluates all four
+      structural invariants on the root-cause hypothesis set: count (3-7),
+      completeness (every hypothesis has prediction + falsifier keys), diversity
+      (>=2 distinct likelihoods), mutual exclusivity (no duplicate hypothesis
+      text). Returns a list of defect strings. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((hyps (assoc "hypotheses" step_3_result)))
+          (if (is_null hyps)
+              (list "no_hypotheses_field")
+              (let ((n (length hyps)))
+                (begin
+                  (define count-defects
+                    (if (< n 3)
+                        (list "insufficient_count_below_3")
+                        (if (> n 7)
+                            (list "excessive_count_above_7")
+                            (list))))
+                  (define check-completeness
+                    (lambda (hs acc)
+                      (if (is_null hs)
+                          acc
+                          (let ((h (car hs)))
+                            (let ((acc2 (if (is_null (assoc "prediction" h))
+                                            (cons "missing_prediction" acc)
+                                            acc)))
+                              (let ((acc3 (if (is_null (assoc "falsifier" h))
+                                              (cons "missing_falsifier" acc2)
+                                              acc2)))
+                                (check-completeness (cdr hs) acc3)))))))
+                  (define completeness-defects (check-completeness hyps (list)))
+                  (define check-diversity
+                    (lambda (hs nh nm nl)
+                      (if (is_null hs)
+                          (let ((distinct (+ (if (> nh 0) 1 0) (if (> nm 0) 1 0) (if (> nl 0) 1 0))))
+                            (if (< distinct 2)
+                                (list "insufficient_diversity_below_2")
+                                (list)))
+                          (let ((h (car hs)))
+                            (let ((lk (assoc "likelihood" h)))
+                              (let ((is-high (string= lk "high")))
+                                (let ((is-med (string= lk "medium")))
+                                  (let ((is-low (string= lk "low")))
+                                    (check-diversity
+                                      (cdr hs)
+                                      (if is-high (+ nh 1) nh)
+                                      (if is-med (+ nm 1) nm)
+                                      (if is-low (+ nl 1) nl))))))))))
+                  (define diversity-defects (check-diversity hyps 0 0 0))
+                  (define check-duplicates
+                    (lambda (hs seen)
+                      (if (is_null hs)
+                          (list)
+                          (let ((h (car hs)))
+                            (let ((hyp-text (assoc "hypothesis" h)))
+                              (let ((hyp-str (if (is_null hyp-text) "" hyp-text)))
+                                (if (not (is_null (assoc hyp-str seen)))
+                                    (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
+                                    (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
+                  (define duplicate-defects (check-duplicates hyps (list)))
+                  (append
+                    count-defects completeness-defects
+                    diversity-defects duplicate-defects)))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+
+  # ── Step 5: LLM probabilistic step — instrumentation, gated on Lisp verdict ──
+  - ordinal: 5
     action: select
-    description: Instrument code with targeted probes mapped to the top-ranked hypothesis.
+    condition: "{{ step_4_result | length == 0 }}"
+    description: >
+      Instrument code with targeted probes mapped to the top-ranked hypothesis.
+      Gated on the Lisp hypothesis invariant check (step 4) — only runs when
+      the hypothesis set is structurally valid.
     renderer: minijinja
     template_ref: diagnose/diagnose-instrument.j2
     gas_cap: 4096
@@ -119,8 +205,9 @@ steps:
       hypotheses: "{{ step_3_result.hypotheses | default([]) }}"
       selected_hypothesis: "{{ step_3_result.hypotheses[0].hypothesis | default('') }}"
       crate_scope: "{{ crate_scope | default('') }}"
+      hypothesis_defects: "{{ step_4_result | default([]) }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: select
     description: Apply fix with regression test, verify repro no longer reproduces, clean up instrumentation.
     renderer: minijinja
@@ -134,7 +221,7 @@ steps:
       crate_scope: "{{ crate_scope | default('') }}"
       has_correct_seam: "{{ has_correct_seam | default(true) }}"
 
-  - ordinal: 6
+  - ordinal: 7
     action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
@@ -149,16 +236,21 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
-    description: Re-enter diagnosis cycle if convergence is not met; re-hypothesise on falsification.
+    description: >
+      Re-enter diagnosis cycle if convergence is not met; re-hypothesise on
+      falsification. If the Lisp hypothesis check (step 4) found defects,
+      re-enters at step 3 (hypothesize) so the LLM repairs the structural
+      defects before instrumentation runs.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: "{{ 3 }}"
+      loop_target: "{{ 3 if (step_4_result | default([]) | length > 0) else 5 }}"
       # Push the fix quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
+      # When step 6 was skipped (hypothesis defects), fall back to 0.0.
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(0.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -28,12 +28,12 @@ manifest:
 
 convergence:
   convergence_mode: "cauchy"
-  target_artifacts_field: step_5_result.verification_passed
   cauchy_epsilon: 0.03
   cauchy_window: 3
   max_iterations: 10
   min_iterations: 2
   on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
 
 gas:
   cap: 150000
@@ -82,8 +82,6 @@ steps:
       target_file: "{{ target_file }}"
       upstream_ref: "{{ upstream_ref }}"
       task: "{{ task }}"
-    generates_spans:
-      - reg.upstream_rebase.assess
 
   - ordinal: 2
     action: select
@@ -101,8 +99,6 @@ steps:
       target_file: "{{ target_file }}"
       step_1_result: "{{ step_1_result }}"
       task: "{{ task }}"
-    generates_spans:
-      - reg.upstream_rebase.map
 
   - ordinal: 3
     action: select
@@ -122,8 +118,6 @@ steps:
       step_1_result: "{{ step_1_result }}"
       step_2_result: "{{ step_2_result }}"
       task: "{{ task }}"
-    generates_spans:
-      - reg.upstream_rebase.decide
 
   - ordinal: 4
     action: select
@@ -142,8 +136,6 @@ steps:
       step_2_result: "{{ step_2_result }}"
       step_3_result: "{{ step_3_result }}"
       task: "{{ task }}"
-    generates_spans:
-      - reg.upstream_rebase.execute
 
   - ordinal: 5
     action: compute
@@ -151,28 +143,33 @@ steps:
       Verify the re-application: run cargo check, cargo test (pinning tests),
       check-hkask-no-zed-deps.sh, and grep marker count. Compute the
       verification_passed boolean (all checks pass) and the marker_density
-      (markers / kask_call_sites).
+      (markers / kask_call_sites). The Lisp form checks compiled, tests_passed,
+      invariant_holds, and marker_count >= 50% of call_site_count.
     compute_ref: lisp.eval
     gas_cap: 100
     timeout_seconds: 30
     input_mapping:
-      target_file: "{{ target_file }}"
-      step_4_result: "{{ step_4_result }}"
-    lisp_form: |
-      (let ((checks (assoc "step_4_result" input))
-            (compiled (assoc "compiled" checks))
-            (tests_passed (assoc "tests_passed" checks))
-            (invariant_holds (assoc "invariant_holds" checks))
-            (marker_count (assoc "marker_count" checks))
-            (call_site_count (assoc "call_site_count" checks)))
-        (if (and compiled tests_passed invariant_holds
-                 (>= marker_count (* call_site_count 0.5)))
-            (list (cons "verification_passed" true)
-                  (cons "marker_density" (/ marker_count call_site_count)))
-            (list (cons "verification_passed" false)
-                  (cons "marker_density" (/ marker_count call_site_count)))))
-    generates_spans:
-      - reg.upstream_rebase.verify
+      # The form returns an alist (JSON object) with verification_passed,
+      # marker_density, and convergence_metric (1.0 if passed, 0.0 if failed).
+      # convergence_metric feeds the Cauchy criterion via the loop step's
+      # kata_hypotenuse binding.
+      form: >
+        (let ((checks step_4_result))
+          (let ((compiled (assoc "compiled" checks))
+                (tests_passed (assoc "tests_passed" checks))
+                (invariant_holds (assoc "invariant_holds" checks))
+                (marker_count (assoc "marker_count" checks))
+                (call_site_count (assoc "call_site_count" checks)))
+            (if (and compiled tests_passed invariant_holds
+                     (>= marker_count (* call_site_count 0.5)))
+                (list (cons "verification_passed" true)
+                      (cons "marker_density" (/ marker_count call_site_count))
+                      (cons "convergence_metric" 1.0))
+                (list (cons "verification_passed" false)
+                      (cons "marker_density" (/ marker_count call_site_count))
+                      (cons "convergence_metric" 0.0)))))
+      env:
+        step_4_result: "{{ step_4_result }}"
 
   - ordinal: 6
     action: select
@@ -192,12 +189,22 @@ steps:
       step_4_result: "{{ step_4_result }}"
       step_5_result: "{{ step_5_result }}"
       task: "{{ task }}"
-    generates_spans:
-      - reg.upstream_rebase.document
 
-loop:
-  description: >
-    If verification failed (step_5_result.verification_passed == false),
-    re-enter at step 4 (execute) with the failure report. The loop converges
-    when all verification checks pass and marker_density >= 0.5.
-  convergence_check: step_5_result.verification_passed
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter at step 4 (execute) if verification failed. The loop converges
+      when all verification checks pass (step_5_result.verification_passed
+      is true) and the Cauchy criterion on the verification signal is met.
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: "{{ 4 }}"
+      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(0.0) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort

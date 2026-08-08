@@ -1246,9 +1246,6 @@ mod tests {
                 (list "no_hypotheses_field")
                 (let ((n (length hyps)))
                   (begin
-                    (define append2
-                      (lambda (a b)
-                        (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
                     (define count-defects
                       (if (< n 3)
                           (list "insufficient_count_below_3")
@@ -1277,9 +1274,9 @@ mod tests {
                                   (list)))
                             (let ((h (car hs)))
                               (let ((lk (assoc "likelihood" h)))
-                                (let ((is-high (not (is_null (assoc "high" (list (list lk true)))))))
-                                  (let ((is-med (not (is_null (assoc "medium" (list (list lk true)))))))
-                                    (let ((is-low (not (is_null (assoc "low" (list (list lk true)))))))
+                                (let ((is-high (string= lk "high")))
+                                  (let ((is-med (string= lk "medium")))
+                                    (let ((is-low (string= lk "low")))
                                       (check-diversity
                                         (cdr hs)
                                         (if is-high (+ nh 1) nh)
@@ -1297,9 +1294,9 @@ mod tests {
                                       (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
                                       (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
                     (define duplicate-defects (check-duplicates hyps (list)))
-                    (append2
-                      (append2 count-defects completeness-defects)
-                      (append2 diversity-defects duplicate-defects))))))
+                    (append
+                      count-defects completeness-defects
+                      diversity-defects duplicate-defects)))))
         "#;
         // Case 1: structurally valid set — 3 hypotheses, all fields present,
         // 3 distinct likelihoods, no duplicates. Expect empty defect list.
@@ -1430,20 +1427,17 @@ mod tests {
     fn dispatch_lisp_eval_pico_completeness() {
         let form = r#"
           (begin
-            (define append2
-              (lambda (a b)
-                (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
             (define check-key
-              (lambda (key label)
+              (lambda (key)
                 (let ((val (assoc key step_2_result)))
                   (if (is_null val)
-                      (list label)
+                      (list (concat "missing_" key))
                       (list)))))
-            (append2
-              (append2 (check-key "population" "missing_population")
-                       (check-key "intervention" "missing_intervention"))
-              (append2 (check-key "comparison" "missing_comparison")
-                       (check-key "outcome" "missing_outcome"))))
+            (append
+              (check-key "population")
+              (check-key "intervention")
+              (check-key "comparison")
+              (check-key "outcome")))
         "#;
         // Case 1: all four PICO elements present. Expect empty defect list.
         let valid_input = serde_json::json!({
@@ -1476,6 +1470,135 @@ mod tests {
         assert_eq!(defects.len(), 2, "missing comparison + outcome should give 2 defects, got: {defects:?}");
         assert!(defects.iter().any(|d| d == "missing_comparison"), "should flag missing_comparison");
         assert!(defects.iter().any(|d| d == "missing_outcome"), "should flag missing_outcome");
+    }
+
+    /// Validates the grill-me question-level coverage check form.
+    /// Counts distinct difficulty levels (Recall, Mechanism, Rationale, Edge
+    /// Cases, Synthesis) in generated questions and flags < 3 distinct levels.
+    #[test]
+    fn dispatch_lisp_eval_grill_me_level_coverage() {
+        let form = r#"
+          (let ((questions (assoc "questions" step_2_result)))
+            (if (is_null questions)
+                (list "no_questions_field")
+                (begin
+                  (define count-level
+                    (lambda (qs level-name count)
+                      (if (is_null qs)
+                          count
+                          (let ((q (car qs)))
+                            (let ((ql (assoc "level" q)))
+                              (let ((ql-str (if (is_null ql) "" ql)))
+                                (count-level
+                                  (cdr qs)
+                                  level-name
+                                  (if (string= ql-str level-name) (+ count 1) count))))))))
+                  (define n-recall (count-level questions "Recall" 0))
+                  (define n-mechanism (count-level questions "Mechanism" 0))
+                  (define n-rationale (count-level questions "Rationale" 0))
+                  (define n-edge (count-level questions "Edge Cases" 0))
+                  (define n-synthesis (count-level questions "Synthesis" 0))
+                  (define distinct
+                    (+ (if (> n-recall 0) 1 0)
+                       (if (> n-mechanism 0) 1 0)
+                       (if (> n-rationale 0) 1 0)
+                       (if (> n-edge 0) 1 0)
+                       (if (> n-synthesis 0) 1 0)))
+                  (if (< distinct 3)
+                      (list "insufficient_level_coverage_below_3")
+                      (list)))))
+        "#;
+        // Case 1: 3 distinct levels. Expect no defects.
+        let valid_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "questions": [
+                        {"level": "Recall", "question": "q1"},
+                        {"level": "Mechanism", "question": "q2"},
+                        {"level": "Rationale", "question": "q3"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(defects.is_empty(), "3 distinct levels should pass, got: {defects:?}");
+
+        // Case 2: only 1 distinct level. Expect defect.
+        let narrow_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "questions": [
+                        {"level": "Recall", "question": "q1"},
+                        {"level": "Recall", "question": "q2"},
+                        {"level": "Recall", "question": "q3"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &narrow_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert_eq!(defects.len(), 1, "1 distinct level should give 1 defect, got: {defects:?}");
+        assert!(defects[0].as_str().unwrap() == "insufficient_level_coverage_below_3");
+    }
+
+    /// Validates the task-breakdown task completeness check form.
+    /// Checks every task has title and acceptance_criteria keys present.
+    #[test]
+    fn dispatch_lisp_eval_task_completeness() {
+        let form = r#"
+          (let ((tasks (assoc "tasks" step_2_result)))
+            (if (is_null tasks)
+                (list "no_tasks_field")
+                (begin
+                  (define check-task
+                    (lambda (ts acc)
+                      (if (is_null ts)
+                          acc
+                          (let ((t (car ts)))
+                            (let ((acc2 (if (is_null (assoc "title" t))
+                                            (cons "missing_title" acc)
+                                            acc)))
+                              (let ((acc3 (if (is_null (assoc "acceptance_criteria" t))
+                                              (cons "missing_acceptance_criteria" acc2)
+                                              acc2)))
+                                (check-task (cdr ts) acc3)))))))
+                  (check-task tasks (list)))))
+        "#;
+        // Case 1: all tasks have both fields. Expect no defects.
+        let valid_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "tasks": [
+                        {"title": "task1", "acceptance_criteria": ["c1"]},
+                        {"title": "task2", "acceptance_criteria": ["c2"]}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(defects.is_empty(), "valid tasks should have no defects, got: {defects:?}");
+
+        // Case 2: one task missing acceptance_criteria. Expect 1 defect.
+        let missing_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "tasks": [
+                        {"title": "task1", "acceptance_criteria": ["c1"]},
+                        {"title": "task2"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &missing_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert_eq!(defects.len(), 1, "missing AC should give 1 defect, got: {defects:?}");
+        assert!(defects.iter().any(|d| d == "missing_acceptance_criteria"));
     }
 
     #[test]

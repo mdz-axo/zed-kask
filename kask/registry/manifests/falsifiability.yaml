@@ -131,9 +131,6 @@ steps:
               (list "no_hypotheses_field")
               (let ((n (length hyps)))
                 (begin
-                  (define append2
-                    (lambda (a b)
-                      (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
                   (define count-defects
                     (if (< n 3)
                         (list "insufficient_count_below_3")
@@ -162,9 +159,9 @@ steps:
                                 (list)))
                           (let ((h (car hs)))
                             (let ((lk (assoc "likelihood" h)))
-                              (let ((is-high (not (is_null (assoc "high" (list (list lk true)))))))
-                                (let ((is-med (not (is_null (assoc "medium" (list (list lk true)))))))
-                                  (let ((is-low (not (is_null (assoc "low" (list (list lk true)))))))
+                              (let ((is-high (string= lk "high")))
+                                (let ((is-med (string= lk "medium")))
+                                  (let ((is-low (string= lk "low")))
                                     (check-diversity
                                       (cdr hs)
                                       (if is-high (+ nh 1) nh)
@@ -182,9 +179,9 @@ steps:
                                     (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
                                     (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
                   (define duplicate-defects (check-duplicates hyps (list)))
-                  (append2
-                    (append2 count-defects completeness-defects)
-                    (append2 diversity-defects duplicate-defects))))))
+                  (append
+                    count-defects completeness-defects
+                    diversity-defects duplicate-defects)))))
       env:
         step_2_result: "{{ step_2_result }}"
 

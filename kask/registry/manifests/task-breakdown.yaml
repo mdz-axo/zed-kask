@@ -149,19 +149,62 @@ steps:
       context_summary: "{{ step_1_result.context_summary | default('') }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
       risks: "{{ step_1_result.risks | default([]) }}"
-      refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
+      refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
       parallelization_hint: "{{ parallelization_hint | default('') }}"
       skill_catalog: "{{ skill_catalog | default([]) }}"
       prior_outcome: "{{ prior_outcome | default({}) }}"
       prior_operator_feedback: "{{ prior_operator_feedback | default({}) }}"
+      # Carry prior Lisp defects forward so the LLM repairs cumulatively.
+      prior_task_defects: "{{ step_3_result | default([]) }}"
 
+  # ── Step 3: Lisp deterministic step — task structural completeness check ──
+  # The LLM generates tasks in step 2, but LLMs are unreliable at checking
+  # every task has the required structural fields (title, acceptance_criteria).
+  # The manifest's own step 2 description flags "no ACs" as a catastrophic plan
+  # — this Lisp step catches that deterministically before the evaluate step
+  # runs. Returns a list of defect strings — empty = passed, non-empty = step 4
+  # (evaluate) notes the structural gaps.
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Lisp task completeness check. Deterministically verifies every task has
+      a title and acceptance_criteria key present. Returns a list of defect
+      strings. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((tasks (assoc "tasks" step_2_result)))
+          (if (is_null tasks)
+              (list "no_tasks_field")
+              (begin
+                (define check-task
+                  (lambda (ts acc)
+                    (if (is_null ts)
+                        acc
+                        (let ((t (car ts)))
+                          (let ((acc2 (if (is_null (assoc "title" t))
+                                          (cons "missing_title" acc)
+                                          acc)))
+                            (let ((acc3 (if (is_null (assoc "acceptance_criteria" t))
+                                            (cons "missing_acceptance_criteria" acc2)
+                                            acc2)))
+                              (check-task (cdr ts) acc3)))))))
+                (check-task tasks (list)))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+
+  # ── Step 4: LLM probabilistic step — evaluate (renumbered from ordinal 3) ──
+  - ordinal: 4
     action: select
     description: >
       EVALUATE — score the plan against six weighted criteria. Emit task-addressable
       refinement directives for criteria above threshold. v0.31.0: receives
       context_summary so evaluators can check project-specific conventions
-      (Good Regulator), not just generic criteria.
+      (Good Regulator), not just generic criteria. Receives task_defects from
+      the Lisp structural check (step 3) so the evaluator can flag structural
+      gaps in its scoring.
     renderer: minijinja
     template_ref: task-breakdown/task-breakdown-evaluate
     gas_cap: 6144
@@ -171,8 +214,9 @@ steps:
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
       slices: "{{ step_2_result.slices | default([]) }}"
       context_summary: "{{ step_1_result.context_summary | default('') }}"
+      task_defects: "{{ step_3_result | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: select
     description: >
       QUALITY-GATE — independent evaluation of the plan (deterministic
@@ -188,10 +232,10 @@ steps:
       tasks: "{{ step_2_result.tasks | default([]) }}"
       slices: "{{ step_2_result.slices | default([]) }}"
       dependency_graph: "{{ step_1_result.dependency_graph | default([]) }}"
-      evaluation_result: "{{ step_3_result }}"
+      evaluation_result: "{{ step_4_result }}"
       context_summary: "{{ step_1_result.context_summary | default('') }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
@@ -206,7 +250,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 6
+  - ordinal: 7
     action: select
     description: >
       WRITE-PLAN — finalize tasks/plan.md (overview, architecture decisions, phased
@@ -225,9 +269,10 @@ steps:
       slices: "{{ step_2_result.slices | default([]) }}"
       risks: "{{ step_1_result.risks | default([]) }}"
       evaluation_result: "{{ step_4_result }}"
-      refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
+      refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
+      task_defects: "{{ step_3_result | default([]) }}"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: >
       If convergence not met and refinement directives exist, loop
@@ -240,8 +285,8 @@ steps:
     input_mapping:
       loop_target: "{{ 2 }}"
       kata_hypotenuse: "{{ step_4_result.convergence_metric | default(1.0) }}"
-      prior_metric: "{{ step_5_result.hypotenuse | default(1.0) }}"
-      refinement_directives: "{{ step_3_result.refinement_directives | default([]) }}"
+      prior_metric: "{{ step_6_result.hypotenuse | default(1.0) }}"
+      refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
 
 error_handling:
   on_gas_exceeded: abort

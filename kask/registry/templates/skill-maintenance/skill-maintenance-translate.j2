@@ -206,7 +206,7 @@ Respond with a JSON object:
 - The process manifest must have a `gas:` block with `cap > 0`.
 - The process manifest must have an `rjoule:` block with `cap > 0` if any step uses `action: select`.
 - The process manifest must have a `convergence:` block (for `category: skill`).
-- Every `lisp.eval` compute step must have a non-empty `form` string using only supported special forms and builtins (E12, E14). `=` is numeric-only; string equality uses `assoc`. No `append` builtin — use a recursive helper. Boolean literals are `true`/`false`/`nil`.
+- Every `lisp.eval` compute step must have a non-empty `form` string using only supported special forms and builtins (E12, E14). `=` is numeric-only; string equality uses `string=`. String concatenation uses `concat`. List concatenation uses `append`. Boolean literals are `true`/`false`/`nil`.
 - Every `{{ step_N_result }}` reference in a `lisp.eval` step's `env` must point backward (ordinal < current). Bare-list results must be bound directly, not via `.field` (E13).
 - Every step from `step_classifications` must appear in the output (preserved, adapted, or dropped with reason).
 - Do not invent hKask tools or MCP servers that do not exist. Use the domain substitution table.

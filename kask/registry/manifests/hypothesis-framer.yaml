@@ -119,20 +119,17 @@ steps:
     input_mapping:
       form: >
         (begin
-          (define append2
-            (lambda (a b)
-              (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
           (define check-key
-            (lambda (key label)
+            (lambda (key)
               (let ((val (assoc key step_2_result)))
                 (if (is_null val)
-                    (list label)
+                    (list (concat "missing_" key))
                     (list)))))
-          (append2
-            (append2 (check-key "population" "missing_population")
-                     (check-key "intervention" "missing_intervention"))
-            (append2 (check-key "comparison" "missing_comparison")
-                     (check-key "outcome" "missing_outcome"))))
+          (append
+            (check-key "population")
+            (check-key "intervention")
+            (check-key "comparison")
+            (check-key "outcome")))
       env:
         step_2_result: "{{ step_2_result }}"
 

@@ -1038,6 +1038,56 @@ fn assoc_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Li
     Ok(LispValue::Nil)
 }
 
+/// List concatenation: `(append l1 l2 ...)` joins multiple lists into one.
+/// Nil arguments are treated as empty lists. Non-list, non-nil args error.
+/// Returns nil if all args are nil/empty.
+fn append_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    let mut combined: Vec<LispValue> = Vec::new();
+    for arg in args {
+        match arg {
+            LispValue::List(l) => combined.extend(l.to_vec()),
+            LispValue::Nil => {}
+            _ => {
+                return Err(LispError::TypeError {
+                    expected: "list".into(),
+                    actual: type_of(arg),
+                })
+            }
+        }
+    }
+    Ok(LispValue::List(List::from_vec(combined)))
+}
+
+/// String equality: `(string= a b)` returns true iff both args are strings
+/// with equal content. Distinct from `=` which is numeric-only.
+fn string_eq_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 2 {
+        return Err(LispError::Arity("string= expects 2 args".into()));
+    }
+    match (&args[0], &args[1]) {
+        (LispValue::String(a), LispValue::String(b)) => Ok(LispValue::Bool(a == b)),
+        _ => Ok(LispValue::Bool(false)),
+    }
+}
+
+/// String concatenation: `(concat s1 s2 ...)` joins multiple strings.
+/// Non-string args error. Returns empty string if no args.
+fn concat_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    let mut combined = String::new();
+    for arg in args {
+        match arg {
+            LispValue::String(s) => combined.push_str(s),
+            _ => {
+                return Err(LispError::TypeError {
+                    expected: "string".into(),
+                    actual: type_of(arg),
+                })
+            }
+        }
+    }
+    Ok(LispValue::String(combined))
+}
+
 // ── JSON interop ────────────────────────────────────────────────────────────
 
 /// Convert a `serde_json::Value` into a `LispValue`.
@@ -1249,6 +1299,92 @@ mod tests {
     fn test_no_eval_builtin() {
         let result = eval_sandboxed("(eval \"(+ 1 2)\")", &json!({}));
         assert!(matches!(result, Err(LispError::UnboundSymbol(_))));
+    }
+
+    #[test]
+    fn test_append_builtin() {
+        // Two lists
+        assert_eq!(
+            eval_sandboxed("(append (list 1 2) (list 3 4))", &json!({})).unwrap(),
+            json!([1, 2, 3, 4])
+        );
+        // Multiple lists
+        assert_eq!(
+            eval_sandboxed("(append (list 1) (list 2) (list 3))", &json!({})).unwrap(),
+            json!([1, 2, 3])
+        );
+        // Nil args treated as empty
+        assert_eq!(
+            eval_sandboxed("(append nil (list 1 2) nil)", &json!({})).unwrap(),
+            json!([1, 2])
+        );
+        // All nil → empty list
+        assert_eq!(
+            eval_sandboxed("(append nil nil)", &json!({})).unwrap(),
+            json!([])
+        );
+        // No args → empty list
+        assert_eq!(
+            eval_sandboxed("(append)", &json!({})).unwrap(),
+            json!([])
+        );
+        // Non-list arg errors
+        assert!(eval_sandboxed("(append (list 1) 2)", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_string_eq_builtin() {
+        // Equal strings
+        assert_eq!(
+            eval_sandboxed("(string= \"high\" \"high\")", &json!({})).unwrap(),
+            json!(true)
+        );
+        // Unequal strings
+        assert_eq!(
+            eval_sandboxed("(string= \"high\" \"low\")", &json!({})).unwrap(),
+            json!(false)
+        );
+        // Non-string args return false (not error)
+        assert_eq!(
+            eval_sandboxed("(string= 1 1)", &json!({})).unwrap(),
+            json!(false)
+        );
+        // String vs non-string
+        assert_eq!(
+            eval_sandboxed("(string= \"high\" 1)", &json!({})).unwrap(),
+            json!(false)
+        );
+        // Wrong arity
+        assert!(eval_sandboxed("(string= \"a\")", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_concat_builtin() {
+        // Two strings
+        assert_eq!(
+            eval_sandboxed("(concat \"missing_\" \"prediction\")", &json!({})).unwrap(),
+            json!("missing_prediction")
+        );
+        // Multiple strings
+        assert_eq!(
+            eval_sandboxed("(concat \"a\" \"b\" \"c\")", &json!({})).unwrap(),
+            json!("abc")
+        );
+        // No args → empty string
+        assert_eq!(
+            eval_sandboxed("(concat)", &json!({})).unwrap(),
+            json!("")
+        );
+        // Non-string arg errors
+        assert!(eval_sandboxed("(concat \"a\" 1)", &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_string_eq_with_json_env() {
+        // Realistic: compare a JSON field value against a literal string.
+        let env = json!({"step_1_result": {"likelihood": "high"}});
+        let form = r#"(string= (assoc "likelihood" step_1_result) "high")"#;
+        assert_eq!(eval_sandboxed(form, &env).unwrap(), json!(true));
     }
 
     #[test]

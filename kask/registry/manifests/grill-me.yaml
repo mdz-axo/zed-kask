@@ -74,7 +74,63 @@ steps:
       previous_answers: "{{ [] }}"
       assessment_so_far: "{{ {} }}"
 
+  # ── Step 3: Lisp deterministic step — question-level coverage check ──
+  # The LLM generates questions across 5 difficulty levels (Recall, Mechanism,
+  # Rationale, Edge Cases, Synthesis) but is unreliable at checking whether its
+  # question set actually spans enough levels — it often reports "covers 4 levels"
+  # when all questions are Recall-level. This Lisp step deterministically counts
+  # distinct levels present in the generated questions and flags insufficient
+  # coverage (< 3 distinct levels). Returns a list of defect strings — empty =
+  # passed, non-empty = step 4 (assess) notes the coverage gap.
+  #
+  # This is the symbolic-neural scaffolding pattern: deterministic Lisp prunes
+  # the LLM's probabilistic question generation by checking structural diversity
+  # the LLM cannot reliably self-evaluate.
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Lisp question-level coverage check. Deterministically counts distinct
+      difficulty levels (Recall, Mechanism, Rationale, Edge Cases, Synthesis)
+      present in the generated questions. Flags insufficient coverage (< 3
+      distinct levels). Returns a list of defect strings. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((questions (assoc "questions" step_2_result)))
+          (if (is_null questions)
+              (list "no_questions_field")
+              (begin
+                (define count-level
+                  (lambda (qs level-name count)
+                    (if (is_null qs)
+                        count
+                        (let ((q (car qs)))
+                          (let ((ql (assoc "level" q)))
+                            (let ((ql-str (if (is_null ql) "" ql)))
+                              (count-level
+                                (cdr qs)
+                                level-name
+                                (if (string= ql-str level-name) (+ count 1) count))))))))
+                (define n-recall (count-level questions "Recall" 0))
+                (define n-mechanism (count-level questions "Mechanism" 0))
+                (define n-rationale (count-level questions "Rationale" 0))
+                (define n-edge (count-level questions "Edge Cases" 0))
+                (define n-synthesis (count-level questions "Synthesis" 0))
+                (define distinct
+                  (+ (if (> n-recall 0) 1 0)
+                     (if (> n-mechanism 0) 1 0)
+                     (if (> n-rationale 0) 1 0)
+                     (if (> n-edge 0) 1 0)
+                     (if (> n-synthesis 0) 1 0)))
+                (if (< distinct 3)
+                    (list "insufficient_level_coverage_below_3")
+                    (list)))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+
+  - ordinal: 4
     action: select
     description: Synthesize final assessment and recommendations.
     renderer: minijinja
@@ -85,8 +141,9 @@ steps:
       topic: "{{ topic }}"
       all_answers: "{{ step_2_result.all_answers | default(step_2_result.evaluations | default([])) }}"
       assessment: "{{ step_2_result.assessment | default({}) }}"
+      level_coverage_defects: "{{ step_3_result | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: compute
     compute_ref: kata.convergence_check
     description: >
@@ -104,14 +161,18 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 5
+  - ordinal: 6
     action: loop
-    description: Re-enter interrogation cycle if convergence is not met, recalibrating difficulty from assessment.
+    description: >
+      Re-enter interrogation cycle if convergence is not met, recalibrating
+      difficulty from assessment. If the Lisp level-coverage check (step 3)
+      found insufficient coverage, the loop re-enters at step 2 (question
+      generation) so the LLM generates questions at the missing levels.
     input_mapping:
       loop_target: "{{ 1 }}"
       # Push the recommendation count into kata_hypotenuse so the Cauchy
       # criterion can detect when the assessment has stopped moving.
-      kata_hypotenuse: "{{ step_3_result.recommendations | default([]) | length }}"
+      kata_hypotenuse: "{{ step_4_result.recommendations | default([]) | length }}"
 
 error_handling:
   on_gas_exceeded: abort

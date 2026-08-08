@@ -1,24 +1,28 @@
 # Template crate manifest for prompt-enhance skill
-# hKask v0.31.0
+# hKask v0.33.0
+#
+# Streamlined from the former 15-step / 13-template design to a 4-step /
+# 4-template single-pass pipeline. The former 7 typed rewrite variants
+# (coding/reasoning/creative/classification/extraction/agent-task/meta),
+# the collector, and the evolve step are removed — the rewrite is now unified
+# into a single template (enhance-rewrite.j2) that performs the audit inline
+# and applies type-specific moves based on the classification from step 1.
+# enhance-audit.j2 is retained as an unreferenced artifact from the old design
+# (it exists on disk and may be referenced by future skills, but the current
+# process manifest folds the audit into the rewrite step).
 
 crate:
   name: prompt-enhance
-  version: "0.31.0"
+  version: "0.33.0"
   description: >
     General-purpose prompt enhancement skill for prompts destined for the
     zed-kask platform (skill .j2 templates, agent system prompts, chat/REPL
     prompts, infrastructure Jinja2 templates). Typed routing over a 7-type
     prompt taxonomy (coding, reasoning, creative, classification, extraction,
-    agent-task, meta) with a 3-tier effort knob (low/medium/high). Composes
-    pragmatic-semantics (classifier + provenance), pragmatic-cybernetics
-    (loop diagnosis), essentialist (deletion test on prompt sections),
-    grill-me (decoupled critic), and gpa-evolution (high-effort evolutionary
-    optimization) as phase delegates. Specialized leaf of the self-improvement
-    family tree (Σ-pathway, p-component, intrinsic evaluative feedback signal)
-    — encodes prompt-engineering domain knowledge that the general
-    si-exec-scaffold-prompt template does not. Default output is the enhanced
-    prompt returned inline in a copyable code block; optional output_format
-    supports file save or both.
+    agent-task, meta) with a 3-tier effort knob (low/medium/high). Single-pass
+    pipeline: classify, rewrite (with inline audit), verify (decoupled critic
+    at medium/high), output. Default output is the enhanced prompt returned
+    inline in a copyable code block; optional file save or both.
 
 templates:
   - id: prompt-enhance/enhance-classify
@@ -26,184 +30,68 @@ templates:
     path: enhance-classify.j2
     type: KnowAct
     description: >
-      Phase 1 — Classify the input prompt against the 7-type taxonomy
-      (coding, reasoning, creative, classification, extraction, agent-task,
-      meta) using pragmatic-semantics IS/OUGHT + epistemic-mode axes. Select
-      the effort tier (low/medium/high) and validate the output_format
-      (inline/file/both, default inline). Synthesize a minimal proxy eval set
-      (3-5 representative inputs) for medium/high tiers so downstream phases
-      have a signal to optimize against. Produces the routing decision that
-      drives Phase 2-5 invocation.
+      Classify the input prompt against the 7-type taxonomy (coding, reasoning,
+      creative, classification, extraction, agent-task, meta) using pragmatic-
+      semantics IS/OUGHT + epistemic-mode axes. Select the effort tier
+      (low/medium/high) and validate the output_format (inline/file/both,
+      default inline). Synthesize a minimal proxy eval set (3-5 representative
+      inputs) for medium/high tiers so downstream phases have a signal to
+      optimize against. Produces the routing decision that drives step 2.
     generates_spans:
       - reg.prompt-enhance.classify
 
-  - id: prompt-enhance/enhance-audit
-    name: "Phase 2 — Audit prompt health via semantics, cybernetics, essentialist"
-    path: enhance-audit.j2
+  - id: prompt-enhance/enhance-rewrite
+    name: "Phase 2 — Inline audit + typed rewrite (unified)"
+    path: enhance-rewrite.j2
     type: KnowAct
     description: >
-      Phase 2 — Audit the input prompt through three lenses. (1) pragmatic-
-      semantics: classify every claim, default, and hardcoded reference by
-      IS/OUGHT, epistemic mode, constraint force, and provenance; flag any
-      Inference-tier claim (confidence <= 0.3) as fragile. (2) pragmatic-
-      cybernetics: treat prompt->model->output as a feedback loop and assess
-      the 5 properties (polarity, delay, gain, closure, fidelity); diagnose
-      broken loops. (3) essentialist advisory mode: run G1 (deletion test on
-      prompt sections — does complexity reappear in model failures if deleted?)
-      and G2 (surface count — <=7 distinct instruction blocks). Skipped at
-      low tier. Produces a constraint-force-labeled findings list that feeds
-      Phase 3.
+      Inline audit + typed rewrite. Scans for unresolved placeholders, semantic
+      fragility, and structural accretion, then applies type-specific rewrite
+      moves based on the prompt_type from step 1. Folds the former separate
+      audit step and 7 typed rewrite variants into a single LLM call. Produces
+      the enhanced prompt, audit findings, and mutations applied.
     generates_spans:
-      - reg.prompt-enhance.audit
-
-  - id: prompt-enhance/enhance-rewrite-coding
-    name: "Phase 3 (coding) — Typed rewrite for coding prompts"
-    path: enhance-rewrite-coding.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for coding prompts (taxonomy: reasoning & planning).
-      Focus: contract clarity, I/O specification, error case enumeration,
-      test-first framing, acceptance criteria. Applies audit findings as
-      targeted mutations. Key risk: vague acceptance criteria. Anchors to
-      project .rules where relevant (no unwrap/expect/panic, no mod.rs,
-      surgical changes, ./script/clippy over cargo clippy).
-    generates_spans:
-      - reg.prompt-enhance.rewrite.coding
-
-  - id: prompt-enhance/enhance-rewrite-reasoning
-    name: "Phase 3 (reasoning) — Typed rewrite for reasoning prompts"
-    path: enhance-rewrite-reasoning.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for reasoning prompts (taxonomy: reasoning &
-      planning). Focus: chain-of-thought structure, problem decomposition,
-      self-verification steps, hidden-assumption surfacing. Applies audit
-      findings as targeted mutations. Key risk: hidden assumptions that cause
-      the model to skip necessary reasoning steps.
-    generates_spans:
-      - reg.prompt-enhance.rewrite.reasoning
-
-  - id: prompt-enhance/enhance-rewrite-creative
-    name: "Phase 3 (creative) — Typed rewrite for creative prompts"
-    path: enhance-rewrite-creative.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for creative prompts (taxonomy: profile &
-      instruction). Focus: persona depth, constraints as creative tension
-      rather than suppression, example curation. Applies audit findings as
-      targeted mutations. Key risk: over-constraining the creative space.
-    generates_spans:
-      - reg.prompt-enhance.rewrite.creative
-
-  - id: prompt-enhance/enhance-rewrite-classification
-    name: "Phase 3 (classification) — Typed rewrite for classification prompts"
-    path: enhance-rewrite-classification.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for classification prompts (taxonomy: profile &
-      instruction). Focus: explicit label space, edge-case enumeration,
-      few-shot balance across labels, label-leakage prevention in examples.
-      Applies audit findings as targeted mutations. Key risk: label leakage
-      in few-shot examples that inflates apparent accuracy.
-    generates_spans:
-      - reg.prompt-enhance.rewrite.classification
-
-  - id: prompt-enhance/enhance-rewrite-extraction
-    name: "Phase 3 (extraction) — Typed rewrite for extraction prompts"
-    path: enhance-rewrite-extraction.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for extraction prompts (taxonomy: knowledge).
-      Focus: schema-first output, explicit field definitions, missing-field
-      policy, null vs absent distinction. Applies audit findings as targeted
-      mutations. Key risk: underspecified output schema that produces
-      inconsistent extraction.
-    generates_spans:
-      - reg.prompt-enhance.rewrite.extraction
-
-  - id: prompt-enhance/enhance-rewrite-agent-task
-    name: "Phase 3 (agent-task) — Typed rewrite for agent task prompts"
-    path: enhance-rewrite-agent-task.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for agent task prompts (taxonomy: reliability).
-      Focus: tool-use contracts, failure-mode enumeration, context budget
-      management, bounded iteration loops, termination criteria. Applies
-      audit findings as targeted mutations. Key risk: unbounded tool loops
-      that exhaust context or gas without converging.
-    generates_spans:
-      - reg.prompt-enhance.rewrite.agent-task
-
-  - id: prompt-enhance/enhance-rewrite-meta
-    name: "Phase 3 (meta) — Typed rewrite for meta-prompts"
-    path: enhance-rewrite-meta.j2
-    type: KnowAct
-    description: >
-      Phase 3 typed rewrite for meta-prompts (prompts that generate or refine
-      other prompts; taxonomy: reliability). Focus: self-reference safety,
-      eval harness specification, convergence criteria, critic decoupling
-      (generator vs evaluator separation per self-improvement §9.1). Applies
-      audit findings as targeted mutations. Key risk: self-confirming loop
-      where the generator and critic collapse.
-    generates_spans:
-      - reg.prompt-enhance.rewrite.meta
-
-  - id: prompt-enhance/enhance-collector
-    name: "Collector — canonicalize the active rewrite step's output"
-    path: enhance-collector.j2
-    type: KnowAct
-    description: >
-      Collector step — coalesce the output of whichever Phase 3 typed
-      rewrite step (3-9) actually ran into a single canonical context key.
-      Pure coalescing, no enhancement. Eliminates the need for nested
-      default() chains in downstream steps (verify, evolve, output).
-    generates_spans:
-      - reg.prompt-enhance.collector
+      - reg.prompt-enhance.rewrite
 
   - id: prompt-enhance/enhance-verify
-    name: "Phase 4 — Decoupled critic via grill-me self-challenge"
+    name: "Phase 3 — Decoupled critic via grill-me self-challenge"
     path: enhance-verify.j2
     type: KnowAct
     description: >
-      Phase 4 — Decoupled critic. Runs grill-me self-challenge against the
-      enhanced prompt across Recall -> Mechanism -> Rationale -> Edge Cases ->
-      Synthesis (the cognitive-level axis from the Hierarchical Prompting
-      Taxonomy). Decoupled from Phase 3 to prevent the self-confirming loop
-      (self-improvement §9.1 critic-decoupling requirement). Tier-scaled:
+      Decoupled critic. Runs grill-me self-challenge against the enhanced prompt
+      across Recall -> Mechanism -> Rationale -> Edge Cases -> Synthesis.
+      Decoupled from step 2 to prevent the self-confirming loop. Tier-scaled:
       1 round (Recall+Mechanism) at medium, 3 escalating rounds at high.
-      Produces a Solid/Partial/Gap rating per area; Partial/Gap findings feed
-      back to Phase 3 for another rewrite pass (max 2 rewrites).
+      Skipped at low tier. Produces a Solid/Partial/Gap rating per area.
     generates_spans:
       - reg.prompt-enhance.verify
 
-  - id: prompt-enhance/enhance-evolve
-    name: "Phase 5 — Evolutionary optimization via gpa-evolution delegate (high only)"
-    path: enhance-evolve.j2
-    type: KnowAct
-    description: >
-      Phase 5 — Evolutionary optimization. Fires only at high tier AND when
-      the prompt is high-stakes enough to justify gas. Delegates to
-      gpa-evolution: sample trajectories against the proxy eval set, reflect
-      in natural language (textual gradient), propose 3-7 mutations + crossover
-      from the Pareto frontier, test variants, update frontier. Min 2
-      iterations. Uses (quality, cost) multi-objective — a prompt that is 5%
-      better but 3x longer is often a loss. Returns the frontier's best
-      member as the final enhanced prompt.
-    generates_spans:
-      - reg.prompt-enhance.evolve
-
   - id: prompt-enhance/enhance-output
-    name: "ACT phase — Format and deliver the enhanced prompt"
+    name: "Phase 4 — Format and deliver the enhanced prompt"
     path: enhance-output.j2
     type: KnowAct
     description: >
-      ACT phase — Format the final enhanced prompt per output_format
-      contract. inline (default): return the prompt in a fenced code block
-      with a one-line summary of changes and the audit findings table.
-      file: write the prompt to a path the user specifies (or a derived
-      default under tasks/ or alongside the source). both: inline + file.
-      Always include a change-log section: type, effort, phases run, audit
-      findings by constraint force, grill-me ratings, and any residual
-      Hypothesis-tier findings the user should verify.
+      Format the final enhanced prompt per output_format (inline/file/both).
+      inline (default): return the prompt in a fenced code block with a
+      one-line summary of changes and the audit findings table. file: write
+      the prompt to a path the user specifies (or a derived default). both:
+      inline + file. Always include a change-log section.
     generates_spans:
       - reg.prompt-enhance.output
+
+  # enhance-audit.j2 is retained from the former multi-step design but is not
+  # referenced by the current process manifest (the audit is folded into
+  # enhance-rewrite.j2). Kept here so the bootstrap test's source_path check
+  # passes and the template remains available for future re-decomposition.
+  - id: prompt-enhance/enhance-audit
+    name: "Audit prompt health via semantics, cybernetics, essentialist (unreferenced)"
+    path: enhance-audit.j2
+    type: KnowAct
+    description: >
+      Audit the input prompt through three lenses: pragmatic-semantics (classify
+      claims by IS/OUGHT, epistemic mode, constraint force), pragmatic-cybernetics
+      (feedback loop properties), and essentialist (deletion test + surface count).
+      Not referenced by the current process manifest — the audit is folded into
+      enhance-rewrite.j2. Retained for potential future re-decomposition.
+    generates_spans:
+      - reg.prompt-enhance.audit
