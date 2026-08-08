@@ -1,5 +1,6 @@
 ---
 name: upstream-rebase
+visibility: public
 description: "Manage upstream Zed rebases for zed-kask. Decides per-D-seam-file strategy (git merge vs. mapped re-application vs. destroy-and-rebuild), executes the chosen strategy, pins every kask-wiring deviation with a test, and updates DIVERGENCE.md. For divergent files (under-marked, accumulated cruft, compile bugs), uses mapped re-application: extract the functional inventory (code-graph), classify each unit by constraint force (semantic audit), build the dependency DAG, re-apply onto clean upstream in topological order, and pin every unit with a test. Composes graph-audit (dual mode), essentialist, coding-guidelines, task-breakdown. Emits reg.upstream_rebase.* spans."
 ---
 

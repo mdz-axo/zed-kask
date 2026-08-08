@@ -726,10 +726,24 @@ impl KaskExtensionsPage {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(Label::new(reff.id()).color(Color::Default))
-                                .child(Label::new("Shared in channel").color(Color::Muted)),
+                                .min_w_0()
+                                .child(
+                                    Label::new(reff.id())
+                                        .color(Color::Default)
+                                        .truncate(),
+                                )
+                                .child(
+                                    Label::new("Shared in channel")
+                                        .color(Color::Muted)
+                                        .flex_shrink_0(),
+                                ),
                         )
-                        .child(Label::new(uri).color(Color::Muted)),
+                        .child(
+                            Label::new(uri)
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .truncate(),
+                        ),
                 )
                 .child(if installing {
                     Button::new(
@@ -780,25 +794,39 @@ impl KaskExtensionsPage {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(Label::new(skill.id.clone()).color(Color::Default))
+                                .min_w_0()
+                                .child(
+                                    Label::new(skill.id.clone())
+                                        .color(Color::Default)
+                                        .truncate(),
+                                )
                                 .child(
                                     Label::new(format!("↓ {}", skill.download_count))
-                                        .color(Color::Muted),
+                                        .color(Color::Muted)
+                                        .flex_shrink_0(),
                                 )
                                 .child(
                                     Label::new(format!("▲ {}", skill.upvote_count))
-                                        .color(Color::Muted),
+                                        .color(Color::Muted)
+                                        .flex_shrink_0(),
                                 )
                                 .child(
                                     Label::new(format!("▼ {}", skill.downvote_count))
-                                        .color(Color::Muted),
+                                        .color(Color::Muted)
+                                        .flex_shrink_0(),
                                 ),
                         )
-                        .child(Label::new(skill.manifest.description.clone()).color(Color::Muted)),
+                        .child(
+                            Label::new(skill.manifest.description.clone())
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                                .truncate(),
+                        ),
                 )
                 .child(
                     h_flex()
                         .gap_1()
+                        .flex_shrink_0()
                         .when(matches!(status, KaskSkillStatus::NotInstalled), |this| {
                             this.child(
                                 Button::new(
@@ -898,10 +926,23 @@ impl KaskExtensionsPage {
         };
         let mut header = h_flex()
             .gap_2()
-            .child(Label::new(entry.name).color(Color::Default))
-            .child(Label::new(source_label).color(Color::Muted));
+            .min_w_0()
+            .child(
+                Label::new(entry.name)
+                    .color(Color::Default)
+                    .truncate(),
+            )
+            .child(
+                Label::new(source_label)
+                    .color(Color::Muted)
+                    .flex_shrink_0(),
+            );
         if entry.modified {
-            header = header.child(Label::new("Modified").color(Color::Modified));
+            header = header.child(
+                Label::new("Modified")
+                    .color(Color::Modified)
+                    .flex_shrink_0(),
+            );
         }
         MarketplaceCard::new().child(
             h_flex().w_full().gap_2().child(
@@ -910,7 +951,12 @@ impl KaskExtensionsPage {
                     .flex_1()
                     .gap_1()
                     .child(header)
-                    .child(Label::new(entry.description).color(Color::Muted)),
+                    .child(
+                        Label::new(entry.description)
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall)
+                            .truncate(),
+                    ),
             ),
         )
     }

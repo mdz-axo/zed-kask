@@ -1599,7 +1599,7 @@ impl SwarmPanel {
             let Some(entry) = self.entries.get(entry_ix).cloned() else {
                 continue;
             };
-            cards.push(self.render_card(entry, cx));
+            cards.push(self.render_card(entry, window, cx));
         }
         cards
     }

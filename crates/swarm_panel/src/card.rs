@@ -1,17 +1,12 @@
-//! Agent and swarm card renderer for the browse list. Extracted from
-//! `swarm_panel.rs` — the renderer stays a method on `SwarmPanel` (it
-//! dispatches via `cx.listener` into panel methods); this module owns the
-//! card construction.
+//! Agent and swarm card renderer for the browse list.
 //!
-//! Cards are intentionally minimal: the agent/swarm **name** and a **brief
-//! description** on the left, the action buttons on the right. Metadata
-//! (agent_type, execution count, author, source badge, staleness, budget,
-//! agent count) lives in the detail drill-down, not on the small card —
-//! crowding the card with labels makes the list hard to scan.
+//! Cards: name + truncated description on the left, action buttons in a
+//! horizontal row on the right. Both name and description truncate so long
+//! text never blows out the fixed-height card.
 
-use gpui::{Context, SharedString};
+use gpui::{Context, SharedString, Window};
 use marketplace_ui_common::MarketplaceCard;
-use ui::{Tooltip, prelude::*};
+use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, Tooltip, prelude::*};
 
 use crate::parse::AgentSource;
 use crate::{SwarmEntry, SwarmPanel};
@@ -20,6 +15,7 @@ impl SwarmPanel {
     pub(crate) fn render_card(
         &mut self,
         entry: SwarmEntry,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> MarketplaceCard {
         match entry {
@@ -59,13 +55,23 @@ impl SwarmPanel {
                                         );
                                     }
                                 }))
-                                .child(Label::new(agent.id.clone()).color(Color::Default))
-                                .child(Label::new(agent.description).color(Color::Muted)),
+                                .child(
+                                    Label::new(agent.id.clone())
+                                        .color(Color::Default)
+                                        .truncate(),
+                                )
+                                .child(
+                                    Label::new(agent.description.clone())
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall)
+                                        .truncate(),
+                                ),
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .gap_1()
-                                .items_end()
+                                .flex_shrink_0()
+                                .items_center()
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("edit-{edit_name}")),
@@ -78,6 +84,8 @@ impl SwarmPanel {
                                          to view and adjust its details.",
                                     ))
                                     .on_click(cx.listener({
+                                        let edit_name = edit_name.clone();
+                                        let edit_source = edit_source.clone();
                                         move |this, _, window, cx| {
                                             this.load_agent_into_author(
                                                 edit_name.clone(),
@@ -96,10 +104,10 @@ impl SwarmPanel {
                                         {
                                             "Hiring…"
                                         } else {
-                                            "Hire…"
+                                            "Hire"
                                         },
                                     )
-                                    .style(ButtonStyle::Subtle)
+                                    .style(ButtonStyle::Filled)
                                     .label_size(LabelSize::XSmall)
                                     .disabled(self.spend_in_flight.is_some())
                                     .tooltip(Tooltip::text(
@@ -112,87 +120,35 @@ impl SwarmPanel {
                                         },
                                     )),
                                 )
-                                .when(show_clone, |this| {
-                                    this.child(
-                                        Button::new(
-                                            SharedString::from(format!("clone-{clone_name}")),
-                                            "Clone to Local",
+                                .when(
+                                    show_clone || show_push || show_publish || show_remove,
+                                    |this| {
+                                        let menu = cx.new(|cx| {
+                                            ContextMenu::new(window, cx, |menu, _window, _cx| {
+                                                menu.when(show_clone, |m| {
+                                                    m.entry(
+                                                        ContextMenuEntry::new("Clone to Local")
+                                                            .handler(move |_, window, cx| {
+                                                                drop(window);
+                                                                drop(cx);
+                                                                clone_name_clone
+                                                                    .spawn_clone(cx);
+                                                            }),
+                                                    )
+                                                })
+                                            })
+                                        });
+                                        this.child(
+                                            DropdownMenu::new(
+                                                SharedString::from(format!("more-{agent_name}")),
+                                                "More",
+                                                menu,
+                                            )
+                                            .trigger_size(ButtonSize::Compact)
+                                            .style(DropdownStyle::Subtle),
                                         )
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::XSmall)
-                                        .disabled(self.spend_in_flight.is_some())
-                                        .tooltip(Tooltip::text(
-                                            "Copies this ABW agent to the local registry \
-                                             (agents/local/curated) and marks it synced.",
-                                        ))
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.clone_to_local(clone_name.clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .when(show_push, |this| {
-                                    this.child(
-                                        Button::new(
-                                            SharedString::from(format!("push-{push_name}")),
-                                            "Push to Cloud",
-                                        )
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::XSmall)
-                                        .disabled(self.spend_in_flight.is_some())
-                                        .tooltip(Tooltip::text(
-                                            "Publishes this local agent to the ABW catalogue \
-                                             and links it via cloud_id (becomes synced).",
-                                        ))
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.push_to_cloud(push_name.clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .when(show_publish, |this| {
-                                    this.child(
-                                        Button::new(
-                                            SharedString::from(format!("publish-{publish_name}")),
-                                            "Publish…",
-                                        )
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::XSmall)
-                                        .disabled(self.spend_in_flight.is_some())
-                                        .tooltip(Tooltip::text(
-                                            "Runs publish preflight checks, then publishes \
-                                             the agent to the ABW catalogue. An admin \
-                                             force-publish path is available if checks fail.",
-                                        ))
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.begin_publish(publish_name.clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .when(show_remove, |this| {
-                                    this.child(
-                                        Button::new(
-                                            SharedString::from(format!("remove-{remove_name}")),
-                                            "Remove",
-                                        )
-                                        .style(ButtonStyle::Subtle)
-                                        .label_size(LabelSize::XSmall)
-                                        .disabled(self.spend_in_flight.is_some())
-                                        .tooltip(Tooltip::text(
-                                            "Deletes this local-only agent card. A synced \
-                                             card's ABW agent is untouched.",
-                                        ))
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.remove_local_agent(remove_name.clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                }),
+                                    },
+                                ),
                         ),
                 )
             }
@@ -219,13 +175,23 @@ impl SwarmPanel {
                                 .min_w_0()
                                 .flex_1()
                                 .gap_1()
-                                .child(Label::new(swarm.name.clone()).color(Color::Default))
-                                .child(Label::new(swarm.description).color(Color::Muted)),
+                                .child(
+                                    Label::new(swarm.name.clone())
+                                        .color(Color::Default)
+                                        .truncate(),
+                                )
+                                .child(
+                                    Label::new(swarm.description.clone())
+                                        .color(Color::Muted)
+                                        .size(LabelSize::XSmall)
+                                        .truncate(),
+                                ),
                         )
                         .child(
-                            v_flex()
+                            h_flex()
                                 .gap_1()
-                                .items_end()
+                                .flex_shrink_0()
+                                .items_center()
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("detail-{swarm_id}")),
@@ -255,7 +221,7 @@ impl SwarmPanel {
                                 .child(
                                     Button::new(
                                         SharedString::from(format!("runs-{swarm_id}")),
-                                        "Run Status",
+                                        "Runs",
                                     )
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::XSmall)
