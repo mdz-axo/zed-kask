@@ -912,10 +912,7 @@ fn build_curator_consolidation(
     Some(Arc::new(MemoryConsolidator::new(Arc::clone(store))))
 }
 
-fn open_curator_store(
-    passphrase: &str,
-    embedding_dim: usize,
-) -> Option<Arc<MemoryStore>> {
+fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<MemoryStore>> {
     let curator_db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
         let p = hkask_types::agent_paths::agent_pod_db("curator");
         let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
@@ -1157,11 +1154,8 @@ impl MemoryPort for RealMemoryPort {
             // State-axis anchoring (P5.4): the curator copy is a document the
             // curator holds about the conversation, not a step it executed.
             // `bibo:Document` is the BIBO type for a standalone record.
-            let curator_ontology = HMemOntology::semantic(
-                "bibo:Document",
-                vec!["chat_turn".to_string()],
-                "curator",
-            );
+            let curator_ontology =
+                HMemOntology::semantic("bibo:Document", vec!["chat_turn".to_string()], "curator");
             let curator_h_mem = HMem::new(
                 &curator_entity,
                 "turn",
@@ -1623,7 +1617,8 @@ impl RealMemoryPort {
 
         // ── 1. Episodic: exact entity match, perspective-scoped ─────
         let episodic_entity = format!("chat:thread:{thread_id}");
-        if let Ok(h_mems) = episodic_store.query_for_deduped_untouched(&episodic_entity, perspective)
+        if let Ok(h_mems) =
+            episodic_store.query_for_deduped_untouched(&episodic_entity, perspective)
         {
             for h_mem in h_mems {
                 let text = h_mem.value.as_str().unwrap_or("").to_string();
@@ -1687,7 +1682,8 @@ impl RealMemoryPort {
                 RecallSource::Episodic => episodic_store,
                 RecallSource::Semantic => semantic_store.unwrap_or(episodic_store),
             };
-            let result: Result<(), Box<dyn std::error::Error>> = touch_store.touch_recall(&c.h_mem_id).map_err(Into::into);
+            let result: Result<(), Box<dyn std::error::Error>> =
+                touch_store.touch_recall(&c.h_mem_id).map_err(Into::into);
             if let Err(e) = result {
                 tracing::warn!(
                     target: "reg.memory.decay",
@@ -1811,8 +1807,10 @@ mod tests {
         // Curator consolidation service — mirrors the production construction
         // in `RealMemoryPort::new`. Skipped when cadence is 0 (matches
         // production). The curator store is always `Some` in tests.
-        let curator_consolidation =
-            build_curator_consolidation(consolidation_cadence_secs, &Some(Arc::clone(&curator_store_inner)));
+        let curator_consolidation = build_curator_consolidation(
+            consolidation_cadence_secs,
+            &Some(Arc::clone(&curator_store_inner)),
+        );
 
         RealMemoryPort {
             store,

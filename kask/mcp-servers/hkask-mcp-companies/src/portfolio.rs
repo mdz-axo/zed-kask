@@ -75,8 +75,12 @@ fn resolve_db_path(owner: &WebID) -> Result<PathBuf, PortfolioError> {
     // A read-only config dir, a full disk, or a permissions error must surface
     // as an error the server can report, not abort the process at startup.
     // Mirrors `PortfolioStore::new`, which already propagates.
-    std::fs::create_dir_all(&path)
-        .map_err(|e| PortfolioError::from(format!("failed to create portfolio directory {}: {e}", path.display())))?;
+    std::fs::create_dir_all(&path).map_err(|e| {
+        PortfolioError::from(format!(
+            "failed to create portfolio directory {}: {e}",
+            path.display()
+        ))
+    })?;
     Ok(path.join("master.db"))
 }
 

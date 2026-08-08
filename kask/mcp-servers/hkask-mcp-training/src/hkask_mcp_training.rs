@@ -68,7 +68,6 @@
 //! - `HKASK_PODS_FILE` — Path to RunPod pod ID persistence file (default: data/training-pods.json)
 //!   Ensures pod IDs survive restarts so orphaned pods can be terminated.
 
-
 pub mod adapter;
 pub mod adapters;
 pub mod dataset;

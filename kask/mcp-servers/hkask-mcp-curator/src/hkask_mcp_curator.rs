@@ -11,7 +11,6 @@
 //! cross-pod semantic search, memory recall, spec drift detection,
 //! and algedonic event history.
 
-
 pub mod governance;
 pub mod types;
 
@@ -62,9 +61,7 @@ pub struct CuratorStores {
 impl CuratorStores {
     /// All stores `None` — the DB-open level failed and a re-open may help.
     fn all_none(&self) -> bool {
-        self.escalation_queue.is_none()
-            && self.regulation_store.is_none()
-            && self.memory.is_none()
+        self.escalation_queue.is_none() && self.regulation_store.is_none() && self.memory.is_none()
     }
 
     /// Empty store set — used when the DB cannot be opened at all.

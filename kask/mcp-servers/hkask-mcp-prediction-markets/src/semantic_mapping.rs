@@ -108,13 +108,11 @@ pub fn classify_base_object_from_catalog(
             .unwrap_or(event_ticker_or_id)
             .to_uppercase();
         let title_lower = question_or_title.to_lowercase();
-        resolve_kalshi_series(&series_prefix, &title_lower)?
-            .map(|(_, base_object, _)| base_object)
+        resolve_kalshi_series(&series_prefix, &title_lower)?.map(|(_, base_object, _)| base_object)
     } else {
         // Gamma: use the question as the title, with empty tags/slug.
         let title_lower = question_or_title.to_lowercase();
-        resolve_gamma_event(&title_lower, &[], "")
-            .map(|(_, base_object, _)| base_object)
+        resolve_gamma_event(&title_lower, &[], "").map(|(_, base_object, _)| base_object)
     }
 }
 
@@ -665,11 +663,8 @@ mod tests {
     #[test]
     fn classify_kalshi_catalog_record_non_base_event() {
         // Non-economic series → None.
-        let bo = classify_base_object_from_catalog(
-            "kalshi",
-            "KXELONMARS-99",
-            "Will Elon go to Mars?",
-        );
+        let bo =
+            classify_base_object_from_catalog("kalshi", "KXELONMARS-99", "Will Elon go to Mars?");
         assert_eq!(bo, None);
     }
 
@@ -711,22 +706,15 @@ mod tests {
     #[test]
     fn classify_gamma_catalog_record_ecb_rate() {
         // ONT-6: non-Fed central bank (ECB) — same economic object (policy rate).
-        let bo = classify_base_object_from_catalog(
-            "gamma",
-            "118468",
-            "ECB rate cut in 2026?",
-        );
+        let bo = classify_base_object_from_catalog("gamma", "118468", "ECB rate cut in 2026?");
         assert_eq!(bo, Some(BaseEconomicObject::PolicyInterestRate));
     }
 
     #[test]
     fn classify_gamma_catalog_record_non_base_event() {
         // Non-economic Gamma question → None.
-        let bo = classify_base_object_from_catalog(
-            "gamma",
-            "99999",
-            "Will the mayor win re-election?",
-        );
+        let bo =
+            classify_base_object_from_catalog("gamma", "99999", "Will the mayor win re-election?");
         assert_eq!(bo, None);
     }
 }

@@ -65,7 +65,6 @@
 //! Balance sheet items under `fibo-fbc-pas-fpas`, ratios under `fibo-fbc-fct-ra`,
 //! securities under `fibo-sec-sec-ast`, indices under `fibo-ind-ind-ind`.
 
-
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_mcp_server::server::{McpToolError, map_join_error, validate_identifier};

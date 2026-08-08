@@ -12,7 +12,6 @@
 //! and sample event titles, so the user can review the mapping before
 //! proceeding to contract fetching.
 
-
 use hkask_mcp_prediction_markets::economic_object::BaseEconomicObject;
 use hkask_mcp_prediction_markets::semantic_mapping::{
     EventConstellation, MappedEvent, build_constellations, map_gamma_event, map_kalshi_event,

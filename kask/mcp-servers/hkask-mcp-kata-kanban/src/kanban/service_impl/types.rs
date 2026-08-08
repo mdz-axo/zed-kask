@@ -59,7 +59,9 @@ impl From<KataError> for KanbanError {
             KataError::LoadFailed(msg)
             | KataError::ParseFailed(msg)
             | KataError::UnknownType(msg)
-            | KataError::TemplateNotFound(msg) => KanbanError::Internal(format!("kata engine: {msg}")),
+            | KataError::TemplateNotFound(msg) => {
+                KanbanError::Internal(format!("kata engine: {msg}"))
+            }
             KataError::NoSteps(manifest_id) => {
                 KanbanError::InvalidInput(format!("kata manifest '{manifest_id}' has no steps"))
             }

@@ -767,7 +767,8 @@ pub fn implied_growth(
         .intrinsic_per_share
     };
 
-    if at_growth(IMPLIED_GROWTH_LO) > current_price || at_growth(IMPLIED_GROWTH_HI) < current_price {
+    if at_growth(IMPLIED_GROWTH_LO) > current_price || at_growth(IMPLIED_GROWTH_HI) < current_price
+    {
         return None;
     }
 

@@ -56,7 +56,11 @@ fn episodic_store_and_recall() {
         perspective,
     )
     .with_perspective(perspective)
-    .with_ontology(HMemOntology::episodic("test-procedure", "step-1", "session"));
+    .with_ontology(HMemOntology::episodic(
+        "test-procedure",
+        "step-1",
+        "session",
+    ));
 
     store.store(h_mem).expect("store episodic");
 
@@ -82,8 +86,13 @@ fn perspective_scoped_recall_excludes_other_agents() {
     let theirs = WebID::from_persona(b"other-agent");
 
     for (perspective, value) in [(mine, "mine"), (theirs, "theirs")] {
-        let h_mem = HMem::new("shared_entity", "attr", serde_json::json!(value), perspective)
-            .with_perspective(perspective);
+        let h_mem = HMem::new(
+            "shared_entity",
+            "attr",
+            serde_json::json!(value),
+            perspective,
+        )
+        .with_perspective(perspective);
         store.store(h_mem).expect("store");
     }
 
@@ -125,13 +134,18 @@ fn episodic_and_semantic_coexist_and_stay_distinguishable() {
     let store = setup_store();
     let perspective = test_perspective();
 
-    let fact = HMem::new("company:Apple", "roic", serde_json::json!(0.32), perspective)
-        .with_visibility(hkask_types::Visibility::Shared)
-        .with_ontology(HMemOntology::semantic(
-            "bibo:Article",
-            vec!["ROIC".to_string()],
-            "10-K 2025",
-        ));
+    let fact = HMem::new(
+        "company:Apple",
+        "roic",
+        serde_json::json!(0.32),
+        perspective,
+    )
+    .with_visibility(hkask_types::Visibility::Shared)
+    .with_ontology(HMemOntology::semantic(
+        "bibo:Article",
+        vec!["ROIC".to_string()],
+        "10-K 2025",
+    ));
     store.store(fact).expect("store fact");
 
     let step = HMem::new(

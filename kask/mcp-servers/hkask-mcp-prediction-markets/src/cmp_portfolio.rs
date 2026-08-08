@@ -608,15 +608,13 @@ fn solve_portfolio_cohort(
         cohorts.push((c.days_to_expiration, c.probability, c.quality, vec![idx]));
     }
     // Find the cohort closest to the target.
-    let best_cohort = cohorts
-        .iter()
-        .min_by(|a, b| {
-            let dist_a = (a.0 - target).abs();
-            let dist_b = (b.0 - target).abs();
-            dist_a
-                .partial_cmp(&dist_b)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
+    let best_cohort = cohorts.iter().min_by(|a, b| {
+        let dist_a = (a.0 - target).abs();
+        let dist_b = (b.0 - target).abs();
+        dist_a
+            .partial_cmp(&dist_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })?;
     let cohort_maturity = best_cohort.0;
     let maturity_error = (cohort_maturity - target).abs();
     if maturity_error > effective_tolerance {
@@ -915,7 +913,12 @@ mod tests {
         // Mean probability of the two contracts.
         assert!((portfolio.index_probability - 0.50).abs() < 1e-9);
         // Equal weights within the cohort.
-        assert!(portfolio.constituents.iter().all(|c| (c.weight - 0.5).abs() < 1e-9));
+        assert!(
+            portfolio
+                .constituents
+                .iter()
+                .all(|c| (c.weight - 0.5).abs() < 1e-9)
+        );
         let weights: Vec<f64> = portfolio.constituents.iter().map(|c| c.weight).collect();
         assert!((weights.iter().sum::<f64>() - 1.0).abs() < 1e-9);
     }
@@ -1382,7 +1385,10 @@ mod tests {
         // C0.5: the cohort fallback publishes BucketedSparse indices.
         assert!(!set.indices.is_empty(), "cohort fallback should publish");
         // The 3m index should be present as a BucketedSparse cohort.
-        let three_m = set.indices.iter().find(|i| i.bucket == MaturityBucket::ThreeMonth)
+        let three_m = set
+            .indices
+            .iter()
+            .find(|i| i.bucket == MaturityBucket::ThreeMonth)
             .expect("3m index should publish via cohort fallback");
         assert_eq!(three_m.portfolio.method, CmpMethod::BucketedSparse);
         // Nearest cohort is 75d (the contracts at 70/72/75 form separate

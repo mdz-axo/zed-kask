@@ -754,8 +754,7 @@ impl HMemStore {
     /// inject SQL.
     #[must_use = "result must be used"]
     pub fn query_by_ontology_namespace(&self, namespace: &str) -> Result<Vec<HMem>, HMemError> {
-        let predicate =
-            "json_extract(ontology, '$.ontology_tags.' || ?1) IS NOT NULL".to_string();
+        let predicate = "json_extract(ontology, '$.ontology_tags.' || ?1) IS NOT NULL".to_string();
         let params = vec![DbValue::Text(namespace.to_string())];
         let valid = self.ontology_is_json();
         self.query_rows(
@@ -859,12 +858,14 @@ impl From<&HMem> for HMemEntry {
                 .map(|wid| wid.to_string())
                 .unwrap_or_default(),
             visibility: t.access.visibility.as_str().to_string(),
-            dimension: t.ontology.as_ref().and_then(|ont| {
-                ont.dimensions.first().map(|s| s.clone())
-            }),
-            ontology: t.ontology.as_ref().and_then(|ont| {
-                ont.to_json_string().ok()
-            }),
+            dimension: t
+                .ontology
+                .as_ref()
+                .and_then(|ont| ont.dimensions.first().map(|s| s.clone())),
+            ontology: t
+                .ontology
+                .as_ref()
+                .and_then(|ont| ont.to_json_string().ok()),
         }
     }
 }
@@ -965,10 +966,14 @@ mod tests {
         // the store — the ontology column preserves the JSON blob.
         let store = make_store();
         let webid = WebID::new();
-        let ont = hkask_types::HMemOntology::semantic("bibo:Article", vec!["ROIC".to_string()], "10-K 2025")
-            .with_ontology_tag("fibo", "competitive advantage");
-        let h_mem = HMem::new("company:Apple", "roic", serde_json::json!(0.32), webid)
-            .with_ontology(ont);
+        let ont = hkask_types::HMemOntology::semantic(
+            "bibo:Article",
+            vec!["ROIC".to_string()],
+            "10-K 2025",
+        )
+        .with_ontology_tag("fibo", "competitive advantage");
+        let h_mem =
+            HMem::new("company:Apple", "roic", serde_json::json!(0.32), webid).with_ontology(ont);
         store.insert(&h_mem).unwrap();
 
         let results = store.query_by_entity("company:Apple").unwrap();
@@ -980,7 +985,10 @@ mod tests {
         assert_eq!(loaded_ont.dc_subject, vec!["ROIC".to_string()]);
         assert_eq!(loaded_ont.dc_source, "10-K 2025");
         assert!(loaded_ont.has_ontology("fibo"));
-        assert_eq!(loaded_ont.ontology_concepts("fibo"), &["competitive advantage"]);
+        assert_eq!(
+            loaded_ont.ontology_concepts("fibo"),
+            &["competitive advantage"]
+        );
     }
 
     #[test]
@@ -1009,12 +1017,10 @@ mod tests {
         let store = make_store();
         let webid = WebID::new();
 
-        let anchored = HMem::new("good:entity", "attr", serde_json::json!("v"), webid)
-            .with_ontology(HMemOntology::semantic(
-                "bibo:Article",
-                vec!["ROIC".to_string()],
-                "10-K",
-            ));
+        let anchored =
+            HMem::new("good:entity", "attr", serde_json::json!("v"), webid).with_ontology(
+                HMemOntology::semantic("bibo:Article", vec!["ROIC".to_string()], "10-K"),
+            );
         store.insert(&anchored).expect("insert anchored");
 
         // Simulate the poison row an older binary could have written: an

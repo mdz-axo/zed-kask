@@ -53,7 +53,13 @@ fn extract_historical_arrays<'a>(
     let cf_data = cf.as_array().filter(|a| !a.is_empty())?;
     let metrics_data: &[serde_json::Value] = metrics.as_array().map_or(&[], |v| v);
     let profile_data = profile.as_array().and_then(|a| a.first())?;
-    Some((income_data, balance_data, cf_data, metrics_data, profile_data))
+    Some((
+        income_data,
+        balance_data,
+        cf_data,
+        metrics_data,
+        profile_data,
+    ))
 }
 
 #[tool_router(router = valuation_router, vis = "pub")]

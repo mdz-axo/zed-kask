@@ -118,9 +118,17 @@ impl SwarmPanel {
         let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
         let is_editing = self.author.editing_id.is_some();
         let create_label = if self.author.busy {
-            if is_editing { "Updating…" } else { "Creating…" }
+            if is_editing {
+                "Updating…"
+            } else {
+                "Creating…"
+            }
         } else if is_editing {
-            if is_local { "Update Local Agent" } else { "Update Agent" }
+            if is_local {
+                "Update Local Agent"
+            } else {
+                "Update Agent"
+            }
         } else if is_local {
             "Create Local Agent"
         } else {

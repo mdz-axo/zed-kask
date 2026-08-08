@@ -58,8 +58,11 @@ fn ontology_anchor(tool: &str) -> Option<&'static str> {
         "ledger_apply" | "ledger_read" | "ledger_import" | "ledger_export" => {
             Some(fibo::TRANSACTION_LEDGER)
         }
-        "portfolio_seed_price" | "portfolio_roll" | "portfolio_rebuild_views"
-        | "portfolio_materialize_returns" | "portfolio_daily_returns" => Some(fibo::PORTFOLIO),
+        "portfolio_seed_price"
+        | "portfolio_roll"
+        | "portfolio_rebuild_views"
+        | "portfolio_materialize_returns"
+        | "portfolio_daily_returns" => Some(fibo::PORTFOLIO),
         _ => None,
     }
 }
@@ -256,27 +259,32 @@ impl PortfolioServer {
             PortfolioSnapshotRequest,
         >,
     ) -> String {
-        execute_tool_semantic(self, "portfolio_snapshot", ontology_anchor("portfolio_snapshot"), async {
-            // Validate the date up front — never silently epoch-substitute
-            // (the SF-4 bug: a malformed date produced garbage projections
-            // while callers reported success).
-            parse_ymd(&date, "date").map_err(map_portfolio_error)?;
-            let snapshot: HoldingsSnapshot = run_store(self.store.clone(), move |store| {
-                store.snapshot(&portfolio, &date)
-            })
-            .await?;
-            let mut value = serde_json::to_value(&snapshot)
-                .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?; // rr0044-ok: serialize-own-struct
-            if let Some(obj) = value.as_object_mut() {
-                obj.insert(
-                    "ontology".to_string(),
-                    serde_json::Value::String(
-                        hkask_bridge_ontology::fibo::PORTFOLIO.to_string(),
-                    ),
-                );
-            }
-            Ok(value)
-        })
+        execute_tool_semantic(
+            self,
+            "portfolio_snapshot",
+            ontology_anchor("portfolio_snapshot"),
+            async {
+                // Validate the date up front — never silently epoch-substitute
+                // (the SF-4 bug: a malformed date produced garbage projections
+                // while callers reported success).
+                parse_ymd(&date, "date").map_err(map_portfolio_error)?;
+                let snapshot: HoldingsSnapshot = run_store(self.store.clone(), move |store| {
+                    store.snapshot(&portfolio, &date)
+                })
+                .await?;
+                let mut value = serde_json::to_value(&snapshot)
+                    .map_err(|e| McpToolError::internal(format!("serialize snapshot: {e}")))?; // rr0044-ok: serialize-own-struct
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert(
+                        "ontology".to_string(),
+                        serde_json::Value::String(
+                            hkask_bridge_ontology::fibo::PORTFOLIO.to_string(),
+                        ),
+                    );
+                }
+                Ok(value)
+            },
+        )
         .await
     }
 

@@ -160,7 +160,8 @@ Updated: {}",
             task.assignee
                 .map(|a| a.redacted_display())
                 .unwrap_or_else(|| "none".into()),
-            task.estimated_hours.map_or("?".into(), |h| format!("{}h", h)),
+            task.estimated_hours
+                .map_or("?".into(), |h| format!("{}h", h)),
             task.story_points.map_or("?".into(), |p| format!("{}pt", p)),
             task.updated_at.format("%Y-%m-%d %H:%M"),
         );

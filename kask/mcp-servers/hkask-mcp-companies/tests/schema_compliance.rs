@@ -14,8 +14,8 @@
 //! so all 35 request types are pinned.
 
 use hkask_mcp_companies::types::{
-    AttributionRequest, CalibrateForecastRequest, CharacteristicsRequest, ComparableAnalysisRequest,
-    CompanyTranscriptRequest, DcfValuationRequest, EpValuationRequest, EquityDurationRequest,
+    AttributionRequest, CalibrateForecastRequest, CharacteristicsRequest, CompanyTranscriptRequest,
+    ComparableAnalysisRequest, DcfValuationRequest, EpValuationRequest, EquityDurationRequest,
     ExpectationsGapRequest, FileAttachRequest, FileDeleteRequest, FileListRequest,
     ForecastGetRequest, ForecastListRequest, ForecastRecordRequest, HistoricalRequest,
     LedgerExportRequest, LedgerImportRequest, MonteCarloDcfRequest, NoteAddRequest,
@@ -70,9 +70,15 @@ schema_clean_test!(calibrate_forecast_request_schema, CalibrateForecastRequest);
 schema_clean_test!(forecast_get_request_schema, ForecastGetRequest);
 schema_clean_test!(forecast_list_request_schema, ForecastListRequest);
 schema_clean_test!(forecast_record_request_schema, ForecastRecordRequest);
-schema_clean_test!(sensitivity_analysis_request_schema, SensitivityAnalysisRequest);
+schema_clean_test!(
+    sensitivity_analysis_request_schema,
+    SensitivityAnalysisRequest
+);
 schema_clean_test!(monte_carlo_dcf_request_schema, MonteCarloDcfRequest);
-schema_clean_test!(comparable_analysis_request_schema, ComparableAnalysisRequest);
+schema_clean_test!(
+    comparable_analysis_request_schema,
+    ComparableAnalysisRequest
+);
 schema_clean_test!(research_search_request_schema, ResearchSearchRequest);
 schema_clean_test!(screener_request_schema, ScreenerRequest);
 schema_clean_test!(company_transcript_request_schema, CompanyTranscriptRequest);

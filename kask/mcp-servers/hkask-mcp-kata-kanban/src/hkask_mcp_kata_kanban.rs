@@ -8,7 +8,6 @@
 //! The KanbanServer struct and tool methods are exported from the library
 //! target to enable fuzz testing (P5 Testing Discipline, P4 Clear Boundaries).
 
-
 pub mod kanban;
 pub mod kata;
 pub mod pko;
@@ -1028,16 +1027,16 @@ impl KanbanServer {
 /// Replaces the repeated `match task_id.parse::<hkask_types::TaskId>() { Ok(id) => id, Err(e) => return Err(McpToolError::invalid_argument(...)) }`
 /// block across the kanban tool methods.
 fn parse_task_id(task_id: &str) -> Result<hkask_types::TaskId, McpToolError> {
-    task_id.parse::<hkask_types::TaskId>().map_err(|e| {
-        McpToolError::invalid_argument(format!("invalid task_id: {e}"))
-    })
+    task_id
+        .parse::<hkask_types::TaskId>()
+        .map_err(|e| McpToolError::invalid_argument(format!("invalid task_id: {e}")))
 }
 
 /// Parse a board id string or return an `invalid_argument` MCP error.
 fn parse_board_id(board_id: &str) -> Result<hkask_types::BoardId, McpToolError> {
-    board_id.parse::<hkask_types::BoardId>().map_err(|e| {
-        McpToolError::invalid_argument(format!("invalid board_id: {e}"))
-    })
+    board_id
+        .parse::<hkask_types::BoardId>()
+        .map_err(|e| McpToolError::invalid_argument(format!("invalid board_id: {e}")))
 }
 
 /// Map a service-layer `KanbanError` to the correct `McpToolError` variant.
@@ -1060,7 +1059,6 @@ fn map_kanban_error(e: KanbanError) -> McpToolError {
         KanbanError::Internal(msg) => McpToolError::internal(msg), // rr0044-ok: kanban internal-error arm
     }
 }
-
 
 /// Run the kanban MCP server (used by binary target).
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {

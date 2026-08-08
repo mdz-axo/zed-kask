@@ -56,12 +56,12 @@ use crate::load_manifest_from_yaml;
 use crate::output_schema::{build_structured_output_tool, resolve_output_schema};
 use crate::ports::{Result, TemplateError};
 use crate::template_renderer::TemplateRenderer;
+use hkask_capability::tool_taint::ToolTaint;
 use hkask_capability::{DelegationAction, DelegationResource};
 use hkask_capability::{ToolPort, ToolPortError};
 use hkask_guard::{SpotlightMode, Spotlighter};
 use hkask_regulation::SkillFeedbackSpan;
 use hkask_types::NotFound;
-use hkask_capability::tool_taint::ToolTaint;
 use hkask_types::WebID;
 use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
@@ -784,11 +784,8 @@ impl ManifestExecutor {
                                 if k == "loop_target" {
                                     continue;
                                 }
-                                let bound = resolve_mapping_value(
-                                    v,
-                                    &context,
-                                    &self.template_renderer,
-                                );
+                                let bound =
+                                    resolve_mapping_value(v, &context, &self.template_renderer);
                                 // Propagate taint from referenced Source entries
                                 // to the new binding key (ART-3/IR-1 fix).
                                 self.propagate_taint_for_binding(v, k);
@@ -815,10 +812,8 @@ impl ManifestExecutor {
                         // snapshot loop — the prior code acquired it twice per
                         // step (read + write), which is 2N acquisitions for an
                         // N-step manifest where 1 suffices.
-                        let mut labels = self
-                            .taint_labels
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
+                        let mut labels =
+                            self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
                         for step in steps.iter() {
                             let key = format!("step_{}_result", step.ordinal);
                             if let Some(val) = context.get(&key) {
@@ -1681,9 +1676,7 @@ impl ManifestExecutor {
         let input: Value = step
             .input_mapping
             .as_ref()
-            .map(|mapping| {
-                resolve_mapping_value(mapping, context, &self.template_renderer)
-            })
+            .map(|mapping| resolve_mapping_value(mapping, context, &self.template_renderer))
             .unwrap_or_else(|| {
                 Value::Object(
                     context
@@ -1748,8 +1741,7 @@ impl ManifestExecutor {
                 if let Value::Object(map) = mapping {
                     let mut out = serde_json::Map::new();
                     for (k, v) in map {
-                        let bound =
-                            resolve_mapping_value(v, &context, &self.template_renderer);
+                        let bound = resolve_mapping_value(v, &context, &self.template_renderer);
                         // Propagate taint from referenced Source entries to the
                         // bound key (the .rules "input_mapping bindings must
                         // propagate taint" trap — RR-0026/RR-0027 fixed this at

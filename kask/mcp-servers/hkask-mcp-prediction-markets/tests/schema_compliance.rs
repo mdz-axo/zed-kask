@@ -48,17 +48,32 @@ macro_rules! schema_clean_test {
 schema_clean_test!(status_request_schema, StatusRequest);
 schema_clean_test!(market_ontology_map_request_schema, MarketOntologyMapRequest);
 schema_clean_test!(market_lookup_request_schema, MarketLookupRequest);
-schema_clean_test!(market_record_resolution_request_schema, MarketRecordResolutionRequest);
+schema_clean_test!(
+    market_record_resolution_request_schema,
+    MarketRecordResolutionRequest
+);
 schema_clean_test!(market_subscribe_request_schema, MarketSubscribeRequest);
 schema_clean_test!(market_residual_request_schema, MarketResidualRequest);
 schema_clean_test!(market_cmp_index_request_schema, MarketCmpIndexRequest);
-schema_clean_test!(market_cmp_index_store_request_schema, MarketCmpIndexStoreRequest);
-schema_clean_test!(market_cmp_portfolio_store_request_schema, MarketCmpPortfolioStoreRequest);
-schema_clean_test!(market_cmp_context_suggest_request_schema, MarketCmpContextSuggestRequest);
+schema_clean_test!(
+    market_cmp_index_store_request_schema,
+    MarketCmpIndexStoreRequest
+);
+schema_clean_test!(
+    market_cmp_portfolio_store_request_schema,
+    MarketCmpPortfolioStoreRequest
+);
+schema_clean_test!(
+    market_cmp_context_suggest_request_schema,
+    MarketCmpContextSuggestRequest
+);
 schema_clean_test!(market_volatility_request_schema, MarketVolatilityRequest);
 schema_clean_test!(market_cmp_request_schema, MarketCmpRequest);
 schema_clean_test!(market_history_request_schema, MarketHistoryRequest);
-schema_clean_test!(market_check_resolutions_request_schema, MarketCheckResolutionsRequest);
+schema_clean_test!(
+    market_check_resolutions_request_schema,
+    MarketCheckResolutionsRequest
+);
 schema_clean_test!(market_calibration_request_schema, MarketCalibrationRequest);
 schema_clean_test!(market_match_request_schema, MarketMatchRequest);
 schema_clean_test!(market_ladder_request_schema, MarketLadderRequest);

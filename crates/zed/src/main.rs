@@ -4253,15 +4253,19 @@ mod tests {
         // item (not just a function pointer type). Referencing the fn value
         // pins both its existence and its name; renaming or deleting it
         // breaks compilation here.
-        let _ = sync_kask_mcp_runtime_servers as fn(
-            std::sync::Arc<hkask_mcp::McpRuntime>,
-            std::sync::Arc<
-                std::sync::Mutex<
-                    std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+        let _ = sync_kask_mcp_runtime_servers
+            as fn(
+                std::sync::Arc<hkask_mcp::McpRuntime>,
+                std::sync::Arc<
+                    std::sync::Mutex<
+                        std::collections::HashMap<
+                            String,
+                            std::collections::HashMap<String, String>,
+                        >,
+                    >,
                 >,
-            >,
-            &mut gpui::App,
-        );
+                &mut gpui::App,
+            );
 
         // If this test compiles, the functional units' key symbols are
         // present. Removing any wiring function/type breaks compilation here.

@@ -24,7 +24,6 @@
 //! Helpers in helpers.rs (math/text); LLM JSON parsing comes from
 //! `hkask_types::json_extract` (re-exported below).
 
-
 mod backend;
 pub mod batch;
 pub mod compose;

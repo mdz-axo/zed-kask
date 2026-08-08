@@ -78,7 +78,9 @@ impl SwarmPanel {
                     .child(
                         Label::new(format!(
                             "agents: {}",
-                            detail.agent_count.map_or("-".to_string(), |c| c.to_string())
+                            detail
+                                .agent_count
+                                .map_or("-".to_string(), |c| c.to_string())
                         ))
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),

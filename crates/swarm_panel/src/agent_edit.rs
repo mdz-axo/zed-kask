@@ -19,8 +19,8 @@
 use gpui::{Context, Window};
 use serde_json::json;
 
-use crate::parse::AgentSource;
 use crate::SwarmPanel;
+use crate::parse::AgentSource;
 
 /// The fields extracted from an agent card that the author form can populate.
 /// Source: `swarm_get_agent` (cloud) or `swarm_list_local_agents` (local).
@@ -231,15 +231,15 @@ impl SwarmPanel {
                     list_result.and_then(|output| {
                         let parsed = hkask_types::tool_response::parse_tool_response(&output)
                             .ok_or_else(|| {
-                                "swarm_list_local_agents: failed to parse tool response"
-                                    .to_string()
+                                "swarm_list_local_agents: failed to parse tool response".to_string()
                             })?;
-                        let agents = parsed
-                            .get("agents")
-                            .and_then(|a| a.as_array())
-                            .ok_or_else(|| {
-                                "swarm_list_local_agents: missing agents array".to_string()
-                            })?;
+                        let agents =
+                            parsed
+                                .get("agents")
+                                .and_then(|a| a.as_array())
+                                .ok_or_else(|| {
+                                    "swarm_list_local_agents: missing agents array".to_string()
+                                })?;
                         let card = agents
                             .iter()
                             .find(|a| {
@@ -263,8 +263,8 @@ impl SwarmPanel {
                         .and_then(|output| {
                             let parsed = hkask_types::tool_response::parse_tool_response(&output)
                                 .ok_or_else(|| {
-                                    "swarm_get_agent: failed to parse tool response".to_string()
-                                })?;
+                                "swarm_get_agent: failed to parse tool response".to_string()
+                            })?;
                             Ok(AgentDetail::parse_cloud(&parsed))
                         })
                 };
@@ -322,11 +322,17 @@ impl SwarmPanel {
             .tags
             .update(cx, |e, cx| e.set_text(tags_joined, window, cx));
         self.author.visibility = detail.visibility;
-        let arousal = detail.valence_arousal.map(|v| v.to_string()).unwrap_or_default();
+        let arousal = detail
+            .valence_arousal
+            .map(|v| v.to_string())
+            .unwrap_or_default();
         self.author
             .valence_arousal
             .update(cx, |e, cx| e.set_text(arousal, window, cx));
-        let valence = detail.valence_valence.map(|v| v.to_string()).unwrap_or_default();
+        let valence = detail
+            .valence_valence
+            .map(|v| v.to_string())
+            .unwrap_or_default();
         self.author
             .valence_valence
             .update(cx, |e, cx| e.set_text(valence, window, cx));
@@ -403,8 +409,7 @@ impl SwarmPanel {
                             this.fetch_all(cx);
                         }
                         Err(err) => {
-                            this.author.status =
-                                Some(format!("Update failed: {err}").into());
+                            this.author.status = Some(format!("Update failed: {err}").into());
                         }
                     }
                     cx.notify();

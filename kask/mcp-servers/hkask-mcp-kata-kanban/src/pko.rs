@@ -93,7 +93,6 @@ pub fn kanban_type_to_pko(type_name: &str) -> Option<PkoConcept> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,5 +123,4 @@ mod tests {
         assert!(kanban_type_to_pko("InternalDbConnection").is_none());
         assert!(kanban_type_to_pko("").is_none());
     }
-
 }

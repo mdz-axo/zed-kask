@@ -19,10 +19,10 @@
 use hkask_mcp_research::research::rss_types::{
     DiscoverRequest as RssDiscoverRequest, EditTagRequest as RssEditTagRequest,
     FetchRequest as RssFetchRequest, GetEntriesRequest as RssGetEntriesRequest,
-    ImportOpmlRequest as RssImportOpmlRequest, ListSubscriptionsRequest as RssListSubscriptionsRequest,
-    MarkReadRequest as RssMarkReadRequest, SearchRequest as RssSearchRequest,
-    SubscribeRequest as RssSubscribeRequest, UnreadCountRequest as RssUnreadCountRequest,
-    UnsubscribeRequest as RssUnsubscribeRequest,
+    ImportOpmlRequest as RssImportOpmlRequest,
+    ListSubscriptionsRequest as RssListSubscriptionsRequest, MarkReadRequest as RssMarkReadRequest,
+    SearchRequest as RssSearchRequest, SubscribeRequest as RssSubscribeRequest,
+    UnreadCountRequest as RssUnreadCountRequest, UnsubscribeRequest as RssUnsubscribeRequest,
 };
 use hkask_mcp_research::research::types::{
     BrowseRequest, CitationGetRequest, CitationListRequest, ExtractRequest, FindSimilarRequest,
@@ -49,7 +49,10 @@ macro_rules! schema_clean_test {
 // ── research::rss_types (11) ──
 schema_clean_test!(rss_subscribe_request_schema, RssSubscribeRequest);
 schema_clean_test!(rss_unsubscribe_request_schema, RssUnsubscribeRequest);
-schema_clean_test!(rss_list_subscriptions_request_schema, RssListSubscriptionsRequest);
+schema_clean_test!(
+    rss_list_subscriptions_request_schema,
+    RssListSubscriptionsRequest
+);
 schema_clean_test!(rss_fetch_request_schema, RssFetchRequest);
 schema_clean_test!(rss_get_entries_request_schema, RssGetEntriesRequest);
 schema_clean_test!(rss_mark_read_request_schema, RssMarkReadRequest);

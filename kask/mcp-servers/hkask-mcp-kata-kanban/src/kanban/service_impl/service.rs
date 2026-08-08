@@ -434,8 +434,8 @@ impl KanbanService {
         // `query_by_pko_procedure(board_id)` reaches every task under a board.
         let task_ontology =
             HMemOntology::episodic(board_id.to_string(), task.id.to_string(), "kanban");
-        let h_mem = HMem::new(TASK_ENTITY, &task.id.to_string(), value, owner)
-            .with_ontology(task_ontology);
+        let h_mem =
+            HMem::new(TASK_ENTITY, &task.id.to_string(), value, owner).with_ontology(task_ontology);
         self.store
             .insert(&h_mem)
             .map_err(|e| KanbanError::Internal(format!("h_mem insert failed: {e}")))?;

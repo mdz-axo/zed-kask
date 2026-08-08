@@ -250,14 +250,14 @@ impl ServiceConfig {
     pub fn open_driver(
         &self,
     ) -> Result<std::sync::Arc<dyn hkask_storage::DatabaseDriver>, ServiceError> {
-        let db = hkask_storage::open_database(&self.db_path, &self.db_passphrase).map_err(
-            |e| ServiceError::Domain {
+        let db = hkask_storage::open_database(&self.db_path, &self.db_passphrase).map_err(|e| {
+            ServiceError::Domain {
                 kind: ErrorKind::ServiceUnavailable,
                 domain: DomainKind::Storage,
                 message: e.to_string(),
                 source: Some(Box::new(e)),
-            },
-        )?;
+            }
+        })?;
         let pool = db.sqlite_pool().map_err(|e| ServiceError::Domain {
             kind: ErrorKind::ServiceUnavailable,
             domain: DomainKind::Storage,
@@ -265,10 +265,7 @@ impl ServiceConfig {
             source: Some(Box::new(e)),
         })?;
         Ok(std::sync::Arc::new(
-            hkask_storage::database::sqlite::SqliteDriver::new_labeled(
-                pool,
-                self.db_path.as_str(),
-            ),
+            hkask_storage::database::sqlite::SqliteDriver::new_labeled(pool, self.db_path.as_str()),
         ))
     }
 }

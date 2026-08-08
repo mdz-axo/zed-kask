@@ -26,7 +26,6 @@
 //! HTTP client or inference URL configuration is needed — the router handles
 //! provider dispatch (DeepInfra, OpenRouter) automatically.
 
-
 // Bridge crates: shared ontological vocabulary (P5.4 dual-axis framework)
 
 use hkask_condenser::engine::CondenserEngine;
@@ -39,9 +38,9 @@ use hkask_mcp_server::server::{CapabilityTier, McpToolError, execute_tool};
 use hkask_memory::{MemoryStore, MemoryStoreError};
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_storage::{Database, EmbeddingStore, HMem, HMemError};
-use hkask_types::{HMemOntology, Visibility};
 use hkask_types::template::LLMParameters;
 use hkask_types::time::now_rfc3339;
+use hkask_types::{HMemOntology, Visibility};
 use hkask_types::{InferenceError, InferencePort};
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
 use serde::Deserialize;

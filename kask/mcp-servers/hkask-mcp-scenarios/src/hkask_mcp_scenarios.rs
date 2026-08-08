@@ -2321,12 +2321,22 @@ mod tests {
             }))
             .await;
 
-        let store = server.forecast_store.lock().unwrap_or_else(|e| e.into_inner());
+        let store = server
+            .forecast_store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Every stored record must carry the scenario_type as its category.
         assert!(
-            store.records.values().all(|r| r.category.as_deref() == Some("company_analysis")),
+            store
+                .records
+                .values()
+                .all(|r| r.category.as_deref() == Some("company_analysis")),
             "scenario_score must populate category from scenario_type; got: {:?}",
-            store.records.values().map(|r| &r.category).collect::<Vec<_>>()
+            store
+                .records
+                .values()
+                .map(|r| &r.category)
+                .collect::<Vec<_>>()
         );
         // ≥5 same-category resolved forecasts must yield a non-zero δ.
         let delta = superforecast::domain_bias_delta(Some(&store), "company_analysis");

@@ -28,8 +28,7 @@ pub const KANBAN_TASK_MOVE_TOOL: &str = "kanban_task_move";
 /// order; the server's `TaskStatus::parse_str()` accepts these (plus
 /// case-insensitive aliases like `inprogress`).
 /// (`backlog`, `ready`, `in_progress`, `review`, `done`).
-pub const STANDARD_STATUS_KEYS: &[&str] =
-    &["backlog", "ready", "in_progress", "review", "done"];
+pub const STANDARD_STATUS_KEYS: &[&str] = &["backlog", "ready", "in_progress", "review", "done"];
 
 /// Returns `true` if `status` is one of the five standard wire strings.
 /// The widget uses this to validate a move target before dispatch; the server

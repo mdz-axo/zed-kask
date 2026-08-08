@@ -10,7 +10,6 @@
 //! - Voice: voice_design, generate_speech
 //! - Audio: transcribe, transcribe_bundle, audio_capture, record_and_transcribe
 
-
 mod error;
 mod gallery;
 pub mod media_block;

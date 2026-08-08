@@ -161,10 +161,7 @@ impl TemplateRenderer {
         template_content: &str,
         context: &HashMap<String, Value>,
     ) -> Result<String> {
-        let mut env = self
-            .env
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut env = self.env.lock().unwrap_or_else(|e| e.into_inner());
 
         // Register the per-render template under the synthetic name "step".
         // `add_template_owned` replaces any prior "step" registration (no

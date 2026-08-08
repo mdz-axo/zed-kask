@@ -1853,9 +1853,7 @@ pub fn convert_cmp_index(
         CmpMethod::BucketedSparse => "bucketed_sparse",
     };
     let id = format!("cmp:{family_label}:{tenor}:{orientation}");
-    let name = format!(
-        "{family_label} {tenor} {orientation} ({venue}, {method})"
-    );
+    let name = format!("{family_label} {tenor} {orientation} ({venue}, {method})");
     let question = format!(
         "CMP index: {family_label} {orientation} at {tenor} forward maturity, \
          venue={venue}, method={method}, p={:.3}, maturity_error={:.1}d, constituents={}",
@@ -1922,7 +1920,8 @@ pub fn compose_cmp_tree(
             return Err(ScenarioError::InvalidDependency(
                 event.id.clone(),
                 "duplicate CMP index (same family/tenor/orientation) — \
-                 merge venues or filter before composing".into(),
+                 merge venues or filter before composing"
+                    .into(),
             ));
         }
     }
@@ -2946,7 +2945,9 @@ mod tests {
         probability: f64,
         method: hkask_mcp_prediction_markets::cmp::CmpMethod,
     ) -> hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex {
-        use hkask_mcp_prediction_markets::cmp_portfolio::{CmpIndex, IndexPortfolio, WeightedConstituent};
+        use hkask_mcp_prediction_markets::cmp_portfolio::{
+            CmpIndex, IndexPortfolio, WeightedConstituent,
+        };
         hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex {
             family,
             venue,
@@ -2993,16 +2994,45 @@ mod tests {
         assert_eq!(tree.nodes.len(), 2);
         assert_eq!(tree.root_ids.len(), 2);
         // Provenance: the event IDs cite the index, not a contract.
-        assert!(tree.nodes.iter().any(|n| n.event.id == "cmp:policy_interest_rate:3m:increase"));
-        assert!(tree.nodes.iter().any(|n| n.event.id == "cmp:crude_oil_price:1m:increase"));
+        assert!(
+            tree.nodes
+                .iter()
+                .any(|n| n.event.id == "cmp:policy_interest_rate:3m:increase")
+        );
+        assert!(
+            tree.nodes
+                .iter()
+                .any(|n| n.event.id == "cmp:crude_oil_price:1m:increase")
+        );
         // Probabilities are the CMP index probabilities.
-        let rates = tree.nodes.iter().find(|n| n.event.subject == "policy_interest_rate").unwrap();
+        let rates = tree
+            .nodes
+            .iter()
+            .find(|n| n.event.subject == "policy_interest_rate")
+            .unwrap();
         assert!((rates.marginal_probability - 0.65).abs() < 1e-9);
-        let oil = tree.nodes.iter().find(|n| n.event.subject == "crude_oil_price").unwrap();
+        let oil = tree
+            .nodes
+            .iter()
+            .find(|n| n.event.subject == "crude_oil_price")
+            .unwrap();
         assert!((oil.marginal_probability - 0.40).abs() < 1e-9);
         // Basis records the CMP method.
-        assert!(rates.event.basis.as_deref().unwrap().contains("interpolated"));
-        assert!(oil.event.basis.as_deref().unwrap().contains("bucketed_sparse"));
+        assert!(
+            rates
+                .event
+                .basis
+                .as_deref()
+                .unwrap()
+                .contains("interpolated")
+        );
+        assert!(
+            oil.event
+                .basis
+                .as_deref()
+                .unwrap()
+                .contains("bucketed_sparse")
+        );
     }
 
     #[test]

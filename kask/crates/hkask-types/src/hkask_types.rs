@@ -59,8 +59,8 @@ pub use template::LLMParameters;
 pub use template_type::TemplateType;
 pub use tool_schema::{AnyJsonValue, find_boolean_schema_positions};
 
-pub use visibility::{Confidence, Dimension, Visibility};
 pub use hmem_ontology::HMemOntology;
+pub use visibility::{Confidence, Dimension, Visibility};
 pub use voice::VoiceDesign;
 
 pub use ports::*;

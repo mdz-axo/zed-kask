@@ -407,8 +407,7 @@ impl MemoryStore {
         &self,
         namespace: &str,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
-        Ok(self
-            .decayed(self.h_mem_store.query_by_ontology_namespace(namespace)?))
+        Ok(self.decayed(self.h_mem_store.query_by_ontology_namespace(namespace)?))
     }
 
     /// Apply the Wozniak-Gorzelanczyk forgetting curve to a recalled batch
@@ -472,7 +471,9 @@ impl MemoryStore {
             .collect();
 
         if matching_refs.is_empty() {
-            return Err(MemoryStoreError::NoEmbeddingsForCentroid(prefix.to_string()));
+            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
+                prefix.to_string(),
+            ));
         }
 
         let mut centroid = vec![0.0f32; dim];
@@ -497,7 +498,9 @@ impl MemoryStore {
         }
 
         if count == 0 {
-            return Err(MemoryStoreError::NoEmbeddingsForCentroid(prefix.to_string()));
+            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
+                prefix.to_string(),
+            ));
         }
 
         let n = count as f32;
@@ -619,10 +622,7 @@ impl MemoryStore {
     }
 
     /// Expire a h_mem by setting its `valid_to` (soft-delete).
-    pub(crate) fn expire_h_mem(
-        &self,
-        id: &hkask_storage::HMemId,
-    ) -> Result<(), MemoryStoreError> {
+    pub(crate) fn expire_h_mem(&self, id: &hkask_storage::HMemId) -> Result<(), MemoryStoreError> {
         self.h_mem_store.close_by_id(id)?;
         tracing::debug!(
             target: "hkask.memory",
@@ -655,7 +655,9 @@ impl MemoryStore {
     }
 
     pub fn low_confidence_count(&self, threshold: f64) -> Result<usize, MemoryStoreError> {
-        Ok(self.h_mem_store.count_semantic_below_confidence(threshold)?)
+        Ok(self
+            .h_mem_store
+            .count_semantic_below_confidence(threshold)?)
     }
 
     pub fn low_confidence_h_mems(
@@ -725,7 +727,10 @@ mod tests {
         let results = store.query_deduped("company:Apple").unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].ontology.is_some());
-        assert_eq!(results[0].ontology.as_ref().unwrap().dc_type, "bibo:Article");
+        assert_eq!(
+            results[0].ontology.as_ref().unwrap().dc_type,
+            "bibo:Article"
+        );
     }
 
     #[test]
@@ -744,16 +749,28 @@ mod tests {
 
         // Episodic experience (PKO-anchored, with perspective)
         let episodic_ont = HMemOntology::episodic("diagnose-bug-123", "reproduce", "session-1");
-        let episodic_h_mem = HMem::new("chat:thread:abc", "chatted", serde_json::json!("reproduced the bug"), user)
-            .with_perspective(user)
-            .with_visibility(Visibility::Private)
-            .with_ontology(episodic_ont);
+        let episodic_h_mem = HMem::new(
+            "chat:thread:abc",
+            "chatted",
+            serde_json::json!("reproduced the bug"),
+            user,
+        )
+        .with_perspective(user)
+        .with_visibility(Visibility::Private)
+        .with_ontology(episodic_ont);
         store.store(episodic_h_mem).unwrap();
 
         // Both are in the store
         let all_apple = store.query_deduped("company:Apple").unwrap();
         assert_eq!(all_apple.len(), 1);
-        assert!(all_apple[0].ontology.as_ref().unwrap().pko_procedure.is_none());
+        assert!(
+            all_apple[0]
+                .ontology
+                .as_ref()
+                .unwrap()
+                .pko_procedure
+                .is_none()
+        );
 
         let all_thread = store.query_deduped("chat:thread:abc").unwrap();
         assert_eq!(all_thread.len(), 1);
@@ -797,11 +814,15 @@ mod tests {
             .with_visibility(Visibility::Private);
         store.store(h2).unwrap();
 
-        let user1_results = store.query_for_deduped_untouched("shared:entity", user1).unwrap();
+        let user1_results = store
+            .query_for_deduped_untouched("shared:entity", user1)
+            .unwrap();
         assert_eq!(user1_results.len(), 1);
         assert_eq!(user1_results[0].value, serde_json::json!("v1"));
 
-        let user2_results = store.query_for_deduped_untouched("shared:entity", user2).unwrap();
+        let user2_results = store
+            .query_for_deduped_untouched("shared:entity", user2)
+            .unwrap();
         assert_eq!(user2_results.len(), 1);
         assert_eq!(user2_results[0].value, serde_json::json!("v2"));
     }
@@ -829,14 +850,19 @@ mod tests {
             ));
         store.store(moat).expect("store moat");
 
-        let step = HMem::new("chat:thread:abc", "chatted", serde_json::json!("reproduced"), user)
-            .with_perspective(user)
-            .with_visibility(Visibility::Private)
-            .with_ontology(HMemOntology::episodic(
-                "diagnose-bug-123",
-                "reproduce",
-                "session-1",
-            ));
+        let step = HMem::new(
+            "chat:thread:abc",
+            "chatted",
+            serde_json::json!("reproduced"),
+            user,
+        )
+        .with_perspective(user)
+        .with_visibility(Visibility::Private)
+        .with_ontology(HMemOntology::episodic(
+            "diagnose-bug-123",
+            "reproduce",
+            "session-1",
+        ));
         store.store(step).expect("store step");
 
         (store, user)
@@ -892,7 +918,10 @@ mod tests {
             .expect("query");
         assert_eq!(steps.len(), 1);
         assert_eq!(
-            steps[0].ontology.as_ref().and_then(|o| o.pko_step.as_deref()),
+            steps[0]
+                .ontology
+                .as_ref()
+                .and_then(|o| o.pko_step.as_deref()),
             Some("reproduce")
         );
 
@@ -941,10 +970,30 @@ mod tests {
             .with_visibility(Visibility::Shared);
         store.store(bare).expect("store bare");
 
-        assert!(store.query_by_dc_type("bibo:Article").expect("query").is_empty());
-        assert!(store.query_by_dc_subject("anything").expect("query").is_empty());
-        assert!(store.query_by_pko_procedure("any").expect("query").is_empty());
-        assert!(store.query_by_ontology_namespace("fibo").expect("query").is_empty());
+        assert!(
+            store
+                .query_by_dc_type("bibo:Article")
+                .expect("query")
+                .is_empty()
+        );
+        assert!(
+            store
+                .query_by_dc_subject("anything")
+                .expect("query")
+                .is_empty()
+        );
+        assert!(
+            store
+                .query_by_pko_procedure("any")
+                .expect("query")
+                .is_empty()
+        );
+        assert!(
+            store
+                .query_by_ontology_namespace("fibo")
+                .expect("query")
+                .is_empty()
+        );
     }
 
     /// `reg.memory.encode` span emission is the enforcement point for the

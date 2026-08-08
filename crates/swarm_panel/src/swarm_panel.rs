@@ -673,21 +673,25 @@ impl SwarmPanel {
     /// operator clicks the Author mode toggle in the header — distinct from
     /// `load_agent_into_author`, which sets `editing_id` and read-only before
     /// calling `set_mode`.
-    fn reset_author_form_for_create(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn reset_author_form_for_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.author.editing_id = None;
         self.author.status = None;
         self.author.name.update(cx, |e, _| e.set_read_only(false));
         // Clear the text fields so the operator starts fresh.
         self.author.name.update(cx, |e, cx| e.clear(window, cx));
-        self.author.description.update(cx, |e, cx| e.clear(window, cx));
-        self.author.system_prompt.update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .description
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .system_prompt
+            .update(cx, |e, cx| e.clear(window, cx));
         self.author.tags.update(cx, |e, cx| e.clear(window, cx));
-        self.author.valence_arousal.update(cx, |e, cx| e.clear(window, cx));
-        self.author.valence_valence.update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_arousal
+            .update(cx, |e, cx| e.clear(window, cx));
+        self.author
+            .valence_valence
+            .update(cx, |e, cx| e.clear(window, cx));
         self.author
             .valence_primary_affect
             .update(cx, |e, cx| e.clear(window, cx));

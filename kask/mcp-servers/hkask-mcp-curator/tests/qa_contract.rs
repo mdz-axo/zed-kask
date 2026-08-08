@@ -67,17 +67,12 @@ fn make_server_with_ontology_h_mem() -> CuratorServer {
             .expect("embedding-free memory store"),
     );
     let owner = WebID::new();
-    let h_mem = hkask_storage::HMem::new(
-        "company:Apple",
-        "roic",
-        serde_json::json!(0.32),
-        owner,
-    )
-    .with_visibility(hkask_types::Visibility::Shared)
-    .with_ontology(
-        hkask_types::HMemOntology::semantic("bibo:Article", vec!["ROIC".to_string()], "10-K")
-            .with_ontology_tag("fibo", "return on invested capital"),
-    );
+    let h_mem = hkask_storage::HMem::new("company:Apple", "roic", serde_json::json!(0.32), owner)
+        .with_visibility(hkask_types::Visibility::Shared)
+        .with_ontology(
+            hkask_types::HMemOntology::semantic("bibo:Article", vec!["ROIC".to_string()], "10-K")
+                .with_ontology_tag("fibo", "return on invested capital"),
+        );
     memory.store(h_mem).expect("store ontology h_mem");
     CuratorServer::new(
         owner,

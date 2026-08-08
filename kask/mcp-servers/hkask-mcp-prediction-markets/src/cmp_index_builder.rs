@@ -31,9 +31,7 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 
 use crate::base_event::{BaseEvent, EconomicContext};
-use crate::cmp_portfolio::{
-    self, CmpConfig, CmpIndex, Constituent, OrientedConstituent,
-};
+use crate::cmp_portfolio::{self, CmpConfig, CmpIndex, Constituent, OrientedConstituent};
 use crate::economic_object::BaseEconomicObject;
 
 // ── Errors ─────────────────────────────────────────────────────────────────
@@ -56,7 +54,9 @@ pub enum CmpError {
     /// or the materiality/maturity/tier gates). Distinct from `NoBracket`
     /// because the diagnosis is different: the catalog may be empty, the
     /// classifier may be wrong, or the venue genuinely lacks the family.
-    #[error("no eligible contracts for {family_label}/{venue} ({n_rejected} rejected: {sample_reasons})")]
+    #[error(
+        "no eligible contracts for {family_label}/{venue} ({n_rejected} rejected: {sample_reasons})"
+    )]
     NoEligibleContracts {
         family: BaseEconomicObject,
         family_label: &'static str,
@@ -524,23 +524,21 @@ pub fn build_cmp_indices_from_lines(
         }
         match venue {
             Venue::Kalshi => {
-                let record: KalshiCatalogRecord = serde_json::from_str(trimmed).map_err(|e| {
-                    CmpError::ParseError {
+                let record: KalshiCatalogRecord =
+                    serde_json::from_str(trimmed).map_err(|e| CmpError::ParseError {
                         path: format!("<{}/{venue}>", family.label()),
                         line: line_idx + 1,
                         source: e,
-                    }
-                })?;
+                    })?;
                 adapters.push(CatalogAdapter::from_kalshi(&record));
             }
             Venue::Polymarket => {
-                let record: GammaCatalogRecord = serde_json::from_str(trimmed).map_err(|e| {
-                    CmpError::ParseError {
+                let record: GammaCatalogRecord =
+                    serde_json::from_str(trimmed).map_err(|e| CmpError::ParseError {
                         path: format!("<{}/{venue}>", family.label()),
                         line: line_idx + 1,
                         source: e,
-                    }
-                })?;
+                    })?;
                 adapters.push(CatalogAdapter::from_gamma(&record));
             }
         }
@@ -777,7 +775,13 @@ mod tests {
     }
 
     /// Build a Kalshi rates catalog record at a given strike + close time.
-    fn kalshi_rate_record(market_ticker: &str, strike: f64, days_out: f64, yes_bid: &str, yes_ask: &str) -> serde_json::Value {
+    fn kalshi_rate_record(
+        market_ticker: &str,
+        strike: f64,
+        days_out: f64,
+        yes_bid: &str,
+        yes_ask: &str,
+    ) -> serde_json::Value {
         let now = now();
         let close = now + chrono::Duration::seconds((days_out * 86400.0) as i64);
         serde_json::json!({
@@ -799,7 +803,13 @@ mod tests {
     }
 
     /// Build a Gamma rates catalog record.
-    fn gamma_rate_record(market_id: &str, question: &str, days_out: f64, best_bid: f64, best_ask: f64) -> serde_json::Value {
+    fn gamma_rate_record(
+        market_id: &str,
+        question: &str,
+        days_out: f64,
+        best_bid: f64,
+        best_ask: f64,
+    ) -> serde_json::Value {
         let now = now();
         let close = now + chrono::Duration::seconds((days_out * 86400.0) as i64);
         serde_json::json!({
@@ -822,12 +832,30 @@ mod tests {
 
     #[test]
     fn base_event_for_maps_all_six_families() {
-        assert_eq!(base_event_for(BaseEconomicObject::CrudeOilPrice), Some(BaseEvent::Oil));
-        assert_eq!(base_event_for(BaseEconomicObject::NaturalGasPrice), Some(BaseEvent::NaturalGas));
-        assert_eq!(base_event_for(BaseEconomicObject::BitcoinPrice), Some(BaseEvent::Bitcoin));
-        assert_eq!(base_event_for(BaseEconomicObject::EthereumPrice), Some(BaseEvent::Ethereum));
-        assert_eq!(base_event_for(BaseEconomicObject::ConsumerPriceInflation), Some(BaseEvent::Inflation));
-        assert_eq!(base_event_for(BaseEconomicObject::PolicyInterestRate), Some(BaseEvent::InterestRates));
+        assert_eq!(
+            base_event_for(BaseEconomicObject::CrudeOilPrice),
+            Some(BaseEvent::Oil)
+        );
+        assert_eq!(
+            base_event_for(BaseEconomicObject::NaturalGasPrice),
+            Some(BaseEvent::NaturalGas)
+        );
+        assert_eq!(
+            base_event_for(BaseEconomicObject::BitcoinPrice),
+            Some(BaseEvent::Bitcoin)
+        );
+        assert_eq!(
+            base_event_for(BaseEconomicObject::EthereumPrice),
+            Some(BaseEvent::Ethereum)
+        );
+        assert_eq!(
+            base_event_for(BaseEconomicObject::ConsumerPriceInflation),
+            Some(BaseEvent::Inflation)
+        );
+        assert_eq!(
+            base_event_for(BaseEconomicObject::PolicyInterestRate),
+            Some(BaseEvent::InterestRates)
+        );
     }
 
     #[test]
@@ -861,10 +889,10 @@ mod tests {
         // At least one index published.
         assert!(!set.indices.is_empty(), "expected at least one index");
         // Find the 3m Increase index.
-        let three_m_increase = set
-            .indices
-            .iter()
-            .find(|p| p.index.bucket == MaturityBucket::ThreeMonth && p.index.orientation == Orientation::Increase);
+        let three_m_increase = set.indices.iter().find(|p| {
+            p.index.bucket == MaturityBucket::ThreeMonth
+                && p.index.orientation == Orientation::Increase
+        });
         let idx = three_m_increase.expect("3m increase index");
         let portfolio = &idx.index.portfolio;
         assert!(
@@ -917,7 +945,9 @@ mod tests {
         );
         // No 3m index published.
         assert!(
-            !set.indices.iter().any(|p| p.index.bucket == MaturityBucket::ThreeMonth),
+            !set.indices
+                .iter()
+                .any(|p| p.index.bucket == MaturityBucket::ThreeMonth),
             "no 3m index should be published"
         );
     }
@@ -1042,10 +1072,10 @@ mod tests {
         .expect("build t=+5");
 
         // At t=0, the 1m index should be published (both contracts in window).
-        let one_m_0 = set_0
-            .indices
-            .iter()
-            .find(|p| p.index.bucket == MaturityBucket::OneMonth && p.index.orientation == Orientation::Increase);
+        let one_m_0 = set_0.indices.iter().find(|p| {
+            p.index.bucket == MaturityBucket::OneMonth
+                && p.index.orientation == Orientation::Increase
+        });
         // The 1m index may or may not publish depending on whether the bracket
         // spans 30d — 25d and 35d do bracket 30d, so it should publish.
         assert!(one_m_0.is_some(), "1m index should publish at t=0");
@@ -1056,10 +1086,10 @@ mod tests {
         // the index transitions from published to withheld as the front
         // contract leaves the window. No cliff-edge probability jump —
         // the index simply stops publishing (honest withholding).
-        let one_m_5 = set_5
-            .indices
-            .iter()
-            .find(|p| p.index.bucket == MaturityBucket::OneMonth && p.index.orientation == Orientation::Increase);
+        let one_m_5 = set_5.indices.iter().find(|p| {
+            p.index.bucket == MaturityBucket::OneMonth
+                && p.index.orientation == Orientation::Increase
+        });
         assert!(
             one_m_5.is_none(),
             "1m index should be withheld at t=+5 (front contract left window)"
@@ -1076,8 +1106,12 @@ mod tests {
         let record = kalshi_rate_record("KXFED-TEST-T5.50", 5.50, 90.0, "0.40", "0.60");
         std::fs::write(&kalshi_path, format!("{record}\n")).expect("write kalshi");
 
-        let lines = read_catalog(dir.path(), BaseEconomicObject::PolicyInterestRate, Venue::Kalshi)
-            .expect("read");
+        let lines = read_catalog(
+            dir.path(),
+            BaseEconomicObject::PolicyInterestRate,
+            Venue::Kalshi,
+        )
+        .expect("read");
         assert_eq!(lines.len(), 1);
     }
 
@@ -1085,7 +1119,11 @@ mod tests {
     fn read_catalog_io_error_propagates() {
         // Missing file → IoError, not a panic.
         let dir = tempfile::tempdir().expect("temp dir");
-        let result = read_catalog(dir.path(), BaseEconomicObject::PolicyInterestRate, Venue::Kalshi);
+        let result = read_catalog(
+            dir.path(),
+            BaseEconomicObject::PolicyInterestRate,
+            Venue::Kalshi,
+        );
         assert!(matches!(result, Err(CmpError::IoError { .. })));
     }
 
@@ -1119,7 +1157,11 @@ mod tests {
             &config(),
             &now(),
         );
-        assert!(result.passed, "checkpoint should pass: {}", result.diagnosis);
+        assert!(
+            result.passed,
+            "checkpoint should pass: {}",
+            result.diagnosis
+        );
         assert!(result.published_tenors.contains(&"1m"));
         assert!(result.published_tenors.contains(&"3m"));
         assert!(result.published_tenors.contains(&"6m"));
@@ -1172,7 +1214,10 @@ mod tests {
             .join("..")
             .join("tasks/bayesian-apt/catalogs/contracts");
         if !catalogs_dir.exists() {
-            eprintln!("real catalog not present at {} — skipping smoke test", catalogs_dir.display());
+            eprintln!(
+                "real catalog not present at {} — skipping smoke test",
+                catalogs_dir.display()
+            );
             return;
         }
         let now = Utc::now();
@@ -1195,7 +1240,10 @@ mod tests {
                     set.indices.len(),
                     set.withheld_buckets
                 );
-                assert!(set.n_records_read > 0, "Kalshi rates catalog should have records");
+                assert!(
+                    set.n_records_read > 0,
+                    "Kalshi rates catalog should have records"
+                );
             }
             Err(e) => panic!("Kalshi rates build failed: {e}"),
         }
@@ -1252,8 +1300,13 @@ mod tests {
         let cfg = config();
 
         eprintln!("\n=== All-families CMP index probe ===");
-        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:>20}", "family", "venue", "recs", "elig", "idxs", "published tenors");
-        eprintln!("─────────────────────────────────────────────────────────────────────────────────────────");
+        eprintln!(
+            "{:<30} {:<6} {:>5} {:>5} {:>5} {:>20}",
+            "family", "venue", "recs", "elig", "idxs", "published tenors"
+        );
+        eprintln!(
+            "─────────────────────────────────────────────────────────────────────────────────────────"
+        );
 
         for family in BaseEconomicObject::ALL {
             // Use the family's default economic context (reference + volatility).
@@ -1262,8 +1315,15 @@ mod tests {
                 Some(be) => be.default_economic_context(),
                 None => {
                     // RealGdpGrowth — no BaseEvent, all tenors withhold.
-                    eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
-                        family.label(), "-", "-", "-", "-", "no BaseEvent");
+                    eprintln!(
+                        "{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                        family.label(),
+                        "-",
+                        "-",
+                        "-",
+                        "-",
+                        "no BaseEvent"
+                    );
                     continue;
                 }
             };
@@ -1283,7 +1343,8 @@ mod tests {
                 let result = build_cmp_indices(&catalogs_dir, family, venue, &context, &cfg, &now);
                 match result {
                     Ok(set) => {
-                        let tenors: Vec<&str> = set.indices
+                        let tenors: Vec<&str> = set
+                            .indices
                             .iter()
                             .map(|p| p.index.bucket.label())
                             .collect::<std::collections::HashSet<_>>()
@@ -1294,21 +1355,44 @@ mod tests {
                         } else {
                             tenors.join(", ")
                         };
-                        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
-                            family.label(), venue.to_string(), set.n_records_read, set.n_eligible, set.indices.len(), tenors_str);
+                        eprintln!(
+                            "{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                            family.label(),
+                            venue.to_string(),
+                            set.n_records_read,
+                            set.n_eligible,
+                            set.indices.len(),
+                            tenors_str
+                        );
                     }
                     Err(CmpError::NoEligibleContracts { n_rejected, .. }) => {
-                        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
-                            family.label(), venue.to_string(), "?", 0, 0, format!("no eligible ({n_rejected} rejected)"));
+                        eprintln!(
+                            "{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                            family.label(),
+                            venue.to_string(),
+                            "?",
+                            0,
+                            0,
+                            format!("no eligible ({n_rejected} rejected)")
+                        );
                     }
                     Err(e) => {
-                        eprintln!("{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
-                            family.label(), venue.to_string(), "?", "?", "?", format!("error: {e}"));
+                        eprintln!(
+                            "{:<30} {:<6} {:>5} {:>5} {:>5} {:<20}",
+                            family.label(),
+                            venue.to_string(),
+                            "?",
+                            "?",
+                            "?",
+                            format!("error: {e}")
+                        );
                     }
                 }
             }
         }
-        eprintln!("─────────────────────────────────────────────────────────────────────────────────────────");
+        eprintln!(
+            "─────────────────────────────────────────────────────────────────────────────────────────"
+        );
         // This test never panics — it's a diagnostic probe. The assertions are
         // in the per-family tests above.
     }
@@ -1330,7 +1414,11 @@ mod tests {
             return;
         }
         let now = Utc::now();
-        let lines = match read_catalog(&catalogs_dir, BaseEconomicObject::PolicyInterestRate, Venue::Kalshi) {
+        let lines = match read_catalog(
+            &catalogs_dir,
+            BaseEconomicObject::PolicyInterestRate,
+            Venue::Kalshi,
+        ) {
             Ok(l) => l,
             Err(e) => {
                 eprintln!("catalog read failed: {e}");

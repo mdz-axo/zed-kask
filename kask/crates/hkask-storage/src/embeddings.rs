@@ -100,14 +100,11 @@ impl EmbeddingStore {
         // SqliteDriver always provides a pool (constructed with one in
         // `SqliteDriver::new`). A `None` return here means the driver
         // is not a SqliteDriver — a logic error that cannot be recovered from.
-        let pool = driver
-            .sqlite_pool()
-            .cloned()
-            .ok_or_else(|| EmbeddingError::Infrastructure(
-                hkask_types::InfrastructureError::database(
-                    "EmbeddingStore requires a SqliteDriver, but sqlite_pool() returned None"
-                )
-            ))?;
+        let pool = driver.sqlite_pool().cloned().ok_or_else(|| {
+            EmbeddingError::Infrastructure(hkask_types::InfrastructureError::database(
+                "EmbeddingStore requires a SqliteDriver, but sqlite_pool() returned None",
+            ))
+        })?;
         Ok(Self { pool, dim, driver })
     }
 
@@ -305,8 +302,7 @@ impl EmbeddingStore {
         })?;
         let mut results = Vec::new();
         for row in rows {
-            let (id, distance, entity_ref, blob, model) =
-                row.map_err(EmbeddingError::Storage)?;
+            let (id, distance, entity_ref, blob, model) = row.map_err(EmbeddingError::Storage)?;
             let vector = Self::decode_vector(&blob, self.dim())?;
             results.push(SimilarityResult {
                 embedding: StoredEmbedding {
@@ -412,9 +408,8 @@ impl EmbeddingStore {
             .pool
             .get()
             .map_err(|e| InfrastructureError::database(e.to_string()))?;
-        let mut stmt = conn.prepare(
-            "SELECT entity_ref, vector FROM embeddings WHERE entity_ref LIKE ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT entity_ref, vector FROM embeddings WHERE entity_ref LIKE ?1")?;
         let rows = stmt.query_map(rusqlite::params![pattern], |row| {
             let entity_ref: String = row.get(0)?;
             let blob: Vec<u8> = row.get(1)?;

@@ -11,9 +11,7 @@
 //! **survived_by_default** (no test available) / **blocked** (test exists but
 //! needs infrastructure not yet available).
 
-use crate::{
-    contract_price_coherence, duration_vs_cmp_tenors, CoherenceMeasure, DurationGap,
-};
+use crate::{CoherenceMeasure, DurationGap, contract_price_coherence, duration_vs_cmp_tenors};
 
 // ── Falsification log entry ────────────────────────────────────────────────
 
@@ -129,10 +127,7 @@ pub struct H3CoherenceResult {
 ///
 /// `pairs` is a slice of (tree_implied, market_price) tuples. `cost_band` is
 /// the transaction-cost band (passed variable).
-pub fn h3_coherence_test(
-    pairs: &[(f64, f64)],
-    cost_band: f64,
-) -> Option<H3CoherenceResult> {
+pub fn h3_coherence_test(pairs: &[(f64, f64)], cost_band: f64) -> Option<H3CoherenceResult> {
     if pairs.is_empty() {
         return None;
     }
@@ -200,13 +195,18 @@ pub fn falsification_log(
                 } else {
                     "Duration far exceeds contract horizons — H2a corroborated (maturity transformation is real)"
                 },
-                if result.clusters_near_contract_horizons { "TRIGGERED" } else { "not triggered" },
+                if result.clusters_near_contract_horizons {
+                    "TRIGGERED"
+                } else {
+                    "not triggered"
+                },
             );
             (status, evidence)
         }
         None => (
             HypothesisStatus::Open,
-            "No duration test run yet. Use h2_duration_test(equity_duration_years) to compute.".into(),
+            "No duration test run yet. Use h2_duration_test(equity_duration_years) to compute."
+                .into(),
         ),
     };
     log.push(FalsificationEntry {
@@ -236,7 +236,11 @@ pub fn falsification_log(
                 } else {
                     "Tree is coherent with market within costs — H3 corroborated"
                 },
-                if result.refuted { "TRIGGERED" } else { "not triggered" },
+                if result.refuted {
+                    "TRIGGERED"
+                } else {
+                    "not triggered"
+                },
             );
             (status, evidence)
         }
@@ -308,12 +312,7 @@ mod tests {
     #[test]
     fn h3_coherence_test_corroborates_within_band() {
         // 4 pairs, all within the 0.05 cost band → coherence rate 100%.
-        let pairs = [
-            (0.60, 0.58),
-            (0.40, 0.42),
-            (0.50, 0.48),
-            (0.70, 0.72),
-        ];
+        let pairs = [(0.60, 0.58), (0.40, 0.42), (0.50, 0.48), (0.70, 0.72)];
         let result = h3_coherence_test(&pairs, 0.05).expect("non-empty");
         assert!(!result.refuted);
         assert_eq!(result.coherent_count, 4);
@@ -323,12 +322,7 @@ mod tests {
     #[test]
     fn h3_coherence_test_refutes_systematic_divergence() {
         // 4 pairs, all diverge beyond the 0.05 cost band → coherence rate 0%.
-        let pairs = [
-            (0.60, 0.40),
-            (0.70, 0.45),
-            (0.50, 0.30),
-            (0.80, 0.50),
-        ];
+        let pairs = [(0.60, 0.40), (0.70, 0.45), (0.50, 0.30), (0.80, 0.50)];
         let result = h3_coherence_test(&pairs, 0.05).expect("non-empty");
         assert!(result.refuted);
         assert_eq!(result.coherent_count, 0);

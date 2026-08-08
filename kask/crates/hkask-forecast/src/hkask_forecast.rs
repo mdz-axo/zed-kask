@@ -556,9 +556,7 @@ pub struct CmpScenarioRiskMeasure {
 /// Returns None when no branch has positive probability (same contract as
 /// `scenario_risk_measure`). Never fabricates.
 #[must_use = "CMP risk measure should feed valuation or coherence analysis"]
-pub fn cmp_scenario_risk_measure(
-    branches: &[CmpBranchOutcome],
-) -> Option<CmpScenarioRiskMeasure> {
+pub fn cmp_scenario_risk_measure(branches: &[CmpBranchOutcome]) -> Option<CmpScenarioRiskMeasure> {
     let raw: Vec<BranchOutcome> = branches
         .iter()
         .map(|b| BranchOutcome {
@@ -655,11 +653,7 @@ pub fn contract_price_coherence(
 // tenor) rather than an unmeasurable confound (decaying contract snapshots).
 
 /// The standard CMP tenors in years (1m/3m/6m = 30/90/180 days).
-pub const CMP_TENORS_YEARS: [f64; 3] = [
-    30.0 / 365.25,
-    90.0 / 365.25,
-    180.0 / 365.25,
-];
+pub const CMP_TENORS_YEARS: [f64; 3] = [30.0 / 365.25, 90.0 / 365.25, 180.0 / 365.25];
 
 /// The labels for the standard CMP tenors.
 pub const CMP_TENOR_LABELS: [&str; 3] = ["1m", "3m", "6m"];

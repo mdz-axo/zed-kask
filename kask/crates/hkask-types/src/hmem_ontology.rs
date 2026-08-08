@@ -95,7 +95,11 @@ impl HMemOntology {
     /// Semantic h_mems are facts: Dublin Core type + subject + source, with
     /// 5W1H dimensions as universal ground. No PKO procedure/step (facts
     /// aren't steps in a process).
-    pub fn semantic(dc_type: impl Into<String>, dc_subject: Vec<String>, dc_source: impl Into<String>) -> Self {
+    pub fn semantic(
+        dc_type: impl Into<String>,
+        dc_subject: Vec<String>,
+        dc_source: impl Into<String>,
+    ) -> Self {
         Self {
             dimensions: vec![Dimension::What.as_str().to_string()],
             dc_type: dc_type.into(),
@@ -118,7 +122,10 @@ impl HMemOntology {
         dc_source: impl Into<String>,
     ) -> Self {
         Self {
-            dimensions: vec![Dimension::How.as_str().to_string(), Dimension::When.as_str().to_string()],
+            dimensions: vec![
+                Dimension::How.as_str().to_string(),
+                Dimension::When.as_str().to_string(),
+            ],
             dc_type: "pko:StepExecution".to_string(),
             dc_subject: Vec::new(),
             dc_source: dc_source.into(),
@@ -138,7 +145,11 @@ impl HMemOntology {
     }
 
     /// Add a domain ontology tag under a namespace.
-    pub fn with_ontology_tag(mut self, namespace: impl Into<String>, concept: impl Into<String>) -> Self {
+    pub fn with_ontology_tag(
+        mut self,
+        namespace: impl Into<String>,
+        concept: impl Into<String>,
+    ) -> Self {
         self.ontology_tags
             .entry(namespace.into())
             .or_default()
@@ -202,7 +213,10 @@ mod tests {
             .with_ontology_tag("fibo", "ROIC")
             .with_ontology_tag("golem", "metaphor");
         assert!(ont.has_ontology("fibo"));
-        assert_eq!(ont.ontology_concepts("fibo"), &["competitive advantage", "ROIC"]);
+        assert_eq!(
+            ont.ontology_concepts("fibo"),
+            &["competitive advantage", "ROIC"]
+        );
         assert_eq!(ont.ontology_concepts("golem"), &["metaphor"]);
         assert!(!ont.has_ontology("omc"));
 
