@@ -1,5 +1,5 @@
 # Scenario Planning Process Manifest
-# ℏKask v0.33.0 — Schwartz scenario planning as convergent PDCA
+# ℏKask v0.33.3 — Schwartz scenario planning as convergent PDCA
 
 manifest:
   id: scenario-builder
@@ -11,7 +11,7 @@ manifest:
     implications, computes convergence, and iterates until scenario set and
     indicators are decision-ready.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

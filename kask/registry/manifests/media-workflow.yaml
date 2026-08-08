@@ -1,5 +1,5 @@
 # Media Workflow — Improvement Kata Process Manifest
-# hKask v0.33.0
+# hKask v0.33.3
 # Convergent PDCA loop: analyze intent → compose DAG → execute → validate → refine
 # Converges when all workflow output URLs are present and accessible.
 
@@ -15,7 +15,7 @@ manifest:
     are missing. Converges when all pipeline steps produce valid, accessible
     output URLs.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

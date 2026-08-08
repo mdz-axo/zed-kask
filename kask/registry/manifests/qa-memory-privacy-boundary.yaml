@@ -28,7 +28,7 @@ manifest:
   id: qa-memory-privacy-boundary
   category: qa-script
   name: QA Memory Privacy Boundary
-  version: 0.33.0
+  version: "0.33.3"
   visibility: Private
   description: >
     Verifies hkask-mcp-memory privacy invariants through the

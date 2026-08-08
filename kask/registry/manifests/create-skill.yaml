@@ -1,5 +1,5 @@
 # Create Skill Process Manifest
-# ℏKask v0.33.0 — kask-native skill creation with ontological grounding
+# ℏKask v0.33.3 — kask-native skill creation with ontological grounding
 # Decomposed into: Research → Describe → Scaffold → Validate → Convergence
 #
 # Overrides the built-in Zed create-skill, which only produces SKILL.md
@@ -42,7 +42,7 @@ manifest:
     the SKILL.md is a discovery-only catalog entry and the implementation
     lives in the registry.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

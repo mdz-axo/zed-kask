@@ -1,5 +1,5 @@
 # Template crate manifest for prompt-enhance skill
-# hKask v0.33.0
+# hKask v0.33.3
 #
 # Streamlined from the former 15-step / 13-template design to a 4-step /
 # 4-template single-pass pipeline. The former 7 typed rewrite variants
@@ -13,7 +13,7 @@
 
 crate:
   name: prompt-enhance
-  version: "0.33.0"
+  version: "0.33.3"
   description: >
     General-purpose prompt enhancement skill for prompts destined for the
     zed-kask platform (skill .j2 templates, agent system prompts, chat/REPL

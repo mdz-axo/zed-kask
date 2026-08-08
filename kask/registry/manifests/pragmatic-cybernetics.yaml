@@ -1,5 +1,5 @@
 # Pragmatic Cybernetics Process Manifest
-# ℏKask v0.33.0 — Loop diagnostics as convergent PDCA
+# ℏKask v0.33.3 — Loop diagnostics as convergent PDCA
 # EXTENDED: Wired variety-check and vsm-map templates (previously orphaned).
 
 manifest:
@@ -12,7 +12,7 @@ manifest:
     computes convergence, and iterates until diagnostic recommendations are
     stable for intervention design.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

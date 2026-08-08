@@ -1,5 +1,5 @@
 # MCP Web — Web Search & Extract Manifest
-# ℏKask v0.33.0 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.3 - A Minimal Viable Container for UserPods
 
 manifest:
   id: prompt-templates/web_extract
@@ -9,7 +9,7 @@ manifest:
     Search and extract information from web sources.
     Supports source filtering, freshness constraints, and relevance ranking.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

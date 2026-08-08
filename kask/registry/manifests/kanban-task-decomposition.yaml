@@ -1,5 +1,5 @@
 # Kanban Task Decomposition Skill
-# ℏKask v0.33.0 — Agent coordination via kanban boards
+# ℏKask v0.33.3 — Agent coordination via kanban boards
 #
 # Decomposes a project description into agile-sized kanban tasks
 # following INVEST criteria (Independent, Negotiable, Valuable,
@@ -16,7 +16,7 @@ manifest:
   id: kanban-task-decomposition
   category: pipeline
   name: Kanban Task Decomposition
-  version: "0.33.0"
+  version: "0.33.3"
   description: >
     Decompose a project description into discrete, independently
     verifiable kanban tasks. Follows INVEST criteria with vertical

@@ -1,5 +1,5 @@
 # Constraint-Forces Recast Process Manifest
-# ℏKask v0.33.0 — Concept generation as convergent PDCA
+# ℏKask v0.33.3 — Concept generation as convergent PDCA
 # Decomposed into: Represent → Violate → Project → Control → Three-Criterion → Compare → Frontier → Convergence
 #
 # Substrate ontology: Popper falsifiability (the three-criterion test is the
@@ -53,7 +53,7 @@ manifest:
     source vocabulary. Different operations — CFR operates within
     translational steps but does not constitute translation.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

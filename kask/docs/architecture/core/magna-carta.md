@@ -2,7 +2,7 @@
 title: "The Magna Carta of hKask"
 audience: [architects, users, agents]
 last_updated: 2026-08-04
-version: "0.33.0"
+version: "0.33.3"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [domain, composition, trust, lifecycle, curation]
@@ -10,7 +10,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 # The Magna Carta of hKask
 
-## ℏKask v0.33.0 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
+## ℏKask v0.33.3 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
 
 **User Sovereignty is Non-Negotiable.**
 
@@ -520,7 +520,7 @@ The Magna Carta is not aspirational. It is enforced:
 
 ## Version
 
-ℏKask v0.33.0 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
+ℏKask v0.33.3 — A Sovereign In-Process Agent Platform for Human Users with AI Tools
 
 *As simple as possible, but no simpler.*
 

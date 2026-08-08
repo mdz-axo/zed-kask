@@ -1,5 +1,5 @@
 # Listening Process Manifest
-# ℏKask v0.33.0 — MAIA v3 listening skill as a retrieve-cite-verify process
+# ℏKask v0.33.3 — MAIA v3 listening skill as a retrieve-cite-verify process
 # Design: kask/docs/explanation/earnings-transcript-analysis-design.md §(b), §(c)
 #
 # No-fabrication design (process-embedded, not instruction-embedded):
@@ -22,7 +22,7 @@ manifest:
     cited substring is present in the referenced chunk. The no-fabrication
     invariant is enforced by the process, not by the prompt.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

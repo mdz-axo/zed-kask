@@ -1,5 +1,5 @@
 # Prompt Injection Diagnostic Process Manifest
-# ℏKask v0.33.0 — On-demand prompt injection analysis (NOT a membrane filter)
+# ℏKask v0.33.3 — On-demand prompt injection analysis (NOT a membrane filter)
 # Template type: Process (FlowDef) — diagnostic skill for prompt injection threats
 
 manifest:
@@ -15,7 +15,7 @@ manifest:
     This is NOT a membrane filter — it is an on-demand diagnostic invoked
     when injection is suspected or as a proactive security assessment.
   functional_role: knowact
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

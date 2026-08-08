@@ -1,5 +1,5 @@
 # Refactor Architecture Process Manifest
-# hKask v0.33.0 — End-to-end architecture refactoring as convergent PDCA
+# hKask v0.33.3 — End-to-end architecture refactoring as convergent PDCA
 #
 # Merged from improve-codebase-architecture (discover phase) + refactor-service-layer (execution phase).
 # Unified flow: explore -> candidates -> deepen -> route -> audit -> strangle -> verify -> converge
@@ -20,7 +20,7 @@ manifest:
     coding-guidelines, pragmatic-semantics, graph-audit, deep-module,
     essentialist, and pragmatic-cybernetics as methodological guidance.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

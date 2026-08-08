@@ -1,5 +1,5 @@
 # Hypothesis Framer Process Manifest
-# ℏKask v0.33.0 — FINER + PICO research framing as convergent PDCA
+# ℏKask v0.33.3 — FINER + PICO research framing as convergent PDCA
 
 manifest:
   id: hypothesis-framer
@@ -14,7 +14,7 @@ manifest:
     and iterates until the question-hypothesis-aims chain is coherent and
     decision-ready.
   functional_role: flowdef
-  version: 0.33.0
+  version: "0.33.3"
   editor: curator-or-human-admin
   visibility: Public
 

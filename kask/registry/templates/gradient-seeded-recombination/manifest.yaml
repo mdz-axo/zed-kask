@@ -1,9 +1,9 @@
 # Template crate manifest for gradient-seeded-recombination skill
-# hKask v0.33.0
+# hKask v0.33.3
 
 crate:
   name: gradient-seeded-recombination
-  version: "0.33.0"
+  version: "0.33.3"
   description: >
     Substrate-analysis process for interdisciplinary concept generation.
     Inventories a set of ontology namespaces (the project's 6 domain-supplement

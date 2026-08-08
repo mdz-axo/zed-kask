@@ -14,7 +14,7 @@ manifest:
   id: qa-media-contract-gate
   category: qa-script
   name: QA Media Server Contract Gate
-  version: 0.33.0
+  version: "0.33.3"
   visibility: Public
   description: >
     Verifies hkask-mcp-media integrity: 26 unit tests plus gallery
