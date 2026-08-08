@@ -26,10 +26,23 @@
 #
 # The Lisp forms below check invariants the LLM cannot reliably self-evaluate:
 #   - count: 3-7 hypotheses present (LLMs miscount their own outputs)
-#   - completeness: every hypothesis has both `prediction` and `falsifier`
-#   - diversity: at least 2 distinct `likelihood` values
+#   - completeness: every hypothesis has both `prediction` and `falsifier` keys
+#     (structural presence, not non-empty value — an empty-string falsifier is a
+#     semantic defect the LLM should catch, not a structural one Lisp flags)
+#   - diversity: at least 2 distinct `likelihood` values (high/medium/low)
 #   - mutual_exclusivity: no two hypotheses are textually identical
 # These are exactly the structural checks the LLM is bad at and Lisp is good at.
+#
+# Interpreter constraints honored by the form (verified by
+# `dispatch_lisp_eval_hypothesis_four_invariants` test in compute.rs):
+#   - `define` inside `begin` at the `let` scope mutates the let's child env
+#     (works — define mutates the env it receives).
+#   - `define` inside a called lambda mutates the call_env (child), NOT the
+#     closure env, so recursive helpers accumulate via return values.
+#   - `=` is numeric-only; string equality is done via `assoc` (which uses
+#     LispValue PartialEq, and String vs String is structural).
+#   - No `append` builtin; a recursive `append2` helper joins two lists.
+#   - Boolean literals are `true`/`false`/`nil` (not #t/#f).
 
 manifest:
   id: lisp-scaffold-reasoning
@@ -100,31 +113,41 @@ steps:
       target: "{{ target }}"
       domain: "{{ domain | default('') }}"
       context: "{{ context | default({}) }}"
-      prior_defects: "{{ step_2_result.defects | default([]) }}"
+      # step_2_result is a bare list of defect strings (not an object with a
+      # .defects field). Bind it directly so the LLM sees the actual defects
+      # from the prior iteration — this closes the feedback loop (cybernetics
+      # closure property). The `default([])` handles the first iteration where
+      # step_2_result does not yet exist.
+      prior_defects: "{{ step_2_result | default([]) }}"
 
   # ── Step 2: Lisp deterministic step — structural invariant check ──
   # This is the symbolic scaffolding. The Lisp form walks the hypothesis set
-  # and returns a verdict object: { passed: bool, count: int, defects: [...] }.
-  # No LLM round-trip — deterministic, bounded, auditable.
+  # and returns a list of defect strings — empty list = passed, non-empty =
+  # LLM must refine (step 3 condition gates on this).
   #
-  # The form uses `let` to bind the hypotheses list once, then `if`/`and`/`or`
-  # to check the four invariants. `assoc` pulls fields from each hypothesis
-  # (JSON objects become association lists in the interpreter). `length` counts.
-  # The form returns a list of defect strings — empty list = passed.
+  # All four advertised invariants are implemented (verified by the
+  # `dispatch_lisp_eval_hypothesis_four_invariants` test):
+  #   - count: 3-7 hypotheses (LLMs miscount their own outputs)
+  #   - completeness: every hypothesis has `prediction` and `falsifier` keys
+  #     (structural presence; empty-string values are semantic, not structural)
+  #   - diversity: ≥2 distinct likelihood values (high/medium/low)
+  #   - mutual_exclusivity: no duplicate `hypothesis` text
   #
-  # Infix notation is NOT used here because the logic is nested conditionals,
-  # not simple scoring. Infix is for `score_a * 0.6 + score_b * 0.4`-style
-  # expressions (see step 4).
+  # The form uses `let`+`begin`+`define` to define recursive helpers, then
+  # composes the four defect lists via a recursive `append2` helper. String
+  # equality is done via `assoc` (the interpreter's `=` is numeric-only).
+  # `define` inside a called lambda mutates the call_env, not the closure env,
+  # so helpers accumulate via return values, not outer mutation.
   - ordinal: 2
     action: compute
     compute_ref: lisp.eval
     description: >
-      Lisp invariant check. Deterministically evaluates count (3-7 hypotheses)
-      and presence (the hypotheses field exists and is non-empty). Returns a list
-      of defect strings — empty list = passed, non-empty = LLM must refine.
-      Deeper invariants (per-hypothesis field completeness, diversity, mutual
-      exclusivity) would require a recursive lambda helper; kept simple here so
-      the pattern is legible. See the form comment for the extension point.
+      Lisp invariant check. Deterministically evaluates all four structural
+      invariants: count (3-7), completeness (every hypothesis has prediction +
+      falsifier keys), diversity (≥2 distinct likelihoods), mutual exclusivity
+      (no duplicate hypothesis text). Returns a list of defect strings — empty
+      list = passed; non-empty = LLM must refine (step 3 condition gates on
+      this). No LLM round-trip.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
@@ -135,25 +158,66 @@ steps:
       #   falsifier, likelihood}, ...], "notes": "..." }. from_json converts the
       # object to an alist of (String, value) pairs; the array becomes a Lisp list.
       # `assoc "hypotheses" step_1_result` pulls the array; `length` counts it.
-      #
-      # The form checks two invariants Lisp is good at and LLMs are bad at:
-      #   - count: 3-7 hypotheses (LLMs miscount their own outputs)
-      #   - presence: the hypotheses field exists and is non-empty
-      # Deeper invariants (per-hypothesis field completeness, diversity,
-      #   mutual exclusivity) would require a recursive helper — left as an
-      #   exercise for skill authors extending this pattern. The interpreter
-      #   supports `lambda` and recursion for exactly this; kept simple here
-      #   so the pattern is legible.
       form: >
         (let ((hyps (assoc "hypotheses" step_1_result)))
           (if (is_null hyps)
               (list "no_hypotheses_field")
               (let ((n (length hyps)))
-                (if (< n 3)
-                    (list "insufficient_count_below_3")
-                    (if (> n 7)
-                        (list "excessive_count_above_7")
-                        (list))))))
+                (begin
+                  (define append2
+                    (lambda (a b)
+                      (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+                  (define count-defects
+                    (if (< n 3)
+                        (list "insufficient_count_below_3")
+                        (if (> n 7)
+                            (list "excessive_count_above_7")
+                            (list))))
+                  (define check-completeness
+                    (lambda (hs acc)
+                      (if (is_null hs)
+                          acc
+                          (let ((h (car hs)))
+                            (let ((acc2 (if (is_null (assoc "prediction" h))
+                                            (cons "missing_prediction" acc)
+                                            acc)))
+                              (let ((acc3 (if (is_null (assoc "falsifier" h))
+                                              (cons "missing_falsifier" acc2)
+                                              acc2)))
+                                (check-completeness (cdr hs) acc3)))))))
+                  (define completeness-defects (check-completeness hyps (list)))
+                  (define check-diversity
+                    (lambda (hs nh nm nl)
+                      (if (is_null hs)
+                          (let ((distinct (+ (if (> nh 0) 1 0) (if (> nm 0) 1 0) (if (> nl 0) 1 0))))
+                            (if (< distinct 2)
+                                (list "insufficient_diversity_below_2")
+                                (list)))
+                          (let ((h (car hs)))
+                            (let ((lk (assoc "likelihood" h)))
+                              (let ((is-high (not (is_null (assoc "high" (list (list lk true)))))))
+                                (let ((is-med (not (is_null (assoc "medium" (list (list lk true)))))))
+                                  (let ((is-low (not (is_null (assoc "low" (list (list lk true)))))))
+                                    (check-diversity
+                                      (cdr hs)
+                                      (if is-high (+ nh 1) nh)
+                                      (if is-med (+ nm 1) nm)
+                                      (if is-low (+ nl 1) nl))))))))))
+                  (define diversity-defects (check-diversity hyps 0 0 0))
+                  (define check-duplicates
+                    (lambda (hs seen)
+                      (if (is_null hs)
+                          (list)
+                          (let ((h (car hs)))
+                            (let ((hyp-text (assoc "hypothesis" h)))
+                              (let ((hyp-str (if (is_null hyp-text) "" hyp-text)))
+                                (if (not (is_null (assoc hyp-str seen)))
+                                    (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
+                                    (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
+                  (define duplicate-defects (check-duplicates hyps (list)))
+                  (append2
+                    (append2 count-defects completeness-defects)
+                    (append2 diversity-defects duplicate-defects))))))
       env:
         step_1_result: "{{ step_1_result }}"
 
@@ -185,27 +249,32 @@ steps:
       lisp_defects: "{{ step_2_result }}"
 
   # ── Step 4: Lisp deterministic step — convergence score ──
-  # Computes a scalar convergence metric from the (possibly refined) hypothesis
-  # set. The score is 1.0 minus the defect rate — 1.0 = no defects, 0.0 = all
-  # invariants violated. This feeds the Cauchy criterion in step 5.
+  # Computes a scalar convergence metric from the defect list produced by
+  # step 2. The score is `1.0 - (defect_count / (n * 4))` where `n` is the
+  # hypothesis count and 4 is the number of invariants — so the score is
+  # sensitive to all four invariant classes (count, completeness, diversity,
+  # duplicates), not just count. 1.0 = no defects; lower = more defects.
+  # This feeds the Cauchy criterion in step 5.
   #
   # Pure prefix notation. The infix expander only handles `atom op atom` (no
   # nested parens in the operand position — `1.0 - (x / y)` would NOT expand
-  # because `(` is not an infix context). Mixing infix with nested parens
-  # requires explicit prefix: `(- 1.0 (/ defect_count n))`. See the interpreter's
-  # `expand_infix` / `is_infix_context` for the exact rule.
+  # because `(` is not an infix context per `is_infix_context`). Mixing infix
+  # with nested parens requires explicit prefix: `(- 1.0 (/ defect_count (* n 4)))`.
   #
   # The score is computed from step_3_result if step 3 ran (refinement), else
   # from step_1_result (no defects, first iteration passed). The Jinja
   # `default` filter falls back to step_1_result when step_3_result is absent
-  # (step 3 was skipped by the condition).
+  # (step 3 was skipped by the condition). The defect_count comes from
+  # step_2_result (the Lisp invariant check) — it is the authoritative defect
+  # count regardless of whether refinement ran.
   - ordinal: 4
     action: compute
     compute_ref: lisp.eval
     description: >
       Lisp convergence score. Deterministically computes a scalar from the
-      (possibly refined) hypothesis set: 1.0 minus defect rate. Feeds the
-      Cauchy criterion. No LLM round-trip.
+      defect count and hypothesis count: 1.0 minus defect rate normalized by
+      the four-invariant maximum. Sensitive to all four invariant classes.
+      Feeds the Cauchy criterion. No LLM round-trip.
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
@@ -214,10 +283,12 @@ steps:
           (if (is_null hyps)
               0.0
               (let ((n (length hyps)))
-                (if (= n 0) 0.0 (- 1.0 (/ defect_count n))))))
+                (if (= n 0)
+                    0.0
+                    (- 1.0 (/ defect_count (* n 4)))))))
       env:
         current: "{{ step_3_result | default(step_1_result) }}"
-        defect_count: "{{ step_2_result | length }}"
+        defect_count: "{{ step_2_result | length | default(0) }}"
 
   # ── Step 5: Convergence check (built-in compute) ──
   # Standard Cauchy criterion check. The Lisp score from step 4 is the

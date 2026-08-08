@@ -93,13 +93,117 @@ steps:
       admitted_target: "{{ step_1_result.refined_target | default(target, true) }}"
       domain: "{{ domain | default('') }}"
       context: "{{ context | default({}) }}"
+      # Carry prior Lisp defects forward so the LLM repairs cumulatively across
+      # loop iterations. step_3_result is the bare defect list from the Lisp
+      # invariant check (not an object with a .defects field).
+      prior_defects: "{{ step_3_result | default([]) }}"
 
+  # ── Step 3: Lisp deterministic step — hypothesis structural invariant check ──
+  # The LLM generates 3-7 hypotheses in step 2, but LLMs are unreliable at
+  # counting their own outputs, checking every hypothesis has both a prediction
+  # and a falsifier, forcing diversity, and detecting duplicates. This Lisp step
+  # deterministically checks all four invariants (count, completeness, diversity,
+  # mutual exclusivity) — the same four-invariant form used in
+  # lisp-scaffold-reasoning, validated by the
+  # `dispatch_lisp_eval_hypothesis_four_invariants` test in compute.rs.
+  #
+  # Returns a list of defect strings — empty = passed, non-empty = step 4
+  # (counterfactual generation) is gated on the LLM repairing the defects first.
+  # This is the symbolic-neural scaffolding pattern: deterministic Lisp prunes
+  # the LLM's probabilistic hypothesis output before the expensive counterfactual
+  # step runs. No point constructing counterfactuals for structurally invalid
+  # hypotheses (missing falsifier, duplicate, insufficient diversity).
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Lisp hypothesis invariant check. Deterministically evaluates all four
+      structural invariants on the Chamberlin hypothesis set: count (3-7),
+      completeness (every hypothesis has prediction + falsifier keys), diversity
+      (>=2 distinct likelihoods), mutual exclusivity (no duplicate hypothesis
+      text). Returns a list of defect strings. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((hyps (assoc "hypotheses" step_2_result)))
+          (if (is_null hyps)
+              (list "no_hypotheses_field")
+              (let ((n (length hyps)))
+                (begin
+                  (define append2
+                    (lambda (a b)
+                      (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+                  (define count-defects
+                    (if (< n 3)
+                        (list "insufficient_count_below_3")
+                        (if (> n 7)
+                            (list "excessive_count_above_7")
+                            (list))))
+                  (define check-completeness
+                    (lambda (hs acc)
+                      (if (is_null hs)
+                          acc
+                          (let ((h (car hs)))
+                            (let ((acc2 (if (is_null (assoc "prediction" h))
+                                            (cons "missing_prediction" acc)
+                                            acc)))
+                              (let ((acc3 (if (is_null (assoc "falsifier" h))
+                                              (cons "missing_falsifier" acc2)
+                                              acc2)))
+                                (check-completeness (cdr hs) acc3)))))))
+                  (define completeness-defects (check-completeness hyps (list)))
+                  (define check-diversity
+                    (lambda (hs nh nm nl)
+                      (if (is_null hs)
+                          (let ((distinct (+ (if (> nh 0) 1 0) (if (> nm 0) 1 0) (if (> nl 0) 1 0))))
+                            (if (< distinct 2)
+                                (list "insufficient_diversity_below_2")
+                                (list)))
+                          (let ((h (car hs)))
+                            (let ((lk (assoc "likelihood" h)))
+                              (let ((is-high (not (is_null (assoc "high" (list (list lk true)))))))
+                                (let ((is-med (not (is_null (assoc "medium" (list (list lk true)))))))
+                                  (let ((is-low (not (is_null (assoc "low" (list (list lk true)))))))
+                                    (check-diversity
+                                      (cdr hs)
+                                      (if is-high (+ nh 1) nh)
+                                      (if is-med (+ nm 1) nm)
+                                      (if is-low (+ nl 1) nl))))))))))
+                  (define diversity-defects (check-diversity hyps 0 0 0))
+                  (define check-duplicates
+                    (lambda (hs seen)
+                      (if (is_null hs)
+                          (list)
+                          (let ((h (car hs)))
+                            (let ((hyp-text (assoc "hypothesis" h)))
+                              (let ((hyp-str (if (is_null hyp-text) "" hyp-text)))
+                                (if (not (is_null (assoc hyp-str seen)))
+                                    (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
+                                    (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
+                  (define duplicate-defects (check-duplicates hyps (list)))
+                  (append2
+                    (append2 count-defects completeness-defects)
+                    (append2 diversity-defects duplicate-defects))))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+
+  # ── Step 4: LLM probabilistic step — counterfactual generation, gated on Lisp verdict ──
+  # Only runs if the Lisp hypothesis check passed (no structural defects). If
+  # the Lisp step found defects, the loop (step 8) re-enters at step 2
+  # (hypothesize) so the LLM repairs the defects before counterfactuals are
+  # constructed. This gates the expensive counterfactual step on structural
+  # validity — no point constructing counterfactuals for hypotheses missing a
+  # falsifier or with insufficient diversity.
+  - ordinal: 4
     action: select
+    condition: "{{ step_3_result | length == 0 }}"
     description: >
       Pearl/Halpern counterfactual generation. For each surviving hypothesis
       construct the minimal do(not X) counterfactual, hold confounders fixed,
-      derive the testable consequence, flag irreducible causes.
+      derive the testable consequence, flag irreducible causes. Gated on the
+      Lisp hypothesis invariant check (step 3) — only runs when the hypothesis
+      set is structurally valid.
     renderer: minijinja
     template_ref: falsifiability/falsifiability-counterfactual
     gas_cap: 4096
@@ -108,8 +212,9 @@ steps:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
       admitted_target: "{{ step_1_result.refined_target | default(target, true) }}"
       domain: "{{ domain | default('') }}"
+      hypothesis_defects: "{{ step_3_result | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: select
     description: >
       Platt discriminating-test design. Design tests that rule out at least one
@@ -121,10 +226,10 @@ steps:
     timeout_seconds: 60
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
-      counterfactuals: "{{ step_3_result.counterfactuals | default([]) }}"
+      counterfactuals: "{{ step_4_result.counterfactuals | default([]) }}"
       domain: "{{ domain | default('') }}"
 
-  - ordinal: 5
+  - ordinal: 6
     action: select
     description: >
       Apply evidence and eliminate. Hypotheses whose falsifiable predictions
@@ -138,10 +243,10 @@ steps:
     timeout_seconds: 60
     input_mapping:
       hypotheses: "{{ step_2_result.hypotheses | default([]) }}"
-      discriminating_tests: "{{ step_4_result.discriminating_tests | default([]) }}"
+      discriminating_tests: "{{ step_5_result.discriminating_tests | default([]) }}"
       observations: "{{ observations | default([]) }}"
 
-  - ordinal: 6
+  - ordinal: 7
     action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
@@ -156,19 +261,24 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: >
       Re-enter the elimination cycle if convergence is not met. On re-entry,
       carry the prior iteration's eliminated set so elimination is cumulative
-      and the materiality guard can detect a plateau.
+      and the materiality guard can detect a plateau. If the Lisp hypothesis
+      check (step 3) found defects, re-enter at step 2 (hypothesize) so the LLM
+      repairs the structural defects before counterfactuals are constructed.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
-      loop_target: "{{ 2 }}"
+      # If hypothesis check failed, re-enter at hypothesize (step 2); else
+      # re-enter at counterfactual (step 4) for convergence-driven refinement.
+      loop_target: "{{ 2 if (step_3_result | default([]) | length > 0) else 4 }}"
       # Push the elimination quality signal into kata_hypotenuse so the Cauchy
-      # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
+      # criterion can detect when the iterates have stopped moving. When step 6
+      # was skipped (hypothesis defects), fall back to 0.0 so the loop continues.
+      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(0.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

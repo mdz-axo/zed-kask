@@ -42,7 +42,8 @@ and gated to `category: skill`.
 
 ## The lisp.eval Pattern
 
-The manifest's step 2 is the canonical example:
+The manifest's step 2 is the canonical example. It implements all four
+structural invariants via recursive Lisp helpers:
 
 ```yaml
 - ordinal: 2
@@ -53,17 +54,23 @@ The manifest's step 2 is the canonical example:
       (let ((hyps (assoc "hypotheses" step_1_result)))
         (if (is_null hyps)
             (list "no_hypotheses_field")
-            (begin
-              (define n (length hyps))
-              (define defects (list))
-              (if (< n 3) (define defects (cons "insufficient_count_below_3" defects)) defects)
-              (if (> n 7) (define defects (cons "excessive_count_above_7" defects)) defects)
-              defects)))
+            (let ((n (length hyps)))
+              (begin
+                (define append2
+                  (lambda (a b)
+                    (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+                (define count-defects ...)
+                (define check-completeness (lambda (hs acc) ...))
+                (define check-diversity (lambda (hs nh nm nl) ...))
+                (define check-duplicates (lambda (hs seen) ...))
+                (append2 (append2 count-defects completeness-defects)
+                         (append2 diversity-defects duplicate-defects))))))
     env:
       step_1_result: "{{ step_1_result }}"
 ```
 
 Key points:
+
 - `form:` is a static YAML field (auditable in code review), not a
   runtime-emitted string (the paper's `<lisp>` tag).
 - `env:` binds prior step results into the Lisp environment via Jinja
@@ -72,6 +79,32 @@ Key points:
   as `step_2_result` and consumed by downstream steps.
 - Step 3's `condition: "{{ step_2_result | length > 0 }}"` gates the LLM
   refinement on the Lisp verdict — the symbolic→neural feedback loop.
+- Step 1's `prior_defects: "{{ step_2_result | default([]) }}"` carries the
+  defect list forward across loop iterations — this closes the feedback loop.
+  The binding is to the bare list (not `step_2_result.defects`, which would be
+  undefined on a list result).
+
+### Interpreter constraints honored by the form
+
+These constraints are non-obvious and were verified by the
+`dispatch_lisp_eval_hypothesis_four_invariants` test in
+`kask/crates/hkask-templates/src/compute.rs`:
+
+- `define` inside `begin` at the `let` scope mutates the `let`'s child env
+  (works — `define` mutates the env it receives, which is the `let` env).
+- `define` inside a _called lambda_ mutates the call_env (a child of the
+  closure env), NOT the closure env itself. Recursive helpers must accumulate
+  via return values, not by mutating an outer variable.
+- `=` is numeric-only (`num_eq` calls `as_f64`). String equality is done via
+  `assoc` — `(assoc "high" (list (list lk true)))` returns non-nil iff `lk`
+  is the string `"high"` (because `assoc` uses `LispValue::PartialEq`, and
+  `String` vs `String` is structural equality).
+- There is no `append` builtin. A recursive `append2` helper joins two lists.
+- Boolean literals are `true`/`false`/`nil` (not `#t`/`#f`).
+- `assoc` tests for key _presence_, not non-empty value. An empty-string
+  `falsifier` is a present key — it is a semantic defect the LLM should catch,
+  not a structural one Lisp flags. To flag empty values, add a `length` check
+  on the `assoc` result.
 
 ## Constraints
 

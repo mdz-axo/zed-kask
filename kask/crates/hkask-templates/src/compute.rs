@@ -1318,6 +1318,164 @@ mod tests {
         let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
         assert!(defects.is_empty(), "valid set should have no defects, got: {defects:?}");
+
+        // Case 2: insufficient count (2 hypotheses). Expect count defect.
+        let count_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "hypotheses": [
+                        {"rank": 1, "hypothesis": "A", "prediction": "p1", "falsifier": "f1", "likelihood": "high"},
+                        {"rank": 2, "hypothesis": "B", "prediction": "p2", "falsifier": "f2", "likelihood": "low"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &count_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects.iter().any(|d| d == "insufficient_count_below_3"),
+            "count<3 should flag insufficient_count_below_3, got: {defects:?}"
+        );
+
+        // Case 3: missing falsifier on one hypothesis. Expect missing_falsifier.
+        let completeness_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "hypotheses": [
+                        {"rank": 1, "hypothesis": "A", "prediction": "p1", "falsifier": "", "likelihood": "high"},
+                        {"rank": 2, "hypothesis": "B", "prediction": "p2", "falsifier": "f2", "likelihood": "medium"},
+                        {"rank": 3, "hypothesis": "C", "prediction": "p3", "falsifier": "f3", "likelihood": "low"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &completeness_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        // Note: empty string "" is a present-but-empty falsifier. The assoc check
+        // tests for key presence, not non-empty value. An empty-string falsifier
+        // is a semantic defect the LLM should catch, not a structural one Lisp
+        // flags. To test the structural case, omit the key entirely.
+        assert!(
+            !defects.iter().any(|d| d == "missing_falsifier"),
+            "present-but-empty falsifier is not a structural defect, got: {defects:?}"
+        );
+
+        // Case 3b: falsifier key entirely absent. Expect missing_falsifier.
+        let missing_key_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "hypotheses": [
+                        {"rank": 1, "hypothesis": "A", "prediction": "p1", "likelihood": "high"},
+                        {"rank": 2, "hypothesis": "B", "prediction": "p2", "falsifier": "f2", "likelihood": "medium"},
+                        {"rank": 3, "hypothesis": "C", "prediction": "p3", "falsifier": "f3", "likelihood": "low"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &missing_key_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects.iter().any(|d| d == "missing_falsifier"),
+            "absent falsifier key should flag missing_falsifier, got: {defects:?}"
+        );
+
+        // Case 4: insufficient diversity (all likelihoods "high"). Expect diversity defect.
+        let diversity_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "hypotheses": [
+                        {"rank": 1, "hypothesis": "A", "prediction": "p1", "falsifier": "f1", "likelihood": "high"},
+                        {"rank": 2, "hypothesis": "B", "prediction": "p2", "falsifier": "f2", "likelihood": "high"},
+                        {"rank": 3, "hypothesis": "C", "prediction": "p3", "falsifier": "f3", "likelihood": "high"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &diversity_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects.iter().any(|d| d == "insufficient_diversity_below_2"),
+            "all-high likelihoods should flag insufficient_diversity_below_2, got: {defects:?}"
+        );
+
+        // Case 5: duplicate hypothesis text. Expect duplicate_hypothesis.
+        let dup_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "hypotheses": [
+                        {"rank": 1, "hypothesis": "same", "prediction": "p1", "falsifier": "f1", "likelihood": "high"},
+                        {"rank": 2, "hypothesis": "same", "prediction": "p2", "falsifier": "f2", "likelihood": "medium"},
+                        {"rank": 3, "hypothesis": "C", "prediction": "p3", "falsifier": "f3", "likelihood": "low"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &dup_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects.iter().any(|d| d == "duplicate_hypothesis"),
+            "duplicate hypothesis text should flag duplicate_hypothesis, got: {defects:?}"
+        );
+    }
+
+    /// Validates the PICO completeness check form for the hypothesis-framer
+    /// skill. Checks that all four PICO keys (population, intervention,
+    /// comparison, outcome) are present and non-null.
+    #[test]
+    fn dispatch_lisp_eval_pico_completeness() {
+        let form = r#"
+          (begin
+            (define append2
+              (lambda (a b)
+                (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+            (define check-key
+              (lambda (key label)
+                (let ((val (assoc key step_2_result)))
+                  (if (is_null val)
+                      (list label)
+                      (list)))))
+            (append2
+              (append2 (check-key "population" "missing_population")
+                       (check-key "intervention" "missing_intervention"))
+              (append2 (check-key "comparison" "missing_comparison")
+                       (check-key "outcome" "missing_outcome"))))
+        "#;
+        // Case 1: all four PICO elements present. Expect empty defect list.
+        let valid_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "population": {"description": "adults with condition X"},
+                    "intervention": {"description": "drug Y 50mg daily"},
+                    "comparison": {"description": "placebo"},
+                    "outcome": {"description": "symptom reduction at 12 weeks"}
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(defects.is_empty(), "valid PICO set should have no defects, got: {defects:?}");
+
+        // Case 2: missing comparison and outcome. Expect two defects.
+        let missing_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "population": {"description": "adults with condition X"},
+                    "intervention": {"description": "drug Y 50mg daily"}
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &missing_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert_eq!(defects.len(), 2, "missing comparison + outcome should give 2 defects, got: {defects:?}");
+        assert!(defects.iter().any(|d| d == "missing_comparison"), "should flag missing_comparison");
+        assert!(defects.iter().any(|d| d == "missing_outcome"), "should flag missing_outcome");
     }
 
     #[test]

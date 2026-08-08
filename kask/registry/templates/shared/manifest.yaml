@@ -1,17 +1,35 @@
 # Shared template crate manifest
-# hKask v0.32.0
+# hKask v0.33.0
 #
 # The shared convergence-check template has been removed. All skills now use
 # the deterministic `kata.convergence_check` compute primitive instead of an
-# LLM self-grade convergence-check template. This file is kept for the crate
-# structure; if no shared templates remain, the crate can be deleted.
+# LLM self-grade convergence-check template. The shared Lisp invariant macros
+# (lisp-invariants.j2) provide reusable `lisp.eval` form strings for skills
+# that need deterministic structural checks (count, completeness, diversity,
+# duplicates) on LLM-generated structured output.
 
 crate:
   name: shared
-  version: "0.32.0"
+  version: "0.33.0"
   description: >
-    Shared templates used across multiple skill PDCA flows. The old
-    convergence-check template has been removed — all skills now use the
-    deterministic `kata.convergence_check` compute primitive.
+    Shared templates used across multiple skill PDCA flows. Contains reusable
+    Lisp invariant-check macros (lisp-invariants.j2) for `compute_ref: lisp.eval`
+    steps — skills `{% include %}` the macro file and call the named macro to
+    emit a validated Lisp `form:` string. The old convergence-check template has
+    been removed — all skills now use the deterministic `kata.convergence_check`
+    compute primitive.
 
-templates: []
+templates:
+  - id: shared/lisp-invariants
+    name: "Reusable Lisp invariant-check macros"
+    path: lisp-invariants.j2
+    type: RenderAct
+    description: >
+      Jinja macro library emitting Lisp `form:` strings for `lisp.eval` compute
+      steps. Macros: `hypothesis_four_invariants` (count + completeness +
+      diversity + duplicates for hypothesis sets), `field_completeness` (check
+      named keys present on every item in a list), `count_in_range` (list length
+      within bounds). Validated by the
+      `dispatch_lisp_eval_hypothesis_four_invariants` test in
+      kask/crates/hkask-templates/src/compute.rs. Skills `{% include %}` this
+      file and call the macro in their `form:` field.

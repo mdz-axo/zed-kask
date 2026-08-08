@@ -93,14 +93,66 @@ steps:
       finer_result: "{{ step_1_result | default({}) }}"
       population_hints: "{{ population_hints | default('') }}"
 
+  # ── Step 3: Lisp deterministic step — PICO structural completeness check ──
+  # The LLM self-assesses PICO completeness in step 2's `pico_completeness`
+  # field, but LLMs are unreliable at checking their own output for structural
+  # completeness (they often report "complete" when a field is empty or
+  # generic). This Lisp step deterministically verifies that all four PICO
+  # keys (population, intervention, comparison, outcome) are present and
+  # non-null in step_2_result. Returns a list of defect strings — empty =
+  # passed, non-empty = step 4 (operationalize) is gated on the LLM repairing
+  # the missing elements first.
+  #
+  # This is the symbolic-neural scaffolding pattern from lisp-scaffold-reasoning
+  # applied to PICO: deterministic Lisp prunes the LLM's probabilistic PICO
+  # output before the expensive operationalize step runs.
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Lisp PICO completeness check. Deterministically verifies all four PICO
+      elements (population, intervention, comparison, outcome) are present and
+      non-null in the PICO step's output. Returns a list of defect strings.
+      No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (begin
+          (define append2
+            (lambda (a b)
+              (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+          (define check-key
+            (lambda (key label)
+              (let ((val (assoc key step_2_result)))
+                (if (is_null val)
+                    (list label)
+                    (list)))))
+          (append2
+            (append2 (check-key "population" "missing_population")
+                     (check-key "intervention" "missing_intervention"))
+            (append2 (check-key "comparison" "missing_comparison")
+                     (check-key "outcome" "missing_outcome"))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+
+  # ── Step 4: LLM probabilistic step — operationalize, gated on Lisp verdict ──
+  # Only runs if the Lisp PICO check passed (no missing elements). If the Lisp
+  # step found defects, the loop (step 6) re-enters at step 2 (PICO) so the LLM
+  # can repair the missing elements. This gates the expensive operationalize
+  # step on structural validity — no point deriving hypotheses from an
+  # incomplete PICO frame.
+  - ordinal: 4
     action: select
+    condition: "{{ step_3_result | length == 0 }}"
     description: >
       Single cognitive act: derive a testable hypothesis, formulate the null
       hypothesis, classify type, operationalize into research aims and
       objectives, assess testability against the specified objectives, verify
       five-link alignment, and recheck feasibility. Merged step — because you
-      cannot assess testability without knowing the objectives.
+      cannot assess testability without knowing the objectives. Gated on the
+      Lisp PICO completeness check (step 3) — only runs when all four PICO
+      elements are structurally present.
     renderer: minijinja
     template_ref: hypothesis-framer/hypothesis-operationalize
     gas_cap: 8000
@@ -110,8 +162,9 @@ steps:
       pico_elements: "{{ step_2_result | default({}) }}"
       domain: "{{ domain }}"
       finer_result: "{{ step_1_result | default({}) }}"
+      pico_defects: "{{ step_3_result | default([]) }}"
 
-  - ordinal: 4
+  - ordinal: 5
     action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
@@ -126,20 +179,25 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 5
+  - ordinal: 6
     action: loop
     description: >
       Re-enter hypothesis-framer cycle if convergence is not met. NOTE: FINER (step 1)
       is skipped on re-entry — the topic has already been evaluated as FINER-viable on
       the first pass; re-running it every iteration is wasteful (mirrors superforecasting's
-      triage-skip). PICO (step 2) and operationalize (step 3) are where blockers live, and
+      triage-skip). PICO (step 2) and operationalize (step 4) are where blockers live, and
       finer_result persists in context for operationalize to read. If FINER itself is the
       blocker (a dimension < 4), the loop cannot fix it -> escalate to human.
+      If the Lisp PICO check (step 3) found defects, the loop re-enters at step 2
+      (PICO) so the LLM repairs the missing elements before operationalize runs.
     input_mapping:
-      loop_target: "{{ 2 }}"
+      # If PICO check failed, re-enter at PICO (step 2); else re-enter at
+      # operationalize (step 4) for convergence-driven refinement.
+      loop_target: "{{ 2 if (step_3_result | default([]) | length > 0) else 4 }}"
       # Push the operationalize quality signal into kata_hypotenuse so the Cauchy
-      # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_3_result.convergence_metric | default(1.0) }}"
+      # criterion can detect when the iterates have stopped moving. When step 4
+      # was skipped (PICO defects), fall back to 0.0 so the loop continues.
+      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(0.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

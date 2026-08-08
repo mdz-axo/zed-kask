@@ -2578,7 +2578,6 @@ convergence:
             r#"
 manifest:
   id: populate-last-sub
-templates: []
 steps:
   - ordinal: 1
     action: select

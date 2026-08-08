@@ -1,0 +1,140 @@
+{# Shared Lisp invariant-check forms for reuse across skill manifests.
+   # hKask v0.33.0
+   #
+   # These macros emit Lisp `form:` strings suitable for use in
+   # `compute_ref: lisp.eval` steps. They are validated by the
+   # `dispatch_lisp_eval_hypothesis_four_invariants` test in
+   # kask/crates/hkask-templates/src/compute.rs.
+   #
+   # Usage in a manifest step:
+   #
+   #   - ordinal: N
+   #     action: compute
+   #     compute_ref: lisp.eval
+   #     input_mapping:
+   #       form: >
+   #         {% from "shared/lisp-invariants.j2" import hypothesis_four_invariants %}
+   #         {{ hypothesis_four_invariants() }}
+   #       env:
+   #         step_1_result: "{{ step_1_result }}"
+   #
+   # Interpreter constraints (documented in lisp-scaffold-reasoning/SKILL.md):
+   #   - `define` inside `begin` at `let` scope mutates the let env (works).
+   #   - `define` inside a called lambda mutates the call_env (child), NOT the
+   #     closure env — recursive helpers accumulate via return values.
+   #   - `=` is numeric-only; string equality via `assoc` (PartialEq on String).
+   #   - No `append` builtin; `append2` helper joins lists.
+   #   - Boolean literals: `true`/`false`/`nil` (not #t/#f).
+   #   - `assoc` tests key presence, not non-empty value.
+   #}
+
+{# hypothesis_four_invariants: check count (3-7), completeness (prediction +
+   falsifier keys present), diversity (>=2 distinct likelihoods), mutual
+   exclusivity (no duplicate hypothesis text).
+   #}
+{% macro hypothesis_four_invariants() %}
+(let ((hyps (assoc "hypotheses" step_1_result)))
+  (if (is_null hyps)
+      (list "no_hypotheses_field")
+      (let ((n (length hyps)))
+        (begin
+          (define append2
+            (lambda (a b)
+              (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+          (define count-defects
+            (if (< n 3)
+                (list "insufficient_count_below_3")
+                (if (> n 7)
+                    (list "excessive_count_above_7")
+                    (list))))
+          (define check-completeness
+            (lambda (hs acc)
+              (if (is_null hs)
+                  acc
+                  (let ((h (car hs)))
+                    (let ((acc2 (if (is_null (assoc "prediction" h))
+                                    (cons "missing_prediction" acc)
+                                    acc)))
+                      (let ((acc3 (if (is_null (assoc "falsifier" h))
+                                      (cons "missing_falsifier" acc2)
+                                      acc2)))
+                        (check-completeness (cdr hs) acc3)))))))
+          (define completeness-defects (check-completeness hyps (list)))
+          (define check-diversity
+            (lambda (hs nh nm nl)
+              (if (is_null hs)
+                  (let ((distinct (+ (if (> nh 0) 1 0) (if (> nm 0) 1 0) (if (> nl 0) 1 0))))
+                    (if (< distinct 2)
+                        (list "insufficient_diversity_below_2")
+                        (list)))
+                  (let ((h (car hs)))
+                    (let ((lk (assoc "likelihood" h)))
+                      (let ((is-high (not (is_null (assoc "high" (list (list lk true)))))))
+                        (let ((is-med (not (is_null (assoc "medium" (list (list lk true)))))))
+                          (let ((is-low (not (is_null (assoc "low" (list (list lk true)))))))
+                            (check-diversity
+                              (cdr hs)
+                              (if is-high (+ nh 1) nh)
+                              (if is-med (+ nm 1) nm)
+                              (if is-low (+ nl 1) nl))))))))))
+          (define diversity-defects (check-diversity hyps 0 0 0))
+          (define check-duplicates
+            (lambda (hs seen)
+              (if (is_null hs)
+                  (list)
+                  (let ((h (car hs)))
+                    (let ((hyp-text (assoc "hypothesis" h)))
+                      (let ((hyp-str (if (is_null hyp-text) "" hyp-text)))
+                        (if (not (is_null (assoc hyp-str seen)))
+                            (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
+                            (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
+          (define duplicate-defects (check-duplicates hyps (list)))
+          (append2
+            (append2 count-defects completeness-defects)
+            (append2 diversity-defects duplicate-defects))))))
+{% endmacro %}
+
+{# field_completeness: check that every item in a list has the named keys
+   present. Parameters: items_key (the key in step_N_result holding the array),
+   required_keys (a Lisp list of string keys to check on each item).
+   Returns a list of "missing_<key>" defect strings.
+   #}
+{% macro field_completeness(items_key, required_keys) %}
+(let ((items (assoc {{ items_key }} step_1_result)))
+  (if (is_null items)
+      (list "no_items_field")
+      (begin
+        (define append2
+          (lambda (a b)
+            (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+        (define check-one
+          (lambda (item keys acc)
+            (if (is_null keys)
+                acc
+                (let ((k (car keys)))
+                  (let ((acc2 (if (is_null (assoc k item))
+                                  (cons (concat "missing_" k) acc)
+                                  acc)))
+                    (check-one item (cdr keys) acc2))))))
+        (define check-all
+          (lambda (items keys acc)
+            (if (is_null items)
+                acc
+                (check-all (cdr items) keys (append2 acc (check-one (car items) keys (list)))))))
+        (check-all items {{ required_keys }} (list)))))
+{% endmacro %}
+
+{# count_in_range: check that a list's length is within [min, max].
+   Returns a list with a defect string if out of range, empty if in range.
+   #}
+{% macro count_in_range(items_key, min, max) %}
+(let ((items (assoc {{ items_key }} step_1_result)))
+  (if (is_null items)
+      (list "no_items_field")
+      (let ((n (length items)))
+        (if (< n {{ min }})
+            (list "insufficient_count_below_{{ min }}")
+            (if (> n {{ max }})
+                (list "excessive_count_above_{{ max }}")
+                (list))))))
+{% endmacro %}
