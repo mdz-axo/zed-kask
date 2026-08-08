@@ -1092,7 +1092,10 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert!(defects.is_empty(), "valid set should have no defects, got: {defects:?}");
+        assert!(
+            defects.is_empty(),
+            "valid set should have no defects, got: {defects:?}"
+        );
 
         // Case 2: insufficient count (2 hypotheses). Expect count defect.
         let count_input = serde_json::json!({
@@ -1173,7 +1176,9 @@ mod tests {
         let result = dispatch_compute("lisp.eval", &diversity_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
         assert!(
-            defects.iter().any(|d| d == "insufficient_diversity_below_2"),
+            defects
+                .iter()
+                .any(|d| d == "insufficient_diversity_below_2"),
             "all-high likelihoods should flag insufficient_diversity_below_2, got: {defects:?}"
         );
 
@@ -1231,7 +1236,10 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert!(defects.is_empty(), "valid PICO set should have no defects, got: {defects:?}");
+        assert!(
+            defects.is_empty(),
+            "valid PICO set should have no defects, got: {defects:?}"
+        );
 
         // Case 2: missing comparison and outcome. Expect two defects.
         let missing_input = serde_json::json!({
@@ -1245,9 +1253,19 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &missing_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert_eq!(defects.len(), 2, "missing comparison + outcome should give 2 defects, got: {defects:?}");
-        assert!(defects.iter().any(|d| d == "missing_comparison"), "should flag missing_comparison");
-        assert!(defects.iter().any(|d| d == "missing_outcome"), "should flag missing_outcome");
+        assert_eq!(
+            defects.len(),
+            2,
+            "missing comparison + outcome should give 2 defects, got: {defects:?}"
+        );
+        assert!(
+            defects.iter().any(|d| d == "missing_comparison"),
+            "should flag missing_comparison"
+        );
+        assert!(
+            defects.iter().any(|d| d == "missing_outcome"),
+            "should flag missing_outcome"
+        );
     }
 
     /// Validates the grill-me question-level coverage check form.
@@ -1301,7 +1319,10 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert!(defects.is_empty(), "3 distinct levels should pass, got: {defects:?}");
+        assert!(
+            defects.is_empty(),
+            "3 distinct levels should pass, got: {defects:?}"
+        );
 
         // Case 2: only 1 distinct level. Expect defect.
         let narrow_input = serde_json::json!({
@@ -1318,7 +1339,11 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &narrow_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert_eq!(defects.len(), 1, "1 distinct level should give 1 defect, got: {defects:?}");
+        assert_eq!(
+            defects.len(),
+            1,
+            "1 distinct level should give 1 defect, got: {defects:?}"
+        );
         assert!(defects[0].as_str().unwrap() == "insufficient_level_coverage_below_3");
     }
 
@@ -1359,7 +1384,10 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert!(defects.is_empty(), "valid tasks should have no defects, got: {defects:?}");
+        assert!(
+            defects.is_empty(),
+            "valid tasks should have no defects, got: {defects:?}"
+        );
 
         // Case 2: one task missing acceptance_criteria. Expect 1 defect.
         let missing_input = serde_json::json!({
@@ -1375,7 +1403,11 @@ mod tests {
         });
         let result = dispatch_compute("lisp.eval", &missing_input).unwrap();
         let defects = result.as_array().expect("result should be a list");
-        assert_eq!(defects.len(), 1, "missing AC should give 1 defect, got: {defects:?}");
+        assert_eq!(
+            defects.len(),
+            1,
+            "missing AC should give 1 defect, got: {defects:?}"
+        );
         assert!(defects.iter().any(|d| d == "missing_acceptance_criteria"));
     }
 

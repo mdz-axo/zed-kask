@@ -241,16 +241,18 @@ steps:
     action: loop
     description: >
       Re-enter GSR cycle if convergence is not met. Routes
-      step_8_result.next_prior_focus back to step 2 as
+      step_6_result.priority_ranking[0].location back to step 2 as
       prior_iteration.next_prior_focus, along with the prior report's
       lessons_learned and pattern_signatures, closing the feedback loop.
+      The convergence signal is field_coverage from the Map step (step 3);
+      Cauchy convergence fires when coverage stops changing across the window.
     input_mapping:
       loop_target: "{{ 2 }}"
       prior_iteration:
         lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_6_result.pattern_signatures | default([]) }}"
         next_prior_focus: "{{ step_6_result.priority_ranking[0].location | default('') }}"
-      convergence_signal: "{{ step_8_result.hypotenuse }}"
+      convergence_signal: "{{ step_3_result.field_coverage }}"
 
 error_handling:
   on_gas_exceeded: abort

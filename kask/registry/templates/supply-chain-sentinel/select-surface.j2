@@ -18,7 +18,6 @@ Select surface: {{ target_surface | default('all') }}
 Discovered manifests: {{ discovered_manifests | default([]) }}
 Existing supply-chain regressions: {{ existing_regressions | default([]) }}
 Defense layers to verify: dependency_pinning, registry_trust, sbom_presence, license_compatibility
-Convergence baseline: {{ convergence_metric | default(1.0) }}
 
 {# Evidence: concrete file paths only — no fabricated manifest findings #}
 {# Source citations: crates.io advisory database, cargo-deny docs, deny.toml spec #}

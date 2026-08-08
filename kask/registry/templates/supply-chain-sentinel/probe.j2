@@ -101,6 +101,6 @@ CONSTRAINTS (same as report — P5 minimalism, P8 evidence integrity, P12 host):
 
 CONVERGENCE INDEPENDENT: Convergence-check is a separate phase; this
 probe phase does not compute metric (that is the `compute` step's
-responsibility (`compute_ref: kata.convergence_check`)). This maintains
+responsibility (the `lisp.eval` compute step pushes the signal, and the ConvergenceTracker gates convergence)). This maintains
 pipeline decomposition (P5 minimalism — each phase answers one 5W1H
 dimension clearly).

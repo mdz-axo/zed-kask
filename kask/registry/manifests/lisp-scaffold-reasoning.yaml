@@ -300,7 +300,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "{{ step_4_result | default(0.0) }}"
+      convergence_signal: "{{ step_4_result }}"
 
   # ── Step 7: Final report ──
   # Runs after convergence (the loop action exits when converged). Synthesizes

@@ -52,12 +52,14 @@ manifest_path: <path-to-Cargo.toml-or-workspace-root>
 ```
 
 **Expected output:**
+
 - `select-surface` step (ordinal 1): discovers `Cargo.toml`, `Cargo.lock`, `deny.toml`
 - `probe` step (ordinal 2): reads manifest entries, checks version pinning, registry trust
 - `report` step (ordinal 3): proposes `surface: supply-chain` regression entries (if any findings)
-- `convergence-check` step (ordinal 4, `compute` action with `compute_ref: kata.convergence_check`): computes the Cauchy convergence metric
+- `loop` step (ordinal 4): re-enters the audit cycle if convergence is not met; the `convergence_signal:` binding (finding count from `step_3_result`) feeds the `ConvergenceTracker`'s Cauchy check
 
 **Validation:**
+
 1. The skill produces JSON output (not an error)
 2. `manifest_paths` includes `Cargo.toml` and `Cargo.lock`
 3. `defense_layers_present` includes at least `dependency_pinning` and `sbom_presence`
@@ -83,12 +85,14 @@ workspace_context: <optional-workspace-path>
 ```
 
 **Expected output:**
+
 - `select-signal` step (ordinal 1): discovers `hkask.*` and `reg.*` span sources
 - `classify-threat` step (ordinal 2): classifies observed signals (may find zero threats if baseline is clean)
 - `emit-regulation` step (ordinal 3): proposes `surface: runtime` regression entries (if any threats)
 - `convergence-check` step (ordinal 4, `compute` action): computes the Cauchy convergence metric
 
 **Validation:**
+
 1. The skill produces JSON output (not an error)
 2. `signal_sources` includes at least one `reg.*` or `hkask.*` target
 3. `reg.skill.runtime-posture-monitor` spans are emitted (query via the in-process `reg_query_spans` tool)
@@ -109,6 +113,7 @@ target_path: <crate-or-workspace-path>
 ```
 
 **Expected output:**
+
 - `select-surface` step (ordinal 1): discovers Rust source files, maps defense-layer coverage
 - `audit` step (ordinal 2): agent-coordinated MCP tool execution — checks for unsafe blocks, panics, auth bypass, crypto misuse
 - `report` step (ordinal 3): synthesizes findings into a structured report with verdict (Pass/Conditional/Fail)
@@ -117,6 +122,7 @@ target_path: <crate-or-workspace-path>
 - `loop` step (ordinal 6): re-enters the audit cycle if convergence is not met
 
 **Validation:**
+
 1. The skill produces JSON output (not an error)
 2. `defense_layers` includes at least 4 of the 7 layers
 3. Every finding includes concrete evidence (file path, line number, code snippet)
@@ -192,23 +198,30 @@ recommended as a pre-release checklist, not a CI gate.
 
 ## Footnotes
 
-[^owasp-llm]: OWASP. (2025). *OWASP Top 10 for Large Language Model Applications*. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
+[^owasp-llm]:
+    OWASP. (2025). _OWASP Top 10 for Large Language Model Applications_. OWASP Foundation. https://owasp.org/www-project-top-10-for-large-language-model-applications/
     Cited for the security-threat taxonomy the security skills are designed to probe.
 
-[^mitre-atlas]: MITRE. (2024). *MITRE ATLAS (Adversarial Threat Landscape for AI Systems)*. MITRE Corporation. https://atlas.mitre.org/
+[^mitre-atlas]:
+    MITRE. (2024). _MITRE ATLAS (Adversarial Threat Landscape for AI Systems)_. MITRE Corporation. https://atlas.mitre.org/
     Cited for the adversarial-attack taxonomy underlying the kali-audit and runtime-posture-monitor skills.
 
-[^nist-ssdf]: NIST. (2022). *Secure Software Development Framework (SSDF) — SP 800-218A*. National Institute of Standards and Technology. https://csrc.nist.gov/pubs/sp/800/218/a/final
+[^nist-ssdf]:
+    NIST. (2022). _Secure Software Development Framework (SSDF) — SP 800-218A_. National Institute of Standards and Technology. https://csrc.nist.gov/pubs/sp/800/218/a/final
     Cited as the supply-chain and secure-development framework the supply-chain-sentinel fixture validates against.
 
-[^bach-bolton]: Bach, J., & Bolton, M. (2019). *Rapid Software Testing*. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
+[^bach-bolton]:
+    Bach, J., & Bolton, M. (2019). _Rapid Software Testing_. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
     Cited for the exploratory-testing methodology guiding manual smoke-test fixture validation.
 
-[^hendrickson-explore]: Hendrickson, E. (2013). *Explore It!: Reduce Risk and Increase Confidence with Exploratory Testing*. Pragmatic Bookshelf. https://pragprog.com/titles/ehxta/explore-it/
+[^hendrickson-explore]:
+    Hendrickson, E. (2013). _Explore It!: Reduce Risk and Increase Confidence with Exploratory Testing_. Pragmatic Bookshelf. https://pragprog.com/titles/ehxta/explore-it/
     Cited for the automation-from-exploratory-charters design choice in the future smoke-test harness.
 
-[^mcp-spec]: Anthropic. (2024). *Model Context Protocol Specification*. Anthropic PBC. https://modelcontextprotocol.io/specification
+[^mcp-spec]:
+    Anthropic. (2024). _Model Context Protocol Specification_. Anthropic PBC. https://modelcontextprotocol.io/specification
     Cited for the MCP protocol the in-process ManifestExecutor (D1) implements.
 
-[^bach-bolton-smoke]: Bach, J., & Bolton, M. (2019). *Rapid Software Testing*. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
+[^bach-bolton-smoke]:
+    Bach, J., & Bolton, M. (2019). _Rapid Software Testing_. Satisfice, Inc. https://www.satisfice.com/rapid-software-testing
     Cited for the rationale that smoke testing catches integration issues mechanical layer validation cannot.

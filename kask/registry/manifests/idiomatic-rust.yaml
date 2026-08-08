@@ -219,7 +219,7 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       iteration_focus: "{{ step_3_result.refinement_directives | default([]) | tojson }}"
-      convergence_signal: "{{ step_5_result.hypotenuse }}"
+      convergence_signal: "{{ step_4_result }}"
 
 error_handling:
   on_gas_exceeded: abort

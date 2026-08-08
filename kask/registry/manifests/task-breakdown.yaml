@@ -285,13 +285,10 @@ steps:
       back to DECOMPOSE (step 2) with directives as focused, task-addressable
       improvement targets. v0.31.0: explicitly routes refinement_directives back
       to decompose (was implicit, depended on manifest executor preserving
-      cross-iteration step results). Carries the prior convergence_metric forward
-      so the next convergence check's materiality guard can detect a stable-but-
-      unconverged plan. Each iteration narrows the gap.
+      cross-iteration step results). Each iteration narrows the gap.
     input_mapping:
       loop_target: "{{ 2 }}"
       convergence_signal: "{{ step_6_result }}"
-      prior_metric: "{{ step_7_result.hypotenuse | default(1.0) }}"
       refinement_directives: "{{ step_4_result.refinement_directives | default([]) }}"
 
 error_handling:

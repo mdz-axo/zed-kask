@@ -251,10 +251,10 @@ steps:
     description: Re-enter maintenance cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the Lisp-computed convergence score (step 3) into kata_hypotenuse
+      # Push the Lisp-computed convergence score (step 3) into convergence_signal
       # so the Cauchy criterion can detect when the coverage gaps stop changing.
       # No default — if step 3 failed, the error should surface.
-      kata_hypotenuse: "{{ step_3_result }}"
+      convergence_signal: "{{ step_3_result }}"
 
   - ordinal: 11
     action: loop
@@ -262,11 +262,10 @@ steps:
     description: Re-enter logic audit cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 4 }}"
-      # Push the Lisp-computed convergence score (step 9) into kata_hypotenuse
+      # Push the Lisp-computed convergence score (step 9) into convergence_signal
       # so the Cauchy criterion can detect when the proposal confidence stops changing.
       # No default — if step 9 failed, the error should surface.
-      kata_hypotenuse: "{{ step_9_result }}"
-      convergence_metric: "{{ step_11_result.hypotenuse }}"
+      convergence_signal: "{{ step_9_result }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -1051,7 +1051,7 @@ fn append_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
                 return Err(LispError::TypeError {
                     expected: "list".into(),
                     actual: type_of(arg),
-                })
+                });
             }
         }
     }
@@ -1081,7 +1081,7 @@ fn concat_fn(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, L
                 return Err(LispError::TypeError {
                     expected: "string".into(),
                     actual: type_of(arg),
-                })
+                });
             }
         }
     }
@@ -1324,10 +1324,7 @@ mod tests {
             json!([])
         );
         // No args → empty list
-        assert_eq!(
-            eval_sandboxed("(append)", &json!({})).unwrap(),
-            json!([])
-        );
+        assert_eq!(eval_sandboxed("(append)", &json!({})).unwrap(), json!([]));
         // Non-list arg errors
         assert!(eval_sandboxed("(append (list 1) 2)", &json!({})).is_err());
     }
@@ -1371,10 +1368,7 @@ mod tests {
             json!("abc")
         );
         // No args → empty string
-        assert_eq!(
-            eval_sandboxed("(concat)", &json!({})).unwrap(),
-            json!("")
-        );
+        assert_eq!(eval_sandboxed("(concat)", &json!({})).unwrap(), json!(""));
         // Non-string arg errors
         assert!(eval_sandboxed("(concat \"a\" 1)", &json!({})).is_err());
     }
@@ -2325,7 +2319,8 @@ mod tests {
 
     #[test]
     fn lora_training_three_findings_scores_three() {
-        let env = json!({"step_3_result": {"findings": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}]}});
+        let env =
+            json!({"step_3_result": {"findings": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}]}});
         let result = eval_sandboxed(lora_training_findings_count_form(), &env).unwrap();
         let score = result.as_f64().expect("score is a float");
         assert!((score - 3.0).abs() < 1e-9);

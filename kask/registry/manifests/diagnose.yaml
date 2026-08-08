@@ -232,10 +232,11 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 3 if (step_4_result | default([]) | length > 0) else 5 }}"
-      # Push the fix quality signal into convergence_signal so the Cauchy
-      # criterion can detect when the iterates have stopped moving.
-      # When step 6 was skipped (hypothesis defects), fall back to 0.0.
-      convergence_signal: "{{ step_6_result.convergence_metric | default(0.0) }}"
+      # The convergence signal is the hypothesis-defect count from the Lisp
+      # invariant check (step 4). Cauchy converges when the defect count
+      # stabilizes (ideally at 0 — structurally sound hypotheses). Step 4
+      # always runs, so the signal is always present; no default needed.
+      convergence_signal: "{{ step_4_result | default([]) | length }}"
 
 error_handling:
   on_gas_exceeded: abort

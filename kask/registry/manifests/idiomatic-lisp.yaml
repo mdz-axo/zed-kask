@@ -119,7 +119,7 @@ steps:
     description: Re-enter design cycle if the critique score has not stabilized.
     input_mapping:
       loop_target: "{{ 2 }}"
-      convergence_signal: "{{ step_3_result.critique_score | default(0.0) }}"
+      convergence_signal: "{{ step_3_result.critique_score }}"
 
 error_handling:
   on_gas_exceeded: abort

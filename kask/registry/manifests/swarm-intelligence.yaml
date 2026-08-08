@@ -392,7 +392,7 @@ steps:
       iteration_log: "{{ iteration_log | default([]) }}"
       failed_edits: "{{ failed_edits | default([]) }}"
       influence_scores: "{{ influence_scores | default({}) }}"
-      d: "{{ step_6_result.convergence_metric | default(0.0) }}"
+      d: "{{ step_6_result.convergence_metric }}"
       task_success: "{{ step_6_result.task_success | default(none) }}"
       deficit_class: "{{ step_2_result.deficit_class | default('') }}"
       decisions: "{{ step_4_result | default({}) }}"
@@ -446,12 +446,15 @@ steps:
         lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
         next_focus: "{{ step_6_result.next_focus | default('') }}"
         second_order: "{{ step_9_result | default({}) }}"
-      convergence_signal: "{{ step_7_result.hypotenuse }}"
-      iteration_log: "{{ step_8_result.iteration_log | default([]) }}"
-      failed_edits: "{{ step_8_result.failed_edits | default([]) }}"
-      influence_scores: "{{ step_8_result.influence_scores | default({}) }}"
+      # swarm.converge_accumulate (step 7) produces iteration_log, failed_edits,
+      # influence_scores, fault_count — not hypotenuse. The convergence signal
+      # is the swarm-state distance d from step 6 (the CHECK step).
+      convergence_signal: "{{ step_6_result.convergence_metric }}"
+      iteration_log: "{{ step_7_result.iteration_log | default([]) }}"
+      failed_edits: "{{ step_7_result.failed_edits | default([]) }}"
+      influence_scores: "{{ step_7_result.influence_scores | default({}) }}"
       second_order: "{{ step_9_result | default({}) }}"
-      fault_count: "{{ step_8_result.fault_count | default({}) }}"
+      fault_count: "{{ step_7_result.fault_count | default({}) }}"
 
 error_handling:
   on_gas_exceeded: abort
