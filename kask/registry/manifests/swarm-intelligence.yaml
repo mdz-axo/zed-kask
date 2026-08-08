@@ -446,7 +446,7 @@ steps:
         lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
         next_focus: "{{ step_6_result.next_focus | default('') }}"
         second_order: "{{ step_9_result | default({}) }}"
-      convergence_signal: "{{ step_7_result.hypotenuse | default(1.0) }}"
+      convergence_signal: "{{ step_7_result.hypotenuse }}"
       iteration_log: "{{ step_8_result.iteration_log | default([]) }}"
       failed_edits: "{{ step_8_result.failed_edits | default([]) }}"
       influence_scores: "{{ step_8_result.influence_scores | default({}) }}"

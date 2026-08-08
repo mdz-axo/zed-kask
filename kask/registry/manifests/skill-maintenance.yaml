@@ -252,7 +252,7 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       convergence_signal: "{{ step_3_result }}"
-      convergence_metric: "{{ step_4_result.hypotenuse | default(1.0) }}"
+      convergence_metric: "{{ step_4_result.hypotenuse }}"
 
   - ordinal: 11
     action: loop
@@ -261,7 +261,7 @@ steps:
     input_mapping:
       loop_target: "{{ 4 }}"
       convergence_signal: "{{ step_10_result }}"
-      convergence_metric: "{{ step_11_result.hypotenuse | default(1.0) }}"
+      convergence_metric: "{{ step_11_result.hypotenuse }}"
 
 error_handling:
   on_gas_exceeded: abort

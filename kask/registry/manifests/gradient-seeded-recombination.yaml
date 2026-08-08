@@ -250,7 +250,7 @@ steps:
         lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_6_result.pattern_signatures | default([]) }}"
         next_prior_focus: "{{ step_6_result.priority_ranking[0].location | default('') }}"
-      convergence_signal: "{{ step_8_result.hypotenuse | default(1.0) }}"
+      convergence_signal: "{{ step_8_result.hypotenuse }}"
 
 error_handling:
   on_gas_exceeded: abort
