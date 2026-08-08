@@ -6,8 +6,9 @@
 //! Remove) collapsed behind an ellipsis PopoverMenu so the button row
 //! never overflows the text column on narrow dock panels.
 //!
-//! Pattern reference: `agent_panel.rs:5674` (PopoverMenu + IconButton
-//! Ellipsis + ContextMenu::build + WeakEntity handler capture).
+//! Pattern reference: `agent_panel.rs`, `render_panel_options_menu`
+//! (PopoverMenu + IconButton Ellipsis + ContextMenu::build + WeakEntity
+//! handler capture).
 
 use gpui::{Context, SharedString, Window, WeakEntity};
 use marketplace_ui_common::MarketplaceCard;
