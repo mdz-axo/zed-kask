@@ -150,10 +150,27 @@ steps:
 
   - ordinal: 6
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from step 5's actual frontier-update
+      output. The convergence signal is frontier churn: the count of variants
+      dominated this round (length of dominated). Lower = more converged (a
+      stable frontier dominates few new variants). If dominated is absent,
+      the form errors (no silent default), surfacing a broken frontier step.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(length (assoc \"dominated\" step_5_result))"
+      env:
+        step_5_result: "{{ step_5_result }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 7
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -163,7 +180,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: >
       Re-enter evolution cycle from step 1 (sample trajectories from the
@@ -173,7 +190,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_6_result }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -132,10 +132,47 @@ steps:
 
   - ordinal: 6
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE RECOMMENDATION CONFIDENCE GAP: Deterministic Lisp
+      computation that turns the synthesize-recommendations output into
+      a scalar convergence signal. Lower = more converged (fewer
+      low-confidence recommendations). The score is the fraction of
+      recommendations with confidence < 0.5; an empty recommendation set
+      scores 1.0 (no recommendations = not converged). No
+      `default(1.0)` fallback: missing fields surface as nil and are
+      guarded explicitly.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((recs (assoc "recommendations" step_5_result)))
+          (if (is_null recs)
+              1.0
+              (let ((n (length recs)))
+                (if (= n 0)
+                    1.0
+                    (begin
+                      (define count-low
+                        (lambda (rs acc)
+                          (if (is_null rs)
+                              acc
+                              (let ((conf (assoc "confidence" (car rs))))
+                                (count-low
+                                  (cdr rs)
+                                  (if (numberp conf)
+                                      (if (< conf 0.5) (+ acc 1) acc)
+                                      (+ acc 1)))))))
+                      (let ((low (count-low recs 0)))
+                        (/ low n)))))))
+      env:
+        step_5_result: "{{ step_5_result }}"
+
+  - ordinal: 7
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -145,7 +182,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: render
     description: >
       SURFACE the Wardley Map quadrant chart and recommendations as a markdown
@@ -162,14 +199,16 @@ steps:
       recommendations: "{{ step_5_result.recommendations }}"
       rationale: "{{ step_5_result.rationale }}"
 
-  - ordinal: 8
+  - ordinal: 9
     action: loop
     gas_cap: 200
     timeout_seconds: 10
     description: Re-enter cycle if convergence not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+      # Push the confidence gap from the lisp.eval step (ordinal 6) into
+      # kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_6_result }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -199,7 +199,7 @@ steps:
                               (cdr hs)
                               (if is-high (+ nh 1) nh)
                               (if is-med (+ nm 1) nm)
-                              (if is-low (+ nl 1) nl)))))))
+                              (if is-low (+ nl 1) nl))))))
                   (define diversity-defects (check-diversity hyps 0 0 0))
                   (define check-duplicates
                     (lambda (hs seen)
@@ -210,7 +210,7 @@ steps:
                                 (hyp-str (if (is_null hyp-text) "" hyp-text)))
                             (if (not (is_null (assoc hyp-str seen)))
                                 (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
-                                (check-duplicates (cdr hs) (cons (list hyp-str true) seen))))))))
+                                (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))
                   (define duplicate-defects (check-duplicates hyps (list)))
                   (append
                     count-defects completeness-defects

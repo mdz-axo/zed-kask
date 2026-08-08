@@ -177,10 +177,60 @@ steps:
 
   - ordinal: 8
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE REFACTOR GAP: Deterministic Lisp computation that turns
+      the verify step's output into a scalar convergence signal.
+      Lower = more converged (fewer shallow modules, fewer violations,
+      fewer incomplete checklist items). The score sums: count of
+      depth_test_results with verdict "shallow", length of
+      dependency_check.violations, length of p6_p7_p8_compliance.violations,
+      and count of checklist items with status "not_done"; the sum is
+      capped at 1.0. When step 7 was skipped (decision !=
+      proceed_to_refactor), step_7_result is nil and the score is 1.0
+      (not converged — no verification happened). No `default(1.0)`
+      fallback: the nil-guard is explicit and surfaces the skip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (if (is_null step_7_result)
+            1.0
+            (let ((depth (assoc "depth_test_results" step_7_result))
+                  (dep-check (assoc "dependency_check" step_7_result))
+                  (p68 (assoc "p6_p7_p8_compliance" step_7_result))
+                  (checklist (assoc "checklist" step_7_result)))
+              (begin
+                (define count-shallow
+                  (lambda (ds acc)
+                    (if (is_null ds)
+                        acc
+                        (let ((verdict (assoc "verdict" (car ds))))
+                          (count-shallow
+                            (cdr ds)
+                            (if (string= verdict "shallow") (+ acc 1) acc))))))
+                (define count-not-done
+                  (lambda (cs acc)
+                    (if (is_null cs)
+                        acc
+                        (let ((st (assoc "status" (car cs))))
+                          (count-not-done
+                            (cdr cs)
+                            (if (string= st "not_done") (+ acc 1) acc))))))
+                (let ((shallow (count-shallow (if (is_null depth) (list) depth) 0))
+                      (dep-v (let ((v (assoc "violations" dep-check))) (if (is_null v) 0 (length v))))
+                      (p68-v (let ((v (assoc "violations" p68))) (if (is_null v) 0 (length v))))
+                      (nd (count-not-done (if (is_null checklist) (list) checklist) 0)))
+                  (let ((raw (+ shallow dep-v p68-v nd)))
+                    (if (> raw 1) 1.0 raw))))))
+      env:
+        step_7_result: "{{ step_7_result }}"
+
+  - ordinal: 9
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -190,12 +240,14 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 9
+  - ordinal: 10
     action: loop
     description: Re-enter architecture refactoring cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_8_result.convergence_metric | default(1.0) }}"
+      # Push the refactor gap from the lisp.eval step (ordinal 8) into
+      # kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_8_result }}"
 
 error_handling:
   on_gas_exceeded: abort

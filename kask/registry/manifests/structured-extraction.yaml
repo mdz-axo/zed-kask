@@ -88,10 +88,38 @@ steps:
 
   - ordinal: 4
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE EXTRACTION GAP: Deterministic Lisp computation that turns
+      the schema-mapping output into a scalar convergence signal.
+      Lower = more converged (higher coverage, fewer unresolved fields).
+      The score is `(1 - coverage_ratio) + unresolved_penalty` where
+      unresolved_penalty is `min(unresolved_count / total_fields, 0.5)`.
+      A complete extraction with no unresolved fields scores 0.0; a sparse
+      one approaches 1.0. No `default(1.0)` fallback: if the mapping step
+      omitted `field_coverage`, `assoc` returns nil and the score falls
+      back to 1.0 via the nil-guard — a real measurement ("no coverage
+      reported"), surfaced rather than masked.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((cov (assoc "field_coverage" step_3_result))
+              (unresolved (assoc "unresolved_fields" step_3_result)))
+          (let ((ratio (if (is_null cov) 0.0 (let ((r (assoc "coverage_ratio" cov))) (if (numberp r) r 0.0))))
+                (total (if (is_null cov) 1 (let ((t (assoc "total_fields" cov))) (if (numberp t) t 1))))
+                (uc (if (is_null unresolved) 0 (length unresolved))))
+            (let ((penalty (if (> total 0) (/ uc total) 0)))
+              (let ((penalty (if (> penalty 0.5) 0.5 penalty)))
+                (+ (- 1.0 ratio) penalty)))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+
+  - ordinal: 5
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -101,12 +129,14 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 5
+  - ordinal: 6
     action: loop
     description: Re-enter extraction cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(1.0) }}"
+      # Push the extraction gap from the lisp.eval step (ordinal 4) into
+      # kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_4_result }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -153,10 +153,37 @@ steps:
 
   - ordinal: 5
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE DIAGRAM QUALITY SCORE: Deterministic Lisp computation
+      that turns the evaluate step's output into a scalar convergence
+      signal. Lower = more converged (lower weighted total, fewer
+      refinement directives). The score is `weighted_total +
+      0.05 * directive_count` — the weighted total is the LLM-assessed
+      defect score (0 = perfect diagram); each refinement directive is
+      an unmet criterion the generate step must fix, so a small penalty
+      per directive makes the signal sensitive to whether the directives
+      are actually being resolved across iterations. No `default(1.0)`
+      fallback: a missing `weighted_total` surfaces as nil and is guarded
+      to 1.0 ("no score reported" = not converged), not masked.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((wt (assoc "weighted_total" step_4_result))
+              (directives (assoc "refinement_directives" step_4_result)))
+          (let ((score (if (numberp wt) wt 1.0))
+                (dc (if (is_null directives) 0 (length directives))))
+            (let ((raw (+ score (* dc 0.05))))
+              (if (> raw 1.0) 1.0 raw))))
+      env:
+        step_4_result: "{{ step_4_result }}"
+
+  - ordinal: 6
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -166,7 +193,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 6
+  - ordinal: 7
     action: select
     description: >
       WRITE the diagram to docs/diagrams/{type}-{target}.md. Wraps the
@@ -186,11 +213,11 @@ steps:
       evaluation_result: "{{ step_4_result }}"
       related_docs: "{{ related_docs | default([]) }}"
 
-  - ordinal: 7
+  - ordinal: 8
     action: render
     description: >
       SURFACE the finalized diataxis-diagram markdown (containing the fenced
-      ```mermaid block) as the cascade's final output. The write step (step 6)
+      ```mermaid block) as the cascade's final output. The write step (step 7)
       produces {file_path, file_content, description_paragraph}; without this
       render step, extract_final_step_result returns that JSON object and the
       model must discover the file_content field. This render step flattens it
@@ -202,10 +229,10 @@ steps:
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
-      file_content: "{{ step_6_result.file_content }}"
-      file_path: "{{ step_6_result.file_path }}"
+      file_content: "{{ step_7_result.file_content }}"
+      file_path: "{{ step_7_result.file_path }}"
 
-  - ordinal: 8
+  - ordinal: 9
     action: loop
     description: >
       If convergence not met (metric > 0.15) and refinement directives
@@ -213,7 +240,9 @@ steps:
       focused improvement targets. Each iteration narrows the gap.
     input_mapping:
       loop_target: "{{ 3 }}"
-      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
+      # Push the diagram quality score from the lisp.eval step (ordinal 5)
+      # into kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_5_result }}"
 
 error_handling:
   on_gas_exceeded: abort

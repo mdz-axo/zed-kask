@@ -307,13 +307,38 @@ steps:
       domain: "code: {{ goal | default('codebase') }}"
 
   # === CONVERGENCE — mode-specific ===
+  # Code mode: lisp.eval computes a structural score from step 3's
+  # quality_findings count, then kata.convergence_check runs on it.
   - ordinal: 13
     action: compute
     condition: "{{ mode | default('code') == 'code' }}"
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE CODE-ANALYSIS GAP (code mode): Deterministic Lisp
+      computation that turns the code-analyze step's output into a
+      scalar convergence signal. Lower = more converged (fewer quality
+      findings). The score is `min(quality_findings_count / 10, 1.0)` —
+      capped at 1.0 so a flood of findings doesn't overflow. No
+      `default(1.0)` fallback: a missing `quality_findings` field
+      surfaces as nil and is guarded to 0 ("no findings reported"),
+      which is a real measurement, not a phantom 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
     input_mapping:
-      hypotenuse: 0.0
+      form: >
+        (let ((findings (assoc "quality_findings" step_3_result)))
+          (let ((n (if (is_null findings) 0 (length findings))))
+            (let ((raw (/ n 10)))
+              (if (> raw 1.0) 1.0 raw))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+
+  - ordinal: 14
+    action: compute
+    condition: "{{ mode | default('code') == 'code' }}"
+    compute_ref: kata.convergence_check
+    description: "CHECK CONVERGENCE (code mode): Cauchy criterion. Deterministic."
+    input_mapping:
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -323,7 +348,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 14
+  - ordinal: 15
     action: select
     condition: "{{ mode == 'semantic' }}"
     description: >
@@ -341,13 +366,62 @@ steps:
       structural_issues: "{{ step_7_result }}"
       domain: "{{ domain }}"
 
-  - ordinal: 15
+  # Semantic mode: lisp.eval computes a structural score from the
+  # semantic-report's blockers array length (deterministic count),
+  # replacing the phantom LLM-generated convergence_metric.
+  - ordinal: 16
+    action: compute
+    condition: "{{ mode == 'semantic' }}"
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE SEMANTIC-REPORT GAP (semantic mode): Deterministic Lisp
+      computation that turns the semantic-report step's output into a
+      scalar convergence signal. Lower = more converged (fewer blockers).
+      The score is `min(blockers_count / 5, 1.0)` — capped at 1.0. No
+      `default(1.0)` fallback: a missing `blockers` field surfaces as
+      nil and is guarded to 0 ("no blockers reported"), which is a real
+      measurement, not a phantom 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((blockers (assoc "blockers" step_15_result)))
+          (let ((n (if (is_null blockers) 0 (length blockers))))
+            (let ((raw (/ n 5)))
+              (if (> raw 1.0) 1.0 raw))))
+      env:
+        step_15_result: "{{ step_15_result }}"
+
+  # Dual mode: lisp.eval computes a structural score from the dual
+  # semantic-report's blockers array length.
+  - ordinal: 17
+    action: compute
+    condition: "{{ mode == 'dual' }}"
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE DUAL-REPORT GAP (dual mode): Deterministic Lisp
+      computation that turns the dual semantic-report step's (ordinal 12)
+      output into a scalar convergence signal. Lower = more converged
+      (fewer blockers). The score is `min(blockers_count / 5, 1.0)` —
+      capped at 1.0. No `default(1.0)` fallback: a missing `blockers`
+      field surfaces as nil and is guarded to 0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((blockers (assoc "blockers" step_12_result)))
+          (let ((n (if (is_null blockers) 0 (length blockers))))
+            (let ((raw (/ n 5)))
+              (if (> raw 1.0) 1.0 raw))))
+      env:
+        step_12_result: "{{ step_12_result }}"
+
+  - ordinal: 18
     action: compute
     condition: "{{ mode == 'dual' }}"
     compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
+    description: "CHECK CONVERGENCE (dual mode): Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -357,32 +431,35 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 16
+  - ordinal: 19
     action: loop
     condition: "{{ mode | default('code') == 'code' }}"
     description: Re-enter code mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_metric: "{{ step_13_result.convergence_metric | default(1.0) }}"
-      kata_hypotenuse: "{{ step_13_result.convergence_metric | default(1.0) }}"
+      # Push the code-analysis gap from the lisp.eval step (ordinal 13)
+      # into kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_13_result }}"
 
-  - ordinal: 17
+  - ordinal: 20
     action: loop
     condition: "{{ mode == 'semantic' }}"
     description: Re-enter semantic mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 5 }}"
-      convergence_metric: "{{ step_14_result.convergence_metric | default(1.0) }}"
-      kata_hypotenuse: "{{ step_14_result.convergence_metric | default(1.0) }}"
+      # Push the semantic-report gap from the lisp.eval step (ordinal 16)
+      # into kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_16_result }}"
 
-  - ordinal: 18
+  - ordinal: 21
     action: loop
     condition: "{{ mode == 'dual' }}"
     description: Re-enter dual mode cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_metric: "{{ step_15_result.convergence_metric | default(1.0) }}"
-      kata_hypotenuse: "{{ step_15_result.convergence_metric | default(1.0) }}"
+      # Push the dual-report gap from the lisp.eval step (ordinal 17)
+      # into kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_17_result }}"
 
 error_handling:
   on_gas_exceeded: abort

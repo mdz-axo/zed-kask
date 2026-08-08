@@ -137,10 +137,41 @@ steps:
 
   - ordinal: 7
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE SCENARIO GAP: Deterministic Lisp computation that turns
+      the quality-gate output into a scalar convergence signal.
+      Lower = more converged (higher minimum quality dimension).
+      The score is `(1 - min(divergence, consistency, coverage)) +
+      parametric_penalty` where parametric_penalty is 0.15 when
+      parametric_variation_flag is true (the gate's own warning that the
+      scenarios are dial-level variants, not distinct worlds). A passing
+      gate with no parametric variation scores near 0.0; a failing gate
+      approaches 1.0. No `default(1.0)` fallback: missing fields surface
+      as nil and are guarded explicitly.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((div (assoc "divergence_score" step_5_result))
+              (con (assoc "consistency_score" step_5_result))
+              (cov (assoc "coverage_score" step_5_result))
+              (pflag (assoc "parametric_variation_flag" step_5_result)))
+          (let ((d (if (numberp div) div 0.0))
+                (c (if (numberp con) con 0.0))
+                (v (if (numberp cov) cov 0.0))
+                (pen (if pflag 0.15 0.0)))
+            (let ((mn (if (< d c) (if (< d v) d v) (if (< c v) c v))))
+              (let ((gap (- 1.0 mn)))
+                (if (> (+ gap pen) 1.0) 1.0 (+ gap pen))))))
+      env:
+        step_5_result: "{{ step_5_result }}"
+
+  - ordinal: 8
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -150,7 +181,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 8
+  - ordinal: 9
     action: loop
     description: >
       Re-enter scenario cycle if convergence is not met. Restarts at narrative
@@ -161,8 +192,10 @@ steps:
       re-rolling the already-bounded focal question.
     input_mapping:
       loop_target: "{{ 4 }}"
-      prior_convergence_metric: "{{ step_7_result.convergence_metric }}"
-      kata_hypotenuse: "{{ step_7_result.convergence_metric | default(1.0) }}"
+      prior_convergence_metric: "{{ step_7_result }}"
+      # Push the scenario gap from the lisp.eval step (ordinal 7) into
+      # kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      kata_hypotenuse: "{{ step_7_result }}"
 
 error_handling:
   on_gas_exceeded: abort

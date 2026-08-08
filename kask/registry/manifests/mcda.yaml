@@ -105,10 +105,35 @@ steps:
 
   - ordinal: 5
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE ROBUSTNESS SCORE: Deterministic Lisp computation that turns
+      the sensitivity-analysis output into a scalar convergence signal.
+      Lower = more converged (more robust decision). The score is the
+      count of rank reversals plus the count of critical weights, capped
+      at 1.0 — a robust decision (empty rank_reversals, empty
+      critical_weights) scores 0.0; a fragile one approaches 1.0. No
+      `default(1.0)` fallback: if the sensitivity step omitted a field,
+      the Lisp `assoc` returns nil and `length` of nil is 0, which is a
+      real measurement ("no reversals found"), not a phantom 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((reversals (assoc "rank_reversals" step_4_result))
+              (critical (assoc "critical_weights" step_4_result)))
+          (let ((r (if (is_null reversals) 0 (length reversals)))
+                (c (if (is_null critical) 0 (length critical))))
+            (let ((raw (+ r c)))
+              (if (> raw 1) 1.0 raw))))
+      env:
+        step_4_result: "{{ step_4_result }}"
+
+  - ordinal: 6
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -118,16 +143,18 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 6
+  - ordinal: 7
     action: loop
     description: Re-enter MCDA cycle if convergence is not met.
     gas_cap: 1000
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the sensitivity quality signal into kata_hypotenuse so the Cauchy
-      # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(1.0) }}"
+      # Push the robustness score from the lisp.eval step (ordinal 5) into
+      # kata_hypotenuse so the Cauchy criterion can detect when the
+      # iterates have stopped moving. No default(1.0): a Lisp failure must
+      # surface, not be masked as a phantom 1.0.
+      kata_hypotenuse: "{{ step_5_result }}"
 
 error_handling:
   on_gas_exceeded: abort

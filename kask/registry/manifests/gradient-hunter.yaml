@@ -215,10 +215,27 @@ steps:
 
   - ordinal: 6
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from step 5's actual report output.
+      The convergence signal is the count of gradients in the report (length
+      of gradient_report). Lower = more converged (fewer new gradients found
+      as the field is mapped and explained). If gradient_report is absent,
+      the form errors (no silent default), surfacing a broken report step.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(length (assoc \"gradient_report\" step_5_result))"
+      env:
+        step_5_result: "{{ step_5_result }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 7
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -228,11 +245,11 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: >
       Re-enter gradient-hunt cycle if convergence is not met. Routes
-      step_6_result.next_prior_focus back to step 1 as
+      step_7_result.next_prior_focus back to step 1 as
       prior_iteration.next_prior_focus, along with the prior report's
       lessons_learned and pattern_signatures, closing the feedback loop.
     input_mapping:
@@ -240,8 +257,8 @@ steps:
       prior_iteration:
         lessons_learned: "{{ step_5_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_5_result.pattern_signatures | default([]) }}"
-        next_prior_focus: "{{ step_6_result.next_prior_focus | default('') }}"
-      kata_hypotenuse: "{{ step_6_result.convergence_metric | default(1.0) }}"
+        next_prior_focus: "{{ step_7_result.next_prior_focus | default('') }}"
+      kata_hypotenuse: "{{ step_6_result }}"
 
 error_handling:
   on_gas_exceeded: abort

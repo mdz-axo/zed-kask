@@ -181,10 +181,28 @@ steps:
 
   - ordinal: 5
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from step 4's actual validation
+      output. The convergence signal is fail_count — the number of registry,
+      companion, cross-artifact, and executor-compliance checks that failed.
+      Lower = more converged (zero failures = scaffolded crate is valid).
+      If fail_count is absent, the form errors (no silent default),
+      surfacing a broken validation step rather than masking it.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(assoc \"fail_count\" step_4_result)"
+      env:
+        step_4_result: "{{ step_4_result }}"
+      max_steps: 10000
+      max_depth: 32
+
+  - ordinal: 6
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -194,11 +212,11 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 6
+  - ordinal: 7
     action: loop
     description: >
       Re-enter create-skill cycle if convergence is not met. Routes
-      step_5_result.next_research_focus back to step 1 (research, not
+      step_6_result.next_research_focus back to step 1 (research, not
       describe) as prior_validation_failures.next_research_focus, along
       with the validation's fix_suggestions, closing the feedback loop.
       The loop targets research because failures often indicate the
@@ -206,9 +224,9 @@ steps:
       re-run to find better anchors or derive a better PDCA shape.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_5_result }}"
       prior_validation_failures:
-        next_research_focus: "{{ step_5_result.next_research_focus | default('') }}"
+        next_research_focus: "{{ step_6_result.next_research_focus | default('') }}"
         fix_suggestions: "{{ step_4_result.fix_suggestions | default([]) }}"
 
 error_handling:
