@@ -517,8 +517,10 @@ pub fn fuse_volatility(
 /// `cmp_source` identifies the CMP index that supplied the probability
 /// (e.g. "cmp:policy_interest_rate:3m:increase"). When `None`, the branch
 /// probability is from a raw contract (pre-R4 behavior) — the risk measure
-// degrades to the uncontrolled form.
-#[derive(Debug, Clone, Copy)]
+/// degrades to the uncontrolled form. Owned `String` so dynamically-generated
+/// CMP source identifiers (from `compose_cmp_tree`) can be used without
+/// leaking allocations or forcing `'static`.
+#[derive(Debug, Clone)]
 pub struct CmpBranchOutcome {
     /// The branch's joint probability (from a CMP index or a raw contract).
     pub probability: f64,
@@ -526,7 +528,7 @@ pub struct CmpBranchOutcome {
     pub branch_return: f64,
     /// CMP index identity when the probability is CMP-controlled, else None.
     /// Carries the (family, tenor, orientation) of the source index.
-    pub cmp_source: Option<&'static str>,
+    pub cmp_source: Option<String>,
 }
 
 /// Probability-weighted risk measure with CMP provenance.
@@ -816,12 +818,12 @@ mod tests {
             CmpBranchOutcome {
                 probability: 0.6,
                 branch_return: 0.20,
-                cmp_source: Some("cmp:policy_interest_rate:3m:increase"),
+                cmp_source: Some("cmp:policy_interest_rate:3m:increase".to_string()),
             },
             CmpBranchOutcome {
                 probability: 0.4,
                 branch_return: -0.15,
-                cmp_source: Some("cmp:crude_oil_price:1m:decline"),
+                cmp_source: Some("cmp:crude_oil_price:1m:decline".to_string()),
             },
         ];
         let measure = cmp_scenario_risk_measure(&branches).expect("positive mass");
@@ -838,7 +840,7 @@ mod tests {
             CmpBranchOutcome {
                 probability: 0.6,
                 branch_return: 0.20,
-                cmp_source: Some("cmp:policy_interest_rate:3m:increase"),
+                cmp_source: Some("cmp:policy_interest_rate:3m:increase".to_string()),
             },
             CmpBranchOutcome {
                 probability: 0.4,
@@ -856,7 +858,7 @@ mod tests {
         let branches = [CmpBranchOutcome {
             probability: 0.0,
             branch_return: 0.1,
-            cmp_source: Some("cmp:policy_interest_rate:3m:increase"),
+            cmp_source: Some("cmp:policy_interest_rate:3m:increase".to_string()),
         }];
         assert!(cmp_scenario_risk_measure(&branches).is_none());
     }

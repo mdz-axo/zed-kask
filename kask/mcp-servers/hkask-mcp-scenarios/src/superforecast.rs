@@ -1839,8 +1839,14 @@ pub fn compose_market_tree(
 /// probability with its own reliability floor and construction method surfaced
 /// in the provenance. The event ID is `cmp:{family}:{tenor}:{orientation}` —
 /// the index identity, not a decaying contract ID.
+///
+/// `observation_date` is the date the CMP index was built (the "today" of the
+/// index). The event deadline is `observation_date + target_maturity_days` —
+/// the honest deadline for the constant-maturity target, not a fabricated
+/// placeholder.
 pub fn convert_cmp_index(
     index: &hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex,
+    observation_date: chrono::NaiveDate,
 ) -> ScenarioEvent {
     use hkask_mcp_prediction_markets::cmp::CmpMethod;
 
@@ -1861,11 +1867,11 @@ pub fn convert_cmp_index(
         index.index.portfolio.maturity_error_days,
         index.index.portfolio.constituents.len()
     );
-    // The deadline is the observation date + the target maturity. We don't
-    // have the observation date here, so use a far-future placeholder — the
-    // CMP index is a rolling synthetic, not a fixed-deadline contract.
-    let deadline = chrono::NaiveDate::from_ymd_opt(2099, 12, 31)
-        .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap());
+    // The deadline is the observation date + the target maturity — the honest
+    // deadline for the constant-maturity target. The CMP index is a rolling
+    // synthetic, so this deadline advances with each observation.
+    let target_days = index.index.bucket.target_days() as i64;
+    let deadline = observation_date + chrono::Duration::days(target_days);
     let probability = index.index.portfolio.index_probability;
     ScenarioEvent {
         id,
@@ -1898,6 +1904,9 @@ pub fn convert_cmp_index(
 /// the provenance — not a decaying contract. This is the re-pointed composition
 /// path: same tree machinery, CMP-controlled inputs.
 ///
+/// `observation_date` is the date the CMP indices were built. Each event's
+/// deadline is `observation_date + target_maturity_days` — the honest deadline.
+///
 /// CMP indices are independent root events (no caller-authored dependencies
 /// in the initial implementation — the tree is a flat set of CMP priors).
 /// Dependency edges between CMP indices (e.g. "oil price increase → inflation
@@ -1906,13 +1915,17 @@ pub fn convert_cmp_index(
 /// scenario_propagate) consume.
 pub fn compose_cmp_tree(
     indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
+    observation_date: chrono::NaiveDate,
 ) -> Result<EventTree, ScenarioError> {
     if indices.is_empty() {
         return Err(ScenarioError::EmptyInput(
             "compose_cmp_tree requires at least one CMP index".into(),
         ));
     }
-    let events: Vec<ScenarioEvent> = indices.iter().map(convert_cmp_index).collect();
+    let events: Vec<ScenarioEvent> = indices
+        .iter()
+        .map(|idx| convert_cmp_index(idx, observation_date))
+        .collect();
     // Check for duplicate IDs (same family/tenor/orientation from different venues).
     let mut seen = HashSet::new();
     for event in &events {
@@ -1924,6 +1937,84 @@ pub fn compose_cmp_tree(
                     .into(),
             ));
         }
+    }
+    build_event_tree(&events)
+}
+
+/// A caller-authored dependency edge between CMP indices.
+///
+/// `child_id` and `parent_ids` use the CMP index ID format
+/// `cmp:{family}:{tenor}:{orientation}` — the same format `convert_cmp_index`
+/// generates. The caller identifies the CMP indices by their (family, tenor,
+/// orientation) triple and supplies the conditional probability table.
+///
+/// The conditionals are P(child | parent truth assignment), bitmap-ordered,
+/// length 2^parent_ids.len(). The server validates structure but never invents
+/// conditional probabilities — the caller authors them.
+#[derive(Debug, Clone)]
+pub struct CmpDependencySpec {
+    /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
+    pub child_id: String,
+    /// The parent CMP index IDs.
+    pub parent_ids: Vec<String>,
+    /// P(child | parent truth assignment), bitmap-ordered.
+    pub conditionals: Vec<f64>,
+}
+
+/// Compose a set of CMP indices into an EventTree with caller-authored
+/// dependency edges (R1 + H3 joint coherence support).
+///
+/// This is the extended version of `compose_cmp_tree` that supports dependency
+/// edges between CMP indices — e.g. "oil price increase → inflation increase."
+/// The dependency edges enable the H3 joint coherence test: the tree-implied
+/// joint P(A ∧ B) can be compared against a parlay contract price.
+///
+/// `observation_date` is the date the CMP indices were built.
+/// `dependency_specs` are caller-authored edges between CMP index IDs. Omit for
+/// a flat (independent) tree — same as `compose_cmp_tree`.
+pub fn compose_cmp_tree_with_deps(
+    indices: &[hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex],
+    observation_date: chrono::NaiveDate,
+    dependency_specs: &[CmpDependencySpec],
+) -> Result<EventTree, ScenarioError> {
+    if indices.is_empty() {
+        return Err(ScenarioError::EmptyInput(
+            "compose_cmp_tree_with_deps requires at least one CMP index".into(),
+        ));
+    }
+    let mut events: Vec<ScenarioEvent> = indices
+        .iter()
+        .map(|idx| convert_cmp_index(idx, observation_date))
+        .collect();
+    // Check for duplicate IDs.
+    let seen: HashSet<String> = events.iter().map(|e| e.id.clone()).collect();
+    // Wire caller-specified dependencies.
+    for spec in dependency_specs {
+        if spec.parent_ids.len() > MAX_PARENTS_PER_GROUP {
+            return Err(ScenarioError::InvalidDependency(
+                spec.child_id.clone(),
+                format!(
+                    "{} parents exceeds the CPT size cap of {MAX_PARENTS_PER_GROUP}",
+                    spec.parent_ids.len()
+                ),
+            ));
+        }
+        for parent_id in &spec.parent_ids {
+            if !seen.contains(parent_id) {
+                return Err(ScenarioError::UnknownParent(
+                    spec.child_id.clone(),
+                    parent_id.clone(),
+                ));
+            }
+        }
+        let child = events
+            .iter_mut()
+            .find(|e| e.id == spec.child_id)
+            .ok_or_else(|| ScenarioError::EventNotFound(spec.child_id.clone()))?;
+        child.depends_on.push(crate::types::EventDependency {
+            parent_event_ids: spec.parent_ids.clone(),
+            conditionals: spec.conditionals.clone(),
+        });
     }
     build_event_tree(&events)
 }
@@ -2990,7 +3081,7 @@ mod tests {
                 hkask_mcp_prediction_markets::cmp::CmpMethod::BucketedSparse,
             ),
         ];
-        let tree = compose_cmp_tree(&indices).expect("tree");
+        let tree = compose_cmp_tree(&indices, chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap()).expect("tree");
         assert_eq!(tree.nodes.len(), 2);
         assert_eq!(tree.root_ids.len(), 2);
         // Provenance: the event IDs cite the index, not a contract.
@@ -3037,7 +3128,7 @@ mod tests {
 
     #[test]
     fn compose_cmp_tree_rejects_empty() {
-        let result = compose_cmp_tree(&[]);
+        let result = compose_cmp_tree(&[], chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap());
         assert!(result.is_err());
     }
 
@@ -3062,7 +3153,7 @@ mod tests {
                 hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
             ),
         ];
-        let result = compose_cmp_tree(&indices);
+        let result = compose_cmp_tree(&indices, chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap());
         assert!(result.is_err());
     }
 
@@ -3087,7 +3178,97 @@ mod tests {
                 hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
             ),
         ];
-        let tree = compose_cmp_tree(&indices).expect("tree");
+        let tree = compose_cmp_tree(&indices, chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap()).expect("tree");
         assert_eq!(tree.nodes.len(), 2);
+    }
+
+    #[test]
+    fn compose_cmp_tree_with_deps_builds_dependent_tree() {
+        // Oil increase (root, p=0.40) → inflation increase (child, conditional).
+        // P(inflation increase | oil increase) = 0.70
+        // P(inflation increase | oil not increase) = 0.20
+        // Marginal P(inflation increase) = 0.70*0.40 + 0.20*0.60 = 0.28 + 0.12 = 0.40
+        let indices = vec![
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::CrudeOilPrice,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::OneMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.40,
+                hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+            ),
+            cmp_index(
+                hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::ConsumerPriceInflation,
+                hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+                hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::ThreeMonth,
+                hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+                0.50, // prior — will be overridden by the conditional marginal
+                hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+            ),
+        ];
+        let deps = vec![CmpDependencySpec {
+            child_id: "cmp:consumer_price_inflation:3m:increase".into(),
+            parent_ids: vec!["cmp:crude_oil_price:1m:increase".into()],
+            conditionals: vec![0.20, 0.70], // P(child|parent=false), P(child|parent=true)
+        }];
+        let tree = compose_cmp_tree_with_deps(
+            &indices,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap(),
+            &deps,
+        )
+        .expect("tree");
+        assert_eq!(tree.nodes.len(), 2);
+        // Oil is the root.
+        assert!(tree.root_ids.contains(&"cmp:crude_oil_price:1m:increase".to_string()));
+        // Oil marginal = 0.40 (root prior).
+        let oil = tree.nodes.iter().find(|n| n.event.subject == "crude_oil_price").unwrap();
+        assert!((oil.marginal_probability - 0.40).abs() < 1e-9);
+        // Inflation marginal = 0.70*0.40 + 0.20*0.60 = 0.40.
+        let inflation = tree.nodes.iter().find(|n| n.event.subject == "consumer_price_inflation").unwrap();
+        assert!((inflation.marginal_probability - 0.40).abs() < 1e-9);
+        // Joint probability = P(oil) * P(inflation|oil) = 0.40 * 0.70 = 0.28.
+        assert!((tree.joint_probability - 0.28).abs() < 1e-9);
+    }
+
+    #[test]
+    fn compose_cmp_tree_with_deps_rejects_unknown_parent() {
+        let indices = vec![cmp_index(
+            hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::CrudeOilPrice,
+            hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+            hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::OneMonth,
+            hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+            0.40,
+            hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+        )];
+        let deps = vec![CmpDependencySpec {
+            child_id: "cmp:crude_oil_price:1m:increase".into(),
+            parent_ids: vec!["cmp:nonexistent:1m:increase".into()],
+            conditionals: vec![0.5, 0.5],
+        }];
+        let result = compose_cmp_tree_with_deps(
+            &indices,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap(),
+            &deps,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn compose_cmp_tree_with_deps_no_deps_matches_flat_tree() {
+        // With empty deps, compose_cmp_tree_with_deps should produce the same
+        // result as compose_cmp_tree.
+        let indices = vec![cmp_index(
+            hkask_mcp_prediction_markets::economic_object::BaseEconomicObject::PolicyInterestRate,
+            hkask_mcp_prediction_markets::cmp_index_builder::Venue::Kalshi,
+            hkask_mcp_prediction_markets::cmp_portfolio::MaturityBucket::ThreeMonth,
+            hkask_mcp_prediction_markets::cmp_portfolio::Orientation::Increase,
+            0.65,
+            hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
+        )];
+        let obs = chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap();
+        let flat = compose_cmp_tree(&indices, obs).expect("flat");
+        let with_deps = compose_cmp_tree_with_deps(&indices, obs, &[]).expect("with_deps");
+        assert_eq!(flat.nodes.len(), with_deps.nodes.len());
+        assert_eq!(flat.joint_probability, with_deps.joint_probability);
     }
 }

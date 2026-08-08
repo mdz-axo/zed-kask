@@ -607,7 +607,11 @@ fn solve_portfolio_cohort(
         }
         cohorts.push((c.days_to_expiration, c.probability, c.quality, vec![idx]));
     }
-    // Find the cohort closest to the target.
+    // Find the cohort closest to the target. Ties (equal distance) are broken
+    // by iteration order — since cohorts are sorted by maturity ascending, the
+    // shorter-maturity cohort wins. This is the conservative tie-break: a
+    // shorter-maturity cohort has less time for the probability to drift from
+    // the index value, so it's the marginally more reliable choice.
     let best_cohort = cohorts.iter().min_by(|a, b| {
         let dist_a = (a.0 - target).abs();
         let dist_b = (b.0 - target).abs();

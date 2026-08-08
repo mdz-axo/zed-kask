@@ -74,6 +74,8 @@ pub struct H2DurationResult {
     /// The minimum ratio across all CMP tenors (duration / tenor).
     /// A ratio near 1.0 means the equity duration is close to a CMP tenor.
     pub min_ratio: f64,
+    /// The label of the CMP tenor with the minimum ratio (the nearest tenor).
+    pub min_ratio_tenor: &'static str,
 }
 
 /// Run the H2 duration falsification test (T1: implied equity duration vs CMP tenors).
@@ -86,7 +88,12 @@ pub struct H2DurationResult {
 /// Returns the duration gaps and the falsification verdict.
 pub fn h2_duration_test(equity_duration_years: f64) -> Option<H2DurationResult> {
     let gaps = duration_vs_cmp_tenors(equity_duration_years)?;
-    let min_ratio = gaps.iter().map(|g| g.ratio).fold(f64::INFINITY, f64::min);
+    // Find the gap with the minimum ratio (the nearest CMP tenor).
+    let min_gap = gaps.iter().min_by(|a, b| {
+        a.ratio.partial_cmp(&b.ratio).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let min_ratio = min_gap.map(|g| g.ratio).unwrap_or(f64::INFINITY);
+    let min_ratio_tenor = min_gap.map(|g| g.tenor_label).unwrap_or("?");
     // H2a falsifier: if the minimum ratio (duration / nearest CMP tenor) is
     // near 1.0, the equity duration is close to a contract horizon. "Near"
     // means < 2.0 — the equity duration is less than 2× the longest CMP tenor.
@@ -96,6 +103,7 @@ pub fn h2_duration_test(equity_duration_years: f64) -> Option<H2DurationResult> 
         gaps,
         clusters_near_contract_horizons,
         min_ratio,
+        min_ratio_tenor,
     })
 }
 
@@ -104,12 +112,16 @@ pub fn h2_duration_test(equity_duration_years: f64) -> Option<H2DurationResult> 
 /// The result of the H3 coherence falsification test.
 #[derive(Debug, Clone)]
 pub struct H3CoherenceResult {
-    /// The coherence measures for each (tree_implied, market_price) pair tested.
+    /// The coherence measures for each valid (tree_implied, market_price) pair.
     pub measures: Vec<CoherenceMeasure>,
     /// The number of coherent pairs (divergence within cost band).
     pub coherent_count: usize,
-    /// The total number of pairs tested.
+    /// The total number of valid pairs tested (excluding dropped invalid pairs).
     pub total_count: usize,
+    /// The number of pairs dropped due to invalid probabilities (outside [0,1]).
+    /// Surfaced — never silently discarded (.rules: errors propagate). A non-zero
+    /// count indicates a data quality issue in the input pairs.
+    pub dropped_count: usize,
     /// The coherence rate (coherent_count / total_count).
     pub coherence_rate: f64,
     /// Whether H3 is refuted: coherence rate < 0.5 (the tree diverges from
@@ -131,10 +143,22 @@ pub fn h3_coherence_test(pairs: &[(f64, f64)], cost_band: f64) -> Option<H3Coher
     if pairs.is_empty() {
         return None;
     }
-    let measures: Vec<CoherenceMeasure> = pairs
-        .iter()
-        .filter_map(|&(tree, market)| contract_price_coherence(tree, market, cost_band))
-        .collect();
+    let mut measures: Vec<CoherenceMeasure> = Vec::with_capacity(pairs.len());
+    let mut dropped_count: usize = 0;
+    for &(tree, market) in pairs {
+        match contract_price_coherence(tree, market, cost_band) {
+            Some(m) => measures.push(m),
+            None => {
+                dropped_count += 1;
+                tracing::warn!(
+                    target: "reg.falsification",
+                    tree_implied = tree,
+                    market_price = market,
+                    "H3 coherence pair dropped — probability outside [0,1] (data quality issue)"
+                );
+            }
+        }
+    }
     if measures.is_empty() {
         return None;
     }
@@ -142,10 +166,21 @@ pub fn h3_coherence_test(pairs: &[(f64, f64)], cost_band: f64) -> Option<H3Coher
     let total_count = measures.len();
     let coherence_rate = coherent_count as f64 / total_count as f64;
     let refuted = coherence_rate < 0.5;
+    if refuted {
+        tracing::warn!(
+            target: "reg.falsification",
+            coherent_count,
+            total_count,
+            coherence_rate,
+            dropped_count,
+            "H3 refuted: coherence rate < 50% — tree diverges from market beyond transaction costs"
+        );
+    }
     Some(H3CoherenceResult {
         measures,
         coherent_count,
         total_count,
+        dropped_count,
         coherence_rate,
         refuted,
     })
@@ -186,9 +221,10 @@ pub fn falsification_log(
                 HypothesisStatus::Corroborated
             };
             let evidence = format!(
-                "Equity duration {:.1}y vs CMP tenors: min ratio {:.1}× (6m), gaps {:?}. {}. Falsifier (duration < 2× longest CMP tenor): {}.",
+                "Equity duration {:.1}y vs CMP tenors: min ratio {:.1}× ({}), gaps {:?}. {}. Falsifier (duration < 2× longest CMP tenor): {}.",
                 result.equity_duration_years,
                 result.min_ratio,
+                result.min_ratio_tenor,
                 result.gaps.iter().map(|g| g.gap_years).collect::<Vec<_>>(),
                 if result.clusters_near_contract_horizons {
                     "Duration clusters near contract horizons — H2a refuted (maturity transformation is not real)"
@@ -227,7 +263,7 @@ pub fn falsification_log(
                 HypothesisStatus::Corroborated
             };
             let evidence = format!(
-                "Coherence rate: {}/{} ({:.1}%). {}. Falsifier (coherence rate < 50%): {}.",
+                "Coherence rate: {}/{} ({:.1}%). {}. Dropped: {} invalid pairs. Falsifier (coherence rate < 50%): {}.",
                 result.coherent_count,
                 result.total_count,
                 result.coherence_rate * 100.0,
@@ -236,11 +272,8 @@ pub fn falsification_log(
                 } else {
                     "Tree is coherent with market within costs — H3 corroborated"
                 },
-                if result.refuted {
-                    "TRIGGERED"
-                } else {
-                    "not triggered"
-                },
+                result.dropped_count,
+                if result.refuted { "TRIGGERED" } else { "not triggered" },
             );
             (status, evidence)
         }
@@ -349,6 +382,20 @@ mod tests {
     }
 
     #[test]
+    fn h3_coherence_test_reports_dropped_invalid_pairs() {
+        // 2 valid pairs + 1 invalid (probability > 1) → dropped_count = 1.
+        let pairs = [
+            (0.60, 0.58),   // valid, coherent
+            (0.40, 0.42),   // valid, coherent
+            (1.5, 0.50),    // invalid — tree_implied > 1
+        ];
+        let result = h3_coherence_test(&pairs, 0.05).expect("non-empty");
+        assert_eq!(result.dropped_count, 1);
+        assert_eq!(result.total_count, 2); // only valid pairs counted
+        assert_eq!(result.coherent_count, 2);
+    }
+
+    #[test]
     fn falsification_log_records_all_five_hypotheses() {
         let log = falsification_log(None, None);
         assert_eq!(log.len(), 5);
@@ -407,18 +454,28 @@ mod tests {
         // not a return). This pins the equity-pricing discipline.
         let log = falsification_log(None, None);
         for entry in &log {
-            assert!(
-                !entry.evidence.to_lowercase().contains("beta"),
-                "{} evidence must not mention beta: {}",
-                entry.hypothesis,
-                entry.evidence
-            );
-            assert!(
-                !entry.evidence.to_lowercase().contains("fama-french"),
-                "{} evidence must not mention Fama-French: {}",
-                entry.hypothesis,
-                entry.evidence
-            );
+            // Check all four text fields — a future edit could sneak a beta
+            // reference into any of them.
+            for field in [entry.evidence.as_str(), entry.statement, entry.test, entry.falsifier] {
+                assert!(
+                    !field.to_lowercase().contains("beta"),
+                    "{} field must not mention beta: {}",
+                    entry.hypothesis,
+                    field
+                );
+                assert!(
+                    !field.to_lowercase().contains("fama-french"),
+                    "{} field must not mention Fama-French: {}",
+                    entry.hypothesis,
+                    field
+                );
+                assert!(
+                    !field.to_lowercase().contains("equity-return regression"),
+                    "{} field must not mention equity-return regression: {}",
+                    entry.hypothesis,
+                    field
+                );
+            }
         }
     }
 }

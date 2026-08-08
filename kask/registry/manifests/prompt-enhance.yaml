@@ -1,5 +1,5 @@
 # Prompt-Enhance Skill Manifest
-# hKask v0.34.0 — Streamlined typed prompt enhancement
+# hKask v0.33.0 — Streamlined typed prompt enhancement
 #
 # General-purpose prompt enhancement for prompts destined for the zed-kask
 # platform. Typed routing over a 7-type prompt taxonomy (coding, reasoning,
@@ -34,7 +34,7 @@ manifest:
     output. Default output is the enhanced prompt returned inline in a
     copyable code block; optional file save or both.
   functional_role: flowdef
-  version: 0.34.0
+  version: 0.33.0
   editor: curator-or-human-admin
   visibility: Public
 
