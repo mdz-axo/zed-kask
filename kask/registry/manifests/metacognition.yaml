@@ -41,7 +41,7 @@ convergence:
   # 2. Cauchy: iterates stopped moving (learning exhausted)
   # 3. Calibration: Brier score calibrated (predictions accurate)
   convergence_mode: "gap_or_cauchy_or_calibration"
-  hypotenuse_epsilon: 0.05
+  gap_epsilon: 0.05
   cauchy_epsilon: 0.03
   cauchy_window: 3
   brier_window: 3

@@ -152,7 +152,7 @@ steps:
       # The form returns an alist (JSON object) with verification_passed,
       # marker_density, and convergence_metric (1.0 if passed, 0.0 if failed).
       # convergence_metric feeds the Cauchy criterion via the loop step's
-      # kata_hypotenuse binding.
+      # convergence_signal binding.
       form: >
         (let ((checks step_4_result))
           (let ((compiled (assoc "compiled" checks))

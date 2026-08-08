@@ -73,7 +73,7 @@ steps:
     description: Re-enter elimination cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the items-removed count into kata_hypotenuse so the Cauchy
+      # Push the items-removed count into convergence_signal so the Cauchy
       # criterion can detect when eliminations have stopped.
       convergence_signal: "{{ step_1_result.elimination_report.essentialism_score.items_removed | default(0) }}"
 

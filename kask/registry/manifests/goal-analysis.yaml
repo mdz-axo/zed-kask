@@ -138,7 +138,7 @@ steps:
     description: Re-enter goal cycle if convergence is not met or verdict is continue.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the judge confidence gap into kata_hypotenuse so the Cauchy
+      # Push the judge confidence gap into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving. The
       # score is computed by the lisp.eval step (step 4) from step 3's
       # actual confidence field — no phantom convergence_metric default.

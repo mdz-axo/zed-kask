@@ -62,9 +62,9 @@ steps:
     description: Re-enter caveman cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the compression ratio into kata_hypotenuse so the Cauchy
+      # Push the compression ratio into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      convergence_signal: "{{ step_1_result.compression_ratio | default(1.0) }}"
+      convergence_signal: "{{ step_1_result.compression_ratio  }}"
 
 error_handling:
   on_gas_exceeded: abort

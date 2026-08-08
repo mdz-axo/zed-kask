@@ -129,7 +129,7 @@ steps:
       persist step results, re-entry will fail.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the public-interface item count into kata_hypotenuse so the
+      # Push the public-interface item count into convergence_signal so the
       # Cauchy criterion can detect when the design has stopped moving.
       # When step 3 (design) is skipped (DELETE/MERGE recommendation),
       # the value defaults to 0 — stable, so Cauchy fires after min_iterations.

@@ -90,7 +90,7 @@ steps:
     description: Re-enter semantics cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the provenance-chain length into kata_hypotenuse so the Cauchy
+      # Push the provenance-chain length into convergence_signal so the Cauchy
       # criterion can detect when the classification has stopped moving.
       convergence_signal: "{{ step_2_result.provenance_chain | default([]) | length }}"
 

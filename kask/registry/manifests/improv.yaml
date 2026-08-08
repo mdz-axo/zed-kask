@@ -160,7 +160,7 @@ steps:
     description: Re-enter improv cycle if convergence threshold is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the active mode's response length into kata_hypotenuse so the
+      # Push the active mode's response length into convergence_signal so the
       # Cauchy criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ (step_2_result.response | default(step_3_result.response | default(step_4_result.response | default(step_5_result.response | default(step_6_result.response | default(step_7_result.response | default(''))))))) | length }}"
 

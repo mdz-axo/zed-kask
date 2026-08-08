@@ -180,7 +180,7 @@ steps:
       loop_target: "{{ 4 }}"
       prior_convergence_metric: "{{ step_7_result }}"
       # Push the scenario gap from the lisp.eval step (ordinal 7) into
-      # kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      # convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_7_result }}"
 
 error_handling:

@@ -152,7 +152,7 @@ steps:
       generation) so the LLM generates questions at the missing levels.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the recommendation count into kata_hypotenuse so the Cauchy
+      # Push the recommendation count into convergence_signal so the Cauchy
       # criterion can detect when the assessment has stopped moving.
       convergence_signal: "{{ step_4_result.recommendations | default([]) | length }}"
 

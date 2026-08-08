@@ -215,21 +215,6 @@ steps:
         step_10_result: "{{ step_10_result }}"
 
   - ordinal: 11
-    action: compute
-    condition: "{{ mode | default('improvement') == 'improvement' }}"
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse_epsilon: "{{ _convergence.gap_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.signal_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 12
     action: loop
     condition: "{{ mode | default('improvement') == 'beginner' }}"
     description: Re-enter beginner kata cycle if convergence is not met.
@@ -237,11 +222,11 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the drill quality signal into kata_hypotenuse so the Cauchy
+      # Push the drill quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_5_result }}"
 
-  - ordinal: 13
+  - ordinal: 12
     action: loop
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Re-enter improvement kata cycle if convergence is not met.
@@ -249,7 +234,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 7 }}"
-      # Push the experiment quality signal into kata_hypotenuse so the Cauchy
+      # Push the experiment quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_11_result }}"
 

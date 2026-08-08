@@ -137,7 +137,7 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       # Push the robustness score from the lisp.eval step (ordinal 5) into
-      # kata_hypotenuse so the Cauchy criterion can detect when the
+      # convergence_signal so the Cauchy criterion can detect when the
       # iterates have stopped moving. No default(1.0): a Lisp failure must
       # surface, not be masked as a phantom 1.0.
       convergence_signal: "{{ step_5_result }}"

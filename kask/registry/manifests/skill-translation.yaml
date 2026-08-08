@@ -80,7 +80,7 @@ steps:
   #     input_mapping:
   #       form: "(if (< gap 0.1) 1 0)"  # prefix; also supports infix: "gap < 0.1"
   #       env:
-  #         gap: "{{ step_1_result.convergence_metric | default(1.0) }}"
+  #         gap: "{{ step_1_result.convergence_metric }}"
   #       max_steps: 10000
   #       max_depth: 32
   #
@@ -110,7 +110,7 @@ steps:
     description: Re-enter translation cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the translation quality signal into kata_hypotenuse so the
+      # Push the translation quality signal into convergence_signal so the
       # Cauchy criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_2_result }}"
 

@@ -94,7 +94,7 @@ steps:
     description: Re-enter coding-guidelines cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the violation count into kata_hypotenuse so the Cauchy
+      # Push the violation count into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_3_result.violations | default([]) | length }}"
 

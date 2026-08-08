@@ -99,7 +99,7 @@ steps:
   #     input_mapping:
   #       form: "(if (< gap 0.1) 1 0)"  # prefix; also supports infix: "gap < 0.1"
   #       env:
-  #         gap: "{{ step_1_result.convergence_metric | default(1.0) }}"
+  #         gap: "{{ step_1_result.convergence_metric }}"
   #       max_steps: 10000
   #       max_depth: 32
   #

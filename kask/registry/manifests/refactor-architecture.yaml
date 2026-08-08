@@ -232,7 +232,7 @@ steps:
     input_mapping:
       loop_target: "{{ 1 }}"
       # Push the refactor gap from the lisp.eval step (ordinal 8) into
-      # kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      # convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_8_result }}"
 
 error_handling:

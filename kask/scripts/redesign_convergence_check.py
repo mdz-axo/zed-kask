@@ -1,44 +1,43 @@
 #!/usr/bin/env python3
 """
-Redesign kata.convergence_check — Option D migration.
+Redesign kata.convergence_check — Option D migration (v2).
 
-For each manifest that uses kata.convergence_check:
-1. Remove the kata.convergence_check compute step entirely (it was a dead
-   diagnostic — the ConvergenceTracker is the real gate).
-2. Renumber subsequent step ordinals to close the gap.
-3. Rename kata_hypotenuse: -> convergence_signal: in the loop step.
-4. Remove `| default(1.0)` from convergence_metric bindings in the
-   convergence_signal line (the premature-convergence bug — a missing
-   convergence_metric should be NaN, not a fake 1.0).
-5. Update any remaining _convergence.hypotenuse_epsilon ->
-   _convergence.gap_epsilon and _convergence.hypotenuse_history ->
-   _convergence.signal_history references (these appear in steps that
-   read the _convergence context block, e.g. report steps).
-
-The script is idempotent: running it twice produces the same output.
+Fixes from v1:
+- Robust step-block detection: walks backwards from the compute_ref line to
+  the nearest `- ordinal:` and forwards to the next `- ordinal:` or top-level
+  key. Handles conditional steps (condition: field) correctly.
+- Removes `| default(1.0)` from ALL convergence_metric bindings in loop steps
+  (not just the convergence_signal line), since these feed the same
+  premature-convergence bug.
+- Updates comments that reference kata_hypotenuse -> convergence_signal.
+- Updates comments that reference kata.convergence_check (marks them as
+  removed, since the primitive no longer exists).
 """
 import re
 import sys
 from pathlib import Path
 
 
-def find_convergence_check_block(lines):
-    """Find the start and end line indices of the kata.convergence_check step block.
+def find_step_block_containing(lines, needle):
+    """Find the start and end line indices of the step block containing `needle`.
 
-    Returns (start_idx, end_idx) where start_idx is the line with
-    `- ordinal: N` and end_idx is the last line of the block (exclusive
-    in slice terms: lines[start_idx:end_idx] is the block).
+    A step block starts at `- ordinal: N` and ends at the next `- ordinal:`
+    line or at a top-level key (non-indented line with `:`).
 
-    The block ends at the next `- ordinal:` line or at the next top-level
-    key (error_handling:, ledger:, audit:, etc.) or EOF.
+    Returns (start_idx, end_idx) or None.
     """
     for i, line in enumerate(lines):
-        # Match the compute_ref inside a step block
-        if "compute_ref: kata.convergence_check" in line:
+        if needle in line:
             # Walk backwards to find the `- ordinal:` that starts this block
             start = i
-            while start > 0 and not re.match(r"\s*-\s+ordinal:", lines[start]):
+            while start > 0:
+                if re.match(r"\s*-\s+ordinal:", lines[start]):
+                    break
                 start -= 1
+            else:
+                # No `- ordinal:` found before this line — not a step block
+                continue
+
             # Walk forwards to find the next `- ordinal:` or top-level key
             end = i + 1
             while end < len(lines):
@@ -47,13 +46,13 @@ def find_convergence_check_block(lines):
                 if re.match(r"\s*-\s+ordinal:", next_line):
                     break
                 # Top-level key (non-indented, non-blank, not a comment)
+                stripped = next_line.lstrip()
                 if (
                     next_line
-                    and not next_line.startswith(" ")
-                    and not next_line.startswith("\t")
-                    and not next_line.startswith("#")
+                    and not next_line[0].isspace()
+                    and stripped
+                    and not stripped.startswith("#")
                     and ":" in next_line
-                    and not next_line.startswith("  ")
                 ):
                     break
                 end += 1
@@ -67,12 +66,12 @@ def get_ordinal(lines, block_start):
     return int(m.group(1)) if m else None
 
 
-def remove_convergence_check_step(lines):
-    """Remove the kata.convergence_check step block and renumber subsequent steps.
+def remove_step_containing(lines, needle):
+    """Remove the step block containing `needle` and renumber subsequent steps.
 
     Returns (new_lines, removed_ordinal) or (lines, None) if no change.
     """
-    block = find_convergence_check_block(lines)
+    block = find_step_block_containing(lines, needle)
     if block is None:
         return (lines, None)
     start, end = block
@@ -80,10 +79,10 @@ def remove_convergence_check_step(lines):
     if removed_ordinal is None:
         return (lines, None)
 
-    # Remove the block. Also remove a trailing blank line if present
-    # (to avoid double blanks).
+    # Remove the block
     new_lines = lines[:start] + lines[end:]
-    # If we created a double blank at the seam, collapse it.
+
+    # Collapse a double blank at the seam if we created one
     if start > 0 and start < len(new_lines):
         if (
             new_lines[start - 1].strip() == ""
@@ -104,38 +103,40 @@ def remove_convergence_check_step(lines):
     return (new_lines, removed_ordinal)
 
 
-def rename_kata_hypotenuse(lines):
-    """Rename kata_hypotenuse: -> convergence_signal: in loop step input_mapping.
-
-    Also remove `| default(1.0)` from convergence_metric bindings (the
-    premature-convergence bug). A missing convergence_metric should resolve
-    to null/NaN, not a fake 1.0 that causes premature Cauchy convergence.
+def fix_loop_step_bindings(lines):
+    """Fix bindings in loop steps:
+    1. Rename kata_hypotenuse: -> convergence_signal:
+    2. Remove `| default(1.0)` from convergence_metric bindings (the bug).
+    3. Remove `| default(1.0)` from convergence_signal bindings that reference
+       convergence_metric (the bug).
     """
     new_lines = []
     for line in lines:
+        # Rename kata_hypotenuse key -> convergence_signal
         if "kata_hypotenuse:" in line:
-            # Rename the key
             line = line.replace("kata_hypotenuse:", "convergence_signal:")
-            # Remove `| default(1.0)` from convergence_metric bindings.
-            # The pattern is: convergence_metric | default(1.0)
-            # We want: convergence_metric  (no default — let it be null/NaN)
-            # But only remove the default(1.0), not other defaults like default(0.0).
-            line = re.sub(
-                r"convergence_metric\s*\|\s*default\(1\.0\)",
-                "convergence_metric",
-                line,
-            )
+
+        # Remove `| default(1.0)` from convergence_metric bindings.
+        # The pattern is: convergence_metric | default(1.0)
+        # We want: convergence_metric  (no default — let it be null/NaN)
+        line = re.sub(
+            r"convergence_metric\s*\|\s*default\(1\.0\)",
+            "convergence_metric",
+            line,
+        )
+
+        # Also remove `| default(1.0)` from convergence_signal bindings that
+        # reference convergence_metric (e.g. "{{ step_N_result.convergence_metric | default(1.0) }}")
+        # These are the same premature-convergence bug.
+        if "convergence_signal:" in line and "default(1.0)" in line:
+            line = line.replace("| default(1.0)", "")
+
         new_lines.append(line)
     return new_lines
 
 
 def update_convergence_context_refs(lines):
-    """Update _convergence.hypotenuse_* references in remaining steps.
-
-    After removing the convergence_check step, other steps (e.g. report steps)
-    may still reference _convergence.hypotenuse_epsilon or
-    _convergence.hypotenuse_history. Update them to the renamed keys.
-    """
+    """Update _convergence.hypotenuse_* references in remaining steps."""
     new_lines = []
     for line in lines:
         line = line.replace(
@@ -148,24 +149,40 @@ def update_convergence_context_refs(lines):
     return new_lines
 
 
+def update_comments(lines):
+    """Update comments that reference the old names."""
+    new_lines = []
+    for line in lines:
+        # Update comments referencing kata_hypotenuse -> convergence_signal
+        if "#" in line and "kata_hypotenuse" in line:
+            line = line.replace("kata_hypotenuse", "convergence_signal")
+        new_lines.append(line)
+    return new_lines
+
+
 def process_manifest(path):
-    """Process a single manifest. Returns True if changed, False if unchanged."""
+    """Process a single manifest. Returns True if changed."""
     original = path.read_text()
     lines = original.splitlines(keepends=False)
 
-    # Step 1: Remove the kata.convergence_check step + renumber
-    lines, removed = remove_convergence_check_step(lines)
+    # Step 1: Remove ALL kata.convergence_check step blocks + renumber.
+    # Some manifests have multiple (conditional) convergence_check steps.
+    changed = True
+    while changed:
+        lines, removed = remove_step_containing(lines, "compute_ref: kata.convergence_check")
+        changed = removed is not None
 
-    # Step 2: Rename kata_hypotenuse -> convergence_signal + fix default(1.0)
-    lines = rename_kata_hypotenuse(lines)
+    # Step 2: Fix loop step bindings
+    lines = fix_loop_step_bindings(lines)
 
     # Step 3: Update _convergence.hypotenuse_* refs
     lines = update_convergence_context_refs(lines)
 
+    # Step 4: Update comments
+    lines = update_comments(lines)
+
     new_content = "\n".join(lines)
-    if not original.endswith("\n"):
-        original = original  # preserve no-trailing-newline
-    else:
+    if original.endswith("\n"):
         new_content = new_content + "\n"
 
     if new_content != original:
@@ -180,7 +197,7 @@ def main():
     skipped = 0
     for yaml_file in sorted(manifests_dir.glob("*.yaml")):
         content = yaml_file.read_text()
-        if "kata.convergence_check" not in content and "kata_hypotenuse" not in content:
+        if "kata.convergence_check" not in content and "kata_hypotenuse" not in content and "hypotenuse_epsilon" not in content and "hypotenuse_history" not in content:
             skipped += 1
             continue
         if process_manifest(yaml_file):
@@ -188,7 +205,7 @@ def main():
             print(f"  CHANGED: {yaml_file.name}")
         else:
             print(f"  UNCHANGED: {yaml_file.name}")
-    print(f"\n{changed} manifests changed, {skipped} skipped (no convergence_check/hypotenuse)")
+    print(f"\n{changed} manifests changed, {skipped} skipped")
 
 
 if __name__ == "__main__":

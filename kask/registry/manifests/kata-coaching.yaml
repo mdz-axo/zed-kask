@@ -128,7 +128,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the coaching quality signal into kata_hypotenuse so the Cauchy
+      # Push the coaching quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_6_result }}"
 

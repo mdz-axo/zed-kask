@@ -227,7 +227,7 @@ steps:
     input_mapping:
       loop_target: "{{ 3 }}"
       # Push the diagram quality score from the lisp.eval step (ordinal 5)
-      # into kata_hypotenuse. No default(1.0): a Lisp failure must surface.
+      # into convergence_signal. No default(1.0): a Lisp failure must surface.
       convergence_signal: "{{ step_5_result }}"
 
 error_handling:

@@ -121,7 +121,7 @@ steps:
   #     input_mapping:
   #       form: "(if (< gap 0.1) 1 0)"  # prefix; also supports infix: "gap < 0.1"
   #       env:
-  #         gap: "{{ step_1_result.convergence_metric | default(1.0) }}"
+  #         gap: "{{ step_1_result.convergence_metric }}"
   #       max_steps: 10000
   #       max_depth: 32
   #
@@ -246,21 +246,6 @@ steps:
         step_8_result: "{{ step_8_result }}"
 
   - ordinal: 10
-    action: compute
-    condition: "{{ mode == 'logic_audit' }}"
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse_epsilon: "{{ _convergence.gap_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.signal_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 11
     action: loop
     condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Re-enter maintenance cycle if convergence is not met.
@@ -269,7 +254,7 @@ steps:
       convergence_signal: "{{ step_3_result }}"
       convergence_metric: "{{ step_4_result.hypotenuse | default(1.0) }}"
 
-  - ordinal: 12
+  - ordinal: 11
     action: loop
     condition: "{{ mode == 'logic_audit' }}"
     description: Re-enter logic audit cycle if convergence is not met.

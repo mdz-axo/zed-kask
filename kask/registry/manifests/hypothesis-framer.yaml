@@ -176,7 +176,7 @@ steps:
       # If PICO check failed, re-enter at PICO (step 2); else re-enter at
       # operationalize (step 4) for convergence-driven refinement.
       loop_target: "{{ 2 if (step_3_result | default([]) | length > 0) else 4 }}"
-      # Push the operationalize quality signal into kata_hypotenuse so the Cauchy
+      # Push the operationalize quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving. When step 4
       # was skipped (PICO defects), fall back to 0.0 so the loop continues.
       convergence_signal: "{{ step_4_result.convergence_metric | default(0.0) }}"

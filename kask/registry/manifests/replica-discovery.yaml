@@ -380,7 +380,7 @@ steps:
       (corpus generation) with the prior results preserved.
     input_mapping:
       loop_target: "{{ 11 }}"
-      # Push the validation convergence metric into kata_hypotenuse so the
+      # Push the validation convergence metric into convergence_signal so the
       # Cauchy criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_14_result }}"
 

@@ -87,7 +87,7 @@ steps:
     description: Re-enter cybernetics cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      # Push the unviable-component count into kata_hypotenuse so the Cauchy
+      # Push the unviable-component count into convergence_signal so the Cauchy
       # criterion can detect when the diagnostic has stopped moving.
       convergence_signal: "{{ step_3_result.unviable_components | default([]) | length }}"
 

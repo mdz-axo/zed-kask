@@ -343,7 +343,7 @@ steps:
     input_mapping:
       loop_target: "{{ 2 }}"
       prior_probability: "{{ step_17_result.adjusted | default(step_12_result.final_probability | default(0.5)) }}"
-      # Push the forecast quality signal into kata_hypotenuse so the Cauchy
+      # Push the forecast quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_15_result }}"
 

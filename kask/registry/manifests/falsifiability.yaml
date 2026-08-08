@@ -257,7 +257,7 @@ steps:
       # If hypothesis check failed, re-enter at hypothesize (step 2); else
       # re-enter at counterfactual (step 4) for convergence-driven refinement.
       loop_target: "{{ 2 if (step_3_result | default([]) | length > 0) else 4 }}"
-      # Push the elimination quality signal into kata_hypotenuse so the Cauchy
+      # Push the elimination quality signal into convergence_signal so the Cauchy
       # criterion can detect when the iterates have stopped moving. When step 6
       # was skipped (hypothesis defects), fall back to 0.0 so the loop continues.
       convergence_signal: "{{ step_6_result.convergence_metric | default(0.0) }}"
