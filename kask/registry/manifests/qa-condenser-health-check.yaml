@@ -28,7 +28,7 @@ manifest:
   id: qa-condenser-health-check
   category: qa-script
   name: QA Condenser Health Check
-  version: "0.33.3"
+  version: "0.33.5"
   visibility: Private
   description: >
     Verifies hkask-mcp-condenser invariants through the qa_contract.rs test

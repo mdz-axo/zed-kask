@@ -1,5 +1,5 @@
 # Replica Discovery Manifest
-# hKask v0.33.3 — Replica Corpus Discovery & Generation Pipeline
+# hKask v0.33.5 — Replica Corpus Discovery & Generation Pipeline
 #
 # Composable skill for discovering an author's body of work across multiple
 # sources and generating a corpus.yaml for corpus_build_persona. Supports
@@ -33,7 +33,7 @@ manifest:
     patterns via LLM, generates a corpus.yaml, validates it against the
     CorpusConfig contract, and presents it for Curator approval. Supports
     three replica classes: academic, literary, and exemplar/theme.
-  version: "0.33.3"
+  version: "0.33.5"
   functional_role: flowdef
   editor: curator-or-human-admin
   visibility: Public

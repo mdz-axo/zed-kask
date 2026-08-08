@@ -55,7 +55,7 @@ manifest:
     telemetry field* (test coverage, span emission, hook wiring). The
     substrate is ontology namespaces, not code artifacts.
   functional_role: flowdef
-  version: 0.33.3
+  version: 0.33.5
   editor: curator-or-human-admin
   visibility: Public
 
@@ -214,7 +214,7 @@ manifest:
     aggregator) — see gradient-seeded-recombination's ontology_sources
     input.
   functional_role: flowdef
-  version: 0.33.3
+  version: 0.33.5
   editor: curator-or-human-admin
   visibility: Public
 

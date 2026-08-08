@@ -1,5 +1,5 @@
 # Curator Metacognition Manifest
-# ℏKask v0.33.3 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.5 - A Minimal Viable Container for UserPods
 
 manifest:
   id: curator-metacognition
@@ -9,7 +9,7 @@ manifest:
   description: >
     Metacognitive reasoning for system sense-making, performance monitoring,
     and coordination with hKask Administrator on system evolution.
-  version: "0.33.3"
+  version: "0.33.5"
   editor: hKask-Administrator
   visibility: Public
 

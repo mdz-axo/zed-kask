@@ -1,5 +1,5 @@
 # Grill-Me Process Manifest
-# ℏKask v0.33.3 — Socratic interrogation as convergent PDCA
+# ℏKask v0.33.5 — Socratic interrogation as convergent PDCA
 
 manifest:
   id: grill-me
@@ -10,7 +10,7 @@ manifest:
     generates Socratic challenge rounds, synthesizes assessment,
     computes convergence, and iterates until coverage is sufficient.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

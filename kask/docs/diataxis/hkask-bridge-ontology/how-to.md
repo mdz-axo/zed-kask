@@ -2,7 +2,7 @@
 title: "Using the Ontology Bridge — How-to Guide"
 audience: [developers, agents]
 last_updated: 2026-08-05
-version: "0.33.3"
+version: "0.33.5"
 status: "Active"
 domain: "Cross-cutting"
 mds_categories: [composition, curation]

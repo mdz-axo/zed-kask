@@ -1,5 +1,5 @@
 # Improvement Kata Process Manifest
-# ℏKask v0.33.3 — Improvement cycle as convergent PDCA
+# ℏKask v0.33.5 — Improvement cycle as convergent PDCA
 #
 # Two modes:
 #   improvement (default) — 4-step PDCA: direction → current → target → experiment
@@ -17,7 +17,7 @@ manifest:
     kata-starter): foundational drills for habit-building — Five Questions,
     PDCA Cycle, and Observation Drill. Agents graduate when automaticity > 0.5.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

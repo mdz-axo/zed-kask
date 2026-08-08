@@ -1,5 +1,5 @@
 # Diagnose Process Manifest
-# ℏKask v0.33.3 — Diagnosis as convergent PDCA
+# ℏKask v0.33.5 — Diagnosis as convergent PDCA
 
 manifest:
   id: diagnose
@@ -12,7 +12,7 @@ manifest:
     code with targeted probes, applies the fix with regression test, computes
     convergence, and iterates until root cause is confirmed and fix is validated.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

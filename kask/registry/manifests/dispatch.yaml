@@ -5,7 +5,7 @@ manifest:
   id: dispatch
   category: pipeline
   name: dispatch
-  version: "0.33.3"
+  version: "0.33.5"
   description: Template dispatch orchestration with selector-driven routing
   functional_role: flowdef
   visibility: Public

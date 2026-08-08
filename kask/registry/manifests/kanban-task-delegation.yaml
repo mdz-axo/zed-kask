@@ -1,5 +1,5 @@
 # Kanban Task Delegation Skill
-# ℏKask v0.33.3 — Agent coordination via kanban boards
+# ℏKask v0.33.5 — Agent coordination via kanban boards
 #
 # Handles the initial handoff of kanban tasks to sub-userpods:
 # configure spawn parameters and execute the task. Ongoing
@@ -15,7 +15,7 @@ manifest:
   id: kanban-task-delegation
   category: pipeline
   name: Kanban Task Delegation
-  version: "0.33.3"
+  version: "0.33.5"
   description: >
     Delegate kanban tasks to sub-userpods. Configure spawn
     parameters (delegation level, skills, memory scope, tool

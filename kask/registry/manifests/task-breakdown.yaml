@@ -1,5 +1,5 @@
 # Task Breakdown Process Manifest
-# hKask v0.33.3 — Convergent plan generation
+# hKask v0.33.5 — Convergent plan generation
 # Adapted from addyosmani/planning-and-task-breakdown
 #
 # PDCA cycle (single-producer loop — mirrors diataxis-diagram):
@@ -47,7 +47,7 @@ manifest:
     with PKO process-axis anchors. Distinct from kanban-task-decomposition (single-pass
     board populate) and tdd (consumes the plan one vertical slice at a time).
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

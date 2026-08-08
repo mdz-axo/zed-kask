@@ -1,5 +1,5 @@
 # Swarm Compose Guide Process Manifest
-# hKask v0.33.3 — Agent/swarm composition authoring + validation
+# hKask v0.33.5 — Agent/swarm composition authoring + validation
 #
 # Ontological anchors:
 #   - PKO (Carriero et al. 2025): the composition request is a Procedure input;
@@ -41,7 +41,7 @@ manifest:
     field definitions and ABW/Local composition considerations. Used by the
     swarm panel's AI Assist / Validate buttons via the swarm_ai_assist MCP tool.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
   enforce_inputs: true

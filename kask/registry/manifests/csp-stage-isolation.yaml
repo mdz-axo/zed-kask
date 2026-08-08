@@ -1,5 +1,5 @@
 # CSP Stage Isolation Configuration
-# ℏKask v0.33.3 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.5 - A Minimal Viable Container for UserPods
 
 manifest:
   id: csp-stage-isolation
@@ -8,7 +8,7 @@ manifest:
   description: >
     Stage isolation configuration for Cybernetic Service Process pipelines,
     including timeouts, backpressure, retry policy, and pre/post stages.
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

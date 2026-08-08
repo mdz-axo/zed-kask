@@ -8,7 +8,7 @@ manifest:
     and proposes test improvements. Dispatches to proptest in generate_only
     mode. Cannot run tests (terminal disabled — proposer/evaluator separation).
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

@@ -1,5 +1,5 @@
 # Skill Translation Process Manifest
-# ℏKask v0.33.3 — Skill translation as convergent PDCA
+# ℏKask v0.33.5 — Skill translation as convergent PDCA
 
 manifest:
   id: skill-translation
@@ -10,7 +10,7 @@ manifest:
     into hKask-compatible structures with iterative normalization and
     convergence-based completion rails.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

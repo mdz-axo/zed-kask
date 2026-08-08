@@ -1,5 +1,5 @@
 # Graph Audit Process Manifest
-# hKask v0.33.3 — Unified graph analysis (code + semantic + dual) as convergent PDCA
+# hKask v0.33.5 — Unified graph analysis (code + semantic + dual) as convergent PDCA
 #
 # Merged from codegraph + semantic-graph-audit + zoom-out (context-expansion).
 # Three modes selected by the `mode` input:
@@ -19,7 +19,7 @@ manifest:
     grill-me lenses. Dual mode: extract code graph then audit its health.
     Any userpod may invoke this skill.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

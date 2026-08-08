@@ -1,12 +1,12 @@
 # Regulation Energy Tracking Configuration
-# ℏKask v0.33.3
+# ℏKask v0.33.5
 
 manifest:
   id: regulation-gas-tracking
   category: runtime-config
   name: Regulation Gas Tracking
   description: Regulation energy budget and alert configuration
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

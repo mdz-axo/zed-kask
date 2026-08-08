@@ -214,6 +214,39 @@ These are read-only authoring aids — no ledger debit, no consent. They never
 call ABW. For the cloud equivalents (fermi-backed), use `swarm_search_knowledge`
 / `swarm_generate_prompt` / `swarm_generate_ontology` in `abw` mode.
 
+## How-to 9: Browse, edit, and manage agent cards
+
+The swarm panel's browse list shows agent cards with a name, truncated
+description, and a compact action row. The layout follows the
+`ui-layout-discipline` skill: primary actions (Edit, Hire) are visible as
+buttons; secondary actions (Clone, Push, Publish, Remove) are collapsed
+behind an ellipsis (`⋯`) PopoverMenu to prevent overflow on narrow dock
+panels.
+
+1. **Edit an agent's settings**: Click the agent card body or the "Edit"
+   button. This opens the Author panel with the agent's existing details
+   loaded (name, description, system prompt, tags, visibility, valence).
+   The name field is read-only (renaming creates a new agent). For local
+   agents, saving updates the system prompt via `swarm_reconfigure_local_agent`
+   (preserves `cloud_id` and other fields). For cloud agents, the form is
+   view-only — clone to local to edit.
+
+2. **Hire an agent**: Click "Hire" (the filled/primary button). Pre-flighted
+   for cost and consent-gated.
+
+3. **Secondary actions** (Clone, Push, Publish, Remove): Click the `⋯`
+   ellipsis button to open the PopoverMenu. Each action has a tooltip
+   explaining what it does.
+
+4. **Create a new agent**: Click the "Author" mode toggle in the panel
+   header. This resets the form to a fresh create state (name field
+   editable, all fields cleared).
+
+The card layout uses `min_w_0()` + `flex_1()` on the text column,
+`flex_shrink_0()` on the button row, and `.truncate()` on all labels so
+long text ellipsizes instead of blowing out the card. The pattern
+reference is `agent_panel.rs` `render_panel_options_menu`.
+
 ## See also
 
 - [Reference: The 51-Tool Surface](./reference.md)

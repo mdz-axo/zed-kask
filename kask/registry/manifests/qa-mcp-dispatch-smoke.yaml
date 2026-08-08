@@ -21,7 +21,7 @@ manifest:
   id: qa-mcp-dispatch-smoke
   category: qa-script
   name: QA MCP Dispatch Smoke
-  version: "0.33.3"
+  version: "0.33.5"
   visibility: Private
   description: >
     End-to-end smoke test for MCP tool dispatch in the QA runner.

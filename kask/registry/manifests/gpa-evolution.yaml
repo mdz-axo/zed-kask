@@ -1,5 +1,5 @@
 # GEPA Evolution Process Manifest
-# ℏKask v0.33.3 — Reflective evolutionary optimization as convergent PDCA
+# ℏKask v0.33.5 — Reflective evolutionary optimization as convergent PDCA
 # Based on: Agrawal et al., "GEPA: Reflective Prompt Evolution Can Outperform
 # Reinforcement Learning" (arXiv:2507.19457, ICLR 2026 Oral).
 #
@@ -22,7 +22,7 @@ manifest:
     cheaper than policy gradients. v1 implements the prompt artifact path;
     manifest and template paths are future extensions.
   functional_role: flowdef
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 

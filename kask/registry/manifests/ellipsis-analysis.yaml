@@ -1,6 +1,6 @@
 # File: registry/manifests/ellipsis-analysis.yaml
 # Ellipsis Analysis Process Manifest
-# ℏKask v0.33.3 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.5 - A Minimal Viable Container for UserPods
 
 manifest:
   id: ellipsis-analysis
@@ -12,7 +12,7 @@ manifest:
     information loss). Applies Harold Bloom's five-step method: read deeply, mind the gaps,
     differentiate ellipsis from leak, see past yourself, find what is not inferno.
   functional_role: knowact
-  version: "0.33.3"
+  version: "0.33.5"
   editor: curator-or-human-admin
   visibility: Public
 
