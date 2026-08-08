@@ -8,6 +8,8 @@ contract:
     previous_manifest: object
   output:
     bundle_manifest: object
+    coverage: number
+    overlap: integer
     conflicts: array
     complementarities: array
     ontology_anchors: object
@@ -80,6 +82,24 @@ The goal defines WHAT the bundle must achieve. Every skill in the bundle is a pk
 | **Scope creep** | Too many terms or skills | Decompose into sub-bundles |
 | **Dead letter** | No productive skill in the bundle | Require at least one productive skill |
 
+## Composition Metrics
+
+Alongside the bundle manifest, emit two deterministic metrics the convergence
+scorer (`lisp.eval`, ordinal 5) reads to rank candidate compositions across
+loop iterations. These are the only fields the scorer can evaluate
+reproducibly — the LLM's own self-assessment is non-deterministic and must
+not be the convergence signal.
+
+| Metric | Type | Range | Meaning |
+|--------|------|-------|---------|
+| `coverage` | number | 0.0–1.0 | Fraction of the named `skill_names` that appear in `bundle_manifest.skills`. 1.0 = every requested skill is placed. <1.0 = a skill was dropped (scope creep / dead-letter resolution). |
+| `overlap` | integer | ≥0 | Count of skill pairs in the same cascade phase with overlapping artifact contracts (same `consumes` or `produces`). 0 = no redundancy. Higher = more fusion candidates the synthesizer should have decimated. |
+
+Compute these by inspecting `bundle_manifest.skills` against the input
+`skill_names` (coverage) and by counting same-phase pairs with matching
+`artifact_contract.input_from`/`output_to` targets (overlap). Do not
+approximate — the scorer reads the exact values.
+
 ## Output Requirements
 
 Respond with a JSON object:
@@ -129,6 +149,8 @@ Respond with a JSON object:
       "threshold": 0.7
     }
   },
+  "coverage": 1.0,
+  "overlap": 0,
   "conflicts": [],
   "complementarities": [],
   "ontology_anchors": {

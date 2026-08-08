@@ -1423,6 +1423,9 @@ mod tests {
             // tool calls inside the spawned thread, not the spawning itself.
             "create_thread",
             "spawn_agent",
+            // skill_bundle delegates to the manifest executor (same as skill);
+            // permission checks happen inside the composed cascade's tool calls.
+            "skill_bundle",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

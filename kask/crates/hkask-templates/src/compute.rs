@@ -1016,7 +1016,7 @@ mod tests {
         //     closure env, so recursive helpers accumulate via return values.
         //   - `=` is numeric-only; string equality is done via `assoc` (which uses
         //     LispValue PartialEq, and String vs String is structural).
-        //   - No `append` builtin; a recursive `append2` helper joins two lists.
+        //   - `append` is a builtin that joins N lists (all args must be lists).
         //   - Boolean literals are `true`/`false`/`nil` (not #t/#f).
         let form = r#"
           (let ((hyps (assoc "hypotheses" step_1_result)))
@@ -1200,6 +1200,523 @@ mod tests {
         assert!(
             defects.iter().any(|d| d == "duplicate_hypothesis"),
             "duplicate hypothesis text should flag duplicate_hypothesis, got: {defects:?}"
+        );
+    }
+
+    /// Validates the upstream-rebase verification lisp form's type-coercion
+    /// guard. When the LLM returns booleans as strings ("false" instead of
+    /// JSON false), the `is_truthy` function treats String("false") as true —
+    /// a failed check would pass the verification gate. The form includes a
+    /// `(string= raw "false")` coercion guard that converts string "false"
+    /// to Bool(false) before the `and` gate. This test pins that guard.
+    #[test]
+    fn dispatch_lisp_eval_upstream_rebase_string_false_coercion() {
+        let form = r#"
+          (let ((checks step_4_result))
+            (let ((compiled-raw (assoc "compiled" checks))
+                  (tests-raw (assoc "tests_passed" checks))
+                  (invariant-raw (assoc "invariant_holds" checks))
+                  (marker_count (assoc "marker_count" checks))
+                  (call_site_count (assoc "call_site_count" checks)))
+              (let ((compiled (if (string= compiled-raw "false") false compiled-raw))
+                    (tests_passed (if (string= tests-raw "false") false tests-raw))
+                    (invariant_holds (if (string= invariant-raw "false") false invariant-raw)))
+                (if (and compiled tests_passed invariant_holds
+                         (>= marker_count (* call_site_count 0.5)))
+                    (list (list "verification_passed" true)
+                          (list "marker_density" (/ marker_count call_site_count))
+                          (list "convergence_metric" 1.0))
+                    (list (list "verification_passed" false)
+                          (list "marker_density" (/ marker_count call_site_count))
+                          (list "convergence_metric" 0.0))))))
+        "#;
+
+        // Case 1: all checks pass with JSON booleans — verification_passed = true.
+        let valid_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_4_result": {
+                    "compiled": true,
+                    "tests_passed": true,
+                    "invariant_holds": true,
+                    "marker_count": 10,
+                    "call_site_count": 10
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
+        let pairs = result.as_array().expect("result should be a list of pairs");
+        let passed = pairs
+            .iter()
+            .find(|p| {
+                p.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    == Some("verification_passed")
+            })
+            .and_then(|p| {
+                p.as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(false);
+        assert!(passed, "all-true JSON booleans should pass verification");
+
+        // Case 2: compiled = "false" (string) — without the guard, is_truthy
+        // treats String("false") as true and the gate passes. With the guard,
+        // string "false" is coerced to Bool(false) and the gate correctly fails.
+        let string_false_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_4_result": {
+                    "compiled": "false",
+                    "tests_passed": true,
+                    "invariant_holds": true,
+                    "marker_count": 10,
+                    "call_site_count": 10
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &string_false_input).unwrap();
+        let pairs = result.as_array().expect("result should be a list of pairs");
+        let passed = pairs
+            .iter()
+            .find(|p| {
+                p.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    == Some("verification_passed")
+            })
+            .and_then(|p| {
+                p.as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(true);
+        assert!(
+            !passed,
+            "string \"false\" must be coerced to Bool(false) — verification must fail"
+        );
+        assert!(
+            !passed,
+            "string \"false\" must be coerced to Bool(false) — verification must fail"
+        );
+    }
+
+    /// Validates the prompt-enhance schema check lisp form. Verifies that
+    /// the rewrite output has all 4 required fields and that coding-type
+    /// prompts have ≥1 acceptance criterion. Pins the symbolic-neural
+    /// scaffolding pattern (de la Torre 2025) applied to prompt-enhance.
+    #[test]
+    fn dispatch_lisp_eval_prompt_enhance_schema_check() {
+        let form = r#"
+          (let ((result step_2_result))
+            (if (is_null result)
+                (list "no_rewrite_result")
+                (begin
+                  (define check-field
+                    (lambda (key)
+                      (if (is_null (assoc key result))
+                          (list (concat "missing_" key))
+                          (list))))
+                  (define field-defects
+                    (append (check-field "enhanced_prompt")
+                            (check-field "mutations_applied")
+                            (check-field "acceptance_criteria")
+                            (check-field "audit_findings")))
+                  (define prompt-type (assoc "prompt_type" step_1_result))
+                  (define is-coding (string= prompt-type "coding"))
+                  (define criteria (assoc "acceptance_criteria" result))
+                  (define criteria-count (if (is_null criteria) 0 (length criteria)))
+                  (define criteria-defects
+                    (if (and is-coding (< criteria-count 1))
+                        (list "coding_prompt_missing_acceptance_criteria")
+                        (list)))
+                  (append field-defects criteria-defects))))
+        "#;
+
+        // Case 1: valid output with all fields — no defects.
+        let valid = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "enhanced_prompt": "You are a coding agent...",
+                    "mutations_applied": [{"finding": "vague criteria", "mutation": "added testable criteria"}],
+                    "acceptance_criteria": ["test passes", "no regressions"],
+                    "audit_findings": [{"lens": "semantics", "finding": "ok", "constraint_force": "Evidence", "addressed": true}]
+                },
+                "step_1_result": {"prompt_type": "coding"}
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects.is_empty(),
+            "valid output should have no defects, got: {defects:?}"
+        );
+
+        // Case 2: coding prompt with empty acceptance_criteria — should flag.
+        let no_criteria = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "enhanced_prompt": "You are a coding agent...",
+                    "mutations_applied": [],
+                    "acceptance_criteria": [],
+                    "audit_findings": []
+                },
+                "step_1_result": {"prompt_type": "coding"}
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &no_criteria).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects
+                .iter()
+                .any(|d| d.as_str() == Some("coding_prompt_missing_acceptance_criteria")),
+            "coding prompt with empty acceptance_criteria should flag, got: {defects:?}"
+        );
+
+        // Case 3: missing enhanced_prompt field — should flag.
+        let missing_field = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_2_result": {
+                    "mutations_applied": [],
+                    "acceptance_criteria": ["test"],
+                    "audit_findings": []
+                },
+                "step_1_result": {"prompt_type": "reasoning"}
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &missing_field).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects
+                .iter()
+                .any(|d| d.as_str() == Some("missing_enhanced_prompt")),
+            "missing enhanced_prompt should flag, got: {defects:?}"
+        );
+    }
+
+    /// Validates the sankey-flow conservation check lisp form. For mandatory
+    /// conservation mode, sums source-side and sink-side edge weights and
+    /// compares for equality. Pins the symbolic-neural scaffolding pattern
+    /// applied to sankey-flow (Schmidt 2008 conservation).
+    #[test]
+    fn dispatch_lisp_eval_sankey_conservation_check() {
+        let form = r#"
+          (let ((mode step_1_result))
+            (let ((cmode (assoc "conservation_mode" mode))
+                  (edges (assoc "edges" step_2_result)))
+              (if (is_null edges)
+                  (list (list "conservation_verified" true)
+                        (list "source_total" 0)
+                        (list "sink_total" 0)
+                        (list "delta" 0)
+                        (list "check_mode" "no_edges"))
+                  (if (string= cmode "mandatory")
+                      (begin
+                        (define find-node
+                          (lambda (nodes nid)
+                            (if (is_null nodes)
+                                (list)
+                                (let ((node (car nodes)))
+                                  (let ((id (assoc "id" node)))
+                                    (if (string= id nid)
+                                        node
+                                        (find-node (cdr nodes) nid)))))))
+                        (define get-role
+                          (lambda (nid)
+                            (let ((node (find-node (assoc "nodes" step_1_result) nid)))
+                              (if (is_null node)
+                                  ""
+                                  (assoc "role" node)))))
+                        (define sum-sources
+                          (lambda (es acc)
+                            (if (is_null es)
+                                acc
+                                (let ((edge (car es)))
+                                  (let ((source (assoc "source" edge))
+                                        (weight (assoc "weight" edge)))
+                                    (let ((src-role (get-role source)))
+                                      (let ((w (if (is_null weight) 1 weight)))
+                                        (sum-sources
+                                          (cdr es)
+                                          (if (string= src-role "source")
+                                              (+ acc w)
+                                              acc)))))))))
+                        (define sum-sinks
+                          (lambda (es acc)
+                            (if (is_null es)
+                                acc
+                                (let ((edge (car es)))
+                                  (let ((target (assoc "target" edge))
+                                        (weight (assoc "weight" edge)))
+                                    (let ((tgt-role (get-role target)))
+                                      (let ((w (if (is_null weight) 1 weight)))
+                                        (sum-sinks
+                                          (cdr es)
+                                          (if (string= tgt-role "sink")
+                                              (+ acc w)
+                                              acc)))))))))
+                        (define source-total (sum-sources edges 0))
+                        (define sink-total (sum-sinks edges 0))
+                        (define delta (- source-total sink-total))
+                        (define verified (<= delta 0.01))
+                        (list (list "conservation_verified" verified)
+                              (list "source_total" source-total)
+                              (list "sink_total" sink-total)
+                              (list "delta" delta)
+                              (list "check_mode" "mandatory")))
+                      (list (list "conservation_verified" true)
+                            (list "source_total" 0)
+                            (list "sink_total" 0)
+                            (list "delta" 0)
+                            (list "check_mode" "skipped"))))))
+        "#;
+
+        // Case 1: mandatory conservation, balanced (source_total == sink_total).
+        let balanced = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "conservation_mode": "mandatory",
+                    "nodes": [
+                        {"id": "revenue", "label": "Revenue", "role": "source"},
+                        {"id": "cogs", "label": "COGS", "role": "sink"},
+                        {"id": "rd", "label": "R&D", "role": "sink"}
+                    ]
+                },
+                "step_2_result": {
+                    "edges": [
+                        {"source": "revenue", "target": "cogs", "weight": 60},
+                        {"source": "revenue", "target": "rd", "weight": 40}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &balanced).unwrap();
+        let pairs = result.as_array().expect("result should be a list of pairs");
+        let verified = pairs
+            .iter()
+            .find(|p| {
+                p.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    == Some("conservation_verified")
+            })
+            .and_then(|p| {
+                p.as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(false);
+        assert!(verified, "balanced mandatory conservation should verify");
+
+        // Case 2: mandatory conservation, unbalanced (source_total != sink_total).
+        // Revenue (source) sends 60 to COGS (sink) and 30 to R&D (sink).
+        // source_total = 90, sink_total = 90 — wait, that's balanced.
+        // Make it unbalanced: Revenue sends 60 to COGS and 30 to R&D,
+        // but add an extra edge from Marketing (source) to R&D (sink) with weight 10.
+        // source_total = 100, sink_total = 100 — still balanced.
+        // Actually, to make it unbalanced, we need a source edge that doesn't
+        // end at a sink. Revenue → Internal (not a sink).
+        let unbalanced = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "conservation_mode": "mandatory",
+                    "nodes": [
+                        {"id": "revenue", "label": "Revenue", "role": "source"},
+                        {"id": "cogs", "label": "COGS", "role": "sink"},
+                        {"id": "internal", "label": "Internal", "role": "internal"},
+                        {"id": "rd", "label": "R&D", "role": "sink"}
+                    ]
+                },
+                "step_2_result": {
+                    "edges": [
+                        {"source": "revenue", "target": "cogs", "weight": 60},
+                        {"source": "revenue", "target": "internal", "weight": 20},
+                        {"source": "revenue", "target": "rd", "weight": 30}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &unbalanced).unwrap();
+        let pairs = result.as_array().expect("result should be a list of pairs");
+        let verified = pairs
+            .iter()
+            .find(|p| {
+                p.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    == Some("conservation_verified")
+            })
+            .and_then(|p| {
+                p.as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(true);
+        assert!(
+            !verified,
+            "unbalanced mandatory conservation should not verify"
+        );
+
+        // Case 3: non-mandatory mode — should skip (verified = true).
+        let non_mandatory = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {"conservation_mode": "none"},
+                "step_2_result": {"edges": [{"source": "a", "target": "b", "weight": 1}]}
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &non_mandatory).unwrap();
+        let pairs = result.as_array().expect("result should be a list of pairs");
+        let check_mode = pairs
+            .iter()
+            .find(|p| {
+                p.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    == Some("check_mode")
+            })
+            .and_then(|p| p.as_array().and_then(|a| a.get(1)).and_then(|v| v.as_str()))
+            .unwrap_or("");
+        assert_eq!(
+            check_mode, "skipped",
+            "non-mandatory mode should be skipped"
+        );
+    }
+
+    /// Validates the swarm-steering pre-flight validation lisp form. Verifies
+    /// that execution_sequence entries have required keys, credits don't exceed
+    /// the ceiling, and no duplicate agent_name entries exist.
+    #[test]
+    fn dispatch_lisp_eval_swarm_steering_preflight() {
+        let form = r#"
+          (let ((directive step_1_result))
+            (if (is_null directive)
+                (list "no_directive_result")
+                (let ((seq (assoc "execution_sequence" directive)))
+                  (if (is_null seq)
+                      (list "missing_execution_sequence")
+                      (begin
+                        (define check-entry
+                          (lambda (es idx acc)
+                            (if (is_null es)
+                                acc
+                                (let ((entry (car es)))
+                                  (let ((agent (assoc "agent_name" entry))
+                                        (task (assoc "task" entry))
+                                        (credits (assoc "credits_authorized" entry)))
+                                    (let ((d1 (if (is_null agent) (list "missing_agent_name") (list)))
+                                          (d2 (if (is_null task) (list "missing_task") (list)))
+                                          (d3 (if (is_null credits) (list "missing_credits_authorized") (list)))
+                                          (d4 (if (and (not (is_null credits)) (> credits credit_ceiling))
+                                                (list "credits_exceed_ceiling")
+                                                (list))))
+                                      (check-entry (cdr es) (+ idx 1)
+                                        (append acc d1 d2 d3 d4))))))))
+                        (define check-duplicates
+                          (lambda (es seen acc)
+                            (if (is_null es)
+                                acc
+                                (let ((entry (car es)))
+                                  (let ((agent (assoc "agent_name" entry)))
+                                    (let ((agent-str (if (is_null agent) "" agent)))
+                                      (if (not (is_null (assoc agent-str seen)))
+                                          (check-duplicates (cdr es) (cons (list agent-str true) seen)
+                                            (cons "duplicate_agent" acc))
+                                          (check-duplicates (cdr es) (cons (list agent-str true) seen) acc))))))))
+                        (define entry-defects (check-entry seq 0 (list)))
+                        (define dup-defects (check-duplicates seq (list) (list)))
+                        (append entry-defects dup-defects))))))
+        "#;
+
+        // Case 1: valid directive — no defects.
+        let valid = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "execution_sequence": [
+                        {"agent_name": "researcher", "task": "find sources", "credits_authorized": 10},
+                        {"agent_name": "writer", "task": "write report", "credits_authorized": 5}
+                    ]
+                },
+                "credit_ceiling": 50
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects.is_empty(),
+            "valid directive should have no defects, got: {defects:?}"
+        );
+
+        // Case 2: missing agent_name in entry 1.
+        let missing_agent = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "execution_sequence": [
+                        {"task": "find sources", "credits_authorized": 10}
+                    ]
+                },
+                "credit_ceiling": 50
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &missing_agent).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects
+                .iter()
+                .any(|d| d.as_str().unwrap_or("").contains("missing_agent_name")),
+            "missing agent_name should flag, got: {defects:?}"
+        );
+
+        // Case 3: credits exceed ceiling.
+        let over_ceiling = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "execution_sequence": [
+                        {"agent_name": "researcher", "task": "find sources", "credits_authorized": 100}
+                    ]
+                },
+                "credit_ceiling": 50
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &over_ceiling).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects
+                .iter()
+                .any(|d| d.as_str().unwrap_or("").contains("credits_exceed_ceiling")),
+            "credits exceeding ceiling should flag, got: {defects:?}"
+        );
+
+        // Case 4: duplicate agent_name.
+        let duplicate = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "execution_sequence": [
+                        {"agent_name": "researcher", "task": "find sources", "credits_authorized": 10},
+                        {"agent_name": "researcher", "task": "find more sources", "credits_authorized": 5}
+                    ]
+                },
+                "credit_ceiling": 50
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &duplicate).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(
+            defects
+                .iter()
+                .any(|d| d.as_str().unwrap_or("").contains("duplicate_agent")),
+            "duplicate agent_name should flag, got: {defects:?}"
         );
     }
 

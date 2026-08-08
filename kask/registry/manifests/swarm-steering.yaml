@@ -110,6 +110,68 @@ steps:
       swarm_id: "{{ swarm_id }}"
       credits_authorized: "{{ credits_authorized | default(50) }}"
 
+  # ─── STEP 2: PRE-FLIGHT VALIDATION (deterministic lisp.eval) ───
+  # Symbolic-neural scaffolding (de la Torre 2025, arXiv:2506.10021):
+  # the LLM is bad at self-checking structural completeness of the directive
+  # it produced. This step deterministically verifies: (1) every entry in
+  # execution_sequence has agent_name, task, credits_authorized keys, (2) no
+  # credits_authorized exceeds the ceiling, (3) no duplicate agent_name entries.
+  # Reference model: Conant-Ashby Good Regulator (1970) — the actuator must
+  # model the swarm it steers; a structurally invalid directive cannot model it.
+  - ordinal: 2
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic pre-flight validation. Verifies the steering directive's
+      execution_sequence entries each have agent_name, task, credits_authorized
+      keys; that no credits_authorized exceeds the ceiling; and that no
+      duplicate agent_name entries exist. Returns a defects list — empty =
+      passed, non-empty = the directive is structurally invalid. No LLM call.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((directive step_1_result))
+          (if (is_null directive)
+              (list "no_directive_result")
+              (let ((seq (assoc "execution_sequence" directive)))
+                (if (is_null seq)
+                    (list "missing_execution_sequence")
+                    (begin
+                      (define check-entry
+                        (lambda (es idx acc)
+                          (if (is_null es)
+                              acc
+                              (let ((entry (car es)))
+                                (let ((agent (assoc "agent_name" entry))
+                                      (task (assoc "task" entry))
+                                      (credits (assoc "credits_authorized" entry)))
+                                  (let ((d1 (if (is_null agent) (list "missing_agent_name") (list)))
+                                        (d2 (if (is_null task) (list "missing_task") (list)))
+                                        (d3 (if (is_null credits) (list "missing_credits_authorized") (list)))
+                                        (d4 (if (and (not (is_null credits)) (> credits credit_ceiling))
+                                              (list "credits_exceed_ceiling")
+                                              (list))))
+                                    (check-entry (cdr es) (+ idx 1)
+                                      (append acc d1 d2 d3 d4))))))))
+                      (define check-duplicates
+                        (lambda (es seen acc)
+                          (if (is_null es)
+                              acc
+                              (let ((entry (car es)))
+                                (let ((agent (assoc "agent_name" entry)))
+                                  (let ((agent-str (if (is_null agent) "" agent)))
+                                    (if (not (is_null (assoc agent-str seen)))
+                                        (check-duplicates (cdr es) (cons (list agent-str true) seen)
+                                          (cons "duplicate_agent" acc))
+                                        (check-duplicates (cdr es) (cons (list agent-str true) seen) acc))))))))
+                      (define entry-defects (check-entry seq 0 (list)))
+                      (define dup-defects (check-duplicates seq (list) (list)))
+                      (append entry-defects dup-defects))))))
+      env:
+        step_1_result: "{{ step_1_result }}"
+        credit_ceiling: "{{ credits_authorized | default(50) }}"
+
 error_handling:
   on_gas_exceeded: abort
   on_timeout: retry

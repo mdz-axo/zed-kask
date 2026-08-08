@@ -2406,4 +2406,67 @@ mod tests {
         let score = result.as_f64().expect("score is a float");
         assert!((score - 0.0).abs() < 1e-9);
     }
+
+    // ── Skill-bundler composition-score form ──
+    // Pins the exact form used in kask/registry/manifests/skill-bundler.yaml
+    // step 5. The score combines coverage (from compose), overlap (from
+    // compose), and validation violations/warnings/ontology_gaps (from
+    // validate) into a single deterministic convergence signal. Lower =
+    // better. This is the falsifier anchor: if `lisp.eval` is removed, the
+    // score becomes LLM-internal and non-reproducible — this test pins the
+    // deterministic computation so the drift is detectable.
+
+    fn skill_bundler_composition_score_form() -> &'static str {
+        r##"
+        (let ((coverage (assoc "coverage" step_2_result))
+              (overlap (assoc "overlap" step_2_result))
+              (v (length (assoc "violations" step_4_result)))
+              (w (length (assoc "warnings" step_4_result)))
+              (o (length (assoc "ontology_gaps" step_4_result))))
+          (+ 0.0
+             (* 2.0 (- 1.0 coverage))
+             (* 0.5 overlap)
+             (+ v w) o))
+        "##
+    }
+
+    #[test]
+    fn skill_bundler_full_coverage_no_overlap_no_violations_scores_zero() {
+        let env = json!({
+            "step_2_result": {"coverage": 1.0, "overlap": 0},
+            "step_4_result": {"violations": [], "warnings": [], "ontology_gaps": []}
+        });
+        let result = eval_sandboxed(skill_bundler_composition_score_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        // 2.0*(1-1) + 0.5*0 + 0 + 0 + 0 = 0.0
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn skill_bundler_half_coverage_penalizes_double() {
+        let env = json!({
+            "step_2_result": {"coverage": 0.5, "overlap": 0},
+            "step_4_result": {"violations": [], "warnings": [], "ontology_gaps": []}
+        });
+        let result = eval_sandboxed(skill_bundler_composition_score_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        // 2.0*(1-0.5) + 0 + 0 = 1.0
+        assert!((score - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn skill_bundler_overlap_and_violations_add_to_score() {
+        let env = json!({
+            "step_2_result": {"coverage": 1.0, "overlap": 2},
+            "step_4_result": {
+                "violations": [{"rule_id": "V1"}],
+                "warnings": [{"rule_id": "V7"}],
+                "ontology_gaps": [{"axis": "pko"}]
+            }
+        });
+        let result = eval_sandboxed(skill_bundler_composition_score_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        // 2.0*0 + 0.5*2 + (1+1) + 1 = 0 + 1.0 + 2 + 1 = 4.0
+        assert!((score - 4.0).abs() < 1e-9);
+    }
 }

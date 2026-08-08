@@ -727,11 +727,7 @@ impl KaskExtensionsPage {
                             h_flex()
                                 .gap_2()
                                 .min_w_0()
-                                .child(
-                                    Label::new(reff.id())
-                                        .color(Color::Default)
-                                        .truncate(),
-                                )
+                                .child(Label::new(reff.id()).color(Color::Default).truncate())
                                 .child(
                                     Label::new("Shared in channel")
                                         .color(Color::Muted)
@@ -927,16 +923,8 @@ impl KaskExtensionsPage {
         let mut header = h_flex()
             .gap_2()
             .min_w_0()
-            .child(
-                Label::new(entry.name)
-                    .color(Color::Default)
-                    .truncate(),
-            )
-            .child(
-                Label::new(source_label)
-                    .color(Color::Muted)
-                    .flex_shrink_0(),
-            );
+            .child(Label::new(entry.name).color(Color::Default).truncate())
+            .child(Label::new(source_label).color(Color::Muted).flex_shrink_0());
         if entry.modified {
             header = header.child(
                 Label::new("Modified")
@@ -946,17 +934,12 @@ impl KaskExtensionsPage {
         }
         MarketplaceCard::new().child(
             h_flex().w_full().gap_2().child(
-                v_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .gap_1()
-                    .child(header)
-                    .child(
-                        Label::new(entry.description)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall)
-                            .truncate(),
-                    ),
+                v_flex().min_w_0().flex_1().gap_1().child(header).child(
+                    Label::new(entry.description)
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall)
+                        .truncate(),
+                ),
             ),
         )
     }

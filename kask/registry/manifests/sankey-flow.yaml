@@ -47,8 +47,7 @@ convergence:
   on_not_reached: escalate
 
 gas:
-  # 2 LLM calls (match + adapt) + 1 deterministic render. Much lower than the
-  # old 7-step PDCA loop (up to 21 LLM calls).
+  # 2 LLM calls (match + adapt) + 1 deterministic conservation check + 1 deterministic render.
   cap: 20000
   cost_per_iteration: 100
   alert_threshold: 0.8
@@ -126,7 +125,100 @@ steps:
       source_ref: "{{ source_ref | default(step_1_result.source_ref | default('')) }}"
       match_notes: "{{ step_1_result.match_notes | default('') }}"
 
+  # ─── STEP 3: CONSERVATION CHECK (deterministic lisp.eval) ───
+  # Symbolic-neural scaffolding (de la Torre 2025, arXiv:2506.10021):
+  # the LLM is bad at arithmetic — summing edge weights and comparing for
+  # equality is exactly the class of structural invariant lisp.eval catches.
+  # Reference model: Schmidt (2008) J. Industrial Ecology 12(1):82–94 —
+  # mandatory conservation requires inflow = outflow at every internal node.
   - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic conservation check. For mandatory conservation mode,
+      sums source-side edge weights and sink-side edge weights from the
+      adapt step's edges, then compares for equality (within epsilon 0.01
+      for float precision). Returns conservation_verified (bool),
+      source_total, sink_total, and delta. For non-mandatory modes, returns
+      conservation_verified: true (skipped). No LLM call.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((mode step_1_result))
+          (let ((cmode (assoc "conservation_mode" mode))
+                (edges (assoc "edges" step_2_result)))
+            (if (is_null edges)
+                (list (list "conservation_verified" true)
+                      (list "source_total" 0)
+                      (list "sink_total" 0)
+                      (list "delta" 0)
+                      (list "check_mode" "no_edges"))
+                (if (string= cmode "mandatory")
+                    (begin
+                      (define find-node
+                        (lambda (nodes nid)
+                          (if (is_null nodes)
+                              (list)
+                              (let ((node (car nodes)))
+                                (let ((id (assoc "id" node)))
+                                  (if (string= id nid)
+                                      node
+                                      (find-node (cdr nodes) nid)))))))
+                      (define get-role
+                        (lambda (nid)
+                          (let ((node (find-node (assoc "nodes" step_1_result) nid)))
+                            (if (is_null node)
+                                ""
+                                (assoc "role" node)))))
+                      (define sum-sources
+                        (lambda (es acc)
+                          (if (is_null es)
+                              acc
+                              (let ((edge (car es)))
+                                (let ((source (assoc "source" edge))
+                                      (weight (assoc "weight" edge)))
+                                  (let ((src-role (get-role source)))
+                                    (let ((w (if (is_null weight) 1 weight)))
+                                      (sum-sources
+                                        (cdr es)
+                                        (if (string= src-role "source")
+                                            (+ acc w)
+                                            acc)))))))))
+                      (define sum-sinks
+                        (lambda (es acc)
+                          (if (is_null es)
+                              acc
+                              (let ((edge (car es)))
+                                (let ((target (assoc "target" edge))
+                                      (weight (assoc "weight" edge)))
+                                  (let ((tgt-role (get-role target)))
+                                    (let ((w (if (is_null weight) 1 weight)))
+                                      (sum-sinks
+                                        (cdr es)
+                                        (if (string= tgt-role "sink")
+                                            (+ acc w)
+                                            acc)))))))))
+                      (define source-total (sum-sources edges 0))
+                      (define sink-total (sum-sinks edges 0))
+                      (define delta (- source-total sink-total))
+                      (define verified (<= delta 0.01))
+                      (list (list "conservation_verified" verified)
+                            (list "source_total" source-total)
+                            (list "sink_total" sink-total)
+                            (list "delta" delta)
+                            (list "check_mode" "mandatory")))
+                    (list (list "conservation_verified" true)
+                          (list "source_total" 0)
+                          (list "sink_total" 0)
+                          (list "delta" 0)
+                          (list "check_mode" "skipped"))))))
+      env:
+        step_1_result: "{{ step_1_result }}"
+        step_2_result: "{{ step_2_result }}"
+
+  # ─── STEP 4: RENDER ───
+  - ordinal: 4
     action: render
     description: >
       FORMAT and surface the finalized Sankey as the cascade's final output.
@@ -144,6 +236,11 @@ steps:
       node_count: "{{ step_2_result.node_count }}"
       edge_count: "{{ step_2_result.edge_count }}"
       conservation_check: "{{ step_2_result.conservation_check }}"
+      conservation_verified: "{{ step_3_result.conservation_verified | default(true) }}"
+      conservation_delta: "{{ step_3_result.delta | default(0) }}"
+      conservation_source_total: "{{ step_3_result.source_total | default(0) }}"
+      conservation_sink_total: "{{ step_3_result.sink_total | default(0) }}"
+      conservation_check_mode: "{{ step_3_result.check_mode | default('skipped') }}"
       adapt_notes: "{{ step_2_result.adapt_notes | default('') }}"
       domain: "{{ step_1_result.domain }}"
       subject: "{{ step_1_result.subject }}"

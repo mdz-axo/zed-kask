@@ -132,20 +132,31 @@ steps:
     action: compute
     compute_ref: lisp.eval
     description: >
-      Deterministic convergence score from the validation step's actual
-      output. The bundler-validate template produces `violations`, `warnings`,
-      and `ontology_gaps` arrays; the sum of their lengths is the distance from
-      a valid, fully-anchored composite. Lower = more converged. Replaces the
-      phantom `convergence_metric` binding that silently defaulted to 1.0.
+      Deterministic composition-quality score combining three signals:
+      coverage (from compose), overlap (from compose), and validation
+      violations/warnings/ontology_gaps (from validate). The score is a
+      weighted sum where lower = better: coverage contributes negatively
+      (higher coverage = lower score = better), while overlap and
+      violations contribute positively (more = higher score = worse).
+      This is the deterministic convergence signal the loop (ordinal 7)
+      converges on — removing `lisp.eval` makes the score non-reproducible
+      (the LLM's self-assessment is non-deterministic), so the loop would
+      drift on re-runs of the same input (the falsifier test pins this).
     gas_cap: 100
     timeout_seconds: 10
     input_mapping:
       form: >
-        (let ((v (length (assoc "violations" step_4_result)))
+        (let ((coverage (assoc "coverage" step_2_result))
+              (overlap (assoc "overlap" step_2_result))
+              (v (length (assoc "violations" step_4_result)))
               (w (length (assoc "warnings" step_4_result)))
               (o (length (assoc "ontology_gaps" step_4_result))))
-          (+ 0.0 (+ v w) o))
+          (+ 0.0
+             (* 2.0 (- 1.0 coverage))
+             (* 0.5 overlap)
+             (+ v w) o))
       env:
+        step_2_result: "{{ step_2_result }}"
         step_4_result: "{{ step_4_result }}"
 
   - ordinal: 6

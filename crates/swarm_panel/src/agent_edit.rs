@@ -420,3 +420,125 @@ impl SwarmPanel {
         .detach();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_local_extracts_full_card() {
+        let card = serde_json::json!({
+            "agent_id": "market_research",
+            "agent_type": "research",
+            "description": "Market research analyst",
+            "capabilities": {
+                "system_prompt": "You are a market research analyst.",
+                "model": "glm-5.2"
+            },
+            "tags": ["research", "analysis"],
+            "visibility": "private",
+            "valence": {
+                "arousal": 0.6,
+                "valence": 0.8,
+                "primary_affect": "curiosity",
+                "personality_traits": ["analytical", "cautious"]
+            }
+        });
+        let detail = AgentDetail::parse_local(&card);
+        assert_eq!(detail.agent_id, "market_research");
+        assert_eq!(detail.agent_type, "research");
+        assert_eq!(detail.description, "Market research analyst");
+        assert_eq!(detail.system_prompt, "You are a market research analyst.");
+        assert_eq!(detail.tags, vec!["research", "analysis"]);
+        assert_eq!(detail.visibility, "private");
+        assert_eq!(detail.valence_arousal, Some(0.6));
+        assert_eq!(detail.valence_valence, Some(0.8));
+        assert_eq!(detail.valence_primary_affect, Some("curiosity".to_string()));
+        assert_eq!(
+            detail.valence_personality_traits,
+            vec!["analytical", "cautious"]
+        );
+    }
+
+    #[test]
+    fn parse_local_handles_missing_fields() {
+        let card = serde_json::json!({
+            "agent_id": "minimal_agent",
+            "agent_type": "research"
+        });
+        let detail = AgentDetail::parse_local(&card);
+        assert_eq!(detail.agent_id, "minimal_agent");
+        assert_eq!(detail.agent_type, "research");
+        assert_eq!(detail.description, "");
+        assert_eq!(detail.system_prompt, "");
+        assert!(detail.tags.is_empty());
+        assert_eq!(detail.visibility, "private");
+        assert!(detail.valence_arousal.is_none());
+        assert!(detail.valence_valence.is_none());
+        assert!(detail.valence_primary_affect.is_none());
+        assert!(detail.valence_personality_traits.is_empty());
+    }
+
+    #[test]
+    fn parse_cloud_extracts_abw_card_shape() {
+        let card = serde_json::json!({
+            "agent_id": "cloud_agent",
+            "agent_type": "creative",
+            "system_prompt": "You are a creative writer.",
+            "metadata": {
+                "description": "Creative writing assistant",
+                "tags": ["creative", "writing"],
+                "valence": {
+                    "arousal": 0.7,
+                    "valence": 0.9,
+                    "primary_affect": "enthusiasm",
+                    "personality_traits": ["imaginative"]
+                }
+            },
+            "visibility": "public"
+        });
+        let detail = AgentDetail::parse_cloud(&card);
+        assert_eq!(detail.agent_id, "cloud_agent");
+        assert_eq!(detail.agent_type, "creative");
+        assert_eq!(detail.description, "Creative writing assistant");
+        assert_eq!(detail.system_prompt, "You are a creative writer.");
+        assert_eq!(detail.tags, vec!["creative", "writing"]);
+        assert_eq!(detail.visibility, "public");
+        assert_eq!(detail.valence_arousal, Some(0.7));
+        assert_eq!(detail.valence_valence, Some(0.9));
+        assert_eq!(
+            detail.valence_primary_affect,
+            Some("enthusiasm".to_string())
+        );
+        assert_eq!(detail.valence_personality_traits, vec!["imaginative"]);
+    }
+
+    #[test]
+    fn parse_cloud_falls_back_to_agent_name() {
+        let card = serde_json::json!({
+            "agent_name": "fallback_agent",
+            "agent_type": "meta",
+            "system_prompt": "prompt",
+            "metadata": {"description": "desc"},
+            "visibility": "unlisted"
+        });
+        let detail = AgentDetail::parse_cloud(&card);
+        assert_eq!(detail.agent_id, "fallback_agent");
+    }
+
+    #[test]
+    fn parse_cloud_handles_missing_valence() {
+        let card = serde_json::json!({
+            "agent_id": "no_valence",
+            "agent_type": "research",
+            "system_prompt": "prompt",
+            "metadata": {"description": "desc", "tags": []},
+            "visibility": "private"
+        });
+        let detail = AgentDetail::parse_cloud(&card);
+        assert!(detail.valence_arousal.is_none());
+        assert!(detail.valence_valence.is_none());
+        assert!(detail.valence_primary_affect.is_none());
+        assert!(detail.valence_personality_traits.is_empty());
+    }
+}

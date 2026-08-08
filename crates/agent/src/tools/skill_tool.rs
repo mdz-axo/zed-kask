@@ -185,6 +185,31 @@ pub trait SkillManifestExecutor: Send + Sync {
         context: std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<String, String>;
 
+    /// Compose a bundle from multiple peer-level skills via the `skill-bundler`
+    /// manifest, then execute the composed bundle's cascade.
+    ///
+    /// This is the two-phase orchestration for multi-skill prompts:
+    /// 1. Runs the `skill-bundler` manifest (compose → synthesize → validate →
+    ///    score → evolve → loop) to produce a governed `BundleManifest`.
+    /// 2. Executes the composed manifest's `steps` via `ManifestExecutor`.
+    ///
+    /// `skill_names` is the set of peer-level skills to compose (≥3 triggers
+    ///    the bundler; fewer should use `execute_skill` directly).
+    /// `task` is the user's natural-language request.
+    /// `context` carries any extra context entries merged into the cascade.
+    ///
+    /// Returns the composed bundle manifest (as JSON), the cascade's final
+    /// output text, and the deterministic composition score (for the post-run
+    /// UI's save/refine/discard affordance). The `bundle_manifest` JSON is
+    /// the `step_3_result.candidates[0].composite_manifest` extracted from
+    /// the skill-bundler cascade context.
+    async fn compose_and_execute_bundle(
+        &self,
+        skill_names: &[String],
+        task: &str,
+        context: std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<BundleExecutionResult, String>;
+
     /// Check whether a skill has an hKask manifest in the registry.
     ///
     /// Returns `true` if `kask/registry/manifests/<skill_name>.yaml` exists.
@@ -192,6 +217,28 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// return the no-manifest envelope (body injection is disabled in
     /// zed-kask — the SKILL.md body is never injected).
     fn has_manifest(&self, skill_name: &str) -> bool;
+}
+
+/// The result of composing and executing a skill bundle.
+///
+/// Carries the structured data the post-run UI needs for the
+/// save/refine/discard affordance (section B of the spec).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BundleExecutionResult {
+    /// The composed `BundleManifest` as JSON (the
+    /// `step_3_result.candidates[0].composite_manifest` from the
+    /// skill-bundler cascade). Persisted by the `Save` action.
+    pub bundle_manifest: serde_json::Value,
+    /// The final output text from executing the composed bundle's cascade.
+    pub output: String,
+    /// The deterministic composition score from `lisp.eval` (ordinal 5).
+    /// Lower = better. Used by `Refine` to decide if re-composition is
+    /// worthwhile, and by the UI to display the score breakdown.
+    pub composition_score: Option<f64>,
+    /// The skill names that were actually placed in the composed bundle
+    /// (may differ from the input if the bundler dropped a skill via
+    /// dead-letter resolution). Used by `Save` for registry matching.
+    pub composed_skill_names: Vec<String>,
 }
 
 impl SkillTool {
@@ -1024,6 +1071,27 @@ mod tests {
             } else {
                 Err(format!("no manifest for {skill_name}"))
             }
+        }
+
+        async fn compose_and_execute_bundle(
+            &self,
+            skill_names: &[String],
+            _task: &str,
+            _context: std::collections::HashMap<String, serde_json::Value>,
+        ) -> Result<BundleExecutionResult, String> {
+            // The stub doesn't run a real bundler cascade — it returns a
+            // minimal result so tests that exercise the skill_bundle tool's
+            // wiring (authorization, context injection, output shaping) can
+            // proceed without a live skill-bundler manifest.
+            Ok(BundleExecutionResult {
+                bundle_manifest: serde_json::json!({
+                    "name": "stub-bundle",
+                    "skills": skill_names.iter().map(|s| serde_json::json!({"name": s})).collect::<Vec<_>>(),
+                }),
+                output: self.output.clone(),
+                composition_score: Some(0.0),
+                composed_skill_names: skill_names.to_vec(),
+            })
         }
 
         fn has_manifest(&self, skill_name: &str) -> bool {

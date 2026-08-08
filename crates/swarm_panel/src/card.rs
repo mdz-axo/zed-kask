@@ -10,9 +10,9 @@
 //! (PopoverMenu + IconButton Ellipsis + ContextMenu::build + WeakEntity
 //! handler capture).
 
-use gpui::{Context, SharedString, Window, WeakEntity};
+use gpui::{Context, SharedString, WeakEntity, Window};
 use marketplace_ui_common::MarketplaceCard;
-use ui::{ContextMenu, IconName, IconSize, IconButton, PopoverMenu, Tooltip, prelude::*};
+use ui::{ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip, prelude::*};
 
 use crate::parse::AgentSource;
 use crate::{SwarmEntry, SwarmPanel};

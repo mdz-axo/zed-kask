@@ -1,5 +1,12 @@
 # Upstream Rebase Process Manifest
-# ℏKask v0.33.5 — Upstream sync as convergent PDCA
+# ℏKask v0.33.3 — Upstream sync as convergent PDCA
+#
+# Reference models:
+#   - Ousterhout, J. "A Philosophy of Software Design." Yaknyam Press, 2018.
+#     ISBN 978-0-9991428-0-1. The deletion test (deep modules, ch. 4) and
+#     interface minimalism drive the essentialist G1 gate.
+#   - PKO (Procedural Knowledge Ontology, Carriero et al. 2025):
+#     specification → execution → verification separation.
 #
 # Ontological anchors:
 # - PKO (Procedural Knowledge Ontology): the re-application is a Procedure
@@ -144,7 +151,9 @@ steps:
       check-hkask-no-zed-deps.sh, and grep marker count. Compute the
       verification_passed boolean (all checks pass) and the marker_density
       (markers / kask_call_sites). The Lisp form checks compiled, tests_passed,
-      invariant_holds, and marker_count >= 50% of call_site_count.
+      invariant_holds, and marker_count >= 50% of call_site_count. A string-to-bool
+      coercion guard handles LLMs that return "false" as a string instead of a
+      JSON boolean — without it, is_truthy treats String("false") as true.
     compute_ref: lisp.eval
     gas_cap: 100
     timeout_seconds: 30
@@ -155,19 +164,22 @@ steps:
       # convergence_signal binding.
       form: >
         (let ((checks step_4_result))
-          (let ((compiled (assoc "compiled" checks))
-                (tests_passed (assoc "tests_passed" checks))
-                (invariant_holds (assoc "invariant_holds" checks))
+          (let ((compiled-raw (assoc "compiled" checks))
+                (tests-raw (assoc "tests_passed" checks))
+                (invariant-raw (assoc "invariant_holds" checks))
                 (marker_count (assoc "marker_count" checks))
                 (call_site_count (assoc "call_site_count" checks)))
-            (if (and compiled tests_passed invariant_holds
-                     (>= marker_count (* call_site_count 0.5)))
-                (list (cons "verification_passed" true)
-                      (cons "marker_density" (/ marker_count call_site_count))
-                      (cons "convergence_metric" 1.0))
-                (list (cons "verification_passed" false)
-                      (cons "marker_density" (/ marker_count call_site_count))
-                      (cons "convergence_metric" 0.0)))))
+            (let ((compiled (if (string= compiled-raw "false") false compiled-raw))
+                  (tests_passed (if (string= tests-raw "false") false tests-raw))
+                  (invariant_holds (if (string= invariant-raw "false") false invariant-raw)))
+              (if (and compiled tests_passed invariant_holds
+                       (>= marker_count (* call_site_count 0.5)))
+                  (list (list "verification_passed" true)
+                        (list "marker_density" (/ marker_count call_site_count))
+                        (list "convergence_metric" 1.0))
+                  (list (list "verification_passed" false)
+                        (list "marker_density" (/ marker_count call_site_count))
+                        (list "convergence_metric" 0.0))))))
       env:
         step_4_result: "{{ step_4_result }}"
 

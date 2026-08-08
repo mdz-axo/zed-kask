@@ -1,5 +1,12 @@
 # Template crate manifest for prompt-enhance skill
-# hKask v0.33.5
+# hKask v0.33.3
+#
+# Reference model:
+#   Liu, Y.-Y., Zheng, Z., Zhang, F. et al. "A comprehensive taxonomy of
+#   prompt engineering techniques for large language models." Frontiers of
+#   Computer Science 20, 2003601 (2026). DOI: 10.1007/s11704-025-50058-z.
+#   Published 28 October 2025.
+#   4 aspects: profile & instruction, knowledge, reasoning & planning, reliability.
 #
 # Streamlined from the former 15-step / 13-template design to a 4-step /
 # 4-template single-pass pipeline. The former 7 typed rewrite variants

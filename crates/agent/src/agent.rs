@@ -976,6 +976,14 @@ impl NativeAgent {
                 skills_resolver_for_project(weak.clone(), project_id),
                 crate::manifest_executor_cloned,
             ));
+            // Register the skill_bundle tool for multi-skill composition.
+            // Shares the same skills resolver and manifest executor resolver
+            // as SkillTool — the bundler is invoked when ≥3 peer-level skills
+            // are named, producing a governed BundleManifest before execution.
+            thread.add_tool(SkillBundleTool::with_manifest_executor_resolver(
+                skills_resolver_for_project(weak.clone(), project_id),
+                crate::manifest_executor_cloned,
+            ));
         });
 
         let subscriptions = vec![

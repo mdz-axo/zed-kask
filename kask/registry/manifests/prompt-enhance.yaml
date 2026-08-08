@@ -1,5 +1,11 @@
 # Prompt-Enhance Skill Manifest
-# hKask v0.33.5 — Streamlined typed prompt enhancement
+# hKask v0.33.3 — Streamlined typed prompt enhancement
+#
+# Reference model:
+#   Liu, Y.-Y., Zheng, Z., Zhang, F. et al. "A comprehensive taxonomy of
+#   prompt engineering techniques for large language models." Frontiers of
+#   Computer Science 20, 2003601 (2026). DOI: 10.1007/s11704-025-50058-z.
+#   4 aspects: profile & instruction, knowledge, reasoning & planning, reliability.
 #
 # General-purpose prompt enhancement for prompts destined for the zed-kask
 # platform. Typed routing over a 7-type prompt taxonomy (coding, reasoning,
@@ -131,12 +137,59 @@ steps:
       risks: "{{ step_1_result.risks | default([]) }}"
       task: "{{ task | default('') }}"
 
-  # ─── STEP 3: VERIFY (medium/high only) ───
+  # ─── STEP 3: SCHEMA CHECK (deterministic lisp.eval) ───
+  # Symbolic-neural scaffolding (de la Torre 2025, arXiv:2506.10021):
+  # the LLM is bad at self-checking structural completeness. This step
+  # deterministically verifies the rewrite output has all required fields
+  # and that coding-type prompts have ≥1 acceptance criterion. No LLM call.
+  # Reference model: Liu et al. (FCS 2026) — reliability aspect requires
+  # testable acceptance criteria for coding prompts.
+  - ordinal: 3
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic schema check. Verifies the rewrite output has all 4
+      required fields (enhanced_prompt, mutations_applied, acceptance_criteria,
+      audit_findings) and that coding-type prompts have ≥1 acceptance
+      criterion. Returns a defects list — empty = passed, non-empty = the
+      output step surfaces the defects in the change log. No LLM call.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((result step_2_result))
+          (if (is_null result)
+              (list "no_rewrite_result")
+              (begin
+                (define check-field
+                  (lambda (key)
+                    (if (is_null (assoc key result))
+                        (list (concat "missing_" key))
+                        (list))))
+                (define field-defects
+                  (append (check-field "enhanced_prompt")
+                          (check-field "mutations_applied")
+                          (check-field "acceptance_criteria")
+                          (check-field "audit_findings")))
+                (define prompt-type (assoc "prompt_type" step_1_result))
+                (define is-coding (string= prompt-type "coding"))
+                (define criteria (assoc "acceptance_criteria" result))
+                (define criteria-count (if (is_null criteria) 0 (length criteria)))
+                (define criteria-defects
+                  (if (and is-coding (< criteria-count 1))
+                      (list "coding_prompt_missing_acceptance_criteria")
+                      (list)))
+                (append field-defects criteria-defects))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+        step_1_result: "{{ step_1_result }}"
+
+  # ─── STEP 4: VERIFY (medium/high only) ───
   # Decoupled grill-me critic. Skipped at low tier. Single round at medium,
   # three escalating rounds at high (the template scales internally based on
   # effort_tier). Verdict is informational — no PDCA re-entry. If the verdict
   # is fail, the output step surfaces it in the change log.
-  - ordinal: 3
+  - ordinal: 4
     action: select
     description: >
       Decoupled critic via grill-me self-challenge. Verdict: pass, rewrite_needed,
@@ -155,10 +208,10 @@ steps:
       round: 1
     condition: "step_1_result.effort_tier != 'low'"
 
-  # ─── STEP 4: OUTPUT ───
+  # ─── STEP 5: OUTPUT ───
   # Format per output_format: inline (fenced code block, default),
   # file (write to path), or both. Always include change log.
-  - ordinal: 4
+  - ordinal: 5
     action: select
     description: >
       Format and deliver the enhanced prompt per output_format
@@ -177,11 +230,12 @@ steps:
       output_path_resolved: "{{ step_1_result.output_path_resolved }}"
       phases_run: "{{ step_1_result.routing | default({}) }}"
       audit_findings: "{{ step_2_result.audit_findings | default([]) }}"
-      grill_ratings: "{{ step_3_result.ratings | default([]) }}"
-      grill_verdict: "{{ step_3_result.verdict | default('skipped') }}"
+      grill_ratings: "{{ step_4_result.ratings | default([]) }}"
+      grill_verdict: "{{ step_4_result.verdict | default('skipped') }}"
       mutations_applied: "{{ step_2_result.mutations_applied | default([]) }}"
       mutations_deferred: "{{ step_2_result.mutations_deferred | default([]) }}"
-      convergence_metric: 0.0
+      schema_defects: "{{ step_3_result | default([]) }}"
+      convergence_metric: 1.0
 
 error_handling:
   on_gas_exceeded: abort
