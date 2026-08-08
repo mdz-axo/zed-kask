@@ -108,10 +108,27 @@ steps:
   # Security: gated to category: skill manifests only (human-reviewed).
   - ordinal: 4
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence score from the candidate-evaluation step's
+      actual output. The skill-discovery-evaluate template produces
+      `overall_score` (0–22, higher = better). The score is normalized to
+      1 - overall_score/22 so lower = more converged. Replaces the phantom
+      `convergence_metric` binding that silently defaulted to 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((score (assoc "overall_score" step_3_result)))
+          (if (is_null score) 1.0 (- 1.0 (/ score 22.0))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+
+  - ordinal: 5
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -121,15 +138,15 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 5
+  - ordinal: 6
     action: loop
     description: Re-enter discovery cycle if convergence threshold is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
       # Carry convergence context into the next iteration.
-      kata_hypotenuse: "{{ step_3_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_4_result }}"
       previous_blockers: "{{ step_3_result.blockers | default([]) }}"
-      previous_metric: "{{ step_3_result.convergence_metric | default(1.0) }}"
+      previous_metric: "{{ step_4_result }}"
 
 error_handling:
   on_gas_exceeded: abort

@@ -106,10 +106,26 @@ steps:
 
   - ordinal: 6
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from step 5's actual Q5 output.
+      The convergence signal is the feedback-loop tightness: 0.0 if
+      coach_assessment is "tight-loop" (time-bound check committed), 1.0 if
+      "open-loop" (vague timing, not yet converged). Lower = more converged.
+      If coach_assessment is absent, the form errors (no silent default),
+      surfacing a broken Q5 step rather than masking it with a flat 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(if (string= (assoc \"coach_assessment\" step_5_result) \"tight-loop\") 0.0 1.0)"
+      env:
+        step_5_result: "{{ step_5_result }}"
+
+  - ordinal: 7
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -119,7 +135,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 7
+  - ordinal: 8
     action: loop
     description: Re-enter coaching cycle if convergence is not met.
     gas_cap: 1000
@@ -128,7 +144,7 @@ steps:
       loop_target: "{{ 1 }}"
       # Push the coaching quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_5_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_6_result }}"
 
 error_handling:
   on_gas_exceeded: abort

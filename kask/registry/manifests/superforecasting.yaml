@@ -290,10 +290,36 @@ steps:
 
   - ordinal: 15
     action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence score from the forecast-quality-gate step's
+      actual output. The quality-gate template produces four 0–1 dimension
+      scores (calibration_realism, confidence_justification, evidence_trail,
+      record_completeness, each 1.0 = optimal). The score is
+      (4 - sum(scores)) / 4 so lower = more converged. Any missing dimension
+      degrades to 1.0 (not converged). Replaces the phantom
+      `convergence_metric` binding that silently defaulted to 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((cr (assoc "calibration_realism_score" step_14_result))
+              (cj (assoc "confidence_justification_score" step_14_result))
+              (et (assoc "evidence_trail_score" step_14_result))
+              (rc (assoc "record_completeness_score" step_14_result)))
+          (if (is_null cr) 1.0
+            (if (is_null cj) 1.0
+              (if (is_null et) 1.0
+                (if (is_null rc) 1.0
+                  (/ (- 4.0 (+ cr cj et rc)) 4.0))))))
+      env:
+        step_14_result: "{{ step_14_result }}"
+
+  - ordinal: 16
+    action: compute
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -303,7 +329,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 16
+  - ordinal: 17
     action: compute
     description: >
       Apply the learned calibration bias to the prior probability before
@@ -318,7 +344,7 @@ steps:
       prior: "{{ step_12_result.final_probability | default(0.5) }}"
       overconfidence_bias: "{{ overconfidence_bias | default(0.0) }}"
 
-  - ordinal: 17
+  - ordinal: 18
     action: loop
     description: >
       Re-enter forecasting refinement cycle if convergence is not met.
@@ -330,10 +356,10 @@ steps:
       iterations (delta < 0.02 with no new evidence).
     input_mapping:
       loop_target: "{{ 2 }}"
-      prior_probability: "{{ step_16_result.adjusted | default(step_12_result.final_probability | default(0.5)) }}"
+      prior_probability: "{{ step_17_result.adjusted | default(step_12_result.final_probability | default(0.5)) }}"
       # Push the forecast quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_14_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_15_result }}"
 
 error_handling:
   on_gas_exceeded: abort

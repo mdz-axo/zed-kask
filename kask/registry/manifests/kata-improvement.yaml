@@ -128,10 +128,29 @@ steps:
   - ordinal: 5
     action: compute
     condition: "{{ mode | default('improvement') == 'beginner' }}"
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from the beginner drill's actual
+      output. Only one of steps 2/3/4 runs (selected by step 1); the others
+      are null. The convergence signal is the graduation criterion:
+      1.0 - automaticity_self_assess from the five-questions drill (step 2).
+      If the five-questions drill did not run (step_2_result is null) or
+      automaticity_self_assess is absent, the form returns 1.0 (not yet
+      graduated — pdca-cycle and observation-drill do not measure
+      automaticity directly). Lower = more converged.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(if (is_null step_2_result) 1.0 (let ((a (assoc \"automaticity_self_assess\" step_2_result))) (if (is_null a) 1.0 (- 1.0 a))))"
+      env:
+        step_2_result: "{{ step_2_result }}"
+
+  - ordinal: 6
+    action: compute
+    condition: "{{ mode | default('improvement') == 'beginner' }}"
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -142,7 +161,7 @@ steps:
       mode: "cauchy"
 
   # === IMPROVEMENT MODE (default) ===
-  - ordinal: 6
+  - ordinal: 7
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 1 — understand direction/challenge.
@@ -153,7 +172,7 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
 
-  - ordinal: 7
+  - ordinal: 8
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 2 — grasp current condition with data.
@@ -164,9 +183,9 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
       current_metrics: "{{ current_metrics | default({}) }}"
-      direction: "{{ step_6_result }}"
+      direction: "{{ step_7_result }}"
 
-  - ordinal: 8
+  - ordinal: 9
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 3 — establish target condition.
@@ -176,9 +195,9 @@ steps:
     timeout_seconds: 45
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_7_result }}"
+      current_condition: "{{ step_8_result }}"
 
-  - ordinal: 9
+  - ordinal: 10
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 4 — define next experiment.
@@ -188,16 +207,35 @@ steps:
     timeout_seconds: 60
     input_mapping:
       challenge: "{{ challenge }}"
-      current_condition: "{{ step_7_result }}"
-      target_condition: "{{ step_8_result }}"
+      current_condition: "{{ step_8_result }}"
+      target_condition: "{{ step_9_result }}"
 
-  - ordinal: 10
+  - ordinal: 11
+    action: compute
+    condition: "{{ mode | default('improvement') == 'improvement' }}"
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from step 10's actual experiment
+      output. The convergence signal is the count of missing core experiment
+      fields (obstacle, next_experiment, prediction, measurement_method,
+      success_criterion, learning_commitment, when_to_check): 7 minus the
+      number present. Lower = more converged (zero missing = well-defined
+      experiment). If step_10_result is null or a core field is absent, the
+      form counts it as missing (no silent default that masks a broken
+      experiment step).
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(- 7 (+ (if (is_null (assoc \"obstacle\" step_10_result)) 0 1) (if (is_null (assoc \"next_experiment\" step_10_result)) 0 1) (if (is_null (assoc \"prediction\" step_10_result)) 0 1) (if (is_null (assoc \"measurement_method\" step_10_result)) 0 1) (if (is_null (assoc \"success_criterion\" step_10_result)) 0 1) (if (is_null (assoc \"learning_commitment\" step_10_result)) 0 1) (if (is_null (assoc \"when_to_check\" step_10_result)) 0 1)))"
+      env:
+        step_10_result: "{{ step_10_result }}"
+
+  - ordinal: 12
     action: compute
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -207,7 +245,7 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 11
+  - ordinal: 13
     action: loop
     condition: "{{ mode | default('improvement') == 'beginner' }}"
     description: Re-enter beginner kata cycle if convergence is not met.
@@ -217,9 +255,9 @@ steps:
       loop_target: "{{ 1 }}"
       # Push the drill quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(step_3_result.convergence_metric | default(step_2_result.convergence_metric | default(1.0))) }}"
+      kata_hypotenuse: "{{ step_5_result }}"
 
-  - ordinal: 12
+  - ordinal: 14
     action: loop
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Re-enter improvement kata cycle if convergence is not met.
@@ -229,7 +267,7 @@ steps:
       loop_target: "{{ 7 }}"
       # Push the experiment quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_9_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_11_result }}"
 
 error_handling:
   on_gas_exceeded: abort

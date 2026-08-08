@@ -180,9 +180,27 @@ steps:
       behaviors_tested: "{{ step_5_result.behavior_coverage | default([]) }}"
     branching:
       replan: 1
-      converge: 8
+      converge: 9
 
   - ordinal: 8
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Compute structural-validity score from step 6's actual gap-check
+      output. The convergence signal combines open gaps with coverage
+      shortfall: length(gaps) + (100 - coverage_percentage) / 100.
+      Lower = more converged (zero gaps and 100% coverage = fully covered).
+      If gaps or coverage_percentage is absent, the form errors (no silent
+      default), surfacing a broken gap-check step rather than masking it
+      with a flat 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: "(let ((g (assoc \"gaps\" step_6_result)) (c (assoc \"coverage_percentage\" step_6_result))) (let ((gc (if (is_null g) 0 (length g))) (cc (if (numberp c) c 0.0))) (+ gc (/ (- 100 cc) 100))))"
+      env:
+        step_6_result: "{{ step_6_result }}"
+
+  - ordinal: 9
     action: compute
     compute_ref: kata.convergence_check
     description: >
@@ -191,7 +209,6 @@ steps:
       AND bug_hunt_new_gaps == 0 (step 7) — false convergence with open
       violations/gaps is prevented.
     input_mapping:
-      hypotenuse: 0.0
       hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
@@ -201,12 +218,12 @@ steps:
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 9
+  - ordinal: 10
     action: loop
     description: Re-enter TDD cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_8_result.convergence_metric | default(1.0) }}"
+      kata_hypotenuse: "{{ step_8_result }}"
 
 error_handling:
   on_gas_exceeded: abort
