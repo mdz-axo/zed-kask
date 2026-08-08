@@ -3081,7 +3081,11 @@ mod tests {
                 hkask_mcp_prediction_markets::cmp::CmpMethod::BucketedSparse,
             ),
         ];
-        let tree = compose_cmp_tree(&indices, chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap()).expect("tree");
+        let tree = compose_cmp_tree(
+            &indices,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap(),
+        )
+        .expect("tree");
         assert_eq!(tree.nodes.len(), 2);
         assert_eq!(tree.root_ids.len(), 2);
         // Provenance: the event IDs cite the index, not a contract.
@@ -3153,7 +3157,10 @@ mod tests {
                 hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
             ),
         ];
-        let result = compose_cmp_tree(&indices, chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap());
+        let result = compose_cmp_tree(
+            &indices,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap(),
+        );
         assert!(result.is_err());
     }
 
@@ -3178,7 +3185,11 @@ mod tests {
                 hkask_mcp_prediction_markets::cmp::CmpMethod::Interpolated,
             ),
         ];
-        let tree = compose_cmp_tree(&indices, chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap()).expect("tree");
+        let tree = compose_cmp_tree(
+            &indices,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, 7).unwrap(),
+        )
+        .expect("tree");
         assert_eq!(tree.nodes.len(), 2);
     }
 
@@ -3219,12 +3230,23 @@ mod tests {
         .expect("tree");
         assert_eq!(tree.nodes.len(), 2);
         // Oil is the root.
-        assert!(tree.root_ids.contains(&"cmp:crude_oil_price:1m:increase".to_string()));
+        assert!(
+            tree.root_ids
+                .contains(&"cmp:crude_oil_price:1m:increase".to_string())
+        );
         // Oil marginal = 0.40 (root prior).
-        let oil = tree.nodes.iter().find(|n| n.event.subject == "crude_oil_price").unwrap();
+        let oil = tree
+            .nodes
+            .iter()
+            .find(|n| n.event.subject == "crude_oil_price")
+            .unwrap();
         assert!((oil.marginal_probability - 0.40).abs() < 1e-9);
         // Inflation marginal = 0.70*0.40 + 0.20*0.60 = 0.40.
-        let inflation = tree.nodes.iter().find(|n| n.event.subject == "consumer_price_inflation").unwrap();
+        let inflation = tree
+            .nodes
+            .iter()
+            .find(|n| n.event.subject == "consumer_price_inflation")
+            .unwrap();
         assert!((inflation.marginal_probability - 0.40).abs() < 1e-9);
         // Joint probability = P(oil) * P(inflation|oil) = 0.40 * 0.70 = 0.28.
         assert!((tree.joint_probability - 0.28).abs() < 1e-9);

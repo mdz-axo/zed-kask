@@ -87,7 +87,7 @@ pub enum CmpError {
 /// The venue a CMP index is built from. Per-venue indices are mandated
 /// (plan.md C0.4 AC) — the law-of-one-price failure (arXiv:2601.01706) is the
 /// reason per-venue indices exist. Never pool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Venue {
     Kalshi,
@@ -119,7 +119,7 @@ impl Venue {
 /// §6. Wraps `CmpIndex` with the (family, venue) the index was built from, so
 /// downstream consumers (composition, risk core) cite the index, not a
 /// decaying contract.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProvenancedCmpIndex {
     /// The base-event family this index tracks.
     pub family: BaseEconomicObject,

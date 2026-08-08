@@ -191,6 +191,34 @@ pub struct MarketsSetBridgeRequest {
     pub dependency_specs: Option<Vec<DependencySpecRequest>>,
 }
 
+/// One dependency edge for `scenario_from_cmp_indices`. Uses CMP index IDs
+/// (`cmp:{family}:{tenor}:{orientation}`) instead of market IDs.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CmpDependencySpecRequest {
+    /// The child CMP index ID: `cmp:{family}:{tenor}:{orientation}`.
+    pub child_id: String,
+    /// The parent CMP index IDs.
+    pub parent_ids: Vec<String>,
+    /// P(child | parent truth assignment), bitmap-ordered; length must be
+    /// 2^parent_ids.len(). Caller-authored.
+    pub conditionals: Vec<f64>,
+}
+
+/// Request for `scenario_from_cmp_indices`: compose CMP indices into an
+/// EventTree with optional dependency edges (R1).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CmpBridgeRequest {
+    /// JSON array of ProvenancedCmpIndex objects from
+    /// hkask-mcp-prediction-markets (build_cmp_indices output).
+    pub cmp_indices: String,
+    /// The observation date (YYYY-MM-DD) the CMP indices were built. The event
+    /// deadlines are observation_date + target_maturity_days.
+    pub observation_date: String,
+    /// Optional caller-authored dependency edges between CMP index IDs. Omit
+    /// for a flat (independent) tree.
+    pub dependency_specs: Option<Vec<CmpDependencySpecRequest>>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FullPipelineRequest {
     /// Subject: company ticker, industry, country, or technology domain
@@ -837,6 +865,112 @@ impl ScenariosServer {
                     "dependency_edge_count": specs.len(),
                 },
                 "bridge_note": "Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities. base_rate is None on records refused by the per-market gates.",
+                "ontology": "dcterms:Dataset"
+            });
+
+            Ok(output)
+        })
+        .await
+    }
+
+    /// Bridge: compose CMP indices into an EventTree (R1).
+    ///
+    /// Takes CMP index probabilities (from hkask-mcp-prediction-markets
+    /// build_cmp_indices) and composes them into a validated EventTree. Each
+    /// CMP index becomes a root ScenarioEvent with its index probability as the
+    /// prior. The tree cites the index (family, orientation, tenor, venue) in
+    /// the provenance — not a decaying contract.
+    ///
+    /// Optional dependency edges between CMP indices (e.g. "oil price increase
+    /// → inflation increase") enable the H3 joint coherence test.
+    #[tool(
+        description = "Compose CMP (Constant-Maturity Prediction) indices into a validated EventTree. Each CMP index becomes a root event with its index probability as the prior. Optional dependency edges between CMP indices (e.g. oil→inflation) enable joint probability computation for coherence testing. The tree cites the CMP index identity (family, tenor, orientation, venue) in the provenance — not a decaying contract. Input: JSON array of ProvenancedCmpIndex objects (from build_cmp_indices), observation date, optional dependency specs."
+    )]
+    pub async fn scenario_from_cmp_indices(
+        &self,
+        Parameters(req): Parameters<CmpBridgeRequest>,
+    ) -> String {
+        execute_tool_semantic(self, "scenario_from_cmp_indices", Some(Self::ontology_anchor("scenario_from_cmp_indices")), async {
+            let indices: Vec<hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex> =
+                serde_json::from_str(&req.cmp_indices)
+                    .map_err(|e| McpToolError::invalid_argument(format!("invalid cmp_indices JSON array: {e}")))?;
+
+            let observation_date = chrono::NaiveDate::parse_from_str(&req.observation_date, "%Y-%m-%d")
+                .map_err(|e| McpToolError::invalid_argument(format!(
+                    "invalid observation_date '{}': {e} — expected YYYY-MM-DD",
+                    req.observation_date
+                )))?;
+
+            let deps: Vec<superforecast::CmpDependencySpec> = req
+                .dependency_specs
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| superforecast::CmpDependencySpec {
+                    child_id: s.child_id,
+                    parent_ids: s.parent_ids,
+                    conditionals: s.conditionals,
+                })
+                .collect();
+
+            let tree = if deps.is_empty() {
+                superforecast::compose_cmp_tree(&indices, observation_date)
+            } else {
+                superforecast::compose_cmp_tree_with_deps(&indices, observation_date, &deps)
+            }
+            .map_err(map_scenario_error)?;
+
+            let nodes: Vec<serde_json::Value> = tree
+                .nodes
+                .iter()
+                .map(|n| serde_json::json!({
+                    "id": n.event.id,
+                    "question": n.event.question,
+                    "marginal_probability": n.marginal_probability,
+                    "depends_on": n.event.depends_on.iter().map(|d| serde_json::json!({
+                        "parent_event_ids": d.parent_event_ids,
+                        "conditionals": d.conditionals,
+                    })).collect::<Vec<_>>(),
+                    "base_rate": n.event.base_rate,
+                    "basis": n.event.basis,
+                    "variance_contribution": n.variance_contribution,
+                }))
+                .collect();
+
+            // Extract CMP provenance from the event IDs (cmp:{family}:{tenor}:{orientation}).
+            let cmp_provenance: Vec<serde_json::Value> = tree
+                .nodes
+                .iter()
+                .filter_map(|n| {
+                    let id = &n.event.id;
+                    if !id.starts_with("cmp:") {
+                        return None;
+                    }
+                    Some(serde_json::json!({
+                        "id": id,
+                        "basis": n.event.basis,
+                        "reference_class": n.event.reference_class,
+                    }))
+                })
+                .collect();
+
+            let output = serde_json::json!({
+                "tree": {
+                    "subject": tree.subject,
+                    "root_ids": tree.root_ids,
+                    "topo_order": tree.topo_order,
+                    "joint_probability": tree.joint_probability,
+                    "nodes": nodes,
+                },
+                "cmp_provenance": cmp_provenance,
+                "provenance": {
+                    "tool": "scenario_from_cmp_indices",
+                    "server": "hkask-mcp-scenarios",
+                    "version": SERVER_VERSION,
+                    "cmp_index_count": indices.len(),
+                    "dependency_edge_count": deps.len(),
+                    "observation_date": req.observation_date,
+                },
+                "bridge_note": "CMP indices are constant-maturity, constant-orientation synthetic portfolios. The tree cites the index identity, not a decaying contract. Dependency edges and their conditionals are caller-authored; the server validates structure and computes marginals/joints but never invents conditional probabilities.",
                 "ontology": "dcterms:Dataset"
             });
 

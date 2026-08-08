@@ -1377,4 +1377,147 @@ mod tests {
             json!(0.85)
         );
     }
+
+    // ── lisp-scaffold-reasoning manifest form tests ──
+    // Pins the exact form used in kask/registry/manifests/lisp-scaffold-reasoning.yaml
+    // step 2. If the interpreter changes in a way that breaks this form, these
+    // tests fail before the skill is invoked in production.
+
+    fn scaffold_form() -> &'static str {
+        r##"
+        (let ((hyps (assoc "hypotheses" step_1_result)))
+          (if (is_null hyps)
+              (list "no_hypotheses_field")
+              (let ((n (length hyps)))
+                (if (< n 3)
+                    (list "insufficient_count_below_3")
+                    (if (> n 7)
+                        (list "excessive_count_above_7")
+                        (list))))))
+        "##
+    }
+
+    #[test]
+    fn scaffold_form_valid_count_returns_empty_defects() {
+        let env = json!({
+            "step_1_result": {
+                "hypotheses": [
+                    {"rank": 1, "hypothesis": "a", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 2, "hypothesis": "b", "prediction": "p", "falsifier": "f", "likelihood": "medium"},
+                    {"rank": 3, "hypothesis": "c", "prediction": "p", "falsifier": "f", "likelihood": "low"}
+                ],
+                "notes": "ok"
+            }
+        });
+        let result = eval_sandboxed(scaffold_form(), &env).unwrap();
+        assert_eq!(result, json!([]));
+    }
+
+    #[test]
+    fn scaffold_form_too_few_returns_defect() {
+        let env = json!({
+            "step_1_result": {
+                "hypotheses": [
+                    {"rank": 1, "hypothesis": "a", "prediction": "p", "falsifier": "f", "likelihood": "high"}
+                ]
+            }
+        });
+        let result = eval_sandboxed(scaffold_form(), &env).unwrap();
+        assert_eq!(result, json!(["insufficient_count_below_3"]));
+    }
+
+    #[test]
+    fn scaffold_form_too_many_returns_defect() {
+        let env = json!({
+            "step_1_result": {
+                "hypotheses": [
+                    {"rank": 1, "hypothesis": "a", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 2, "hypothesis": "b", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 3, "hypothesis": "c", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 4, "hypothesis": "d", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 5, "hypothesis": "e", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 6, "hypothesis": "g", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 7, "hypothesis": "h", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 8, "hypothesis": "i", "prediction": "p", "falsifier": "f", "likelihood": "high"}
+                ]
+            }
+        });
+        let result = eval_sandboxed(scaffold_form(), &env).unwrap();
+        assert_eq!(result, json!(["excessive_count_above_7"]));
+    }
+
+    #[test]
+    fn scaffold_form_missing_hypotheses_field_returns_defect() {
+        let notes = "model returned none.";
+        let env = json!({
+            "step_1_result": {
+                "notes": notes
+            }
+        });
+        let result = eval_sandboxed(scaffold_form(), &env).unwrap();
+        // Expected: a one-element list containing the defect string.
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let defect = arr[0].as_str().unwrap_or("");
+        let expected: &str = "no_hypotheses_field";
+        assert_eq!(defect, expected);
+    }
+
+    // ── Step 4 form: convergence score ──
+    // Pins the exact form used in lisp-scaffold-reasoning.yaml step 4.
+    // Score = 1.0 - (defect_count / n). Pure prefix (infix can't handle
+    // nested-paren operands — see expand_infix/is_infix_context).
+
+    fn scaffold_score_form() -> &'static str {
+        r##"
+        (let ((hyps (assoc "hypotheses" current)))
+          (if (is_null hyps)
+              0.0
+              (let ((n (length hyps)))
+                (if (= n 0) 0.0 (- 1.0 (/ defect_count n))))))
+        "##
+    }
+
+    #[test]
+    fn scaffold_score_no_defects_returns_one() {
+        let env = json!({
+            "current": {
+                "hypotheses": [
+                    {"rank": 1, "hypothesis": "a", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 2, "hypothesis": "b", "prediction": "p", "falsifier": "f", "likelihood": "medium"},
+                    {"rank": 3, "hypothesis": "c", "prediction": "p", "falsifier": "f", "likelihood": "low"}
+                ]
+            },
+            "defect_count": 0
+        });
+        let result = eval_sandboxed(scaffold_score_form(), &env).unwrap();
+        assert_eq!(result, json!(1.0));
+    }
+
+    #[test]
+    fn scaffold_score_one_defect_of_three_returns_two_thirds() {
+        let env = json!({
+            "current": {
+                "hypotheses": [
+                    {"rank": 1, "hypothesis": "a", "prediction": "p", "falsifier": "f", "likelihood": "high"},
+                    {"rank": 2, "hypothesis": "b", "prediction": "p", "falsifier": "f", "likelihood": "medium"},
+                    {"rank": 3, "hypothesis": "c", "prediction": "p", "falsifier": "f", "likelihood": "low"}
+                ]
+            },
+            "defect_count": 1
+        });
+        let result = eval_sandboxed(scaffold_score_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - (1.0 - 1.0 / 3.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaffold_score_missing_hypotheses_returns_zero() {
+        let env = json!({
+            "current": {},
+            "defect_count": 5
+        });
+        let result = eval_sandboxed(scaffold_score_form(), &env).unwrap();
+        assert_eq!(result, json!(0.0));
+    }
 }

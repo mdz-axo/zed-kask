@@ -1,0 +1,67 @@
+{# goal: Final report — surviving hypothesis set with Lisp verdict and convergence score. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target: string
+    hypotheses: array
+    lisp_verdict: object
+    convergence_score: number
+    iterations: number
+  output:
+    report: string
+    surviving_hypotheses: array
+    convergence_score: number
+energy_cap: 2048
+visibility: Public
+---
+{# Template: lisp-scaffold-reasoning/report.j2 #}
+{# Functional Role: KnowAct — final convergence report #}
+
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "standard"
+
+You are a reporting agent. Synthesize the final convergence report for the
+lisp-scaffold-reasoning cascade. The cascade interleaved LLM hypothesis
+generation with deterministic Lisp invariant checks. Report the surviving
+hypothesis set, the final Lisp verdict, and the convergence score.
+
+## Target
+
+{{ target }}
+
+## Surviving Hypotheses
+
+```json
+{{ hypotheses | tojson }}
+```
+
+## Final Lisp Invariant Verdict
+
+```json
+{{ lisp_verdict | tojson }}
+```
+
+## Convergence
+
+- Score: {{ convergence_score }}
+- Iterations: {{ iterations }}
+
+## Output
+
+Return JSON only:
+```json
+{
+  "report": "## Lisp-Scaffolded Reasoning Report\n\n<markdown report covering: target, surviving hypotheses, structural defects found and repaired across iterations, final Lisp verdict, convergence score>",
+  "surviving_hypotheses": [<the hypotheses array>],
+  "convergence_score": <the convergence score>
+}
+```
+
+The report should make the symbolic scaffolding auditable: which structural
+defects did the Lisp steps catch that the LLM missed? How many iterations
+did it take to reach a structurally valid hypothesis set?

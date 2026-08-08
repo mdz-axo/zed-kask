@@ -1223,6 +1223,103 @@ mod tests {
         assert!(dispatch_compute("lisp.eval", &input).is_err());
     }
 
+    /// Validates the four-invariant hypothesis check form intended for the
+    /// `lisp-scaffold-reasoning` skill manifest. Exercises all four invariants
+    /// (count, completeness, diversity, mutual-exclusivity) against a
+    /// structurally valid hypothesis set (expect no defects) and against
+    /// deliberately defective sets (expect the named defect strings).
+    /// This test pins the form before it is transplanted into the manifest.
+    #[test]
+    fn dispatch_lisp_eval_hypothesis_four_invariants() {
+        // Interpreter constraints honored:
+        //   - `define` inside `begin` at the `let` scope mutates the let's child env
+        //     (works — define mutates the env it receives, which is the let env).
+        //   - `define` inside a called lambda mutates the call_env (child), NOT the
+        //     closure env, so recursive helpers accumulate via return values.
+        //   - `=` is numeric-only; string equality is done via `assoc` (which uses
+        //     LispValue PartialEq, and String vs String is structural).
+        //   - No `append` builtin; a recursive `append2` helper joins two lists.
+        //   - Boolean literals are `true`/`false`/`nil` (not #t/#f).
+        let form = r#"
+          (let ((hyps (assoc "hypotheses" step_1_result)))
+            (if (is_null hyps)
+                (list "no_hypotheses_field")
+                (let ((n (length hyps)))
+                  (begin
+                    (define append2
+                      (lambda (a b)
+                        (if (is_null a) b (cons (car a) (append2 (cdr a) b)))))
+                    (define count-defects
+                      (if (< n 3)
+                          (list "insufficient_count_below_3")
+                          (if (> n 7)
+                              (list "excessive_count_above_7")
+                              (list))))
+                    (define check-completeness
+                      (lambda (hs acc)
+                        (if (is_null hs)
+                            acc
+                            (let ((h (car hs)))
+                              (let ((acc2 (if (is_null (assoc "prediction" h))
+                                              (cons "missing_prediction" acc)
+                                              acc)))
+                                (let ((acc3 (if (is_null (assoc "falsifier" h))
+                                                (cons "missing_falsifier" acc2)
+                                                acc2)))
+                                  (check-completeness (cdr hs) acc3)))))))
+                    (define completeness-defects (check-completeness hyps (list)))
+                    (define check-diversity
+                      (lambda (hs nh nm nl)
+                        (if (is_null hs)
+                            (let ((distinct (+ (if (> nh 0) 1 0) (if (> nm 0) 1 0) (if (> nl 0) 1 0))))
+                              (if (< distinct 2)
+                                  (list "insufficient_diversity_below_2")
+                                  (list)))
+                            (let ((h (car hs)))
+                              (let ((lk (assoc "likelihood" h)))
+                                (let ((is-high (not (is_null (assoc "high" (list (list lk true)))))))
+                                  (let ((is-med (not (is_null (assoc "medium" (list (list lk true)))))))
+                                    (let ((is-low (not (is_null (assoc "low" (list (list lk true)))))))
+                                      (check-diversity
+                                        (cdr hs)
+                                        (if is-high (+ nh 1) nh)
+                                        (if is-med (+ nm 1) nm)
+                                        (if is-low (+ nl 1) nl))))))))))
+                    (define diversity-defects (check-diversity hyps 0 0 0))
+                    (define check-duplicates
+                      (lambda (hs seen)
+                        (if (is_null hs)
+                            (list)
+                            (let ((h (car hs)))
+                              (let ((hyp-text (assoc "hypothesis" h)))
+                                (let ((hyp-str (if (is_null hyp-text) "" hyp-text)))
+                                  (if (not (is_null (assoc hyp-str seen)))
+                                      (cons "duplicate_hypothesis" (check-duplicates (cdr hs) seen))
+                                      (check-duplicates (cdr hs) (cons (list hyp-str true) seen)))))))))
+                    (define duplicate-defects (check-duplicates hyps (list)))
+                    (append2
+                      (append2 count-defects completeness-defects)
+                      (append2 diversity-defects duplicate-defects))))))
+        "#;
+        // Case 1: structurally valid set — 3 hypotheses, all fields present,
+        // 3 distinct likelihoods, no duplicates. Expect empty defect list.
+        let valid_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_1_result": {
+                    "hypotheses": [
+                        {"rank": 1, "hypothesis": "A", "prediction": "p1", "falsifier": "f1", "likelihood": "high"},
+                        {"rank": 2, "hypothesis": "B", "prediction": "p2", "falsifier": "f2", "likelihood": "medium"},
+                        {"rank": 3, "hypothesis": "C", "prediction": "p3", "falsifier": "f3", "likelihood": "low"}
+                    ]
+                }
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &valid_input).unwrap();
+        let defects = result.as_array().expect("result should be a list");
+        assert!(defects.is_empty(), "valid set should have no defects, got: {defects:?}");
+    }
+
     #[test]
     fn dispatch_kata_object_gap_complete() {
         let input = serde_json::json!({

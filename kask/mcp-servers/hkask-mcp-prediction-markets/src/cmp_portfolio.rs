@@ -217,7 +217,7 @@ pub fn select_available_buckets(
 // ── Orientation ─────────────────────────────────────────────────────────────
 
 /// The orientation of a contract relative to the reference level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Orientation {
     Increase,
@@ -450,7 +450,7 @@ pub struct Constituent {
 }
 
 /// A weighted constituent of the index portfolio.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WeightedConstituent {
     pub market_index: usize,
     pub weight: f64,
@@ -459,7 +459,7 @@ pub struct WeightedConstituent {
 }
 
 /// The solved index portfolio.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexPortfolio {
     pub constituents: Vec<WeightedConstituent>,
     /// Weighted-average maturity of the portfolio (days).
@@ -667,7 +667,7 @@ pub struct OrientedConstituent {
 /// One CMP index — a single (base object, maturity bucket, orientation)
 /// triple with its solved portfolio. This is the publishable unit: the daily
 /// index probability, constituent weights, and maturity-matching error.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CmpIndex {
     /// The maturity bucket this index is built for.
     pub bucket: MaturityBucket,

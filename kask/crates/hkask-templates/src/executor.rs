@@ -971,11 +971,28 @@ impl ManifestExecutor {
                 // Track the highest ordinal that stored a `step_N_result` key,
                 // so `execute_flowdef` can extract the sub-cascade's final
                 // result in O(1) instead of scanning the full context.
-                // Control-flow actions (abort/escalate/choice/loop) break or
-                // continue before reaching here, so only result-emitting
-                // actions (select/compute/execute/render/flowdef) update this.
-                // Steps are sorted by ordinal, so the last to run is the max.
-                last_result_ordinal = Some(step.ordinal);
+                //
+                // Only update for actions that store under `step_{ordinal}_result`:
+                // select, compute, execute/feedback/validate/retrieve, render,
+                // flowdef. `populate` stores under `step_{ordinal}_populated` (not
+                // `_result`), and `choice` may fall through without emitting any
+                // key — both would corrupt the tracker if set unconditionally.
+                // Control-flow actions (abort/escalate/loop) break or continue
+                // before reaching here; `choice` falls through only when no
+                // branch jumps, but it emits no result key, so it must be excluded.
+                if matches!(
+                    step.action.as_str(),
+                    "select"
+                        | "compute"
+                        | "execute"
+                        | "feedback"
+                        | "validate"
+                        | "retrieve"
+                        | "render"
+                        | "flowdef"
+                ) {
+                    last_result_ordinal = Some(step.ordinal);
+                }
 
                 // ── Unified skill feedback span emission (P9 §9.2) ──────────
                 // After each select step, emit the corresponding SkillFeedbackSpan
@@ -1584,11 +1601,16 @@ impl ManifestExecutor {
         // The final result is the highest-ordinal `step_N_result` key.
         // `run_cascade` tracks the last-completed ordinal, so we can read it
         // directly in O(1). The `extract_final_step_result` fallback (full
-        // context scan) is used only if the ordinal is unavailable (defensive
-        // — e.g. an empty sub-manifest with no result-emitting steps).
+        // context scan) is used when the ordinal is unavailable OR when the
+        // tracked key is absent from the context (defense-in-depth — the
+        // producer only tracks result-emitting actions, but a future action
+        // type or an edge case could still produce a stale ordinal).
         let final_step_key = last_ordinal.map(|n| format!("step_{n}_result"));
         let result_value = match &final_step_key {
-            Some(key) => sub_result.get(key).cloned().unwrap_or(Value::Null),
+            Some(key) => sub_result
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| extract_final_step_result(&sub_result)),
             None => extract_final_step_result(&sub_result),
         };
 
@@ -1608,19 +1630,13 @@ impl ManifestExecutor {
         // step_{ordinal}_result key, however, is inserted below without a
         // label; copy the label of the sub-cascade's final step result (the
         // same ordinal key we extracted above) so a Source-tainted sub-result
-        // doesn't enter the parent context unlabeled.
+        // doesn't enter the parent context unlabeled. Acquire the lock once
+        // for the read + write (the prior code acquired it twice in
+        // succession — a TOCTOU window and 2× the lock cost).
         if let Some(ref final_key) = final_step_key {
-            let label = self
-                .taint_labels
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(final_key)
-                .copied();
-            if let Some(label) = label {
-                self.taint_labels
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(format!("step_{}_result", step.ordinal), label);
+            let mut labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(label) = labels.get(final_key).copied() {
+                labels.insert(format!("step_{}_result", step.ordinal), label);
             }
         }
         parent_context.insert(format!("step_{}_result", step.ordinal), result_value);
@@ -2502,6 +2518,147 @@ convergence:
             iterations, 10,
             "cascade must run all 10 iterations before MaxedOut (matryoshka previously capped at 7)"
         );
+    }
+
+    /// Regression for BUG-1: `last_result_ordinal` was set unconditionally
+    /// after the match block, including for `populate` (which stores
+    /// `step_N_populated`, not `step_N_result`) and `choice` (which may
+    /// fall through without emitting any key). When such a step was the last
+    /// to run in a flowdef sub-cascade, `execute_flowdef` looked up
+    /// `step_N_result`, got `None`, and silently returned `Value::Null`
+    /// instead of falling back to `extract_final_step_result`.
+    ///
+    /// This test constructs a sub-manifest where step 1 is `select` (writes
+    /// `step_1_result`) and step 2 is `populate` (writes `step_2_populated`,
+    /// NOT `step_2_result`). The flowdef result must be step 1's output, not
+    /// `Value::Null`.
+    #[tokio::test]
+    async fn flowdef_result_not_null_when_last_step_is_populate() {
+        // Stub InferencePort returning valid JSON so the select step succeeds.
+        struct JsonInference;
+        impl InferencePort for JsonInference {
+            fn generate(
+                &self,
+                _prompt: &str,
+                _parameters: &LLMParameters,
+                _tools: Option<&[ChatToolDefinition]>,
+            ) -> Pin<Box<dyn Future<Output = Result<InferenceResult, InferenceError>> + Send + '_>>
+            {
+                Box::pin(async {
+                    Ok(InferenceResult {
+                        text: r#"{"answer": 42}"#.to_string(),
+                        model: "test".to_string(),
+                        usage: hkask_types::InferenceUsage {
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            total_tokens: 0,
+                        },
+                        finish_reason: "stop".to_string(),
+                        token_probabilities: None,
+                        tool_calls: vec![],
+                        reasoning: None,
+                        cost_usd: None,
+                    })
+                })
+            }
+        }
+
+        let executor = ManifestExecutor::new(
+            Arc::new(JsonInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+
+        let tmp = std::env::temp_dir().join("hkask-flowdef-populate-last-test");
+        std::fs::create_dir_all(&tmp).expect("create temp template dir");
+        // Sub-manifest: step 1 select (writes step_1_result), step 2 populate
+        // (writes step_2_populated, NOT step_2_result).
+        std::fs::write(
+            tmp.join("populate-last-sub.yaml"),
+            r#"
+manifest:
+  id: populate-last-sub
+templates: []
+steps:
+  - ordinal: 1
+    action: select
+    description: produce a result
+    renderer: inline
+    template_ref: "{{ 1 + 1 }}"
+    gas_cap: 1000
+    timeout_seconds: 5
+  - ordinal: 2
+    action: populate
+    description: produce a populated artifact (not a result)
+    renderer: inline
+    template_ref: "populated content"
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+gas:
+  cap: 10000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 0
+  alert_threshold: 0.8
+  hard_limit: true
+error_handling:
+  on_capability_denied: escalate
+ledger:
+  span_namespace: reg.skill.test
+  telemetry_namespace: hkask.template.test
+audit:
+  enabled: false
+"#,
+        )
+        .expect("write sub-manifest");
+        let executor = executor.with_template_base_path(tmp.clone());
+
+        let step = BundleManifestStep {
+            ordinal: 7,
+            action: "flowdef".to_string(),
+            description: "run sub-cascade ending in populate".to_string(),
+            renderer: None,
+            template_ref: Some("populate-last-sub".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: None,
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        let (parent_context, _gas, _rjoule) = executor
+            .execute_flowdef(&step, HashMap::new(), 100, 100.0, 0)
+            .await
+            .expect("sub-cascade should succeed");
+
+        // The flowdef step's result (step_7_result) must be the select step's
+        // output (step_1_result from the sub-cascade), NOT Value::Null.
+        let flowdef_result = parent_context
+            .get("step_7_result")
+            .expect("step_7_result must exist");
+        assert!(
+            !flowdef_result.is_null(),
+            "flowdef result must not be null when sub-cascade ends in populate; got: {flowdef_result}"
+        );
+        assert_eq!(
+            flowdef_result.get("answer"),
+            Some(&serde_json::json!(42)),
+            "flowdef result must be the select step's output"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// S1 regression: the matryoshka guard must still bound recursive nesting

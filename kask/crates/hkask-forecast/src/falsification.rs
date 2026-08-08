@@ -90,7 +90,9 @@ pub fn h2_duration_test(equity_duration_years: f64) -> Option<H2DurationResult> 
     let gaps = duration_vs_cmp_tenors(equity_duration_years)?;
     // Find the gap with the minimum ratio (the nearest CMP tenor).
     let min_gap = gaps.iter().min_by(|a, b| {
-        a.ratio.partial_cmp(&b.ratio).unwrap_or(std::cmp::Ordering::Equal)
+        a.ratio
+            .partial_cmp(&b.ratio)
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     let min_ratio = min_gap.map(|g| g.ratio).unwrap_or(f64::INFINITY);
     let min_ratio_tenor = min_gap.map(|g| g.tenor_label).unwrap_or("?");
@@ -151,7 +153,7 @@ pub fn h3_coherence_test(pairs: &[(f64, f64)], cost_band: f64) -> Option<H3Coher
             None => {
                 dropped_count += 1;
                 tracing::warn!(
-                    target: "reg.falsification",
+                    target: "hkask.forecast.falsification",
                     tree_implied = tree,
                     market_price = market,
                     "H3 coherence pair dropped — probability outside [0,1] (data quality issue)"
@@ -168,7 +170,7 @@ pub fn h3_coherence_test(pairs: &[(f64, f64)], cost_band: f64) -> Option<H3Coher
     let refuted = coherence_rate < 0.5;
     if refuted {
         tracing::warn!(
-            target: "reg.falsification",
+            target: "hkask.forecast.falsification",
             coherent_count,
             total_count,
             coherence_rate,
@@ -273,7 +275,11 @@ pub fn falsification_log(
                     "Tree is coherent with market within costs — H3 corroborated"
                 },
                 result.dropped_count,
-                if result.refuted { "TRIGGERED" } else { "not triggered" },
+                if result.refuted {
+                    "TRIGGERED"
+                } else {
+                    "not triggered"
+                },
             );
             (status, evidence)
         }
@@ -385,9 +391,9 @@ mod tests {
     fn h3_coherence_test_reports_dropped_invalid_pairs() {
         // 2 valid pairs + 1 invalid (probability > 1) → dropped_count = 1.
         let pairs = [
-            (0.60, 0.58),   // valid, coherent
-            (0.40, 0.42),   // valid, coherent
-            (1.5, 0.50),    // invalid — tree_implied > 1
+            (0.60, 0.58), // valid, coherent
+            (0.40, 0.42), // valid, coherent
+            (1.5, 0.50),  // invalid — tree_implied > 1
         ];
         let result = h3_coherence_test(&pairs, 0.05).expect("non-empty");
         assert_eq!(result.dropped_count, 1);
@@ -456,7 +462,12 @@ mod tests {
         for entry in &log {
             // Check all four text fields — a future edit could sneak a beta
             // reference into any of them.
-            for field in [entry.evidence.as_str(), entry.statement, entry.test, entry.falsifier] {
+            for field in [
+                entry.evidence.as_str(),
+                entry.statement,
+                entry.test,
+                entry.falsifier,
+            ] {
                 assert!(
                     !field.to_lowercase().contains("beta"),
                     "{} field must not mention beta: {}",

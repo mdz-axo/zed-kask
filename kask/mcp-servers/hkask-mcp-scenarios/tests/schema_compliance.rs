@@ -15,10 +15,10 @@
 
 use hkask_mcp_scenarios::{
     AssessRequest, BrainstormRequest, BuildEventsRequest, CalibrateRequest, CalibrationRequest,
-    CompaniesBridgeRequest, CrossValidateRequest, DependencySpecRequest, FrameDocumentRequest,
-    FrameRequest, FullPipelineRequest, MarketsSetBridgeRequest, PropagateRequest, QuantifyRequest,
-    ResearchRequest, ScoreRequest, SensitivityRequest, StatusRequest, SynthesizeRequest,
-    TriageRequest, UpdateRequest,
+    CmpBridgeRequest, CmpDependencySpecRequest, CompaniesBridgeRequest, CrossValidateRequest,
+    DependencySpecRequest, FrameDocumentRequest, FrameRequest, FullPipelineRequest,
+    MarketsSetBridgeRequest, PropagateRequest, QuantifyRequest, ResearchRequest, ScoreRequest,
+    SensitivityRequest, StatusRequest, SynthesizeRequest, TriageRequest, UpdateRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -59,3 +59,5 @@ schema_clean_test!(assess_request_schema, AssessRequest);
 schema_clean_test!(markets_set_bridge_request_schema, MarketsSetBridgeRequest);
 schema_clean_test!(dependency_spec_request_schema, DependencySpecRequest);
 schema_clean_test!(propagate_request_schema, PropagateRequest);
+schema_clean_test!(cmp_bridge_request_schema, CmpBridgeRequest);
+schema_clean_test!(cmp_dependency_spec_request_schema, CmpDependencySpecRequest);

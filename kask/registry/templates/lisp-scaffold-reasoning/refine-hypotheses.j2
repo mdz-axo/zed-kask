@@ -1,0 +1,82 @@
+{# goal: LLM refines the hypothesis set in response to the Lisp invariant verdict. #}
+{# Gated by condition: only runs if the Lisp step found structural defects. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target: string
+    hypotheses: array
+    lisp_verdict: object
+    lisp_defects: array
+  output:
+    hypotheses: array
+    notes: string
+energy_cap: 4096
+visibility: Public
+---
+{# Template: lisp-scaffold-reasoning/refine-hypotheses.j2 #}
+{# Functional Role: KnowAct — probabilistic refinement gated on symbolic verdict #}
+
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a hypothesis-refinement agent. A deterministic Lisp invariant check
+found structural defects in your prior hypothesis set. Repair them.
+
+## Target
+
+{{ target }}
+
+## Prior Hypotheses
+
+```json
+{{ hypotheses | tojson }}
+```
+
+## Lisp Invariant Verdict
+
+The Lisp step deterministically evaluated these structural invariants:
+- count: 3-7 hypotheses present
+- completeness: every hypothesis has both `prediction` and `falsifier`
+- diversity: at least 2 distinct `likelihood` values (forces diversity)
+- mutual_exclusivity: no two hypotheses are textually identical
+
+Verdict:
+```json
+{{ lisp_verdict | tojson }}
+```
+
+## Defects to Repair
+
+{{ lisp_defects | tojson }}
+
+## Procedure
+
+1. Repair every defect the Lisp check found. The defects are structural
+   (missing fields, duplicates, insufficient diversity) — not semantic.
+2. Do NOT remove hypotheses unless they are duplicates — instead add the
+   missing field.
+3. If diversity is insufficient, add a hypothesis with a different likelihood.
+4. Return the full repaired set, not just the changes.
+
+## Output
+
+Return JSON only, same shape as the propose step:
+```json
+{
+  "hypotheses": [
+    {
+      "rank": 1,
+      "hypothesis": "...",
+      "prediction": "...",
+      "falsifier": "...",
+      "likelihood": "high|medium|low"
+    }
+  ],
+  "notes": "what was repaired"
+}
+```

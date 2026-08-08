@@ -1,0 +1,58 @@
+# Template crate manifest for lisp-scaffold-reasoning skill
+# hKask v0.33.0
+#
+# Demonstrates deterministic Lisp scaffolding of LLM probabilistic reasoning,
+# after de la Torre (2025, arXiv:2506.10021) — "From Tool Calling to Symbolic
+# Thinking: LLMs in a Persistent Lisp Metaprogramming Loop". The paper proposes
+# a live SBCL REPL with middleware-intercepted <lisp> tags; kask realizes the
+# same symbolic-neural scaffolding via stateless `lisp.eval` compute steps
+# interleaved between LLM `select` steps. State lives in the manifest's
+# step-result chain (auditable YAML), not in a persistent REPL (attack surface).
+# See .rules trap "Manifest `ocap:` is declared config, not a security gate"
+# for why the stateless interpreter is the correct trade-off.
+
+crate:
+  name: lisp-scaffold-reasoning
+  version: "0.33.0"
+  description: >
+    Demonstrates deterministic Lisp scaffolding of LLM probabilistic reasoning.
+    Interleaves LLM hypothesis-generation steps with stateless `lisp.eval`
+    compute steps that check structural invariants the LLM cannot reliably
+    self-evaluate (count, completeness, mutual exclusivity, threshold gates).
+    Realizes the symbolic-neural scaffolding thesis of de la Torre (2025,
+    arXiv:2506.10021) via kask's manifest cascade rather than a persistent REPL.
+    A reference skill — read its manifest to see the `lisp.eval` pattern.
+
+templates:
+  - id: lisp-scaffold-reasoning/propose-hypotheses
+    name: "LLM proposes candidate hypotheses"
+    path: propose-hypotheses.j2
+    type: KnowAct
+    description: >
+      Probabilistic step: the LLM generates 3-7 candidate hypotheses for the
+      target question. Each hypothesis carries a prediction, a falsifier, and
+      a likelihood estimate. This is the connectionist compute the Lisp steps
+      scaffold — the LLM is good at generation, bad at counting its own outputs
+      and checking structural completeness.
+
+  - id: lisp-scaffold-reasoning/refine-hypotheses
+    name: "LLM refines hypotheses gated on Lisp verdict"
+    path: refine-hypotheses.j2
+    type: KnowAct
+    description: >
+      Probabilistic step: the LLM refines the hypothesis set in response to
+      the deterministic Lisp invariant check. Gated by `condition:` on the
+      Lisp verdict — only runs if the Lisp step found structural defects the
+      LLM must repair (missing falsifier, duplicate hypothesis, insufficient
+      diversity). This is the feedback loop: Lisp finds a structural defect,
+      LLM repairs it, Lisp re-checks.
+
+  - id: lisp-scaffold-reasoning/report
+    name: "Final convergence report"
+    path: report.j2
+    type: KnowAct
+    description: >
+      Final report: the surviving hypothesis set with the Lisp invariant
+      verdict and convergence score. Surfaces which structural defects were
+      found and repaired across iterations, making the symbolic scaffolding
+      auditable.

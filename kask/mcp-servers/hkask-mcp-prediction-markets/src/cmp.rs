@@ -35,7 +35,7 @@ pub struct TenorPoint {
 }
 
 /// Interpolation method actually used — sparse coverage degrades honestly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CmpMethod {
     /// ≥2 distinct tenor cohorts: log-odds interpolation.
