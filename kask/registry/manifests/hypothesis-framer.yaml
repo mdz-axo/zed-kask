@@ -162,21 +162,6 @@ steps:
       pico_defects: "{{ step_3_result | default([]) }}"
 
   - ordinal: 5
-    action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 6
     action: loop
     description: >
       Re-enter hypothesis-framer cycle if convergence is not met. NOTE: FINER (step 1)
@@ -194,7 +179,7 @@ steps:
       # Push the operationalize quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving. When step 4
       # was skipped (PICO defects), fall back to 0.0 so the loop continues.
-      kata_hypotenuse: "{{ step_4_result.convergence_metric | default(0.0) }}"
+      convergence_signal: "{{ step_4_result.convergence_metric | default(0.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

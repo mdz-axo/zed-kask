@@ -82,16 +82,20 @@ pub struct ConvergenceConfig {
     pub result_field: Option<String>,
 
     // ── Convergence thresholds ──
-    /// Hypotenuse below this → **gap convergence** (the agent reached the
-    /// target condition). This is the limit-of-a-sequence criterion:
+    /// Convergence signal below this → **gap convergence** (the agent reached
+    /// the target condition). This is the limit-of-a-sequence criterion:
     /// `‖xₙ − L‖ < ε` where L is the target and xₙ is the current condition.
-    #[serde(default = "default_hypotenuse_epsilon")]
-    pub hypotenuse_epsilon: f64,
+    /// Only meaningful when the signal is a real gap distance (e.g., the
+    /// `kata.hypotenuse` output for Kata-gap skills like `sequential-inquiry`
+    /// and `metacognition`). For custom-signal skills (violation count, etc.),
+    /// use the Cauchy path instead.
+    #[serde(default = "default_gap_epsilon")]
+    pub gap_epsilon: f64,
 
     /// Epsilon for the **Cauchy convergence** (stall) criterion: the iterates
     /// have stopped moving. A sequence is Cauchy if for all m, n > N,
     /// `‖xₘ − xₙ‖ < ε`. In practice, we check that the maximum pairwise
-    /// distance between hypotenuse readings in the last `cauchy_window`
+    /// distance between signal readings in the last `cauchy_window`
     /// cycles is below this epsilon. This means *all* recent readings are
     /// clustered together — the iterates have genuinely stabilized, not just
     /// locally plateaued.
@@ -100,11 +104,12 @@ pub struct ConvergenceConfig {
     /// stopped producing new information" (learning exhausted, current methods
     /// at their ceiling). It catches oscillation (0.3 → 0.5 → 0.3 → 0.5 has
     /// large pairwise distances → not Cauchy) and plateau (0.3 → 0.31 → 0.3
-    /// has small pairwise distances → Cauchy).
+    /// has small pairwise distances → Cauchy). Works on any scalar signal —
+    /// the signal need not be a gap distance.
     #[serde(default = "default_cauchy_epsilon")]
     pub cauchy_epsilon: f64,
     /// Window size (number of PDCA cycles) for the Cauchy convergence check.
-    /// The maximum pairwise distance between hypotenuse readings in the last
+    /// The maximum pairwise distance between signal readings in the last
     /// `cauchy_window` cycles must be below `cauchy_epsilon`.
     #[serde(default = "default_cauchy_window")]
     pub cauchy_window: u32,
@@ -121,7 +126,7 @@ pub struct ConvergenceConfig {
     /// Convergence mode — selects which stop conditions are active. Any active
     /// condition that fires triggers convergence.
     ///
-    /// - `"gap"`: gap convergence only (hypotenuse < epsilon).
+    /// - `"gap"`: gap convergence only (signal < gap_epsilon).
     /// - `"cauchy"`: Cauchy convergence only (iterates stabilized).
     /// - `"calibration"`: calibration convergence only (Brier calibrated).
     /// - `"gap_or_cauchy"`: gap or Cauchy (no Brier).
@@ -184,7 +189,7 @@ impl Default for ConvergenceConfig {
             current_procedure_field: None,
             prediction_field: None,
             result_field: None,
-            hypotenuse_epsilon: 0.05,
+            gap_epsilon: 0.05,
             cauchy_epsilon: 0.03,
             cauchy_window: 3,
             brier_window: 3,
@@ -212,7 +217,7 @@ fn default_improvement_gate() -> String {
     "threshold_only".to_string()
 }
 
-fn default_hypotenuse_epsilon() -> f64 {
+fn default_gap_epsilon() -> f64 {
     0.05
 }
 

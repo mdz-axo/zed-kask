@@ -428,7 +428,7 @@ proptest! {
 // largest reachable pure-function surface for property testing without stubs.
 //
 // The Kata model has three orthogonal stop conditions:
-//   - gap          : hypotenuse < hypotenuse_epsilon (limit of a sequence)
+//   - gap          : signal < gap_epsilon (limit of a sequence)
 //   - cauchy       : max pairwise distance in the last cauchy_window readings
 //                    < cauchy_epsilon (the iterates stopped moving)
 //   - calibration  : rolling Brier average over brier_window < brier_threshold
@@ -488,10 +488,10 @@ proptest! {
         }
 
         let payload = json!({
-            "hyp_len": tracker.hypotenuse_history().len(),
+            "hyp_len": tracker.signal_history().len(),
             "brier_len": tracker.brier_history().len(),
             "expected_len": cycles.len(),
-            "hyp": tracker.hypotenuse_history(),
+            "hyp": tracker.signal_history(),
             "brier": tracker.brier_history(),
             "expected_hyp": cycles.iter().map(|(h, _)| h).collect::<Vec<_>>(),
             "expected_brier": cycles.iter().map(|(_, b)| b).collect::<Vec<_>>(),
@@ -523,7 +523,7 @@ proptest! {
         prop_assert_eq!(verdict, OracleVerdict::Pass, "push_kata_cycle storage contract violated");
     }
 
-    /// `push_hypotenuse` keeps the two histories aligned by cycle count: it
+    /// `push_signal` keeps the two histories aligned by cycle count: it
     /// appends the hypotenuse and a NaN Brier placeholder so the Kata checks
     /// (which index by cycle) don't skew. The hypotenuse value is stored
     /// verbatim; the Brier slot is NaN (not 0.0 — the calibration check filters
@@ -531,20 +531,20 @@ proptest! {
     ///
     /// Oracle: invariant — hyp_len == brier_len == n, last hypotenuse == input.
     #[test]
-    fn push_hypotenuse_keeps_histories_aligned(
+    fn push_signal_keeps_histories_aligned(
         readings in prop::collection::vec(arb_finite_f64(), 0..12),
     ) {
         let config = kata_config_base();
         let mut tracker = ConvergenceTracker::new(&config);
         for h in &readings {
-            tracker.push_hypotenuse(*h);
+            tracker.push_signal(*h);
         }
 
         let payload = json!({
             "n": readings.len(),
-            "hyp_len": tracker.hypotenuse_history().len(),
+            "hyp_len": tracker.signal_history().len(),
             "brier_len": tracker.brier_history().len(),
-            "last_hyp": tracker.hypotenuse_history().last().copied(),
+            "last_hyp": tracker.signal_history().last().copied(),
             "expected_last": readings.last().copied(),
         });
         let oracle = oracle_invariant(|_input, output| {
@@ -568,7 +568,7 @@ proptest! {
             Ok(())
         });
         let verdict = oracle.verify(&Value::Null, &payload);
-        prop_assert_eq!(verdict, OracleVerdict::Pass, "push_hypotenuse alignment contract violated");
+        prop_assert_eq!(verdict, OracleVerdict::Pass, "push_signal alignment contract violated");
     }
 
     /// `check_met` is a pure function of tracker state: it takes `&self`, so two
@@ -586,7 +586,7 @@ proptest! {
         config.convergence_mode = "gap".to_string();
         let mut tracker = ConvergenceTracker::new(&config);
         for h in &history {
-            tracker.push_hypotenuse(*h);
+            tracker.push_signal(*h);
         }
         let context = HashMap::new();
         let first = tracker.check_met(&context, iteration);
@@ -608,8 +608,8 @@ proptest! {
     }
 
     /// Gap convergence matches the reference definition: with convergence_mode
-    /// = "gap" and min_iterations = 0, after a single push_hypotenuse(h),
-    /// `check_met` returns `h < hypotenuse_epsilon` (h is finite by
+    /// = "gap" and min_iterations = 0, after a single push_signal(h),
+    /// `check_met` returns `h < gap_epsilon` (h is finite by
     /// construction, so the is_finite filter in the implementation is a
     /// no-op). This is the limit-of-a-sequence criterion.
     ///
@@ -622,9 +622,9 @@ proptest! {
     ) {
         let mut config = kata_config_base();
         config.convergence_mode = "gap".to_string();
-        config.hypotenuse_epsilon = epsilon;
+        config.gap_epsilon = epsilon;
         let mut tracker = ConvergenceTracker::new(&config);
-        tracker.push_hypotenuse(h);
+        tracker.push_signal(h);
         let context = HashMap::new();
         let got = tracker.check_met(&context, 1);
 
@@ -659,10 +659,10 @@ proptest! {
         config.convergence_mode = "gap".to_string();
         // Huge epsilon so the gap criterion is always satisfied for finite h;
         // the only variable is the iteration gate.
-        config.hypotenuse_epsilon = 1.0e9;
+        config.gap_epsilon = 1.0e9;
         config.min_iterations = min_iterations;
         let mut tracker = ConvergenceTracker::new(&config);
-        tracker.push_hypotenuse(0.0);
+        tracker.push_signal(0.0);
         let context = HashMap::new();
         let got = tracker.check_met(&context, iteration);
         let expected = iteration > min_iterations;
@@ -706,7 +706,7 @@ proptest! {
         config.cauchy_window = window;
         let mut tracker = ConvergenceTracker::new(&config);
         for r in &readings {
-            tracker.push_hypotenuse(*r);
+            tracker.push_signal(*r);
         }
         let context = HashMap::new();
         let iteration = readings.len() as u32;

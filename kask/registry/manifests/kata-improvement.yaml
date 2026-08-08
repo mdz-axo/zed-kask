@@ -146,22 +146,6 @@ steps:
         step_2_result: "{{ step_2_result }}"
 
   - ordinal: 6
-    action: compute
-    condition: "{{ mode | default('improvement') == 'beginner' }}"
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  # === IMPROVEMENT MODE (default) ===
-  - ordinal: 7
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 1 — understand direction/challenge.
@@ -172,7 +156,7 @@ steps:
     input_mapping:
       challenge: "{{ challenge }}"
 
-  - ordinal: 8
+  - ordinal: 7
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 2 — grasp current condition with data.
@@ -185,7 +169,7 @@ steps:
       current_metrics: "{{ current_metrics | default({}) }}"
       direction: "{{ step_7_result }}"
 
-  - ordinal: 9
+  - ordinal: 8
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 3 — establish target condition.
@@ -197,7 +181,7 @@ steps:
       challenge: "{{ challenge }}"
       current_condition: "{{ step_8_result }}"
 
-  - ordinal: 10
+  - ordinal: 9
     action: select
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Step 4 — define next experiment.
@@ -210,7 +194,7 @@ steps:
       current_condition: "{{ step_8_result }}"
       target_condition: "{{ step_9_result }}"
 
-  - ordinal: 11
+  - ordinal: 10
     action: compute
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     compute_ref: lisp.eval
@@ -230,22 +214,22 @@ steps:
       env:
         step_10_result: "{{ step_10_result }}"
 
-  - ordinal: 12
+  - ordinal: 11
     action: compute
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      hypotenuse_epsilon: "{{ _convergence.gap_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
       brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.signal_history | default([]) }}"
       brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 13
+  - ordinal: 12
     action: loop
     condition: "{{ mode | default('improvement') == 'beginner' }}"
     description: Re-enter beginner kata cycle if convergence is not met.
@@ -255,9 +239,9 @@ steps:
       loop_target: "{{ 1 }}"
       # Push the drill quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_5_result }}"
+      convergence_signal: "{{ step_5_result }}"
 
-  - ordinal: 14
+  - ordinal: 13
     action: loop
     condition: "{{ mode | default('improvement') == 'improvement' }}"
     description: Re-enter improvement kata cycle if convergence is not met.
@@ -267,7 +251,7 @@ steps:
       loop_target: "{{ 7 }}"
       # Push the experiment quality signal into kata_hypotenuse so the Cauchy
       # criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ step_11_result }}"
+      convergence_signal: "{{ step_11_result }}"
 
 error_handling:
   on_gas_exceeded: abort

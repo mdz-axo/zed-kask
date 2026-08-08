@@ -148,24 +148,26 @@ fn superforecasting_manifest_loads_with_compute_step() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load superforecasting manifest: {e}"));
 
-    // 11 select steps + 5 compute steps + 1 loop step = 17 total.
-    // The 5th compute step (ordinal 15) is the Cauchy convergence check
-    // (kata.convergence_check), which replaced the former LLM convergence-check
-    // select step in the Cauchy-only convergence migration.
+    // 11 select steps + 4 compute steps + 1 loop step = 16 total.
+    // The former kata.convergence_check compute step (ordinal 16) was removed
+    // — the ConvergenceTracker is the single convergence gate, and the
+    // kata.convergence_check compute primitive was dead diagnostic code.
     assert_eq!(
         manifest.steps.len(),
         17,
-        "expected 17 steps after Fermi + outside-view + Bayesian + calibration + convergence compute insertions"
+        "expected 17 steps after Fermi + outside-view + Bayesian + calibration compute steps (convergence_check removed)"
     );
 
-    // Five compute steps: Fermi (3), outside-view (5), Bayesian (10),
-    // convergence-check (15), calibration (16).
+    // Four compute steps: Fermi (3), outside-view (5), Bayesian (10),
+    // calibration (17). The former convergence-check compute (ordinal 16) was
+    // removed — convergence is gated by the ConvergenceTracker, not a compute
+    // step whose output nothing reads.
     let compute_steps: Vec<_> = manifest
         .steps
         .iter()
         .filter(|s| s.action == "compute")
         .collect();
-    assert_eq!(compute_steps.len(), 5, "manifest must have 5 compute steps");
+    assert_eq!(compute_steps.len(), 4, "manifest must have 4 compute steps");
     assert_eq!(compute_steps[0].ordinal, 3, "Fermi compute at ordinal 3");
     assert_eq!(
         compute_steps[0].compute_ref.as_deref(),
@@ -188,35 +190,28 @@ fn superforecasting_manifest_loads_with_compute_step() {
         Some("bayesian_update")
     );
     assert_eq!(
-        compute_steps[3].ordinal, 15,
-        "Cauchy convergence-check compute at ordinal 15"
+        compute_steps[3].ordinal, 17,
+        "calibration feedback compute at ordinal 17"
     );
     assert_eq!(
         compute_steps[3].compute_ref.as_deref(),
-        Some("kata.convergence_check")
-    );
-    assert_eq!(
-        compute_steps[4].ordinal, 16,
-        "calibration feedback compute at ordinal 16"
-    );
-    assert_eq!(
-        compute_steps[4].compute_ref.as_deref(),
         Some("apply_calibration_adjustment")
     );
 
-    // The loop step (ordinal 17) must carry the calibration-adjusted prior.
+    // The loop step (ordinal 18) must carry the calibration-adjusted prior.
     let loop_step = manifest
         .steps
         .iter()
         .find(|s| s.action == "loop")
         .expect("manifest must have a loop step");
-    assert_eq!(loop_step.ordinal, 17, "loop step should be ordinal 17");
+    assert_eq!(loop_step.ordinal, 18, "loop step should be ordinal 18");
 }
 
 /// Verify the kali-audit FlowDef manifest loads correctly with the expected
-/// PDCA structure after the Cauchy-only convergence migration: 4 select
-/// steps + 1 compute step (kata.convergence_check) + 1 loop step, with the
-/// Cauchy convergence block.
+/// PDCA structure after the convergence-check removal: 4 select
+/// steps + 1 loop step, with the Cauchy convergence block. The former
+/// kata.convergence_check compute step was removed — the ConvergenceTracker
+/// is the single convergence gate.
 #[test]
 fn kali_audit_manifest_loads_with_correct_structure() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -230,11 +225,13 @@ fn kali_audit_manifest_loads_with_correct_structure() {
     let manifest = hkask_templates::load_manifest_from_yaml(&yaml)
         .unwrap_or_else(|e| panic!("Failed to load kali-audit manifest: {e}"));
 
-    // 4 select steps + 1 compute step (convergence) + 1 loop step = 6 total.
+    // 4 select steps + 1 loop step = 5 total. The former convergence-check
+    // compute step was removed — convergence is gated by the
+    // ConvergenceTracker, not a compute step whose output nothing reads.
     assert_eq!(
         manifest.steps.len(),
-        6,
-        "expected 6 steps: select-surface → audit → report → taxonomy-map → convergence-check (compute) → loop"
+        5,
+        "expected 5 steps: select-surface → audit → report → taxonomy-map → loop"
     );
 
     // Verify step ordinals are sequential starting at 1.
@@ -274,16 +271,9 @@ fn kali_audit_manifest_loads_with_correct_structure() {
         Some("kali-audit/taxonomy-map")
     );
 
-    // Verify step 5 is the Cauchy convergence-check compute step (replaced the
-    // former LLM select step in the Cauchy-only convergence migration).
-    assert_eq!(manifest.steps[4].action, "compute");
-    assert_eq!(
-        manifest.steps[4].compute_ref.as_deref(),
-        Some("kata.convergence_check")
-    );
-
-    // Verify step 6 is loop.
-    assert_eq!(manifest.steps[5].action, "loop");
+    // Verify step 5 is loop (the former convergence-check compute step was
+    // removed — the ConvergenceTracker gates convergence, not a compute step).
+    assert_eq!(manifest.steps[4].action, "loop");
 
     // Verify the convergence block uses the Cauchy-only model.
     assert_eq!(

@@ -749,14 +749,16 @@ impl ManifestExecutor {
 
                         // Record this iteration's convergence data in the
                         // trajectory history BEFORE the convergence check.
-                        // For the Kata model, the hypotenuse and Brier score
-                        // are read from the context (produced by `compute`
-                        // steps with compute_ref: kata.hypotenuse and
-                        // kata.prediction_vs_result). For the legacy model,
-                        // the self-grade metric is read from the convergence
-                        // field. If the Kata fields aren't present, falls back
-                        // to pushing NaN (a missing reading is not a converged
-                        // reading).
+                        // For the Kata model, the convergence signal and Brier
+                        // score are read from the context (the signal is
+                        // produced by a `compute` step — `kata.hypotenuse` for
+                        // Kata-gap skills, or `lisp.eval`/any compute for
+                        // custom-signal skills — and bound into context via the
+                        // loop step's `convergence_signal:` mapping). For the
+                        // legacy model, the self-grade metric is read from the
+                        // convergence field. If the Kata fields aren't present,
+                        // falls back to pushing NaN (a missing reading is not a
+                        // converged reading).
                         convergence.push_cycle_from_context(&context);
 
                         // Check threshold convergence
@@ -1120,7 +1122,7 @@ impl ManifestExecutor {
             // Record this iteration's convergence data in the trajectory history
             // AFTER compound quality computation, so the history records the
             // same value check_met will read. For the Kata model, reads the
-            // hypotenuse and Brier score from the context (produced by
+            // convergence signal and Brier score from the context (produced by
             // `compute` steps). For the legacy model, reads the self-grade
             // metric from the convergence field.
             convergence.push_cycle_from_context(&context);
@@ -1750,7 +1752,7 @@ impl ManifestExecutor {
                 // convention every other step action (select/populate/loop/
                 // render/flowdef) uses. bind_parameters passed `{{ }}` strings
                 // through as literals, silently breaking compute steps that
-                // bound context values via Jinja (e.g. kata.convergence_check's
+                // bound context values via Jinja (e.g. lisp.eval's
                 // histories degraded to empty defaults; swarm.converge_accumulate
                 // hard-errored on get_f64). $ref objects and literal values pass
                 // through unchanged, so existing compute bindings are unaffected.

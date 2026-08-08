@@ -292,24 +292,6 @@ steps:
   # hypotenuse signal — when it stops moving across iterations, the cascade
   # has converged.
   - ordinal: 5
-    action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion on the Lisp convergence score. Deterministic."
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  # ── Step 6: Loop back if not converged ──
-  # Re-enter at step 1 (propose), carrying the prior defects so the LLM can
-  # repair them. The Lisp step will re-check the refined set.
-  - ordinal: 6
     action: loop
     description: >
       Re-enter the propose→check→refine cycle if convergence is not met.
@@ -318,12 +300,12 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_4_result | default(0.0) }}"
+      convergence_signal: "{{ step_4_result | default(0.0) }}"
 
   # ── Step 7: Final report ──
   # Runs after convergence (the loop action exits when converged). Synthesizes
   # the surviving hypothesis set with the Lisp verdict and convergence score.
-  - ordinal: 7
+  - ordinal: 6
     action: select
     description: >
       Final report. Synthesizes the surviving hypothesis set, the final Lisp

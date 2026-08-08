@@ -167,20 +167,6 @@ steps:
       max_depth: 32
 
   - ordinal: 7
-    action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 8
     action: loop
     description: >
       Re-enter evolution cycle from step 1 (sample trajectories from the
@@ -190,7 +176,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_6_result }}"
+      convergence_signal: "{{ step_6_result }}"
 
 error_handling:
   on_gas_exceeded: abort

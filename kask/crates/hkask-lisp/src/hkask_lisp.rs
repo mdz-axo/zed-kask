@@ -2182,4 +2182,233 @@ mod tests {
         let score = result.as_f64().expect("score is a float");
         assert!((score - 0.6).abs() < 1e-9);
     }
+
+    // ── Phantom convergence_metric fix: 8 manifest forms ──
+    // Pins the exact forms used in the 8 manifests fixed for the phantom
+    // convergence_metric bug (code-review, kali-audit, kata-coaching,
+    // kata-improvement, lora-training, proptest, replica-discovery, tdd).
+    // Each form computes a real structural-validity score from the prior
+    // step's actual output fields, replacing the phantom
+    // `convergence_metric` binding that silently defaulted to 1.0.
+
+    fn code_review_open_findings_form() -> &'static str {
+        r##"
+        (+ (assoc "blockers" (assoc "severity_counts" step_3_result))
+           (* 0.5 (assoc "should_fix" (assoc "severity_counts" step_3_result))))
+        "##
+    }
+
+    #[test]
+    fn code_review_two_blockers_four_should_fix_scores_four() {
+        let env = json!({"step_3_result": {"severity_counts": {"blockers": 2, "should_fix": 4, "nit": 1, "fyi": 0}}});
+        let result = eval_sandboxed(code_review_open_findings_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        // 2 + 0.5*4 = 4.0
+        assert!((score - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn code_review_zero_findings_scores_zero() {
+        let env = json!({"step_3_result": {"severity_counts": {"blockers": 0, "should_fix": 0, "nit": 0, "fyi": 0}}});
+        let result = eval_sandboxed(code_review_open_findings_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    fn kali_audit_critical_high_form() -> &'static str {
+        r##"
+        (+ (length (assoc "critical" (assoc "findings_by_severity" (assoc "report" step_3_result))))
+           (length (assoc "high" (assoc "findings_by_severity" (assoc "report" step_3_result)))))
+        "##
+    }
+
+    #[test]
+    fn kali_audit_one_critical_two_high_scores_three() {
+        let env = json!({"step_3_result": {"report": {"findings_by_severity": {"critical": ["c1"], "high": ["h1", "h2"], "medium": [], "low": []}}}});
+        let result = eval_sandboxed(kali_audit_critical_high_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn kali_audit_no_findings_scores_zero() {
+        let env = json!({"step_3_result": {"report": {"findings_by_severity": {"critical": [], "high": [], "medium": [], "low": []}}}});
+        let result = eval_sandboxed(kali_audit_critical_high_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    fn kata_coaching_tight_loop_form() -> &'static str {
+        r##"
+        (if (string= (assoc "coach_assessment" step_5_result) "tight-loop") 0.0 1.0)
+        "##
+    }
+
+    #[test]
+    fn kata_coaching_tight_loop_scores_zero() {
+        let env = json!({"step_5_result": {"coach_assessment": "tight-loop"}});
+        let result = eval_sandboxed(kata_coaching_tight_loop_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn kata_coaching_open_loop_scores_one() {
+        let env = json!({"step_5_result": {"coach_assessment": "open-loop"}});
+        let result = eval_sandboxed(kata_coaching_tight_loop_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 1.0).abs() < 1e-9);
+    }
+
+    fn kata_improvement_beginner_form() -> &'static str {
+        r##"
+        (if (is_null step_2_result)
+            1.0
+            (let ((a (assoc "automaticity_self_assess" step_2_result)))
+              (if (is_null a) 1.0 (- 1.0 a))))
+        "##
+    }
+
+    #[test]
+    fn kata_improvement_beginner_high_automaticity_scores_low() {
+        let env = json!({"step_2_result": {"automaticity_self_assess": 0.7}});
+        let result = eval_sandboxed(kata_improvement_beginner_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        // 1.0 - 0.7 = 0.3
+        assert!((score - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn kata_improvement_beginner_null_drill_scores_one() {
+        // pdca-cycle or observation-drill ran (step_2_result is null)
+        let env = json!({"step_2_result": null});
+        let result = eval_sandboxed(kata_improvement_beginner_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 1.0).abs() < 1e-9);
+    }
+
+    fn kata_improvement_experiment_form() -> &'static str {
+        r##"
+        (- 7
+           (+ (if (is_null (assoc "obstacle" step_10_result)) 0 1)
+              (if (is_null (assoc "next_experiment" step_10_result)) 0 1)
+              (if (is_null (assoc "prediction" step_10_result)) 0 1)
+              (if (is_null (assoc "measurement_method" step_10_result)) 0 1)
+              (if (is_null (assoc "success_criterion" step_10_result)) 0 1)
+              (if (is_null (assoc "learning_commitment" step_10_result)) 0 1)
+              (if (is_null (assoc "when_to_check" step_10_result)) 0 1)))
+        "##
+    }
+
+    #[test]
+    fn kata_improvement_experiment_all_fields_scores_zero() {
+        let env = json!({"step_10_result": {"obstacle": "x", "next_experiment": "y", "prediction": "z", "measurement_method": "m", "success_criterion": "s", "learning_commitment": "l", "when_to_check": "w"}});
+        let result = eval_sandboxed(kata_improvement_experiment_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn kata_improvement_experiment_three_missing_scores_three() {
+        let env = json!({"step_10_result": {"obstacle": "x", "next_experiment": "y", "prediction": "z", "measurement_method": "m"}});
+        let result = eval_sandboxed(kata_improvement_experiment_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 3.0).abs() < 1e-9);
+    }
+
+    fn lora_training_findings_count_form() -> &'static str {
+        r##"
+        (let ((f (assoc "findings" step_3_result)))
+          (if (is_null f) 0 (length f)))
+        "##
+    }
+
+    #[test]
+    fn lora_training_three_findings_scores_three() {
+        let env = json!({"step_3_result": {"findings": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}]}});
+        let result = eval_sandboxed(lora_training_findings_count_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lora_training_no_findings_scores_zero() {
+        let env = json!({"step_3_result": {"findings": []}});
+        let result = eval_sandboxed(lora_training_findings_count_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    fn proptest_failures_form() -> &'static str {
+        r##"
+        (let ((f (assoc "failures_found" step_5_result)))
+          (if (is_null f) 0 (length f)))
+        "##
+    }
+
+    #[test]
+    fn proptest_one_failure_scores_one() {
+        let env = json!({"step_5_result": {"failures_found": [{"property_name": "p1"}]}});
+        let result = eval_sandboxed(proptest_failures_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn proptest_no_failures_scores_zero() {
+        let env = json!({"step_5_result": {"failures_found": []}});
+        let result = eval_sandboxed(proptest_failures_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    fn replica_discovery_missing_fields_form() -> &'static str {
+        r##"
+        (let ((m (assoc "fields_missing" step_12_result)))
+          (if (is_null m) 0 (length m)))
+        "##
+    }
+
+    #[test]
+    fn replica_discovery_two_missing_scores_two() {
+        let env = json!({"step_12_result": {"fields_missing": ["field_a", "field_b"], "fields_present": ["field_c"]}});
+        let result = eval_sandboxed(replica_discovery_missing_fields_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn replica_discovery_no_missing_scores_zero() {
+        let env = json!({"step_12_result": {"fields_missing": [], "fields_present": ["a", "b"]}});
+        let result = eval_sandboxed(replica_discovery_missing_fields_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
+
+    fn tdd_gap_coverage_form() -> &'static str {
+        r##"
+        (let ((g (assoc "gaps" step_6_result))
+              (c (assoc "coverage_percentage" step_6_result)))
+          (let ((gc (if (is_null g) 0 (length g)))
+                (cc (if (numberp c) c 0.0)))
+            (+ gc (/ (- 100 cc) 100))))
+        "##
+    }
+
+    #[test]
+    fn tdd_one_gap_85pct_coverage_scores_one_and_tenth() {
+        let env = json!({"step_6_result": {"gaps": [{"id": "g1"}], "coverage_percentage": 85.7}});
+        let result = eval_sandboxed(tdd_gap_coverage_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        // 1 + (100 - 85.7)/100 = 1 + 0.143 = 1.143
+        assert!((score - 1.143).abs() < 1e-2);
+    }
+
+    #[test]
+    fn tdd_no_gaps_full_coverage_scores_zero() {
+        let env = json!({"step_6_result": {"gaps": [], "coverage_percentage": 100.0}});
+        let result = eval_sandboxed(tdd_gap_coverage_form(), &env).unwrap();
+        let score = result.as_f64().expect("score is a float");
+        assert!((score - 0.0).abs() < 1e-9);
+    }
 }

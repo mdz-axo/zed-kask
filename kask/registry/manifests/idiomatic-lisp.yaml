@@ -115,29 +115,11 @@ steps:
       design_constraints: "{{ design_constraints | default({}) }}"
 
   - ordinal: 4
-    action: compute
-    compute_ref: kata.convergence_check
-    description: >
-      CHECK CONVERGENCE: Cauchy criterion on the critique score. The design
-      has converged when the critique score stops moving across iterations —
-      the proposal is as idiomatic as the current method can make it.
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 5
     action: loop
     description: Re-enter design cycle if the critique score has not stabilized.
     input_mapping:
       loop_target: "{{ 2 }}"
-      kata_hypotenuse: "{{ step_3_result.critique_score | default(0.0) }}"
+      convergence_signal: "{{ step_3_result.critique_score | default(0.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

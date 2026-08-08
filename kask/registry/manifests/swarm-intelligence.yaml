@@ -373,21 +373,6 @@ steps:
 
   - ordinal: 7
     action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion on the swarm-state distance d. Deterministic."
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 8
-    action: compute
     compute_ref: swarm.converge_accumulate
     description: >
       CONVERGE ACCUMULATE (Cybernetic Swarm Plan C1/C3/C7): deterministic
@@ -421,7 +406,7 @@ steps:
       agent_at_fault: "{{ step_2_result.agent_at_fault | default(none) }}"
       fault_count: "{{ fault_count | default({}) }}"
 
-  - ordinal: 9
+  - ordinal: 8
     action: compute
     compute_ref: swarm.second_order_monitor
     description: >
@@ -446,7 +431,7 @@ steps:
       # unknown-unknowns.
       cadence_every: 3
 
-  - ordinal: 10
+  - ordinal: 9
     action: loop
     description: >
       Re-enter the swarm-intelligence cycle if convergence is not met. Routes
@@ -461,7 +446,7 @@ steps:
         lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
         next_focus: "{{ step_6_result.next_focus | default('') }}"
         second_order: "{{ step_9_result | default({}) }}"
-      kata_hypotenuse: "{{ step_7_result.hypotenuse | default(1.0) }}"
+      convergence_signal: "{{ step_7_result.hypotenuse | default(1.0) }}"
       iteration_log: "{{ step_8_result.iteration_log | default([]) }}"
       failed_edits: "{{ step_8_result.failed_edits | default([]) }}"
       influence_scores: "{{ step_8_result.influence_scores | default({}) }}"

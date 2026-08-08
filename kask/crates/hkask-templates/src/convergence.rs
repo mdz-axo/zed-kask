@@ -56,11 +56,19 @@ impl ConvergenceStatus {
 /// - **Process space** (PKO): procedure progress — are the required steps
 ///   executed?
 ///
-/// The total distance to the target is the hypotenuse of the right triangle
-/// formed by the two gaps: `sqrt(object_gap² + process_gap²)`. Convergence
-/// requires both legs to close.
+/// For skills that use the full Kata gap model (`sequential-inquiry`,
+/// `metacognition`), the total distance to the target is the hypotenuse of the
+/// right triangle formed by the two gaps: `sqrt(object_gap² + process_gap²)`,
+/// produced by the `kata.hypotenuse` compute primitive and pushed into the
+/// tracker as the convergence signal. Convergence requires the gap to close.
 ///
-/// Each PDCA cycle, the agent makes a **prediction** ("the hypotenuse will
+/// For skills that use a custom convergence signal (violation count, finding
+/// count, Pareto hypervolume delta, etc.), the signal is whatever scalar the
+/// manifest pushes via the loop step's `convergence_signal:` binding. The
+/// Cauchy check works on any scalar — it detects when the signal stops moving,
+/// regardless of whether the signal is a gap distance.
+///
+/// Each PDCA cycle, the agent makes a **prediction** ("the signal will
 /// decrease by Δ" with confidence `c`). After the experiment, the actual
 /// decrease is measured. The **Brier score** `(c − actual_outcome)²` tracks
 /// whether the agent's predictions are calibrated. Brier decreasing → the
@@ -85,7 +93,7 @@ pub struct ConvergenceTracker {
     prediction_field: Option<String>,
     #[allow(dead_code)]
     result_field: Option<String>,
-    hypotenuse_epsilon: f64,
+    gap_epsilon: f64,
     cauchy_epsilon: f64,
     cauchy_window: u32,
     brier_window: u32,
@@ -93,11 +101,13 @@ pub struct ConvergenceTracker {
     convergence_mode: String,
 
     // ── Trajectory history ──
-    /// Hypotenuse history, one entry per completed PDCA cycle. Should be
-    /// *decreasing* — the agent is getting closer to the target. Convergence
-    /// is `h_n < hypotenuse_epsilon`. Confidence convergence is `h` stopped
-    /// decreasing AND Brier is calibrated.
-    hypotenuse_history: Vec<f64>,
+    /// Convergence signal history, one entry per completed PDCA cycle. For
+    /// Kata-gap skills this is the `kata.hypotenuse` value (Euclidean gap
+    /// distance, decreasing toward zero). For custom-signal skills this is
+    /// whatever scalar the manifest pushes (violation count, finding count,
+    /// etc.). Gap convergence is `signal < gap_epsilon`. Cauchy convergence is
+    /// `signal stopped moving` (max pairwise delta in window < cauchy_epsilon).
+    signal_history: Vec<f64>,
     /// Brier score history, one entry per completed PDCA cycle. Should be
     /// *decreasing* — the agent's predictions are getting calibrated.
     /// Convergence (confidence mode) is rolling average < brier_threshold.
@@ -128,13 +138,13 @@ impl ConvergenceTracker {
             current_procedure_field: config.current_procedure_field.clone(),
             prediction_field: config.prediction_field.clone(),
             result_field: config.result_field.clone(),
-            hypotenuse_epsilon: config.hypotenuse_epsilon,
+            gap_epsilon: config.gap_epsilon,
             cauchy_epsilon: config.cauchy_epsilon,
             cauchy_window: config.cauchy_window,
             brier_window: config.brier_window,
             brier_threshold: config.brier_threshold,
             convergence_mode: config.convergence_mode.clone(),
-            hypotenuse_history: Vec::new(),
+            signal_history: Vec::new(),
             brier_history: Vec::new(),
             min_iterations: config.min_iterations,
             max_iterations: if config.max_iterations == 0 {
@@ -179,9 +189,9 @@ impl ConvergenceTracker {
             && (self.target_artifacts_field.is_some() || self.target_procedure_field.is_some())
     }
 
-    /// Read-only access to the hypotenuse history.
-    pub fn hypotenuse_history(&self) -> &[f64] {
-        &self.hypotenuse_history
+    /// Read-only access to the convergence signal history.
+    pub fn signal_history(&self) -> &[f64] {
+        &self.signal_history
     }
 
     /// Read-only access to the Brier score history.
@@ -189,42 +199,62 @@ impl ConvergenceTracker {
         &self.brier_history
     }
 
-    /// Record a PDCA cycle's hypotenuse and Brier score. Called by the executor
-    /// after the gap and prediction-vs-result compute steps have run. The
-    /// hypotenuse should be *decreasing* (the agent is closing the gap); the
-    /// Brier score should be *decreasing* (the agent's predictions are getting
-    /// calibrated).
-    pub fn push_kata_cycle(&mut self, hypotenuse: f64, brier: f64) {
-        self.hypotenuse_history.push(hypotenuse);
+    /// Record a PDCA cycle's convergence signal and Brier score. Called by the
+    /// executor after the gap and prediction-vs-result compute steps have run.
+    /// For Kata-gap skills, the signal is the `kata.hypotenuse` value
+    /// (decreasing toward zero). For custom-signal skills, the signal is
+    /// whatever scalar the manifest pushes. The Brier score should be
+    /// *decreasing* (the agent's predictions are getting calibrated).
+    pub fn push_kata_cycle(&mut self, signal: f64, brier: f64) {
+        self.signal_history.push(signal);
         self.brier_history.push(brier);
     }
 
-    /// Record a PDCA cycle's hypotenuse only (when Brier is not yet available —
-    /// e.g., the first cycle before any prediction has been made).
-    pub fn push_hypotenuse(&mut self, hypotenuse: f64) {
-        self.hypotenuse_history.push(hypotenuse);
+    /// Record a PDCA cycle's convergence signal only (when Brier is not yet
+    /// available — e.g., the first cycle before any prediction has been made).
+    pub fn push_signal(&mut self, signal: f64) {
+        self.signal_history.push(signal);
         // Push NaN for Brier so the histories stay aligned by cycle count.
         self.brier_history.push(f64::NAN);
     }
 
     /// Record a PDCA cycle from the executor context. For the Kata model,
-    /// reads the hypotenuse and Brier score from the context (produced by
-    /// `compute` steps with `compute_ref: kata.hypotenuse` and
-    /// `kata.prediction_vs_result`). For the legacy model, reads the self-grade
-    /// metric from the convergence field. Called by the executor after each
-    /// iteration's compute steps have run, BEFORE `check_met`.
+    /// reads the convergence signal and Brier score from the context (the
+    /// signal is produced by a `compute` step — `kata.hypotenuse` for Kata-gap
+    /// skills, or `lisp.eval` / any compute for custom-signal skills — and
+    /// bound into context via the loop step's `convergence_signal:` mapping).
+    /// For the legacy model, reads the self-grade metric from the convergence
+    /// field. Called by the executor after each iteration's compute steps have
+    /// run, BEFORE `check_met`.
     pub fn push_cycle_from_context(&mut self, context: &HashMap<String, Value>) {
         if self.kata_enabled() {
-            // Kata model: read hypotenuse and Brier from context
-            let hypotenuse = context
-                .get("kata_hypotenuse")
+            // Kata model: read convergence signal and Brier from context
+            let signal = context
+                .get("convergence_signal")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(f64::NAN);
             let brier = context
                 .get("kata_brier")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(f64::NAN);
-            self.hypotenuse_history.push(hypotenuse);
+            // A missing/non-finite signal silently degrades the Cauchy check
+            // (NaN readings are filtered out, so a flat [NaN, NaN, NaN] history
+            // never converges — but the operator sees no signal). Warn so an
+            // operator reading logs can distinguish "signal is 0" from "signal
+            // binding is broken" (the .rules "startup-failure signal" trap).
+            if !signal.is_finite() {
+                tracing::warn!(
+                    target: "hkask.templates.convergence",
+                    field = "convergence_signal",
+                    "Convergence signal is missing or non-finite — the loop step's \
+                     `convergence_signal:` binding did not resolve to a number. \
+                     The Cauchy check will not fire until a finite reading is \
+                     pushed. Remediation: check the manifest's loop step \
+                     input_mapping — the bound expression must produce a finite \
+                     f64 (not null, not a string, not an object)."
+                );
+            }
+            self.signal_history.push(signal);
             self.brier_history.push(brier);
         } else {
             // Legacy model: read self-grade metric via the shared resolver so
@@ -274,12 +304,14 @@ impl ConvergenceTracker {
 
     /// Check whether convergence has been met.
     ///
-    /// If the Kata model is active (`kata_enabled()`), uses the hypotenuse and
-    /// Brier trajectories:
-    /// - "hypotenuse": `hypotenuse_history.last() < hypotenuse_epsilon`.
-    /// - "confidence": rolling Brier average < `brier_threshold` for
-    ///   `brier_window` cycles AND hypotenuse not decreasing.
-    /// - "hypotenuse_or_confidence": either condition.
+    /// If the Kata model is active (`kata_enabled()`), uses the convergence
+    /// signal and Brier trajectories:
+    /// - "gap": `signal_history.last() < gap_epsilon`.
+    /// - "cauchy": max pairwise delta in the last `cauchy_window` readings <
+    ///   `cauchy_epsilon` (the signal stopped moving).
+    /// - "calibration": rolling Brier average < `brier_threshold` for
+    ///   `brier_window` cycles AND signal not decreasing.
+    /// - "gap_or_cauchy_or_calibration" (default): any of the three.
     ///
     /// Otherwise, falls back to the legacy self-grade model (threshold +
     /// improvement gate + stability).
@@ -300,13 +332,15 @@ impl ConvergenceTracker {
     ///
     /// Three canonical stop conditions (any active one triggers convergence):
     ///
-    /// 1. **Gap convergence** (limit of a sequence): `hypotenuse < hypotenuse_epsilon`.
-    ///    The agent reached the target condition.
+    /// 1. **Gap convergence** (limit of a sequence): `signal < gap_epsilon`.
+    ///    The agent reached the target condition. Only meaningful when the
+    ///    signal is a real gap distance (e.g., `kata.hypotenuse` output).
     ///
     /// 2. **Cauchy convergence** (stall): the maximum pairwise distance between
-    ///    hypotenuse readings in the last `cauchy_window` cycles is below
+    ///    signal readings in the last `cauchy_window` cycles is below
     ///    `cauchy_epsilon`. The iterates have stopped moving — learning
-    ///    exhausted, current methods at their ceiling.
+    ///    exhausted, current methods at their ceiling. Works on any scalar
+    ///    signal (gap distance, violation count, finding count, etc.).
     ///
     /// 3. **Calibration convergence**: rolling Brier average below
     ///    `brier_threshold` for `brier_window` cycles. The agent's predictions
@@ -333,32 +367,35 @@ impl ConvergenceTracker {
         }
     }
 
-    /// Gap convergence: hypotenuse below epsilon (limit of a sequence).
+    /// Gap convergence: signal below epsilon (limit of a sequence). Only
+    /// meaningful when the signal is a real gap distance (e.g., the
+    /// `kata.hypotenuse` output for Kata-gap skills).
     fn check_gap_converged(&self) -> bool {
-        self.hypotenuse_history
+        self.signal_history
             .last()
             .copied()
             .filter(|h| h.is_finite())
-            .map(|h| h < self.hypotenuse_epsilon)
+            .map(|h| h < self.gap_epsilon)
             .unwrap_or(false)
     }
 
     /// Cauchy convergence: the iterates have stopped moving. The maximum
-    /// pairwise distance between hypotenuse readings in the last
-    /// `cauchy_window` cycles is below `cauchy_epsilon`.
+    /// pairwise distance between signal readings in the last `cauchy_window`
+    /// cycles is below `cauchy_epsilon`.
     ///
     /// This is the canonical Cauchy criterion: for all m, n > N,
     /// `‖xₘ − xₙ‖ < ε`. It catches both plateau (readings clustered together)
     /// and oscillation (readings bouncing — large pairwise distances → not
     /// Cauchy). Unlike checking just the last two readings, it requires *all*
-    /// pairs in the window to be close.
+    /// pairs in the window to be close. Works on any scalar signal — the signal
+    /// need not be a gap distance.
     fn check_cauchy_converged(&self) -> bool {
         let window = self.cauchy_window as usize;
-        if self.hypotenuse_history.len() < window {
+        if self.signal_history.len() < window {
             return false;
         }
-        let start = self.hypotenuse_history.len().saturating_sub(window);
-        let window_slice = &self.hypotenuse_history[start..];
+        let start = self.signal_history.len().saturating_sub(window);
+        let window_slice = &self.signal_history[start..];
         let finite: Vec<f64> = window_slice
             .iter()
             .copied()
@@ -529,9 +566,9 @@ impl ConvergenceTracker {
                 "baseline_quality": self.baseline_quality,
                 "quality_history": self.quality_history,
                 // Kata model fields
-                "hypotenuse_history": self.hypotenuse_history,
+                "signal_history": self.signal_history,
                 "brier_history": self.brier_history,
-                "hypotenuse_epsilon": self.hypotenuse_epsilon,
+                "gap_epsilon": self.gap_epsilon,
                 "cauchy_epsilon": self.cauchy_epsilon,
                 "cauchy_window": self.cauchy_window,
                 "brier_threshold": self.brier_threshold,
@@ -573,9 +610,9 @@ impl ConvergenceTracker {
                 "baseline_quality": self.baseline_quality,
                 "quality_history": self.quality_history,
                 // Kata model fields
-                "hypotenuse_history": self.hypotenuse_history,
+                "signal_history": self.signal_history,
                 "brier_history": self.brier_history,
-                "hypotenuse_epsilon": self.hypotenuse_epsilon,
+                "gap_epsilon": self.gap_epsilon,
                 "cauchy_epsilon": self.cauchy_epsilon,
                 "cauchy_window": self.cauchy_window,
                 "brier_threshold": self.brier_threshold,
@@ -605,7 +642,7 @@ mod tests {
             current_procedure_field: None,
             prediction_field: None,
             result_field: None,
-            hypotenuse_epsilon: 0.05,
+            gap_epsilon: 0.05,
             cauchy_epsilon: 0.03,
             cauchy_window: 3,
             brier_window: 3,
@@ -631,7 +668,7 @@ mod tests {
             current_procedure_field: Some("current_procedure".to_string()),
             prediction_field: Some("prediction".to_string()),
             result_field: Some("result".to_string()),
-            hypotenuse_epsilon: 0.05,
+            gap_epsilon: 0.05,
             cauchy_epsilon: 0.03,
             cauchy_window: 3,
             brier_window: 3,
@@ -763,23 +800,23 @@ mod tests {
     // ── Gap convergence (limit of a sequence) ──
 
     #[test]
-    fn gap_converges_when_hypotenuse_below_epsilon() {
+    fn gap_converges_when_signal_below_epsilon() {
         let cfg = kata_config("gap");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        tracker.push_hypotenuse(0.3);
+        tracker.push_signal(0.3);
         assert!(!tracker.check_met(&ctx, 3));
-        tracker.push_hypotenuse(0.02); // below epsilon 0.05
+        tracker.push_signal(0.02); // below epsilon 0.05
         assert!(tracker.check_met(&ctx, 3));
     }
 
     #[test]
-    fn gap_rejects_when_hypotenuse_above_epsilon() {
+    fn gap_rejects_when_signal_above_epsilon() {
         let cfg = kata_config("gap");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        tracker.push_hypotenuse(0.3);
-        tracker.push_hypotenuse(0.2); // above 0.05
+        tracker.push_signal(0.3);
+        tracker.push_signal(0.2); // above 0.05
         assert!(!tracker.check_met(&ctx, 3));
     }
 
@@ -791,9 +828,9 @@ mod tests {
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
         // 3 readings within 0.03 of each other
-        tracker.push_hypotenuse(0.30);
-        tracker.push_hypotenuse(0.31);
-        tracker.push_hypotenuse(0.30);
+        tracker.push_signal(0.30);
+        tracker.push_signal(0.31);
+        tracker.push_signal(0.30);
         // max pairwise delta = 0.01 < cauchy_epsilon 0.03
         assert!(tracker.check_met(&ctx, 3));
     }
@@ -804,9 +841,9 @@ mod tests {
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
         // Oscillating: 0.3 → 0.5 → 0.3, max pairwise delta = 0.2 >> 0.03
-        tracker.push_hypotenuse(0.30);
-        tracker.push_hypotenuse(0.50);
-        tracker.push_hypotenuse(0.30);
+        tracker.push_signal(0.30);
+        tracker.push_signal(0.50);
+        tracker.push_signal(0.30);
         assert!(!tracker.check_met(&ctx, 3));
     }
 
@@ -815,8 +852,8 @@ mod tests {
         let cfg = kata_config("cauchy");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        tracker.push_hypotenuse(0.30);
-        tracker.push_hypotenuse(0.31); // only 2 readings, window is 3
+        tracker.push_signal(0.30);
+        tracker.push_signal(0.31); // only 2 readings, window is 3
         assert!(!tracker.check_met(&ctx, 3));
     }
 
@@ -826,9 +863,9 @@ mod tests {
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
         // Readings are decreasing: 0.5 → 0.3 → 0.1, max pairwise = 0.4 >> 0.03
-        tracker.push_hypotenuse(0.50);
-        tracker.push_hypotenuse(0.30);
-        tracker.push_hypotenuse(0.10);
+        tracker.push_signal(0.50);
+        tracker.push_signal(0.30);
+        tracker.push_signal(0.10);
         assert!(!tracker.check_met(&ctx, 3));
     }
 
@@ -875,7 +912,7 @@ mod tests {
         let cfg = kata_config("gap_or_cauchy");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        tracker.push_hypotenuse(0.02); // gap converged
+        tracker.push_signal(0.02); // gap converged
         assert!(tracker.check_met(&ctx, 3));
     }
 
@@ -885,9 +922,9 @@ mod tests {
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
         // Gap not converged (0.3 > 0.05) but Cauchy converged (clustered)
-        tracker.push_hypotenuse(0.30);
-        tracker.push_hypotenuse(0.31);
-        tracker.push_hypotenuse(0.30);
+        tracker.push_signal(0.30);
+        tracker.push_signal(0.31);
+        tracker.push_signal(0.30);
         assert!(tracker.check_met(&ctx, 3));
     }
 
@@ -923,7 +960,7 @@ mod tests {
         let cfg = kata_config("gap");
         let mut tracker = ConvergenceTracker::new(&cfg);
         let ctx = HashMap::new();
-        tracker.push_hypotenuse(0.02); // gap already below epsilon
+        tracker.push_signal(0.02); // gap already below epsilon
         assert!(!tracker.check_met(&ctx, 2)); // iteration 2 <= min 2
         assert!(tracker.check_met(&ctx, 3)); // iteration 3 > 2
     }

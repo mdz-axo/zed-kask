@@ -821,18 +821,18 @@ mod tests {
             "ORIENT input_mapping must bind `delegate_results` for C5 fault attribution"
         );
 
-        // The loop step must bind kata_hypotenuse from the field
-        // kata.convergence_check actually returns (hypotenuse), not a
-        // nonexistent convergence_metric — a stale binding leaves the
-        // convergence tracker's hypotenuse_history at the 1.0 default and
+        // The loop step must bind convergence_signal from the field
+        // the signal compute actually returns (hypotenuse from kata.hypotenuse),
+        // not a nonexistent convergence_metric — a stale binding leaves the
+        // convergence tracker's signal_history at the 1.0 default and
         // causes premature Cauchy convergence. Pin the corrected binding.
-        let kata_hyp = loop_mapping
-            .get("kata_hypotenuse")
+        let conv_signal = loop_mapping
+            .get("convergence_signal")
             .and_then(|v| v.as_str())
-            .expect("loop step binds kata_hypotenuse");
+            .expect("loop step binds convergence_signal");
         assert!(
-            kata_hyp.contains("step_7_result.hypotenuse"),
-            "kata_hypotenuse must read step_7_result.hypotenuse (not the nonexistent convergence_metric) — got {kata_hyp}"
+            conv_signal.contains("step_7_result.hypotenuse"),
+            "convergence_signal must read step_7_result.hypotenuse (not the nonexistent convergence_metric) — got {conv_signal}"
         );
     }
 

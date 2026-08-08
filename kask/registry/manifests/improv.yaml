@@ -156,31 +156,13 @@ steps:
       contribution: "{{ contribution | default('') }}"
 
   - ordinal: 8
-    action: compute
-    compute_ref: kata.convergence_check
-    description: >
-      CHECK CONVERGENCE: Cauchy criterion on the response length. The
-      improv mode has converged when the response stops changing across
-      iterations.
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 9
     action: loop
     description: Re-enter improv cycle if convergence threshold is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
       # Push the active mode's response length into kata_hypotenuse so the
       # Cauchy criterion can detect when the iterates have stopped moving.
-      kata_hypotenuse: "{{ (step_2_result.response | default(step_3_result.response | default(step_4_result.response | default(step_5_result.response | default(step_6_result.response | default(step_7_result.response | default(''))))))) | length }}"
+      convergence_signal: "{{ (step_2_result.response | default(step_3_result.response | default(step_4_result.response | default(step_5_result.response | default(step_6_result.response | default(step_7_result.response | default(''))))))) | length }}"
 
 error_handling:
   on_gas_exceeded: abort

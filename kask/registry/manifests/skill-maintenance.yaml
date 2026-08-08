@@ -131,20 +131,23 @@ steps:
   - ordinal: 3
     action: compute
     condition: "{{ mode | default('maintenance') == 'maintenance' }}"
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence score from the coverage step's actual output.
+      The skill-maintenance-coverage template produces `uncovered_patterns`
+      and `partial_coverage` arrays; the sum of their lengths is the distance
+      from full corpus coverage. Lower = more converged. Replaces the phantom
+      `convergence_metric` binding that silently defaulted to 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
     input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
+      form: >
+        (let ((u (length (assoc "uncovered_patterns" step_2_result)))
+              (p (length (assoc "partial_coverage" step_2_result))))
+          (+ 0.0 (+ u p)))
+      env:
+        step_2_result: "{{ step_2_result }}"
 
-  # === LOGIC_AUDIT MODE (folded from skill-logic-audit) ===
   - ordinal: 4
     action: select
     condition: "{{ mode == 'logic_audit' }}"
@@ -175,7 +178,7 @@ steps:
       target_path: "{{ target_path }}"
       target_content: "{{ target_content }}"
       template_type: "{{ template_type }}"
-      goal: "{{ step_4_result.goal }}"
+      goal: "{{ step_5_result.goal }}"
 
   - ordinal: 6
     action: select
@@ -188,8 +191,8 @@ steps:
     gas_cap: 2048
     timeout_seconds: 30
     input_mapping:
-      goal: "{{ step_4_result.goal }}"
-      prior_critique: "{{ step_5_result }}"
+      goal: "{{ step_5_result.goal }}"
+      prior_critique: "{{ step_6_result }}"
 
   - ordinal: 7
     action: select
@@ -204,9 +207,9 @@ steps:
     input_mapping:
       target_path: "{{ target_path }}"
       original_content: "{{ target_content }}"
-      goal: "{{ step_4_result.goal }}"
-      calibrated_verdict: "{{ step_6_result.calibrated_verdict }}"
-      valid_concerns: "{{ step_6_result.valid_concerns }}"
+      goal: "{{ step_5_result.goal }}"
+      calibrated_verdict: "{{ step_7_result.calibrated_verdict }}"
+      valid_concerns: "{{ step_7_result.valid_concerns }}"
 
   - ordinal: 8
     action: select
@@ -220,42 +223,60 @@ steps:
     timeout_seconds: 30
     input_mapping:
       target_path: "{{ target_path }}"
-      proposal: "{{ step_7_result.revised_content }}"
-      diff: "{{ step_7_result.diff }}"
+      proposal: "{{ step_8_result.revised_content }}"
+      diff: "{{ step_8_result.diff }}"
 
   - ordinal: 9
+    action: compute
+    condition: "{{ mode == 'logic_audit' }}"
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence score from the compose-proposal step's actual
+      output. The logic-compose-proposal template produces `confidence` (0–1,
+      higher = more confident in the revision). The score is 1 - confidence so
+      lower = more converged. Replaces the phantom `convergence_metric` binding
+      that silently defaulted to 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((c (assoc "confidence" step_8_result)))
+          (if (is_null c) 1.0 (- 1.0 c)))
+      env:
+        step_8_result: "{{ step_8_result }}"
+
+  - ordinal: 10
     action: compute
     condition: "{{ mode == 'logic_audit' }}"
     compute_ref: kata.convergence_check
     description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
     input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
+      hypotenuse_epsilon: "{{ _convergence.gap_epsilon | default(0.05) }}"
       cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
       cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
       brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
+      hypotenuse_history: "{{ _convergence.signal_history | default([]) }}"
       brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
       brier_window: "{{ _convergence.brier_window | default(3) }}"
       mode: "cauchy"
 
-  - ordinal: 10
+  - ordinal: 11
     action: loop
     condition: "{{ mode | default('maintenance') == 'maintenance' }}"
     description: Re-enter maintenance cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_2_result.convergence_metric | default(1.0) }}"
-      convergence_metric: "{{ step_3_result.hypotenuse | default(1.0) }}"
+      convergence_signal: "{{ step_3_result }}"
+      convergence_metric: "{{ step_4_result.hypotenuse | default(1.0) }}"
 
-  - ordinal: 11
+  - ordinal: 12
     action: loop
     condition: "{{ mode == 'logic_audit' }}"
     description: Re-enter logic audit cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 4 }}"
-      kata_hypotenuse: "{{ step_7_result.convergence_metric | default(1.0) }}"
-      convergence_metric: "{{ step_9_result.hypotenuse | default(1.0) }}"
+      convergence_signal: "{{ step_10_result }}"
+      convergence_metric: "{{ step_11_result.hypotenuse | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

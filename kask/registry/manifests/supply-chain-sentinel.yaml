@@ -70,28 +70,13 @@ steps:
     gas_cap: 2048
     timeout_seconds: 60
   - ordinal: 4
-    action: compute
-    compute_ref: kata.convergence_check
-    description: "CHECK CONVERGENCE: Cauchy criterion. Deterministic."
-    input_mapping:
-      hypotenuse: 0.0
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 5
     action: loop
     description: >
       Re-enter supply chain audit cycle if convergence is not met. Routes
       back to step 1 (scan manifests) to re-check dependencies.
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_3_result.findings | default([]) | length }}"
+      convergence_signal: "{{ step_3_result.findings | default([]) | length }}"
 
 # Registry invariant X4 (skill-maintenance): verified.
 # Manifest version: 0.33.0. Registry authoritative; SKILL.md is companion.

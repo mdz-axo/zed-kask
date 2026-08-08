@@ -238,24 +238,6 @@ steps:
       namespaces: "{{ step_1_result.namespaces | default([]) }}"
 
   - ordinal: 8
-    action: compute
-    compute_ref: kata.convergence_check
-    description: >
-      CHECK CONVERGENCE: Cauchy criterion on gradient-map stability. The
-      hypotenuse is the distance to complete-field target (1 - field_coverage).
-      Deterministic.
-    input_mapping:
-      hypotenuse: "{{ 1.0 - (step_3_result.field_coverage | default(0.0)) }}"
-      hypotenuse_epsilon: "{{ _convergence.hypotenuse_epsilon | default(0.05) }}"
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(3) }}"
-      brier_history: "{{ _convergence.brier_history | default([]) }}"
-      hypotenuse_history: "{{ _convergence.hypotenuse_history | default([]) }}"
-      brier_threshold: "{{ _convergence.brier_threshold | default(0.15) }}"
-      brier_window: "{{ _convergence.brier_window | default(3) }}"
-      mode: "cauchy"
-
-  - ordinal: 9
     action: loop
     description: >
       Re-enter GSR cycle if convergence is not met. Routes
@@ -268,7 +250,7 @@ steps:
         lessons_learned: "{{ step_6_result.lessons_learned | default([]) }}"
         pattern_signatures: "{{ step_6_result.pattern_signatures | default([]) }}"
         next_prior_focus: "{{ step_6_result.priority_ranking[0].location | default('') }}"
-      kata_hypotenuse: "{{ step_8_result.hypotenuse | default(1.0) }}"
+      convergence_signal: "{{ step_8_result.hypotenuse | default(1.0) }}"
 
 error_handling:
   on_gas_exceeded: abort

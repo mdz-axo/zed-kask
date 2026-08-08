@@ -270,7 +270,7 @@ steps:
     timeout_seconds: 30
     input_mapping:
       loop_target: "{{ 1 }}"
-      kata_hypotenuse: "{{ step_8_result.result | default(1.0) }}"
+      convergence_signal: "{{ step_8_result.result | default(1.0) }}"
       # Advance the seed index on each loop iteration so the evolutionary
       # loop processes the next seed concept. When all seeds are exhausted,
       # the loop tests mutations from reflected rules (per the Phase F

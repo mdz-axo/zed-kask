@@ -107,18 +107,6 @@ steps:
       transcript_chunks: "{{ step_1_result.transcript_chunks | default([]) }}"
 
   - ordinal: 4
-    action: compute
-    compute_ref: kata.convergence_check
-    description: >
-      CHECK CONVERGENCE: single-pass — convergence is trivially satisfied
-      (min=max=1). The compute step records the pass for the trace.
-    input_mapping:
-      hypotenuse: 0.0
-      cauchy_epsilon: "{{ _convergence.cauchy_epsilon | default(0.03) }}"
-      cauchy_window: "{{ _convergence.cauchy_window | default(1) }}"
-      cauchy_mode: "cauchy"
-
-  - ordinal: 5
     action: loop
     description: Single-pass — no loop (max_iterations=1).
     input_mapping:
