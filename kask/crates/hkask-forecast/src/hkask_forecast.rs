@@ -11,6 +11,8 @@
 //! 3. Bayesian updating — P(H|E) = P(E|H) × P(H) / P(E)
 //! 4. Brier scoring — (prediction - outcome)²
 
+pub mod falsification;
+
 use thiserror::Error;
 
 // ── Error type ──────────────────────────────────────────────────────────────
@@ -502,6 +504,211 @@ pub fn fuse_volatility(
     }
 }
 
+// ── R4: σ_scenario over CMP-driven branches ────────────────────────────────
+//
+// Re-points the scenario risk measure at CMP-controlled branch probabilities.
+// A CMP branch is a `BranchOutcome` whose probability comes from a CMP index
+// (constant-maturity, constant-orientation), not a raw decaying contract. The
+// risk measure carries CMP provenance so downstream consumers can distinguish
+// CMP-controlled risk from raw-contract risk.
+
+/// A scenario branch whose probability comes from a CMP index.
+///
+/// `cmp_source` identifies the CMP index that supplied the probability
+/// (e.g. "cmp:policy_interest_rate:3m:increase"). When `None`, the branch
+/// probability is from a raw contract (pre-R4 behavior) — the risk measure
+// degrades to the uncontrolled form.
+#[derive(Debug, Clone, Copy)]
+pub struct CmpBranchOutcome {
+    /// The branch's joint probability (from a CMP index or a raw contract).
+    pub probability: f64,
+    /// The company's annualized return if this branch realizes.
+    pub branch_return: f64,
+    /// CMP index identity when the probability is CMP-controlled, else None.
+    /// Carries the (family, tenor, orientation) of the source index.
+    pub cmp_source: Option<&'static str>,
+}
+
+/// Probability-weighted risk measure with CMP provenance.
+///
+/// When `cmp_controlled` is true, all branch probabilities came from CMP
+/// indices — the risk measure is maturity-controlled. When false, at least
+/// one branch used a raw-contract probability — the risk measure carries
+/// the maturity-transformation confound.
+#[derive(Debug, Clone, Copy)]
+pub struct CmpScenarioRiskMeasure {
+    /// The underlying scenario risk measure (expected return, σ_scenario).
+    pub inner: ScenarioRiskMeasure,
+    /// True when all branch probabilities came from CMP indices.
+    pub cmp_controlled: bool,
+    /// Number of CMP-controlled branches.
+    pub cmp_branch_count: usize,
+}
+
+/// Compute the scenario risk measure over CMP-controlled branches.
+///
+/// Each branch's probability comes from either a CMP index (`cmp_source`
+/// present) or a raw contract (`cmp_source` absent). The risk measure is
+/// `cmp_controlled` only when ALL branches are CMP-controlled — a single
+/// raw-contract branch contaminates the measure with the maturity-
+/// transformation confound.
+///
+/// Returns None when no branch has positive probability (same contract as
+/// `scenario_risk_measure`). Never fabricates.
+#[must_use = "CMP risk measure should feed valuation or coherence analysis"]
+pub fn cmp_scenario_risk_measure(
+    branches: &[CmpBranchOutcome],
+) -> Option<CmpScenarioRiskMeasure> {
+    let raw: Vec<BranchOutcome> = branches
+        .iter()
+        .map(|b| BranchOutcome {
+            probability: b.probability,
+            branch_return: b.branch_return,
+        })
+        .collect();
+    let inner = scenario_risk_measure(&raw)?;
+    let cmp_branch_count = branches.iter().filter(|b| b.cmp_source.is_some()).count();
+    let cmp_controlled = cmp_branch_count == branches.len() && !branches.is_empty();
+    Some(CmpScenarioRiskMeasure {
+        inner,
+        cmp_controlled,
+        cmp_branch_count,
+    })
+}
+
+// ── R5: Contract-price coherence (H3 reframed) ──────────────────────────────
+//
+// The arbitrage analysis on the contracts: are the tree-implied joint
+// probabilities coherent with observed contract prices (incl. parlay/joint
+// contracts where listed)? Divergence = the analyzable signal.
+//
+// This is the H3 test (reframed per user correction): NO equity-return
+// regressions, NO betas. The arbitrage-pricing apparatus applies to the
+// contracts — decomposing and bridging their prices and analyzing their
+// coherence — never to modeling stock returns.
+
+/// The coherence between a tree-implied joint probability and a market price.
+///
+/// `divergence` = |tree_implied - market_price|. When `divergence <= cost_band`,
+/// the tree is coherent with the market (the gap is within transaction costs).
+/// When `divergence > cost_band`, the gap is the arbitrage signal — the tree
+// and the market disagree beyond what transaction costs explain.
+#[derive(Debug, Clone, Copy)]
+pub struct CoherenceMeasure {
+    /// The tree-implied joint probability.
+    pub tree_implied: f64,
+    /// The observed market price (joint/parlay contract, or single contract).
+    pub market_price: f64,
+    /// |tree_implied - market_price| — the absolute divergence.
+    pub divergence: f64,
+    /// The transaction-cost band (passed variable). Divergences within this
+    /// band are not actionable (transaction costs eat the arbitrage).
+    pub cost_band: f64,
+    /// Whether the divergence is within the transaction-cost band.
+    pub coherent: bool,
+}
+
+/// Measure the coherence between a tree-implied joint probability and a
+/// market price (R5).
+///
+/// `tree_implied` is the joint probability from the CMP-controlled tree
+/// (e.g. P(rates increase AND oil increase) from `compose_cmp_tree` output).
+/// `market_price` is the observed price of a parlay/joint contract on the
+/// same events (or a single contract's price for a marginal comparison).
+/// `cost_band` is the transaction-cost band (a passed variable — the sum of
+/// bid-ask spreads, fees, and slippage for both legs of the arbitrage).
+///
+/// Returns `None` when either input is outside [0, 1] — a coherence measure
+/// over an invalid probability is undefined, never fabricated.
+///
+/// The falsifier (H3): if `coherent` is systematically false across many
+/// CMP-controlled trees (the tree diverges from the market beyond costs),
+/// the composition algebra adds no pricing coherence — H3 is refuted. If
+/// `coherent` is true on CMP trees but false on raw-snapshot trees, CMP is
+/// the active ingredient — H3b corroborated.
+#[must_use = "coherence measure should feed the H3 falsification log"]
+pub fn contract_price_coherence(
+    tree_implied: f64,
+    market_price: f64,
+    cost_band: f64,
+) -> Option<CoherenceMeasure> {
+    if !(0.0..=1.0).contains(&tree_implied) || !(0.0..=1.0).contains(&market_price) {
+        return None;
+    }
+    let divergence = (tree_implied - market_price).abs();
+    let coherent = divergence <= cost_band;
+    Some(CoherenceMeasure {
+        tree_implied,
+        market_price,
+        divergence,
+        cost_band,
+        coherent,
+    })
+}
+
+// ── R2: Duration matching vs constant maturity ─────────────────────────────
+//
+// Compares equity duration (Macaulay years) against the fixed CMP tenors
+// (1m/3m/6m = ~0.083/0.25/0.5 years). The gap is the H2 signal: equity
+// duration is typically 5-15+ years, while CMP tenors are sub-year. This
+// maturity-transformation gap is now a controlled quantity (CMP fixes the
+// tenor) rather than an unmeasurable confound (decaying contract snapshots).
+
+/// The standard CMP tenors in years (1m/3m/6m = 30/90/180 days).
+pub const CMP_TENORS_YEARS: [f64; 3] = [
+    30.0 / 365.25,
+    90.0 / 365.25,
+    180.0 / 365.25,
+];
+
+/// The labels for the standard CMP tenors.
+pub const CMP_TENOR_LABELS: [&str; 3] = ["1m", "3m", "6m"];
+
+/// One entry in the duration-vs-CMP comparison.
+#[derive(Debug, Clone)]
+pub struct DurationGap {
+    /// The CMP tenor label ("1m", "3m", "6m").
+    pub tenor_label: &'static str,
+    /// The CMP tenor in years.
+    pub tenor_years: f64,
+    /// |equity_duration − tenor| in years — the maturity-transformation gap.
+    pub gap_years: f64,
+    /// The ratio equity_duration / tenor — how many CMP tenors fit inside the
+    /// equity duration. A ratio of 20 means the equity claim is 20 CMP-3m
+    /// periods long — the maturity transformation is 20:1.
+    pub ratio: f64,
+}
+
+/// Compare an equity duration against the fixed CMP tenors (R2).
+///
+/// Returns one `DurationGap` per CMP tenor (1m, 3m, 6m). The gap is the
+/// absolute difference between the equity duration and the tenor; the ratio
+/// is how many tenors fit inside the equity duration. This is the H2/T1
+/// dataset: the maturity-transformation gap is now a controlled quantity
+/// (CMP fixes the tenor) rather than an unmeasurable confound.
+///
+/// Returns `None` when `equity_duration_years` is not positive — a duration
+/// over a non-positive stream is not meaningful (mirrors `EquityDuration`'s
+/// None contract). Never a fabricated number.
+#[must_use = "duration gap should be used or the None inspected"]
+pub fn duration_vs_cmp_tenors(equity_duration_years: f64) -> Option<Vec<DurationGap>> {
+    if equity_duration_years <= 0.0 {
+        return None;
+    }
+    Some(
+        CMP_TENORS_YEARS
+            .iter()
+            .zip(CMP_TENOR_LABELS.iter())
+            .map(|(&tenor, &label)| DurationGap {
+                tenor_label: label,
+                tenor_years: tenor,
+                gap_years: (equity_duration_years - tenor).abs(),
+                ratio: equity_duration_years / tenor,
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,6 +811,92 @@ mod tests {
         assert!((fused - 0.2915).abs() < 0.001, "fused {fused}");
         // Zero weight → realized only.
         assert!((fuse_volatility(0.25, Some(0.15), 0.0) - 0.25).abs() < 1e-12);
+    }
+
+    // ── R4: cmp_scenario_risk_measure ────────────────────────────────────
+
+    #[test]
+    fn cmp_risk_measure_all_cmp_controlled() {
+        // Both branches from CMP indices → cmp_controlled = true.
+        let branches = [
+            CmpBranchOutcome {
+                probability: 0.6,
+                branch_return: 0.20,
+                cmp_source: Some("cmp:policy_interest_rate:3m:increase"),
+            },
+            CmpBranchOutcome {
+                probability: 0.4,
+                branch_return: -0.15,
+                cmp_source: Some("cmp:crude_oil_price:1m:decline"),
+            },
+        ];
+        let measure = cmp_scenario_risk_measure(&branches).expect("positive mass");
+        assert!(measure.cmp_controlled);
+        assert_eq!(measure.cmp_branch_count, 2);
+        // Same math as the underlying scenario_risk_measure.
+        assert!((measure.inner.expected_return - 0.06).abs() < 1e-12);
+    }
+
+    #[test]
+    fn cmp_risk_measure_mixed_controlled() {
+        // One CMP branch, one raw-contract branch → cmp_controlled = false.
+        let branches = [
+            CmpBranchOutcome {
+                probability: 0.6,
+                branch_return: 0.20,
+                cmp_source: Some("cmp:policy_interest_rate:3m:increase"),
+            },
+            CmpBranchOutcome {
+                probability: 0.4,
+                branch_return: -0.15,
+                cmp_source: None, // raw contract
+            },
+        ];
+        let measure = cmp_scenario_risk_measure(&branches).expect("positive mass");
+        assert!(!measure.cmp_controlled);
+        assert_eq!(measure.cmp_branch_count, 1);
+    }
+
+    #[test]
+    fn cmp_risk_measure_none_on_zero_mass() {
+        let branches = [CmpBranchOutcome {
+            probability: 0.0,
+            branch_return: 0.1,
+            cmp_source: Some("cmp:policy_interest_rate:3m:increase"),
+        }];
+        assert!(cmp_scenario_risk_measure(&branches).is_none());
+    }
+
+    // ── R5: contract_price_coherence ─────────────────────────────────────
+
+    #[test]
+    fn coherence_within_cost_band() {
+        // Tree says 0.60, market says 0.58, cost band 0.05 → coherent.
+        let c = contract_price_coherence(0.60, 0.58, 0.05).expect("valid");
+        assert!((c.divergence - 0.02).abs() < 1e-12);
+        assert!(c.coherent);
+    }
+
+    #[test]
+    fn coherence_beyond_cost_band() {
+        // Tree says 0.60, market says 0.45, cost band 0.05 → not coherent.
+        let c = contract_price_coherence(0.60, 0.45, 0.05).expect("valid");
+        assert!((c.divergence - 0.15).abs() < 1e-12);
+        assert!(!c.coherent);
+    }
+
+    #[test]
+    fn coherence_none_for_invalid_probabilities() {
+        assert!(contract_price_coherence(1.5, 0.50, 0.05).is_none());
+        assert!(contract_price_coherence(0.50, -0.1, 0.05).is_none());
+    }
+
+    #[test]
+    fn coherence_exact_match() {
+        // Tree and market agree exactly → divergence 0, coherent.
+        let c = contract_price_coherence(0.50, 0.50, 0.0).expect("valid");
+        assert!((c.divergence - 0.0).abs() < 1e-12);
+        assert!(c.coherent);
     }
 
     #[test]
@@ -799,5 +1092,38 @@ mod tests {
         assert_eq!(certainty_tier(0.9), "proximate");
         assert_eq!(certainty_tier(0.5), "probable");
         assert_eq!(certainty_tier(0.1), "possible");
+    }
+
+    // ── R2: duration_vs_cmp_tenors ───────────────────────────────────────
+
+    #[test]
+    fn duration_vs_cmp_tenors_typical_equity() {
+        // A typical equity duration of 10 years vs CMP tenors.
+        let gaps = duration_vs_cmp_tenors(10.0).expect("positive duration");
+        assert_eq!(gaps.len(), 3);
+        // 1m: gap ≈ 9.92 years, ratio ≈ 121.8
+        assert!((gaps[0].gap_years - (10.0 - 30.0 / 365.25)).abs() < 0.01);
+        assert!((gaps[0].ratio - 10.0 / (30.0 / 365.25)).abs() < 0.1);
+        // 3m: gap ≈ 9.75 years, ratio ≈ 40.6
+        assert!((gaps[1].gap_years - (10.0 - 90.0 / 365.25)).abs() < 0.01);
+        assert!((gaps[1].ratio - 10.0 / (90.0 / 365.25)).abs() < 0.1);
+        // 6m: gap ≈ 9.51 years, ratio ≈ 20.3
+        assert!((gaps[2].gap_years - (10.0 - 180.0 / 365.25)).abs() < 0.01);
+        assert!((gaps[2].ratio - 10.0 / (180.0 / 365.25)).abs() < 0.1);
+    }
+
+    #[test]
+    fn duration_vs_cmp_tenors_none_for_non_positive() {
+        assert!(duration_vs_cmp_tenors(0.0).is_none());
+        assert!(duration_vs_cmp_tenors(-1.0).is_none());
+    }
+
+    #[test]
+    fn duration_vs_cmp_tenors_short_duration() {
+        // A short-duration equity (1 year) — the gap is smaller, the ratio is lower.
+        let gaps = duration_vs_cmp_tenors(1.0).expect("positive duration");
+        // 6m: gap ≈ 0.51 years, ratio ≈ 2.03
+        assert!((gaps[2].gap_years - (1.0 - 180.0 / 365.25)).abs() < 0.01);
+        assert!((gaps[2].ratio - 1.0 / (180.0 / 365.25)).abs() < 0.1);
     }
 }

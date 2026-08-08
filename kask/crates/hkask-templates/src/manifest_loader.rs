@@ -140,7 +140,7 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
     let file: ManifestFile =
         serde_yaml_neo::from_str(yaml).map_err(|e| ManifestLoadError::Yaml { source: e })?;
 
-    let manifest = BundleManifest {
+    let mut manifest = BundleManifest {
         id: file.manifest.id,
         name: file.manifest.name,
         description: file.manifest.description,
@@ -163,6 +163,13 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         enforce_inputs: file.manifest.enforce_inputs,
         principles: file.principles,
     };
+
+    // Sort steps by ordinal once at load time. The executor's `run_cascade`
+    // previously cloned + sorted on every cascade entry (including recursive
+    // flowdef sub-cascades); moving the sort here makes it a one-time cost.
+    // Manifests are authored in ordinal order, so this is almost always a
+    // no-op sort — but it guarantees the invariant for safety.
+    manifest.steps.sort_by_key(|s| s.ordinal);
 
     info!(
         target: "hkask.manifest_loader",

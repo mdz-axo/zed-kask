@@ -10,6 +10,7 @@ description = "Shared superforecasting computation engine — Fermi decompositio
 path = "src/hkask_forecast.rs"
 
 [dependencies]
+serde.workspace = true
 thiserror.workspace = true
 
 [lints]

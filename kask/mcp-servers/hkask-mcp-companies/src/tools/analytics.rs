@@ -817,6 +817,11 @@ impl CompaniesServer {
                             );
                             let expected = superforecast::expected_intrinsic(&weighted);
                             weighting_mode = superforecast::WeightingMode::EventTree;
+                            let cmp_provenance = if tree.cmp_provenance.is_empty() {
+                                None
+                            } else {
+                                Some(&tree.cmp_provenance)
+                            };
                             weighted_output = Some(serde_json::json!({
                                 "growth_probability": growth_p,
                                 "margin_probability": margin_p,
@@ -826,6 +831,16 @@ impl CompaniesServer {
                                     "intrinsic_per_share": w.intrinsic_per_share,
                                     "probability": w.probability,
                                 })).collect::<Vec<_>>(),
+                                // R3: cite CMP provenance when the tree was built from CMP indices.
+                                "cmp_provenance": cmp_provenance.map(|p| p.iter().map(|c| serde_json::json!({
+                                    "id": c.id,
+                                    "family": c.family,
+                                    "tenor": c.tenor,
+                                    "orientation": c.orientation,
+                                    "venue": c.venue,
+                                    "method": c.method,
+                                    "maturity_error_days": c.maturity_error_days,
+                                })).collect::<Vec<_>>()),
                             }));
                         }
                         None => {

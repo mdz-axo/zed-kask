@@ -207,10 +207,39 @@ pub enum WeightingMode {
 /// report); this struct is the documented contract of what the bridge
 /// consumes — the `tree` object from `scenario_from_markets_set` or
 /// `scenario_propagate` output.
+///
+/// R3: when the tree comes from `compose_cmp_tree` (CMP-driven composition),
+/// the `cmp_provenance` field records the CMP index identities so the
+/// tree-weighted output can cite them. When absent, the tree is from raw
+/// contracts (pre-R3 behavior).
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EventTreeProjection {
     pub root_ids: Vec<String>,
     pub nodes: Vec<EventTreeNodeProjection>,
+    /// R3: CMP provenance — present when the tree was built from CMP indices
+    /// (via `compose_cmp_tree`). Each entry is a CMP index identity
+    /// (`cmp:{family}:{tenor}:{orientation}`). Absent for raw-contract trees.
+    #[serde(default)]
+    pub cmp_provenance: Vec<CmpIndexProvenance>,
+}
+
+/// R3: CMP index provenance entry — one per CMP index in the tree.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct CmpIndexProvenance {
+    /// The CMP index identity: `cmp:{family}:{tenor}:{orientation}`.
+    pub id: String,
+    /// The base-event family label (e.g. "policy_interest_rate").
+    pub family: String,
+    /// The CMP tenor label ("1m", "3m", "6m").
+    pub tenor: String,
+    /// The orientation ("increase", "decline", "stable").
+    pub orientation: String,
+    /// The venue ("kalshi", "polymarket").
+    pub venue: String,
+    /// The construction method ("interpolated" or "bucketed_sparse").
+    pub method: String,
+    /// The maturity-matching error in days.
+    pub maturity_error_days: f64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -280,6 +309,7 @@ mod tests {
                     marginal_probability: 0.99,
                 },
             ],
+            cmp_provenance: vec![],
         }
     }
 
@@ -304,6 +334,64 @@ mod tests {
     fn tree_root_probabilities_rejects_out_of_range_marginal() {
         let tree = two_root_tree(1.5, 0.4);
         assert!(tree_root_probabilities(&tree).is_none());
+    }
+
+    // ── R3: CMP provenance ───────────────────────────────────────────────
+
+    #[test]
+    fn cmp_provenance_deserializes_from_json() {
+        // A CMP-driven tree JSON with cmp_provenance field.
+        let json = r#"{
+            "root_ids": ["cmp:policy_interest_rate:3m:increase", "cmp:crude_oil_price:1m:increase"],
+            "nodes": [
+                {"id": "cmp:policy_interest_rate:3m:increase", "marginal_probability": 0.65},
+                {"id": "cmp:crude_oil_price:1m:increase", "marginal_probability": 0.40}
+            ],
+            "cmp_provenance": [
+                {
+                    "id": "cmp:policy_interest_rate:3m:increase",
+                    "family": "policy_interest_rate",
+                    "tenor": "3m",
+                    "orientation": "increase",
+                    "venue": "kalshi",
+                    "method": "interpolated",
+                    "maturity_error_days": 0.0
+                },
+                {
+                    "id": "cmp:crude_oil_price:1m:increase",
+                    "family": "crude_oil_price",
+                    "tenor": "1m",
+                    "orientation": "increase",
+                    "venue": "kalshi",
+                    "method": "bucketed_sparse",
+                    "maturity_error_days": 5.0
+                }
+            ]
+        }"#;
+        let tree: EventTreeProjection = serde_json::from_str(json).expect("deserialize");
+        assert_eq!(tree.cmp_provenance.len(), 2);
+        assert_eq!(tree.cmp_provenance[0].family, "policy_interest_rate");
+        assert_eq!(tree.cmp_provenance[0].method, "interpolated");
+        assert_eq!(tree.cmp_provenance[1].family, "crude_oil_price");
+        assert_eq!(tree.cmp_provenance[1].method, "bucketed_sparse");
+        // The root probabilities still extract correctly.
+        let (g, m) = tree_root_probabilities(&tree).expect("two roots");
+        assert!((g - 0.65).abs() < 1e-9);
+        assert!((m - 0.40).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cmp_provenance_defaults_to_empty_for_raw_contract_trees() {
+        // A raw-contract tree JSON without cmp_provenance — backward compatible.
+        let json = r#"{
+            "root_ids": ["mkt-G", "mkt-M"],
+            "nodes": [
+                {"id": "mkt-G", "marginal_probability": 0.6},
+                {"id": "mkt-M", "marginal_probability": 0.4}
+            ]
+        }"#;
+        let tree: EventTreeProjection = serde_json::from_str(json).expect("deserialize");
+        assert!(tree.cmp_provenance.is_empty());
     }
 
     #[test]

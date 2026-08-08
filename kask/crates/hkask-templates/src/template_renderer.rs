@@ -56,10 +56,21 @@ pub fn safe_template_join(base: &Path, template_ref: &str) -> Option<PathBuf> {
 /// requires `&mut`. The guard is held only for the duration of the
 /// synchronous render (no await points), so contention is negligible —
 /// the executor is single-threaded per cascade.
-#[derive(Clone)]
 pub struct TemplateRenderer {
     base_path: PathBuf,
     env: Mutex<minijinja::Environment<'static>>,
+}
+
+impl Clone for TemplateRenderer {
+    fn clone(&self) -> Self {
+        // `Environment` is `Clone` (holds `Arc` internally) — cloning is cheap
+        // and produces an independent environment that does not share template
+        // registrations with the original.
+        Self {
+            base_path: self.base_path.clone(),
+            env: Mutex::new(self.env.lock().unwrap_or_else(|e| e.into_inner()).clone()),
+        }
+    }
 }
 
 impl TemplateRenderer {
@@ -159,7 +170,7 @@ impl TemplateRenderer {
         // `add_template_owned` replaces any prior "step" registration (no
         // accumulation across renders). The loader handles only `{% include %}`
         // references, not "step".
-        env.add_template_owned("step", template_content)
+        env.add_template_owned("step", template_content.to_string())
             .map_err(|e| TemplateError::Render(format!("Invalid template: {}", e)))?;
 
         // `Value::from_serialize` accepts any `Serialize` type directly — the

@@ -222,45 +222,29 @@ impl ManifestExecutor {
     /// Check whether a JSON value references any tainted (Source) context entries.
     ///
     /// This is the FIDES taint propagation check: recursively scans the value
-    /// for `{"$ref": "step_N_result..."}` patterns and checks whether the
-    /// referenced context entry is labeled `Source` (untrusted).
+    /// for `{"$ref": "step_N_result..."}` patterns and inline Jinja
+    /// `{{ step_N_result }}` expressions, and checks whether any referenced
+    /// context entry is labeled `Source` (untrusted).
     ///
     /// Source: Microsoft Research FIDES (arXiv:2505.23643)
     ///
     /// expect: "The system detects untrusted data flowing into tool inputs"
     /// pre:  value is the bound input JSON for a tool invocation
-    /// post: returns true iff any $ref in the value resolves to a Source-labeled entry
+    /// post: returns true iff any $ref or {{ }} reference in the value resolves
+    ///       to a Source-labeled entry
     fn check_untrusted_input(&self, value: &Value) -> bool {
-        match value {
-            Value::Object(map) => {
-                // Check for $ref pattern: {"$ref": "step_1_result.field"}
-                if let Some(Value::String(ref_path)) = map.get("$ref") {
-                    let context_key = ref_path.split('.').next().unwrap_or("");
-                    let labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
-                    return labels.get(context_key).copied().unwrap_or(ToolTaint::Pure)
-                        == ToolTaint::Source;
-                }
-                // Recurse into object fields.
-                map.values().any(|v| self.check_untrusted_input(v))
-            }
-            Value::Array(arr) => arr.iter().any(|v| self.check_untrusted_input(v)),
-            // Inline Jinja: `{{ step_N_result }}` is the same reference grammar
-            // `propagate_taint_for_binding` recognizes (RR-0026/0027). The gate
-            // must scan the same grammar as the propagation it complements —
-            // otherwise a Source-tainted entry bound into a Sink tool via
-            // inline Jinja bypasses the FIDES Source→Sink block (the gate saw
-            // only `$ref` while propagation already handled inline Jinja).
-            Value::String(_) => {
-                let keys = self.extract_referenced_keys(value);
-                if keys.is_empty() {
-                    return false;
-                }
-                let labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
-                keys.iter()
-                    .any(|k| labels.get(k).copied().unwrap_or(ToolTaint::Pure) == ToolTaint::Source)
-            }
-            _ => false,
+        // `extract_referenced_keys` walks the entire value tree (Object $ref,
+        // Array recursion, String inline-Jinja) and returns the set of
+        // referenced context keys. This replaces the prior separate recursive
+        // walk that duplicated `collect_referenced_keys`'s logic — one walk
+        // instead of two.
+        let keys = self.extract_referenced_keys(value);
+        if keys.is_empty() {
+            return false;
         }
+        let labels = self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
+        keys.iter()
+            .any(|k| labels.get(k).copied().unwrap_or(ToolTaint::Pure) == ToolTaint::Source)
     }
 
     /// Propagate taint labels from referenced context entries to a newly bound key.
@@ -485,7 +469,8 @@ impl ManifestExecutor {
         manifest: &BundleManifest,
         initial_context: HashMap<String, Value>,
     ) -> Result<HashMap<String, Value>> {
-        self.run_cascade(manifest, initial_context, 0).await
+        let (context, _last_ordinal) = self.run_cascade(manifest, initial_context, 0).await?;
+        Ok(context)
     }
 
     /// Drive the cascade with an explicit recursion `depth`.
@@ -504,7 +489,7 @@ impl ManifestExecutor {
         manifest: &BundleManifest,
         initial_context: HashMap<String, Value>,
         depth: u8,
-    ) -> Result<HashMap<String, Value>> {
+    ) -> Result<(HashMap<String, Value>, Option<u32>)> {
         if depth > hkask_capability::SYSTEM_MAX_RECURSION {
             return Err(TemplateError::Manifest(format!(
                 "Matryoshka depth limit ({}) exceeded",
@@ -512,8 +497,9 @@ impl ManifestExecutor {
             )));
         }
         let mut context = initial_context;
-        let mut steps = manifest.steps.clone();
-        steps.sort_by_key(|s| s.ordinal);
+        // Steps are sorted by ordinal at load time (see `load_manifest_from_yaml`).
+        // Borrow directly — no per-cascade clone+sort.
+        let steps = &manifest.steps;
 
         // Unified convergence tracking (extracted to `convergence.rs`).
         // Replaces 5 `let` locals (max_iterations, threshold, field,
@@ -541,6 +527,11 @@ impl ManifestExecutor {
         );
 
         let mut step_idx: usize = 0;
+        // Track the highest ordinal of any step that stored a `step_N_result`
+        // key during this cascade. Used by `execute_flowdef` to extract the
+        // sub-cascade's final result in O(1) instead of scanning the entire
+        // context HashMap (the `extract_final_step_result` fallback).
+        let mut last_result_ordinal: Option<u32> = None;
 
         'cascade: loop {
             iteration += 1;
@@ -796,7 +787,7 @@ impl ManifestExecutor {
                                 let bound = resolve_mapping_value(
                                     v,
                                     &context,
-                                    self.template_renderer.base_path(),
+                                    &self.template_renderer,
                                 );
                                 // Propagate taint from referenced Source entries
                                 // to the new binding key (ART-3/IR-1 fix).
@@ -820,6 +811,14 @@ impl ManifestExecutor {
                         // impossible (each iteration produces a different
                         // artifact against a different goal, so the metric
                         // bounces instead of stabilizing).
+                        // Acquire the taint-labels lock once for the entire
+                        // snapshot loop — the prior code acquired it twice per
+                        // step (read + write), which is 2N acquisitions for an
+                        // N-step manifest where 1 suffices.
+                        let mut labels = self
+                            .taint_labels
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
                         for step in steps.iter() {
                             let key = format!("step_{}_result", step.ordinal);
                             if let Some(val) = context.get(&key) {
@@ -828,21 +827,13 @@ impl ManifestExecutor {
                                 // also copy the taint label — otherwise a
                                 // Source-tainted artifact silently loses its
                                 // label when referenced as prev_step_N_result.
-                                let label = self
-                                    .taint_labels
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .get(&key)
-                                    .copied();
-                                if let Some(label) = label {
-                                    self.taint_labels
-                                        .lock()
-                                        .unwrap_or_else(|e| e.into_inner())
-                                        .insert(prev_key.clone(), label);
+                                if let Some(label) = labels.get(&key).copied() {
+                                    labels.insert(prev_key.clone(), label);
                                 }
                                 context.insert(prev_key, val.clone());
                             }
                         }
+                        drop(labels);
 
                         // Re-enter: reset step index to loop target
                         if let Some(pos) = steps.iter().position(|s| s.ordinal == loop_target) {
@@ -981,6 +972,15 @@ impl ManifestExecutor {
                         )));
                     }
                 }
+
+                // Track the highest ordinal that stored a `step_N_result` key,
+                // so `execute_flowdef` can extract the sub-cascade's final
+                // result in O(1) instead of scanning the full context.
+                // Control-flow actions (abort/escalate/choice/loop) break or
+                // continue before reaching here, so only result-emitting
+                // actions (select/compute/execute/render/flowdef) update this.
+                // Steps are sorted by ordinal, so the last to run is the max.
+                last_result_ordinal = Some(step.ordinal);
 
                 // ── Unified skill feedback span emission (P9 §9.2) ──────────
                 // After each select step, emit the corresponding SkillFeedbackSpan
@@ -1166,7 +1166,7 @@ impl ManifestExecutor {
         }
 
         context.insert("_recursion_depth".to_string(), Value::Number(depth.into()));
-        Ok(context)
+        Ok((context, last_result_ordinal))
     }
 
     /// Evaluate a `choice` step's condition against the context.
@@ -1254,7 +1254,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                let bound = resolve_mapping_value(v, &context, &self.template_renderer);
                 // Propagate taint from referenced Source entries to the new
                 // binding key (ART-3/IR-1 fix — closes FIDES closure break).
                 self.propagate_taint_for_binding(v, k);
@@ -1384,7 +1384,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                let bound = resolve_mapping_value(v, &context, &self.template_renderer);
                 // Propagate taint from referenced Source entries to the new
                 // binding key (RR-0027 — same FIDES closure break as RR-0026).
                 // Pass the *original* mapping value (with $ref / {{ }} markers),
@@ -1432,7 +1432,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                let bound = resolve_mapping_value(v, &context, &self.template_renderer);
                 // Propagate taint from referenced Source entries to the new
                 // binding key (ART-3/IR-1 fix — closes FIDES closure break).
                 self.propagate_taint_for_binding(v, k);
@@ -1558,7 +1558,7 @@ impl ManifestExecutor {
             && let Value::Object(map) = mapping
         {
             for (k, v) in map {
-                let bound = resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                let bound = resolve_mapping_value(v, &context, &self.template_renderer);
                 // Propagate taint from referenced Source entries to the new
                 // binding key (ART-3/IR-1 fix — closes FIDES closure break).
                 self.propagate_taint_for_binding(v, k);
@@ -1576,16 +1576,26 @@ impl ManifestExecutor {
         // sized. Re-enter `run_cascade` with `depth + 1` so the matryoshka
         // guard in `run_cascade` bounds recursive nesting (this is the ONLY
         // path that increments depth; iterative loop re-entry does not).
-        let sub_result = Box::pin(self.run_cascade(&sub_manifest, context, depth + 1)).await?;
+        // `run_cascade` returns the last-completed step ordinal so we can
+        // extract the final result in O(1) instead of scanning the full
+        // context HashMap.
+        let (sub_result, last_ordinal) =
+            Box::pin(self.run_cascade(&sub_manifest, context, depth + 1)).await?;
 
         // Extract the sub-cascade's final result value. We do NOT merge the
         // full sub-context back into the parent — only the result is stored,
         // preventing the sub-cascade from overwriting parent context keys.
         //
-        // The final result is the highest-ordinal `step_N_result` key —
-        // HashMap iteration order is randomized, so we can't use `.last()`.
-        // This mirrors the bridge's `extract_final_step_result` logic.
-        let result_value = extract_final_step_result(&sub_result);
+        // The final result is the highest-ordinal `step_N_result` key.
+        // `run_cascade` tracks the last-completed ordinal, so we can read it
+        // directly in O(1). The `extract_final_step_result` fallback (full
+        // context scan) is used only if the ordinal is unavailable (defensive
+        // — e.g. an empty sub-manifest with no result-emitting steps).
+        let final_step_key = last_ordinal.map(|n| format!("step_{n}_result"));
+        let result_value = match &final_step_key {
+            Some(key) => sub_result.get(key).cloned().unwrap_or(Value::Null),
+            None => extract_final_step_result(&sub_result),
+        };
 
         // Reconstruct the parent context from the sub-result. The sub-cascade
         // received the parent's context, so the sub-result contains the
@@ -1602,9 +1612,8 @@ impl ManifestExecutor {
         // set on parent keys persist — no copy needed for those. The new
         // step_{ordinal}_result key, however, is inserted below without a
         // label; copy the label of the sub-cascade's final step result (the
-        // same ordinal key extract_final_step_result picked) so a Source-
-        // tainted sub-result doesn't enter the parent context unlabeled.
-        let final_step_key = extract_final_step_entry(&sub_result).map(|(key, _)| key);
+        // same ordinal key we extracted above) so a Source-tainted sub-result
+        // doesn't enter the parent context unlabeled.
         if let Some(ref final_key) = final_step_key {
             let label = self
                 .taint_labels
@@ -1673,7 +1682,7 @@ impl ManifestExecutor {
             .input_mapping
             .as_ref()
             .map(|mapping| {
-                resolve_mapping_value(mapping, context, self.template_renderer.base_path())
+                resolve_mapping_value(mapping, context, &self.template_renderer)
             })
             .unwrap_or_else(|| {
                 Value::Object(
@@ -1740,7 +1749,7 @@ impl ManifestExecutor {
                     let mut out = serde_json::Map::new();
                     for (k, v) in map {
                         let bound =
-                            resolve_mapping_value(v, &context, self.template_renderer.base_path());
+                            resolve_mapping_value(v, &context, &self.template_renderer);
                         // Propagate taint from referenced Source entries to the
                         // bound key (the .rules "input_mapping bindings must
                         // propagate taint" trap — RR-0026/RR-0027 fixed this at

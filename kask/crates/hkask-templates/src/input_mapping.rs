@@ -14,7 +14,7 @@
 //! rendering), so the last `bind_parameters` call site (execute_populate)
 //! switched to it and the dead pair was deleted.
 
-use crate::template_renderer::render_minijinja;
+use crate::template_renderer::TemplateRenderer;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -46,10 +46,13 @@ pub(crate) fn resolve_dot_path(path: &str, context: &HashMap<String, Value>) -> 
 ///   not a stringified repr that would double-encode under `| tojson`).
 /// - `{"$ref": "dot.path"}` object → the referenced context value (populate-style).
 /// - literal (string/number/bool/array) → as-is, recursing into containers.
+///
+/// `renderer` provides the cached minijinja `Environment` — reusing it across
+/// bindings avoids rebuilding the Environment per `{{ }}` expression.
 pub(crate) fn resolve_mapping_value(
     value: &Value,
     context: &HashMap<String, Value>,
-    base: &std::path::Path,
+    renderer: &TemplateRenderer,
 ) -> Value {
     match value {
         Value::String(s) => {
@@ -57,14 +60,15 @@ pub(crate) fn resolve_mapping_value(
             if trimmed.starts_with("{{") && trimmed.ends_with("}}") {
                 let inner = trimmed[2..trimmed.len() - 2].trim();
                 let wrapped = format!("{{{{ ({inner}) | tojson }}}}");
-                match render_minijinja(&wrapped, context, base) {
+                match renderer.render(&wrapped, context) {
                     Ok(json_str) => {
                         serde_json::from_str(json_str.trim()).unwrap_or_else(|_| value.clone())
                     }
                     Err(_) => value.clone(),
                 }
             } else if trimmed.contains("{{") {
-                render_minijinja(s, context, base)
+                renderer
+                    .render(s, context)
                     .map(Value::String)
                     .unwrap_or_else(|_| value.clone())
             } else {
@@ -82,13 +86,13 @@ pub(crate) fn resolve_mapping_value(
             }
             let mut out = serde_json::Map::new();
             for (k, v) in map {
-                out.insert(k.clone(), resolve_mapping_value(v, context, base));
+                out.insert(k.clone(), resolve_mapping_value(v, context, renderer));
             }
             Value::Object(out)
         }
         Value::Array(arr) => Value::Array(
             arr.iter()
-                .map(|v| resolve_mapping_value(v, context, base))
+                .map(|v| resolve_mapping_value(v, context, renderer))
                 .collect(),
         ),
         other => other.clone(),

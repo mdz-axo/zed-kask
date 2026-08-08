@@ -17,6 +17,7 @@
 //! owned by this module, not assembled ad-hoc at 11 call sites.
 
 use crate::bundle::config::{AggregationSource, ConvergenceConfig};
+use crate::input_mapping::resolve_dot_path;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -590,27 +591,6 @@ impl ConvergenceTracker {
             }),
         );
     }
-}
-
-/// Resolve a dot-path like "step_1_result.field" from the context.
-/// (Duplicated from executor.rs to keep this module self-contained —
-/// the function is a pure leaf with no dependency on executor state.)
-fn resolve_dot_path(path: &str, context: &HashMap<String, Value>) -> Option<Value> {
-    let parts: Vec<&str> = path.split('.').collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let first = context.get(parts[0])?.clone();
-    let mut current = first;
-    for part in &parts[1..] {
-        match current {
-            Value::Object(map) => {
-                current = map.get(*part)?.clone();
-            }
-            _ => return None,
-        }
-    }
-    Some(current)
 }
 
 #[cfg(test)]

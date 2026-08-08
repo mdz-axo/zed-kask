@@ -9230,6 +9230,7 @@ dependencies = [
 name = "hkask-forecast"
 version = "0.33.0"
 dependencies = [
+ "serde",
  "thiserror 2.0.19",
 ]
 
@@ -9860,7 +9861,6 @@ dependencies = [
  "serde_json",
  "sqlite-vec",
  "thiserror 2.0.19",
- "tokio",
  "tracing",
  "utoipa",
  "uuid",

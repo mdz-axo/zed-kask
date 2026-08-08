@@ -1842,8 +1842,7 @@ pub fn compose_market_tree(
 pub fn convert_cmp_index(
     index: &hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex,
 ) -> ScenarioEvent {
-    use hkask_mcp_prediction_markets::cmp_index_builder::ProvenancedCmpIndex;
-    use hkask_mcp_prediction_markets::cmp_portfolio::CmpMethod;
+    use hkask_mcp_prediction_markets::cmp::CmpMethod;
 
     let family_label = index.family.label();
     let tenor = index.index.bucket.label();
