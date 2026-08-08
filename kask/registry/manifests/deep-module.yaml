@@ -101,7 +101,7 @@ steps:
       verdict is EXTRACT or DEEPEN. Skipped for DELETE/MERGE (designing a
       module that should not exist is undefined behavior). When skipped,
       step_3_result is undefined; downstream steps use default({}) which is
-      falsy in Jinja2, so the Cauchy tracker sees a 0 kata_hypotenuse reading.
+      falsy in Jinja2, so the Cauchy tracker sees a 0 convergence_signal reading.
     renderer: minijinja
     template_ref: deep-module/deep-module-design
     gas_cap: 6000

@@ -86,7 +86,7 @@ steps:
 
   # ── Deterministic compute: lisp.eval is available for custom logic ──
   #
-  # In addition to the built-in compute_refs (kata.convergence_check,
+  # In addition to the built-in compute_refs (lisp.eval for signal computation,
   # kata.object_gap, kata.process_gap, kata.hypotenuse, etc.), skill
   # authors can use `compute_ref: lisp.eval` to write custom deterministic
   # logic inline in the manifest — no Rust change needed. The sandboxed

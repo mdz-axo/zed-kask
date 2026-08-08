@@ -308,7 +308,7 @@ steps:
 
   # === CONVERGENCE — mode-specific ===
   # Code mode: lisp.eval computes a structural score from step 3's
-  # quality_findings count, then kata.convergence_check runs on it.
+  # quality_findings count, then the ConvergenceTracker checks it (Cauchy criterion).
   - ordinal: 13
     action: compute
     condition: "{{ mode | default('code') == 'code' }}"

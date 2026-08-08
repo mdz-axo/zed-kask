@@ -1,12 +1,15 @@
 # Shared template crate manifest
 # hKask v0.33.0
 #
-# The shared convergence-check template has been removed. All skills now use
-# the deterministic `kata.convergence_check` compute primitive instead of an
-# LLM self-grade convergence-check template. The shared Lisp invariant macros
-# (lisp-invariants.j2) provide reusable `lisp.eval` form strings for skills
-# that need deterministic structural checks (count, completeness, diversity,
-# duplicates) on LLM-generated structured output.
+# The shared convergence-check template has been removed. Convergence is now
+# gated solely by the ConvergenceTracker (kask/crates/hkask-templates/src/
+# convergence.rs), which reads the convergence signal pushed by each manifest's
+# loop step via the `convergence_signal:` binding. The former
+# `kata.convergence_check` compute primitive was removed — it was a dead
+# diagnostic whose output was read by zero loop-gating paths. The shared Lisp
+# invariant macros (lisp-invariants.j2) provide reusable `lisp.eval` form
+# strings for skills that need deterministic structural checks (count,
+# completeness, diversity, duplicates) on LLM-generated structured output.
 
 crate:
   name: shared
@@ -16,8 +19,8 @@ crate:
     Lisp invariant-check macros (lisp-invariants.j2) for `compute_ref: lisp.eval`
     steps — skills `{% include %}` the macro file and call the named macro to
     emit a validated Lisp `form:` string. The old convergence-check template has
-    been removed — all skills now use the deterministic `kata.convergence_check`
-    compute primitive.
+    been removed — convergence is gated by the ConvergenceTracker, which reads
+    the `convergence_signal:` binding from each manifest's loop step.
 
 templates:
   - id: shared/lisp-invariants

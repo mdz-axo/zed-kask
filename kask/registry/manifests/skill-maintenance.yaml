@@ -108,7 +108,7 @@ steps:
 
   # ── Deterministic compute: lisp.eval is available for custom logic ──
   #
-  # In addition to the built-in compute_refs (kata.convergence_check,
+  # In addition to the built-in compute_refs (lisp.eval for signal computation,
   # kata.object_gap, kata.process_gap, kata.hypotenuse, etc.), skill
   # authors can use `compute_ref: lisp.eval` to write custom deterministic
   # logic inline in the manifest — no Rust change needed. The sandboxed
@@ -251,8 +251,10 @@ steps:
     description: Re-enter maintenance cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 1 }}"
-      convergence_signal: "{{ step_3_result }}"
-      convergence_metric: "{{ step_4_result.hypotenuse }}"
+      # Push the Lisp-computed convergence score (step 3) into kata_hypotenuse
+      # so the Cauchy criterion can detect when the coverage gaps stop changing.
+      # No default — if step 3 failed, the error should surface.
+      kata_hypotenuse: "{{ step_3_result }}"
 
   - ordinal: 11
     action: loop
@@ -260,7 +262,10 @@ steps:
     description: Re-enter logic audit cycle if convergence is not met.
     input_mapping:
       loop_target: "{{ 4 }}"
-      convergence_signal: "{{ step_10_result }}"
+      # Push the Lisp-computed convergence score (step 9) into kata_hypotenuse
+      # so the Cauchy criterion can detect when the proposal confidence stops changing.
+      # No default — if step 9 failed, the error should surface.
+      kata_hypotenuse: "{{ step_9_result }}"
       convergence_metric: "{{ step_11_result.hypotenuse }}"
 
 error_handling:
