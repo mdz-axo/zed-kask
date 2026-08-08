@@ -83,6 +83,10 @@ inputs:
     type: object
     required: false
     description: 'Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any.'
+  - name: task
+    type: string
+    required: false
+    description: 'The user\'s task description (injected per .rules skill-cascade-context rule).'
 
 steps:
   # ─── STEP 1: CLASSIFY ───
@@ -104,6 +108,7 @@ steps:
       output_format: "{{ output_format | default('inline') }}"
       output_path: "{{ output_path | default('') }}"
       context: "{{ context | default({}) }}"
+      task: "{{ task | default('') }}"
 
   # ─── STEP 2: REWRITE (inline audit + typed rewrite) ───
   # Folds the former audit (step 2) + 7-way typed rewrite branch (steps 3-9)
@@ -124,6 +129,7 @@ steps:
       prompt_type: "{{ step_1_result.prompt_type }}"
       effort_tier: "{{ step_1_result.effort_tier }}"
       risks: "{{ step_1_result.risks | default([]) }}"
+      task: "{{ task | default('') }}"
 
   # ─── STEP 3: VERIFY (medium/high only) ───
   # Decoupled grill-me critic. Skipped at low tier. Single round at medium,

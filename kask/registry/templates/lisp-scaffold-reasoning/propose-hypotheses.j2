@@ -8,6 +8,7 @@ contract:
     domain: string
     context: object
     prior_defects: array
+    task: string
   output:
     hypotheses: array
     notes: string
@@ -40,6 +41,12 @@ structural defects.
 ## Domain
 
 {{ domain }}
+{% endif %}
+
+{% if task %}
+## User Task
+
+{{ task }}
 {% endif %}
 
 {% if context %}

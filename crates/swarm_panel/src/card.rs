@@ -1,12 +1,17 @@
 //! Agent and swarm card renderer for the browse list.
 //!
-//! Cards: name + truncated description on the left, action buttons in a
-//! horizontal row on the right. Both name and description truncate so long
-//! text never blows out the fixed-height card.
+//! Layout: name + truncated description on the left (flex_1, min_w_0,
+//! truncate). Primary actions (Edit, Hire) as visible buttons on the
+//! right (flex_shrink_0). Secondary actions (Clone, Push, Publish,
+//! Remove) collapsed behind an ellipsis PopoverMenu so the button row
+//! never overflows the text column on narrow dock panels.
+//!
+//! Pattern reference: `agent_panel.rs:5674` (PopoverMenu + IconButton
+//! Ellipsis + ContextMenu::build + WeakEntity handler capture).
 
-use gpui::{Context, SharedString, Window};
+use gpui::{Context, SharedString, Window, WeakEntity};
 use marketplace_ui_common::MarketplaceCard;
-use ui::{ContextMenu, ContextMenuEntry, DropdownMenu, Tooltip, prelude::*};
+use ui::{ContextMenu, IconName, IconSize, IconButton, PopoverMenu, Tooltip, prelude::*};
 
 use crate::parse::AgentSource;
 use crate::{SwarmEntry, SwarmPanel};
@@ -15,7 +20,7 @@ impl SwarmPanel {
     pub(crate) fn render_card(
         &mut self,
         entry: SwarmEntry,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> MarketplaceCard {
         match entry {
@@ -26,6 +31,7 @@ impl SwarmPanel {
                 let show_push = source == AgentSource::Local;
                 let show_remove = source == AgentSource::Local;
                 let show_publish = source != AgentSource::Local;
+                let has_secondary = show_clone || show_push || show_publish || show_remove;
                 let hire_name = agent_name.clone();
                 let clone_name = agent_name.clone();
                 let push_name = agent_name.clone();
@@ -33,10 +39,16 @@ impl SwarmPanel {
                 let publish_name = agent_name.clone();
                 let edit_name = agent_name.clone();
                 let edit_source = source;
+                let panel_handle: WeakEntity<SwarmPanel> = cx.entity().downgrade();
+
                 MarketplaceCard::new().child(
                     h_flex()
                         .w_full()
                         .gap_2()
+                        // Left: name + description. min_w_0 + flex_1 so the
+                        // text column shrinks (not the buttons) when space is
+                        // tight. truncate so long names/descriptions ellipsize
+                        // instead of blowing out the card.
                         .child(
                             v_flex()
                                 .min_w_0()
@@ -61,12 +73,17 @@ impl SwarmPanel {
                                         .truncate(),
                                 )
                                 .child(
-                                    Label::new(agent.description.clone())
+                                    Label::new(agent.description)
                                         .color(Color::Muted)
                                         .size(LabelSize::XSmall)
                                         .truncate(),
                                 ),
                         )
+                        // Right: primary actions (Edit + Hire) as visible
+                        // buttons, secondary actions behind a PopoverMenu
+                        // ellipsis trigger. flex_shrink_0 so the button
+                        // column keeps its width and the text column absorbs
+                        // the squeeze.
                         .child(
                             h_flex()
                                 .gap_1()
@@ -84,8 +101,6 @@ impl SwarmPanel {
                                          to view and adjust its details.",
                                     ))
                                     .on_click(cx.listener({
-                                        let edit_name = edit_name.clone();
-                                        let edit_source = edit_source.clone();
                                         move |this, _, window, cx| {
                                             this.load_agent_into_author(
                                                 edit_name.clone(),
@@ -120,35 +135,108 @@ impl SwarmPanel {
                                         },
                                     )),
                                 )
-                                .when(
-                                    show_clone || show_push || show_publish || show_remove,
-                                    |this| {
-                                        let menu = cx.new(|cx| {
-                                            ContextMenu::new(window, cx, |menu, _window, _cx| {
-                                                menu.when(show_clone, |m| {
-                                                    m.entry(
-                                                        ContextMenuEntry::new("Clone to Local")
-                                                            .handler(move |_, window, cx| {
-                                                                drop(window);
-                                                                drop(cx);
-                                                                clone_name_clone
-                                                                    .spawn_clone(cx);
-                                                            }),
-                                                    )
-                                                })
-                                            })
-                                        });
-                                        this.child(
-                                            DropdownMenu::new(
-                                                SharedString::from(format!("more-{agent_name}")),
-                                                "More",
-                                                menu,
+                                .when(has_secondary, |this| {
+                                    this.child(
+                                        PopoverMenu::new("agent-secondary-actions")
+                                            .trigger_with_tooltip(
+                                                IconButton::new(
+                                                    "agent-secondary-trigger",
+                                                    IconName::Ellipsis,
+                                                )
+                                                .icon_size(IconSize::Small),
+                                                Tooltip::text("More actions"),
                                             )
-                                            .trigger_size(ButtonSize::Compact)
-                                            .style(DropdownStyle::Subtle),
-                                        )
-                                    },
-                                ),
+                                            .menu({
+                                                let panel_handle = panel_handle.clone();
+                                                move |window, cx| {
+                                                    let panel_handle = panel_handle.clone();
+                                                    let clone_name = clone_name.clone();
+                                                    let push_name = push_name.clone();
+                                                    let publish_name = publish_name.clone();
+                                                    let remove_name = remove_name.clone();
+                                                    let show_clone = show_clone;
+                                                    let show_push = show_push;
+                                                    let show_publish = show_publish;
+                                                    let show_remove = show_remove;
+                                                    Some(ContextMenu::build(
+                                                        window,
+                                                        cx,
+                                                        |mut menu, _window, _cx| {
+                                                            if show_clone {
+                                                                let panel_handle =
+                                                                    panel_handle.clone();
+                                                                menu = menu.entry(
+                                                                    "Clone to Local",
+                                                                    None,
+                                                                    move |_, cx| {
+                                                                        if let Some(panel) =
+                                                                            panel_handle.upgrade()
+                                                                        {
+                                                                            panel.update(cx, |this, cx| {
+                                                                                this.clone_to_local(clone_name.clone(), cx);
+                                                                            });
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                            if show_push {
+                                                                let panel_handle =
+                                                                    panel_handle.clone();
+                                                                menu = menu.entry(
+                                                                    "Push to Cloud",
+                                                                    None,
+                                                                    move |_, cx| {
+                                                                        if let Some(panel) =
+                                                                            panel_handle.upgrade()
+                                                                        {
+                                                                            panel.update(cx, |this, cx| {
+                                                                                this.push_to_cloud(push_name.clone(), cx);
+                                                                            });
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                            if show_publish {
+                                                                let panel_handle =
+                                                                    panel_handle.clone();
+                                                                menu = menu.entry(
+                                                                    "Publish…",
+                                                                    None,
+                                                                    move |_, cx| {
+                                                                        if let Some(panel) =
+                                                                            panel_handle.upgrade()
+                                                                        {
+                                                                            panel.update(cx, |this, cx| {
+                                                                                this.begin_publish(publish_name.clone(), cx);
+                                                                            });
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                            if show_remove {
+                                                                let panel_handle =
+                                                                    panel_handle.clone();
+                                                                menu = menu.entry(
+                                                                    "Remove",
+                                                                    None,
+                                                                    move |_, cx| {
+                                                                        if let Some(panel) =
+                                                                            panel_handle.upgrade()
+                                                                        {
+                                                                            panel.update(cx, |this, cx| {
+                                                                                this.remove_local_agent(remove_name.clone(), cx);
+                                                                            });
+                                                                        }
+                                                                    },
+                                                                );
+                                                            }
+                                                            menu
+                                                        },
+                                                    ))
+                                                }
+                                            }),
+                                    )
+                                }),
                         ),
                 )
             }
@@ -181,7 +269,7 @@ impl SwarmPanel {
                                         .truncate(),
                                 )
                                 .child(
-                                    Label::new(swarm.description.clone())
+                                    Label::new(swarm.description)
                                         .color(Color::Muted)
                                         .size(LabelSize::XSmall)
                                         .truncate(),

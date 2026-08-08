@@ -1,0 +1,88 @@
+# Template crate manifest for ui-layout-discipline skill
+# hKask v0.33.3
+
+crate:
+  name: ui-layout-discipline
+  version: "0.33.3"
+  description: >
+    Enforces measured layout discipline for GPUI card/panel renderers. Prevents
+    unmeasured action congestion — the failure pattern of adding N elements
+    (buttons, labels) to a fixed-size container without checking available
+    width, counting elements, verifying the text column won't collapse, or
+    matching existing codebase patterns. Anchored to Fitts's Law (target
+    sizing), Hick's Law (action-count cognitive cost), Gestalt proximity
+    (spacing grammar), Rosenholtz feature congestion (measurable clutter),
+    Tufte data-ink ratio (density), Nielsen progressive disclosure (overflow
+    remedy), and Fagan inspection (structured review checklist). Decomposed
+    into phased templates: Sense (measure container + children) → Orient
+    (count actions, compare to budget, grep sibling patterns) → Decide (gate
+    on hard constraints) → Act (apply progressive disclosure remedies) →
+    Review (adversarial probes). Emits reg.ui_layout.* spans. Any userpod
+    may invoke this skill.
+
+templates:
+  - id: ui-layout-discipline/sense
+    name: "Measure container width, child min-widths, and text-column residual"
+    path: sense.j2
+    type: KnowAct
+    description: >
+      Measure the rendering container's available width and each child
+      element's minimum width. Compute whether sum(min_widths) + gaps
+      exceeds the container. If a text column (flex_1) is present, compute
+      its residual width after fixed-width children claim their space.
+      Grounded in Fitts's Law (minimum target width) and the CSS flexbox
+      overflow invariant.
+    generates_spans:
+      - reg.ui_layout.sense
+
+  - id: ui-layout-discipline/orient
+    name: "Count actions, compare to budget, grep sibling card patterns"
+    path: orient.j2
+    type: KnowAct
+    description: >
+      Count the interactive elements in the container. Compare to the
+      action budget (≤5 primary, per Hick's Law). Grep the crate for
+      sibling card/panel components and compare action-count/spacing
+      conventions (Nielsen consistency). Compute the feature congestion
+      score (Rosenholtz) and the action-to-content ratio (Tufte data-ink).
+    generates_spans:
+      - reg.ui_layout.orient
+
+  - id: ui-layout-discipline/decide
+    name: "Gate on hard layout constraints (Fagan checklist)"
+    path: decide.j2
+    type: KnowAct
+    description: >
+      Apply the Fagan-style inspection checklist as hard gates: (1) no
+      overflow, (2) primary action visible, (3) text column ≥ min width,
+      (4) on-grid spacing, (5) action count ≤ budget. Each gate is a
+      yes/no verdict, not a vibe check. Produce a layout_health vector
+      and a pass/fail decision.
+    generates_spans:
+      - reg.ui_layout.decide
+
+  - id: ui-layout-discipline/act
+    name: "Apply progressive disclosure remedies for failing gates"
+    path: act.j2
+    type: KnowAct
+    description: >
+      For each failing gate, prescribe the canonical GPUI remedy: secondary
+      actions behind a PopoverMenu with IconName::Ellipsis trigger (Nielsen
+      progressive disclosure), truncate() on text labels, flex_shrink_0 on
+      fixed elements, min_w_0 on flexible text columns, or explicit
+      hide-secondary. Reference the agent_panel.rs render_panel_options_menu pattern.
+    generates_spans:
+      - reg.ui_layout.act
+
+  - id: ui-layout-discipline/review
+    name: "Adversarial review — long-label, narrow-container, high-count probes"
+    path: review.j2
+    type: KnowAct
+    description: >
+      Run adversarial probes against the proposed layout: a 40-character
+      button label, a localized German string (~30% longer), a 320px
+      container, 7 actions. If any probe breaks a gate, the layout is
+      rejected and the remedy phase re-enters. Grounded in Klein's premortem
+      and the squint test for visual hierarchy.
+    generates_spans:
+      - reg.ui_layout.review

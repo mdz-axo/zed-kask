@@ -40,12 +40,10 @@ manifest:
   visibility: Public
 
 convergence:
-  convergence_mode: "cauchy"
-  cauchy_epsilon: 0.03
-  cauchy_window: 3
+  convergence_mode: ""
   max_iterations: 1
   min_iterations: 0
-  on_not_reached: escalate
+  on_not_reached: proceed
   target_artifacts_field: "current_artifacts"
 
 gas:

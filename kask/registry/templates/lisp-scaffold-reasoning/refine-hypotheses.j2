@@ -8,6 +8,7 @@ contract:
     hypotheses: array
     lisp_verdict: object
     lisp_defects: array
+    task: string
   output:
     hypotheses: array
     notes: string
@@ -30,6 +31,12 @@ found structural defects in your prior hypothesis set. Repair them.
 ## Target
 
 {{ target }}
+
+{% if task %}
+## User Task
+
+{{ task }}
+{% endif %}
 
 ## Prior Hypotheses
 

@@ -1,5 +1,5 @@
 # Template crate manifest for swarm-steering skill
-# hKask v0.31.0
+# hKask v0.33.3
 #
 # Ontological anchors:
 #   - PKO (Procedural Knowledge Ontology, Carriero et al. 2025): the
@@ -31,7 +31,7 @@
 
 crate:
   name: swarm-steering
-  version: "0.31.0"
+  version: "0.33.3"
   description: >
     Focused local-swarm steering skill for the Kask Curator or a human in the
     loop. Codifies the execute-and-feed-back loop: take a swarm-intelligence

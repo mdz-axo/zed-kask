@@ -1,0 +1,93 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target:
+      type: object
+    act_result:
+      type: object
+      description: Output of the ACT phase — remedies, revised_layout.
+    decide_result:
+      type: object
+      description: Prior gate verdicts to re-check against adversarial probes.
+  output:
+    probes:
+      type: array
+      description: Array of {probe_name, input, gate_result, passed} for each
+        adversarial probe.
+    all_probes_passed:
+      type: boolean
+    failing_gates:
+      type: array
+      description: Gates that failed under any probe (empty if all passed).
+    squint_test_result:
+      type: object
+      description: Result of the mechanical squint test — {dominant_element, hierarchy_present}.
+energy_cap: 2048
+visibility: Public
+---
+{# Template: ui-layout-discipline/review.j2 #}
+{# Phase: REVIEW — adversarial probes + squint test #}
+{# Produces: probes, all_probes_passed, failing_gates, squint_test_result #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are an adversarial layout reviewer. Your job is to break the proposed layout with worst-case inputs before it ships. If any probe breaks a gate, the layout is rejected.
+
+## Target
+
+{{ target | tojson }}
+
+## Revised Layout (after ACT remedies)
+
+{{ act_result | tojson }}
+
+## Prior Gate Verdicts
+
+{{ decide_result | tojson }}
+
+## Adversarial Probes (Klein Premortem)
+
+Run each probe against the revised layout. For each, re-evaluate all 5 gates.
+
+### Probe 1: Long Label
+- **Input**: Replace the longest button label with a 40-character string (e.g. "Clone to Local Registry and Sync Now").
+- **Check**: Does the button row overflow? Does the text column collapse? Does the long label push other buttons off-screen?
+
+### Probe 2: Localized Text (German)
+- **Input**: Replace all labels with German equivalents (~30% longer on average). E.g. "Hire" → "Anheuern", "Clone to Local" → "Lokal klonen", "Publish…" → "Veröffentlichen…".
+- **Check**: Does the 30% length increase break any gate?
+
+### Probe 3: Narrow Container
+- **Input**: Set container width to 280px (the minimum dock panel width).
+- **Check**: Does the layout still fit? Is the primary action still visible? Is the text column still ≥160px?
+
+### Probe 4: High Action Count
+- **Input**: Add 2 more secondary actions to the menu (7 total actions).
+- **Check**: Does the PopoverMenu handle 7 entries gracefully? Does the primary button row stay at 2 visible buttons?
+
+### Probe 5: Empty Description
+- **Input**: Set the description to an empty string.
+- **Check**: Does the card render gracefully without a description? Does the name label still truncate correctly?
+
+## Mechanical Squint Test
+
+Strip all color and weight from the layout — reduce every element to size-only. Check:
+- Is exactly one element visually dominant (the primary action)?
+- If all elements are the same size, there is no hierarchy → FAIL.
+- The dominant element should be the primary action (Hire/Details), not a secondary action.
+
+## Output
+
+Produce a JSON object with:
+- `probes`: array of {probe_name, input, gate_results: {gate_name, passed}, overall_passed}
+- `all_probes_passed`: boolean
+- `failing_gates`: array of gate names that failed under any probe (empty if all passed)
+- `squint_test_result`: {dominant_element, hierarchy_present: boolean}
+
+If any probe fails, the layout is NOT ready to ship. The failing gates route back to the ACT phase for further remedy.

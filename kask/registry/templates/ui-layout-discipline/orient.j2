@@ -1,0 +1,106 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target:
+      type: object
+      description: The card or panel renderer being reviewed.
+    sense_result:
+      type: object
+      description: Output of the SENSE phase (container width, child widths,
+        overflow delta).
+    codebase_context:
+      type: object
+      description: Sibling card/panel components with their action counts and
+        layout patterns.
+  output:
+    action_count:
+      type: integer
+      description: Total interactive elements in the container.
+    action_budget:
+      type: integer
+      description: Maximum primary actions allowed (5, per Hick's Law).
+    action_count_exceeds_budget:
+      type: boolean
+      description: True if action_count > action_budget.
+    sibling_patterns:
+      type: array
+      description: Sibling card patterns found in the codebase (action count,
+        layout approach).
+    consistency_violation:
+      type: boolean
+      description: True if the target's action count/layout diverges from sibling
+        patterns without justification.
+    feature_congestion_score:
+      type: number
+      description: Rosenholtz feature congestion score (0-1, higher = more cluttered).
+    data_ink_ratio:
+      type: number
+      description: Tufte data-ink ratio — content pixels / total pixels (0-1, higher
+        = better).
+energy_cap: 2048
+visibility: Public
+---
+{# Template: ui-layout-discipline/orient.j2 #}
+{# Phase: ORIENT — count, compare, score #}
+{# Produces: action_count, action_budget, consistency_violation, congestion, data_ink #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a layout orientation engine. Your job is to count the interactive elements, compare them to cognitive-load budgets, check codebase consistency, and compute clutter/density scores.
+
+## Target
+
+{{ target | tojson }}
+
+## Sense Results
+
+{{ sense_result | tojson }}
+
+## Codebase Context (sibling patterns)
+
+{% if codebase_context %}
+{{ codebase_context | tojson }}
+{% else %}
+No sibling context provided. The agent should grep the crate for existing card/panel components and compare action counts and layout patterns. If no siblings exist, this is a new pattern — note it.
+{% endif %}
+
+## Counting Rules
+
+1. **Action count**: count every interactive element the user can click — buttons, icon buttons, toggle buttons, menu triggers. Do NOT count labels, divs, or containers.
+2. **Action budget**: ≤5 primary actions per card (Hick's Law — decision time grows logarithmically with choices). Secondary actions behind a menu do NOT count toward the primary budget.
+3. **Sibling consistency** (Nielsen "Consistency and standards"): if sibling cards in the same crate use a PopoverMenu for secondary actions, this card must too. If siblings cap at 3 visible buttons, this card must justify exceeding 3.
+
+## Scoring
+
+### Feature Congestion (Rosenholtz et al. 2007)
+Clutter as feature congestion — too many features competing for the same display region. Score 0-1:
+- 0.0-0.3: low congestion (clean, scannable)
+- 0.3-0.6: moderate (acceptable but approaching limit)
+- 0.6-1.0: high (jumbled mess — user cannot parse at a glance)
+
+Factors: number of equally-weighted interactive elements, uniformity of visual treatment (all Subtle buttons = no hierarchy = high congestion), density of elements per unit width.
+
+### Data-Ink Ratio (Tufte 1983, transposed to UI)
+Content pixels (text the user reads) / total pixels (text + buttons + chrome). Higher = better.
+- >0.6: content-dominant (good)
+- 0.3-0.6: balanced
+- <0.3: chrome-dominant (the card is more toolbar than content — bad)
+
+## Output
+
+Produce a JSON object with:
+- `action_count`: total interactive elements
+- `action_budget`: 5
+- `action_count_exceeds_budget`: boolean
+- `sibling_patterns`: array of {component, action_count, layout_approach}
+- `consistency_violation`: boolean
+- `feature_congestion_score`: 0-1
+- `data_ink_ratio`: 0-1
+
+Be honest. If you cannot find sibling patterns, say so. Do not fabricate consistency verdicts.

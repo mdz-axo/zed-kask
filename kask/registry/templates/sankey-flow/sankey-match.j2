@@ -4,6 +4,7 @@ contract:
   input:
     prompt: string
     hint: string
+    task: string
   output:
     domain: string
     matched_example: object
@@ -36,6 +37,12 @@ You are a Sankey diagram matcher. You match the user's prompt against a library 
 ## Prompt
 
 {{ prompt }}
+
+{% if task %}
+## User Task
+
+{{ task }}
+{% endif %}
 
 {% if hint %}
 ## User Hint

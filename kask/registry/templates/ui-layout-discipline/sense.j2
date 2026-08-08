@@ -1,0 +1,84 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target:
+      type: object
+      description: The card or panel renderer being reviewed (file path, function
+        name, element tree).
+    container_width:
+      type: string
+      default: dock
+      description: 'Container context: "dock" (~300-400px), "center" (~600px+),
+        or a specific pixel width.'
+  output:
+    container_available_width:
+      type: integer
+      description: Available content-box width in pixels (after padding/border).
+    child_min_widths:
+      type: array
+      description: Per-child minimum widths in pixels.
+    sum_min_widths:
+      type: integer
+      description: Sum of child min-widths plus gaps.
+    overflow_delta:
+      type: integer
+      description: sum_min_widths - container_available_width. Positive = overflow.
+    text_column_residual:
+      type: integer
+      description: Residual width of the flex_1 text column after fixed children
+        claim their space. Negative or <20em = text collapse.
+    fitts_min_target:
+      type: integer
+      description: Minimum target width per Fitts's Law (32px mouse floor).
+energy_cap: 2048
+visibility: Public
+---
+{# Template: ui-layout-discipline/sense.j2 #}
+{# Phase: SENSE — measure container and children #}
+{# Produces: container_available_width, child_min_widths, overflow_delta, text_column_residual #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a layout measurement engine. Your job is to measure the container and every child element before any layout decision is made. No element is added to a card without first measuring whether it fits.
+
+## Target
+
+{{ target | tojson }}
+
+## Container Context
+
+- **Container width**: {{ container_width | default("dock") }}
+  {% if container_width == "dock" %}— Dock panel: assume 300-400px available (the narrowest common case). Use 320px as the adversarial floor.{% endif %}
+  {% if container_width == "center" %}— Center pane: assume 600px+ available.{% endif %}
+
+## Measurement Steps
+
+For each child element in the target's element tree, estimate its minimum width:
+
+1. **Buttons**: `XSmall` label buttons are ~40-60px each (label + padding). `Small` buttons are ~50-70px. `IconButton` is ~28-32px. Add `gap_1` (4px) between each.
+2. **Labels**: A `Label` with `truncate()` has a min-width of ~0 (it shrinks). Without `truncate()`, its min-width is the text content width.
+3. **Flex children**: `flex_1` children have min-width 0 (they shrink). `flex_shrink_0` children have min-width = their content width.
+4. **Padding/border**: subtract `p_3` (12px each side = 24px) and `border_1` (1px each side = 2px) from the container's outer width.
+
+## Fitts's Law Floor
+
+Per Fitts (1954), target acquisition time is a log function of distance and target width. Below ~32px (mouse) or ~44px (touch), targets become slow and error-prone. Flag any button whose estimated width falls below this floor.
+
+## Output
+
+Produce a JSON object with:
+- `container_available_width`: the content-box width after padding/border
+- `child_min_widths`: array of {element, min_width_px} for each child
+- `sum_min_widths`: sum of all child min-widths plus gaps
+- `overflow_delta`: sum_min_widths - container_available_width (positive = overflow)
+- `text_column_residual`: if a flex_1 text column exists, its residual width after fixed children claim space. If < 20em (~160px at 8px font), flag as text collapse.
+- `fitts_min_target`: 32 (mouse floor)
+- `fitts_violations`: array of elements below the Fitts floor
+
+Be precise. Estimate widths conservatively (round up). If you cannot estimate a width, say so — do not fabricate a measurement.

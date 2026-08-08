@@ -1585,7 +1585,7 @@ impl SwarmPanel {
     fn render_entries(
         &mut self,
         range: Range<usize>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<MarketplaceCard> {
         let mut cards = Vec::new();

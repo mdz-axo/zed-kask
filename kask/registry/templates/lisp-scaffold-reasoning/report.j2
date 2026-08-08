@@ -8,6 +8,7 @@ contract:
     lisp_verdict: object
     convergence_score: number
     iterations: number
+    task: string
   output:
     report: string
     surviving_hypotheses: array
@@ -33,6 +34,12 @@ hypothesis set, the final Lisp verdict, and the convergence score.
 ## Target
 
 {{ target }}
+
+{% if task %}
+## User Task
+
+{{ task }}
+{% endif %}
 
 ## Surviving Hypotheses
 

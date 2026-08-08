@@ -27,6 +27,9 @@ contract:
     context:
       type: object
       description: Optional context — target model, intended consumer (skill .j2, agent system prompt, chat, infra template), existing eval set if any
+    task:
+      type: string
+      description: The user's task description (injected per .rules skill-cascade-context rule)
   output:
     prompt_type:
       type: string
@@ -160,7 +163,8 @@ Produce the `routing` object: a map of phase → bool indicating which phases to
   "effort": {{ effort | tojson }},
   "output_format": {{ output_format | tojson }},
   "output_path": {{ output_path | tojson }},
-  "context": {{ context | tojson }}
+  "context": {{ context | tojson }},
+  "task": {{ task | tojson }}
 }
 ```
 

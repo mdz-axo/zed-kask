@@ -1,0 +1,89 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target:
+      type: object
+    sense_result:
+      type: object
+    orient_result:
+      type: object
+  output:
+    gates:
+      type: array
+      description: Array of {gate_name, passed, reason} for each of the 5 hard
+        gates.
+    all_gates_passed:
+      type: boolean
+    layout_health:
+      type: object
+      description: The convergence vector — {overflow_delta, primary_action_visible,
+        text_column_ok, on_grid_spacing, action_count_ok}.
+    failing_gates:
+      type: array
+      description: Names of gates that failed (empty if all passed).
+energy_cap: 2048
+visibility: Public
+---
+{# Template: ui-layout-discipline/decide.j2 #}
+{# Phase: DECIDE — Fagan inspection checklist as hard gates #}
+{# Produces: gates, all_gates_passed, layout_health, failing_gates #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are a Fagan-style layout inspector. Your job is to apply a structured checklist of hard gates to the target layout. Each gate is a yes/no verdict grounded in measurement, not a vibe check.
+
+## Target
+
+{{ target | tojson }}
+
+## Sense Results
+
+{{ sense_result | tojson }}
+
+## Orient Results
+
+{{ orient_result | tojson }}
+
+## The 5 Hard Gates (Fagan Inspection Checklist)
+
+### Gate 1: No Overflow
+- **Check**: `sense_result.overflow_delta ≤ 0` (sum of child min-widths + gaps ≤ container available width)
+- **Pass**: overflow_delta ≤ 0
+- **Fail**: overflow_delta > 0 (elements will overflow or collapse the text column)
+- **Fitts sub-check**: no button below 32px (mouse floor)
+
+### Gate 2: Primary Action Visible
+- **Check**: exactly one visually-dominant primary action (Filled style, or the first/largest button). If all buttons are the same style (all Subtle), there is no hierarchy — FAIL.
+- **Pass**: exactly one Filled/primary button, or an explicit "no primary" declaration with justification
+- **Fail**: zero primary buttons (no hierarchy) OR multiple primary buttons (competing hierarchy)
+
+### Gate 3: Text Column ≥ Min Width
+- **Check**: if a flex_1 text column exists, `sense_result.text_column_residual ≥ 160px` (~20em at 8px font). Below this, text is unreadable (Bringhurst's minimum measure).
+- **Pass**: residual ≥ 160px OR no text column present
+- **Fail**: residual < 160px (text column collapsed by button row)
+
+### Gate 4: On-Grid Spacing
+- **Check**: all gaps and paddings are on the 4px/8px grid (gap_0 = 0, gap_0p5 = 2, gap_1 = 4, gap_1p5 = 6, gap_2 = 8, gap_3 = 12, p_2 = 8, p_3 = 12, etc.). Off-grid values (3px, 5px, 7px) signal a nudge-to-fit anti-pattern.
+- **Pass**: all spacing values are multiples of 4 (or 2 for half-steps)
+- **Fail**: any off-grid spacing
+
+### Gate 5: Action Count ≤ Budget
+- **Check**: `orient_result.action_count ≤ orient_result.action_budget` (5 primary). Secondary actions behind a PopoverMenu do NOT count.
+- **Pass**: primary action count ≤ 5
+- **Fail**: primary action count > 5
+
+## Output
+
+Produce a JSON object with:
+- `gates`: array of {gate_name, passed, reason} for all 5 gates
+- `all_gates_passed`: boolean
+- `layout_health`: {overflow_delta, primary_action_visible, text_column_ok, on_grid_spacing, action_count_ok} — the convergence vector
+- `failing_gates`: array of gate names that failed (empty if all passed)
+
+Each gate verdict must cite the specific measurement from the Sense/Orient results. Do not pass a gate without citing the number.

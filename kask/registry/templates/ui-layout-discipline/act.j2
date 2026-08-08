@@ -1,0 +1,100 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    target:
+      type: object
+    decide_result:
+      type: object
+      description: Output of the DECIDE phase — gates, failing_gates, layout_health.
+  output:
+    remedies:
+      type: array
+      description: Array of {failing_gate, remedy, code_pattern, reference} for
+        each failing gate.
+    revised_layout:
+      type: object
+      description: Description of the revised layout after remedies are applied.
+    codebase_pattern_reference:
+      type: string
+      description: The file:function of the reference pattern in the codebase
+        (e.g. agent_panel.rs render_panel_options_menu for PopoverMenu + Ellipsis).
+energy_cap: 4096
+visibility: Public
+---
+{# Template: ui-layout-discipline/act.j2 #}
+{# Phase: ACT — prescribe GPUI remedies for failing gates #}
+{# Produces: remedies, revised_layout, codebase_pattern_reference #}
+
+[inference]
+temperature = 0.1
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are a GPUI layout remediation engine. Your job is to prescribe the canonical GPUI remedy for each failing gate, grounded in the codebase's actual patterns.
+
+## Target
+
+{{ target | tojson }}
+
+## Decide Results (failing gates)
+
+{{ decide_result | tojson }}
+
+## Remedy Catalog (canonical GPUI patterns)
+
+### For Gate 1 (Overflow) or Gate 5 (Action Count > Budget):
+**Progressive Disclosure (Nielsen 2006)**: Collapse secondary actions behind a PopoverMenu with an IconButton Ellipsis trigger.
+
+Reference pattern: `crates/agent_ui/src/agent_panel.rs`, `render_panel_options_menu`:
+```rust
+PopoverMenu::new("menu-id")
+    .trigger_with_tooltip(
+        IconButton::new("trigger-id", IconName::Ellipsis)
+            .icon_size(IconSize::Small),
+        Tooltip::text("More actions"),
+    )
+    .menu(move |window, cx| {
+        Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+            menu = menu.entry("Action Label", None, move |_, cx| {
+                if let Some(panel) = panel_handle.upgrade() {
+                    panel.update(cx, |this, cx| {
+                        this.panel_method(cx);
+                    });
+                }
+            });
+            menu
+        }))
+    })
+```
+
+Key details:
+- `panel_handle` is a `WeakEntity<SwarmPanel>` captured before the closure: `let panel_handle = cx.entity().downgrade();`
+- `menu.entry()` takes 3 args: `(label: impl Into<SharedString>, action: Option<Box<dyn Action>>, handler: impl Fn(&mut Window, &mut App))`
+- The handler captures `WeakEntity`, upgrades, and calls panel methods — it does NOT capture `&mut self` or `Context<SwarmPanel>` directly.
+- `render_card` must take `&mut Window` as a parameter (passed from `render_entries`).
+
+### For Gate 2 (No Primary Action):
+Make exactly one button `ButtonStyle::Filled` (the primary action — usually "Hire" for agent cards, "Details" for swarm cards). Keep all others `ButtonStyle::Subtle`.
+
+### For Gate 3 (Text Column Collapse):
+- Add `min_w_0()` on the text column's `v_flex`/`h_flex` (prevents flex child from refusing to shrink below content width).
+- Add `flex_shrink_0()` on the button/action column (prevents it from being squeezed by the text column).
+- Add `.truncate()` on every `Label` in the text column (ellipsis at end instead of blowout).
+
+### For Gate 4 (Off-Grid Spacing):
+Replace any off-grid gap/padding with the nearest on-grid value:
+- 3px → 4px (gap_1)
+- 5px → 4px (gap_1) or 6px (gap_1p5)
+- 7px → 8px (gap_2)
+
+## Output
+
+Produce a JSON object with:
+- `remedies`: array of {failing_gate, remedy, code_pattern, reference} — one per failing gate
+- `revised_layout`: description of the revised element tree after remedies
+- `codebase_pattern_reference`: "agent_panel.rs render_panel_options_menu" (the PopoverMenu pattern)
+
+For each remedy, provide the exact Rust code snippet the engineer should write. Do not describe the pattern in prose — show the code.

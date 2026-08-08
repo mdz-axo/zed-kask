@@ -42,7 +42,7 @@ manifest:
   visibility: Public
 
 convergence:
-  convergence_mode: "fixed"
+  convergence_mode: ""
   max_iterations: 1
   on_not_reached: escalate
 
@@ -75,6 +75,10 @@ inputs:
     type: string
     description: "Optional hint: preferred domain, audience, or context."
     required: false
+  - name: task
+    type: string
+    description: "The user's task description (injected per .rules skill-cascade-context rule)."
+    required: false
 
 steps:
   - ordinal: 1
@@ -94,6 +98,7 @@ steps:
     input_mapping:
       prompt: "{{ prompt }}"
       hint: "{{ hint | default('') }}"
+      task: "{{ task | default('') }}"
 
   - ordinal: 2
     action: select

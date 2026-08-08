@@ -41,7 +41,8 @@
 #     closure env, so recursive helpers accumulate via return values.
 #   - `=` is numeric-only; string equality is done via `assoc` (which uses
 #     LispValue PartialEq, and String vs String is structural).
-#   - No `append` builtin; a recursive `append2` helper joins two lists.
+#   - `append` is a builtin that joins N lists (all args must be lists).
+#     The form uses it directly to compose the four defect lists.
 #   - Boolean literals are `true`/`false`/`nil` (not #t/#f).
 
 manifest:
@@ -91,6 +92,10 @@ inputs:
   - name: context
     type: object
     required: false
+  - name: task
+    type: string
+    required: false
+    description: The user's task description (injected per .rules skill-cascade-context rule).
 
 ledger:
   span_namespace: reg.skill.lisp-scaffold-reasoning
@@ -113,6 +118,7 @@ steps:
       target: "{{ target }}"
       domain: "{{ domain | default('') }}"
       context: "{{ context | default({}) }}"
+      task: "{{ task | default('') }}"
       # step_2_result is a bare list of defect strings (not an object with a
       # .defects field). Bind it directly so the LLM sees the actual defects
       # from the prior iteration — this closes the feedback loop (cybernetics
@@ -240,6 +246,7 @@ steps:
     input_mapping:
       target: "{{ target }}"
       hypotheses: "{{ step_1_result.hypotheses | default([]) }}"
+      task: "{{ task | default('') }}"
       lisp_verdict:
         passed: "{{ step_2_result | length == 0 }}"
         defect_count: "{{ step_2_result | length }}"
@@ -318,6 +325,7 @@ steps:
     input_mapping:
       target: "{{ target }}"
       hypotheses: "{{ step_3_result.hypotheses | default(step_1_result.hypotheses | default([])) }}"
+      task: "{{ task | default('') }}"
       lisp_verdict:
         passed: "{{ step_2_result | length == 0 }}"
         defect_count: "{{ step_2_result | length }}"

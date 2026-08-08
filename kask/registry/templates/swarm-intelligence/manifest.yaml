@@ -1,5 +1,5 @@
 # Template crate manifest for swarm-intelligence skill
-# hKask v0.31.0
+# hKask v0.33.3
 # Decomposed into: SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE
 #
 # Substrate ontology: Agent Bestiary World (ABW) swarm semantics — a swarm is
@@ -28,7 +28,7 @@
 
 crate:
   name: swarm-intelligence
-  version: "0.31.0"
+  version: "0.33.3"
   description: >
     Convergent swarm-composition process for agent swarms. Senses current
     swarm state against the Onto4MAT multi-agent teaming ontology
