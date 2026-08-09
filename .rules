@@ -365,15 +365,22 @@ deferred task post-login), `sync_kask_mcp_servers` must be called again so
 the registry notifies `ContextServerStore` to restart servers with the
 updated env.
 
-## Model-dependent kask wiring must run in the deferred task
+## Model-dependent kask wiring: manifest executor vs. user-dependent hooks
 
 The `set_manifest_executor` hook is `OnceLock`-based and depends on
-`LanguageModelRegistry::default_model()` being populated. At startup (before
-user auth), `default_model()` returns `None`. Wiring this hook synchronously
-at startup leaves it unwired for the entire session when no model is
-configured at startup — the "Process-global hooks set at runtime need a
-startup-failure signal" trap. It must be wired from the deferred task that
-runs after the Zed user resolves.
+`LanguageModelRegistry::default_model()` being populated. The model registry
+is populated from `settings.json` (`agent.default_model`), not from Zed
+cloud auth — so the manifest executor must NOT be gated on Zed user login.
+Previously it was wired inside the user-login-gated deferred task, which
+meant users with a configured default model but no cloud login had skills
+silently disabled (the `skill` tool returned the no-op envelope). The
+manifest executor is now wired by a separate `cx.spawn` task that
+subscribes to `LanguageModelRegistry` events (`DefaultModelChanged`,
+`ProviderStateChanged`, `AddedProvider`, `ProvidersChanged`) and fires as
+soon as `default_model()` returns `Some`, independent of user login. An
+`AtomicBool` ensures it fires only once (the `OnceLock` would warn on a
+second call). The `try_wire_manifest_executor` helper in `main.rs`
+encapsulates the wiring logic.
 
 `set_thread_condenser` and `set_memory_port` are `Mutex`-based (re-settable)
 and are wired twice: once unconditionally (pre-login, so the condenser works

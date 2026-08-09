@@ -440,4 +440,69 @@ impl SwarmPanel {
         })
         .detach();
     }
+
+    /// Permanently delete the agent currently loaded in the author form.
+    /// Branches on the editing source:
+    /// - `Local` / `Synced`: calls `swarm_remove_local` — deletes the local
+    ///   card directory. A synced card's ABW agent is NOT touched (the cloud
+    ///   copy can be deleted separately from the cloud card's "..." menu).
+    /// - `Cloud`: calls `swarm_delete_agent` — irreversible ABW delete. The
+    ///   agent is removed from the operator's library and every workspace
+    ///   roster. A synced local card is NOT touched.
+    /// On success, resets the author form to create mode and re-fetches the
+    /// browse list so the deleted agent disappears.
+    pub(crate) fn delete_edited_agent(&mut self, cx: &mut Context<Self>) {
+        let Some(agent_name) = self.author.editing_id.clone() else {
+            self.author.status = Some("No agent is loaded for deletion.".into());
+            cx.notify();
+            return;
+        };
+        let source = self
+            .author
+            .editing_source
+            .clone()
+            .unwrap_or(AgentSource::Local);
+        let is_local = matches!(source, AgentSource::Local | AgentSource::Synced);
+        let tool_name = if is_local {
+            "swarm_remove_local"
+        } else {
+            "swarm_delete_agent"
+        };
+        let Some(invoker) = crate::shared_tool_invoker() else {
+            self.author.status = Some("Tool invoker not wired.".into());
+            cx.notify();
+            return;
+        };
+        self.author.busy = true;
+        self.author.status = Some("Deleting agent…".into());
+        cx.notify();
+        cx.spawn({
+            let invoker = invoker.clone();
+            async move |this, cx| {
+                let result = invoker
+                    .invoke_tool(SWARM_SERVER, tool_name, json!({ "agent_name": agent_name }))
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.author.busy = false;
+                    match result {
+                        Ok(_) => {
+                            // Defer the form reset and mode switch to the next
+                            // `render` frame — `Editor::clear` and `set_mode`
+                            // need `&mut Window`, which the spawn closure cannot
+                            // hold. `render` consumes `pending_author_reset`.
+                            this.pending_author_reset = true;
+                            this.fetch_all(cx);
+                        }
+                        Err(err) => {
+                            this.author.status =
+                                Some(format!("Failed to delete agent: {err}").into());
+                        }
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
 }

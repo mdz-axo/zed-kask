@@ -42,8 +42,8 @@ pub use inference_providers::{
     DATA_SERVICE_CREDENTIALS, INFERENCE_PROVIDERS, InferenceProviderDescriptor,
     credential_urls_for_mcp, delete_data_service_api_key, delete_provider_api_key,
     ensure_openai_compatible_entries, has_data_service_api_key, has_provider_api_key,
-    provider_credential_url, resolve_embedding_credentials, write_data_service_api_key,
-    write_provider_api_key,
+    mirror_env_keys_to_keychain, provider_credential_url, resolve_embedding_credentials,
+    write_data_service_api_key, write_provider_api_key,
 };
 pub use mcp_servers::{
     BUILT_IN_MCP_SERVERS, BUILT_IN_MCP_SERVERS_IDS, BUILT_IN_MCP_SERVERS_PAIRS, BuiltinMcpServer,

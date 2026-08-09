@@ -407,6 +407,127 @@ pub fn has_data_service_api_key(env_var: &str) -> bool {
     std::env::var(env_var).is_ok()
 }
 
+/// Mirror inference-provider API keys from the process environment into zed's
+/// keychain so MCP server child processes (media, corpus, etc.) can read them.
+///
+/// The main process reads inference keys from `std::env::var` (populated by
+/// the `.env` load at startup or by the shell). MCP servers, however, receive
+/// their credentials via `mcp_env_with_credentials`, which reads from the
+/// keychain (`kask://credentials/<key>`) — not from the parent process env.
+/// Without this mirror, an operator who sets `FALAI_API_KEY` only in `.env`
+/// gets a working main process but MCP servers silently fail with
+/// "API key not configured".
+///
+/// For each provider in `INFERENCE_PROVIDERS` whose env var is set and
+/// non-empty, this writes the key to both keychain locations (the provider's
+/// `api_url` and `kask://credentials/<credential_key>`), identical to
+/// `write_provider_api_key`. It does NOT overwrite a keychain entry that
+/// already matches (operators who set a different key via the settings UI
+/// get their UI value preserved on the next restart only if the env var is
+/// absent — when both exist, the env var wins, matching the main-process
+/// precedence rule in `ApiKeyState::load_if_needed`).
+///
+/// Per the `.rules` trap "Process-global hooks set at runtime need a
+/// startup-failure signal":
+/// - No inference env vars set → silent no-op (the `.env`-not-found warn at
+///   `main.rs` already covers the "not configured" case; a second warn here
+///   would be redundant noise).
+/// - Env var present, keychain write succeeds → `tracing::info!` naming the env
+///   var and the credential URL (confirms the mirror ran).
+/// - Env var present, keychain write fails → `tracing::warn!` naming the env
+///   var, the error, and the remediation (the main process will use the env
+///   var, but MCP servers reading from the keychain will not see this key).
+pub fn mirror_env_keys_to_keychain(
+    credentials_provider: &Arc<dyn CredentialsProvider>,
+    cx: &mut App,
+) -> Task<()> {
+    let to_mirror = collect_env_keys_for_mirror();
+    if to_mirror.is_empty() {
+        // Silent no-op: either no `.env` loaded or no inference keys in it.
+        // The `.env`-not-found warn in `main.rs` already covers the first
+        // case; the second case is a legitimate "user configured some
+        // providers via the settings UI only" state.
+        return Task::ready(());
+    }
+
+    let credentials_provider = credentials_provider.clone();
+    cx.spawn(async move |cx| {
+        for (env_var, api_url, credential_url, key) in to_mirror {
+            // Write under the api_url (for zed's OpenAI-compatible provider).
+            match credentials_provider
+                .write_credentials(&api_url, "Bearer", key.as_bytes(), cx)
+                .await
+            {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.kask_bridge",
+                        env_var = %env_var,
+                        api_url = %api_url,
+                        error = %e,
+                        "Failed to mirror env key to keychain at api_url. \
+                         The main process will use the env var, but zed's \
+                         OpenAI-compatible provider (which reads the keychain \
+                         when the env var is absent on a future restart) will \
+                         not see this key."
+                    );
+                    continue;
+                }
+            }
+            // Write under the kask credential URL (for MCP env injection).
+            match credentials_provider
+                .write_credentials(&credential_url, "kask", key.as_bytes(), cx)
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        target: "reg.kask_bridge",
+                        env_var = %env_var,
+                        credential_url = %credential_url,
+                        "Mirrored env key to keychain for MCP server env injection"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target: "reg.kask_bridge",
+                        env_var = %env_var,
+                        credential_url = %credential_url,
+                        error = %e,
+                        "Failed to mirror env key to keychain at credential_url. \
+                         The main process will use the env var, but MCP servers \
+                         that read from the keychain will not see this key. \
+                         Remediation: re-enter the key in \
+                         Settings → Kask → Inference Providers."
+                    );
+                }
+            }
+        }
+    })
+}
+
+/// Collect `(env_var, api_url, credential_url, key)` tuples for every
+/// inference provider whose env var is set and non-empty. Extracted from
+/// `mirror_env_keys_to_keychain` for testability (the collection logic is
+/// synchronous and doesn't need a GPUI executor).
+fn collect_env_keys_for_mirror() -> Vec<(String, String, String, String)> {
+    INFERENCE_PROVIDERS
+        .iter()
+        .filter_map(|provider| {
+            std::env::var(provider.env_var)
+                .ok()
+                .filter(|key| !key.is_empty())
+                .map(|key| {
+                    (
+                        provider.env_var.to_string(),
+                        provider.api_url.to_string(),
+                        provider.credential_url(),
+                        key,
+                    )
+                })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,5 +592,76 @@ mod tests {
             result.is_none(),
             "bare model id without prefix should return None"
         );
+    }
+
+    #[test]
+    fn collect_env_keys_for_mirror_no_keys() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: test-only env mutation, serialized by ENV_LOCK. Remove all
+        // inference-provider env vars to assert the silent no-op path.
+        unsafe {
+            for provider in INFERENCE_PROVIDERS {
+                std::env::remove_var(provider.env_var);
+            }
+        }
+        let collected = collect_env_keys_for_mirror();
+        assert!(
+            collected.is_empty(),
+            "no inference env vars set → collect should return empty (silent no-op)"
+        );
+    }
+
+    #[test]
+    fn collect_env_keys_for_mirror_skips_empty_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: test-only env mutation, serialized by ENV_LOCK.
+        unsafe {
+            for provider in INFERENCE_PROVIDERS {
+                std::env::remove_var(provider.env_var);
+            }
+            std::env::set_var("FALAI_API_KEY", "");
+        }
+        let collected = collect_env_keys_for_mirror();
+        assert!(
+            collected.is_empty(),
+            "empty env var should be skipped (treated as not set)"
+        );
+        unsafe {
+            std::env::remove_var("FALAI_API_KEY");
+        }
+    }
+
+    #[test]
+    fn collect_env_keys_for_mirror_collects_set_keys() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: test-only env mutation, serialized by ENV_LOCK.
+        unsafe {
+            for provider in INFERENCE_PROVIDERS {
+                std::env::remove_var(provider.env_var);
+            }
+            std::env::set_var("FALAI_API_KEY", "fal-test-key");
+            std::env::set_var("DEEPINFRA_API_KEY", "di-test-key");
+        }
+        let collected = collect_env_keys_for_mirror();
+        // Should collect exactly the two providers whose env vars we set.
+        assert_eq!(
+            collected.len(),
+            2,
+            "two env vars set → two entries collected, got {collected:?}"
+        );
+        // Each entry should have the correct env_var name, api_url,
+        // credential_url, and key. Verify the fal.ai entry (the other
+        // follows the same shape).
+        let fal_entry = collected
+            .iter()
+            .find(|(env_var, _, _, _)| env_var == "FALAI_API_KEY")
+            .expect("FALAI_API_KEY entry should be present");
+        assert_eq!(fal_entry.1, "https://api.fal.ai/v1", "api_url");
+        assert_eq!(fal_entry.2, "kask://credentials/fal", "credential_url");
+        assert_eq!(fal_entry.3, "fal-test-key", "key");
+        unsafe {
+            std::env::remove_var("FALAI_API_KEY");
+            std::env::remove_var("DEEPINFRA_API_KEY");
+        }
     }
 }

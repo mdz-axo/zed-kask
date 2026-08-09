@@ -138,10 +138,14 @@ impl SwarmPanel {
                                 )
                                 .when(has_secondary, |this| {
                                     this.child(
-                                        PopoverMenu::new("agent-secondary-actions")
+                                        PopoverMenu::new(SharedString::from(format!(
+                                            "agent-secondary-actions-{agent_name}",
+                                        )))
                                             .trigger_with_tooltip(
                                                 IconButton::new(
-                                                    "agent-secondary-trigger",
+                                                    SharedString::from(format!(
+                                                        "agent-secondary-trigger-{agent_name}",
+                                                    )),
                                                     IconName::Ellipsis,
                                                 )
                                                 .icon_size(IconSize::Small),

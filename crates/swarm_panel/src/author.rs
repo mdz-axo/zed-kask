@@ -23,6 +23,12 @@ pub(crate) struct AuthorForm {
     /// would change the agent id). When `None`, the form is creating a new
     /// agent. The submit button label and the save path branch on this.
     pub(crate) editing_id: Option<String>,
+    /// The source of the agent being edited (`Cloud`, `Local`, or `Synced`).
+    /// `None` when creating a new agent. Determines which delete tool the
+    /// Delete button dispatches to: `swarm_remove_local` for local/synced
+    /// (severs the local card), `swarm_delete_agent` for cloud (irreversible
+    /// ABW delete). Set by `load_agent_into_author`.
+    pub(crate) editing_source: Option<crate::parse::AgentSource>,
     /// Comma-separated tags for catalogue discovery.
     pub(crate) tags: Entity<Editor>,
     /// Visibility level: "public", "private", or "unlisted".
@@ -73,6 +79,7 @@ impl AuthorForm {
             }),
             agent_type: "research".to_string(),
             editing_id: None,
+            editing_source: None,
             tags: cx.new(|cx| {
                 let mut e = Editor::single_line(window, cx);
                 e.set_placeholder_text("tag1, tag2, tag3 (comma-separated)", window, cx);
@@ -117,6 +124,20 @@ impl SwarmPanel {
         let border = cx.theme().colors().border;
         let is_local = Self::current_swarm_mode(cx) == kask_bridge::SwarmModeConfig::Local;
         let is_editing = self.author.editing_id.is_some();
+        let editing_source = self.author.editing_source.clone();
+        let delete_tooltip = match &editing_source {
+            Some(crate::parse::AgentSource::Cloud) => {
+                "Permanently deletes this ABW agent (irreversible). Removes it \
+                 from your library and every workspace roster. A synced local \
+                 card is NOT touched."
+            }
+            Some(crate::parse::AgentSource::Local) | Some(crate::parse::AgentSource::Synced) => {
+                "Permanently deletes this local agent card. A synced card's \
+                 ABW agent is NOT touched (delete that separately from the \
+                 cloud card's More menu)."
+            }
+            None => "",
+        };
         let create_label = if self.author.busy {
             if is_editing {
                 "Updating…"
@@ -478,6 +499,23 @@ impl SwarmPanel {
                                 this.save_agent(cx);
                             })),
                     )
+                    .when_some(editing_source, |this, source| {
+                        let delete_label = match source {
+                            crate::parse::AgentSource::Cloud => "Delete Agent",
+                            crate::parse::AgentSource::Local
+                            | crate::parse::AgentSource::Synced => "Delete Local Card",
+                        };
+                        this.child(
+                            Button::new("delete-agent", delete_label)
+                                .style(ButtonStyle::Subtle)
+                                .color(Color::Warning)
+                                .disabled(self.author.busy)
+                                .tooltip(Tooltip::text(delete_tooltip))
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.delete_edited_agent(cx);
+                                })),
+                        )
+                    })
                     .when_some(self.author.status.clone(), |this, status| {
                         this.child(
                             Label::new(status)

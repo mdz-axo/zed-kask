@@ -210,6 +210,7 @@ impl SwarmPanel {
             return;
         };
         self.author.editing_id = Some(agent_id.clone());
+        self.author.editing_source = Some(source.clone());
         self.author.status = Some("Loading agent details…".into());
         self.author.busy = false;
         self.author.name.update(cx, |e, _| e.set_read_only(true));

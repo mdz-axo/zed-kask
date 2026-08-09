@@ -421,6 +421,12 @@ pub struct SwarmPanel {
     /// next `render` (which has `&mut Window` for `Editor::set_text`). Set by
     /// `load_agent_into_author`'s spawn; consumed by `apply_pending_author_load`.
     pending_author_load: Option<crate::agent_edit::AgentDetail>,
+    /// Set by `delete_edited_agent`'s spawn on a successful delete. `render`
+    /// consumes it (it has `&mut Window`, required by `Editor::clear` and
+    /// `set_mode`) to reset the author form to a fresh create state and switch
+    /// back to Browse. Mirrors the `pending_author_load` deferred-mutation
+    /// pattern — the spawn closure cannot hold a `&mut Window` reference.
+    pending_author_reset: bool,
     /// Composition form state.
     compose: ComposeForm,
     /// Lazily-constructed `ConversationView` for Steer mode, scoped to the
@@ -625,6 +631,7 @@ impl SwarmPanel {
                 mode: PanelMode::Browse,
                 author,
                 pending_author_load: None,
+                pending_author_reset: false,
                 compose,
                 steer_conversation: None,
                 steer_connection_store: None,
@@ -675,6 +682,7 @@ impl SwarmPanel {
     /// calling `set_mode`.
     fn reset_author_form_for_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.author.editing_id = None;
+        self.author.editing_source = None;
         self.author.status = None;
         self.author.name.update(cx, |e, _| e.set_read_only(false));
         // Clear the text fields so the operator starts fresh.
@@ -2205,6 +2213,14 @@ impl Render for SwarmPanel {
         // requires `&mut Window`, which the spawn closure does not have.
         if self.pending_author_load.is_some() {
             self.apply_pending_author_load(window, cx);
+        }
+        // Consume a pending author-form reset (set by `delete_edited_agent`'s
+        // spawn on a successful delete). Deferred to `render` for the same
+        // reason — `Editor::clear` and `set_mode` need `&mut Window`.
+        if self.pending_author_reset {
+            self.pending_author_reset = false;
+            self.reset_author_form_for_create(window, cx);
+            self.set_mode(PanelMode::Browse, window, cx);
         }
         // If deserialized into Steer mode (or the operator switched via a
         // path that didn't go through the toggle handler), ensure the
