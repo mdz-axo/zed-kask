@@ -157,6 +157,27 @@ impl HMemOntology {
         self
     }
 
+    /// Convert an episodic ontology (PKO-anchored) to a semantic ontology
+    /// (DC+BIBO state-axis anchored). Drops the PKO procedure/step and
+    /// shifts the 5W1H dimension from `How`/`When` to `What`. Retains any
+    /// DC fields and open-world tags from the source ontology so provenance
+    /// and domain annotations survive the promotion.
+    ///
+    /// The consolidator calls this when promoting an episodic h_mem to a
+    /// semantic fact: the ontology blob is re-tagged from process-axis to
+    /// state-axis anchoring, and visibility is set to Shared separately.
+    pub fn to_semantic(&self) -> Self {
+        Self {
+            dimensions: vec![Dimension::What.as_str().to_string()],
+            dc_type: self.dc_type.clone(),
+            dc_subject: self.dc_subject.clone(),
+            dc_source: self.dc_source.clone(),
+            pko_procedure: None,
+            pko_step: None,
+            ontology_tags: self.ontology_tags.clone(),
+        }
+    }
+
     /// Does this ontology carry a tag from the given namespace?
     pub fn has_ontology(&self, namespace: &str) -> bool {
         self.ontology_tags.contains_key(namespace)
@@ -239,5 +260,21 @@ mod tests {
             .with_dimension(Dimension::What)
             .with_dimension(Dimension::What);
         assert_eq!(ont.dimensions.len(), 1);
+    }
+
+    #[test]
+    fn to_semantic_drops_pko_and_shifts_dimension() {
+        let ont = HMemOntology::episodic("diagnose-bug-123", "reproduce", "session-1")
+            .with_ontology_tag("fibo", "competitive advantage");
+        let semantic = ont.to_semantic();
+        // PKO procedure/step dropped
+        assert!(semantic.pko_procedure.is_none());
+        assert!(semantic.pko_step.is_none());
+        // Dimension shifted from How/When to What
+        assert_eq!(semantic.dimensions, vec!["what".to_string()]);
+        // DC fields and open-world tags retained
+        assert_eq!(semantic.dc_type, "pko:StepExecution");
+        assert_eq!(semantic.dc_source, "session-1");
+        assert_eq!(semantic.ontology_concepts("fibo"), ["competitive advantage"]);
     }
 }

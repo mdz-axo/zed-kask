@@ -9,13 +9,10 @@
 //! axis (PKO: `pko_procedure`, `pko_step`). Both are stored, recalled, and
 //! queried through the single [`MemoryStore`].
 //!
-//! **Intended flow (replacing the deprecated `perspective` discriminator):**
-//! chat stream → chunks → each chunk tagged with both the best-fit state axis
-//! (Dublin Core) and the best-fit process axis (PKO). The `HMemOntology` blob
-//! is the discriminator; the legacy `perspective` field is retained for
-//! backward compatibility with the consolidator's `perspective IS NULL` SQL
-//! path but is deprecated as a semantic classifier (see `HMem::is_episodic` /
-//! `HMem::is_semantic` deprecation notes).
+//! **Flow:** chat stream → chunks → each chunk tagged with both the best-fit
+//! state axis (Dublin Core) and the best-fit process axis (PKO). The
+//! `HMemOntology` blob is the discriminator; the `perspective` field is
+//! provenance (who wrote the memory), not a semantic classifier.
 //!
 //! **Recall deduplication** runs at recall time in `recall_dedup` (BLAKE3 hash
 //! over canonical entity-attribute-value content, first-seen-wins). There is

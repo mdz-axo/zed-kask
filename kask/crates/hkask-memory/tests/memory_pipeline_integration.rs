@@ -186,7 +186,9 @@ fn consolidator_counts_candidates() {
     assert_eq!(consolidator.consolidation_candidate_count(&perspective), 0);
 
     let h_mem =
-        HMem::new("e", "a", serde_json::json!("v"), perspective).with_perspective(perspective);
+        HMem::new("e", "a", serde_json::json!("v"), perspective)
+            .with_perspective(perspective)
+            .with_ontology(HMemOntology::episodic("proc", "step", "src"));
     store.store(h_mem).expect("store");
 
     assert_eq!(
@@ -296,7 +298,7 @@ fn consolidation_combines_both_sides_decayed() {
     let consolidator = MemoryConsolidator::new(Arc::clone(&store));
     let perspective = test_perspective();
 
-    // Seed a shared h_mem with confidence 0.8
+    // Seed a semantic h_mem with confidence 0.8
     let shared = HMem::new(
         "tool_x",
         "returns",
@@ -304,7 +306,8 @@ fn consolidation_combines_both_sides_decayed() {
         perspective,
     )
     .with_visibility(hkask_types::Visibility::Shared)
-    .with_confidence(Confidence::new(0.8));
+    .with_confidence(Confidence::new(0.8))
+    .with_ontology(HMemOntology::semantic("bibo:Document", vec![], "test"));
     store.store(shared).expect("store shared");
 
     // Store a perspective-bound h_mem with same EAV and confidence 0.8
@@ -315,7 +318,8 @@ fn consolidation_combines_both_sides_decayed() {
         perspective,
     )
     .with_perspective(perspective)
-    .with_confidence(Confidence::new(0.8));
+    .with_confidence(Confidence::new(0.8))
+    .with_ontology(HMemOntology::episodic("test-proc", "test-step", "test"));
     store.store(bound).expect("store perspective-bound");
 
     // Consolidate — should Bayesian-combine both sides after decay

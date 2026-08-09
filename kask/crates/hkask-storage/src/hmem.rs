@@ -130,39 +130,31 @@ impl HMem {
         self.ontology = Some(ont.with_dimension(d));
         self
     }
-    /// Check if this is an episodic h_mem (has perspective).
-    ///
-    /// **Deprecated discriminator.** The episodic/semantic distinction is now
-    /// carried by the `HMemOntology` blob (P5.4 dual-axis anchoring): an episodic
-    /// experience carries PKO anchoring (`pko_procedure`, `pko_step`) with
-    /// `dc_type = "pko:StepExecution"`; a semantic fact carries DC+BIBO
-    /// anchoring (`dc_type`, `dc_subject`, `dc_source`) with no PKO procedure.
-    /// The intended flow is: chat stream → chunks → each chunk tagged with
-    /// both the best-fit state axis (Dublin Core) and the best-fit process
-    /// axis (PKO), so the ontology blob — not `perspective` — is the
-    /// discriminator. This predicate still checks `perspective.is_some()` for
-    /// backward compatibility with the consolidator's `perspective IS NULL`
-    /// SQL path, which has not yet been migrated to the ontology blob.
+    /// Check if this is an episodic h_mem (carries a PKO procedure in its
+    /// ontology blob). The episodic/semantic distinction is carried by the
+    /// `HMemOntology` blob (P5.4 dual-axis anchoring): an episodic experience
+    /// carries PKO anchoring (`pko_procedure`, `pko_step`); a semantic fact
+    /// carries DC+BIBO anchoring with no PKO procedure.
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P8\] Motivating: Semantic Grounding — predicate for episodic
-    /// post: returns true iff perspective is Some
+    /// post: returns true iff the ontology blob has a PKO procedure
     pub fn is_episodic(&self) -> bool {
-        self.access.is_episodic()
+        self.ontology
+            .as_ref()
+            .is_some_and(|o| o.pko_procedure.is_some())
     }
-    /// Check if this is a semantic h_mem (public, no perspective).
-    ///
-    /// **Deprecated discriminator.** See [`is_episodic`](Self::is_episodic) for
-    /// the ontology-blob replacement. This predicate still checks
-    /// `perspective.is_none() && visibility == Shared` for backward compatibility
-    /// with the consolidator's `perspective IS NULL` SQL path, which has not
-    /// yet been migrated to the ontology blob.
+    /// Check if this is a semantic h_mem (no PKO procedure in its ontology
+    /// blob). See [`is_episodic`](Self::is_episodic) for the discriminator
+    /// rationale.
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P8\] Motivating: Semantic Grounding — predicate for semantic
-    /// post: returns true iff visibility is Public and perspective is None
+    /// post: returns true iff the ontology blob has no PKO procedure
     pub fn is_semantic(&self) -> bool {
-        self.access.is_semantic()
+        self.ontology
+            .as_ref()
+            .is_some_and(|o| o.pko_procedure.is_none())
     }
 }
 /// HMem store — backed by a provider-agnostic DatabaseDriver.
@@ -222,6 +214,23 @@ impl HMemStore {
 }
 
 const HMEM_COLUMNS: &str = "id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology";
+
+/// SQL predicate selecting semantic h_mems: those whose ontology blob carries no
+/// PKO procedure (`$.pko_procedure IS NULL`). This replaces the deprecated
+/// `perspective IS NULL` discriminator — the episodic/semantic distinction is
+/// now carried by the `HMemOntology` blob (P5.4 dual-axis anchoring), not by the
+/// `perspective` field. A semantic fact anchors to the state axis (DC+BIBO);
+/// an episodic experience anchors to the process axis (PKO). The predicate
+/// tolerates rows with no ontology blob (`json_valid(ontology)` is false) by
+/// treating them as unanchored — the same reading `row_to_h_mem` gives them.
+const SEMANTIC_PREDICATE: &str =
+    "(json_valid(ontology) AND json_extract(ontology, '$.pko_procedure') IS NULL)";
+
+/// SQL predicate selecting episodic h_mems: those whose ontology blob carries
+/// a PKO procedure (`$.pko_procedure IS NOT NULL`). See `SEMANTIC_PREDICATE` for
+/// the discriminator rationale.
+const EPISODIC_PREDICATE: &str =
+    "(json_valid(ontology) AND json_extract(ontology, '$.pko_procedure') IS NOT NULL)";
 
 impl HMemStore {
     fn exec(&self, sql: &str, params: &[DbValue]) -> Result<usize, HMemError> {
@@ -438,6 +447,25 @@ impl HMemStore {
             &[DbValue::Text(perspective.to_string())],
         )
     }
+    /// Query episodic h_mems (ontology blob carries a PKO procedure) written by
+    /// a given perspective. This is the consolidation-candidate selector: the
+    /// episodic/semantic distinction is carried by the `HMemOntology` blob
+    /// (P5.4), not by `perspective` — `perspective` scopes by who wrote the
+    /// memory, while the ontology blob classifies it.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — query episodic by perspective
+    /// pre:  perspective is valid
+    /// post: returns Vec of episodic h_mems for this perspective
+    pub fn query_episodic_by_perspective(
+        &self,
+        perspective: &WebID,
+    ) -> Result<Vec<HMem>, HMemError> {
+        self.query_rows(
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {EPISODIC_PREDICATE} AND perspective = ?1 AND valid_to IS NULL ORDER BY valid_from DESC"),
+            &[DbValue::Text(perspective.to_string())],
+        )
+    }
     /// Query all h_mems with a given attribute, regardless of entity.
     /// Query h_mems by attribute.
     ///
@@ -571,7 +599,7 @@ impl HMemStore {
     /// post: returns up to limit h_mems ordered by confidence ascending
     pub fn query_semantic_lowest_confidence(&self, limit: usize) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective IS NULL AND valid_to IS NULL ORDER BY confidence ASC, valid_from ASC LIMIT ?1"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL ORDER BY confidence ASC, valid_from ASC LIMIT ?1"),
             &[DbValue::Integer(limit as i64)],
         )
     }
@@ -584,7 +612,7 @@ impl HMemStore {
     /// post: returns count of h_mems with confidence ≤ threshold
     pub fn count_semantic_below_confidence(&self, threshold: f64) -> Result<usize, HMemError> {
         self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE perspective IS NULL AND valid_to IS NULL AND confidence <= ?1",
+            &format!("SELECT COUNT(*) FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL AND confidence <= ?1"),
             &[DbValue::Real(threshold)],
         )
     }
@@ -601,7 +629,7 @@ impl HMemStore {
         limit: usize,
     ) -> Result<Vec<HMem>, HMemError> {
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective IS NULL AND valid_to IS NULL AND confidence <= ?1 ORDER BY confidence ASC, valid_from ASC LIMIT ?2"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL AND confidence <= ?1 ORDER BY confidence ASC, valid_from ASC LIMIT ?2"),
             &[DbValue::Real(threshold), DbValue::Integer(limit as i64)],
         )
     }
@@ -614,7 +642,7 @@ impl HMemStore {
     #[must_use = "result must be used"]
     pub fn count_semantic(&self) -> Result<usize, HMemError> {
         self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE perspective IS NULL AND valid_to IS NULL",
+            &format!("SELECT COUNT(*) FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL"),
             &[],
         )
     }
@@ -627,7 +655,7 @@ impl HMemStore {
     /// post: returns count for entity
     pub fn count_semantic_by_entity(&self, entity: &str) -> Result<usize, HMemError> {
         self.count_rows(
-            "SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND perspective IS NULL AND valid_to IS NULL",
+            &format!("SELECT COUNT(*) FROM hmems WHERE entity = ?1 AND {SEMANTIC_PREDICATE} AND valid_to IS NULL"),
             &[DbValue::Text(entity.to_string())],
         )
     }
@@ -664,7 +692,7 @@ impl HMemStore {
     ) -> Result<Vec<HMem>, HMemError> {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(days as i64)).to_rfc3339();
         self.query_rows(
-            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE perspective IS NULL AND valid_to IS NULL AND valid_from < ?1 ORDER BY entity ASC, confidence DESC, valid_from DESC LIMIT ?2"),
+            &format!("SELECT {HMEM_COLUMNS} FROM hmems WHERE {SEMANTIC_PREDICATE} AND valid_to IS NULL AND valid_from < ?1 ORDER BY entity ASC, confidence DESC, valid_from DESC LIMIT ?2"),
             &[DbValue::Text(cutoff), DbValue::Integer(limit as i64)],
         )
     }

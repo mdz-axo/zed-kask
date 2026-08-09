@@ -218,6 +218,18 @@ impl BridgeManifestExecutor {
         manifest: &hkask_templates::BundleManifest,
         mut context: HashMap<String, Value>,
     ) -> Result<HashMap<String, Value>, String> {
+        // Enforce the same `is_skill()` guard as `run_manifest_cascade` — the
+        // inline refine manifest is hardcoded (not user-supplied) so this is
+        // defense in depth, but the guard must be uniform to prevent an infra
+        // manifest from executing via the skill tool if the inline YAML is
+        // ever edited to add `category: pipeline`.
+        if !manifest.is_skill() {
+            return Err(format!(
+                "Refine manifest has category '{:?}' — only `skill` manifests may execute via the skill tool",
+                manifest.category
+            ));
+        }
+
         self.inject_model_defaults(&mut context);
 
         let executor = self.build_executor();
@@ -1120,7 +1132,7 @@ mod tests {
                 "polarity": "Generative",
                 "manifest_ref": "skill-a",
                 "content_hash": "abc123"
-            }],,
+            }],
             "convergence": {"max_iterations": 3, "threshold": 0.1, "field": "score"},
             "gas": {"cap": 10000}
         });

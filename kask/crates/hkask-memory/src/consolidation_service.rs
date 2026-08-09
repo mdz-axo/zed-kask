@@ -1,28 +1,26 @@
-//! Memory consolidator — perspective-bound → shared promotion + cleanup.
+//! Memory consolidator — episodic → semantic promotion + cleanup.
 //!
-//! When currency pressure triggers consolidation, perspective-bound h_mems
-//! (episodic experiences) are:
+//! When currency pressure triggers consolidation, episodic h_mems (those
+//! carrying a PKO procedure in their `HMemOntology` blob) are:
 //! 1. Selected via `MemoryStore::consolidation_candidates()` (oldest, lowest
 //!    effective confidence for a given perspective)
-//! 2. Stripped of perspective (privacy boundary removal), visibility set to
-//!    Shared
-//! 3. Checked against existing shared h_mems with same EAV:
+//! 2. Re-tagged from episodic ontology (PKO process axis) to semantic ontology
+//!    (DC+BIBO state axis) via `HMemOntology::to_semantic()`, visibility set
+//!    to Shared
+//! 3. Checked against existing semantic h_mems with same EAV:
 //!    a. **Match found:** Bayesian combine confidences, update existing
-//!    b. **No match:** Seed as new shared h_mem
+//!    b. **No match:** Seed as new semantic h_mem
 //! 4. Expired in the source (valid_to set, soft-deleted) to free storage budget
 //!
-//! This is a ONE-WAY operation: perspective-bound → shared. No reverse flow.
+//! This is a ONE-WAY operation: episodic → semantic. No reverse flow.
 //!
-//! **Deprecated discriminator.** The episodic/semantic distinction is now
-//! carried by the `HMemOntology` blob (P5.4 dual-axis anchoring): the intended
-//! flow is chat stream → chunks → each chunk tagged with both the best-fit
-//! state axis (Dublin Core) and the best-fit process axis (PKO), so the
-//! ontology blob — not `perspective` — is the discriminator. This consolidator
-//! still uses the `perspective IS NULL` SQL path for backward compatibility;
-//! it has not yet been migrated to the ontology blob. The `to_semantic`
-//! promotion strips `perspective` but does not rewrite the ontology blob — a
-//! migrated consolidator would re-tag the promoted chunk with a semantic
-//! ontology (DC+BIBO state axis) instead.
+//! The episodic/semantic distinction is carried by the `HMemOntology` blob
+//! (P5.4 dual-axis anchoring): the intended flow is chat stream → chunks →
+//! each chunk tagged with both the best-fit state axis (Dublin Core) and the
+//! best-fit process axis (PKO). The consolidator selects episodic candidates
+//! by the ontology blob (`pko_procedure IS NOT NULL`), not by the deprecated
+//! `perspective` field. The `perspective` field is retained as provenance
+//! (who wrote the memory) but is no longer the episodic/semantic discriminator.
 //!
 //! Renamed from `ConsolidationService` to `MemoryConsolidator` to avoid the
 //! name collision with `hkask_mcp_corpus::services::consolidation::ConsolidationService`
@@ -35,6 +33,7 @@ use std::sync::Arc;
 use crate::bayesian::combine_confidences;
 use crate::memory_store::MemoryStore;
 use hkask_storage::{HMem, HMemId};
+use hkask_types::Visibility;
 use hkask_types::WebID;
 use hkask_types::{ConsolidationOutcome, ConsolidationRequest};
 
@@ -110,7 +109,7 @@ impl MemoryConsolidator {
             "Consolidation starting"
         );
 
-        let promotion_outcome = self.promote_perspective_bound(*perspective, request.limit)?;
+        let promotion_outcome = self.promote_episodic_to_semantic(*perspective, request.limit)?;
 
         let mut deleted_count = 0usize;
 
@@ -192,17 +191,20 @@ impl MemoryConsolidator {
         })
     }
 
-    /// Promote perspective-bound h_mems to shared memory (one-way).
+    /// Promote episodic h_mems to semantic memory (one-way).
     ///
-    /// For each candidate (filtered by `perspective`):
-    /// 1. Strip perspective (set to `None`) — removes privacy boundary
-    /// 2. Check shared memory for existing h_mem with same EAV hash:
+    /// For each candidate (episodic h_mems with a PKO procedure, filtered by
+    /// `perspective` to scope by who wrote them):
+    /// 1. Re-tag the ontology blob from episodic (PKO) to semantic (DC+BIBO)
+    ///    via `HMemOntology::to_semantic()`
+    /// 2. Set visibility to Shared (the access-control aspect of promotion)
+    /// 3. Check semantic memory for existing h_mem with same EAV hash:
     ///    a. **Match:** Bayesian combine candidate + existing confidence,
     ///       update existing h_mem
-    ///    b. **No match:** Insert as new shared h_mem
-    /// 3. Expire source h_mem (soft-delete via valid_to)
+    ///    b. **No match:** Insert as new semantic h_mem
+    /// 4. Expire source h_mem (soft-delete via valid_to)
     #[allow(clippy::doc_lazy_continuation, clippy::doc_overindented_list_items)]
-    fn promote_perspective_bound(
+    fn promote_episodic_to_semantic(
         &self,
         perspective: WebID,
         limit: usize,
@@ -282,9 +284,9 @@ impl MemoryConsolidator {
                     value: h_mem.value.clone(),
                     observed_at: h_mem.observed_at,
                     confidence: candidate_c,
-                    access: h_mem.access.to_semantic(),
+                    access: h_mem.access.clone().with_visibility(Visibility::Shared),
                     recalled_at: now,
-                    ontology: h_mem.ontology.clone(),
+                    ontology: h_mem.ontology.as_ref().map(|o| o.to_semantic()),
                 };
 
                 match self.store.store_consolidated(promoted) {

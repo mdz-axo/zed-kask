@@ -8,13 +8,10 @@
 //! ontology blob tells you which kind of memory this is — no separate struct
 //! needed.
 //!
-//! **Deprecated discriminator.** The legacy `perspective` field (Some =
-//! episodic, None = semantic) is retained for backward compatibility with the
-//! consolidator's `perspective IS NULL` SQL path but is deprecated as a
+//! The `perspective` field is provenance (who wrote the memory), not a
 //! semantic classifier. The intended flow is chat stream → chunks → each
 //! chunk tagged with both the best-fit state axis (Dublin Core) and the
 //! best-fit process axis (PKO), so the `HMemOntology` blob is the discriminator.
-//! See `HMem::is_episodic` / `HMem::is_semantic` deprecation notes.
 //!
 //! `MemoryStore` wraps `HMemStore` + `EmbeddingStore` and provides:
 //! - `store()` — accepts any h_mem (no visibility/perspective invariants; the
@@ -597,14 +594,17 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Identify h_mems eligible for consolidation (oldest, lowest effective
-    /// confidence) for a given perspective. Uses recall-time decayed confidence.
+    /// Identify episodic h_mems eligible for consolidation (oldest, lowest
+    /// effective confidence) written by a given perspective. Uses recall-time
+    /// decayed confidence. The episodic/semantic distinction is carried by the
+    /// `HMemOntology` blob (P5.4) — only h_mems with a PKO procedure are
+    /// candidates for promotion to semantic memory.
     pub(crate) fn consolidation_candidates(
         &self,
         perspective: WebID,
         limit: usize,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
-        let mut h_mems = self.h_mem_store.query_by_perspective(&perspective)?;
+        let mut h_mems = self.h_mem_store.query_episodic_by_perspective(&perspective)?;
         h_mems.sort_by(|a, b| {
             let a_effective = a
                 .confidence
@@ -1030,11 +1030,12 @@ mod tests {
         let store = Arc::new(make_store().with_storage_budget(2));
         let owner = WebID::new();
 
-        // Store three shared h_mems with distinct confidences; budget is 2.
+        // Store three semantic h_mems with distinct confidences; budget is 2.
         for (entity, confidence) in [("high", 0.9), ("mid", 0.5), ("low", 0.1)] {
             let h_mem = HMem::new(entity, "is", serde_json::json!("v"), owner)
                 .with_visibility(Visibility::Shared)
-                .with_confidence(Confidence::new(confidence));
+                .with_confidence(Confidence::new(confidence))
+                .with_ontology(HMemOntology::semantic("bibo:Document", vec![], "test"));
             store.store(h_mem).expect("store");
         }
         assert_eq!(store.h_mem_count().expect("count"), 3);

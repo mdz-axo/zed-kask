@@ -611,9 +611,11 @@ pub struct ThreadView {
     /// (via `Save` or `Discard`). Prevents the affordance from re-rendering
     /// after the action completes.
     pub resolved_skill_bundle_calls: HashSet<acp::ToolCallId>,
-    /// skill_bundle tool calls currently running a `Refine` re-composition.
-    /// Disables the affordance buttons while the evolve cascade runs.
-    pub refining_skill_bundle_calls: HashSet<acp::ToolCallId>,
+    /// skill_bundle tool calls with an in-flight Save or Refine operation.
+    /// Disables the affordance buttons while the async operation runs so the
+    /// user can't fire a second action (e.g. Refine while Save is running) that
+    /// would race on the same tool_call_id.
+    pub in_flight_skill_bundle_calls: HashSet<acp::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
@@ -1016,7 +1018,7 @@ impl ThreadView {
             turn_fields: TurnFields::default(),
             discarded_partial_edits: HashSet::default(),
             resolved_skill_bundle_calls: HashSet::default(),
-            refining_skill_bundle_calls: HashSet::default(),
+            in_flight_skill_bundle_calls: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
@@ -10199,7 +10201,7 @@ impl ThreadView {
             return None;
         };
 
-        let is_refining = self.refining_skill_bundle_calls.contains(&tool_call.id);
+        let is_in_flight = self.in_flight_skill_bundle_calls.contains(&tool_call.id);
         let tool_call_id = tool_call.id.clone();
 
         let score_label = composition_score
@@ -10254,7 +10256,7 @@ impl ThreadView {
                                         .size(IconSize::XSmall)
                                         .color(Color::Success),
                                 )
-                                .disabled(is_refining)
+                                .disabled(is_in_flight)
                                 .on_click(cx.listener({
                                     let tool_call_id = tool_call_id_for_save.clone();
                                     move |this, _, _window, cx| {
@@ -10270,10 +10272,10 @@ impl ThreadView {
                             Button::new(refine_button_id, "Refine")
                                 .style(ButtonStyle::Outlined)
                                 .label_size(LabelSize::Small)
-                                .disabled(is_refining)
-                                .when(is_refining, |this| {
+                                .disabled(is_in_flight)
+                                .when(is_in_flight, |this| {
                                     this.start_icon(
-                                        Icon::new(IconName::Spinner)
+                                        Icon::new(IconName::RotateCw)
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )
@@ -10292,7 +10294,7 @@ impl ThreadView {
                             Button::new(discard_button_id, "Discard")
                                 .style(ButtonStyle::Subtle)
                                 .label_size(LabelSize::Small)
-                                .disabled(is_refining)
+                                .disabled(is_in_flight)
                                 .on_click(cx.listener({
                                     let tool_call_id = tool_call_id_for_discard.clone();
                                     move |this, _, _window, cx| {
@@ -10326,10 +10328,10 @@ impl ThreadView {
             );
             return;
         };
-        self.refining_skill_bundle_calls.insert(tool_call_id.clone());
+        self.in_flight_skill_bundle_calls.insert(tool_call_id.clone());
         cx.notify();
 
-        let task = cx.spawn(async move |cx| {
+        let task = cx.spawn(async move |_this, _cx| {
             let result = executor
                 .save_bundle(bundle_manifest)
                 .await
@@ -10340,10 +10342,10 @@ impl ThreadView {
         cx.spawn(async move |this, cx| {
             let (tool_call_id, result) = task.await;
             this.update(cx, |this, cx| {
-                this.refining_skill_bundle_calls.remove(&tool_call_id);
+                this.in_flight_skill_bundle_calls.remove(&tool_call_id);
                 match result {
                     Ok(id) => {
-                        this.resolved_skill_bundle_calls.insert(tool_call_id);
+                        this.resolved_skill_bundle_calls.insert(tool_call_id.clone());
                         this.show_skill_bundle_status(
                             tool_call_id,
                             format!("Saved bundle '{id}' to registry."),
@@ -10423,6 +10425,7 @@ impl ThreadView {
         let agent::SkillBundleToolOutput::Executed {
             bundle_manifest,
             goal_context,
+            composition_score,
             ..
         } = parsed
         else {
@@ -10434,14 +10437,20 @@ impl ThreadView {
             return;
         };
 
-        self.refining_skill_bundle_calls.insert(tool_call_id.clone());
+        self.in_flight_skill_bundle_calls.insert(tool_call_id.clone());
         cx.notify();
 
-        let goal_delta = 0.5;
+        // Derive goal_delta from the composition score when available so a
+        // perfect composition (score 0.0) doesn't trigger unnecessary
+        // recomposition. The score is lower=better; a score of 0.0 means the
+        // goal was met, so goal_delta should be 0.0 (no recomposition needed).
+        // When the score is unavailable, default to 0.5 (partial goal
+        // achievement) so the evolve template still runs.
+        let goal_delta = composition_score.unwrap_or(0.5);
         let convergence_failure_reason =
             "Operator-initiated refinement from the post-run UI.".to_string();
 
-        let task = cx.spawn(async move |cx| {
+        let task = cx.spawn(async move |_this, _cx| {
             let result = executor
                 .refine_bundle(
                     bundle_manifest,
@@ -10458,7 +10467,7 @@ impl ThreadView {
         cx.spawn(async move |this, cx| {
             let (tool_call_id, result) = task.await;
             this.update(cx, |this, cx| {
-                this.refining_skill_bundle_calls.remove(&tool_call_id);
+                this.in_flight_skill_bundle_calls.remove(&tool_call_id);
                 match result {
                     Ok(refine_result) => {
                         this.resolved_skill_bundle_calls.insert(tool_call_id.clone());
@@ -10507,7 +10516,7 @@ impl ThreadView {
     ) {
         let message: SharedString = message.into();
         let Some(workspace) = self.workspace.upgrade() else {
-            tracing::info!(target: "reg.skill.bundle_ui", message = %message);
+            log::info!("skill_bundle action: {}", message);
             return;
         };
         workspace.update(cx, |workspace, cx| {
