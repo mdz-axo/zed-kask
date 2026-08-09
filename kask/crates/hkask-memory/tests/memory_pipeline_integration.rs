@@ -185,10 +185,9 @@ fn consolidator_counts_candidates() {
 
     assert_eq!(consolidator.consolidation_candidate_count(&perspective), 0);
 
-    let h_mem =
-        HMem::new("e", "a", serde_json::json!("v"), perspective)
-            .with_perspective(perspective)
-            .with_ontology(HMemOntology::episodic("proc", "step", "src"));
+    let h_mem = HMem::new("e", "a", serde_json::json!("v"), perspective)
+        .with_perspective(perspective)
+        .with_ontology(HMemOntology::episodic("proc", "step", "src"));
     store.store(h_mem).expect("store");
 
     assert_eq!(

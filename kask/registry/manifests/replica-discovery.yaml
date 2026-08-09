@@ -20,6 +20,25 @@
 # generation, validation) are budgeted generously — they are cheap, local,
 # and load-bearing for downstream quality. Search/extraction (network I/O)
 # remains tightly budgeted. See gas/rjoule blocks below.
+#
+# NOTE (2026-08-08): This manifest was rewritten to match the executor's
+# actual schema. The prior version used `arguments:`/`tool:`/`loop_over:`
+# fields that `BundleManifestStep` does not define (serde silently drops
+# unknown fields), and `${input.*}` interpolation that the executor never
+# performs (only `{{ }}` and `$ref` are resolved). Every `execute` step
+# was silently no-op'ing its tool call (no `input_mapping` → empty input)
+# and every condition was always-false (literal `${...}` never matched).
+# The rewrite:
+#   - `arguments:` → `input_mapping:` (the executor's binding field)
+#   - `tool:` + `mcp: server` → `mcp: "server/tool"` (the executor's mcp ref)
+#   - `${input.x}` → `{{ input.x }}` (the executor's interpolation form)
+#   - `loop_over:` removed — the executor does not support per-item
+#     iteration in `execute` steps. Steps 6/7/8 now operate on the full
+#     merged array (the tool receives the array; per-item fan-out is the
+#     MCP server's responsibility, not the executor's).
+#   - `feedback:` field on ordinal 16 removed — not a `BundleManifestStep`
+#     field. The `feedback` action alias routes to `execute_tool_invoke`,
+#     which uses `mcp:` + `input_mapping:`.
 
 manifest:
   id: mcp/replica-discovery
@@ -81,14 +100,13 @@ steps:
       the Curator for confirmation.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "${input.author_name} academic publications university"
-      strategy: "deep"
-      num_results: 10
+    mcp: "hkask-mcp-research/web_search"
     gas_cap: 4096
     timeout_seconds: 30
+    input_mapping:
+      query: "{{ input.author_name }} academic publications university"
+      strategy: "deep"
+      num_results: 10
     output_schema:
       results: array
       answer_box: object
@@ -101,14 +119,13 @@ steps:
       Returns structured paper metadata with abstracts, citations, and PDF links.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "${input.author_name}"
-      strategy: "web"
-      num_results: "${input.max_works}"
+    mcp: "hkask-mcp-research/web_search"
     gas_cap: 4096
     timeout_seconds: 30
+    input_mapping:
+      query: "{{ input.author_name }}"
+      strategy: "web"
+      num_results: "{{ input.max_works }}"
     output_schema:
       results: array
 
@@ -119,14 +136,13 @@ steps:
       Uses arXiv's author search syntax.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "au:${input.author_name_lower}"
-      strategy: "web"
-      num_results: "${input.max_works}"
+    mcp: "hkask-mcp-research/web_search"
     gas_cap: 2048
     timeout_seconds: 30
+    input_mapping:
+      query: "au:{{ input.author_name_lower }}"
+      strategy: "web"
+      num_results: "{{ input.max_works }}"
     output_schema:
       results: array
 
@@ -138,15 +154,14 @@ steps:
       interviews, and other content by or about the author.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "${input.author_name} faculty page institutional profile"
-      strategy: "web"
-      num_results: 5
-    condition: "${input.include_web}"
+    mcp: "hkask-mcp-research/web_search"
+    condition: "{{ input.include_web }}"
     gas_cap: 2048
     timeout_seconds: 30
+    input_mapping:
+      query: "{{ input.author_name }} faculty page institutional profile"
+      strategy: "web"
+      num_results: 5
     output_schema:
       results: array
 
@@ -159,16 +174,15 @@ steps:
       the transcript extraction step.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "${input.author_name} interview talk lecture"
+    mcp: "hkask-mcp-research/web_search"
+    condition: "{{ input.include_transcripts }}"
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      query: "{{ input.author_name }} interview talk lecture"
       strategy: "web"
       num_results: 5
       include_domains: ["youtube.com"]
-    condition: "${input.include_transcripts}"
-    gas_cap: 2048
-    timeout_seconds: 30
     output_schema:
       results: array
 
@@ -177,19 +191,18 @@ steps:
     action: execute
     description: >
       Phase 5: Extract full content from discovered works.
-      Iterates over merged results from phases 2-4 and extracts markdown content.
-      PDFs are handled by the research server's extraction pipeline.
+      The merged results from phases 2-4 are passed as an array; the research
+      server's extraction pipeline handles per-work fan-out. PDFs are handled
+      by the research server's extraction pipeline.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_extract
-    arguments:
-      url: "${item.url}"
-      format: "markdown"
-      main_content_only: true
-    loop_over: "${merged_works[:input.max_works]}"
+    mcp: "hkask-mcp-research/web_extract"
     gas_cap: 8192
     timeout_seconds: 120
+    input_mapping:
+      urls: "{{ [step_2_result.results, step_3_result.results, step_4_result.results] | flatten }}"
+      format: "markdown"
+      main_content_only: true
     output_schema:
       extracted_pages: array
 
@@ -198,18 +211,16 @@ steps:
     action: execute
     description: >
       Phase 6: Write extracted content to the cache directory so corpus_build_persona
-      can skip re-downloading. Each work is saved as {cache_dir}/{slug}.txt.
+      can skip re-downloading. The corpus server handles per-work caching from
+      the extracted_pages array.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-corpus
-    tool: corpus_cache_work
-    arguments:
-      slug: "${item.slug}"
-      content: "${item.content}"
-      cache_dir: "${input.cache_dir}"
-    loop_over: "${step6_extracted_pages}"
+    mcp: "hkask-mcp-corpus/corpus_cache_work"
     gas_cap: 2048
     timeout_seconds: 30
+    input_mapping:
+      works: "{{ step_6_result.extracted_pages }}"
+      cache_dir: "{{ input.cache_dir }}"
     output_schema:
       cached_works: array
 
@@ -218,25 +229,23 @@ steps:
     action: execute
     description: >
       Phase 7 (conditional): Extract transcripts from discovered YouTube videos.
-      Each video ID is sent to SerpAPI's youtube_video_transcript engine.
+      The research server handles per-video fan-out from the youtube_urls array.
     renderer: null
     template_ref: null
-    mcp: hkask-mcp-research
-    tool: web_search
-    arguments:
-      query: "${item.video_id}"
-      strategy: "quick"
-      num_results: 1
-    loop_over: "${step5_youtube_urls}"
-    condition: "${input.include_transcripts}"
+    mcp: "hkask-mcp-research/web_search"
+    condition: "{{ input.include_transcripts }}"
     gas_cap: 4096
     timeout_seconds: 60
+    input_mapping:
+      youtube_urls: "{{ step_5_result.results | selectattr('url', 'match', 'youtube.com') | map(attribute='url') | list }}"
+      strategy: "quick"
+      num_results: 1
     output_schema:
       transcripts: array
 
   # ── Phase 8: Concept Extraction ──────────────────────────────────────────
   - ordinal: 9
-    action: execute
+    action: select
     description: >
       Phase 8: Extract key concepts, places, and events from paper metadata
       using LLM semantic deduplication. Renders the extract-concepts template
@@ -244,9 +253,11 @@ steps:
       structured entities for the corpus YAML.
     renderer: minijinja
     template_ref: replica/extract-concepts
-    mcp: hkask-mcp-memory
     gas_cap: 4096
     timeout_seconds: 60
+    input_mapping:
+      papers: "{{ [step_2_result.results, step_3_result.results] | flatten }}"
+      author_name: "{{ input.author_name }}"
     output_schema:
       concepts: array
       places: array
@@ -254,7 +265,7 @@ steps:
 
   # ── Phase 9: Method Inference ────────────────────────────────────────────
   - ordinal: 10
-    action: execute
+    action: select
     description: >
       Phase 9 (default on): Infer methodological and stylistic patterns from
       representative passages of the author's work. Renders the infer-methods
@@ -262,10 +273,12 @@ steps:
       definitions with stylometric signal thresholds.
     renderer: minijinja
     template_ref: replica/infer-methods
-    mcp: hkask-mcp-memory
-    condition: "${input.include_methods}"
+    condition: "{{ input.include_methods }}"
     gas_cap: 4096
     timeout_seconds: 60
+    input_mapping:
+      passages: "{{ step_6_result.extracted_pages }}"
+      author_name: "{{ input.author_name }}"
     output_schema:
       methods: array
 
@@ -281,9 +294,14 @@ steps:
       spec. In curated mode, presents the generated config for Curator
       approval before proceeding to build.
     renderer: minijinja
-    template_ref: "${input.replica_class_template | default('replica/academic-corpus')}"
+    template_ref: "{{ input.replica_class_template | default('replica/academic-corpus') }}"
     gas_cap: 4000
     timeout_seconds: 15
+    input_mapping:
+      works: "{{ [step_2_result.results, step_3_result.results, step_4_result.results] | flatten }}"
+      concepts: "{{ step_9_result.concepts | default([]) }}"
+      methods: "{{ step_10_result.methods | default([]) }}"
+      author_name: "{{ input.author_name }}"
     output_schema:
       corpus_yaml: string
       works_count: integer
@@ -306,7 +324,7 @@ steps:
       corpus_build_persona.
     renderer: minijinja
     template_ref: replica/validate-corpus
-    mcp: hkask-mcp-corpus
+    mcp: "hkask-mcp-corpus/validate_corpus"
     gas_cap: 4000
     timeout_seconds: 15
     input_mapping:
@@ -341,9 +359,9 @@ steps:
     gas_cap: 500
     timeout_seconds: 300
     input_mapping:
-      works: "{{ step_3_result }}"
-      concepts: "{{ step_5_result }}"
-      methods: "{{ step_7_result }}"
+      works: "{{ [step_2_result.results, step_3_result.results, step_4_result.results] | flatten }}"
+      concepts: "{{ step_9_result.concepts | default([]) }}"
+      methods: "{{ step_10_result.methods | default([]) }}"
       corpus_yaml: "{{ step_11_result.corpus_yaml }}"
       validation: "{{ step_12_result }}"
     output_schema:
@@ -396,23 +414,26 @@ steps:
       # Cauchy criterion can detect when the iterates have stopped moving.
       convergence_signal: "{{ step_14_result }}"
 
-  # ── Phase 14: Regulation Feedback ───────────────────────────────────────────────
+  # ── Phase 14: Regulation Feedback ─────────────────────────────────────────
   - ordinal: 16
     action: feedback
     description: >
       Emit discovery outcome to Regulation. Track variety, source coverage,
       works discovered, concepts extracted, and methods inferred.
+      The `feedback` action alias routes to `execute_tool_invoke`, which
+      uses `mcp:` + `input_mapping:`. The prior `feedback:` field was not a
+      `BundleManifestStep` field and was silently dropped.
     renderer: null
     template_ref: null
-    mcp: null # Regulation is ambient (RegulationRuntime)
+    mcp: "hkask-mcp-regulation/record_outcome"
     gas_cap: 500
     timeout_seconds: 5
-    feedback:
-      variety_delta: integer
-      works_discovered: integer
-      concepts_extracted: integer
-      methods_inferred: integer
-      sources_used: array
+    input_mapping:
+      variety_delta: "{{ step_9_result.concepts | length | default(0) }}"
+      works_discovered: "{{ [step_2_result.results, step_3_result.results, step_4_result.results] | flatten | length | default(0) }}"
+      concepts_extracted: "{{ step_9_result.concepts | length | default(0) }}"
+      methods_inferred: "{{ step_10_result.methods | length | default(0) }}"
+      sources_used: ["semantic_scholar", "arxiv", "web", "youtube"]
     output_schema:
       reg_event_id: string
       outcome_recorded: boolean

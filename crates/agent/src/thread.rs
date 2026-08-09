@@ -72,6 +72,11 @@ use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock, paths::PathStyle
 use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
+/// Used when a tool call was interrupted because the model's output reached
+/// the token limit before it finished emitting the tool's input. Distinct from
+/// `TOOL_CANCELED_MESSAGE` (which means the user stopped the turn) so the model
+/// can distinguish "retry with a simpler call" from "the user canceled me."
+const TOOL_TRUNCATED_MESSAGE: &str = "Tool call was interrupted because the model's output reached the token limit before completing the tool input. Try again with a shorter or simpler tool call.";
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
 pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permission_denied";
@@ -1406,6 +1411,14 @@ pub struct Thread {
     /// user message before `build_completion_request`. See
     /// `DeferredToolResult`.
     deferred_tool_results: Vec<DeferredToolResult>,
+    /// Set when the last completion ended with `StopReason::MaxTokens`,
+    /// indicating the model's output was truncated before it finished.
+    /// `flush_pending_message` reads this to distinguish stream-truncated
+    /// tool calls (where the model never sent `is_input_complete: true`)
+    /// from genuine user cancellations, so the model gets an accurate
+    /// reason instead of the misleading `TOOL_CANCELED_MESSAGE`.
+    /// Reset to `false` at the start of each completion request.
+    last_completion_truncated: bool,
 }
 
 /// A rendered system prompt cached alongside a digest of its inputs. The
@@ -1567,6 +1580,7 @@ impl Thread {
             agent_id: None,
             mcp_server_scope: None,
             deferred_tool_results: Vec::new(),
+            last_completion_truncated: false,
         }
     }
 
@@ -1968,6 +1982,7 @@ impl Thread {
             agent_id: None,
             mcp_server_scope: None,
             deferred_tool_results: Vec::new(),
+            last_completion_truncated: false,
         }
     }
 
@@ -3158,6 +3173,7 @@ impl Thread {
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 this.current_request_token_usage = TokenUsage::default();
+                this.last_completion_truncated = false;
                 anyhow::Ok((model, request))
             })??;
 
@@ -3958,7 +3974,10 @@ impl Thread {
                 self.update_token_usage(usage, cx);
             }
             Stop(StopReason::Refusal) => return Err(CompletionError::Refusal.into()),
-            Stop(StopReason::MaxTokens) => return Err(CompletionError::MaxTokens.into()),
+            Stop(StopReason::MaxTokens) => {
+                self.last_completion_truncated = true;
+                return Err(CompletionError::MaxTokens.into());
+            }
             Stop(StopReason::ToolUse | StopReason::EndTurn) => {}
             Started | Queued { .. } | Compaction(_) => {}
         }
@@ -4625,15 +4644,18 @@ impl Thread {
             };
 
             if !message.tool_results.contains_key(&tool_use.id) {
+                let cancel_message = if self.last_completion_truncated {
+                    TOOL_TRUNCATED_MESSAGE
+                } else {
+                    TOOL_CANCELED_MESSAGE
+                };
                 message.tool_results.insert(
                     tool_use.id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name.clone(),
                         is_error: true,
-                        content: vec![LanguageModelToolResultContent::Text(
-                            TOOL_CANCELED_MESSAGE.into(),
-                        )],
+                        content: vec![LanguageModelToolResultContent::Text(cancel_message.into())],
                         output: None,
                     },
                 );
@@ -6064,6 +6086,11 @@ impl<T: DeserializeOwned> ToolInput<T> {
                 }
             }
         }
+        log::warn!(
+            "ToolInput::recv() returned no final input — the sender was dropped \
+             before sending Full. This usually means the LLM stream ended \
+             (MaxTokens, error, or refusal) before the tool_use input was complete."
+        );
         Err(anyhow!("tool input was not fully received"))
     }
 

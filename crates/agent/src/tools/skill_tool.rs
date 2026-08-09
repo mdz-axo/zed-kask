@@ -220,10 +220,7 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// `BundleExecutionResult.bundle_manifest` (the
     /// `step_3_result.candidates[0].composite_manifest` from the bundler
     /// cascade). Returns the bundle's `id` on success.
-    async fn save_bundle(
-        &self,
-        bundle_manifest: serde_json::Value,
-    ) -> Result<String, String>;
+    async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String>;
 
     /// Re-compose a bundle via goal-delta-driven evolution. Runs the
     /// `skill-bundler/bundler-evolve` template with the supplied
@@ -1140,10 +1137,7 @@ mod tests {
             self.known.contains(skill_name)
         }
 
-        async fn save_bundle(
-            &self,
-            bundle_manifest: serde_json::Value,
-        ) -> Result<String, String> {
+        async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String> {
             // The stub doesn't write to disk — it echoes back the bundle's id
             // (or a synthetic one if the manifest lacks an id) so tests can
             // assert the Save action's return shape.

@@ -604,7 +604,9 @@ impl MemoryStore {
         perspective: WebID,
         limit: usize,
     ) -> Result<Vec<HMem>, MemoryStoreError> {
-        let mut h_mems = self.h_mem_store.query_episodic_by_perspective(&perspective)?;
+        let mut h_mems = self
+            .h_mem_store
+            .query_episodic_by_perspective(&perspective)?;
         h_mems.sort_by(|a, b| {
             let a_effective = a
                 .confidence
@@ -677,7 +679,6 @@ impl MemoryStore {
             .h_mem_store
             .query_semantic_below_confidence(threshold, limit)?)
     }
-
 }
 
 #[cfg(test)]

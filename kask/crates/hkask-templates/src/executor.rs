@@ -45,7 +45,7 @@
 //! `InferencePort` (for select/populate) and `ToolPort` (for execute),
 //! both of which are already dependencies of this crate.
 
-use crate::budget::{BudgetTracker, BudgetSnapshot};
+use crate::budget::{BudgetSnapshot, BudgetTracker};
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleManifestStep;
 use crate::compute::dispatch_compute;
@@ -3066,5 +3066,222 @@ convergence:
             "execute_select must charge cost_usd ($0.50) to the rJoule budget, got {} rJoule",
             snap.rjoule_used
         );
+    }
+
+    /// Fix #1 regression: the `loop` arm must bind `input_mapping` BEFORE
+    /// `push_cycle_from_context` reads `convergence_signal` from the context.
+    /// The prior ordering (push → bind) read a one-iteration-stale signal —
+    /// the first iteration pushed NaN (no binding yet) and subsequent
+    /// iterations pushed the *previous* iteration's signal. With the fix,
+    /// the first iteration pushes the current signal.
+    ///
+    /// This manifest uses a Kata-enabled `gap` convergence mode with
+    /// `min_iterations: 0`. Step 1 (compute) produces 0.0 (below `gap_epsilon`).
+    /// Step 2 (loop) binds `convergence_signal: "{{ step_1_result }}"` and
+    /// loops back to step 1. With the fix, the signal history is `[0.0]` and
+    /// the cascade converges at iteration 1. Without the fix, the history is
+    /// `[NaN, 0.0]` and convergence is delayed to iteration 2.
+    #[tokio::test]
+    async fn loop_arm_binds_convergence_signal_before_push() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+
+        let manifest_yaml = r#"
+manifest:
+  id: loop-signal-ordering-test
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: produce a convergence signal of 0.0
+    input_mapping:
+      form: "0"
+  - ordinal: 2
+    action: loop
+    description: bind convergence_signal and loop back to step 1
+    input_mapping:
+      loop_target: "1"
+      convergence_signal: "{{ step_1_result }}"
+convergence:
+  max_iterations: 5
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+  convergence_mode: gap
+  target_artifacts_field: current_artifacts
+  current_artifacts_field: current_artifacts
+  target_procedure_field: current_procedure
+  current_procedure_field: current_procedure
+  gap_epsilon: 0.05
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  brier_window: 3
+  brier_threshold: 0.15
+gas:
+  cap: 100000
+  cost_per_iteration: 1
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 0
+  alert_threshold: 0.8
+  hard_limit: true
+error_handling:
+  on_capability_denied: escalate
+ledger:
+  span_namespace: reg.skill.test
+  telemetry_namespace: hkask.template.test
+audit:
+  enabled: false
+"#;
+        let manifest =
+            load_manifest_from_yaml(manifest_yaml).expect("test manifest YAML must parse");
+
+        let result = executor
+            .execute_manifest(&manifest, HashMap::new())
+            .await
+            .expect("Kata gap cascade with signal 0.0 should converge");
+
+        let convergence = result
+            .get("_convergence")
+            .expect("_convergence key present");
+        let iterations = convergence
+            .get("iterations_completed")
+            .and_then(|v| v.as_u64())
+            .expect("iterations_completed present");
+        assert_eq!(
+            iterations, 1,
+            "with the fix, the signal is bound before push, so the gap check \
+             sees [0.0] and converges at iteration 1. Without the fix, the first \
+             push is NaN (no binding yet), delaying convergence to iteration 2."
+        );
+
+        // The signal history must contain no NaN — every reading is the
+        // current iteration's bound value, not a stale one.
+        let signal_history = convergence
+            .get("signal_history")
+            .and_then(|v| v.as_array())
+            .expect("signal_history present");
+        assert_eq!(
+            signal_history.len(),
+            1,
+            "converged at iteration 1 → exactly one signal reading"
+        );
+        let signal = signal_history[0].as_f64().expect("signal is a number");
+        assert!(
+            signal.is_finite(),
+            "the first signal reading must be finite (0.0), not NaN — \
+             NaN indicates the push happened before the input_mapping binding"
+        );
+        assert!(
+            (signal - 0.0).abs() < 1e-9,
+            "signal must be 0.0, got {signal}"
+        );
+    }
+
+    /// Fix #2 regression: `execute_flowdef` must report the sub-cascade's ACTUAL
+    /// gas/rjoule usage (from the returned `BudgetSnapshot`), not the capped cap.
+    /// The prior implementation reported `sub_gas_cap` as consumed — conservative
+    /// but distorted the parent's gas feedback loop: a sub-cascade that converged
+    /// in 1 iteration using 1 gas of a 1000 cap still deducted 1000 from the
+    /// parent, which could prematurely exhaust the parent's budget.
+    ///
+    /// This test constructs a sub-manifest with `gas.cap: 1000` and
+    /// `cost_per_iteration: 1` that runs a single `render` step (no inference,
+    /// no gas charge — `render` doesn't call `charge_iteration`). The sub-cascade
+    /// uses 0 gas. The parent has `gas.cap: 100`. The parent's `gas_used` after
+    /// the flowdef step must be 0 (actual usage), not 1000 (the capped cap, which
+    /// would exceed the parent's own cap and be a clear bug) or 100 (clamped to
+    /// parent remaining).
+    #[tokio::test]
+    async fn flowdef_reports_actual_gas_usage_not_capped_cap() {
+        let executor = ManifestExecutor::new(
+            Arc::new(StubInference),
+            Arc::new(StubToolPort { discover: vec![] }),
+            LLMParameters::default(),
+        );
+
+        let tmp = std::env::temp_dir().join("hkask-flowdef-gas-actual-test");
+        std::fs::create_dir_all(&tmp).expect("create temp template dir");
+        // Sub-manifest: a single render step. `render` does not call
+        // `budget.charge_iteration` (only `select` does), so gas_used stays 0.
+        // The sub-manifest declares gas.cap: 1000 — the prior code reported
+        // this full cap as consumed, not the actual 0.
+        std::fs::write(
+            tmp.join("gas-actual-sub.yaml"),
+            r#"
+manifest:
+  id: gas-actual-sub
+steps:
+  - ordinal: 1
+    action: render
+    description: produce a result without inference (no gas charge)
+    template_ref: "sub-cascade output"
+convergence:
+  max_iterations: 1
+  min_iterations: 0
+  on_not_reached: abort
+  threshold: 0.0
+  convergence_field: composite
+gas:
+  cap: 1000
+  cost_per_iteration: 1
+  alert_threshold: 0.8
+  hard_limit: true
+rjoule:
+  cap: 0
+  alert_threshold: 0.8
+  hard_limit: true
+error_handling:
+  on_capability_denied: escalate
+ledger:
+  span_namespace: reg.skill.test
+  telemetry_namespace: hkask.template.test
+audit:
+  enabled: false
+"#,
+        )
+        .expect("write sub-manifest");
+        let executor = executor.with_template_base_path(tmp.clone());
+
+        let step = BundleManifestStep {
+            ordinal: 7,
+            action: "flowdef".to_string(),
+            description: "run sub-cascade that uses 0 gas".to_string(),
+            renderer: None,
+            template_ref: Some("gas-actual-sub".to_string()),
+            mcp: None,
+            compute_ref: None,
+            gas_cap: 0,
+            timeout_seconds: 0,
+            input_mapping: None,
+            output_schema: None,
+            phase: crate::bundle::cascade::CascadePhase::default(),
+            condition: None,
+            branching: None,
+            branching_field: None,
+            profile: None,
+        };
+
+        // Parent has gas.cap: 100. The sub-cascade's cap (1000) is capped to
+        // the parent's remaining (100). The prior code reported 100 (the
+        // capped cap) as consumed; the fix reports 0 (actual usage).
+        let (_parent_context, gas_consumed, _rjoule_consumed) = executor
+            .execute_flowdef(&step, HashMap::new(), 100, 0.0, 0)
+            .await
+            .expect("sub-cascade should succeed");
+
+        assert_eq!(
+            gas_consumed, 0,
+            "execute_flowdef must report the sub-cascade's actual gas usage (0), \
+             not the capped cap (100). The sub-cascade's only step is `render`, \
+             which does not call `budget.charge_iteration`."
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

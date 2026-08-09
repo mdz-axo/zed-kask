@@ -92,7 +92,7 @@ inputs:
   - name: task
     type: string
     required: false
-    description: 'The user\'s task description (injected per .rules skill-cascade-context rule).'
+    description: "The user's task description (injected per .rules skill-cascade-context rule)."
 
 steps:
   # ─── STEP 1: CLASSIFY ───

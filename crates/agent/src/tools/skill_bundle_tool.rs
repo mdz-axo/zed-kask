@@ -163,9 +163,12 @@ impl AgentTool for SkillBundleTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
-            let input = input.recv().await.map_err(|e| SkillBundleToolOutput::Error {
-                error: e.to_string(),
-            })?;
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| SkillBundleToolOutput::Error {
+                    error: e.to_string(),
+                })?;
 
             // Validate: at least 3 skills required for the bundler to engage.
             // The heuristic gate from the spec (criterion 1): ≥3 peer-level

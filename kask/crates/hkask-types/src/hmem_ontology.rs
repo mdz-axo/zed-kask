@@ -275,6 +275,9 @@ mod tests {
         // DC fields and open-world tags retained
         assert_eq!(semantic.dc_type, "pko:StepExecution");
         assert_eq!(semantic.dc_source, "session-1");
-        assert_eq!(semantic.ontology_concepts("fibo"), ["competitive advantage"]);
+        assert_eq!(
+            semantic.ontology_concepts("fibo"),
+            ["competitive advantage"]
+        );
     }
 }

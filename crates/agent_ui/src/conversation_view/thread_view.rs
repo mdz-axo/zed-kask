@@ -10211,8 +10211,7 @@ impl ThreadView {
         let skills_label: SharedString =
             format!("Composed skills: {}", composed_skill_names.join(", ")).into();
 
-        let save_button_id =
-            SharedString::from(format!("skill-bundle-save-{:?}", tool_call.id));
+        let save_button_id = SharedString::from(format!("skill-bundle-save-{:?}", tool_call.id));
         let refine_button_id =
             SharedString::from(format!("skill-bundle-refine-{:?}", tool_call.id));
         let discard_button_id =
@@ -10283,10 +10282,7 @@ impl ThreadView {
                                 .on_click(cx.listener({
                                     let tool_call_id = tool_call_id_for_refine.clone();
                                     move |this, _, _window, cx| {
-                                        this.refine_skill_bundle(
-                                            tool_call_id.clone(),
-                                            cx,
-                                        );
+                                        this.refine_skill_bundle(tool_call_id.clone(), cx);
                                     }
                                 })),
                         )
@@ -10328,7 +10324,8 @@ impl ThreadView {
             );
             return;
         };
-        self.in_flight_skill_bundle_calls.insert(tool_call_id.clone());
+        self.in_flight_skill_bundle_calls
+            .insert(tool_call_id.clone());
         cx.notify();
 
         let task = cx.spawn(async move |_this, _cx| {
@@ -10345,7 +10342,8 @@ impl ThreadView {
                 this.in_flight_skill_bundle_calls.remove(&tool_call_id);
                 match result {
                     Ok(id) => {
-                        this.resolved_skill_bundle_calls.insert(tool_call_id.clone());
+                        this.resolved_skill_bundle_calls
+                            .insert(tool_call_id.clone());
                         this.show_skill_bundle_status(
                             tool_call_id,
                             format!("Saved bundle '{id}' to registry."),
@@ -10375,11 +10373,7 @@ impl ThreadView {
     /// achievement) and the `convergence_failure_reason` to a generic
     /// operator-initiated refinement message — a future enhancement could
     /// surface an input for the operator to supply these.
-    fn refine_skill_bundle(
-        &mut self,
-        tool_call_id: acp::ToolCallId,
-        cx: &mut Context<Self>,
-    ) {
+    fn refine_skill_bundle(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
         let Some(executor) = agent::manifest_executor_cloned() else {
             self.show_skill_bundle_status(
                 tool_call_id.clone(),
@@ -10413,8 +10407,7 @@ impl ThreadView {
             return;
         };
 
-        let Ok(parsed) = serde_json::from_value::<agent::SkillBundleToolOutput>(raw_output)
-        else {
+        let Ok(parsed) = serde_json::from_value::<agent::SkillBundleToolOutput>(raw_output) else {
             self.show_skill_bundle_status(
                 tool_call_id,
                 "Could not parse the bundle's prior output.",
@@ -10429,15 +10422,12 @@ impl ThreadView {
             ..
         } = parsed
         else {
-            self.show_skill_bundle_status(
-                tool_call_id,
-                "Cannot refine an errored bundle.",
-                cx,
-            );
+            self.show_skill_bundle_status(tool_call_id, "Cannot refine an errored bundle.", cx);
             return;
         };
 
-        self.in_flight_skill_bundle_calls.insert(tool_call_id.clone());
+        self.in_flight_skill_bundle_calls
+            .insert(tool_call_id.clone());
         cx.notify();
 
         // Derive goal_delta from the composition score when available so a
@@ -10470,11 +10460,13 @@ impl ThreadView {
                 this.in_flight_skill_bundle_calls.remove(&tool_call_id);
                 match result {
                     Ok(refine_result) => {
-                        this.resolved_skill_bundle_calls.insert(tool_call_id.clone());
+                        this.resolved_skill_bundle_calls
+                            .insert(tool_call_id.clone());
                         // Inject the evolved output as a new assistant message
                         // so the user can read the refined result. Without this,
                         // the refine action produces output that goes nowhere.
-                        let header = "**Refined bundle output** (goal-delta-driven recomposition):\n\n";
+                        let header =
+                            "**Refined bundle output** (goal-delta-driven recomposition):\n\n";
                         let text = format!("{header}{}", refine_result.output);
                         thread_for_inject.update(cx, |thread, cx| {
                             thread.push_assistant_content_block(

@@ -607,10 +607,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                         .collect(),
                 ),
             );
-            ctx.insert(
-                "user_intent".to_string(),
-                Value::String(task.to_string()),
-            );
+            ctx.insert("user_intent".to_string(), Value::String(task.to_string()));
             ctx
         };
 
@@ -641,9 +638,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // (the lisp.eval step). This is the falsifier anchor — if lisp.eval
         // were removed, this would be absent and the UI's score display
         // would degrade to "unavailable".
-        let composition_score = bundler_result
-            .get("step_5_result")
-            .and_then(|v| v.as_f64());
+        let composition_score = bundler_result.get("step_5_result").and_then(|v| v.as_f64());
 
         // Extract the goal-extract step's output (step_1_result) so the
         // `Refine` action can pass it to `bundler-evolve` as `goal_context`.
@@ -704,10 +699,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         })
     }
 
-    async fn save_bundle(
-        &self,
-        bundle_manifest: serde_json::Value,
-    ) -> Result<String, String> {
+    async fn save_bundle(&self, bundle_manifest: serde_json::Value) -> Result<String, String> {
         // The composed manifest JSON from the bundler cascade is a flat
         // structure (id, name, steps, ... at the top level). The on-disk
         // `ManifestFile` format wraps the header fields under a `manifest:`
@@ -731,7 +723,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // (e.g. if the model produces `id: "grill-me"`, this becomes
         // `bundle-grill-me` and won't overwrite `grill-me.yaml`).
         let namespaced_id = if raw_id.starts_with("bundle-") {
-            raw_id.clone()
+            raw_id
         } else {
             format!("bundle-{raw_id}")
         };
@@ -751,12 +743,8 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             ));
         }
 
-        std::fs::write(&path, yaml_string.as_bytes()).map_err(|e| {
-            format!(
-                "Failed to write bundle manifest to {}: {e}",
-                path.display()
-            )
-        })?;
+        std::fs::write(&path, yaml_string.as_bytes())
+            .map_err(|e| format!("Failed to write bundle manifest to {}: {e}", path.display()))?;
 
         tracing::info!(
             target: "reg.skill.bundle_save",
@@ -787,20 +775,11 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 
         let evolve_context = {
             let mut ctx = HashMap::new();
-            ctx.insert(
-                "bundle_name".to_string(),
-                Value::String(bundle_name),
-            );
-            ctx.insert(
-                "current_manifest".to_string(),
-                bundle_manifest,
-            );
+            ctx.insert("bundle_name".to_string(), Value::String(bundle_name));
+            ctx.insert("current_manifest".to_string(), bundle_manifest);
             ctx.insert("changed_skills".to_string(), Value::Array(vec![]));
             ctx.insert("goal_context".to_string(), goal_context);
-            ctx.insert(
-                "goal_delta".to_string(),
-                serde_json::json!(goal_delta),
-            );
+            ctx.insert("goal_delta".to_string(), serde_json::json!(goal_delta));
             ctx.insert(
                 "convergence_failure_reason".to_string(),
                 Value::String(convergence_failure_reason),
@@ -1045,8 +1024,14 @@ mod tests {
 
         // Header fields are under `manifest:`.
         let manifest_header = reshaped.get("manifest").expect("manifest key present");
-        assert_eq!(manifest_header.get("id").and_then(|v| v.as_str()), Some("my-bundle"));
-        assert_eq!(manifest_header.get("name").and_then(|v| v.as_str()), Some("My Bundle"));
+        assert_eq!(
+            manifest_header.get("id").and_then(|v| v.as_str()),
+            Some("my-bundle")
+        );
+        assert_eq!(
+            manifest_header.get("name").and_then(|v| v.as_str()),
+            Some("My Bundle")
+        );
         assert_eq!(
             manifest_header.get("description").and_then(|v| v.as_str()),
             Some("A test bundle")
@@ -1138,8 +1123,8 @@ mod tests {
         });
 
         let reshaped = reshape_composite_to_manifest_file(&composite);
-        let yaml_string = serde_yaml_neo::to_string(&reshaped)
-            .expect("reshape output must serialize to YAML");
+        let yaml_string =
+            serde_yaml_neo::to_string(&reshaped).expect("reshape output must serialize to YAML");
 
         // The critical assertion: `load_manifest_from_yaml` must accept the
         // YAML without error. If the key lists in `reshape_composite_to_manifest_file`
@@ -1185,8 +1170,8 @@ steps:
       convergence_failure_reason: \"{{ convergence_failure_reason }}\"
 ";
 
-        let manifest = load_manifest_from_yaml(refine_manifest_yaml)
-            .expect("refine manifest YAML must parse");
+        let manifest =
+            load_manifest_from_yaml(refine_manifest_yaml).expect("refine manifest YAML must parse");
         assert_eq!(manifest.id, "refine-bundle");
         assert_eq!(manifest.steps.len(), 1);
         assert_eq!(manifest.steps[0].ordinal, 1);
@@ -1196,7 +1181,9 @@ steps:
         );
         assert_eq!(manifest.steps[0].renderer.as_deref(), Some("minijinja"));
         // The input_mapping must bind all 6 evolve template inputs.
-        let mapping = manifest.steps[0].input_mapping.as_ref()
+        let mapping = manifest.steps[0]
+            .input_mapping
+            .as_ref()
             .expect("input_mapping present");
         for key in [
             "bundle_name",

@@ -4732,6 +4732,82 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
 }
 
 #[gpui::test]
+async fn test_non_streaming_tool_partial_input_then_max_tokens_gets_canceled_message(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Send a partial tool use (is_input_complete = false) for a non-streaming
+    // tool (EchoTool does not override supports_input_streaming). The handler
+    // returns None — no tool starts, but the partial tool_use is stored in the
+    // pending message.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: EchoTool::NAME.into(),
+        raw_input: r#"{"text": "partia"#.into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({"text": "partia"})),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use.clone()));
+    cx.run_until_parked();
+
+    // End the stream with MaxTokens WITHOUT ever sending is_input_complete = true.
+    // This simulates the model hitting the output token limit mid-tool-call.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+        StopReason::MaxTokens,
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // MaxTokens is not retryable (retry_strategy_for returns None for it),
+    // so the turn should end immediately.
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "MaxTokens should end the turn without retrying",
+        );
+    });
+
+    // The partial tool_use should have been flushed with a tool result.
+    // Currently this is TOOL_CANCELED_MESSAGE ("Tool canceled by user"),
+    // which is misleading — the user didn't cancel; the stream truncated.
+    // This test pins the current behavior so a future fix that distinguishes
+    // stream-truncation from user-cancellation must update this assertion.
+    thread.update(cx, |thread, _cx| {
+        let message = thread.last_received_or_pending_message().unwrap();
+        let agent_message = message.as_agent_message().unwrap();
+
+        let tool_result = agent_message
+            .tool_results
+            .get(&tool_use.id)
+            .expect("partial tool_use should have a flushed tool result");
+        assert!(
+            tool_result.is_error,
+            "the flushed result for a stream-truncated partial tool_use should be an error",
+        );
+        let content_text = tool_result.text_contents();
+        assert_eq!(
+            content_text, "Tool call was interrupted because the model's output reached the token limit before completing the tool input. Try again with a shorter or simpler tool call.",
+            "MaxTokens-truncated partial tool_use should get the truncation-specific message, \
+             not the generic TOOL_CANCELED_MESSAGE (which means the user stopped the turn).",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
     cx: &mut TestAppContext,
 ) {
