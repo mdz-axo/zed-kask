@@ -1,3 +1,14 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    exclude_tests: boolean
+    min_line_count: integer
+  output:
+    query: string
+energy_cap: 2048
+visibility: Public
+---
 {# graph-audit/analysis-dead-code.j2 — Template-driven dead code detection query.
    Override this template to customize dead code filtering.
 

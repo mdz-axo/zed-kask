@@ -1,3 +1,15 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    signal_parameter: string
+    authenticated_host: string
+  output:
+    signal_sources: array
+    regressions_checked: array
+energy_cap: 4096
+visibility: Public
+---
 {# goal: Discover runtime signal sources (reg.* canonical spans, reg.guard.* violations, reg.outcome events) within the deployed userpod host (P4 runtime boundary — distinct from supply-chain-sentinel's manifest boundary). Read security/regressions/ for existing surface: runtime checks. Return concrete signal_sources (verifiable span targets only — no synthetic signals). Emit reg.runtime.select span (P9 — namespace registered in CANONICAL_NAMESPACES). Authenticated host mandatory (P12). Signal parameter: guard | regulation | tool | inference | all. #}
 {% set signal_types = [
   {id: 'guard', targets: ['reg.guard.input', 'reg.guard.output', 'reg.guard.canary', 'reg.guard.runtime_policy'], source: 'hkask-guard pipeline + hkask-templates executor'},

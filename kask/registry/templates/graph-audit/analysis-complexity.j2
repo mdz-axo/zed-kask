@@ -1,3 +1,14 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    min_cyclomatic: integer
+    min_cognitive: integer
+  output:
+    query: string
+energy_cap: 2048
+visibility: Public
+---
 {# graph-audit/analysis-complexity.j2 — Template-driven complexity analysis query.
    Override to customize complexity thresholds.
 

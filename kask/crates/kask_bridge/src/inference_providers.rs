@@ -121,6 +121,11 @@ pub static DATA_SERVICE_CREDENTIALS: &[(&str, &str)] = &[
     ("NEBIUS_PROJECT_ID", "nebius_project_id"),
     ("NEBIUS_SUBNET_ID", "nebius_subnet_id"),
     ("HF_TOKEN", "hf_token"),
+    // FRED (Federal Reserve Economic Data) — read by the prediction-markets
+    // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
+    // reference-level fetches. Optional (curated static fallback when absent),
+    // but an operator who sets it in `.env` expects it to reach the server.
+    ("HKASK_FRED_API_KEY", "fred"),
 ];
 
 /// Build the `(env_var, credential_url)` pairs for all credentials that
@@ -402,11 +407,6 @@ pub fn delete_data_service_api_key(
     })
 }
 
-/// Check whether a data service API key is available (env var only).
-pub fn has_data_service_api_key(env_var: &str) -> bool {
-    std::env::var(env_var).is_ok()
-}
-
 /// Mirror inference-provider API keys from the process environment into zed's
 /// keychain so MCP server child processes (media, corpus, etc.) can read them.
 ///
@@ -425,11 +425,14 @@ pub fn has_data_service_api_key(env_var: &str) -> bool {
 /// whose env var is set and non-empty, this writes the key only to
 /// `kask://credentials/<credential_key>` (data services have no
 /// OpenAI-compatible `api_url`), identical to `write_data_service_api_key`.
-/// It does NOT overwrite a keychain entry that already matches (operators who
-/// set a different key via the settings UI get their UI value preserved on
-/// the next restart only if the env var is absent — when both exist, the env
-/// var wins, matching the main-process precedence rule in
-/// `ApiKeyState::load_if_needed`).
+/// It always writes (overwrites any existing keychain entry with the env
+/// value). The env var takes precedence on the next restart because the
+/// main process reads `std::env::var` first; the keychain write ensures MCP
+/// servers (which read the keychain via `mcp_env_with_credentials`) see the
+/// key even when the env var is later removed from `.env`. When the env var
+/// is absent, no mirror happens, so a key the operator set via the settings
+/// UI is preserved — matching the main-process precedence rule in
+/// `ApiKeyState::load_if_needed` (shell env > .env file > keychain).
 ///
 /// Per the `.rules` trap "Process-global hooks set at runtime need a
 /// startup-failure signal":
@@ -477,13 +480,26 @@ pub fn mirror_env_keys_to_keychain(
                              The main process will use the env var, but zed's \
                              OpenAI-compatible provider (which reads the keychain \
                              when the env var is absent on a future restart) will \
-                             not see this key."
+                             not see this key. Falling through to the \
+                             credential_url write so MCP servers still receive it."
                         );
-                        continue;
+                        // Do NOT `continue` — the credential_url write is an
+                        // independent keychain entry (different URL) and MCP
+                        // servers read from it, not from api_url. Skipping it
+                        // would suppress the MCP-server key on an unrelated
+                        // OpenAI-compatible-provider write failure.
                     }
                 }
             }
             // Write under the kask credential URL (for MCP env injection).
+            // The remediation path differs by category: inference-provider
+            // keys live under "Settings → Kask → Inference Providers";
+            // data-service keys (api_url empty) live under "Data Services".
+            let remediation = if api_url.is_empty() {
+                "Settings → Kask → Data Services"
+            } else {
+                "Settings → Kask → Inference Providers"
+            };
             match credentials_provider
                 .write_credentials(&credential_url, "kask", key.as_bytes(), cx)
                 .await
@@ -505,8 +521,7 @@ pub fn mirror_env_keys_to_keychain(
                         "Failed to mirror env key to keychain at credential_url. \
                          The main process will use the env var, but MCP servers \
                          that read from the keychain will not see this key. \
-                         Remediation: re-enter the key in \
-                         Settings → Kask → Inference Providers."
+                         Remediation: re-enter the key in {remediation}."
                     );
                 }
             }
@@ -552,9 +567,7 @@ fn collect_env_keys_for_mirror() -> Vec<(String, String, String, String)> {
     // matches `write_data_service_api_key` so MCP servers reading via
     // `credential_urls_for_mcp` see the mirrored key.
     for (env_var, credential_key) in DATA_SERVICE_CREDENTIALS {
-        if let Ok(key) = std::env::var(env_var)
-            && !key.is_empty()
-        {
+        if let Some(key) = std::env::var(env_var).ok().filter(|k| !k.is_empty()) {
             out.push((
                 env_var.to_string(),
                 String::new(),
@@ -731,12 +744,13 @@ mod tests {
             std::env::set_var("HKASK_EODHD_API_KEY", "eodhd-test-key");
             std::env::set_var("HF_TOKEN", "hf-test-token");
             std::env::set_var("NEBIUS_PROJECT_ID", "nebius-test-project");
+            std::env::set_var("HKASK_FRED_API_KEY", "fred-test-key");
         }
         let collected = collect_env_keys_for_mirror();
         assert_eq!(
             collected.len(),
-            4,
-            "four data-service env vars set → four entries collected, got {collected:?}"
+            5,
+            "five data-service env vars set → five entries collected, got {collected:?}"
         );
         // Every data-service entry must have an empty api_url (no
         // OpenAI-compatible provider to write under).
@@ -759,11 +773,59 @@ mod tests {
             .expect("HF_TOKEN entry should be present");
         assert_eq!(hf_entry.2, "kask://credentials/hf_token", "credential_url");
         assert_eq!(hf_entry.3, "hf-test-token", "key");
+        let fred_entry = collected
+            .iter()
+            .find(|(env_var, _, _, _)| env_var == "HKASK_FRED_API_KEY")
+            .expect("HKASK_FRED_API_KEY entry should be present");
+        assert_eq!(fred_entry.2, "kask://credentials/fred", "credential_url");
+        assert_eq!(fred_entry.3, "fred-test-key", "key");
         unsafe {
             std::env::remove_var("RUNPOD_API_KEY");
             std::env::remove_var("HKASK_EODHD_API_KEY");
             std::env::remove_var("HF_TOKEN");
             std::env::remove_var("NEBIUS_PROJECT_ID");
+            std::env::remove_var("HKASK_FRED_API_KEY");
+        }
+    }
+
+    /// Coverage governance: every env var declared in a built-in MCP server's
+    /// `credentials` allowlist must be in `DATA_SERVICE_CREDENTIALS` or
+    /// `INFERENCE_PROVIDERS`. Without this, an operator who sets the key only
+    /// in `.env` gets a working main process (env var read directly) but the
+    /// MCP server silently fails to receive it via `mcp_env_with_credentials`
+    /// (which reads the keychain, populated by the mirror) — the exact failure
+    /// mode `mirror_env_keys_to_keychain` exists to prevent. This test makes
+    /// the gap a test-time error rather than a silent runtime failure.
+    ///
+    /// Per `.rules` "Advertised invariants need enforcement points": the
+    /// `mcp_env_with_credentials` doc advertises that it injects credentials
+    /// from the keychain; this test enforces that every credential an MCP
+    /// server can declare is reachable via that path.
+    #[test]
+    fn every_mcp_credential_allowlist_entry_is_in_credential_registry() {
+        for server in crate::mcp_servers::BUILT_IN_MCP_SERVERS {
+            let Some(allowlist) = server.credentials else {
+                // `None` means "no filtering" — the server receives all
+                // credentials, so coverage is trivially satisfied.
+                continue;
+            };
+            for env_var in allowlist {
+                let in_data_services = DATA_SERVICE_CREDENTIALS
+                    .iter()
+                    .any(|(ev, _)| *ev == *env_var);
+                let in_inference = INFERENCE_PROVIDERS
+                    .iter()
+                    .any(|p| p.env_var == *env_var);
+                assert!(
+                    in_data_services || in_inference,
+                    "MCP server `{}` credential allowlist contains `{env_var}` \
+                     but it is not in DATA_SERVICE_CREDENTIALS or \
+                     INFERENCE_PROVIDERS. Add it to DATA_SERVICE_CREDENTIALS \
+                     so it is mirrored from .env and injected from the \
+                     keychain via credential_urls_for_mcp.",
+                    server.id,
+                );
+            }
         }
     }
 }

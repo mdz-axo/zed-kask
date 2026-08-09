@@ -1,3 +1,18 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    finding_type: string
+    symbol_name: string
+    kind: string
+    signature: string
+    file: string
+    line: integer
+  output:
+    suggestion: string
+energy_cap: 2048
+visibility: Public
+---
 {# graph-audit/fix-suggestion.j2 — Generate fix suggestions for analysis findings.
    Rendered per-finding, sent to inference router for suggestions.
 

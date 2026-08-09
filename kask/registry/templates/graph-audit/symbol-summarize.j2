@@ -1,3 +1,17 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    kind: string
+    name: string
+    signature: string
+    doc: string|null
+    file: string
+  output:
+    summary: string
+energy_cap: 2048
+visibility: Public
+---
 {# graph-audit/symbol-summarize.j2 — Generate one-sentence summaries of code symbols using the inference router.
    Rendered per-symbol, sent to a cheap model for summarization.
 
