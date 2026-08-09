@@ -154,6 +154,15 @@ impl AccessControl {
     /// Convert to semantic access control: strip perspective, set visibility to Shared.
     /// Convert to semantic access (strip perspective, set Shared).
     ///
+    /// **Deprecated discriminator.** The episodic/semantic distinction is now
+    /// carried by the `HMemOntology` blob (P5.4 dual-axis anchoring): the
+    /// intended flow is chat stream → chunks → each chunk tagged with both the
+    /// best-fit state axis (Dublin Core) and the best-fit process axis (PKO),
+    /// so the ontology blob — not `perspective` — is the discriminator. This
+    /// method still strips `perspective` and sets `Shared` for backward
+    /// compatibility with the consolidator's promotion path, which has not
+    /// yet been migrated to the ontology blob.
+    ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// post: returns AccessControl with Shared visibility, no perspective
     pub fn to_semantic(&self) -> Self {
@@ -179,6 +188,12 @@ impl AccessControl {
     /// Is this an episodic (perspective-bound) access control?
     /// Check if this is episodic (has perspective).
     ///
+    /// **Deprecated discriminator.** The episodic/semantic distinction is now
+    /// carried by the `HMemOntology` blob (P5.4 dual-axis anchoring). This
+    /// predicate still checks `perspective.is_some()` for backward compatibility
+    /// with the consolidator's `perspective IS NULL` SQL path, which has not
+    /// yet been migrated to the ontology blob.
+    ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// post: returns true iff perspective is Some
     pub fn is_episodic(&self) -> bool {
@@ -187,6 +202,12 @@ impl AccessControl {
 
     /// Is this a semantic (shared, perspective-free) access control?
     /// Check if this is semantic (Shared, no perspective).
+    ///
+    /// **Deprecated discriminator.** See [`is_episodic`](Self::is_episodic) for
+    /// the ontology-blob replacement. This predicate still checks
+    /// `perspective.is_none() && visibility == Shared` for backward compatibility
+    /// with the consolidator's `perspective IS NULL` SQL path, which has not
+    /// yet been migrated to the ontology blob.
     ///
     /// expect: "System types preserve semantic identity and are provenance-aware"
     /// post: returns true iff visibility is Shared and perspective is None

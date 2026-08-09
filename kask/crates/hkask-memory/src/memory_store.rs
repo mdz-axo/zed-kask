@@ -1,12 +1,20 @@
 //! Unified memory store — one store for all h_mems, ontology-discriminated.
 //!
-//! The episodic/semantic distinction is now encoded in the `HMemOntology` blob
+//! The episodic/semantic distinction is encoded in the `HMemOntology` blob
 //! (P5.4 dual-axis anchoring), not in separate store structs. A semantic fact
 //! carries DC+BIBO anchoring (`dc_type`, `dc_subject`, `dc_source`) with no
 //! PKO procedure/step. An episodic experience carries PKO anchoring
 //! (`pko_procedure`, `pko_step`) with `dc_type = pko:StepExecution`. The
 //! ontology blob tells you which kind of memory this is — no separate struct
 //! needed.
+//!
+//! **Deprecated discriminator.** The legacy `perspective` field (Some =
+//! episodic, None = semantic) is retained for backward compatibility with the
+//! consolidator's `perspective IS NULL` SQL path but is deprecated as a
+//! semantic classifier. The intended flow is chat stream → chunks → each
+//! chunk tagged with both the best-fit state axis (Dublin Core) and the
+//! best-fit process axis (PKO), so the `HMemOntology` blob is the discriminator.
+//! See `HMem::is_episodic` / `HMem::is_semantic` deprecation notes.
 //!
 //! `MemoryStore` wraps `HMemStore` + `EmbeddingStore` and provides:
 //! - `store()` — accepts any h_mem (no visibility/perspective invariants; the
@@ -670,33 +678,6 @@ impl MemoryStore {
             .query_semantic_below_confidence(threshold, limit)?)
     }
 
-    // ── Text chunking (pure — no store access) ────────────────────────
-    //
-    // Kept as associated functions rather than moving callers to the free
-    // functions in `text_chunking`: the chunking step is always paired with a
-    // store write, so `MemoryStore::chunk_text` keeps the call site readable.
-
-    /// Chunk text into passages for embedding.
-    pub fn chunk_text(
-        text: &str,
-        entity_ref_prefix: &str,
-        min_words: usize,
-        max_words: usize,
-        sentence_boundary: &str,
-    ) -> Vec<(String, String)> {
-        crate::text_chunking::chunk_text(
-            text,
-            entity_ref_prefix,
-            min_words,
-            max_words,
-            sentence_boundary,
-        )
-    }
-
-    /// Strip Project Gutenberg headers and footers from text.
-    pub fn strip_gutenberg_headers(text: &str) -> String {
-        crate::text_chunking::strip_gutenberg_headers(text)
-    }
 }
 
 #[cfg(test)]

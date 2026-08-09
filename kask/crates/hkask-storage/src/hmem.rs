@@ -132,6 +132,18 @@ impl HMem {
     }
     /// Check if this is an episodic h_mem (has perspective).
     ///
+    /// **Deprecated discriminator.** The episodic/semantic distinction is now
+    /// carried by the `HMemOntology` blob (P5.4 dual-axis anchoring): an episodic
+    /// experience carries PKO anchoring (`pko_procedure`, `pko_step`) with
+    /// `dc_type = "pko:StepExecution"`; a semantic fact carries DC+BIBO
+    /// anchoring (`dc_type`, `dc_subject`, `dc_source`) with no PKO procedure.
+    /// The intended flow is: chat stream → chunks → each chunk tagged with
+    /// both the best-fit state axis (Dublin Core) and the best-fit process
+    /// axis (PKO), so the ontology blob — not `perspective` — is the
+    /// discriminator. This predicate still checks `perspective.is_some()` for
+    /// backward compatibility with the consolidator's `perspective IS NULL`
+    /// SQL path, which has not yet been migrated to the ontology blob.
+    ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P8\] Motivating: Semantic Grounding — predicate for episodic
     /// post: returns true iff perspective is Some
@@ -139,6 +151,12 @@ impl HMem {
         self.access.is_episodic()
     }
     /// Check if this is a semantic h_mem (public, no perspective).
+    ///
+    /// **Deprecated discriminator.** See [`is_episodic`](Self::is_episodic) for
+    /// the ontology-blob replacement. This predicate still checks
+    /// `perspective.is_none() && visibility == Shared` for backward compatibility
+    /// with the consolidator's `perspective IS NULL` SQL path, which has not
+    /// yet been migrated to the ontology blob.
     ///
     /// expect: "The system provides durable storage for h_mem data"
     /// \[P8\] Motivating: Semantic Grounding — predicate for semantic

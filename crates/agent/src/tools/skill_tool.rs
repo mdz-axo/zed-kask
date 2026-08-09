@@ -210,6 +210,41 @@ pub trait SkillManifestExecutor: Send + Sync {
         context: std::collections::HashMap<String, serde_json::Value>,
     ) -> Result<BundleExecutionResult, String>;
 
+    /// Persist a composed bundle manifest to the registry so it can be
+    /// re-invoked later by name. The bridge writes the manifest as YAML to
+    /// `registry_manifests_dir/<id>.yaml` — disk is the single source of
+    /// truth (D1), so a saved bundle is immediately discoverable by
+    /// `has_manifest` and executable via `execute_skill` on subsequent turns.
+    ///
+    /// `bundle_manifest` is the JSON value carried by
+    /// `BundleExecutionResult.bundle_manifest` (the
+    /// `step_3_result.candidates[0].composite_manifest` from the bundler
+    /// cascade). Returns the bundle's `id` on success.
+    async fn save_bundle(
+        &self,
+        bundle_manifest: serde_json::Value,
+    ) -> Result<String, String>;
+
+    /// Re-compose a bundle via goal-delta-driven evolution. Runs the
+    /// `skill-bundler/bundler-evolve` template with the supplied
+    /// `goal_delta` (0 = goal met, 1 = completely unmet) and
+    /// `convergence_failure_reason`, producing an evolved manifest, then
+    /// executes the evolved manifest's cascade. The `Refine` action in the
+    /// post-run UI calls this when the operator judges the first composition
+    /// insufficient and supplies a goal correction.
+    ///
+    /// `bundle_manifest` is the prior composition's manifest JSON (the
+    /// `current_manifest` input to `bundler-evolve`). `goal_context` is the
+    /// original goal-extract output (step_1_result). Returns the evolved
+    /// manifest and the executed output, mirroring `compose_and_execute_bundle`.
+    async fn refine_bundle(
+        &self,
+        bundle_manifest: serde_json::Value,
+        goal_context: serde_json::Value,
+        goal_delta: f64,
+        convergence_failure_reason: String,
+    ) -> Result<BundleExecutionResult, String>;
+
     /// Check whether a skill has an hKask manifest in the registry.
     ///
     /// Returns `true` if `kask/registry/manifests/<skill_name>.yaml` exists.
@@ -1096,6 +1131,48 @@ mod tests {
 
         fn has_manifest(&self, skill_name: &str) -> bool {
             self.known.contains(skill_name)
+        }
+
+        async fn save_bundle(
+            &self,
+            bundle_manifest: serde_json::Value,
+        ) -> Result<String, String> {
+            // The stub doesn't write to disk — it echoes back the bundle's id
+            // (or a synthetic one if the manifest lacks an id) so tests can
+            // assert the Save action's return shape.
+            let id = bundle_manifest
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(|| "stub-bundle".to_string());
+            Ok(id)
+        }
+
+        async fn refine_bundle(
+            &self,
+            bundle_manifest: serde_json::Value,
+            _goal_context: serde_json::Value,
+            _goal_delta: f64,
+            _convergence_failure_reason: String,
+        ) -> Result<BundleExecutionResult, String> {
+            // The stub doesn't run a real evolve cascade — it returns the
+            // prior manifest unchanged with the stub output so tests can
+            // exercise the Refine action's wiring without a live bundler.
+            let composed_skill_names = bundle_manifest
+                .get("skills")
+                .and_then(|s| s.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(BundleExecutionResult {
+                bundle_manifest,
+                output: self.output.clone(),
+                composition_score: Some(0.0),
+                composed_skill_names,
+            })
         }
     }
 

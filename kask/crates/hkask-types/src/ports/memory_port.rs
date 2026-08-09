@@ -1,37 +1,40 @@
 //! MemoryPort — ingestion boundary for thread-to-memory wiring (D6).
 //!
 //! When a zed-kask agent thread completes a turn, the conversation is offered
-//! to the memory system for episodic + semantic ingestion. This port is the
-//! hexagonal boundary: the `agent` crate calls it (via a global hook, same
-//! pattern as `set_manifest_executor`), and the bridge provides the
-//! implementation.
+//! to the memory system for ingestion. This port is the hexagonal boundary:
+//! the `agent` crate calls it (via a global hook, same pattern as
+//! `set_manifest_executor`), and the bridge provides the implementation.
 //!
-//! The `TurnRecord` schema matches hKask's `ChatTurn` type
-//! (`{"user_input": ..., "agent_response": ...}`) so when the full memory
-//! stack is wired, ingestion will be compatible with `ChatTurn::from_value()`.
+//! The `TurnRecord` schema (`{"user_input": ..., "agent_response": ...}`)
+//! is the write-side contract for the h_mem `value` field. The read side
+//! (recall) reads `h_mem.value` as a raw JSON value — there is no typed
+//! projection struct on the read side. The episodic/semantic distinction is
+//! carried by the `HMemOntology` blob on each h_mem (P5.4 dual-axis anchoring),
+//! not by a separate read-side type.
 //!
 //! The initial bridge implementation is a logging no-op — the full hKask
-//! memory stack (SQLCipher, episodic/semantic storage, consolidation) is
-//! deferred until the storage layer and WebID mapping are available in-process.
+//! memory stack (SQLCipher storage, consolidation) is deferred until the
+//! storage layer and WebID mapping are available in-process.
 
 use std::future::Future;
 use std::pin::Pin;
 
 /// A completed turn offered to the memory system for ingestion.
 ///
-/// Field names align with hKask's `ChatTurn` schema (`user_input`,
-/// `agent_response`) so the `serde_json::json!` serialization is compatible
-/// with `ChatTurn::from_value()`.
+/// Field names (`user_input`, `agent_response`) are the canonical schema for
+/// the h_mem `value` field written by [`TurnRecord::to_chat_turn_value`].
+/// The read side (recall) reads `h_mem.value` as a raw JSON value; there is
+/// no typed projection struct on the read side.
 #[derive(Debug, Clone)]
 pub struct TurnRecord {
     /// The thread/session identifier (zed's `SessionId` as a string).
     /// Maps to the h_mem `entity` field.
     pub thread_id: String,
     /// The user's input text for this turn.
-    /// Maps to `ChatTurn.user_input`.
+    /// Stored as the `user_input` field of the h_mem `value` JSON.
     pub user_input: String,
     /// The agent's response text for this turn.
-    /// Maps to `ChatTurn.agent_response`.
+    /// Stored as the `agent_response` field of the h_mem `value` JSON.
     pub agent_response: String,
     /// The model that produced the response (e.g., "claude-sonnet-4-20250514").
     pub model: String,
@@ -48,12 +51,14 @@ pub struct TurnRecord {
 }
 
 impl TurnRecord {
-    /// Serialize to the hKask `ChatTurn` JSON schema: `{"user_input": ..., "agent_response": ...}`.
+    /// Serialize to the h_mem `value` JSON schema: `{"user_input": ..., "agent_response": ...}`.
     ///
     /// This is the value stored in the h_mem `value` field. The `thread_id`
     /// becomes the h_mem `entity`, and `"chatted"` is the h_mem `attribute`.
     /// `agent_id` is included when set so the stored record identifies which
     /// agent produced the turn — useful for the curator's own memory recall.
+    /// The episodic/semantic distinction is carried by the `HMemOntology` blob
+    /// on the h_mem (P5.4), not by this value's shape.
     pub fn to_chat_turn_value(&self) -> serde_json::Value {
         let mut v = serde_json::json!({
             "user_input": self.user_input,

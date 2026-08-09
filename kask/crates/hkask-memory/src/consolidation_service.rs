@@ -12,9 +12,17 @@
 //! 4. Expired in the source (valid_to set, soft-deleted) to free storage budget
 //!
 //! This is a ONE-WAY operation: perspective-bound → shared. No reverse flow.
-//! The episodic/semantic distinction is encoded in the `HMemOntology` blob
-//! (P5.4), not in separate store structs — but the consolidation logic remains
-//! the same: promote first-person experiences to shared facts.
+//!
+//! **Deprecated discriminator.** The episodic/semantic distinction is now
+//! carried by the `HMemOntology` blob (P5.4 dual-axis anchoring): the intended
+//! flow is chat stream → chunks → each chunk tagged with both the best-fit
+//! state axis (Dublin Core) and the best-fit process axis (PKO), so the
+//! ontology blob — not `perspective` — is the discriminator. This consolidator
+//! still uses the `perspective IS NULL` SQL path for backward compatibility;
+//! it has not yet been migrated to the ontology blob. The `to_semantic`
+//! promotion strips `perspective` but does not rewrite the ontology blob — a
+//! migrated consolidator would re-tag the promoted chunk with a semantic
+//! ontology (DC+BIBO state axis) instead.
 //!
 //! Renamed from `ConsolidationService` to `MemoryConsolidator` to avoid the
 //! name collision with `hkask_mcp_corpus::services::consolidation::ConsolidationService`

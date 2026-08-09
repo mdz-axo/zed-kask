@@ -210,6 +210,33 @@ impl BridgeManifestExecutor {
             .map_err(|e| format!("Manifest execution task failed: {e}"))?
     }
 
+    /// Variant of `run_manifest_cascade` that takes a pre-loaded manifest
+    /// instead of resolving by name. Used by `refine_bundle` to run the
+    /// minimal single-step evolve manifest without a registry lookup.
+    async fn run_manifest_cascade_with_manifest(
+        &self,
+        manifest: &hkask_templates::BundleManifest,
+        mut context: HashMap<String, Value>,
+    ) -> Result<HashMap<String, Value>, String> {
+        self.inject_model_defaults(&mut context);
+
+        let executor = self.build_executor();
+
+        let join_handle = self.tokio_handle.spawn({
+            let manifest = manifest.clone();
+            async move {
+                executor
+                    .execute_manifest(&manifest, context)
+                    .await
+                    .map_err(|e| format!("Manifest execution failed: {e}"))
+            }
+        });
+
+        join_handle
+            .await
+            .map_err(|e| format!("Manifest execution task failed: {e}"))?
+    }
+
     /// Execute an already-loaded `BundleManifest` directly (no name lookup).
     /// Used by `compose_and_execute_bundle` to run the composed manifest
     /// produced by the skill-bundler cascade.
@@ -654,6 +681,161 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             composed_skill_names,
         })
     }
+
+    async fn save_bundle(
+        &self,
+        bundle_manifest: serde_json::Value,
+    ) -> Result<String, String> {
+        // The composed manifest JSON from the bundler cascade is a flat
+        // structure (id, name, steps, ... at the top level). The on-disk
+        // `ManifestFile` format wraps the header fields under a `manifest:`
+        // key with `steps`, `skills`, etc. as siblings. Reshape into that
+        // form before serializing to YAML so `load_manifest_from_yaml` can
+        // round-trip the saved file.
+        let manifest_file_json = reshape_composite_to_manifest_file(&bundle_manifest);
+        let yaml_string = serde_yaml_neo::to_string(&manifest_file_json)
+            .map_err(|e| format!("Failed to serialize bundle manifest to YAML: {e}"))?;
+
+        let id = bundle_manifest
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| {
+                "bundle manifest has no `id` field — cannot save without an id".to_string()
+            })?;
+
+        let path = self.manifest_path(&id);
+        std::fs::write(&path, yaml_string.as_bytes()).map_err(|e| {
+            format!(
+                "Failed to write bundle manifest to {}: {e}",
+                path.display()
+            )
+        })?;
+
+        tracing::info!(
+            target: "reg.skill.bundle_save",
+            bundle_id = %id,
+            path = %path.display(),
+            "Saved composed bundle manifest to registry"
+        );
+        Ok(id)
+    }
+
+    async fn refine_bundle(
+        &self,
+        bundle_manifest: serde_json::Value,
+        goal_context: serde_json::Value,
+        goal_delta: f64,
+        convergence_failure_reason: String,
+    ) -> Result<agent::BundleExecutionResult, String> {
+        // Run the `skill-bundler/bundler-evolve` template via a minimal
+        // single-step manifest, then execute the evolved manifest's cascade.
+        // The evolve template's contract declares `evolved_manifest` as an
+        // output field; the executor's structured-output extraction stores
+        // the parsed JSON under `step_1_result`.
+        let bundle_name = bundle_manifest
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("composite-skill")
+            .to_string();
+
+        let evolve_context = {
+            let mut ctx = HashMap::new();
+            ctx.insert(
+                "bundle_name".to_string(),
+                Value::String(bundle_name),
+            );
+            ctx.insert(
+                "current_manifest".to_string(),
+                bundle_manifest,
+            );
+            ctx.insert("changed_skills".to_string(), Value::Array(vec![]));
+            ctx.insert("goal_context".to_string(), goal_context);
+            ctx.insert(
+                "goal_delta".to_string(),
+                serde_json::json!(goal_delta),
+            );
+            ctx.insert(
+                "convergence_failure_reason".to_string(),
+                Value::String(convergence_failure_reason),
+            );
+            self.inject_model_defaults(&mut ctx);
+            ctx
+        };
+
+        // Construct a minimal single-step manifest wrapping the evolve
+        // template. The input_mapping mirrors ordinal 6 of skill-bundler.yaml
+        // so the evolve template receives the same bindings the full cascade
+        // would produce.
+        let refine_manifest_yaml = "\
+manifest:
+  id: refine-bundle
+  name: Refine Bundle
+  description: Single-step goal-delta-driven bundle refinement
+steps:
+  - ordinal: 1
+    action: know
+    description: Refine bundle via goal-delta evolution
+    renderer: minijinja
+    template_ref: skill-bundler/bundler-evolve
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      bundle_name: \"{{ bundle_name }}\"
+      current_manifest: \"{{ current_manifest }}\"
+      changed_skills: \"{{ changed_skills }}\"
+      goal_context: \"{{ goal_context }}\"
+      goal_delta: \"{{ goal_delta }}\"
+      convergence_failure_reason: \"{{ convergence_failure_reason }}\"
+";
+
+        let refine_manifest = load_manifest_from_yaml(refine_manifest_yaml)
+            .map_err(|e| format!("Failed to load refine manifest: {e}"))?;
+
+        let refine_result = self
+            .run_manifest_cascade_with_manifest(&refine_manifest, evolve_context)
+            .await?;
+
+        // Extract the evolved manifest from step_1_result.evolved_manifest.
+        let evolved_manifest_json = refine_result
+            .get("step_1_result")
+            .and_then(|v| v.get("evolved_manifest"))
+            .cloned()
+            .ok_or_else(|| {
+                "bundler-evolve did not produce `evolved_manifest` in step_1_result — \
+                 the evolve step may have failed or returned an unexpected shape"
+                    .to_string()
+            })?;
+
+        // Extract the evolved skill names.
+        let composed_skill_names = evolved_manifest_json
+            .get("skills")
+            .and_then(|s| s.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Load and execute the evolved manifest.
+        let manifest_json_string = serde_json::to_string(&evolved_manifest_json)
+            .map_err(|e| format!("Failed to serialize evolved manifest: {e}"))?;
+        let manifest = load_manifest_from_yaml(&manifest_json_string)
+            .map_err(|e| format!("Failed to load evolved manifest: {e}"))?;
+
+        let execution_context = HashMap::new();
+        let output = self
+            .execute_manifest_direct(&manifest, execution_context)
+            .await?;
+
+        Ok(agent::BundleExecutionResult {
+            bundle_manifest: evolved_manifest_json,
+            output,
+            composition_score: None,
+            composed_skill_names,
+        })
+    }
 }
 
 /// Deterministically extract the final step's result from the cascade context,
@@ -670,6 +852,64 @@ fn extract_final_step_result(result: &std::collections::HashMap<String, Value>) 
     } else {
         value.to_string()
     }
+}
+
+/// Reshape a flat composite manifest JSON (as produced by the skill-bundler's
+/// `bundler-synthesize` step under `composite_manifest`) into the
+/// `ManifestFile` structure that `load_manifest_from_yaml` expects on disk.
+/// The on-disk format wraps the header fields (`id`, `name`, `description`,
+/// `version`, `editor`, `visibility`, `functional_role`, `category`,
+/// `enforce_inputs`) under a `manifest:` key, with `steps`, `skills`,
+/// `conflicts`, `complementarities`, `convergence`, `gas`, `rjoule`,
+/// `error_handling`, `ledger`, `audit`, `inputs`, `principles` as siblings.
+///
+/// This is the inverse of the flattening `load_manifest_from_yaml` performs
+/// when it constructs a `BundleManifest` from a `ManifestFile`. Keeping the
+/// reshape here (in the bridge) avoids exposing the on-disk format to the
+/// `agent` crate and keeps disk as the single source of truth (D1).
+fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_json::Value {
+    use serde_json::json;
+
+    let header_keys = [
+        "id",
+        "name",
+        "description",
+        "version",
+        "editor",
+        "visibility",
+        "functional_role",
+        "category",
+        "enforce_inputs",
+    ];
+
+    let sibling_keys = [
+        "steps",
+        "skills",
+        "conflicts",
+        "complementarities",
+        "convergence",
+        "gas",
+        "rjoule",
+        "error_handling",
+        "ledger",
+        "audit",
+        "inputs",
+        "principles",
+    ];
+
+    let manifest_header: serde_json::Map<String, serde_json::Value> = header_keys
+        .iter()
+        .filter_map(|k| composite.get(*k).map(|v| (k.to_string(), v.clone())))
+        .collect();
+
+    let mut out = serde_json::Map::new();
+    out.insert("manifest".to_string(), json!(manifest_header));
+    for k in sibling_keys {
+        if let Some(v) = composite.get(k) {
+            out.insert(k.to_string(), v.clone());
+        }
+    }
+    json!(out)
 }
 
 #[cfg(test)]

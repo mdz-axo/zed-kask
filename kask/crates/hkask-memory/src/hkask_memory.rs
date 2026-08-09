@@ -9,6 +9,14 @@
 //! axis (PKO: `pko_procedure`, `pko_step`). Both are stored, recalled, and
 //! queried through the single [`MemoryStore`].
 //!
+//! **Intended flow (replacing the deprecated `perspective` discriminator):**
+//! chat stream → chunks → each chunk tagged with both the best-fit state axis
+//! (Dublin Core) and the best-fit process axis (PKO). The `HMemOntology` blob
+//! is the discriminator; the legacy `perspective` field is retained for
+//! backward compatibility with the consolidator's `perspective IS NULL` SQL
+//! path but is deprecated as a semantic classifier (see `HMem::is_episodic` /
+//! `HMem::is_semantic` deprecation notes).
+//!
 //! **Recall deduplication** runs at recall time in `recall_dedup` (BLAKE3 hash
 //! over canonical entity-attribute-value content, first-seen-wins). There is
 //! no shared rendering layer: each consuming surface (chat service, MCP server,
@@ -16,14 +24,12 @@
 //! consumer needs. See ADR-060 for the decision and rationale.
 
 pub(crate) mod bayesian; // Loop 2b (semantic confidence combination)
-pub mod chat_turn; // Typed projection of chat episode content
 pub mod consolidation_service; // Memory consolidator (perspective-bound → shared)
 pub mod memory_store; // Unified store (ontology-discriminated)
 pub mod recall_dedup;
 pub mod salience;
 pub mod text_chunking; // Pure chunking helpers (no store access)
 
-pub use chat_turn::ChatTurn;
 pub use consolidation_service::MemoryConsolidator;
 pub use memory_store::{CentroidResult, MemoryStore, MemoryStoreError};
 pub use text_chunking::{chunk_text, strip_gutenberg_headers};
