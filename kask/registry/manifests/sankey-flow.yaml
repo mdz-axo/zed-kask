@@ -44,6 +44,7 @@ manifest:
 convergence:
   convergence_mode: ""
   max_iterations: 1
+  min_iterations: 1
   on_not_reached: escalate
 
 gas:

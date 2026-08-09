@@ -16,6 +16,9 @@ contract:
   post:
     - returns count of symbols embedded
     - symbols without parseable signatures are skipped
+energy_cap: 4096
+visibility: Public
+---
 instructions:
   - Use codegraph_index_embeddings to generate vector embeddings for code symbols.
   - Embeddings enable semantic search over the codebase.

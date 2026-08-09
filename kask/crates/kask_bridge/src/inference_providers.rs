@@ -421,11 +421,15 @@ pub fn has_data_service_api_key(env_var: &str) -> bool {
 /// For each provider in `INFERENCE_PROVIDERS` whose env var is set and
 /// non-empty, this writes the key to both keychain locations (the provider's
 /// `api_url` and `kask://credentials/<credential_key>`), identical to
-/// `write_provider_api_key`. It does NOT overwrite a keychain entry that
-/// already matches (operators who set a different key via the settings UI
-/// get their UI value preserved on the next restart only if the env var is
-/// absent — when both exist, the env var wins, matching the main-process
-/// precedence rule in `ApiKeyState::load_if_needed`).
+/// `write_provider_api_key`. For each entry in `DATA_SERVICE_CREDENTIALS`
+/// whose env var is set and non-empty, this writes the key only to
+/// `kask://credentials/<credential_key>` (data services have no
+/// OpenAI-compatible `api_url`), identical to `write_data_service_api_key`.
+/// It does NOT overwrite a keychain entry that already matches (operators who
+/// set a different key via the settings UI get their UI value preserved on
+/// the next restart only if the env var is absent — when both exist, the env
+/// var wins, matching the main-process precedence rule in
+/// `ApiKeyState::load_if_needed`).
 ///
 /// Per the `.rules` trap "Process-global hooks set at runtime need a
 /// startup-failure signal":
@@ -454,24 +458,29 @@ pub fn mirror_env_keys_to_keychain(
     cx.spawn(async move |cx| {
         for (env_var, api_url, credential_url, key) in to_mirror {
             // Write under the api_url (for zed's OpenAI-compatible provider).
-            match credentials_provider
-                .write_credentials(&api_url, "Bearer", key.as_bytes(), cx)
-                .await
-            {
-                Ok(()) => {}
-                Err(e) => {
-                    tracing::warn!(
-                        target: "reg.kask_bridge",
-                        env_var = %env_var,
-                        api_url = %api_url,
-                        error = %e,
-                        "Failed to mirror env key to keychain at api_url. \
-                         The main process will use the env var, but zed's \
-                         OpenAI-compatible provider (which reads the keychain \
-                         when the env var is absent on a future restart) will \
-                         not see this key."
-                    );
-                    continue;
+            // Data services have no OpenAI-compatible api_url (empty string),
+            // so they skip this write — they only need the kask-namespace
+            // credential URL for MCP env injection.
+            if !api_url.is_empty() {
+                match credentials_provider
+                    .write_credentials(&api_url, "Bearer", key.as_bytes(), cx)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "reg.kask_bridge",
+                            env_var = %env_var,
+                            api_url = %api_url,
+                            error = %e,
+                            "Failed to mirror env key to keychain at api_url. \
+                             The main process will use the env var, but zed's \
+                             OpenAI-compatible provider (which reads the keychain \
+                             when the env var is absent on a future restart) will \
+                             not see this key."
+                        );
+                        continue;
+                    }
                 }
             }
             // Write under the kask credential URL (for MCP env injection).
@@ -506,11 +515,22 @@ pub fn mirror_env_keys_to_keychain(
 }
 
 /// Collect `(env_var, api_url, credential_url, key)` tuples for every
-/// inference provider whose env var is set and non-empty. Extracted from
-/// `mirror_env_keys_to_keychain` for testability (the collection logic is
-/// synchronous and doesn't need a GPUI executor).
+/// inference provider and data service whose env var is set and non-empty.
+/// Extracted from `mirror_env_keys_to_keychain` for testability (the
+/// collection logic is synchronous and doesn't need a GPUI executor).
+///
+/// Data services have no OpenAI-compatible `api_url`, so their `api_url`
+/// field is the empty string — `mirror_env_keys_to_keychain` skips the
+/// api_url keychain write for those entries and only writes the kask-namespace
+/// credential URL (matching `write_data_service_api_key`). Without this,
+/// operators who set `RUNPOD_API_KEY` / `HF_TOKEN` / `HKASK_EODHD_API_KEY` /
+/// `NEBIUS_PROJECT_ID` etc. only in `.env` get a working main process (the
+/// env var is read directly), but MCP server child processes that read from
+/// the keychain via `mcp_env_with_credentials` silently fail with
+/// "API key not configured" — the same failure mode the mirror exists to
+/// prevent for inference providers.
 fn collect_env_keys_for_mirror() -> Vec<(String, String, String, String)> {
-    INFERENCE_PROVIDERS
+    let mut out: Vec<(String, String, String, String)> = INFERENCE_PROVIDERS
         .iter()
         .filter_map(|provider| {
             std::env::var(provider.env_var)
@@ -525,7 +545,26 @@ fn collect_env_keys_for_mirror() -> Vec<(String, String, String, String)> {
                     )
                 })
         })
-        .collect()
+        .collect();
+
+    // Data services: no OpenAI-compatible api_url, so api_url is empty (the
+    // mirror loop skips the api_url write for these). The credential URL
+    // matches `write_data_service_api_key` so MCP servers reading via
+    // `credential_urls_for_mcp` see the mirrored key.
+    for (env_var, credential_key) in DATA_SERVICE_CREDENTIALS {
+        if let Ok(key) = std::env::var(env_var)
+            && !key.is_empty()
+        {
+            out.push((
+                env_var.to_string(),
+                String::new(),
+                format!("{KASK_CREDENTIAL_NAMESPACE}/{credential_key}"),
+                key,
+            ));
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -598,10 +637,14 @@ mod tests {
     fn collect_env_keys_for_mirror_no_keys() {
         let _guard = ENV_LOCK.lock().unwrap();
         // SAFETY: test-only env mutation, serialized by ENV_LOCK. Remove all
-        // inference-provider env vars to assert the silent no-op path.
+        // inference-provider and data-service env vars to assert the silent
+        // no-op path.
         unsafe {
             for provider in INFERENCE_PROVIDERS {
                 std::env::remove_var(provider.env_var);
+            }
+            for (env_var, _) in DATA_SERVICE_CREDENTIALS {
+                std::env::remove_var(env_var);
             }
         }
         let collected = collect_env_keys_for_mirror();
@@ -618,6 +661,9 @@ mod tests {
         unsafe {
             for provider in INFERENCE_PROVIDERS {
                 std::env::remove_var(provider.env_var);
+            }
+            for (env_var, _) in DATA_SERVICE_CREDENTIALS {
+                std::env::remove_var(env_var);
             }
             std::env::set_var("FALAI_API_KEY", "");
         }
@@ -638,6 +684,9 @@ mod tests {
         unsafe {
             for provider in INFERENCE_PROVIDERS {
                 std::env::remove_var(provider.env_var);
+            }
+            for (env_var, _) in DATA_SERVICE_CREDENTIALS {
+                std::env::remove_var(env_var);
             }
             std::env::set_var("FALAI_API_KEY", "fal-test-key");
             std::env::set_var("DEEPINFRA_API_KEY", "di-test-key");
@@ -662,6 +711,59 @@ mod tests {
         unsafe {
             std::env::remove_var("FALAI_API_KEY");
             std::env::remove_var("DEEPINFRA_API_KEY");
+        }
+    }
+
+    #[test]
+    fn collect_env_keys_for_mirror_collects_data_service_keys() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        // SAFETY: test-only env mutation, serialized by ENV_LOCK. Data
+        // services have no OpenAI-compatible api_url, so their api_url field
+        // must be empty (the mirror loop skips the api_url write for these).
+        unsafe {
+            for provider in INFERENCE_PROVIDERS {
+                std::env::remove_var(provider.env_var);
+            }
+            for (env_var, _) in DATA_SERVICE_CREDENTIALS {
+                std::env::remove_var(env_var);
+            }
+            std::env::set_var("RUNPOD_API_KEY", "runpod-test-key");
+            std::env::set_var("HKASK_EODHD_API_KEY", "eodhd-test-key");
+            std::env::set_var("HF_TOKEN", "hf-test-token");
+            std::env::set_var("NEBIUS_PROJECT_ID", "nebius-test-project");
+        }
+        let collected = collect_env_keys_for_mirror();
+        assert_eq!(
+            collected.len(),
+            4,
+            "four data-service env vars set → four entries collected, got {collected:?}"
+        );
+        // Every data-service entry must have an empty api_url (no
+        // OpenAI-compatible provider to write under).
+        for (env_var, api_url, _credential_url, _key) in &collected {
+            assert!(
+                api_url.is_empty(),
+                "data service {env_var} must have empty api_url, got {api_url:?}"
+            );
+        }
+        // Verify the credential URL shape for a representative entry.
+        let runpod_entry = collected
+            .iter()
+            .find(|(env_var, _, _, _)| env_var == "RUNPOD_API_KEY")
+            .expect("RUNPOD_API_KEY entry should be present");
+        assert_eq!(runpod_entry.2, "kask://credentials/runpod", "credential_url");
+        assert_eq!(runpod_entry.3, "runpod-test-key", "key");
+        let hf_entry = collected
+            .iter()
+            .find(|(env_var, _, _, _)| env_var == "HF_TOKEN")
+            .expect("HF_TOKEN entry should be present");
+        assert_eq!(hf_entry.2, "kask://credentials/hf_token", "credential_url");
+        assert_eq!(hf_entry.3, "hf-test-token", "key");
+        unsafe {
+            std::env::remove_var("RUNPOD_API_KEY");
+            std::env::remove_var("HKASK_EODHD_API_KEY");
+            std::env::remove_var("HF_TOKEN");
+            std::env::remove_var("NEBIUS_PROJECT_ID");
         }
     }
 }

@@ -46,16 +46,11 @@ manifest:
 
 convergence:
   # Single-pass skill — no PDCA loop. max_iterations=1 prevents re-entry.
-  # The convergence block is retained because the compliance test requires
-  # it for skill-category manifests (threshold > 0, max_iterations > 0,
-  # non-empty convergence_field, non-empty on_not_reached).
   convergence_mode: ""
   max_iterations: 1
   min_iterations: 1
   on_not_reached: proceed
   target_artifacts_field: "current_artifacts"
-  threshold: 0.5
-  convergence_field: "composite"
 
 gas:
   cap: 30000
