@@ -251,6 +251,21 @@ To use a Skill:
 
 When the user asks you to "run", "apply", "use", or "invoke" a skill on a target (e.g., "run skill-maintenance on each of the 42 skills"), the correct action is a single `skill` tool call with that skill's name and the target expressed in the user's message — not a `read_file` of the skill file followed by you improvising the methodology. The manifest encodes the methodology; your job is to invoke it and act on its output.
 
+### Multi-skill composition with `skill_bundle`
+
+When a task requires **three or more peer-level skills** (skills that are peers, not in a delegation relationship — e.g., "run bug-hunt, proptest, and harness-optimize on this crate"), invoke the `skill_bundle` tool once with the skill names and the task, **not** the `skill` tool three times. The `skill_bundle` tool runs the `skill-bundler` manifest, which composes a governed `BundleManifest` (ordering, conflict resolution, convergence) before executing the composed cascade — producing a single coherent result rather than three independent outputs the model must stitch together.
+
+Use `skill_bundle` when:
+- The user names ≥3 skills in one request ("run A, B, and C").
+- The task spans multiple peer skills whose outputs feed each other (e.g., bug-hunt → proptest → harness-optimize).
+
+Use `skill` (individually) when:
+- Only one skill is needed.
+- The skills are in a delegation relationship (one skill delegates to another — the delegating skill's cascade handles the composition).
+- Only two skills are needed (the bundler's ≥3 gate rejects fewer; invoke `skill` twice instead).
+
+The `skill_bundle` tool's output carries a `<composition_score>` (lower = better composition quality) and a `<bundle_manifest>` (the composed manifest). After the run, the user sees a Save / Refine / Discard affordance in the UI: `Save` persists the composed bundle to the registry for re-invocation by name, `Refine` re-composes via goal-delta evolution, and `Discard` dismisses the affordance. You do not need to take any action for these affordances — they are user-facing UI.
+
 {{/if}}
 {{#if (or user_agents_md has_rules)}}
 ## User's Custom Instructions

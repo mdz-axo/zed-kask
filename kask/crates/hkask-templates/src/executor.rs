@@ -45,7 +45,7 @@
 //! `InferencePort` (for select/populate) and `ToolPort` (for execute),
 //! both of which are already dependencies of this crate.
 
-use crate::budget::BudgetTracker;
+use crate::budget::{BudgetTracker, BudgetSnapshot};
 use crate::bundle::BundleManifest;
 use crate::bundle::BundleManifestStep;
 use crate::compute::dispatch_compute;
@@ -76,7 +76,7 @@ use tracing::{info, warn};
 /// Template refs look like "sankey-flow/sankey-classify" or
 /// "diataxis-diagram/diataxis-diagram-generate". The phase is extracted
 /// from the last segment after the final '-' or '/'. Returns None if the
-/// segment doesn't match one of the six canonical phases.
+/// segment doesn't match one of the canonical phases (see `SkillFeedbackSpan`).
 ///
 /// This is the bridge between the step's template_ref and the
 /// SkillFeedbackSpan enum — it lets the executor emit the correct
@@ -87,9 +87,12 @@ fn extract_feedback_phase(template_ref: &str) -> Option<&'static str> {
     // Match against the canonical phases by checking if the last segment
     // contains the phase name. This handles both "sankey-classify" and
     // "adversarial-convergence-check" — the phase name appears as a substring.
-    // Order matters: check longer/more-specific patterns first to avoid
-    // false positives (e.g. "convergence" before "converge", "operator_feedback"
-    // before "feedback").
+    // Order matters between substrings mapping to DIFFERENT phases (e.g.
+    // "evaluate" is checked before "convergence" so a template named
+    // "evaluate-convergence" classifies as Evaluate, not Convergence).
+    // The paired substrings ("convergence"/"converge",
+    // "operator_feedback"/"feedback") map to the same phase, so their
+    // relative order is harmless.
     if last_segment.contains("classify") {
         Some(SkillFeedbackSpan::Classify.phase())
     } else if last_segment.contains("gather") {
@@ -469,7 +472,8 @@ impl ManifestExecutor {
         manifest: &BundleManifest,
         initial_context: HashMap<String, Value>,
     ) -> Result<HashMap<String, Value>> {
-        let (context, _last_ordinal) = self.run_cascade(manifest, initial_context, 0).await?;
+        let (context, _last_ordinal, _snapshot) =
+            self.run_cascade(manifest, initial_context, 0).await?;
         Ok(context)
     }
 
@@ -489,7 +493,7 @@ impl ManifestExecutor {
         manifest: &BundleManifest,
         initial_context: HashMap<String, Value>,
         depth: u8,
-    ) -> Result<(HashMap<String, Value>, Option<u32>)> {
+    ) -> Result<(HashMap<String, Value>, Option<u32>, BudgetSnapshot)> {
         if depth > hkask_capability::SYSTEM_MAX_RECURSION {
             return Err(TemplateError::Manifest(format!(
                 "Matryoshka depth limit ({}) exceeded",
@@ -747,8 +751,35 @@ impl ManifestExecutor {
                             break 'cascade;
                         }
 
+                        // Bind loop input_mapping (except loop_target) into context
+                        // BEFORE recording the convergence cycle, so the Kata-model
+                        // `convergence_signal` binding (e.g.
+                        // `convergence_signal: "{{ step_14_result }}"`) is present
+                        // in the context when `push_cycle_from_context` reads it.
+                        // The prior ordering (push → bind) read a one-iteration-stale
+                        // signal — the Cauchy check saw `[NaN, stale_1, stale_2, ...]`
+                        // instead of `[fresh_1, fresh_2, ...]`. Carried state (e.g.
+                        // prior_probability) is also available next iteration.
+                        if let Some(ref mapping) = step.input_mapping
+                            && let Value::Object(map) = mapping
+                        {
+                            for (k, v) in map {
+                                if k == "loop_target" {
+                                    continue;
+                                }
+                                let bound =
+                                    resolve_mapping_value(v, &context, &self.template_renderer);
+                                // Propagate taint from referenced Source entries
+                                // to the new binding key (ART-3/IR-1 fix).
+                                self.propagate_taint_for_binding(v, k);
+                                context.insert(k.clone(), bound);
+                            }
+                        }
+
                         // Record this iteration's convergence data in the
-                        // trajectory history BEFORE the convergence check.
+                        // trajectory history BEFORE the convergence check, AFTER
+                        // binding the loop's input_mapping so the Kata-model
+                        // `convergence_signal` is the current iteration's reading.
                         // For the Kata model, the convergence signal and Brier
                         // score are read from the context (the signal is
                         // produced by a `compute` step — `kata.hypotenuse` for
@@ -775,24 +806,6 @@ impl ManifestExecutor {
                                 snap.rjoule_cap,
                             );
                             break 'cascade;
-                        }
-
-                        // Bind loop input_mapping (except loop_target) into context so
-                        // carried state (e.g. prior_probability) is available next iteration.
-                        if let Some(ref mapping) = step.input_mapping
-                            && let Value::Object(map) = mapping
-                        {
-                            for (k, v) in map {
-                                if k == "loop_target" {
-                                    continue;
-                                }
-                                let bound =
-                                    resolve_mapping_value(v, &context, &self.template_renderer);
-                                // Propagate taint from referenced Source entries
-                                // to the new binding key (ART-3/IR-1 fix).
-                                self.propagate_taint_for_binding(v, k);
-                                context.insert(k.clone(), bound);
-                            }
                         }
 
                         // Snapshot the prior iteration's step results under a
@@ -1180,7 +1193,8 @@ impl ManifestExecutor {
         }
 
         context.insert("_recursion_depth".to_string(), Value::Number(depth.into()));
-        Ok((context, last_result_ordinal))
+        let final_snapshot = budget.snapshot();
+        Ok((context, last_result_ordinal, final_snapshot))
     }
 
     /// Evaluate a `choice` step's condition against the context.
@@ -1192,7 +1206,24 @@ impl ManifestExecutor {
     ) -> Result<Option<u32>> {
         let mapping = match &step.input_mapping {
             Some(m) => m,
-            None => return Ok(None),
+            None => {
+                // A `choice` step with no `input_mapping` can never branch —
+                // the `branches` array lives under `input_mapping.branches`.
+                // Warn so the misconfiguration is not silent (the `.rules`
+                // "fails open with no diagnostic" trap — the `branching`
+                // misconfiguration at the call site has a warn; this is the
+                // `choice` counterpart).
+                warn!(
+                    target: "reg.skill.cascade.choice_misconfigured",
+                    step = step.ordinal,
+                    "Step {} (action 'choice') has no `input_mapping` — the `branches` array lives under \
+                     `input_mapping.branches`. The choice will never branch. Remediation: add an \
+                     `input_mapping` with a `branches` array, or use `select` + `branching` (the \
+                     production routing mechanism).",
+                    step.ordinal
+                );
+                return Ok(None);
+            }
         };
 
         // Branch on a JSON path comparison
@@ -1230,7 +1261,11 @@ impl ManifestExecutor {
                     return match action {
                         "continue" => Ok(None),
                         "abort" | "escalate" => {
-                            // Handled by subsequent abort/escalate step; return None to continue
+                            // Handled by subsequent abort/escalate step; return None to continue.
+                            // NOTE: this is an advertised contract with no enforcement —
+                            // the manifest must follow with an explicit abort/escalate step,
+                            // otherwise the cascade silently continues. There is no runtime
+                            // check that such a step exists.
                             Ok(None)
                         }
                         _ => {
@@ -1245,6 +1280,19 @@ impl ManifestExecutor {
                     };
                 }
             }
+        } else {
+            // `input_mapping` is present but has no `branches` key (or `branches`
+            // is not an array). The choice will never branch — warn so the
+            // misconfiguration is not silent (the `.rules` "fails open with no
+            // diagnostic" trap).
+            warn!(
+                target: "reg.skill.cascade.choice_misconfigured",
+                step = step.ordinal,
+                "Step {} (action 'choice') has `input_mapping` but no `branches` array — the choice \
+                 will never branch. Remediation: add a `branches` array under `input_mapping` \
+                 (each branch has `condition` and `action`), or use `select` + `branching`.",
+                step.ordinal
+            );
         }
 
         Ok(None)
@@ -1590,10 +1638,11 @@ impl ManifestExecutor {
         // sized. Re-enter `run_cascade` with `depth + 1` so the matryoshka
         // guard in `run_cascade` bounds recursive nesting (this is the ONLY
         // path that increments depth; iterative loop re-entry does not).
-        // `run_cascade` returns the last-completed step ordinal so we can
-        // extract the final result in O(1) instead of scanning the full
-        // context HashMap.
-        let (sub_result, last_ordinal) =
+        // `run_cascade` returns the last-completed step ordinal and the
+        // sub-cascade's final budget snapshot so we can extract the final
+        // result in O(1) and report actual gas/rjoule usage (not the capped
+        // cap) to the parent.
+        let (sub_result, last_ordinal, sub_budget_snapshot) =
             Box::pin(self.run_cascade(&sub_manifest, context, depth + 1)).await?;
 
         // Extract the sub-cascade's final result value. We do NOT merge the
@@ -1643,16 +1692,18 @@ impl ManifestExecutor {
         }
         parent_context.insert(format!("step_{}_result", step.ordinal), result_value);
 
-        // Compute gas/rjoule consumed by the sub-cascade. The sub-cascade's
-        // gas_cap was capped to the parent's remaining budget, so the
-        // consumption is at most parent_gas_remaining. We report the capped
-        // budget as consumed if the sub-cascade exhausted its budget, or the
-        // actual usage if we can determine it. Since execute_manifest doesn't
-        // return gas accounting, we use the capped cap as an upper bound —
-        // the parent deducts the sub-cascade's budget allocation. This is
-        // conservative (may over-count) but safe (never under-counts).
-        let gas_consumed = sub_gas_cap;
-        let rjoule_consumed = sub_rjoule_cap;
+        // Compute gas/rjoule consumed by the sub-cascade. `run_cascade` returns
+        // the sub-cascade's final `BudgetSnapshot`, so we report the ACTUAL
+        // usage (`gas_used` / `rjoule_used`), not the capped cap. The prior
+        // implementation reported `sub_gas_cap` / `sub_rjoule_cap` (the capped
+        // caps) as consumed — conservative but distorted the parent's gas
+        // feedback loop: a sub-cascade that converged in 1 iteration using
+        // 100 gas of a 5000 cap still deducted 5000 from the parent, which
+        // could prematurely exhaust the parent's budget. The actual usage is
+        // bounded by the capped cap (the sub-cascade's `BudgetTracker` was
+        // constructed with the capped cap), so this never under-counts.
+        let gas_consumed = sub_budget_snapshot.gas_used;
+        let rjoule_consumed = sub_budget_snapshot.rjoule_used;
 
         Ok((parent_context, gas_consumed, rjoule_consumed))
     }

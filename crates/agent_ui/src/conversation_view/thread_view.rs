@@ -607,6 +607,13 @@ pub struct ThreadView {
     pub message_queue: MessageQueue,
     pub turn_fields: TurnFields,
     pub discarded_partial_edits: HashSet<acp::ToolCallId>,
+    /// skill_bundle tool calls whose post-run affordance has been dismissed
+    /// (via `Save` or `Discard`). Prevents the affordance from re-rendering
+    /// after the action completes.
+    pub resolved_skill_bundle_calls: HashSet<acp::ToolCallId>,
+    /// skill_bundle tool calls currently running a `Refine` re-composition.
+    /// Disables the affordance buttons while the evolve cascade runs.
+    pub refining_skill_bundle_calls: HashSet<acp::ToolCallId>,
     pub is_loading_contents: bool,
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
@@ -1008,6 +1015,8 @@ impl ThreadView {
             message_queue: MessageQueue::default(),
             turn_fields: TurnFields::default(),
             discarded_partial_edits: HashSet::default(),
+            resolved_skill_bundle_calls: HashSet::default(),
+            refining_skill_bundle_calls: HashSet::default(),
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
@@ -8599,7 +8608,11 @@ impl ThreadView {
                     )
                 }
             })
-            .children(tool_output_display);
+            .children(tool_output_display)
+            .when_some(
+                self.render_skill_bundle_actions(tool_call, cx),
+                |this, actions| this.child(actions),
+            );
 
         v_flex()
             .map(|this| {
@@ -10144,6 +10157,369 @@ impl ThreadView {
             .detach_and_log_err(cx);
 
         None
+    }
+
+    /// Render the post-run save/refine/discard affordance for a completed
+    /// `skill_bundle` tool call whose `raw_output` deserializes to
+    /// `SkillBundleToolOutput::Executed`. Returns `None` for non-skill_bundle
+    /// calls, error results, or already-resolved calls.
+    ///
+    /// The affordance is a 3-button row: `Save` (primary — persists the
+    /// composed manifest to the registry), `Refine` (secondary — re-invokes
+    /// `bundler-evolve` with a goal correction), and `Discard` (text — dismisses
+    /// the affordance). The structured data (manifest, score, skill names) is
+    /// read from `tool_call.raw_output`, which carries the serialized
+    /// `SkillBundleToolOutput`.
+    fn render_skill_bundle_actions(
+        &self,
+        tool_call: &ToolCall,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        // Only render for completed `skill_bundle` tool calls.
+        if !matches!(tool_call.status, ToolCallStatus::Completed) {
+            return None;
+        }
+        if tool_call.tool_name.as_deref() != Some("skill_bundle") {
+            return None;
+        }
+        // Skip if the affordance has been resolved (Save/Discard already ran).
+        if self.resolved_skill_bundle_calls.contains(&tool_call.id) {
+            return None;
+        }
+        let raw_output = tool_call.raw_output.as_ref()?;
+        let output: agent::SkillBundleToolOutput =
+            serde_json::from_value(raw_output.clone()).ok()?;
+        let agent::SkillBundleToolOutput::Executed {
+            bundle_manifest,
+            composition_score,
+            composed_skill_names,
+            ..
+        } = output
+        else {
+            return None;
+        };
+
+        let is_refining = self.refining_skill_bundle_calls.contains(&tool_call.id);
+        let tool_call_id = tool_call.id.clone();
+
+        let score_label = composition_score
+            .map(|s| format!("Composition score: {:.4} (lower = better)", s))
+            .unwrap_or_else(|| "Composition score: unavailable".to_string());
+
+        let skills_label: SharedString =
+            format!("Composed skills: {}", composed_skill_names.join(", ")).into();
+
+        let save_button_id =
+            SharedString::from(format!("skill-bundle-save-{:?}", tool_call.id));
+        let refine_button_id =
+            SharedString::from(format!("skill-bundle-refine-{:?}", tool_call.id));
+        let discard_button_id =
+            SharedString::from(format!("skill-bundle-discard-{:?}", tool_call.id));
+
+        let bundle_manifest_for_save = bundle_manifest.clone();
+        let tool_call_id_for_save = tool_call_id.clone();
+        let tool_call_id_for_refine = tool_call_id.clone();
+        let tool_call_id_for_discard = tool_call_id.clone();
+
+        Some(
+            v_flex()
+                .p_2()
+                .gap_2()
+                .border_t_1()
+                .border_color(self.tool_card_border_color(cx))
+                .bg(cx.theme().colors().element_background)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Label::new(skills_label)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(score_label)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new(save_button_id, "Save")
+                                .style(ButtonStyle::Filled)
+                                .label_size(LabelSize::Small)
+                                .start_icon(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Success),
+                                )
+                                .disabled(is_refining)
+                                .on_click(cx.listener({
+                                    let tool_call_id = tool_call_id_for_save.clone();
+                                    move |this, _, _window, cx| {
+                                        this.save_skill_bundle(
+                                            tool_call_id.clone(),
+                                            bundle_manifest_for_save.clone(),
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(refine_button_id, "Refine")
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
+                                .disabled(is_refining)
+                                .when(is_refining, |this| {
+                                    this.start_icon(
+                                        Icon::new(IconName::Spinner)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted),
+                                    )
+                                })
+                                .on_click(cx.listener({
+                                    let tool_call_id = tool_call_id_for_refine.clone();
+                                    move |this, _, _window, cx| {
+                                        this.refine_skill_bundle(
+                                            tool_call_id.clone(),
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                        .child(
+                            Button::new(discard_button_id, "Discard")
+                                .style(ButtonStyle::Subtle)
+                                .label_size(LabelSize::Small)
+                                .disabled(is_refining)
+                                .on_click(cx.listener({
+                                    let tool_call_id = tool_call_id_for_discard.clone();
+                                    move |this, _, _window, cx| {
+                                        this.resolved_skill_bundle_calls
+                                            .insert(tool_call_id.clone());
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Persist a composed bundle manifest to the registry via the
+    /// `SkillManifestExecutor::save_bundle` method. The executor is resolved
+    /// from the process-global `manifest_executor_cloned()` (same resolver the
+    /// `skill_bundle` tool uses). On success, marks the affordance resolved
+    /// and shows a confirmation toast.
+    fn save_skill_bundle(
+        &mut self,
+        tool_call_id: acp::ToolCallId,
+        bundle_manifest: serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(executor) = agent::manifest_executor_cloned() else {
+            self.show_skill_bundle_status(
+                tool_call_id,
+                "Skill executor not configured — cannot save bundle.",
+                cx,
+            );
+            return;
+        };
+        self.refining_skill_bundle_calls.insert(tool_call_id.clone());
+        cx.notify();
+
+        let task = cx.spawn(async move |cx| {
+            let result = executor
+                .save_bundle(bundle_manifest)
+                .await
+                .map_err(|e| e.to_string());
+            (tool_call_id, result)
+        });
+
+        cx.spawn(async move |this, cx| {
+            let (tool_call_id, result) = task.await;
+            this.update(cx, |this, cx| {
+                this.refining_skill_bundle_calls.remove(&tool_call_id);
+                match result {
+                    Ok(id) => {
+                        this.resolved_skill_bundle_calls.insert(tool_call_id);
+                        this.show_skill_bundle_status(
+                            tool_call_id,
+                            format!("Saved bundle '{id}' to registry."),
+                            cx,
+                        );
+                    }
+                    Err(e) => {
+                        this.show_skill_bundle_status(
+                            tool_call_id,
+                            format!("Save failed: {e}"),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Re-invoke the `bundler-evolve` template to refine the composed bundle.
+    /// The prior manifest and goal context are read from the tool call's
+    /// `raw_output` (which carries the serialized `SkillBundleToolOutput`).
+    /// The evolved output is injected as a new assistant message so the
+    /// user can read it. The `goal_delta` defaults to 0.5 (partial goal
+    /// achievement) and the `convergence_failure_reason` to a generic
+    /// operator-initiated refinement message — a future enhancement could
+    /// surface an input for the operator to supply these.
+    fn refine_skill_bundle(
+        &mut self,
+        tool_call_id: acp::ToolCallId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(executor) = agent::manifest_executor_cloned() else {
+            self.show_skill_bundle_status(
+                tool_call_id.clone(),
+                "Skill executor not configured — cannot refine bundle.",
+                cx,
+            );
+            return;
+        };
+
+        // Read the prior manifest and goal context from the tool call's
+        // raw_output. `SkillBundleToolOutput::Executed` carries `goal_context`
+        // (step_1_result from the bundler cascade) so the evolve step can
+        // reference the original goal.
+        let thread = self.thread.clone();
+        let prior_output = thread.read(cx).entries().iter().find_map(|entry| {
+            let acp_thread::AgentThreadEntry::ToolCall(tc) = entry else {
+                return None;
+            };
+            if tc.id != tool_call_id {
+                return None;
+            }
+            tc.raw_output.clone()
+        });
+
+        let Some(raw_output) = prior_output else {
+            self.show_skill_bundle_status(
+                tool_call_id,
+                "Could not find the bundle's prior output to refine.",
+                cx,
+            );
+            return;
+        };
+
+        let Ok(parsed) = serde_json::from_value::<agent::SkillBundleToolOutput>(raw_output)
+        else {
+            self.show_skill_bundle_status(
+                tool_call_id,
+                "Could not parse the bundle's prior output.",
+                cx,
+            );
+            return;
+        };
+        let agent::SkillBundleToolOutput::Executed {
+            bundle_manifest,
+            goal_context,
+            ..
+        } = parsed
+        else {
+            self.show_skill_bundle_status(
+                tool_call_id,
+                "Cannot refine an errored bundle.",
+                cx,
+            );
+            return;
+        };
+
+        self.refining_skill_bundle_calls.insert(tool_call_id.clone());
+        cx.notify();
+
+        let goal_delta = 0.5;
+        let convergence_failure_reason =
+            "Operator-initiated refinement from the post-run UI.".to_string();
+
+        let task = cx.spawn(async move |cx| {
+            let result = executor
+                .refine_bundle(
+                    bundle_manifest,
+                    goal_context,
+                    goal_delta,
+                    convergence_failure_reason,
+                )
+                .await
+                .map_err(|e| e.to_string());
+            (tool_call_id, result)
+        });
+
+        let thread_for_inject = self.thread.clone();
+        cx.spawn(async move |this, cx| {
+            let (tool_call_id, result) = task.await;
+            this.update(cx, |this, cx| {
+                this.refining_skill_bundle_calls.remove(&tool_call_id);
+                match result {
+                    Ok(refine_result) => {
+                        this.resolved_skill_bundle_calls.insert(tool_call_id.clone());
+                        // Inject the evolved output as a new assistant message
+                        // so the user can read the refined result. Without this,
+                        // the refine action produces output that goes nowhere.
+                        let header = "**Refined bundle output** (goal-delta-driven recomposition):\n\n";
+                        let text = format!("{header}{}", refine_result.output);
+                        thread_for_inject.update(cx, |thread, cx| {
+                            thread.push_assistant_content_block(
+                                acp::ContentBlock::Text(acp::TextContent::new(text)),
+                                false,
+                                cx,
+                            );
+                        });
+                        this.show_skill_bundle_status(
+                            tool_call_id,
+                            "Bundle refined — evolved output added to conversation.",
+                            cx,
+                        );
+                    }
+                    Err(e) => {
+                        this.show_skill_bundle_status(
+                            tool_call_id,
+                            format!("Refine failed: {e}"),
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Show a status message for a skill_bundle action via a workspace toast.
+    /// Falls back to `tracing::info!` if the workspace is unavailable (e.g.
+    /// the view was dropped between the action dispatch and the completion
+    /// callback).
+    fn show_skill_bundle_status(
+        &self,
+        _tool_call_id: acp::ToolCallId,
+        message: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        let message: SharedString = message.into();
+        let Some(workspace) = self.workspace.upgrade() else {
+            tracing::info!(target: "reg.skill.bundle_ui", message = %message);
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            let toast = StatusToast::new(message, cx, |this, _cx| {
+                this.icon(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+            });
+            workspace.toggle_status_toast(toast, cx);
+        });
     }
 
     fn render_tool_call_content(

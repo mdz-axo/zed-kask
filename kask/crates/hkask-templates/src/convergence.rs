@@ -254,8 +254,11 @@ impl ConvergenceTracker {
                      f64 (not null, not a string, not an object)."
                 );
             }
-            self.signal_history.push(signal);
-            self.brier_history.push(brier);
+            // Delegate to `push_kata_cycle` so the test-only method becomes
+            // production-load-bearing (the `.rules` "Convention helpers with
+            // only test callers are dead code" trap — the prior inline push
+            // duplicated `push_kata_cycle`'s logic, leaving it test-only).
+            self.push_kata_cycle(signal, brier);
         } else {
             // Legacy model: read self-grade metric via the shared resolver so
             // the trajectory history uses the same value space as

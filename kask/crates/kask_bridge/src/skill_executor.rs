@@ -633,6 +633,15 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             .get("step_5_result")
             .and_then(|v| v.as_f64());
 
+        // Extract the goal-extract step's output (step_1_result) so the
+        // `Refine` action can pass it to `bundler-evolve` as `goal_context`.
+        // Without it, the evolve step runs blind — it can't reference the
+        // original goal. `Null` if the bundler cascade didn't produce it.
+        let goal_context = bundler_result
+            .get("step_1_result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
         // Extract the skill names actually placed in the composed manifest
         // (may differ from the input if the bundler dropped a skill via
         // dead-letter resolution).
@@ -679,6 +688,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             output,
             composition_score,
             composed_skill_names,
+            goal_context,
         })
     }
 
@@ -696,7 +706,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         let yaml_string = serde_yaml_neo::to_string(&manifest_file_json)
             .map_err(|e| format!("Failed to serialize bundle manifest to YAML: {e}"))?;
 
-        let id = bundle_manifest
+        let raw_id = bundle_manifest
             .get("id")
             .and_then(|v| v.as_str())
             .map(String::from)
@@ -704,7 +714,31 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
                 "bundle manifest has no `id` field — cannot save without an id".to_string()
             })?;
 
-        let path = self.manifest_path(&id);
+        // Namespace the bundle ID with a `bundle-` prefix to prevent the
+        // model-generated ID from colliding with an existing skill manifest
+        // (e.g. if the model produces `id: "grill-me"`, this becomes
+        // `bundle-grill-me` and won't overwrite `grill-me.yaml`).
+        let namespaced_id = if raw_id.starts_with("bundle-") {
+            raw_id.clone()
+        } else {
+            format!("bundle-{raw_id}")
+        };
+
+        let path = self.manifest_path(&namespaced_id);
+
+        // Guard against overwriting an existing manifest at the namespaced
+        // path. A collision here means a prior save used the same ID — the
+        // operator should choose a different name or accept the overwrite
+        // explicitly (future enhancement: prompt for confirmation).
+        if path.is_file() {
+            return Err(format!(
+                "A bundle manifest already exists at {} (id: {}). \
+                 Choose a different bundle ID or remove the existing file first.",
+                path.display(),
+                namespaced_id
+            ));
+        }
+
         std::fs::write(&path, yaml_string.as_bytes()).map_err(|e| {
             format!(
                 "Failed to write bundle manifest to {}: {e}",
@@ -714,11 +748,11 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 
         tracing::info!(
             target: "reg.skill.bundle_save",
-            bundle_id = %id,
+            bundle_id = %namespaced_id,
             path = %path.display(),
             "Saved composed bundle manifest to registry"
         );
-        Ok(id)
+        Ok(namespaced_id)
     }
 
     async fn refine_bundle(
@@ -834,6 +868,7 @@ steps:
             output,
             composition_score: None,
             composed_skill_names,
+            goal_context: serde_json::Value::Null,
         })
     }
 }
@@ -974,5 +1009,195 @@ mod tests {
         let out = extract_final_step_result(&map);
         assert!(out.contains("convergence_metric"));
         assert!(out.contains("0.05"));
+    }
+
+    /// The reshape must move header fields under `manifest:` and keep the
+    /// rest as siblings, so `load_manifest_from_yaml` can round-trip a saved
+    /// bundle. Pins the on-disk format for the `Save` action.
+    #[test]
+    fn reshape_composite_to_manifest_file_moves_header_under_manifest_key() {
+        let composite = json!({
+            "id": "my-bundle",
+            "name": "My Bundle",
+            "description": "A test bundle",
+            "version": "1.0.0",
+            "editor": "operator",
+            "visibility": "Public",
+            "steps": [{"ordinal": 1, "action": "know", "description": "step 1"}],
+            "skills": [{"id": "skill-a", "polarity": "proposer", "manifest_ref": "skill-a", "content_hash": "abc"}],
+            "convergence": {"max_iterations": 3, "threshold": 0.1, "field": "score"},
+            "gas": {"cap": 10000}
+        });
+
+        let reshaped = reshape_composite_to_manifest_file(&composite);
+
+        // Header fields are under `manifest:`.
+        let manifest_header = reshaped.get("manifest").expect("manifest key present");
+        assert_eq!(manifest_header.get("id").and_then(|v| v.as_str()), Some("my-bundle"));
+        assert_eq!(manifest_header.get("name").and_then(|v| v.as_str()), Some("My Bundle"));
+        assert_eq!(
+            manifest_header.get("description").and_then(|v| v.as_str()),
+            Some("A test bundle")
+        );
+
+        // Sibling fields are at the top level.
+        assert!(reshaped.get("steps").is_some());
+        assert!(reshaped.get("skills").is_some());
+        assert!(reshaped.get("convergence").is_some());
+        assert!(reshaped.get("gas").is_some());
+    }
+
+    /// The reshape must not leak header fields to the top level (would
+    /// confuse `load_manifest_from_yaml`'s `deny_unknown_fields` on
+    /// `ManifestFile`).
+    #[test]
+    fn reshape_composite_to_manifest_file_does_not_leak_header_to_top_level() {
+        let composite = json!({
+            "id": "leak-test",
+            "name": "Leak Test",
+            "steps": []
+        });
+
+        let reshaped = reshape_composite_to_manifest_file(&composite);
+
+        // `id` and `name` must NOT be at the top level.
+        assert!(reshaped.get("id").is_none(), "id leaked to top level");
+        assert!(reshaped.get("name").is_none(), "name leaked to top level");
+        // They must be under `manifest:`.
+        let header = reshaped.get("manifest").expect("manifest key present");
+        assert_eq!(header.get("id").and_then(|v| v.as_str()), Some("leak-test"));
+    }
+
+    /// The reshape must handle a composite missing optional fields without
+    /// inserting nulls (absent fields stay absent, so the YAML is clean).
+    #[test]
+    fn reshape_composite_to_manifest_file_handles_missing_optional_fields() {
+        let composite = json!({
+            "id": "minimal",
+            "name": "Minimal",
+            "steps": []
+        });
+
+        let reshaped = reshape_composite_to_manifest_file(&composite);
+
+        let header = reshaped.get("manifest").expect("manifest key present");
+        assert_eq!(header.get("id").and_then(|v| v.as_str()), Some("minimal"));
+        // Optional header fields that were absent are not present.
+        assert!(header.get("description").is_none());
+        assert!(header.get("version").is_none());
+        // Optional sibling fields that are absent are not present.
+        assert!(reshaped.get("skills").is_none());
+        assert!(reshaped.get("convergence").is_none());
+    }
+
+    /// Round-trip: reshape a composite manifest to `ManifestFile` format,
+    /// serialize to YAML, and verify `load_manifest_from_yaml` can parse it
+    /// back. This catches any field mismatch between the hardcoded key
+    /// lists in `reshape_composite_to_manifest_file` and the actual
+    /// `ManifestFile` struct fields — if `ManifestFile` gains a new field,
+    /// this test will still pass (the field is optional with `#[serde(default)]`),
+    /// but if a field is renamed or removed, the round-trip will fail.
+    #[test]
+    fn reshape_composite_round_trips_through_load_manifest_from_yaml() {
+        let composite = json!({
+            "id": "round-trip-test",
+            "name": "Round Trip Test",
+            "description": "A bundle for round-trip testing",
+            "version": "1.0.0",
+            "editor": "test",
+            "visibility": "Public",
+            "steps": [{
+                "ordinal": 1,
+                "action": "know",
+                "description": "test step",
+                "renderer": "minijinja",
+                "template_ref": "some/template.j2",
+                "gas_cap": 1000,
+                "timeout_seconds": 30
+            }],
+            "skills": [{
+                "id": "skill-a",
+                "polarity": "Generative",
+                "manifest_ref": "skill-a",
+                "content_hash": "abc123"
+            }],,
+            "convergence": {"max_iterations": 3, "threshold": 0.1, "field": "score"},
+            "gas": {"cap": 10000}
+        });
+
+        let reshaped = reshape_composite_to_manifest_file(&composite);
+        let yaml_string = serde_yaml_neo::to_string(&reshaped)
+            .expect("reshape output must serialize to YAML");
+
+        // The critical assertion: `load_manifest_from_yaml` must accept the
+        // YAML without error. If the key lists in `reshape_composite_to_manifest_file`
+        // don't match `ManifestFile`'s fields, this will fail.
+        let manifest = load_manifest_from_yaml(&yaml_string)
+            .expect("reshaped YAML must round-trip through load_manifest_from_yaml");
+
+        // Verify the round-trip preserved key fields.
+        assert_eq!(manifest.id, "round-trip-test");
+        assert_eq!(manifest.name, "Round Trip Test");
+        assert_eq!(manifest.steps.len(), 1);
+        assert_eq!(manifest.steps[0].ordinal, 1);
+        assert_eq!(manifest.skills.len(), 1);
+        assert_eq!(manifest.skills[0].id, "skill-a");
+    }
+
+    /// The inline refine manifest YAML in `refine_bundle` must parse via
+    /// `load_manifest_from_yaml` and produce a single-step manifest pointing
+    /// at `skill-bundler/bundler-evolve`. If the YAML drifts (typo in
+    /// template_ref, missing field, wrong indentation), this test catches it
+    /// before the refine path fails at runtime.
+    #[test]
+    fn refine_manifest_yaml_parses_and_targets_bundler_evolve() {
+        let refine_manifest_yaml = "\
+manifest:
+  id: refine-bundle
+  name: Refine Bundle
+  description: Single-step goal-delta-driven bundle refinement
+steps:
+  - ordinal: 1
+    action: know
+    description: Refine bundle via goal-delta evolution
+    renderer: minijinja
+    template_ref: skill-bundler/bundler-evolve
+    gas_cap: 6000
+    timeout_seconds: 60
+    input_mapping:
+      bundle_name: \"{{ bundle_name }}\"
+      current_manifest: \"{{ current_manifest }}\"
+      changed_skills: \"{{ changed_skills }}\"
+      goal_context: \"{{ goal_context }}\"
+      goal_delta: \"{{ goal_delta }}\"
+      convergence_failure_reason: \"{{ convergence_failure_reason }}\"
+";
+
+        let manifest = load_manifest_from_yaml(refine_manifest_yaml)
+            .expect("refine manifest YAML must parse");
+        assert_eq!(manifest.id, "refine-bundle");
+        assert_eq!(manifest.steps.len(), 1);
+        assert_eq!(manifest.steps[0].ordinal, 1);
+        assert_eq!(
+            manifest.steps[0].template_ref.as_deref(),
+            Some("skill-bundler/bundler-evolve")
+        );
+        assert_eq!(manifest.steps[0].renderer.as_deref(), Some("minijinja"));
+        // The input_mapping must bind all 6 evolve template inputs.
+        let mapping = manifest.steps[0].input_mapping.as_ref()
+            .expect("input_mapping present");
+        for key in [
+            "bundle_name",
+            "current_manifest",
+            "changed_skills",
+            "goal_context",
+            "goal_delta",
+            "convergence_failure_reason",
+        ] {
+            assert!(
+                mapping.get(key).is_some(),
+                "input_mapping missing key: {key}"
+            );
+        }
     }
 }

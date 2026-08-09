@@ -274,6 +274,12 @@ pub struct BundleExecutionResult {
     /// (may differ from the input if the bundler dropped a skill via
     /// dead-letter resolution). Used by `Save` for registry matching.
     pub composed_skill_names: Vec<String>,
+    /// The goal-extract step's output (step_1_result from the skill-bundler
+    /// cascade). Carried so the `Refine` action can pass it to
+    /// `bundler-evolve` as `goal_context` — without it, the evolve step runs
+    /// blind (it can't reference the original goal). `Null` if the bundler
+    /// cascade didn't produce a step_1_result.
+    pub goal_context: serde_json::Value,
 }
 
 impl SkillTool {
@@ -1126,6 +1132,7 @@ mod tests {
                 output: self.output.clone(),
                 composition_score: Some(0.0),
                 composed_skill_names: skill_names.to_vec(),
+                goal_context: serde_json::Value::Null,
             })
         }
 
@@ -1172,6 +1179,7 @@ mod tests {
                 output: self.output.clone(),
                 composition_score: Some(0.0),
                 composed_skill_names,
+                goal_context: serde_json::Value::Null,
             })
         }
     }

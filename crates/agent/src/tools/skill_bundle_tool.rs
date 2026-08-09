@@ -54,6 +54,10 @@ pub enum SkillBundleToolOutput {
         /// from the input if the bundler dropped a skill via dead-letter
         /// resolution).
         composed_skill_names: Vec<String>,
+        /// The goal-extract step's output (step_1_result from the bundler
+        /// cascade). Carried so the `Refine` action can pass it to
+        /// `bundler-evolve` as `goal_context`.
+        goal_context: serde_json::Value,
     },
     Error {
         error: String,
@@ -68,6 +72,7 @@ impl From<SkillBundleToolOutput> for LanguageModelToolResultContent {
                 bundle_manifest,
                 composition_score,
                 composed_skill_names,
+                goal_context: _,
             } => {
                 // Wrap the output in a skill_content envelope (same format as
                 // the single-skill tool) so the model receives a consistent
@@ -245,6 +250,7 @@ impl AgentTool for SkillBundleTool {
                 bundle_manifest: result.bundle_manifest,
                 composition_score: result.composition_score,
                 composed_skill_names: result.composed_skill_names,
+                goal_context: result.goal_context,
             })
         })
     }

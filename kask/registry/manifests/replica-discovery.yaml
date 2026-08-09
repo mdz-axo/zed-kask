@@ -319,29 +319,41 @@ steps:
       convergence_metric: number
 
   # ── Phase 11: Curator Confirmation Gate (curated mode only) ──────────────
+  # NOTE: This step was previously `action: choice` with a `choices:` field and
+  # `condition: ${input.mode == 'curated'}`. Both were silently dropped:
+  # `BundleManifestStep` has no `choices` field (serde drops unknown fields),
+  # and the condition renderer only handles `{{ }}`, not `${ }`. The step was
+  # always skipped (condition always false) and never branched. Rewritten to
+  # use the executor's production routing mechanism: `select` + `branching`,
+  # which 12 manifests in the registry use successfully. The `condition` uses
+  # `{{ }}` rendering so the gate fires when `input.mode` is `curated`.
   - ordinal: 13
-    action: choice
+    action: select
     description: >
-      Phase 11 (curated mode only): Present discovered works, extracted concepts,
-      inferred methods, generated corpus.yaml, and validation results to the
-      Curator for review. Curator can approve, modify (loops back to Phase 10),
-      or abort. In agentic mode, this step is skipped and the pipeline proceeds
-      to Regulation feedback if validation passed.
-    renderer: null
-    template_ref: null
-    mcp: null
-    condition: "${input.mode == 'curated'}"
+      Phase 11 (curated mode only): Present discovered works, extracted
+      concepts, inferred methods, generated corpus.yaml, and validation
+      results to the Curator for review. Curator can approve, modify (loops
+      back to Phase 10), or abort. In agentic mode, this step is skipped and
+      the pipeline proceeds to Regulation feedback if validation passed.
+    renderer: minijinja
+    template_ref: replica/curator-confirmation-gate
+    condition: "{{ input.mode }} == 'curated'"
     gas_cap: 500
     timeout_seconds: 300
-    choices:
-      - approve: "Proceed to Regulation feedback with generated corpus"
-      - modify: "Adjust works, concepts, or methods and regenerate corpus.yaml"
-        restart_at: 11
-      - abort: "Stop discovery, discard results"
+    input_mapping:
+      works: "{{ step_3_result }}"
+      concepts: "{{ step_5_result }}"
+      methods: "{{ step_7_result }}"
+      corpus_yaml: "{{ step_11_result.corpus_yaml }}"
+      validation: "{{ step_12_result }}"
     output_schema:
       decision: string
       approved_works: array
       convergence_metric: number
+    branching:
+      approve: 14
+      modify: 11
+      abort: 16
 
   # ── Phase 12.5: Convergence Score Computation ────────────────────────────
   # Computes a real structural-validity score from the validation step's
