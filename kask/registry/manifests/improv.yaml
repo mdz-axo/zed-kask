@@ -1,5 +1,5 @@
 # Improv Process Manifest
-# ℏKask v0.33.5 — Composable interaction grammar as convergent PDCA
+# ℏKask v0.33.7 — Composable interaction grammar as convergent PDCA
 # Restructured: separated mode selection (KnowAct) from mode application (WordAct routing).
 # Five mode WordActs are now wired into the flow via conditional select steps.
 
@@ -13,7 +13,7 @@ manifest:
     mode-specific WordAct template, evaluates convergence quality, and
     iterates until constructive interaction quality is stable.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

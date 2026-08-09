@@ -23,7 +23,7 @@ manifest:
   id: qa-capability-membrane-penetration
   category: qa-script
   name: QA Capability-Match Membrane Penetration
-  version: "0.33.5"
+  version: "0.33.7"
   visibility: Private
   description: >
     Verifies capability-match security membrane integrity through the hkask-capability

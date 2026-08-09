@@ -1,5 +1,5 @@
 # Coding Guidelines Process Manifest
-# ℏKask v0.33.5 — Coding discipline as convergent PDCA
+# ℏKask v0.33.7 — Coding discipline as convergent PDCA
 
 manifest:
   id: coding-guidelines
@@ -10,7 +10,7 @@ manifest:
     constraints, applies guardrails, verifies proposed implementation quality,
     computes convergence, and iterates until violations are reduced.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

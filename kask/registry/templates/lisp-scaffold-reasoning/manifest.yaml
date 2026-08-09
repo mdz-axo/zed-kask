@@ -1,5 +1,5 @@
 # Template crate manifest for lisp-scaffold-reasoning skill
-# hKask v0.33.5
+# hKask v0.33.7
 #
 # Demonstrates deterministic Lisp scaffolding of LLM probabilistic reasoning,
 # after de la Torre (2025, arXiv:2506.10021) — "From Tool Calling to Symbolic
@@ -13,7 +13,7 @@
 
 crate:
   name: lisp-scaffold-reasoning
-  version: "0.33.5"
+  version: "0.33.7"
   description: >
     Demonstrates deterministic Lisp scaffolding of LLM probabilistic reasoning.
     Interleaves LLM hypothesis-generation steps with stateless `lisp.eval`

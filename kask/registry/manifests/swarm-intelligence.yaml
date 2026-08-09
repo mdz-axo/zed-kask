@@ -1,5 +1,5 @@
 # Swarm Intelligence Process Manifest
-# ℏKask v0.33.5 — Swarm composition as convergent PDCA
+# ℏKask v0.33.7 — Swarm composition as convergent PDCA
 # Decomposed into: SENSE → ORIENT → DECIDE → ACT → CHECK → CONVERGE → LOOP
 #
 # Substrate ontology: Agent Bestiary World (ABW) swarm semantics. A swarm is
@@ -71,7 +71,7 @@ manifest:
     integration plan (zed-kask 2026-08-01). Composes pragmatic-cybernetics,
     kata-improvement, and essentialist. Emits reg.skill.swarm-intelligence.* spans.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

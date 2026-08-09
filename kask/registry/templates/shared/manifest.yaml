@@ -1,5 +1,5 @@
 # Shared template crate manifest
-# hKask v0.33.5
+# hKask v0.33.7
 #
 # The shared convergence-check template has been removed. Convergence is now
 # gated solely by the ConvergenceTracker (kask/crates/hkask-templates/src/
@@ -13,7 +13,7 @@
 
 crate:
   name: shared
-  version: "0.33.5"
+  version: "0.33.7"
   description: >
     Shared templates used across multiple skill PDCA flows. Contains reusable
     Lisp invariant-check macros (lisp-invariants.j2) for `compute_ref: lisp.eval`

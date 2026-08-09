@@ -1,5 +1,5 @@
 # Voice Models Registry — Mapping Profiles → UserPods / Replicas / System Agents (Curator)
-# hKask v0.33.5 — Registry artifact for verified voice model + profile mappings
+# hKask v0.33.7 — Registry artifact for verified voice model + profile mappings
 # References: audio.rs (media server), lib.rs (STT_DEFAULT / TTS_DEFAULT), media-landscape.md,
 # types/voice.rs (VoiceDesign), registry/system-agents/Curator.yaml (curator agent),
 # coding-guidelines (Simplicity First), essentialist (G1/G2/G3), pragmatic-cybernetics (loop health)
@@ -15,7 +15,7 @@ manifest:
     G1: delete profile — does any agent behavior break? Only keep if variety deficit exists or agent requires specific voice identity.
     G2: surface count — profile interface limited to: model_ref, profile_preset, agent_mapping, contract_check.
   functional_role: registry
-  version: "0.33.5"
+  version: "0.33.7"
   visibility: Public
   editor: agent
 

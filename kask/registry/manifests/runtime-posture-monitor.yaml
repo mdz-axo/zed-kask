@@ -1,5 +1,5 @@
 # Runtime Posture Monitor Process Manifest
-# ℏKask v0.33.5 — Runtime security posture observation
+# ℏKask v0.33.7 — Runtime security posture observation
 # Observes Regulation telemetry (reg.* canonical spans, reg.guard.*, reg.outcome events).
 
 manifest:
@@ -10,7 +10,7 @@ manifest:
     Runtime security posture monitoring. Observes Regulation telemetry for endpoint
     abuse, bot traffic, LLM usage anomalies, and dependency behavior.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 
@@ -113,7 +113,7 @@ steps:
       convergence_signal: "{{ step_3_result.threats | default([]) | length }}"
 
 # Registry invariant X4 (skill-maintenance): verified.
-# Manifest version: 0.33.5. Registry authoritative; SKILL.md is companion.
+# Manifest version: 0.33.7. Registry authoritative; SKILL.md is companion.
 # Created as audit fix A (missing manifest recovery) + C (invariant X4 enforcement).
 # Note: Full .j2 templates in registry/templates/ (authoritative per SKILL.md).
 # Cross-artifact invariant: manifest id matches .agents/skills/ directory name.

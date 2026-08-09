@@ -1,5 +1,5 @@
 # Sankey Flow Process Manifest
-# hKask v0.33.5 — Example-anchored Sankey diagramming
+# hKask v0.33.7 — Example-anchored Sankey diagramming
 # Anchored in PKO (Procedural Knowledge Ontology), PROV-O, FIBO, Mermaid sankey-beta
 # Canonical references: Schmidt (2008) J. Industrial Ecology 12(1):82–94, 12(2):173–185
 #
@@ -37,7 +37,7 @@ manifest:
     Example-anchored convergence: the adapt step self-corrects against the
     matched example's structure in a single pass — no multi-iteration PDCA loop.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

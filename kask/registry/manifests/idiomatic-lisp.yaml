@@ -1,5 +1,5 @@
 # Idiomatic Lisp Process Manifest
-# hKask v0.33.5 — Convergent Lisp design inquiry as PDCA
+# hKask v0.33.7 — Convergent Lisp design inquiry as PDCA
 #
 # Anchors a Lisp design problem against McCarthy/Sussman/Graham principles,
 # proposes idiomatic solutions, adversarially challenges the proposal with
@@ -22,7 +22,7 @@ manifest:
     lean-prover — where lean-prover constructs machine-checked proofs,
     idiomatic-lisp constructs idiomatic designs verified by the REPL.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

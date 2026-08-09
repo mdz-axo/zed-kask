@@ -1,5 +1,5 @@
 # Gradient Hunter Process Manifest
-# ℏKask v0.33.5 — Gradient analysis as phased PDCA
+# ℏKask v0.33.7 — Gradient analysis as phased PDCA
 # Decomposed into: Prior → Map → Detect → Hypothesize → Report → Convergence
 #
 # Substrate ontology: Parisi spin glass theory (non-ergodicity, frustration,
@@ -46,7 +46,7 @@ manifest:
     + field-coverage metrics and iterates until the gradient surface is
     directionally stable or escalation is required.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

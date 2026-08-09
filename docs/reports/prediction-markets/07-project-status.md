@@ -2,7 +2,7 @@
 title: "Prediction Markets Integration — Project Status"
 audience: [developers, architects, agents, operators]
 last_updated: 2026-08-06
-version: "0.33.5"
+version: "0.33.7"
 status: "Active — portfolio extraction + CMP index storage + DR-AS volatility landed"
 domain: "Forecasting"
 mds_categories: [domain, composition, lifecycle]

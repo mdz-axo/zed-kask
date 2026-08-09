@@ -1,9 +1,9 @@
 # Template crate manifest for constraint-forces-recast skill
-# hKask v0.33.5
+# hKask v0.33.7
 
 crate:
   name: constraint-forces-recast
-  version: "0.33.5"
+  version: "0.33.7"
   description: >
     Core generative process for interdisciplinary concept generation. Recasts
     a seed concept from a source ontology A into a target ontology B's constraint

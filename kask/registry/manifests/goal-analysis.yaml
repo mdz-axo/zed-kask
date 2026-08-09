@@ -1,5 +1,5 @@
 # Goal Analysis Process Manifest
-# ℏKask v0.33.5 — Goal lifecycle as convergent PDCA
+# ℏKask v0.33.7 — Goal lifecycle as convergent PDCA
 # Consolidates: goal_lifecycle.yaml (Regulation, storage, matryoshka)
 #               goal_verification.yaml (error handling, human review)
 # Both superseded manifests are now deprecated — this is canonical.
@@ -15,7 +15,7 @@ manifest:
     (done, continue, or blocked). Includes storage integration, Regulation variety tracking,
     matryoshka depth enforcement, and human-review escalation on low confidence.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

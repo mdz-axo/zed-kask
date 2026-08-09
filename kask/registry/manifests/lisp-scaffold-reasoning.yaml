@@ -1,5 +1,5 @@
 # Lisp-Scaffold-Reasoning Process Manifest
-# ℏKask v0.33.5
+# ℏKask v0.33.7
 #
 # Demonstrates deterministic Lisp scaffolding of LLM probabilistic reasoning,
 # after de la Torre (2025, arXiv:2506.10021). The paper proposes a live SBCL
@@ -58,7 +58,7 @@ manifest:
     arXiv:2506.10021) via kask's manifest cascade rather than a persistent REPL.
     A reference skill — read its manifest to see the `lisp.eval` pattern.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

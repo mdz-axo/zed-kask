@@ -1,5 +1,5 @@
 # Caveman Process Manifest
-# ℏKask v0.33.5 — Compression mode as convergent PDCA
+# ℏKask v0.33.7 — Compression mode as convergent PDCA
 
 manifest:
   id: caveman
@@ -10,7 +10,7 @@ manifest:
     computes convergence from compression quality and clarity exceptions, and
     iterates until concise output is stable.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

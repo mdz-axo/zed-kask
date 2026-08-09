@@ -1,5 +1,5 @@
 # Gradient-Seeded Recombination Process Manifest
-# ℏKask v0.33.5 — Cross-ontology recombination-site analysis as phased PDCA
+# ℏKask v0.33.7 — Cross-ontology recombination-site analysis as phased PDCA
 # Decomposed into: Inventory → Prior → Map → Detect → Hypothesize → Prioritize → Select-Seeds → Convergence
 #
 # Substrate ontology: Parisi spin glass theory (non-ergodicity, frustration,
@@ -41,7 +41,7 @@ manifest:
     gradients between ontologies, while gradient-hunter hunts gradients
     within a codebase or telemetry field.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

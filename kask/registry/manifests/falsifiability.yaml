@@ -1,5 +1,5 @@
 # Falsifiability Process Manifest
-# ℏKask v0.33.5 — Eliminative inference as convergent PDCA
+# ℏKask v0.33.7 — Eliminative inference as convergent PDCA
 # Popper (admissibility) → Chamberlin (multiple hypotheses) → Pearl/Halpern
 # (counterfactuals) → Platt (discriminating tests) → eliminate → converge.
 
@@ -17,7 +17,7 @@ manifest:
     remainder is honestly reported. A delegation target for diagnose,
     hypothesis-framer, superforecasting, and sequential-inquiry.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

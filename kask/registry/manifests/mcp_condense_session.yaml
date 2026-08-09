@@ -1,5 +1,5 @@
 # MCP Condenser — Session Condensation Manifest
-# ℏKask v0.33.5 - A Minimal Viable Container for UserPods
+# ℏKask v0.33.7 - A Minimal Viable Container for UserPods
 
 manifest:
   id: prompt-templates/condense_session
@@ -9,7 +9,7 @@ manifest:
     Condense conversation sessions into summaries with key decisions and action items.
     Supports configurable compression ratio and selective extraction.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

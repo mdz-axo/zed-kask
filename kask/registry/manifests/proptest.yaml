@@ -1,5 +1,5 @@
 # Proptest Skill Process Manifest
-# ℏKask v0.33.5 — Property-based testing as convergent PDCA
+# ℏKask v0.33.7 — Property-based testing as convergent PDCA
 
 manifest:
   id: proptest
@@ -13,7 +13,7 @@ manifest:
     properties. Complements TDD (which writes the first test per behavior)
     by writing the universal test that covers the full input space.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

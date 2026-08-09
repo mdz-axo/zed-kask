@@ -1,5 +1,5 @@
 # Upstream Rebase Process Manifest
-# ℏKask v0.33.5 — Upstream sync as convergent PDCA
+# ℏKask v0.33.7 — Upstream sync as convergent PDCA
 #
 # Reference models:
 #   - Ousterhout, J. "A Philosophy of Software Design." Yaknyam Press, 2018.
@@ -29,7 +29,7 @@ manifest:
     inventory, classify by constraint force, build the dependency DAG, re-apply
     onto clean upstream in topological order, and pin every unit with a test.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 

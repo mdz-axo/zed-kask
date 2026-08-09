@@ -1,5 +1,5 @@
 # Lean Prover Process Manifest
-# hKask v0.33.5 — Machine-checked proof construction as convergent PDCA
+# hKask v0.33.7 — Machine-checked proof construction as convergent PDCA
 #
 # Anchors a proof obligation against the Curry-Howard Prop/Type discipline,
 # constructs a proof via tactics and term mode, refutes via counterexample
@@ -24,7 +24,7 @@ manifest:
     falsifiability — where falsifiability designs discriminating tests,
     lean-prover constructs machine-checked proofs that discriminate.
   functional_role: flowdef
-  version: "0.33.5"
+  version: "0.33.7"
   editor: curator-or-human-admin
   visibility: Public
 
