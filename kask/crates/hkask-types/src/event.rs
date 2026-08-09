@@ -280,6 +280,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.cascade.compute",
     "reg.skill.cascade.escalated",
     "reg.skill.cascade.branching_misconfigured",
+    "reg.skill.cascade.choice_misconfigured",
     // Convergence: cascade outcomes
     "reg.skill.convergence",
     "reg.skill.convergence.converged",
@@ -310,6 +311,9 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.skill.discovery.gap_detected",
     "reg.skill.discovery.searched",
     "reg.skill.discovery.evaluated",
+    // Bundle: composition and persistence (skill bundler / post-run UI)
+    "reg.skill.bundle_compose",
+    "reg.skill.bundle_save",
     // ── SLO ──
     "reg.slo.evaluated",
     // ── Sovereignty ──

@@ -625,12 +625,15 @@ impl MediaWidget {
     fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let body = self.compose_disagree_body();
         tracing::info!(target: "reg.widget.disagree", "REG");
-        if let Some(injector) = hkask_conversation_injector::shared_injector() {
-            // The production injector pre-fills the editor synchronously and
-            // returns a `Task::ready(Ok(()))`; the returned `Result` is always
-            // `Ok`. Await in a detached task so a hypothetical async impl's
-            // error path is surfaced (not silently dropped — repo `.rules`),
-            // and so `clippy::let_underscore_future` is not triggered.
+        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
+            // The production injector pre-fills the active ThreadView's editor
+            // synchronously; it returns `Ok` while that view is alive, or `Err`
+            // if the active conversation has been dropped (the global holds a
+            // weak ref, so a dead thread is never retained and never leaks
+            // across app/test lifetimes). Await in a detached task so the
+            // `Err` path surfaces the composed body as a draft (not silently
+            // dropped — repo `.rules`), and so `clippy::let_underscore_future`
+            // is not triggered.
             let draft = body.clone();
             let task = injector.inject(body, window, cx);
             cx.spawn(async move |this, cx| {
@@ -859,11 +862,12 @@ mod tests {
     use gpui::{AppContext, TestAppContext, Window};
     use std::sync::{Arc, Mutex};
 
-    /// Serializes tests that mutate the process-global `ToolInvoker` and
-    /// `ConversationInjector` (separate globals, same racy-global trap — repo
-    /// `.rules`). Without this lock, parallel tests observe each other's
-    /// invoker/injector and intermittently fail with "invoker not wired" even
-    /// when the test wired a mock.
+    /// Serializes tests that mutate the process-global `ToolInvoker`
+    /// (the `ConversationInjector` is now per-app — it drops with each
+    /// `TestAppContext` — but this lock is still shared with the invoker
+    /// tests). Without this lock, parallel invoker tests observe each other's
+    /// invoker and intermittently fail with "invoker not wired" even when the
+    /// test wired a mock.
     static GLOBAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// A `MockToolInvoker` whose calls and canned result are configurable.
@@ -921,14 +925,6 @@ mod tests {
                 .unwrap_or_else(|e| e.into_inner())
                 .push(body);
             Task::ready(Ok(()))
-        }
-    }
-
-    /// RAII guard that restores the conversation-injector global to `None`.
-    struct ConversationInjectorGuard;
-    impl Drop for ConversationInjectorGuard {
-        fn drop(&mut self) {
-            hkask_conversation_injector::set_active_injector(None);
         }
     }
 
@@ -1087,9 +1083,10 @@ mod tests {
     #[gpui::test]
     async fn disagree_routes_through_injector(cx: &mut TestAppContext) {
         let _guard = GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = ConversationInjectorGuard;
         let mock = Arc::new(MockConversationInjector::default());
-        hkask_conversation_injector::set_active_injector(Some(mock.clone()));
+        cx.update(|cx| {
+            hkask_conversation_injector::set_active_injector(cx, Some(mock.clone()));
+        });
 
         let block = block_with_provenance("omc:CreativeWork", "generate_image", "a cat");
         let reference = block.to_media_ref().expect("resolves");
@@ -1129,8 +1126,7 @@ mod tests {
     #[gpui::test]
     async fn disagree_surfaces_draft_when_no_injector(cx: &mut TestAppContext) {
         let _guard = GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = ConversationInjectorGuard;
-        hkask_conversation_injector::set_active_injector(None);
+        // Per-app global starts empty — no injector is wired by default.
 
         let block = block_with_provenance("omc:CreativeWork", "generate_image", "a cat");
         let reference = block.to_media_ref().expect("resolves");
@@ -1155,7 +1151,6 @@ mod tests {
         // grill-me edge case (b): absent provenance → generic "media result"
         // framing. `compose_disagree_body` is pure, so no window is needed.
         let _guard = GLOBAL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = ConversationInjectorGuard;
 
         let block = block_without_provenance();
         let reference = block.to_media_ref().expect("resolves");

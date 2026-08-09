@@ -5,7 +5,9 @@ use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{
+    AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
+};
 use action_log::ActionLog;
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
@@ -204,7 +206,7 @@ impl EditFileTool {
                         },
                         Err(error) => {
                             return EditSessionResult::Failed {
-                                error: error.to_string(),
+                                error: map_tool_input_error(error),
                                 session,
                             };
                         }
@@ -850,6 +852,45 @@ mod tests {
         assert!(
             error.contains("cancelled"),
             "Expected cancellation error but got: {error}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_orphaned_by_stream_end_produces_truncation_message(
+        cx: &mut TestAppContext,
+    ) {
+        // When the LLM stream ends (e.g. MaxTokens) before sending
+        // is_input_complete=true, the turn loop drains streaming_tool_inputs,
+        // dropping the sender. The edit_file tool's input.next() returns
+        // Err("tool input was not fully received"), which map_tool_input_error
+        // translates to a truncation-specific message so the model knows to
+        // retry with a simpler call instead of treating it as an arbitrary
+        // failure.
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "hello world"})).await;
+        let (mut sender, input) = ToolInput::<EditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| edit_tool.clone().run(input, event_stream, cx));
+
+        // Send a partial so the edit session starts
+        sender.send_partial(json!({"path": "root/file.txt"}));
+        cx.run_until_parked();
+
+        // Drop the sender WITHOUT sending Full — simulates the stream-end drain
+        drop(sender);
+        cx.run_until_parked();
+
+        let result = task.await;
+        let EditFileToolOutput::Error { error, .. } = result.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            error.contains("token limit"),
+            "Expected truncation message mentioning token limit, but got: {error}"
+        );
+        assert!(
+            !error.contains("tool input was not fully received"),
+            "Should not leak the generic channel-closed error string, but got: {error}"
         );
     }
 

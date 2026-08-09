@@ -642,13 +642,13 @@ impl ConversationView {
     /// global is cleared so widgets surface a visible fallback draft rather than
     /// silently no-op'ing (repo `.rules`).
     // zed-kask: D21 — widget→agent compose-back seam (publish_injector).
-    fn publish_injector(&self) {
+    fn publish_injector(&self, cx: &mut App) {
         let injector = self.active_thread().map(|thread_view| {
             Arc::new(ThreadConversationInjector {
-                thread_view: thread_view.clone(),
+                thread_view: thread_view.downgrade(),
             }) as Arc<dyn hkask_conversation_injector::ConversationInjector>
         });
-        hkask_conversation_injector::set_active_injector(injector);
+        hkask_conversation_injector::set_active_injector(cx, injector);
     }
 
     pub fn pending_tool_call<'a>(
@@ -725,7 +725,7 @@ impl ConversationView {
         if let Some(view) = self.active_thread() {
             view.read(cx).activation_focus_handle(cx).focus(window, cx);
         }
-        self.publish_injector();
+        self.publish_injector(cx);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         cx.notify();
     }
@@ -748,18 +748,22 @@ impl ConversationView {
 /// the same effect. Lives in `agent_ui` (the D-seam) because it needs
 /// `ThreadView` + `MessageEditor`, which only `agent_ui` has.
 struct ThreadConversationInjector {
-    thread_view: Entity<ThreadView>,
+    thread_view: WeakEntity<ThreadView>,
 }
 
 impl hkask_conversation_injector::ConversationInjector for ThreadConversationInjector {
     fn inject(&self, body: String, window: &mut Window, cx: &mut App) -> Task<Result<(), String>> {
-        self.thread_view.update(cx, |thread_view, cx| {
+        match self.thread_view.update(cx, |thread_view, cx| {
             thread_view.message_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
                 editor.insert_text(&body, window, cx);
             });
-        });
-        Task::ready(Ok(()))
+        }) {
+            Ok(()) => Task::ready(Ok(())),
+            Err(error) => Task::ready(Err(format!(
+                "active conversation no longer exists: {error}"
+            ))),
+        }
     }
 }
 
@@ -953,7 +957,7 @@ impl ConversationView {
         }
 
         self.server_state = state;
-        self.publish_injector();
+        self.publish_injector(cx);
         cx.emit(StateChange);
         cx.emit(AcpServerViewEvent::ActiveThreadChanged);
         if matches!(&self.server_state, ServerState::Connected(_)) {
@@ -5684,22 +5688,15 @@ pub(crate) mod tests {
     }
 
     // ── D-seam pinning: ConversationView publishes the active ThreadView to the
-    // kask `hkask-conversation-injector` global on activation (DIVERGENCE.md).
-    // The global is process-shared, so reset it at test end (RAII) to avoid
-    // leaking into sibling tests.
-    struct InjectorGlobalGuard;
-    impl Drop for InjectorGlobalGuard {
-        fn drop(&mut self) {
-            hkask_conversation_injector::set_active_injector(None);
-        }
-    }
+    // kask `hkask-conversation-injector` per-app global on activation
+    // (DIVERGENCE.md). The global is per-app, so it drops with the
+    // TestAppContext — no RAII reset is needed across tests.
 
     #[gpui::test]
     async fn publish_injector_wires_global_on_activation_and_clears_on_disconnect(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        let _restore = InjectorGlobalGuard;
 
         let connection = StubAgentConnection::new();
         let (conversation_view, cx) =
@@ -5710,7 +5707,7 @@ pub(crate) mod tests {
         // calls publish_injector, which publishes the active ThreadView to the
         // kask global so widgets can compose back.
         assert!(
-            hkask_conversation_injector::shared_injector().is_some(),
+            cx.read(|cx| hkask_conversation_injector::shared_injector(cx).is_some()),
             "active conversation must publish a ConversationInjector"
         );
 
@@ -5726,7 +5723,7 @@ pub(crate) mod tests {
             );
         });
         assert!(
-            hkask_conversation_injector::shared_injector().is_none(),
+            cx.read(|cx| hkask_conversation_injector::shared_injector(cx).is_none()),
             "non-Connected server state must clear the global injector"
         );
     }

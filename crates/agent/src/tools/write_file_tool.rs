@@ -2,7 +2,9 @@ use super::edit_session::{
     EditSession, EditSessionContext, EditSessionMode, EditSessionOutput, EditSessionResult,
     initial_title_from_partial_path, run_session,
 };
-use crate::{AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload};
+use crate::{
+    AgentTool, Thread, ToolCallEventStream, ToolInput, ToolInputPayload, map_tool_input_error,
+};
 use action_log::ActionLog;
 use agent_client_protocol::schema::v1 as acp;
 use futures::FutureExt as _;
@@ -182,7 +184,7 @@ impl WriteFileTool {
                         },
                         Err(error) => {
                             return EditSessionResult::Failed {
-                                error: error.to_string(),
+                                error: map_tool_input_error(error),
                                 session,
                             };
                         }

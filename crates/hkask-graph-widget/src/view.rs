@@ -451,10 +451,13 @@ impl GraphWidget {
     fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let body = self.compose_disagree_body();
         tracing::info!(target: "reg.widget.disagree", "REG");
-        if let Some(injector) = hkask_conversation_injector::shared_injector() {
-            // The production injector pre-fills the editor synchronously and
-            // returns `Task::ready(Ok(()))`; await in a detached task so a
-            // hypothetical async impl's error path is surfaced (not silently
+        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
+            // The production injector pre-fills the active ThreadView's editor
+            // synchronously; it returns `Ok` while that view is alive, or `Err`
+            // if the active conversation has been dropped (the global holds a
+            // weak ref, so a dead thread is never retained and never leaks
+            // across app/test lifetimes). Await in a detached task so the
+            // `Err` path surfaces the composed body as a draft (not silently
             // dropped — repo `.rules`), and so `clippy::let_underscore_future`
             // is not triggered.
             let draft = body.clone();
@@ -1213,12 +1216,8 @@ mod tests {
 
     // ── "I disagree" compose-back affordance (C, D21) ─────────────────────
     //
-    // These mutate the process-global `ConversationInjector`, so they take a
-    // `GLOBAL_TEST_LOCK` and use an RAII `ConversationInjectorGuard` to reset
-    // the global on drop (mirrors the portfolio widget's disagree tests).
-
-    /// Serializes tests that mutate the process-global `ConversationInjector`.
-    static GLOBAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // The injector is a per-app GPUI global, so each test's `TestAppContext`
+    // has its own — no cross-test serialization or RAII reset is needed.
 
     /// Records the body of every `inject` call. `Send + Sync` for the
     /// `Arc<dyn ConversationInjector>` global.
@@ -1242,15 +1241,6 @@ mod tests {
         }
     }
 
-    /// RAII guard that restores the conversation-injector global to `None` on
-    /// drop so a test failure cannot leak a mock into sibling tests.
-    struct ConversationInjectorGuard;
-    impl Drop for ConversationInjectorGuard {
-        fn drop(&mut self) {
-            hkask_conversation_injector::set_active_injector(None);
-        }
-    }
-
     /// Trivial root view for `add_window_view` so the test can obtain a `Window`
     /// for `on_disagree_click` without rendering `GraphWidget` (which would
     /// need a theme global this leaf crate's tests don't initialise). Renders a
@@ -1271,12 +1261,10 @@ mod tests {
 
     #[gpui::test]
     async fn disagree_routes_through_injector(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let _restore = ConversationInjectorGuard;
         let mock = std::sync::Arc::new(MockConversationInjector::default());
-        hkask_conversation_injector::set_active_injector(Some(mock.clone()));
+        cx.update(|cx| {
+            hkask_conversation_injector::set_active_injector(cx, Some(mock.clone()));
+        });
 
         let body = body_with_subject();
         // Use a throwaway window root so we get a `Window` for `on_disagree_click`
@@ -1307,11 +1295,7 @@ mod tests {
 
     #[gpui::test]
     async fn disagree_surfaces_draft_when_no_injector(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let _restore = ConversationInjectorGuard;
-        hkask_conversation_injector::set_active_injector(None);
+        // Per-app global starts empty — no injector is wired by default.
 
         let body = body_with_subject();
         let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
@@ -1332,10 +1316,6 @@ mod tests {
     async fn disagree_body_falls_back_when_subject_absent(cx: &mut gpui::TestAppContext) {
         // grill-me edge case (c): absent subject → generic "this event tree"
         // framing. `compose_disagree_body` is pure, so no window is needed.
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let _restore = ConversationInjectorGuard;
 
         let widget = cx.update(|cx| cx.new(|cx| GraphWidget::new(make_body(), cx)));
         let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());
@@ -1350,11 +1330,6 @@ mod tests {
         // grill-me edge case (d): with a selected node → body references the
         // node name; with no selection → no node clause. Uses `.get` bounds
         // check, so an out-of-range `selected` is a no-op (no panic).
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let _restore = ConversationInjectorGuard;
-
         let widget = cx.update(|cx| cx.new(|cx| GraphWidget::new(body_with_subject(), cx)));
         // No selection: no node clause.
         let body = widget.read_with(cx, |widget, _cx| widget.compose_disagree_body());

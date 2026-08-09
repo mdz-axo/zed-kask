@@ -4808,6 +4808,116 @@ async fn test_non_streaming_tool_partial_input_then_max_tokens_gets_canceled_mes
 }
 
 #[gpui::test]
+async fn test_non_streaming_tool_partial_input_then_retryable_error_flushes_canceled_message(
+    cx: &mut TestAppContext,
+) {
+    // When the stream ends with a retryable error after a partial non-streaming
+    // tool_use, flush_pending_message fires before the retry and inserts
+    // TOOL_CANCELED_MESSAGE for the partial tool_use. On retry, the model sees
+    // the partial tool_use with a "canceled" result — which is misleading
+    // (the user didn't cancel; the stream errored). This test pins the current
+    // behavior so we can detect if it changes.
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Send a partial tool use (is_input_complete = false) for a non-streaming
+    // tool. No tool starts; the partial is stored in the pending message.
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: EchoTool::NAME.into(),
+        raw_input: r#"{"text": "partia"#.into(),
+        input: language_model::LanguageModelToolUseInput::Json(json!({"text": "partia"})),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use));
+    cx.run_until_parked();
+
+    // End the stream with a retryable error (internal server error).
+    fake_model.send_last_completion_stream_error(
+        LanguageModelCompletionError::UpstreamProviderError {
+            message: "Internal server error".to_string(),
+            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after: None,
+        },
+    );
+    fake_model.end_last_completion_stream();
+
+    // Advance past the retry delay so run_turn_internal retries.
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+
+    // The retry request should contain the partial tool_use with a flushed
+    // tool result. The result should be TOOL_CANCELED_MESSAGE (not the
+    // truncation message, since this wasn't MaxTokens).
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("No running turn after retry");
+
+    // Find the tool result in the retry request messages.
+    let tool_result_message = completion
+        .messages
+        .iter()
+        .rev()
+        .find_map(|msg| {
+            if msg.role != Role::User {
+                return None;
+            }
+            msg.content.iter().find_map(|content| match content {
+                MessageContent::ToolResult(result) => Some(result),
+                _ => None,
+            })
+        })
+        .expect("retry request should contain a tool result");
+
+    assert!(
+        tool_result_message.is_error,
+        "flushed partial tool_use result should be an error",
+    );
+    let content_text: String = tool_result_message
+        .content
+        .iter()
+        .map(|c| match c {
+            LanguageModelToolResultContent::Text(t) => t.to_string(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(
+        content_text, "Tool canceled by user",
+        "retryable error after partial non-streaming tool_use should flush \
+         TOOL_CANCELED_MESSAGE (not the truncation message, since this isn't MaxTokens). \
+         This is still misleading — the user didn't cancel — but it's the current behavior.",
+    );
+
+    // Finish the retry round so the turn completes cleanly.
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be stuck; the turn should have completed",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
     cx: &mut TestAppContext,
 ) {

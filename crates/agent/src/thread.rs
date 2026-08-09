@@ -80,6 +80,29 @@ const TOOL_TRUNCATED_MESSAGE: &str = "Tool call was interrupted because the mode
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
 pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permission_denied";
+
+/// The error string `ToolInput::recv()` returns when the channel closes without
+/// a final `Full` payload — i.e. the LLM stream ended before the tool_use input
+/// was complete. Streaming tools (`edit_file`, `write_file`) that call
+/// `input.next()` in a loop receive this as an `Err` and would otherwise pass
+/// the generic string through to the model. `map_tool_input_error` replaces
+/// it with an actionable message so the model knows to retry with a simpler
+/// call instead of treating it as an arbitrary failure.
+pub(crate) const TOOL_INPUT_NOT_FULLY_RECEIVED: &str = "tool input was not fully received";
+
+/// If `error` is the `ToolInput::recv()` channel-closed error, return a
+/// model-facing message that explains the cause and suggests a remedy.
+/// Otherwise return the original error string unchanged. Streaming tools
+/// call this in their `Err(error)` arm so the model can distinguish
+/// stream-truncation from genuine tool failures.
+pub(crate) fn map_tool_input_error(error: impl std::fmt::Display) -> String {
+    let text = error.to_string();
+    if text == TOOL_INPUT_NOT_FULLY_RECEIVED {
+        TOOL_TRUNCATED_MESSAGE.to_string()
+    } else {
+        text
+    }
+}
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
@@ -4085,6 +4108,15 @@ impl Thread {
 
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
+                // [DIAG-T0001] Streaming path: tool supports input streaming and
+                // the provider sent a partial delta. The tool starts now and
+                // holds the ToolInput receiver; if the stream ends before
+                // is_input_complete=true, the drain at stream-end drops this
+                // sender and recv() returns "tool input was not fully received".
+                log::debug!(
+                    "[DIAG-T0001] tool {} entered streaming path (is_input_complete=false, supports_streaming=true)",
+                    tool_use.name
+                );
                 let running_turn = self.running_turn.as_mut()?;
                 if let Some(sender) = running_turn.streaming_tool_inputs.get_mut(&tool_use.id) {
                     sender.send_partial(input);
@@ -4110,6 +4142,15 @@ impl Thread {
                     cx,
                 ));
             } else {
+                // [DIAG-T0002] Non-streaming path: tool does not support input
+                // streaming, but the provider sent a partial delta. No tool
+                // starts. If the stream later ends without is_input_complete=true,
+                // flush_pending_message inserts TOOL_TRUNCATED_MESSAGE (for
+                // MaxTokens) or TOOL_CANCELED_MESSAGE (for user cancel).
+                log::debug!(
+                    "[DIAG-T0002] tool {} partial input ignored (is_input_complete=false, supports_streaming=false)",
+                    tool_use.name
+                );
                 return None;
             }
         }
@@ -4125,6 +4166,16 @@ impl Thread {
         }
 
         log::debug!("Running tool {}", tool_use.name);
+        // [DIAG-T0003] Non-streaming complete path: is_input_complete=true,
+        // tool does not support streaming (or no prior partial was sent).
+        // ToolInput::ready() sends Full synchronously, so recv() should
+        // always succeed. If this log appears but the tool later fails with
+        // "tool input was not fully received", the channel was corrupted
+        // between ready() and recv() — a race condition worth investigating.
+        log::debug!(
+            "[DIAG-T0003] tool {} entered non-streaming complete path (is_input_complete=true)",
+            tool_use.name
+        );
         let tool_input = ToolInput::ready(input);
         Some(self.run_tool(
             tool,

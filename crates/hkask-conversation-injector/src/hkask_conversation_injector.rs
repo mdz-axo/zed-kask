@@ -9,17 +9,23 @@
 //! needed (the call is foreground; `AsyncApp` is not `Send`, but it is not
 //! captured across threads here).
 //!
-//! The trait + the process-global accessor live here so the kask GPUI widget
+//! The trait + the per-app global accessor live here so the kask GPUI widget
 //! crates can compose back into the conversation without depending on the
 //! heavy `agent_ui` crate (which would invert sane layering: leaf widgets →
 //! heavy panel/agent). The production impl (`ThreadConversationInjector`) lives
-//! in `crates/agent_ui/src/conversation_view.rs` (the D-seam) and holds the
-//! active `Entity<ThreadView>`; the composition root / `ConversationView`
-//! activation publishes it via [`set_active_injector`].
+//! in `crates/agent_ui/src/conversation_view.rs` (the D-seam) and holds a weak
+//! ref to the active `Entity<ThreadView>`; the composition root /
+//! `ConversationView` activation publishes it via [`set_active_injector`].
+//!
+//! The injector is stored as a per-app [`gpui::Global`], not a process-global.
+//! A process-global would outlive the per-app entity map and keep the active
+//! `ThreadView` alive after its `App`/`TestAppContext` drops — a leaked handle
+//! that broke ~47 `agent_ui` tests. The per-app global drops with the app, so
+//! the weak ref can never retain a dead thread across app/test lifetimes.
 
 use std::sync::Arc;
 
-use gpui::{App, Task, Window};
+use gpui::{App, Global, Task, Window};
 
 /// Inject a user-authored message into the active conversation. The production
 /// impl (in `agent_ui`) pre-fills the active `ThreadView`'s message editor with
@@ -33,19 +39,33 @@ use gpui::{App, Task, Window};
 pub trait ConversationInjector: Send + Sync {
     /// Compose `body` back into the active conversation. Returns a `Task` so the
     /// caller can await completion; the production impl is synchronous and
-    /// returns `Task::ready`.
+    /// returns `Task::ready`. Returns `Err` when the active conversation no
+    /// longer exists (the active `ThreadView` was dropped) — callers must
+    /// surface the composed body as a visible draft, not a silent no-op.
     fn inject(&self, body: String, window: &mut Window, cx: &mut App) -> Task<Result<(), String>>;
 }
 
-static INJECTOR: std::sync::Mutex<Option<Arc<dyn ConversationInjector>>> =
-    std::sync::Mutex::new(None);
+/// Per-app holder for the active-conversation injector. Stored as a GPUI
+/// global so it drops with the `App`/`TestAppContext`; a process-global would
+/// outlive the per-app entity map and leak the active `ThreadView` across
+/// app/test lifetimes.
+struct ActiveInjector(Option<Arc<dyn ConversationInjector>>);
+
+impl Global for ActiveInjector {}
 
 /// Composition root + `ConversationView` activation call this to publish the
-/// active-conversation injector. Re-settable (Mutex, not OnceLock) so each
-/// activation of a different `ThreadView` replaces the prior one. Pass `None`
-/// to clear (e.g. when the active conversation is closed).
-pub fn set_active_injector(injector: Option<Arc<dyn ConversationInjector>>) {
-    *INJECTOR.lock().expect("INJECTOR poisoned") = injector;
+/// active-conversation injector. Re-settable so each activation of a different
+/// `ThreadView` replaces the prior one. Pass `None` to clear (e.g. when the
+/// active conversation is closed).
+pub fn set_active_injector(cx: &mut App, injector: Option<Arc<dyn ConversationInjector>>) {
+    match injector {
+        Some(injector) => cx.set_global(ActiveInjector(Some(injector))),
+        None => {
+            if cx.has_global::<ActiveInjector>() {
+                cx.remove_global::<ActiveInjector>();
+            }
+        }
+    }
 }
 
 /// Widgets read this for the "I disagree" affordance. Returns `None` when no
@@ -53,79 +73,6 @@ pub fn set_active_injector(injector: Option<Arc<dyn ConversationInjector>>) {
 /// show the composed body as a copyable draft), not a silent no-op (repo
 /// `.rules` "Process-global hooks set at runtime need a startup-failure
 /// signal").
-pub fn shared_injector() -> Option<Arc<dyn ConversationInjector>> {
-    INJECTOR.lock().expect("INJECTOR poisoned").clone()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // The static `INJECTOR` is process-global; tests that mutate it must
-    // serialize so parallel test threads never observe each other's injector.
-    static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// RAII guard that restores the global injector to `None` on drop so a
-    /// test failure cannot leak a mock into sibling tests.
-    struct InjectorGuard;
-    impl Drop for InjectorGuard {
-        fn drop(&mut self) {
-            set_active_injector(None);
-        }
-    }
-
-    /// Trivial injector used only as a placeholder `Arc<dyn
-    /// ConversationInjector>` for the global. `inject` is never called here
-    /// (it needs `Window` + `App`, which this leaf crate does not enable the
-    /// `test-support` feature for); the tests below exercise only the global
-    /// accessor contract.
-    #[derive(Default)]
-    struct NoopInjector;
-
-    impl ConversationInjector for NoopInjector {
-        fn inject(
-            &self,
-            _body: String,
-            _window: &mut Window,
-            _cx: &mut App,
-        ) -> Task<Result<(), String>> {
-            Task::ready(Ok(()))
-        }
-    }
-
-    #[test]
-    fn shared_injector_returns_none_by_default() {
-        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
-        let _restore = InjectorGuard;
-        set_active_injector(None);
-        assert!(shared_injector().is_none(), "no injector wired by default");
-    }
-
-    #[test]
-    fn set_then_shared_returns_some() {
-        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
-        let _restore = InjectorGuard;
-        set_active_injector(None);
-        let injector = Arc::new(NoopInjector);
-        set_active_injector(Some(injector));
-        assert!(
-            shared_injector().is_some(),
-            "shared_injector must return the wired injector"
-        );
-    }
-
-    #[test]
-    fn set_none_clears_a_prior_injector() {
-        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
-        let _restore = InjectorGuard;
-        set_active_injector(None);
-        let injector = Arc::new(NoopInjector);
-        set_active_injector(Some(injector));
-        assert!(shared_injector().is_some());
-        set_active_injector(None);
-        assert!(
-            shared_injector().is_none(),
-            "set_active_injector(None) must clear the global"
-        );
-    }
+pub fn shared_injector(cx: &App) -> Option<Arc<dyn ConversationInjector>> {
+    cx.try_global::<ActiveInjector>().and_then(|g| g.0.clone())
 }

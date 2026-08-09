@@ -10217,10 +10217,10 @@ impl ThreadView {
         let discard_button_id =
             SharedString::from(format!("skill-bundle-discard-{:?}", tool_call.id));
 
-        let bundle_manifest_for_save = bundle_manifest.clone();
+        let bundle_manifest_for_save = bundle_manifest;
         let tool_call_id_for_save = tool_call_id.clone();
         let tool_call_id_for_refine = tool_call_id.clone();
-        let tool_call_id_for_discard = tool_call_id.clone();
+        let tool_call_id_for_discard = tool_call_id;
 
         Some(
             v_flex()
@@ -10257,7 +10257,7 @@ impl ThreadView {
                                 )
                                 .disabled(is_in_flight)
                                 .on_click(cx.listener({
-                                    let tool_call_id = tool_call_id_for_save.clone();
+                                    let tool_call_id = tool_call_id_for_save;
                                     move |this, _, _window, cx| {
                                         this.save_skill_bundle(
                                             tool_call_id.clone(),
@@ -10280,7 +10280,7 @@ impl ThreadView {
                                     )
                                 })
                                 .on_click(cx.listener({
-                                    let tool_call_id = tool_call_id_for_refine.clone();
+                                    let tool_call_id = tool_call_id_for_refine;
                                     move |this, _, _window, cx| {
                                         this.refine_skill_bundle(tool_call_id.clone(), cx);
                                     }
@@ -10292,7 +10292,7 @@ impl ThreadView {
                                 .label_size(LabelSize::Small)
                                 .disabled(is_in_flight)
                                 .on_click(cx.listener({
-                                    let tool_call_id = tool_call_id_for_discard.clone();
+                                    let tool_call_id = tool_call_id_for_discard;
                                     move |this, _, _window, cx| {
                                         this.resolved_skill_bundle_calls
                                             .insert(tool_call_id.clone());
@@ -10329,10 +10329,7 @@ impl ThreadView {
         cx.notify();
 
         let task = cx.spawn(async move |_this, _cx| {
-            let result = executor
-                .save_bundle(bundle_manifest)
-                .await
-                .map_err(|e| e.to_string());
+            let result = executor.save_bundle(bundle_manifest).await;
             (tool_call_id, result)
         });
 
@@ -10376,7 +10373,7 @@ impl ThreadView {
     fn refine_skill_bundle(&mut self, tool_call_id: acp::ToolCallId, cx: &mut Context<Self>) {
         let Some(executor) = agent::manifest_executor_cloned() else {
             self.show_skill_bundle_status(
-                tool_call_id.clone(),
+                tool_call_id,
                 "Skill executor not configured — cannot refine bundle.",
                 cx,
             );
@@ -10448,8 +10445,7 @@ impl ThreadView {
                     goal_delta,
                     convergence_failure_reason,
                 )
-                .await
-                .map_err(|e| e.to_string());
+                .await;
             (tool_call_id, result)
         });
 
