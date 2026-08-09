@@ -16,6 +16,7 @@ pub mod id;
 pub mod inference_ipc;
 
 pub mod json_extract;
+pub mod kanban_status;
 pub mod kanban_wire;
 pub mod macros;
 pub mod observable_span;
@@ -51,6 +52,7 @@ pub use id::{
     BoardId, BotID, ColumnId, CommentId, EmbeddingID, EscalationID, EventID, GoalID, HMemId, Id,
     IdKind, PhaseId, PodID, TaskId, TemplateID, UserID, WebID,
 };
+pub use kanban_status::TaskStatus;
 pub use regulation::LedgerHealth;
 
 pub use observable_span::ObservableSpan;

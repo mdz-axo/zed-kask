@@ -182,17 +182,21 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-kata-kanban",
         description: "Kata Kanban — improvement kata board",
         credentials: Some(&[
-            // Resolved via `ctx.credentials.get` in `run()`. Without these in
-            // the allowlist, operator overrides are silently dropped and the
-            // server falls back to in-memory mode (no persistence, no
-            // encryption at rest).
-            "HKASK_KANBAN_DB",
+            // `HKASK_DB_PASSPHRASE` is read via `ctx.credentials.get` in
+            // `run()` for the SQLCipher store. `HKASK_KANBAN_DB` is a
+            // non-secret DB path — moved to `config_env` and read via
+            // `std::env::var` to match every other DB-path env var
+            // (`HKASK_CURATOR_DB`, `HKASK_DB_PATH`, `HKASK_RSS_DB`, etc.).
             "HKASK_DB_PASSPHRASE",
         ]),
         config_env: Some(&[
             // kata-kanban resolves its DB path via `resolve_under_data_dir`,
             // so it needs the data dir to match the parent process.
             "HKASK_DATA_DIR",
+            // DB path override — read via `std::env::var` in `run()`. Non-secret
+            // config; moved from `credentials` to align with the pattern used
+            // by every other DB-path env var in the registry.
+            "HKASK_KANBAN_DB",
         ]),
     },
     BuiltinMcpServer {
@@ -603,18 +607,19 @@ mod tests {
     #[test]
     fn kata_kanban_allowlist_matches_actual_reads() {
         let s = server_by_id("kata-kanban");
-        // Read sites: ctx.credentials.get("HKASK_KANBAN_DB") and
-        // ctx.credentials.get("HKASK_DB_PASSPHRASE") in `run()`;
-        // resolve_under_data_dir reads HKASK_DATA_DIR.
+        // Read sites: `ctx.credentials.get("HKASK_DB_PASSPHRASE")` in
+        // `run()`; `std::env::var("HKASK_KANBAN_DB")` in `run()` (moved from
+        // credentials to config_env — it's a non-secret DB path);
+        // `resolve_under_data_dir` reads `HKASK_DATA_DIR`.
         assert_eq!(
             s.credentials.unwrap().to_vec(),
-            vec!["HKASK_KANBAN_DB", "HKASK_DB_PASSPHRASE"],
+            vec!["HKASK_DB_PASSPHRASE"],
             "kata-kanban credentials allowlist drifted — under-granting silently \
              drops operator overrides (server falls back to in-memory mode)"
         );
         assert_eq!(
             s.config_env.unwrap().to_vec(),
-            vec!["HKASK_DATA_DIR"],
+            vec!["HKASK_DATA_DIR", "HKASK_KANBAN_DB"],
             "kata-kanban config_env allowlist drifted"
         );
     }

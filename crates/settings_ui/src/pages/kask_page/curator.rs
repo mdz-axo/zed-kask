@@ -151,7 +151,7 @@ pub(crate) fn render_curator_email_page(
 
     // SMTP password — keychain-backed, mirrors the data-service API key pattern.
     let smtp_password_url = format!("{KASK_CREDENTIAL_NAMESPACE}/hkask_smtp_password");
-    let has_password = has_credential(&provider, &smtp_password_url, "HKASK_SMTP_PASSWORD");
+    let has_password = has_credential(&provider, &[&smtp_password_url], "HKASK_SMTP_PASSWORD");
     let password_card = if has_password {
         ConfiguredApiCard::new(
             "kask-curator-email-smtp-password-reset",

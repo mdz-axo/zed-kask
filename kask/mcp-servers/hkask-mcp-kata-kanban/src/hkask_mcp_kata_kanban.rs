@@ -1068,11 +1068,12 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
         |ctx: ServerContext| {
             (|| -> anyhow::Result<KanbanServer> {
                 // Use the standard per-agent kanban DB path when not explicitly set.
-                let kanban_db_path = ctx
-                    .credentials
-                    .get("HKASK_KANBAN_DB")
-                    .cloned()
-                    .unwrap_or_else(|| {
+                // `HKASK_KANBAN_DB` is a non-secret config path — read via
+                // `std::env::var` (matching every other DB-path env var:
+                // `HKASK_CURATOR_DB`, `HKASK_DB_PATH`, `HKASK_RSS_DB`, etc.)
+                // and injected via `config_env`, not `credentials`.
+                let kanban_db_path = std::env::var("HKASK_KANBAN_DB")
+                    .unwrap_or_else(|_| {
                         let relative_path = hkask_types::agent_paths::agent_kanban_db("curator");
                         let default_path =
                             hkask_types::agent_paths::resolve_under_data_dir(&relative_path);
@@ -1186,10 +1187,6 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
             })
         },
         vec![
-            hkask_mcp_server::CredentialRequirement::optional(
-                "HKASK_KANBAN_DB",
-                "Path to per-agent kanban database file (defaults to agents/curator/kanban.db)",
-            ),
             hkask_mcp_server::CredentialRequirement::optional(
                 "HKASK_DB_PASSPHRASE",
                 "SQLCipher encryption passphrase (resolved via hkask keystore chain when not set)",

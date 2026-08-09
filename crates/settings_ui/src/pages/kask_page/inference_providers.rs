@@ -93,15 +93,13 @@ fn render_inference_provider_row(
     credentials_provider: Arc<dyn CredentialsProvider>,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let has_key = kask_bridge::has_provider_api_key(desc)
-        || was_recently_written(&desc.credential_url())
-        || was_recently_written(desc.api_url);
+    let credential_url = desc.credential_url();
+    let api_url = desc.api_url.to_string();
+    let has_key = has_credential(&credentials_provider, &[&api_url, &credential_url], desc.env_var);
     let provider_id = desc.id;
     let provider_name = desc.name;
     let dashboard_url = desc.dashboard_url;
     let env_var = desc.env_var;
-    let api_url = desc.api_url.to_string();
-    let credential_url = desc.credential_url();
 
     let toggle_id = format!("kask-inference-{provider_id}-enabled");
     let enable_toggle = SwitchField::new(

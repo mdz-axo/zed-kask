@@ -100,117 +100,53 @@ pub(crate) fn unmark_recently_written(url: &str) {
 /// Re-bound here as `(&str, &str)` for the settings UI's `(id, description)` pattern.
 pub(crate) const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = kask_bridge::BUILT_IN_MCP_SERVERS_PAIRS;
 
-/// Data service descriptors: (key, label, dashboard_url, env_var).
-/// The `key` is the credential key in the keychain (`kask://credentials/<key>`).
-/// The `env_var` is what MCP servers read (checked synchronously for "configured" status).
-pub(crate) const DATA_SERVICES: &[(&str, &str, &str, &str)] = &[
-    (
-        "eodhd",
-        "EODHD",
-        "https://eodhd.com/dashboard",
-        "HKASK_EODHD_API_KEY",
-    ),
-    (
-        "fmp",
-        "FMP (Financial Modeling Prep)",
-        "https://site.financialmodelingprep.com/developer/docs",
-        "HKASK_FMP_API_KEY",
-    ),
-    (
-        "exa",
-        "Exa",
-        "https://dashboard.exa.ai/api-keys",
-        "HKASK_EXA_API_KEY",
-    ),
-    (
-        "tavily",
-        "Tavily",
-        "https://app.tavily.com/api-key",
-        "HKASK_TAVILY_API_KEY",
-    ),
-    (
-        "brave",
-        "Brave Search",
-        "https://api.search.brave.com/app/subscriptions",
-        "HKASK_BRAVE_API_KEY",
-    ),
-    (
-        "serpapi",
-        "SerpAPI (Google Search)",
-        "https://serpapi.com/dashboard",
-        "HKASK_SERPAPI_API_KEY",
-    ),
-    (
-        "firecrawl",
-        "Firecrawl (web scraping)",
-        "https://firecrawl.dev/",
-        "HKASK_FIRECRAWL_API_KEY",
-    ),
-    (
-        "browserbase",
-        "Browserbase (headless browser)",
-        "https://browserbase.com/",
-        "HKASK_BROWSERBASE_API_KEY",
-    ),
-    (
-        "runpod",
-        "RunPod (GPU cloud for training)",
-        "https://runpod.io/",
-        "RUNPOD_API_KEY",
-    ),
-    (
-        "runpod_s3_access_key",
-        "RunPod S3 Access Key (adapter storage)",
-        "https://runpod.io/",
-        "RUNPOD_S3_ACCESS_KEY",
-    ),
-    (
-        "runpod_s3_secret",
-        "RunPod S3 Secret (adapter storage)",
-        "https://runpod.io/",
-        "RUNPOD_S3_SECRET",
-    ),
-    (
-        "nebius_project_id",
-        "Nebius Project ID (GPU cloud for training)",
-        "https://nebius.com/",
-        "NEBIUS_PROJECT_ID",
-    ),
-    (
-        "nebius_subnet_id",
-        "Nebius Subnet ID",
-        "https://nebius.com/",
-        "NEBIUS_SUBNET_ID",
-    ),
-    (
-        "hf_token",
-        "HuggingFace Token",
-        "https://huggingface.co/settings/tokens",
-        "HF_TOKEN",
-    ),
-];
+/// Data service descriptors, sourced from the bridge's canonical registry
+/// (`kask_bridge::DATA_SERVICES`). The bridge's `DataServiceDescriptor` is the
+/// single source of truth; the UI re-binds it as `(key, label, dashboard_url,
+/// env_var)` tuples for the settings UI's rendering pattern. This eliminates
+/// the former parallel `DATA_SERVICES` 4-tuple that drifted from the bridge's
+/// `DATA_SERVICE_CREDENTIALS` 2-tuple (different field order, overlapping but
+/// not identical entries).
+pub(crate) fn data_service_descriptors() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    kask_bridge::DATA_SERVICES
+        .iter()
+        .filter(|d| d.shows_in_ui())
+        .map(|d| (d.credential_key, d.label, d.dashboard_url, d.env_var))
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // Shared credential helpers (used by data_services, inference_providers,
 // and curator sub-modules)
 // ---------------------------------------------------------------------------
 
-/// Check whether a credential is available — either in the keychain or via env var.
+/// Check whether a credential is available — either via env var or in the
+/// session cache of recently-written keychain URLs.
 ///
-/// The keychain read is async, so we can't block on it here. We check the env var
-/// synchronously (instant) and the session-level cache of recently-written URLs.
+/// The keychain read is async, so we can't block on it here. We check the env
+/// var synchronously (instant) and the session-level cache of recently-written
+/// URLs. For credentials with a single keychain URL (data services, curator
+/// SMTP), pass `&[url]`. For inference providers with two keychain URLs
+/// (api_url + credential_url), pass `&[api_url, credential_url]`.
 pub(crate) fn has_credential(
     _provider: &Arc<dyn CredentialsProvider>,
-    url: &str,
+    urls: &[&str],
     env_var: &str,
 ) -> bool {
-    // Env-var check is synchronous and instant.
-    if std::env::var(env_var).is_ok() {
+    // Env-var check is synchronous and instant. Use `!v.is_empty()` (not
+    // `.is_ok()`) to match `mcp_env_with_credentials`'s predicate — an empty
+    // env var (`FOO=`) is not a meaningful value and would cause the runtime
+    // to skip keychain injection, so the UI should not show it as "configured".
+    if std::env::var(env_var).map(|v| !v.is_empty()).unwrap_or(false) {
         return true;
     }
     // Check the session cache for keys written via the settings UI.
-    if was_recently_written(url) {
-        return true;
+    // Inference providers have two keychain URLs (api_url + credential_url);
+    // either one being recently written means the key is configured.
+    for url in urls {
+        if was_recently_written(url) {
+            return true;
+        }
     }
     false
 }

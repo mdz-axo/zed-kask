@@ -19,8 +19,8 @@ pub(crate) fn render_data_services_page(
         .unwrap_or_default();
 
     let mut rows: Vec<AnyElement> = Vec::new();
-    for (key, label, dashboard_url, env_var) in DATA_SERVICES {
-        let enabled = match *key {
+    for (key, label, dashboard_url, env_var) in data_service_descriptors() {
+        let enabled = match key {
             "eodhd" => data_services.eodhd_enabled,
             "fmp" => data_services.fmp_enabled,
             "exa" => data_services.exa_enabled,
@@ -83,7 +83,7 @@ fn render_data_service_row(
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let credential_url = format!("{KASK_CREDENTIAL_NAMESPACE}/{key}");
-    let has_key = has_credential(&provider, &credential_url, env_var);
+    let has_key = has_credential(&provider, &[&credential_url], env_var);
 
     let toggle_id = format!("kask-{key}-enabled");
     let enable_toggle = SwitchField::new(

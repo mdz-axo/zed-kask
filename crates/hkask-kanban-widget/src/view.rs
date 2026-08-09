@@ -21,27 +21,33 @@ use std::collections::{HashMap, HashSet};
 use gpui::{FocusHandle, Focusable, Hsla};
 use gpui_util::ResultExt as _;
 use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_types::TaskStatus;
 use hkask_types::kanban_wire;
 use theme::ActiveTheme;
 use ui::prelude::*;
 
 use crate::block::{KanbanBlockBody, TaskBody};
 
-/// Standard kanban statuses in display order. The wire keys (first element)
-/// come from `hkask_types::kanban_wire::STANDARD_STATUS_KEYS` — the shared
-/// contract with the MCP server. The display labels (second element) are
-/// widget-local (the server has no display concern).
-const STANDARD_STATUSES: &[(&str, &str)] = &[
-    (kanban_wire::STANDARD_STATUS_KEYS[0], "Backlog"),
-    (kanban_wire::STANDARD_STATUS_KEYS[1], "Ready"),
-    (kanban_wire::STANDARD_STATUS_KEYS[2], "In Progress"),
-    (kanban_wire::STANDARD_STATUS_KEYS[3], "Review"),
-    (kanban_wire::STANDARD_STATUS_KEYS[4], "Done"),
-];
+/// Display label for each standard `TaskStatus`. The wire keys come from
+/// `TaskStatus::as_str()` (the shared source of truth in `hkask-types`); the
+/// display labels are widget-local since the server has no display concern.
 
-/// MCP server that hosts the kanban tools. Fallback dispatch target when a
-/// block carries no dispatchable provenance. Sourced from the shared
-/// `kanban_wire` module so a server rename propagates without a silent break.
+/// Display label for each standard `TaskStatus`. The wire keys come from
+/// `TaskStatus::as_str()` (the shared source of truth in `hkask-types`); the
+/// display labels are widget-local since the server has no display concern.
+fn status_label(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Backlog => "Backlog",
+        TaskStatus::Ready => "Ready",
+        TaskStatus::InProgress => "In Progress",
+        TaskStatus::Review => "Review",
+        TaskStatus::Done => "Done",
+    }
+}
+
+/// MCP server binary name — the fallback dispatch target when a block carries
+/// no dispatchable provenance. Sourced from the shared `kanban_wire` module so
+/// a server rename propagates without a silent break.
 const DEFAULT_SERVER: &str = kanban_wire::KANBAN_SERVER_NAME;
 /// Tool the widget dispatches to move a task. Sourced from the shared
 /// `kanban_wire` module. The args shape is confirmed against the server's
@@ -364,6 +370,8 @@ impl KanbanWidget {
     /// partial (non-dispatchable, non-empty), renders a disabled "ask the
     /// agent" hint instead — a visible state, never a silent no-op (repo
     /// `.rules`). Empty provenance falls back to the hardcoded default server.
+    /// Cards in the `Done` status have no next status (`TaskStatus::next`
+    /// returns `None`) and render no move chip.
     fn render_move_affordance(
         &self,
         task: &TaskBody,
@@ -381,12 +389,19 @@ impl KanbanWidget {
         }
 
         let border_color = cx.theme().colors().border;
-        let next_status = next_status(&task.status);
-        let next_label = status_label(next_status);
+        // Parse the task's status and compute the next status. `Done` has no
+        // next status → no move chip (the card is terminal).
+        let Some(current) = TaskStatus::parse_str(&task.status) else {
+            return div().into_any_element();
+        };
+        let Some(next) = current.next() else {
+            return div().into_any_element();
+        };
+        let next_label = status_label(next);
         let task_id = task.task_id.clone();
         let task_title = task.title.clone();
-        let from_label = status_label(&task.status).to_string();
-        let to_status = next_status.to_string();
+        let from_label = status_label(current).to_string();
+        let to_status = next.as_str().to_string();
         let to_label = next_label.to_string();
         let label_text = format!("Move → {next_label}");
         // Pending or in-flight moves gate all chips non-interactive (single
@@ -689,12 +704,13 @@ fn group_tasks_into_columns(tasks: Vec<TaskBody>) -> Vec<KanbanColumn> {
     let mut columns = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
 
-    for (status_key, title) in STANDARD_STATUSES {
+    for status in TaskStatus::STANDARD_ORDER {
+        let status_key = status.as_str();
         seen.insert(status_key);
-        let tasks = by_status.remove(*status_key).unwrap_or_default();
+        let tasks = by_status.remove(status_key).unwrap_or_default();
         columns.push(KanbanColumn {
             status: status_key.to_string(),
-            title: title.to_string(),
+            title: status_label(status).to_string(),
             tasks,
         });
     }
@@ -774,36 +790,12 @@ fn move_enabled(provenance: &BlockProvenance) -> bool {
     provenance.is_dispatchable() || provenance.is_empty()
 }
 
-/// The next standard status after `current`, wrapping Done → Backlog. A
-/// non-standard current status cycles to Backlog. No slice indexing — the
-/// cycle is written out explicitly so it cannot panic on an out-of-bounds key.
-fn next_status(current: &str) -> &'static str {
-    match current.to_lowercase().as_str() {
-        "backlog" => "ready",
-        "ready" => "in_progress",
-        "in_progress" => "review",
-        "review" => "done",
-        "done" => "backlog",
-        _ => "backlog",
-    }
-}
-
-/// The display label for a standard status wire string, without indexing.
-fn status_label(status_key: &str) -> &'static str {
-    STANDARD_STATUSES
-        .iter()
-        .find(|(key, _)| *key == status_key)
-        .map(|(_, label)| *label)
-        .unwrap_or("Status")
-}
-
-/// Whether `status` is one of the five standard wire strings the MCP server's
-/// `TaskStatus::parse_str` accepts. The move affordance only offers standard
-/// targets; a non-standard value is rejected up front with a visible error.
-/// Delegates to the shared `kanban_wire::is_standard_status` so the widget and
-/// server agree on the valid set.
+/// Returns `true` if `status` is one of the five standard `TaskStatus` wire
+/// strings. Delegates to `TaskStatus::parse_str` so the widget and server
+/// agree on the valid set via the shared enum (single source of truth in
+/// `hkask-types`).
 fn is_valid_target_status(status: &str) -> bool {
-    kanban_wire::is_standard_status(status)
+    TaskStatus::parse_str(status).is_some()
 }
 
 /// Pure: decide the `(server, tool, args)` dispatch tuple for a move, given the
@@ -1045,24 +1037,21 @@ mod tests {
     }
 
     #[test]
-    fn next_status_cycles_through_standard_order_and_wraps() {
-        assert_eq!(next_status("backlog"), "ready");
-        assert_eq!(next_status("ready"), "in_progress");
-        assert_eq!(next_status("in_progress"), "review");
-        assert_eq!(next_status("review"), "done");
-        assert_eq!(next_status("done"), "backlog");
-        // Case-insensitive.
-        assert_eq!(next_status("BACKLOG"), "ready");
-        // Non-standard cycles to backlog.
-        assert_eq!(next_status("blocked"), "backlog");
+    fn next_status_returns_none_at_done() {
+        // B2: `TaskStatus::next()` returns `None` at Done — no wrap. The move
+        // affordance hides on Done cards (terminal status).
+        assert_eq!(TaskStatus::Backlog.next(), Some(TaskStatus::Ready));
+        assert_eq!(TaskStatus::Ready.next(), Some(TaskStatus::InProgress));
+        assert_eq!(TaskStatus::InProgress.next(), Some(TaskStatus::Review));
+        assert_eq!(TaskStatus::Review.next(), Some(TaskStatus::Done));
+        assert_eq!(TaskStatus::Done.next(), None);
     }
 
     #[test]
-    fn status_label_returns_display_name_for_standard_statuses() {
-        assert_eq!(status_label("backlog"), "Backlog");
-        assert_eq!(status_label("in_progress"), "In Progress");
-        assert_eq!(status_label("done"), "Done");
-        assert_eq!(status_label("nonstandard"), "Status");
+    fn status_label_returns_display_name_for_task_status() {
+        assert_eq!(status_label(TaskStatus::Backlog), "Backlog");
+        assert_eq!(status_label(TaskStatus::InProgress), "In Progress");
+        assert_eq!(status_label(TaskStatus::Done), "Done");
     }
 
     #[test]
