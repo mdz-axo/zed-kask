@@ -1,0 +1,25 @@
+id: RR-0050
+title: "Shared classify_http_error helper must sanitize provider error bodies before embedding (RR-0035 class)"
+surface: code
+cwe: CWE-209
+owasp_llm_2025: LLM07
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-mcp-server/src/server/http_helpers.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-10
+severity: medium
+detection:
+  kind: grep
+  # PRESENCE check: classify_http_error must call sanitize_error_body on the
+  # body before formatting the message. The absence of the call is the
+  # signal that raw bodies are leaking again. This is the highest-leverage
+  # fix — it covers every MCP server using classify_http_error, api_get,
+  # or api_put.
+  semantics: presence
+  pattern: 'sanitize_error_body'
+  include: "crates/hkask-mcp-server/src/server/http_helpers.rs"
+mitigation: "Route the body argument through sanitize_error_body inside classify_http_error before format!(\"{service} API returned {status}: {}\", body.trim()). This single fix closes the leak for every MCP server using classify_http_error (companies, prediction-markets), api_get, or api_put. The shared sanitizer lives in hkask_inference::openai_compat::sanitize_error_body."
+source: "Cycle 8 kali-audit — shared-helper error-channel leakage (defense layer 7); same class as RR-0035"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

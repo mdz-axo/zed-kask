@@ -1,0 +1,109 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    rationales: array
+    eqm_subset: string|null
+    domain: string|null
+  output:
+    selected_subset: string
+    scoring_batch: array
+    cost_estimate_usd: number
+    forecaster_groups: object
+energy_cap: 2048
+visibility: Public
+generates_spans:
+  - reg.eqm.select
+---
+{# Template: eqm/eqm-select.j2 #}
+{# Functional Role: KnowAct — Choose EQM subset + gather rationale corpus #}
+{# Produces: scoring_batch, cost_estimate, forecaster_groups #}
+{# Phase 1 — SELECT (PLAN: choose EQM subset + prepare scoring batch) #}
+{# hKask v0.33.7 — EQM Measurement Instrument #}
+
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "standard"
+max_tokens = 2048
+thinking_budget = "standard"
+
+You are an EQM measurement coordinator. Your task is to prepare the rationale corpus for scoring against Explanation Quality Markers (Karvetski et al. 2026).
+
+## Rationale Corpus
+
+```json
+{{ rationales | tojson }}
+```
+
+{% if domain %}
+## Domain
+
+{{ domain }}
+{% endif %}
+
+## Step 1 — Choose EQM Subset
+
+Select the EQM subset to score against:
+
+- `predictive_12` (default): the 12 most predictive EQMs from the paper's key findings. Matches the market_score_rationale MCP tool's KEY_EQMS. Use for standard measurement.
+- `full_60`: the complete 60-EQM catalog. Use for research/validation. Note: the MCP tool scores only the predictive 12; full_60 requires multiple tool calls or a custom scoring path.
+- `domain_tuned`: weight specific EQMs higher based on the forecasting domain. Specify which markers to weight.
+
+Default to `predictive_12` unless the user specifies otherwise. The selected subset is: `{{ eqm_subset | default('predictive_12') }}`.
+
+## Step 2 — Prepare Scoring Batch
+
+For each rationale in the corpus, prepare a scoring batch entry:
+
+```json
+{
+  "rationale": "<the written reasoning>",
+  "forecast_probability": <0.0-1.0 or null>,
+  "question": "<the question being forecast>",
+  "forecaster_id": "<optional grouping key>"
+}
+```
+
+Each entry maps to one `market_score_rationale` call.
+
+## Step 3 — Estimate Cost
+
+Cost estimate: ~$0.007 per rationale (per the paper's cost figure).
+
+- Number of rationales: {{ rationales | length }}
+- Estimated cost: ${{ (rationales | length) * 0.007 }}
+
+## Step 4 — Group by Forecaster
+
+Group rationales by `forecaster_id` (if present) for forecaster-level aggregation. Each group will produce a forecaster-level composite (the paper's r=0.51 signal).
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "selected_subset": "predictive_12",
+  "scoring_batch": [
+    {
+      "rationale": "...",
+      "forecast_probability": 0.65,
+      "question": "...",
+      "forecaster_id": "forecaster_a"
+    }
+  ],
+  "cost_estimate_usd": 0.021,
+  "forecaster_groups": {
+    "forecaster_a": [0, 1, 2],
+    "forecaster_b": [3, 4]
+  }
+}
+```
+
+## Constraints
+
+- Do not fabricate rationales — only score what is provided.
+- If the corpus is empty, return an empty scoring_batch and cost_estimate_usd: 0.
+- Preserve forecaster_id grouping for forecaster-level aggregation.
+- The selected_subset must match what the market_score_rationale tool actually scores (predictive_12).

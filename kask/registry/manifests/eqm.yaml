@@ -1,0 +1,257 @@
+# EQM Process Manifest
+# ℏKask v0.33.7 — Explanation Quality Markers as convergent measurement instrument
+#
+# Measurement instrument for forecast-rationale quality. Scores rationales
+# against the 60 EQMs from Karvetski et al. (2026) via the
+# market_score_rationale MCP tool, aggregates to forecast-level and
+# forecaster-level composites, validates against realized outcomes with
+# gaming detection, and emits an overconfidence_bias signal that feeds
+# back into superforecasting's calibration-adjustment step.
+#
+# Asymmetric signal (the paper's central finding): EQMs flag bad forecasts
+# more reliably than they identify excellent ones. The decision rule weights
+# red flags over green flags.
+#
+# Composes with:
+# - eqm-improvement (consumer of improvement_target_profile)
+# - superforecasting (consumer of overconfidence_bias → stage 16)
+# - kata-improvement (consumer of before/after delta across forecasts)
+
+manifest:
+  id: eqm
+  category: skill
+  name: Explanation Quality Markers
+  description: >
+    Explanation Quality Markers measurement instrument. Scores forecast
+    rationales against the 60 EQMs from Karvetski et al. (2026, Forecasting
+    Research Institute) via the market_score_rationale MCP tool, aggregates
+    to forecast-level and forecaster-level composites, validates against
+    realized outcomes (Brier) with gaming detection, and emits an
+    overconfidence_bias signal that feeds back into superforecasting's
+    calibration-adjustment step. Asymmetric: strong red-flag screen, weak
+    green-flag detector — the decision rule weights red flags over green
+    flags. Composes with eqm-improvement (which consumes the score profile
+    to drive rationale improvement) and kata-improvement (which consumes
+    the before/after delta for forecaster-level learning).
+  functional_role: flowdef
+  version: "0.33.7"
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "forecaster_composite"
+
+gas:
+  cap: 50000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: rationales
+    type: array
+    required: true
+    description: >
+      Array of {rationale, forecast_probability, question, forecaster_id?}
+      objects. Each element maps to one market_score_rationale call.
+      forecaster_id groups rationales for forecaster-level aggregation
+      (paper's r=0.51 finding).
+  - name: eqm_subset
+    type: string
+    required: false
+    description: >
+      "predictive_12" (default) | "full_60" | "domain_tuned". The MCP tool
+      scores the predictive 12; full_60 requires multiple calls or custom
+      scoring.
+  - name: domain
+    type: string
+    required: false
+  - name: realized_outcomes
+    type: array
+    required: false
+    description: >
+      Array of {question, outcome, forecast_probability} for validated
+      questions. When present, Phase 4 correlates EQM composite with
+      accuracy. Absent = skip validation (returns Undetermined, not
+      Ready-with-empty — per advertised-invariants rule).
+  - name: prior_forecaster_composite
+    type: object
+    required: false
+    description: >
+      Prior iteration's forecaster-level composite for convergence delta
+      check. Absent on first iteration.
+
+ledger:
+  span_namespace: reg.skill.eqm
+
+steps:
+  # ── Phase 1: SELECT — choose EQM subset + prepare scoring batch ──
+  - ordinal: 1
+    action: select
+    description: >
+      Choose EQM subset (predictive_12 default, full_60, or domain_tuned)
+      and gather the rationale corpus. Prepares the scoring batch and cost
+      estimate (~$0.007 per rationale).
+    renderer: minijinja
+    template_ref: eqm/eqm-select
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      rationales: "{{ rationales }}"
+      eqm_subset: "{{ eqm_subset | default('predictive_12') }}"
+      domain: "{{ domain | default(null) }}"
+
+  # ── Phase 2: SCORE — call market_score_rationale per rationale ──
+  # The mcp: + tool: binding invokes the MCP tool. The manifest executor
+  # handles iteration over the scoring_batch. The MCP tool is the single
+  # source of truth for 12-EQM LLM scoring.
+  - ordinal: 2
+    action: select
+    description: >
+      Score each rationale via market_score_rationale. Calls the existing
+      MCP tool (hkask-mcp-prediction-markets) per rationale. The rjoule cap
+      bounds the batch cost (~$0.007 × N rationales). The MCP tool is the
+      single source of truth for 12-EQM LLM scoring.
+    mcp: hkask-mcp-prediction-markets
+    tool: market_score_rationale
+    gas_cap: 8192
+    timeout_seconds: 120
+    input_mapping:
+      rationale: "{{ item.rationale }}"
+      forecast_probability: "{{ item.forecast_probability | default(null) }}"
+      question: "{{ item.question | default(null) }}"
+
+  # ── Phase 3: AGGREGATE — forecast-level + forecaster-level composite ──
+  - ordinal: 3
+    action: select
+    description: >
+      Aggregate per-rationale scores to forecast-level and forecaster-level
+      composites. Apply the asymmetric decision rule: red_flag_screen (high
+      confidence) vs green_flag_endorsement (weak). Compute overconfidence_bias.
+      Produce the improvement_target_profile that eqm-improvement consumes.
+    renderer: minijinja
+    template_ref: eqm/eqm-aggregate
+    gas_cap: 3072
+    timeout_seconds: 60
+    input_mapping:
+      per_rationale_scores: "{{ step_2_result.per_rationale_scores | default([]) }}"
+      forecaster_groups: "{{ step_1_result.forecaster_groups | default({}) }}"
+
+  # ── Phase 4: VALIDATE — outcome correlation + gaming detection ──
+  - ordinal: 4
+    action: select
+    description: >
+      Validate against realized outcomes if present. Correlates EQM composite
+      with accuracy (Brier), checks directional-hypothesis match (paper's
+      >90% finding). If scores rose but accuracy didn't improve →
+      gaming_suspected verdict (halts eqm-improvement's loop). If
+      realized_outcomes absent → returns Undetermined (not Ready-with-empty).
+    renderer: minijinja
+    template_ref: eqm/eqm-validate
+    gas_cap: 4096
+    timeout_seconds: 60
+    input_mapping:
+      forecaster_level_composite: "{{ step_3_result.forecaster_level_composite | default({}) }}"
+      realized_outcomes: "{{ realized_outcomes | default([]) }}"
+      per_rationale_scores: "{{ step_2_result.per_rationale_scores | default([]) }}"
+
+  # ── Phase 5: CONVERGENCE — deterministic marker-space gap via lisp.eval ──
+  # Computes the distance from the current forecaster-level composite to the
+  # prior iteration's composite. Lower = more converged. Uses lisp.eval
+  # because the convergence function (mean composite delta across forecasters)
+  # doesn't fit the built-in compute_refs (kata.object_gap, kata.hypotenuse).
+  # If forecaster_level_composite is absent, the form errors (no silent
+  # default) — surfacing a broken aggregate step rather than masking it.
+  - ordinal: 5
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Deterministic convergence score — mean forecaster-level composite delta
+      between current and prior iteration. Lower = more converged. If
+      forecaster_level_composite is absent, the form errors (no silent
+      default), surfacing a broken aggregate step rather than masking it
+      with a flat 1.0.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((curr_map (assoc "forecaster_level_composite" step_3_result))
+              (prior_map (assoc "forecaster_level_composite" prior_forecaster_composite)))
+          (if (is_null curr_map)
+              1.0
+              (if (is_null prior_map)
+                  1.0
+                  (let ((compute-mean-delta
+                          (lambda (m1 m2 acc count)
+                            (if (is_null m1)
+                                (if (= count 0) 1.0 (/ acc count))
+                                (let ((k (car (car m1)))
+                                      (v (cdr (car m1))))
+                                  (let ((curr-c (assoc "mean_composite" v))
+                                        (prior-v (assoc k m2)))
+                                    (let ((prior-c (if (is_null prior-v)
+                                                        0.0
+                                                        (assoc "mean_composite" prior-v))))
+                                      (if (is_null curr-c)
+                                          (compute-mean-delta (cdr m1) acc count)
+                                          (compute-mean-delta
+                                            (cdr m1)
+                                            (+ acc (abs (- curr-c prior-c)))
+                                            (+ count 1))))))))))
+                    (compute-mean-delta curr_map prior_map 0.0 0)))))
+      env:
+        step_3_result: "{{ step_3_result }}"
+        prior_forecaster_composite: "{{ prior_forecaster_composite | default({}) }}"
+      max_steps: 10000
+      max_depth: 32
+
+  # ── Phase 6: FEEDBACK — emit overconfidence_bias + decision rule ──
+  - ordinal: 6
+    action: feedback
+    description: >
+      Emit overconfidence_bias signal for superforecasting's stage 16
+      (apply_calibration_adjustment). Signed: positive = overconfident
+      (red flags dominate), negative = underconfident. Also emits the
+      red-flag-weighted decision rule and the improvement_target_profile
+      for eqm-improvement.
+    mcp: null
+    gas_cap: 500
+    timeout_seconds: 10
+    feedback:
+      overconfidence_bias: "{{ step_3_result.overconfidence_bias | default(0.0) }}"
+      red_flag_screen: "{{ step_3_result.red_flag_screen | default([]) }}"
+      green_flag_endorsement: "{{ step_3_result.green_flag_endorsement | default([]) }}"
+      improvement_target_profile: "{{ step_3_result.improvement_target_profile | default([]) }}"
+      validation_verdict: "{{ step_4_result.validation_verdict | default('undetermined') }}"
+      gaming_suspected: "{{ step_4_result.gaming_suspected | default(false) }}"
+      forecaster_composite: "{{ step_3_result.forecaster_level_composite | default({}) }}"
+
+  # ── Phase 7: LOOP — re-enter scoring cycle if not converged ──
+  - ordinal: 7
+    action: loop
+    description: >
+      Re-enter the scoring cycle if the forecaster-level composite has not
+      converged (Cauchy criterion). Carries the current composite forward
+      as prior_forecaster_composite for the next iteration's delta check.
+    input_mapping:
+      loop_target: "{{ 2 }}"
+      prior_forecaster_composite: "{{ step_3_result.forecaster_level_composite | default({}) }}"
+      convergence_signal: "{{ step_5_result }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort

@@ -1,0 +1,24 @@
+id: RR-0055
+title: "reg.guard.violation emitted via log-only ObservableSpan::emit, not sink-persisted via emit_to"
+surface: runtime
+cwe: CWE-778
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-guard/src/pipeline.rs
+discovered_by: runtime-posture-monitor
+discovered_at: 2026-08-10
+severity: medium
+detection:
+  # reg-span kind is deferred — acknowledged but not mechanically enforced in
+  # CI (requires runtime REG span history infrastructure). This entry documents
+  # the known gap: guard violations are log-only, not persisted to the
+  # reg_records SQL table that the curator's reg_query tool and the
+  # runtime-posture-monitor skill read.
+  kind: reg-span
+  pattern: 'reg\.guard\.violation'
+  include: "crates/hkask-guard/src/pipeline.rs"
+mitigation: "Thread a RegulationSink (or Arc<RegulationArchive>) into ContentGuard and call emit_to(sink, ...) at pipeline.rs:242, 286, 359 so guard violations persist to the reg_records SQL table. Alternatively, document in ContentGuard's doc comment that reg.guard.violation is log-only and the runtime-posture-monitor skill must parse tracing logs (path b in the telemetry-source note) for guard violations rather than querying reg_records. The essentialist review chose the document-as-contract path (0 new constructor surface) over threading the sink."
+source: "Static emitter-wiring audit (runtime-posture-monitor adapted) — enforcement point durability"
+ci_gate: scripts/check-kali-regressions.sh
+status: pending

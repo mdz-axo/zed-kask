@@ -1,0 +1,25 @@
+id: RR-0053
+title: "BridgeManifestExecutor must wire with_runtime_policy or the FIDES Source→Sink block (Layer 4) is dead in production"
+surface: runtime
+cwe: CWE-863
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/kask_bridge/src/skill_executor.rs
+discovered_by: runtime-posture-monitor
+discovered_at: 2026-08-10
+severity: critical
+detection:
+  kind: grep
+  # PRESENCE check: the production composition root (build_executor) must
+  # call .with_runtime_policy(...) on the ManifestExecutor it constructs.
+  # If the only callers of with_runtime_policy are in test modules, the
+  # runtime_policy field stays None and the reg.guard.runtime_policy span
+  # + Block/RequireHuman enforcement never fire in production (OWASP LLM06).
+  semantics: presence
+  pattern: 'with_runtime_policy'
+  include: "crates/kask_bridge/src/skill_executor.rs"
+mitigation: "Wire a DefaultPolicy in BridgeManifestExecutor::build_executor (kask/crates/kask_bridge/src/skill_executor.rs) by chaining .with_runtime_policy(Arc::new(DefaultPolicy::default())) on the ManifestExecutor. The policy code exists and is tested but was never attached in production, so runtime_policy was always None and the reg.guard.runtime_policy span (Layer 4 of the runtime-posture-monitor defense catalog) never fired. See .rules: Advertised invariants need enforcement points."
+source: "Static emitter-wiring audit (runtime-posture-monitor adapted) — defense layer 4 reachability"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

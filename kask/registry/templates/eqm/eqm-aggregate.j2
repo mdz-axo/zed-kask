@@ -1,0 +1,194 @@
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    per_rationale_scores: array
+    forecaster_groups: object
+  output:
+    forecast_level_composite: object
+    forecaster_level_composite: object
+    red_flag_screen: array
+    green_flag_endorsement: array
+    overconfidence_bias: number
+    improvement_target_profile: array
+energy_cap: 3072
+visibility: Public
+generates_spans:
+  - reg.eqm.aggregate
+---
+{# Template: eqm/eqm-aggregate.j2 #}
+{# Functional Role: KnowAct — Forecast-level + forecaster-level composite #}
+{# Produces: forecast_level_composite, forecaster_level_composite, decision rule outputs #}
+{# Phase 3 — AGGREGATE (DO: aggregate scores, apply asymmetric decision rule) #}
+{# hKask v0.33.7 — EQM Measurement Instrument #}
+{#
+  The asymmetric decision rule encodes the paper's central finding: EQMs
+  flag bad forecasts more reliably than they identify excellent ones.
+  Red-flag screening is the strong signal; green-flag endorsement is weak.
+#}
+
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "standard"
+max_tokens = 3072
+thinking_budget = "full"
+
+You are an EQM aggregation analyst. Your task is to aggregate per-rationale EQM scores into forecast-level and forecaster-level composites, apply the asymmetric decision rule, and produce the improvement-target profile that eqm-improvement consumes.
+
+## Per-Rationale Scores
+
+```json
+{{ per_rationale_scores | tojson }}
+```
+
+## Forecaster Groups
+
+```json
+{{ forecaster_groups | tojson }}
+```
+
+## Step 1 — Forecast-Level Composite
+
+For each question (grouping rationales by question), compute:
+
+- `mean_composite`: mean of composite_score across rationales for that question.
+- `red_flag_count`: total red flags across rationales for that question.
+- `green_flag_count`: total green flags across rationales for that question.
+- `rationale_count`: number of rationales scored for that question.
+
+## Step 2 — Forecaster-Level Composite
+
+For each forecaster (grouping by forecaster_id), compute:
+
+- `mean_composite`: mean of composite_score across the forecaster's rationales. This is the paper's r=0.51 signal.
+- `red_flag_frequency`: mean red flags per rationale for this forecaster.
+- `green_flag_frequency`: mean green flags per rationale for this forecaster.
+- `rationale_count`: number of rationales scored for this forecaster.
+
+## Step 3 — Asymmetric Decision Rule
+
+Apply the paper's central finding (EQMs flag bad forecasts more reliably than they identify excellent ones):
+
+### Red-Flag Screen (HIGH confidence — the strong signal)
+
+For each rationale, if ≥2 red flags at score 2 → add to `red_flag_screen` with:
+- `forecaster_id`, `question`, `rationale_index`
+- `red_flags`: the list of red flag names
+- `severity`: "high" (the paper's strong-signal threshold)
+
+### Green-Flag Endorsement (WEAK — the weak signal)
+
+For each rationale, if composite ≥ 4 AND no red flags → add to `green_flag_endorsement` with:
+- `forecaster_id`, `question`, `rationale_index`
+- `green_flags`: the list of green flag names
+- `confidence`: "weak" (per the paper, green flags are a weak endorsement)
+- `note`: "High composite with no red flags. This is a weak positive endorsement, not a 'strong rationale' claim. Reserve 'strong' for outcome-validated forecasters."
+
+**Critical:** Do NOT label any rationale "strong" based on EQM scores alone. The paper's asymmetry means high EQM scores are a weak positive signal. Reserve "strong" for forecasters whose EQM composite correlates with accuracy on realized outcomes (validated in Phase 4).
+
+## Step 4 — Overconfidence Bias
+
+Compute `overconfidence_bias` as a signed signal:
+
+- positive = overconfident (red flags dominate, especially `extreme_confidence` and `forecast_rationale_misalign`)
+- negative = underconfident (excessive `speculative_terms` without grounding)
+- 0.0 = balanced
+
+Formula: `overconfidence_bias = (extreme_confidence_score + forecast_rationale_misalign_score) - (statistical_reasoning_score + best_practices_score)`, normalized to [-1, 1] by dividing by the number of rationales × 2.
+
+This signal feeds superforecasting's `apply_calibration_adjustment` compute step (stage 16).
+
+## Step 5 — Improvement-Target Profile
+
+For each rationale, produce the improvement-target profile that eqm-improvement consumes:
+
+```json
+{
+  "forecaster_id": "...",
+  "question": "...",
+  "rationale_index": 0,
+  "current_composite": 4.0,
+  "failing_markers": [
+    {
+      "id": "statistical_reasoning",
+      "name": "Statistical Reasoning",
+      "direction": "helps",
+      "current_score": 0,
+      "target_score": 2,
+      "gap": 2,
+      "description": "<the EQM description — what a 2 looks like>"
+    }
+  ],
+  "red_flag_screen": ["Gut Based", "Extreme Confidence"],
+  "green_flag_endorsement": ["Statistical Reasoning"]
+}
+```
+
+For `failing_markers`:
+- Helps markers where `current_score < 2` → gap = `target_score - current_score`
+- Hurts markers where `current_score > 0` → gap = `current_score` (reducing a hurts marker to 0 is the target)
+
+## Output
+
+Respond with a JSON object:
+
+```json
+{
+  "forecast_level_composite": {
+    "<question>": {
+      "mean_composite": 3.5,
+      "red_flag_count": 4,
+      "green_flag_count": 2,
+      "rationale_count": 3
+    }
+  },
+  "forecaster_level_composite": {
+    "<forecaster_id>": {
+      "mean_composite": 4.0,
+      "red_flag_frequency": 1.5,
+      "green_flag_frequency": 0.5,
+      "rationale_count": 2
+    }
+  },
+  "red_flag_screen": [
+    {
+      "forecaster_id": "...",
+      "question": "...",
+      "rationale_index": 0,
+      "red_flags": ["Gut Based", "Extreme Confidence"],
+      "severity": "high"
+    }
+  ],
+  "green_flag_endorsement": [
+    {
+      "forecaster_id": "...",
+      "question": "...",
+      "rationale_index": 1,
+      "green_flags": ["Statistical Reasoning"],
+      "confidence": "weak",
+      "note": "..."
+    }
+  ],
+  "overconfidence_bias": 0.25,
+  "improvement_target_profile": [
+    {
+      "forecaster_id": "...",
+      "question": "...",
+      "rationale_index": 0,
+      "current_composite": 4.0,
+      "failing_markers": [...],
+      "red_flag_screen": [...],
+      "green_flag_endorsement": [...]
+    }
+  ]
+}
+```
+
+## Constraints
+
+- The asymmetric decision rule is mandatory: red flags weighted as "high" confidence, green flags as "weak". Do not reverse or equalize.
+- Never label a rationale "strong" based on EQM scores alone.
+- The overconfidence_bias must be signed and normalized to [-1, 1].
+- The improvement_target_profile must include the EQM description for each failing marker (eqm-improvement uses it as the spec for what a 2 looks like).
+- Do not fabricate scores — only aggregate what was measured.

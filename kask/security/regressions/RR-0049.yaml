@@ -1,0 +1,25 @@
+id: RR-0049
+title: "Inference backends must route provider error bodies through sanitize_error_body (RR-0035 class)"
+surface: code
+cwe: CWE-209
+owasp_llm_2025: LLM07
+atlas_tactic: AML.TA0010
+nist_ssdf: PW.4.1
+discovered_in: kask/crates/hkask-inference/src/deepinfra_backend.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-10
+severity: medium
+detection:
+  kind: grep
+  # PRESENCE check: each inference backend that embeds a provider error body
+  # in InferenceError::Connection must route it through sanitize_error_body.
+  # The pattern checks that sanitize_error_body is imported in each backend.
+  # A backend that drops the import and reverts to raw {text}/{body} embedding
+  # will fail this gate (zero matches for the import).
+  semantics: presence
+  pattern: 'sanitize_error_body'
+  include: "crates/hkask-inference/src/deepinfra_backend.rs crates/hkask-inference/src/fal_backend.rs crates/hkask-inference/src/openrouter_backend.rs crates/hkask-inference/src/atlascloud_backend.rs"
+mitigation: "Import sanitize_error_body from crate::openai_compat (or hkask_inference::openai_compat) and wrap every provider error body before embedding in InferenceError::Connection. The function redacts Authorization:, Bearer, sk-, api_key, ghp_, AKIA, xoxb-, glpat-, eyJ prefixes and truncates to 200 chars. RR-0035 fixed openai_compat.rs only; this entry covers the 4 other backends that had the same class."
+source: "Cycle 8 kali-audit — error-channel leakage review (defense layer 7); same class as RR-0035"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced

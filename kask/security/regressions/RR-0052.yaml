@@ -1,0 +1,25 @@
+id: RR-0052
+title: "prediction-markets economic_data must URL-encode LLM-controlled query-param values (parameter injection)"
+surface: mcp
+cwe: CWE-918
+owasp_llm_2025: LLM06
+atlas_tactic: AML.TA0006
+nist_ssdf: PW.4.1
+discovered_in: kask/mcp-servers/hkask-mcp-prediction-markets/src/economic_data.rs
+discovered_by: kali-audit
+discovered_at: 2026-08-10
+severity: low
+detection:
+  kind: grep
+  # PRESENCE check: build_url must call url_encode_value on query-param values
+  # before concatenating. Without encoding, LLM-controlled values (series_code,
+  # query, etc.) can inject extra params (&limit=99999 bypasses .min(100) cap),
+  # traverse paths (../), or truncate URLs (#). Base hosts are hardcoded (no
+  # SSRF via host), so severity is low.
+  semantics: presence
+  pattern: 'url_encode_value'
+  include: "mcp-servers/hkask-mcp-prediction-markets/src/economic_data.rs"
+mitigation: "Percent-encode query-param values in build_url via url_encode_value before concatenating into the URL string. Path segments (provider_code, dataset_code, series_code, country, indicator) are interpolated into the endpoint by callers and should be validated against ^[A-Za-z0-9_-]+$ separately. The companies server's urlencoding function (research.rs) is the reference pattern."
+source: "Cycle 8 kali-audit — MCP tool input URL-construction review (defense layer 1)"
+ci_gate: scripts/check-kali-regressions.sh
+status: enforced
