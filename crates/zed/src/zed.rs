@@ -911,15 +911,15 @@ async fn initialize_agent_panel(
 }
 
 fn zed_kask_update_task() -> anyhow::Result<task::SpawnInTerminal> {
-    let executable = std::env::current_exe().context("could not locate the running zed-kask executable")?;
+    let executable =
+        std::env::current_exe().context("could not locate the running zed-kask executable")?;
     let bin_dir = executable
         .parent()
         .context("zed-kask executable has no parent directory")?;
     let install_dir = bin_dir
         .parent()
         .context("zed-kask executable is not installed below a prefix")?;
-    let updater = install_dir
-        .join("share/zed-kask/install/update-zed-kask.sh");
+    let updater = install_dir.join("share/zed-kask/install/update-zed-kask.sh");
 
     anyhow::ensure!(
         updater.is_file(),

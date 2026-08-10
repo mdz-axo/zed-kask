@@ -28,7 +28,7 @@ pub(crate) fn render_corpus_page(
     let template_root_input = kask_string_input(
         "kask-corpus-template-root",
         "Template Root",
-        "registry",
+        "kask/registry",
         template_root,
         "corpus",
         "template_root",

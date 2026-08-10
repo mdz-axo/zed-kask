@@ -1,159 +1,61 @@
-# Capabilities Researcher — Full Pipeline Manifest v9.0
+# Capabilities Researcher — Full Pipeline Manifest
 # Traces from raw files through trained LoRA adapter.
 #
-# Type: PipelineManifest
 # Persona: Business and Economics Researcher — Capability-Performance Gap Analysis
-# Source: 141 files (83 PDF + 49 HTML + 9 other) from Clones/Library/Researcher
+# Source: 138 files (81 PDF + 48 HTML + 9 other) in corpus/source-library/
 # Target: Bloom-balanced QAs for EVA LoRA training via Axolotl
 #
-# Architecture (v9.0 — Inter-Phase Gate System):
-#   Same tool architecture as v8.0, with explicit type: gate steps between
-#   every phase. Gates are BLOCKING — the agent MUST evaluate every check in
-#   a gate before proceeding to the next phase. A failed check halts the
-#   pipeline and triggers remediation.
+# Models:
+#   Classifier/Tagging/Triples: OpenRouter/deepseek/deepseek-v4-flash (HKASK_CLASSIFIER_MODEL)
+#   QA generation:              OpenRouter/z-ai/glm-5.2 (HKASK_DEFAULT_MODEL)
+#   Embedding:                  DeepInfra/Qwen/Qwen3-Embedding-0.6B (HKASK_EMBEDDING_MODEL)
 #
-#   Gate schema:
-#     - id: gate_<name>
-#       type: gate
-#       description: >
-#         What this gate verifies, why it matters, and that it is BLOCKING.
-#       checks:
-#         # Disk-based check (agent runs shell commands and evaluates output):
-#         - name: <check_id>
-#           description: "<what to verify>"
-#           command: |
-#             <POSIX shell commands producing human-readable output>
-#           pass: "<condition for pass — what the agent should see>"
-#           fail: "<condition for fail — what the agent should see>"
-#           remediation: >
-#             <specific, actionable steps to fix each failure mode>
+# Phases:
+#   0. Extract text from 138 source files
+#   1. Chunk extracted text into passages
+#   2a. Tag chunks with ontology annotations
+#   2b. Embed chunks with ontology-anchored vectors
+#   2c. Extract RDF triples as h_mems
+#   3. Dedup near-identical chunks
+#   4. Consolidate related chunks via LLM synthesis
+#   5. Build Bloom taxonomy QA prompts
+#   6. Generate QA pairs
+#   7. Ingest QAs into training JSONL + DB
+#   8. Assemble ChatML dataset
+#   9. Submit LoRA training job
 #
-#         # Response-based check (agent evaluates previous tool's response):
-#         - name: <check_id>
-#           description: "<what to verify>"
-#           response_field: <field_name from tool response>
-#           operator: equals|gte|lte|equals_zero
-#           expected: <value>
-#           pass: "<condition>"
-#           fail: "<condition>"
-#           remediation: >
-#             <steps to fix>
+# Gates:
+#   Each gate runs a deterministic command that checks disk artifacts,
+#   prints verification stats, and asserts invariants. The agent presents
+#   the stats to the user for review and approval before proceeding.
+#   A failed gate halts the pipeline. Gates do NOT check tool response
+#   fields — the disk artifact is the sole source of truth.
 #
-#   Gate placement (11 gates, one between each phase):
-#     Phase 0: extract_text
-#       → GATE: extract_complete
-#     Phase 1: chunk_all → purge_existing
-#       → GATE: chunk_complete
-#     Phase 2a: tag_chunks
-#       → GATE: tag_complete
-#     Phase 2b: embed_chunks
-#       → GATE: embed_complete
-#     Phase 2c: extract_triples
-#       → GATE: triples_complete
-#     Phase 3: dedup_chunks
-#       → GATE: dedup_complete
-#     Phase 4: consolidate_chunks
-#       → GATE: consolidate_complete
-#     Phase 5: build_prompts
-#       → GATE: prompts_complete
-#     Phase 6: generate_qas
-#       → GATE: qa_generation_complete
-#     Phase 7: ingest_qas
-#       → GATE: qa_ingest_complete
-#     Phase 8: assemble_chatml
-#       → GATE: chatml_complete
-#     Phase 9: train_lora (terminal — no gate after)
+# Artifact retention:
+#   The entire corpus/ directory is gitignored. Final outputs will be
+#   explicitly committed with git add -f after the pipeline completes
+#   and all gates pass verification.
 #
-# Architecture (v8.0 — tool layer, unchanged):
-#   Corpus steps (corpus_*) run in-process against the unified hkask-mcp-corpus
-#   server; training steps (training_*) cross to the hkask-mcp-training server.
-#   The former `kask mcp invoke` CLI has been removed — manifests are
-#   orchestrated in-process from the agent panel.
-#
-#   Phase 2 is split into three separate steps (v6.0 combined them into one
-#   LLM call which caused bugs — wrong model, bypassed ContentGuard):
-#     2a. corpus_embed     — Qwen3-Embedding-0.6B → DB vectors + text/provenance h_mems
-#     2b. corpus_tag_chunks — canonical classifier (HKASK_CLASSIFIER_MODEL) → ontology tags JSONL + tag h_mems
-#     2c. corpus_extract_triples — canonical classifier (HKASK_CLASSIFIER_MODEL) → RDF triple h_mems in DB
-#
-#   Each tool uses its own Jinja2 template from registry/templates/docproc/:
-#     tag-chunks.j2, extract-hmems.j2, consolidate-chunks.j2,
-#     generate-qa.j2, build-prompts.j2
-#
-#   h_mem design:
-#     entity = chunk_ref (what the memory is about)
-#     owner_webid = WebID::from_persona("john-brooks") (whose memory it is)
-#     All h_mems queryable via semantic.query_deduped(chunk_ref)
-#
-# Tool response fields (verified from source — used by verify blocks and gates):
-#   corpus_convert (dir):     source_documents, total_documents, extracted, skipped, failed, failures[]
-#   corpus_chunk (dir):       total_documents, total_chunks, indexed
-#   corpus_purge_qa:          embeddings_before, embeddings_purged, embeddings_after, h_mems_purged, h_mem_errors
-#   corpus_tag_chunks:        total_chunks, tagged, failed, dimensions, expertise_levels, time_seconds
-#   corpus_embed:             total, embedded, failed, model
-#   corpus_extract_triples:   total_chunks, succeeded, failed, h_mems_stored
-#   corpus_dedup_chunks:      original, deduped, removed, clusters, sources, reduction_pct
-#   corpus_consolidate_chunks: original, consolidated, multi_chunk_clusters, absorbed, reembedded, reduction_pct
-#   corpus_build_prompts:     total_chunks, prompts_written, output
-#   corpus_generate_qa_batch: total, written, failed, output
-#   corpus_ingest_qa:         parsed, filtered, deduped, stored_h_mems, output
-#   training_assemble_dataset: train_examples, train_path, total_matched, (optional) test_examples, test_path
-#   training_submit:          job_id, provider_job_id, status, base_model, host, estimated_cost_urj
-#
-# Models (approved, in .env):
-#   Classifier/Tagging/Triples: OR/deepseek/deepseek-v4-flash (HKASK_CLASSIFIER_MODEL)
-#   QA generation:              OpenRouter/z-ai/glm-5.2 (HKASK_DEFAULT_MODEL — hkask default)
-#   Embedding:                  DI/Qwen/Qwen3-Embedding-0.6B (HKASK_EMBEDDING_MODEL)
-#
-# Changelog:
-#   v9.0 (2026-08-10) — Inter-phase gate system:
-#     - Added 11 type: gate steps between every phase (see gate placement above).
-#     - Each gate has disk-based checks (shell commands) AND response-based
-#       checks (tool response field verification).
-#     - Gates are BLOCKING: the agent MUST NOT proceed if any check fails.
-#     - Each check includes specific remediation instructions for its failure mode.
-#     - Gate 1 (extract_complete) would have caught the v8.0 bug where the agent
-#       proceeded to chunking with only 85/141 files extracted (min: 80 threshold
-#       was both too low and checked tool response count, not disk artifacts).
-#     - Strengthened verify blocks on tool steps: min thresholds raised from
-#       token floors (min: 1) to proportional floors; added failed: max: 0
-#       where applicable.
-#     - Updated source count from 106 to 141 (83 PDF + 49 HTML + 9 other).
-#     - Documented all tool response fields in header for gate/verify reference.
-#
-#   v8.0 → v7.0 lessons learned (preserved):
-#     - Combined classify-chunks.j2 template caused bugs: wrong model, bypassed
-#       ContentGuard, stored h_mems with wrong entity (triple.subject vs chunk_ref).
-#       Split into separate tag_chunks + extract_triples tools with separate templates.
-#     - Qwen3.6 and GLM-5.2 have thinking mode — extract_json_from_response finds
-#       { ... } in reasoning + JSON response. All MCP tools now handle this.
-#     - Template name mismatch: code called "extract-h_mems" but file is "extract-hmems.j2"
-#       — fixed in v7.0.
-#     - h_mem owner was hardcoded "corpus" instead of "john-brooks" — fixed with
-#       owner parameter on all tools, defaulting to "john-brooks".
-#     - build-prompts never queried h_mems as knowledge graph — v7.0 adds
-#       semantic.query_deduped(chunk_ref) per chunk, injects as "## Knowledge Graph"
-#       section in system prompt via build-prompts.j2 template.
+# Batch awareness:
+#   Some steps (tagging) may require batched execution because the
+#   chunks.jsonl file (71.8 MB) exceeds the MCP server's 32 MiB read cap.
+#   Gates check the final merged output, not individual batch responses.
 
 id: capabilities-researcher-pipeline
-version: "9.0"
+version: "10.0"
 type: pipeline
 energy_budget:
   gas_cap: 500000
   rjoule_cap: 5
 description: >
   Full corpus pipeline for the Capabilities Researcher persona.
-  Corpus steps run through the unified corpus MCP server with Jinja2 templates;
-  training steps (assemble, submit) cross to the training MCP server.
-  Separate embed, tag, and extract_triples steps (no combined classify).
-  h_mem knowledge graph injected into build-prompts.
-  Exact-match QA dedup. Typed EVA LoRA submission through the training MCP boundary.
-  v9.0: 11 inter-phase gates verify artifact completeness on disk before
-  proceeding — gates are BLOCKING with per-check remediation instructions.
+  138 source files → extracted text → chunks → ontology tags → embeddings →
+  triples → dedup → consolidate → Bloom prompts → QA pairs → training JSONL →
+  ChatML → LoRA training. Each phase has a blocking gate that verifies
+  actual disk artifacts and presents stats to the user before proceeding.
 
 env:
   HKASK_EMBEDDING_DIM: "1024"
-
   HKASK_DB_POOL_SIZE: "64"
   HKASK_HTTP_POOL_MAX_IDLE: "256"
   HKASK_CLASSIFIER_MODEL: "{{ classifier_model }}"
@@ -161,161 +63,84 @@ env:
 
 steps:
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 0: Raw Files → Extracted Text
+  # Phase 0: Extract text from source files
   # ═══════════════════════════════════════════════════════════════════════
   - id: extract_text
-    description: "Extract text from 141 source files (83 PDF + 49 HTML + 9 other) from the Researcher library"
+    description: "Extract text from 138 source files (81 PDF + 48 HTML + 9 other)"
     tool: corpus_convert
     params:
-      path: "/home/mdz-axolotl/Clones/Library/Researcher"
+      path: "corpus/source-library"
       output: "corpus/extracted/researcher"
-    verify:
-      - field: extracted
-        gte: 138
-        # 138 = files matching standard extensions (pdf, html, htm, txt, md).
-        # corpus_convert may handle additional formats, pushing the total to 141.
-        # The gate below does the thorough 1:1 check.
-      - field: failed
-        equals: 0
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 1: extract_complete
-  # Verifies that every source file was extracted to a non-empty .txt with
-  # sane size relative to its source. This gate would have caught the v8.0
-  # bug where the agent proceeded with only 85/141 files.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_extract_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 0 extraction completeness before proceeding to chunking.
-      BLOCKING: do NOT proceed to chunk_all if any check fails.
-      This gate checks artifacts on disk, not just the tool response — the
-      tool may report a count that doesn't match what's actually written.
-    checks:
-      - name: file_coverage_1to1
-        description: "Every source file has a corresponding .txt extract (1:1 mapping)"
-        command: |
-          SOURCE_DIR="/home/mdz-axolotl/Clones/Library/Researcher"
-          OUTPUT_DIR="corpus/extracted/researcher"
-          SOURCE_COUNT=$(find "$SOURCE_DIR" -type f \( -name '*.pdf' -o -name '*.html' -o -name '*.htm' -o -name '*.txt' -o -name '*.md' -o -name '*.doc' -o -name '*.docx' \) | wc -l)
-          EXTRACT_COUNT=$(find "$OUTPUT_DIR" -name '*.txt' -type f | wc -l)
-          echo "Source files: $SOURCE_COUNT"
-          echo "Extracted files: $EXTRACT_COUNT"
-          MISSING=0
-          for f in $(find "$SOURCE_DIR" -type f \( -name '*.pdf' -o -name '*.html' -o -name '*.htm' -o -name '*.txt' -o -name '*.md' -o -name '*.doc' -o -name '*.docx' \)); do
-            BASENAME=$(basename "$f" | sed 's/\.[^.]*$//')
-            if ! ls "$OUTPUT_DIR/${BASENAME}.txt" 2>/dev/null 1>&2; then
-              echo "MISSING: $f → $OUTPUT_DIR/${BASENAME}.txt"
-              MISSING=$((MISSING + 1))
-            fi
-          done
-          echo "Missing extracts: $MISSING"
-        pass: "EXTRACT_COUNT >= SOURCE_COUNT and MISSING equals 0"
-        fail: "MISSING > 0 or EXTRACT_COUNT < SOURCE_COUNT — some source files were not extracted"
-        remediation: >
-          Re-run corpus_convert on the missing files. The MCP server may timeout
-          on large PDFs — process in batches of 20-30 files by copying subsets to
-          a temp directory and running corpus_convert on each batch. For PDFs that
-          timeout specifically, use pdftotext as a fallback:
-            pdftotext "$SOURCE_FILE" "corpus/extracted/researcher/$(basename ${SOURCE_FILE%.*}).txt"
-          For scanned PDFs (image-only, no text layer), use corpus_ocr with
-          force_ocr=true on the specific file. Document any files that are
-          genuinely empty/corrupt and exclude them from the pipeline — but
-          only after confirming the source is unusable, not just because the
-          first extraction attempt failed.
-
-      - name: no_empty_extracts
-        description: "All extracted .txt files are >100 bytes (non-empty)"
-        command: |
-          OUTPUT_DIR="corpus/extracted/researcher"
-          EMPTY=$(find "$OUTPUT_DIR" -name '*.txt' -type f -size -100c | wc -l)
-          echo "Files <100 bytes: $EMPTY"
-          find "$OUTPUT_DIR" -name '*.txt' -type f -size -100c -exec echo "  EMPTY: {}" \;
-        pass: "EMPTY equals 0"
-        fail: "EMPTY > 0 — some extracts are empty or near-empty (<100 bytes)"
-        remediation: >
-          Empty extracts indicate extraction failure. For each empty file:
-          1. Check the source file format and integrity (is it a valid PDF/HTML?).
-          2. If PDF: try pdftotext first (fast, handles text-native PDFs). If that
-             also produces empty output, the PDF is likely scanned — use corpus_ocr
-             with force_ocr=true.
-          3. If HTML: check if the page is JavaScript-rendered (view source — if
-             the <body> has no text content, the page needs a headless browser).
-          4. If the source is genuinely empty/blank, document it with a comment
-             in this YAML and exclude it from the expected count.
-
-      - name: zero_extraction_failures
-        description: "The corpus_convert tool response reports failed: 0"
-        response_field: failed
-        operator: equals
-        expected: 0
-        pass: "response.failed equals 0 — no extraction failures reported"
-        fail: "response.failed > 0 — extraction reported failures"
-        remediation: >
-          Review the failures[] array in the tool response for specific error
-          messages. Re-run corpus_convert on each failed path. Common causes:
-          - PDF timeout: use pdftotext fallback or process in smaller batches.
-          - HTML parse error: check if the file is well-formed HTML.
-          - Permission denied: check file permissions on the source.
-
-      - name: size_sanity
-        description: "No extract is suspiciously small relative to its source (large source → tiny extract suggests OCR failure)"
-        command: |
-          SOURCE_DIR="/home/mdz-axolotl/Clones/Library/Researcher"
-          OUTPUT_DIR="corpus/extracted/researcher"
-          SUSPICIOUS=0
-          for f in $(find "$OUTPUT_DIR" -name '*.txt' -type f); do
-            BASENAME=$(basename "$f" .txt)
-            SOURCE_FILE=$(find "$SOURCE_DIR" -name "${BASENAME}.*" -type f | head -1)
-            if [ -n "$SOURCE_FILE" ]; then
-              SOURCE_SIZE=$(stat -c%s "$SOURCE_FILE" 2>/dev/null || stat -f%z "$SOURCE_FILE" 2>/dev/null || echo 0)
-              EXTRACT_SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
-              # Flag: source >1MB but extract <1KB (0.1% ratio — likely OCR failure)
-              if [ "$SOURCE_SIZE" -gt 1000000 ] && [ "$EXTRACT_SIZE" -lt 1000 ]; then
-                echo "SUSPICIOUS: $SOURCE_FILE ($(numfmt --to=iec $SOURCE_SIZE 2>/dev/null || echo ${SOURCE_SIZE}B)) → $f ($(numfmt --to=iec $EXTRACT_SIZE 2>/dev/null || echo ${EXTRACT_SIZE}B))"
-                SUSPICIOUS=$((SUSPICIOUS + 1))
-              fi
-            fi
-          done
-          echo "Suspicious extracts: $SUSPICIOUS"
-        pass: "SUSPICIOUS equals 0 — no large source files produced tiny extracts"
-        fail: "SUSPICIOUS > 0 — large source files produced tiny extracts (likely OCR failure)"
-        remediation: >
-          For each SUSPICIOUS file, the extraction likely failed silently (OCR
-          returned minimal text). Re-extract using corpus_ocr with force_ocr=true
-          on the specific source file. If the source is a scanned PDF, OCR is the
-          only path — pdftotext will not work. If OCR also fails, the source may
-          be corrupt or in an unsupported image format.
+      Verify every source file was extracted to a non-empty .txt with sane
+      size relative to its source. Present inventory and quality stats to
+      the user before proceeding to chunking.
+    command: |
+      python3 - <<'PY'
+      from pathlib import Path
+      import json
+      source_dir = Path("corpus/source-library")
+      output_dir = Path("corpus/extracted/researcher")
+      supported = {".pdf", ".html", ".htm", ".md", ".txt", ".docx", ".pptx", ".xlsx", ".xls", ".csv"}
+      sources = sorted(path for path in source_dir.iterdir() if path.is_file() and path.suffix.lower() in supported)
+      expected = {f"{path.name}.txt": path for path in sources}
+      extracts = {path.name: path for path in output_dir.glob("*.txt") if path.is_file()}
+      missing = sorted(set(expected) - set(extracts))
+      orphaned = sorted(set(extracts) - set(expected))
+      too_small = sorted(name for name, path in extracts.items() if path.stat().st_size <= 100)
+      suspicious = []
+      for name, source in expected.items():
+          extract = extracts.get(name)
+          if extract is None:
+              continue
+          source_size = source.stat().st_size
+          extract_size = extract.stat().st_size
+          if (source_size >= 1_048_576 and extract_size < 1_024) or (source_size >= 10_485_760 and extract_size < 4_096):
+              suspicious.append({"source": source.name, "source_bytes": source_size, "extract_bytes": extract_size})
+      extract_sizes = [path.stat().st_size for path in extracts.values()]
+      extract_words = sum(len(path.read_text(errors="replace").split()) for path in extracts.values())
+      stats = {
+          "sources": len(sources),
+          "extracts": len(extracts),
+          "missing": missing[:20],
+          "orphaned": orphaned[:20],
+          "too_small": too_small[:20],
+          "suspicious_pairs": suspicious[:20],
+          "extract_bytes_total": sum(extract_sizes),
+          "extract_bytes_min": min(extract_sizes) if extract_sizes else 0,
+          "extract_bytes_max": max(extract_sizes) if extract_sizes else 0,
+          "extract_words_total": extract_words,
+      }
+      print(json.dumps(stats, indent=2))
+      assert len(sources) == 138, f"expected 138 sources, found {len(sources)}"
+      assert len(extracts) == 138, f"expected 138 extracts, found {len(extracts)}"
+      assert not missing, f"missing extracts: {missing[:10]}"
+      assert not orphaned, f"orphan extracts: {orphaned[:10]}"
+      assert not too_small, f"extracts <=100 bytes: {too_small[:10]}"
+      assert not suspicious, f"large-source/tiny-extract pairs: {suspicious[:10]}"
+      print("GATE_PASS extract_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair extraction, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 1: Text → Chunks
+  # Phase 1: Chunk extracted text + purge old DB state
   # ═══════════════════════════════════════════════════════════════════════
   - id: chunk_all
-    description: "Chunk extracted text into ~512-token passages (tunable — validate QA coherence post-run; 256 over-fragmented, 512 is unvalidated)"
+    description: "Chunk extracted text into ~512-token passages with 64-token overlap"
     tool: corpus_chunk
     params:
       input_dir: "corpus/extracted/researcher"
       output: "corpus/chunks/chunks.jsonl"
-      # max_tokens is a tunable hypothesis. 256 over-fragmented passages (broke
-      # sentence/paragraph integrity). 512 is the new default — UNVALIDATED.
-      # After the re-run, inspect QA coherence and chunk boundary quality.
-      # If 512 still fragments, bump to 768; if QAs are too generic, drop to 384.
-      max_tokens: 512
+      max_tokens: 300
       overlap_tokens: 64
       entity_ref_prefix: "corpus:researcher"
-    verify:
-      - field: total_chunks
-        gte: 5000
-        # 141 files × ~200 chunks/file at 512 tokens ≈ 28K chunks.
-        # Floor of 5000 catches a broken run (empty input, misconfigured path)
-        # without being so high that a small but valid corpus fails.
 
-  # ═══════════════════════════════════════════════════════════════════════
-  # Phase 1b: Purge existing data (pipeline recovery — clean slate)
-  #
-  # Deletes old embeddings and QA h_mems from the DB. Keeps chunks.jsonl intact.
-  # This ensures a clean run even if a previous pipeline failed mid-way.
-  # ═══════════════════════════════════════════════════════════════════════
   - id: purge_existing
     description: "Purge old embeddings and QA h_mems from DB for clean pipeline run"
     tool: corpus_purge_qa
@@ -323,297 +148,237 @@ steps:
       prefix: "corpus:researcher:"
       db_path: "corpus/memory/john-brooks.db"
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 2: chunk_complete
-  # Verifies that chunking produced a valid JSONL with proportional volume.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_chunk_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 1 chunking produced a valid chunks.jsonl with volume
-      proportional to the extracted text. BLOCKING: do NOT proceed to
-      tag_chunks if any check fails.
-    checks:
-      - name: chunks_jsonl_exists
-        description: "corpus/chunks/chunks.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/chunks/chunks.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            SIZE=$(du -h "$FILE" | cut -f1)
-            echo "OK: $FILE — $LINES lines, $SIZE"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run the chunk_all step. If the file is missing, corpus_chunk may
-          have failed silently — check the tool response for errors. If the file
-          is empty, the input_dir may be wrong or the extracted text directory
-          may be empty (check Gate 1 first).
-
-      - name: chunk_count_proportional
-        description: "Chunk count is proportional to extracted text volume (>=100 chunks per source file on average)"
-        command: |
-          EXTRACT_COUNT=$(find corpus/extracted/researcher -name '*.txt' -type f | wc -l)
-          CHUNK_COUNT=$(wc -l < corpus/chunks/chunks.jsonl)
-          RATIO=$(echo "scale=0; $CHUNK_COUNT / ($EXTRACT_COUNT + 1)" | bc 2>/dev/null || echo "?")
-          echo "Extracts: $EXTRACT_COUNT, Chunks: $CHUNK_COUNT, Chunks/extract: $RATIO"
-          if [ "$CHUNK_COUNT" -lt "$EXTRACT_COUNT" ]; then
-            echo "FAIL: Fewer chunks ($CHUNK_COUNT) than source extracts ($EXTRACT_COUNT) — some files produced zero chunks"
-          fi
-        pass: "CHUNK_COUNT >= EXTRACT_COUNT (every file produced at least one chunk on average)"
-        fail: "CHUNK_COUNT < EXTRACT_COUNT — some extracted files produced zero chunks"
-        remediation: >
-          Some extracted text files may be too short to produce a chunk at
-          512 tokens. This is acceptable for very small files (<100 words).
-          Check which sources have no chunks by comparing distinct source
-          values in chunks.jsonl against the extract filenames:
-            python3 -c "
-            import json
-            sources = set()
-            with open('corpus/chunks/chunks.jsonl') as f:
-                for line in f:
-                    sources.add(json.loads(line)['source'])
-            print(f'Distinct sources in chunks: {len(sources)}')
-            "
-          If large files are missing chunks, re-run chunk_all — the chunker
-          may have crashed on a specific file.
-
-      - name: chunk_schema_valid
-        description: "Each line in chunks.jsonl has entity_ref, source, text, word_count fields"
-        command: |
-          FILE="corpus/chunks/chunks.jsonl"
-          TOTAL=$(wc -l < "$FILE")
-          VALID=$(python3 -c "
-          import json, sys
-          valid = 0
-          required = {'entity_ref', 'source', 'text', 'word_count'}
-          with open('$FILE') as f:
-              for line in f:
-                  try:
-                      d = json.loads(line)
-                      if required.issubset(d.keys()) and d.get('text'):
-                          valid += 1
-                  except: pass
-          print(valid)
-          " 2>/dev/null || echo "?")
-          echo "Total lines: $TOTAL, Valid chunks: $VALID"
-          if [ "$VALID" != "$TOTAL" ]; then
-            echo "FAIL: $((TOTAL - ${VALID:-0})) lines missing required fields or have empty text"
-          fi
-        pass: "VALID equals TOTAL — every line has all required fields with non-empty text"
-        fail: "Some lines are missing required fields or have empty text"
-        remediation: >
-          Malformed chunks indicate a bug in corpus_chunk. Re-run chunk_all.
-          If the issue persists, inspect the malformed lines:
-            head -N corpus/chunks/chunks.jsonl | python3 -c "import json,sys; [print(json.loads(l).keys() if l.strip() else 'EMPTY') for l in sys.stdin]"
+      Verify chunking produced valid JSONL covering all 138 sources with unique
+      entity_refs, sane word counts, and no empty/degenerate chunks. Also verify
+      the DB purge left a clean slate. Present chunk distribution and quality
+      stats to the user before proceeding to tagging.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      from pathlib import Path
+      extract_dir = Path("corpus/extracted/researcher")
+      chunk_path = Path("corpus/chunks/chunks.jsonl")
+      expected_sources = {path.name for path in extract_dir.glob("*.txt") if path.is_file()}
+      extracted_words = sum(len(path.read_text(errors="replace").split()) for path in extract_dir.glob("*.txt"))
+      records = []
+      json_errors = 0
+      with chunk_path.open() as handle:
+          for line_number, line in enumerate(handle, 1):
+              try:
+                  value = json.loads(line)
+              except json.JSONDecodeError as e:
+                  json_errors += 1
+                  print(f"JSON error line {line_number}: {e}")
+                  continue
+              records.append(value)
+      refs = [r["entity_ref"] for r in records]
+      duplicate_refs = [k for k, c in Counter(refs).items() if c != 1]
+      actual_sources = {r["source"] for r in records}
+      missing_sources = sorted(expected_sources - actual_sources)
+      orphan_sources = sorted(actual_sources - expected_sources)
+      word_counts = [r.get("word_count", 0) for r in records]
+      empty_chunks = sum(1 for r in records if not r.get("text", "").strip())
+      chunk_words = sum(word_counts)
+      ratio = chunk_words / max(extracted_words, 1)
+      per_source = Counter(r["source"] for r in records)
+      stats = {
+          "extract_sources": len(expected_sources),
+          "chunk_sources": len(actual_sources),
+          "total_chunks": len(records),
+          "json_errors": json_errors,
+          "duplicate_refs": duplicate_refs[:20],
+          "missing_sources": missing_sources[:20],
+          "orphan_sources": orphan_sources[:20],
+          "empty_chunks": empty_chunks,
+          "extracted_words": extracted_words,
+          "chunk_words": chunk_words,
+          "word_ratio": round(ratio, 3),
+          "words_min": min(word_counts) if word_counts else 0,
+          "words_avg": round(sum(word_counts) / max(len(word_counts), 1)),
+          "words_median": sorted(word_counts)[len(word_counts) // 2] if word_counts else 0,
+          "words_max": max(word_counts) if word_counts else 0,
+          "chunks_per_source_min": min(per_source.values()) if per_source else 0,
+          "chunks_per_source_max": max(per_source.values()) if per_source else 0,
+          "top_5_sources": [(s, c) for s, c in per_source.most_common(5)],
+          "bottom_5_sources": [(s, c) for s, c in per_source.most_common()[-5:]],
+      }
+      print(json.dumps(stats, indent=2))
+      assert len(expected_sources) == 138, f"expected 138 extract sources, found {len(expected_sources)}"
+      assert records, "no chunks produced"
+      assert json_errors == 0, f"{json_errors} JSON parse errors"
+      assert not duplicate_refs, f"duplicate entity_refs: {duplicate_refs[:10]}"
+      assert not missing_sources, f"extracts with no chunks: {missing_sources[:10]}"
+      assert not orphan_sources, f"unknown chunk sources: {orphan_sources[:10]}"
+      assert empty_chunks == 0, f"{empty_chunks} empty-text chunks"
+      assert 0.90 <= ratio <= 1.35, f"word ratio {ratio:.3f} outside [0.90, 1.35]"
+      print("GATE_PASS chunk_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair chunking or purge, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 2a: Tag chunks → ontology tags JSONL (BEFORE embed)
+  # Phase 2a: Tag chunks with ontology annotations (BEFORE embed)
   #
-  # Tags first so embeddings can be ontology-anchored (per INSTRUCTOR,
-  # Su et al. 2023). The LLM classifies each chunk against GOLEM, FIBO,
-  # ESO, PKO, OMC, and Dublin Core ontologies. Tag data flows through
-  # JSONL files to downstream tools (embed, extract_triples, build_prompts).
+  # Tags first so embeddings can be ontology-anchored (INSTRUCTOR, Su et al. 2023).
+  # The LLM classifies each chunk against GOLEM, FIBO, ESO, PKO, Dublin Core.
   #
-  # Design decision: tag → embed (not embed → tag) because:
-  #   1. Ontology tags as embedding "instructions" produce better KNN
-  #      retrieval (instruction-tuned embeddings outperform raw, per MTEB)
-  #   2. Tagging is a classification task — the passage text alone is
-  #      sufficient for ontology classification (no KNN context needed)
-  #   3. One-time classification cost, multiple downstream benefits
-  #   4. Ontology-enhanced KG embeddings outperform baselines (Wang et al. 2023)
-  # See: docs/architecture/adr-ontology-anchored-embedding.md
+  # NOTE: chunks.jsonl is 71.8 MB and exceeds the MCP server's 32 MiB read cap.
+  # This step must be executed in batches (see corpus/.pipeline-batches/tagging/).
+  # The gate checks the final merged tagged_ontology.jsonl, not batch responses.
   # ═══════════════════════════════════════════════════════════════════════
   - id: tag_chunks
     description: >
       Tag chunks with 5W1H dimensions, Dublin Core, PKO, FIBO/GOLEM/ESO
-      ontology tags, and expertise level. Uses tag-chunks.j2 template with
-      the canonical classifier model (HKASK_CLASSIFIER_MODEL). Must run BEFORE embed so embeddings can be
-      ontology-anchored. Output: tagged_ontology.jsonl.
+      ontology tags, and expertise level. Must run BEFORE embed so embeddings
+      can be ontology-anchored. May require batched execution due to file size.
     tool: corpus_tag_chunks
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       output: "corpus/chunks/tagged_ontology.jsonl"
       concurrency: 128
-    verify:
-      - field: tagged
-        gte: 5000
-      - field: failed
-        lte: 100
-        # Tagging is an LLM call per chunk — some failures are expected at scale.
-        # 100 failures on 33K chunks = 0.3% failure rate, acceptable.
-        # The gate below checks the failure rate more precisely.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 3: tag_complete
-  # Verifies ontology tagging coverage and quality.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_tag_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 2a tagging produced a complete tagged_ontology.jsonl with
-      1:1 line correspondence to chunks.jsonl. BLOCKING: do NOT proceed to
-      embed_chunks if any check fails.
-    checks:
-      - name: tagged_jsonl_exists
-        description: "corpus/chunks/tagged_ontology.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/chunks/tagged_ontology.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            echo "OK: $FILE — $LINES lines"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run tag_chunks. If the file is missing, the LLM classifier may
-          have failed entirely — check the tool response for error messages.
-          The classifier model (HKASK_CLASSIFIER_MODEL) must be available and
-          the inference router must be wired.
-
-      - name: tagged_line_count_matches_chunks
-        description: "tagged_ontology.jsonl line count matches chunks.jsonl line count (1:1)"
-        command: |
-          CHUNK_LINES=$(wc -l < corpus/chunks/chunks.jsonl)
-          TAG_LINES=$(wc -l < corpus/chunks/tagged_ontology.jsonl)
-          echo "Chunks: $CHUNK_LINES, Tagged: $TAG_LINES"
-          if [ "$CHUNK_LINES" != "$TAG_LINES" ]; then
-            DIFF=$((CHUNK_LINES - TAG_LINES))
-            echo "FAIL: $DIFF chunks missing tags (tagged < chunks)"
-          fi
-        pass: "TAG_LINES equals CHUNK_LINES — every chunk has a corresponding tag entry"
-        fail: "TAG_LINES < CHUNK_LINES — some chunks were not tagged"
-        remediation: >
-          Re-run tag_chunks on the full chunks.jsonl. If the tool processes in
-          batches and some batches failed, identify the failed batch by checking
-          which entity_refs are missing from tagged_ontology.jsonl:
-            python3 -c "
-            import json
-            chunk_refs = set()
-            tagged_refs = set()
-            with open('corpus/chunks/chunks.jsonl') as f:
-                for line in f: chunk_refs.add(json.loads(line)['entity_ref'])
-            with open('corpus/chunks/tagged_ontology.jsonl') as f:
-                for line in f: tagged_refs.add(json.loads(line)['entity_ref'])
-            missing = chunk_refs - tagged_refs
-            print(f'Missing tags: {len(missing)} chunks')
-            if missing: print('First 5:', list(missing)[:5])
-            "
-          Re-run tag_chunks — the tool should resume from where it left off
-          if the output file already has partial results. If not, delete the
-          partial output and re-run from scratch.
-
-      - name: tag_failure_rate_acceptable
-        description: "Tagging failure rate is <5% of total chunks"
-        response_field: failed
-        operator: lt_percent
-        expected: 5
-        pass: "response.failed is <5% of response.total_chunks — acceptable failure rate"
-        fail: "response.failed is >=5% of response.total_chunks — high failure rate"
-        remediation: >
-          High tag failure rate indicates the classifier model is struggling.
-          Check: (1) is HKASK_CLASSIFIER_MODEL available and responding?
-          (2) are there rate-limit errors in the tool response? (3) is the
-          concurrency too high (128 may overwhelm the provider)? Try reducing
-          concurrency to 32 and re-running.
+      Verify every chunk has a structurally valid ontology tag record with exact
+      entity_ref equality, valid dimensions, ontology_tags, and salience. Present
+      tag coverage, dimension distribution, and quality stats to the user before
+      proceeding to embedding.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      def load(path):
+          records = []
+          with open(path) as handle:
+              for line_number, line in enumerate(handle, 1):
+                  try:
+                      records.append(json.loads(line))
+                  except json.JSONDecodeError as e:
+                      print(f"JSON error at {path} line {line_number}: {e}")
+                      raise
+          return records
+      chunks = load("corpus/chunks/chunks.jsonl")
+      tagged = load("corpus/chunks/tagged_ontology.jsonl")
+      chunk_refs = [item["entity_ref"] for item in chunks]
+      tag_refs = [item["entity_ref"] for item in tagged]
+      duplicates = [k for k, c in Counter(tag_refs).items() if c != 1]
+      missing = sorted(set(chunk_refs) - set(tag_refs))
+      orphaned = sorted(set(tag_refs) - set(chunk_refs))
+      allowed_dimensions = {"who", "what", "when", "where", "why", "how"}
+      invalid = []
+      dimension_counts = Counter()
+      ontology_namespaces = Counter()
+      salience_values = []
+      for index, item in enumerate(tagged, 1):
+          dimensions = item.get("dimensions")
+          tags = item.get("ontology_tags", {})
+          salience = item.get("salience")
+          if (not item.get("text", "").strip() or
+              not isinstance(dimensions, list) or not dimensions or
+              not set(dimensions) <= allowed_dimensions or
+              not isinstance(tags, dict) or not tags or
+              not isinstance(salience, (int, float))):
+              invalid.append(index)
+          else:
+              dimension_counts.update(dimensions)
+              ontology_namespaces.update(tags.keys())
+              salience_values.append(salience)
+      stats = {
+          "chunks": len(chunks),
+          "tagged": len(tagged),
+          "missing_refs": missing[:20],
+          "orphaned_refs": orphaned[:20],
+          "duplicate_refs": duplicates[:20],
+          "invalid_records": invalid[:20],
+          "dimension_distribution": dict(dimension_counts.most_common()),
+          "ontology_namespaces": dict(ontology_namespaces.most_common()),
+          "salience_min": min(salience_values) if salience_values else None,
+          "salience_avg": round(sum(salience_values) / max(len(salience_values), 1), 3) if salience_values else None,
+          "salience_max": max(salience_values) if salience_values else None,
+      }
+      print(json.dumps(stats, indent=2))
+      assert len(tagged) == len(chunks), f"tagged {len(tagged)} != chunks {len(chunks)}"
+      assert not missing, f"{len(missing)} missing refs: {missing[:10]}"
+      assert not orphaned, f"{len(orphaned)} orphaned refs: {orphaned[:10]}"
+      assert not duplicates, f"{len(duplicates)} duplicate refs: {duplicates[:10]}"
+      assert not invalid, f"{len(invalid)} invalid records: {invalid[:10]}"
+      print("GATE_PASS tag_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair tagging, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 2b: Embed chunks → ontology-anchored DB vectors (AFTER tag)
-  #
-  # Qwen3-Embedding-0.6B (1024-dim). Reads tagged_ontology.jsonl and prepends
-  # ontology tag annotations to chunk text before embedding, producing
-  # ontology-anchored vectors. Format: "[golem: metaphor | pko: analysis] <text>"
-  # This is instruction-conditioned embedding per INSTRUCTOR (Su et al. 2023).
-  # Stores vectors only — no h_mem storage.
+  # Phase 2b: Embed chunks with ontology-anchored vectors (AFTER tag)
   # ═══════════════════════════════════════════════════════════════════════
   - id: embed_chunks
     description: >
-      Embed all chunks with Qwen3-Embedding-0.6B, using ontology tag
-      annotations from tagged_ontology.jsonl as embedding instructions.
-      Produces ontology-anchored vectors for improved KNN retrieval in
-      dedup, consolidate, and build_prompts. 3-attempt retry per batch.
+      Embed all chunks with Qwen3-Embedding-0.6B using ontology tag annotations
+      as embedding instructions. Stores vectors in the encrypted memory DB.
     tool: corpus_embed
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       tagged_jsonl: "corpus/chunks/tagged_ontology.jsonl"
       db_path: "corpus/memory/john-brooks.db"
       batch_size: 50
-    verify:
-      - field: embedded
-        gte: 5000
-      - field: failed
-        lte: 100
-        # Embedding is a batched API call — failures should be rare.
-        # 100 failures on 33K chunks = 0.3%, acceptable.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 4: embed_complete
-  # Verifies embedding coverage matches chunk count.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_embed_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 2b embedding produced vectors for all chunks. The embedding
-      count must match the chunk count — unembedded chunks will be invisible
-      to KNN retrieval in dedup, consolidate, and build_prompts. BLOCKING: do
-      NOT proceed to extract_triples if any check fails.
-    checks:
-      - name: embed_count_matches_chunks
-        description: "Embedded count matches total chunk count (1:1)"
-        response_field: embedded
-        operator: gte
-        # No static expected value — compare against chunks.jsonl line count
-        command: |
-          CHUNK_COUNT=$(wc -l < corpus/chunks/chunks.jsonl)
-          echo "Expected (from chunks.jsonl): $CHUNK_COUNT"
-          echo "Check response.embedded against this value"
-        pass: "response.embedded >= CHUNK_COUNT from chunks.jsonl (allowing small variance for retry edge cases)"
-        fail: "response.embedded < CHUNK_COUNT — some chunks were not embedded"
-        remediation: >
-          Re-run embed_chunks. The tool reads chunks.jsonl and embeds each
-          chunk — if some failed, the 'failed' field in the response tells
-          you how many. Check the tool response for the failure reason
-          (embedding API rate limit, network error, etc.). Try reducing
-          batch_size to 25 if the API is rate-limiting.
-
-      - name: embed_failure_rate_acceptable
-        description: "Embedding failure rate is <1% of total"
-        response_field: failed
-        operator: lt_percent
-        expected: 1
-        pass: "response.failed is <1% of response.total — acceptable failure rate"
-        fail: "response.failed is >=1% of response.total — high failure rate"
-        remediation: >
-          Embedding failures are usually transient (API timeout, rate limit).
-          Re-run embed_chunks — the tool stores vectors in the DB, so
-          re-embedding already-stored vectors is idempotent (it overwrites).
-          If failures persist, check HKASK_EMBEDDING_MODEL availability and
-          the inference router configuration.
+      Verify DB vector entity_refs exactly match chunk entity_refs — no missing,
+      stale, or duplicate vectors. Present embedding coverage stats to the user
+      before proceeding to triple extraction. Requires sqlcipher CLI.
+    command: |
+      command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required"; exit 2; }
+      PASSPHRASE="${HKASK_DB_PASSPHRASE:-hkask-default-passphrase-2024}"
+      TMP_REFS=$(mktemp)
+      trap 'rm -f "$TMP_REFS"' EXIT
+      sqlcipher -batch corpus/memory/john-brooks.db \
+        "PRAGMA key='$PASSPHRASE'; SELECT entity_ref FROM embeddings WHERE entity_ref LIKE 'corpus:researcher:%' ORDER BY entity_ref;" > "$TMP_REFS"
+      python3 - "$TMP_REFS" <<'PY'
+      import json, sys
+      from collections import Counter
+      with open("corpus/chunks/chunks.jsonl") as handle:
+          expected = [json.loads(line)["entity_ref"] for line in handle]
+      with open(sys.argv[1]) as handle:
+          actual = [line.rstrip("\n") for line in handle if line.strip()]
+      duplicate = [k for k, c in Counter(actual).items() if c != 1]
+      missing = sorted(set(expected) - set(actual))
+      stale = sorted(set(actual) - set(expected))
+      stats = {
+          "chunks": len(expected),
+          "db_vectors": len(actual),
+          "missing_vectors": missing[:20],
+          "stale_vectors": stale[:20],
+          "duplicate_vectors": duplicate[:20],
+      }
+      print(json.dumps(stats, indent=2))
+      assert len(actual) == len(expected), f"vectors {len(actual)} != chunks {len(expected)}"
+      assert not missing, f"{len(missing)} missing vectors: {missing[:10]}"
+      assert not stale, f"{len(stale)} stale vectors: {stale[:10]}"
+      assert not duplicate, f"{len(duplicate)} duplicate vectors: {duplicate[:10]}"
+      print("GATE_PASS embed_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair embeddings, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 2c: Extract triples → RDF triple h_mems in DB
-  #
-  # Canonical classifier model (HKASK_CLASSIFIER_MODEL, default deepseek-v4-flash). Uses extract-hmems.j2 template.
-  # Extracts RDF triples (subject, predicate, object, confidence) per chunk.
-  # Stores as h_mems with entity=chunk_ref (NOT triple.subject), owner=john-brooks.
-  # 3-attempt retry with backoff. Thinking-mode JSON extraction.
-  # predicate_to_dimension maps each predicate to a 5W1H dimension.
+  # Phase 2c: Extract RDF triples as h_mems in DB
   # ═══════════════════════════════════════════════════════════════════════
   - id: extract_triples
     description: >
-      Extract RDF triples from each chunk with the canonical classifier model
-      (HKASK_CLASSIFIER_MODEL). Uses extract-hmems.j2
-      template. Stores triples as h_mems with entity=chunk_ref, predicate as attribute,
-      object as value, confidence and 5W1H dimension. 3-attempt retry.
+      Extract RDF triples from each chunk with the canonical classifier model.
+      Stores triples as h_mems with entity=chunk_ref, owner=john-brooks.
     tool: corpus_extract_triples
     params:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
@@ -622,73 +387,48 @@ steps:
       owner: "john-brooks"
       max_triples: 15
       concurrency: 64
-    verify:
-      - field: h_mems_stored
-        gte: 1000
-      - field: succeeded
-        gte: 1000
-        # Triples are LLM-extracted — not every chunk will yield triples.
-        # Floor of 1000 ensures the extraction actually ran and produced output.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 5: triples_complete
-  # Verifies triple extraction produced a usable knowledge graph.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_triples_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 2c triple extraction produced a meaningful knowledge graph
-      with h_mems stored in the DB. Triples feed build_prompts' knowledge graph
-      section — an empty or tiny KG degrades QA quality. BLOCKING: do NOT
-      proceed to dedup_chunks if any check fails.
-    checks:
-      - name: triples_stored_nonzero
-        description: "At least some h_mems were stored (h_mems_stored > 0)"
-        response_field: h_mems_stored
-        operator: gte
-        expected: 100
-        pass: "response.h_mems_stored >= 100 — triples were extracted and stored"
-        fail: "response.h_mems_stored < 100 — very few or zero triples stored"
-        remediation: >
-          If h_mems_stored is 0, the classifier model failed to extract any
-          triples. Check: (1) is HKASK_CLASSIFIER_MODEL available? (2) did the
-          tool report all chunks as 'failed'? (3) is the DB writable? Re-run
-          extract_triples after resolving the issue. If only a few triples
-          were stored, the model may be struggling with the content — try
-          reducing concurrency to 16 and re-running.
-
-      - name: triple_failure_rate_acceptable
-        description: "Triple extraction failure rate is <10% of total chunks"
-        response_field: failed
-        operator: lt_percent
-        expected: 10
-        pass: "response.failed is <10% of response.total_chunks — acceptable failure rate"
-        fail: "response.failed is >=10% of response.total_chunks — high failure rate"
-        remediation: >
-          High failure rate indicates the classifier is struggling. Common
-          causes: rate limiting (reduce concurrency), model timeout (use a
-          faster model), or thinking-mode JSON extraction failures (check if
-          the model outputs valid JSON). Re-run extract_triples with reduced
-          concurrency (16 or 32).
-
-      - name: succeeded_nonzero
-        description: "At least some chunks succeeded triple extraction"
-        response_field: succeeded
-        operator: gte
-        expected: 100
-        pass: "response.succeeded >= 100 — a meaningful number of chunks produced triples"
-        fail: "response.succeeded < 100 — very few chunks succeeded"
-        remediation: >
-          If succeeded is near zero, the extraction is fundamentally broken.
-          Check the tool response for error messages. Verify that
-          HKASK_CLASSIFIER_MODEL is set and the model is available via the
-          inference router.
+      Verify the DB contains a non-trivial, distributed knowledge graph with
+      triple coverage across at least 80% of chunks. Present triple distribution
+      and coverage stats to the user before proceeding to dedup. Requires sqlcipher.
+    command: |
+      command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required"; exit 2; }
+      PASSPHRASE="${HKASK_DB_PASSPHRASE:-hkask-default-passphrase-2024}"
+      COUNTS=$(sqlcipher -batch corpus/memory/john-brooks.db \
+        "PRAGMA key='$PASSPHRASE'; SELECT COUNT(*), COUNT(DISTINCT entity) FROM hmems WHERE entity LIKE 'corpus:researcher:%';")
+      python3 - "$COUNTS" <<'PY'
+      import json, sys
+      with open("corpus/chunks/chunks.jsonl") as handle:
+          chunks = sum(1 for _ in handle)
+      parts = sys.argv[1].strip().split("|")
+      total, entities = int(parts[0]), int(parts[1])
+      coverage = entities / max(chunks, 1)
+      avg_per_entity = total / max(entities, 1)
+      stats = {
+          "chunks": chunks,
+          "stored_h_mems": total,
+          "entities_with_triples": entities,
+          "entity_coverage": round(coverage, 3),
+          "avg_h_mems_per_entity": round(avg_per_entity, 1),
+      }
+      print(json.dumps(stats, indent=2))
+      assert total >= chunks, f"only {total} h_mems for {chunks} chunks"
+      assert coverage >= 0.80, f"coverage {coverage:.3f} below 0.80"
+      print("GATE_PASS triples_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair triple extraction, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 3: Dedup (near-identical chunk removal, cosine > 0.85)
+  # Phase 3: Dedup near-identical chunks (cosine > 0.85)
   # ═══════════════════════════════════════════════════════════════════════
   - id: dedup_chunks
-    description: "Remove near-identical chunks using embeddings from DB"
+    description: "Remove near-identical chunks using DB embeddings"
     tool: corpus_dedup_chunks
     params:
       tagged_jsonl: "corpus/chunks/tagged_ontology.jsonl"
@@ -696,82 +436,56 @@ steps:
       db_path: "corpus/memory/john-brooks.db"
       prefix: "corpus:researcher:"
       threshold: 0.85
-    verify:
-      - field: deduped
-        gte: 1000
-        # After dedup at 0.85 cosine threshold, we expect most chunks to survive
-        # (near-duplicates are rare in a diverse research library).
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 6: dedup_complete
-  # Verifies dedup produced a valid reduced dataset.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_dedup_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 3 dedup produced a valid deduped.jsonl with reasonable
-      reduction. An empty output or >90% reduction signals a problem (all
-      chunks are near-duplicates — unlikely for a diverse research library,
-      and more likely an embedding bug). BLOCKING: do NOT proceed to
-      consolidate_chunks if any check fails.
-    checks:
-      - name: deduped_jsonl_exists
-        description: "corpus/chunks/deduped.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/chunks/deduped.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            echo "OK: $FILE — $LINES lines"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run dedup_chunks. The tool reads tagged_ontology.jsonl and
-          queries the DB for embeddings — if the DB has no embeddings (Gate 4
-          failed), dedup will produce nothing. Verify Gate 4 passed first.
-
-      - name: deduped_count_reasonable
-        description: "Deduped count is >10% of original (reduction <90%)"
-        response_field: deduped
-        operator: gt_percent_of
-        # Compare against 'original' field in the same response
-        reference_field: original
-        expected: 10
-        pass: "response.deduped is >10% of response.original — reasonable reduction"
-        fail: "response.deduped is <=10% of response.original — >90% reduction is suspicious"
-        remediation: >
-          >90% reduction means almost all chunks are near-duplicates. This is
-          unlikely for a diverse research library and more likely indicates an
-          embedding problem (all embeddings are identical or near-identical).
-          Check: (1) did embed_chunks actually produce distinct vectors?
-          (2) is the embedding model producing zero vectors? (3) is the
-          threshold (0.85) too low for this embedding model? Try raising the
-          threshold to 0.90 or 0.95 and re-running.
-
-      - name: deduped_nonzero
-        description: "Deduped count is >0"
-        response_field: deduped
-        operator: gte
-        expected: 1
-        pass: "response.deduped > 0 — some chunks survived dedup"
-        fail: "response.deduped equals 0 — all chunks were removed"
-        remediation: >
-          All chunks being removed means every chunk has a near-duplicate
-          with higher salience. This is almost certainly an embedding bug.
-          Re-run embed_chunks and then dedup_chunks.
+      Verify deduped.jsonl is a unique, valid subset of tagged chunks with no
+      implausible mass deletion (>50%). Present dedup stats including reduction
+      rate and removed count to the user before proceeding to consolidation.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      def load(path):
+          with open(path) as handle:
+              return [json.loads(line) for line in handle]
+      original = load("corpus/chunks/tagged_ontology.jsonl")
+      deduped = load("corpus/chunks/deduped.jsonl")
+      original_refs = {item["entity_ref"] for item in original}
+      refs = [item["entity_ref"] for item in deduped]
+      duplicates = [k for k, c in Counter(refs).items() if c != 1]
+      orphaned = sorted(set(refs) - original_refs)
+      reduction = 1 - len(deduped) / max(len(original), 1)
+      invalid = [i for i, item in enumerate(deduped, 1) if not item.get("text", "").strip() or not item.get("source")]
+      stats = {
+          "original": len(original),
+          "deduped": len(deduped),
+          "removed": len(original) - len(deduped),
+          "reduction_pct": round(reduction * 100, 1),
+          "duplicates": duplicates[:20],
+          "orphaned": orphaned[:20],
+          "invalid_records": invalid[:20],
+      }
+      print(json.dumps(stats, indent=2))
+      assert deduped, "deduped output is empty"
+      assert len(deduped) <= len(original), "deduped exceeds original"
+      assert reduction <= 0.50, f"{reduction:.1%} reduction exceeds 50% anomaly ceiling"
+      assert not duplicates, f"{len(duplicates)} duplicate refs"
+      assert not orphaned, f"{len(orphaned)} orphaned refs"
+      assert not invalid, f"{len(invalid)} invalid records"
+      print("GATE_PASS dedup_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair dedup, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 4: Consolidate (LLM synthesis of related chunks, cosine > 0.75)
-  #
-  # Uses consolidate-chunks.j2 template. Clusters within source, LLM-synthesizes
-  # multi-chunk clusters, re-embeds consolidated text.
+  # Phase 4: Consolidate related chunks via LLM synthesis (cosine > 0.75)
   # ═══════════════════════════════════════════════════════════════════════
   - id: consolidate_chunks
-    description: "Cluster related chunks, LLM-synthesize multi-chunk clusters"
+    description: "Cluster related chunks within source, LLM-synthesize multi-chunk clusters, re-embed"
     tool: corpus_consolidate_chunks
     params:
       tagged_jsonl: "corpus/chunks/deduped.jsonl"
@@ -781,90 +495,71 @@ steps:
       threshold: 0.75
       concurrency: 12
       max_chunks_per_cluster: 5
-    verify:
-      - field: consolidated
-        gte: 500
-        # After consolidation at 0.75 cosine threshold, multi-chunk clusters
-        # are synthesized into single passages. The output should be smaller
-        # than the deduped input but still substantial.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 7: consolidate_complete
-  # Verifies consolidation produced a valid output with re-embedded vectors.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_consolidate_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 4 consolidation produced a valid consolidated.jsonl. The
-      consolidated count should be <= deduped count (consolidation merges
-      clusters) but >0. Re-embedding should have succeeded for synthesized
-      passages. BLOCKING: do NOT proceed to build_prompts if any check fails.
-    checks:
-      - name: consolidated_jsonl_exists
-        description: "corpus/chunks/consolidated.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/chunks/consolidated.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            echo "OK: $FILE — $LINES lines"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run consolidate_chunks. The tool reads deduped.jsonl — verify
-          Gate 6 passed and deduped.jsonl is valid. Check the tool response
-          for error messages (LLM synthesis failures, DB errors).
-
-      - name: consolidated_lte_deduped
-        description: "Consolidated count is <= deduped count (consolidation reduces, not expands)"
-        command: |
-          DEDUPED=$(wc -l < corpus/chunks/deduped.jsonl 2>/dev/null || echo 0)
-          CONSOLIDATED=$(wc -l < corpus/chunks/consolidated.jsonl 2>/dev/null || echo 0)
-          echo "Deduped: $DEDUPED, Consolidated: $CONSOLIDATED"
-          if [ "$CONSOLIDATED" -gt "$DEDUPED" ]; then
-            echo "FAIL: Consolidated ($CONSOLIDATED) > Deduped ($DEDUPED) — consolidation expanded the dataset"
-          fi
-        pass: "CONSOLIDATED <= DEDUPED — consolidation reduced or maintained the chunk count"
-        fail: "CONSOLIDATED > DEDUPED — consolidation expanded the dataset (bug)"
-        remediation: >
-          If consolidated > deduped, the consolidation logic has a bug —
-          it should only merge clusters, not create new entries. Re-run
-          consolidate_chunks. If the issue persists, inspect the output for
-          duplicate entity_refs or entries that don't correspond to input
-          chunks.
-
-      - name: reembedded_count_reasonable
-        description: "Re-embedded count matches the number of multi-chunk clusters synthesized"
-        response_field: reembedded
-        operator: gte
-        expected: 0
-        pass: "response.reembedded >= 0 — re-embedding completed (0 is valid if all clusters were singletons)"
-        fail: "response.reembedded is negative or missing — re-embedding failed"
-        remediation: >
-          If re-embedding failed, the consolidated passages won't have updated
-          embeddings in the DB. This affects KNN retrieval in build_prompts but
-          is not fatal — build_prompts can still use the original chunk embeddings.
-          If you want correct consolidated embeddings, re-run consolidate_chunks.
+      Verify consolidated.jsonl has unique identifiers, lossless lineage coverage
+      of every deduped chunk, and no malformed records. Present consolidation
+      stats including cluster counts and reduction rate to the user before
+      proceeding to prompt building.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      def load(path):
+          with open(path) as handle:
+              return [json.loads(line) for line in handle]
+      inputs = load("corpus/chunks/deduped.jsonl")
+      outputs = load("corpus/chunks/consolidated.jsonl")
+      input_refs = {item["entity_ref"] for item in inputs}
+      output_refs = [item["entity_ref"] for item in outputs]
+      covered = set()
+      multi_chunk = 0
+      invalid = []
+      for index, item in enumerate(outputs, 1):
+          if not item.get("text", "").strip() or not item.get("source"):
+              invalid.append(index)
+          lineage = item.get("consolidated_from") or [item["entity_ref"]]
+          covered.update(lineage)
+          if len(lineage) > 1:
+              multi_chunk += 1
+      duplicates = [k for k, c in Counter(output_refs).items() if c != 1]
+      missing = sorted(input_refs - covered)
+      orphaned = sorted(covered - input_refs)
+      reduction = 1 - len(outputs) / max(len(inputs), 1)
+      stats = {
+          "deduped_input": len(inputs),
+          "consolidated_output": len(outputs),
+          "multi_chunk_clusters": multi_chunk,
+          "singletons": len(outputs) - multi_chunk,
+          "reduction_pct": round(reduction * 100, 1),
+          "missing_lineage": missing[:20],
+          "orphan_lineage": orphaned[:20],
+          "duplicate_output_refs": duplicates[:20],
+          "invalid_records": invalid[:20],
+      }
+      print(json.dumps(stats, indent=2))
+      assert outputs, "consolidated output is empty"
+      assert len(outputs) <= len(inputs), "output exceeds input"
+      assert not missing, f"{len(missing)} missing lineage refs"
+      assert not orphaned, f"{len(orphaned)} orphan lineage refs"
+      assert not duplicates, f"{len(duplicates)} duplicate output refs"
+      assert not invalid, f"{len(invalid)} invalid records"
+      print("GATE_PASS consolidate_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair consolidation, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 5: Build Bloom QA Prompts (5 per chunk, KNN + h_mem knowledge graph)
-  #
-  # Uses build-prompts.j2 template. For each chunk:
-  #   1. KNN scaffold from DB embeddings (source-scoped)
-  #   2. Ontology context (5W1H, Dublin Core, PKO, tags)
-  #   3. Concept graph (concept → chunk_count centrality)
-  #   4. h_mem knowledge graph via semantic.query_deduped(chunk_ref)
-  # 5 prompts per chunk: factual, conceptual, analyze, evaluate, create.
+  # Phase 5: Build Bloom taxonomy QA prompts (5 per chunk)
   # ═══════════════════════════════════════════════════════════════════════
   - id: build_prompts
     description: >
-      Build Bloom taxonomy prompts: 5 QAs per chunk. KNN scaffold from DB
-      embeddings. Ontology context + concept graph + h_mem knowledge graph.
-      Uses build-prompts.j2 template.
+      Build Bloom taxonomy prompts: 5 per chunk with KNN context scaffold,
+      ontology context, concept graph, and h_mem knowledge graph.
     tool: corpus_build_prompts
     params:
       tagged_jsonl: "corpus/chunks/consolidated.jsonl"
@@ -873,226 +568,156 @@ steps:
       context_k: 3
       prompts_per_chunk: 5
       type_distribution: "1,1,1,1,1"
-      # Per-ontology Bloom distribution overrides:
-      #   golem (narrative): more analyze/create — interpret character, identify themes
-      #   fibo (financial): more factual/conceptual — define ROIC, explain DCF
-      #   pko (process): more evaluate — assess procedure effectiveness
-      #   eso (epistemic): more analyze/evaluate — assess evidence, evaluate claims
       ontology_bloom_overrides: "golem:0,1,2,1,1|fibo:2,1,1,1,0|pko:1,1,1,1,1|eso:1,1,2,1,0|epistemic:1,1,2,1,0"
       owner: "john-brooks"
-    verify:
-      - field: prompts_written
-        gte: 2500
-        # 5 prompts per chunk × ~500 consolidated chunks = ~2500 prompts minimum.
-        # If consolidated count is higher, expect proportionally more prompts.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 8: prompts_complete
-  # Verifies prompt building produced a valid prompts.jsonl with expected volume.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_prompts_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 5 prompt building produced a valid prompts.jsonl with
-      volume proportional to the consolidated chunk count (5 prompts per
-      chunk). BLOCKING: do NOT proceed to generate_qas if any check fails.
-    checks:
-      - name: prompts_jsonl_exists
-        description: "corpus/qa_pairs/prompts.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/qa_pairs/prompts.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            echo "OK: $FILE — $LINES lines"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run build_prompts. The tool reads consolidated.jsonl — verify
-          Gate 7 passed. Check the tool response for errors (DB query
-          failures, KNN retrieval errors, h_mem query failures).
-
-      - name: prompt_count_proportional
-        description: "Prompt count is approximately 5× the consolidated chunk count"
-        command: |
-          CONSOLIDATED=$(wc -l < corpus/chunks/consolidated.jsonl 2>/dev/null || echo 0)
-          PROMPTS=$(wc -l < corpus/qa_pairs/prompts.jsonl 2>/dev/null || echo 0)
-          EXPECTED=$((CONSOLIDATED * 5))
-          echo "Consolidated chunks: $CONSOLIDATED, Prompts: $PROMPTS, Expected (~5x): $EXPECTED"
-          # Allow 80%-120% range (some chunks may get fewer prompts due to ontology overrides)
-          MIN_EXPECTED=$((CONSOLIDATED * 4))
-          if [ "$PROMPTS" -lt "$MIN_EXPECTED" ]; then
-            echo "FAIL: Prompts ($PROMPTS) < 80% of expected ($MIN_EXPECTED)"
-          fi
-        pass: "PROMPTS >= 80% of (CONSOLIDATED × 5) — proportional prompt volume"
-        fail: "PROMPTS < 80% of expected — some chunks produced no prompts"
-        remediation: >
-          If prompt count is far below expected, some chunks may have failed
-          prompt building (DB query error, KNN retrieval failure, h_mem query
-          timeout). Re-run build_prompts. Check the tool response for the
-          total_chunks vs prompts_written discrepancy.
-
-      - name: prompt_schema_valid
-        description: "Each prompt line has chunk_ref, source, qa_type, system, user fields"
-        command: |
-          FILE="corpus/qa_pairs/prompts.jsonl"
-          TOTAL=$(wc -l < "$FILE")
-          VALID=$(python3 -c "
-          import json
-          valid = 0
-          required = {'chunk_ref', 'source', 'qa_type', 'system', 'user'}
-          with open('$FILE') as f:
-              for line in f:
-                  try:
-                      d = json.loads(line)
-                      if required.issubset(d.keys()) and d.get('user'):
-                          valid += 1
-                  except: pass
-          print(valid)
-          " 2>/dev/null || echo "?")
-          echo "Total lines: $TOTAL, Valid prompts: $VALID"
-        pass: "VALID is close to TOTAL — most lines have all required fields"
-        fail: "Many lines are missing required fields or have empty user prompts"
-        remediation: >
-          Malformed prompts indicate a bug in build_prompts. Re-run the tool.
-          If the issue persists, inspect malformed lines:
-            head -5 corpus/qa_pairs/prompts.jsonl | python3 -m json.tool
+      Verify exactly 5 valid Bloom prompts per consolidated chunk with the
+      configured ontology-specific type distribution. Present prompt matrix
+      coverage and distribution stats to the user before proceeding to QA
+      generation.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter, defaultdict
+      allowed = {"factual", "conceptual", "analyze", "evaluate", "create"}
+      default_dist = ["factual", "conceptual", "analyze", "evaluate", "create"]
+      overrides = {
+          "golem": ["conceptual", "analyze", "analyze", "evaluate", "create"],
+          "fibo": ["factual", "factual", "conceptual", "analyze", "evaluate"],
+          "pko": default_dist,
+          "eso": ["factual", "conceptual", "analyze", "analyze", "evaluate"],
+          "epistemic": ["factual", "conceptual", "analyze", "analyze", "evaluate"],
+      }
+      priority = ["pko", "golem", "fibo", "eso", "epistemic"]
+      with open("corpus/chunks/consolidated.jsonl") as handle:
+          chunks = {item["entity_ref"]: item for item in map(json.loads, handle)}
+      prompts = []
+      with open("corpus/qa_pairs/prompts.jsonl") as handle:
+          for line_number, line in enumerate(handle, 1):
+              item = json.loads(line)
+              required = {"chunk_ref", "source", "qa_type", "system", "user"}
+              assert required <= item.keys(), f"line {line_number}: missing fields"
+              assert item["qa_type"] in allowed, f"line {line_number}: invalid qa_type"
+              assert item["system"].strip() and item["user"].strip(), f"line {line_number}: empty prompt"
+              prompts.append(item)
+      matrix = defaultdict(list)
+      for item in prompts:
+          matrix[item["chunk_ref"]].append(item["qa_type"])
+      bad = {}
+      for ref, chunk in chunks.items():
+          namespaces = chunk.get("ontology_tags", {})
+          selected = next((ns for ns in priority if ns in namespaces), None)
+          expected = overrides[selected] if selected else default_dist
+          if Counter(matrix.get(ref, [])) != Counter(expected):
+              bad[ref] = {"actual": matrix.get(ref, []), "expected": expected, "selected": selected}
+      missing = sorted(set(chunks) - set(matrix))
+      orphaned = sorted(set(matrix) - set(chunks))
+      type_counts = Counter(item["qa_type"] for item in prompts)
+      stats = {
+          "chunks": len(chunks),
+          "prompts": len(prompts),
+          "prompts_per_chunk": len(prompts) / max(len(chunks), 1),
+          "type_distribution": dict(type_counts.most_common()),
+          "missing_chunks": missing[:20],
+          "orphan_chunks": orphaned[:20],
+          "distribution_mismatches": len(bad),
+          "mismatch_samples": list(bad.items())[:5],
+      }
+      print(json.dumps(stats, indent=2))
+      assert len(prompts) == len(chunks) * 5, f"expected {len(chunks)*5} prompts, got {len(prompts)}"
+      assert not missing, f"{len(missing)} chunks with no prompts"
+      assert not orphaned, f"{len(orphaned)} orphan prompt chunks"
+      assert not bad, f"{len(bad)} distribution mismatches"
+      print("GATE_PASS prompts_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair prompt building, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 6: Generate QAs (GLM-5.2, per-Bloom sampling, thinking-mode)
-  #
-  # GLM-5.2 (HKASK_DEFAULT_MODEL — hkask default). Uses generate-qa.j2 template. Thinking-mode JSON
-  # extraction via extract_json_from_response. ContentGuard on input + output.
-  # Provenance attached (chunk_ref, source, concepts, evidence_quotes).
+  # Phase 6: Generate QA pairs (GLM-5.2, thinking-mode, ContentGuard)
   # ═══════════════════════════════════════════════════════════════════════
   - id: generate_qas
     description: >
-      Generate QA pairs via GLM-5.2 (hkask default, OpenRouter). Per-Bloom sampling parameters.
-      Thinking-mode JSON extraction. ContentGuard. Provenance-enriched output.
+      Generate QA pairs via GLM-5.2 with per-Bloom sampling, thinking-mode JSON
+      extraction, ContentGuard, and provenance-enriched output.
     tool: corpus_generate_qa_batch
     params:
       prompts_jsonl: "corpus/qa_pairs/prompts.jsonl"
       output: "corpus/qa_pairs/generated.jsonl"
       concurrency: 196
       model: "{{ qa_model }}"
-    verify:
-      - field: written
-        gte: 1000
-      - field: failed
-        lte: 500
-        # QA generation is an LLM call per prompt — some failures expected.
-        # 500 failures on ~25K prompts = 2% failure rate, acceptable.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 9: qa_generation_complete
-  # Verifies QA generation produced usable output with acceptable failure rate.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_qa_generation_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 6 QA generation produced a valid generated.jsonl with
-      acceptable yield and failure rate. The written count should be a
-      significant fraction of the total prompts — a low yield means most
-      LLM calls failed. BLOCKING: do NOT proceed to ingest_qas if any
-      check fails.
-    checks:
-      - name: generated_jsonl_exists
-        description: "corpus/qa_pairs/generated.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/qa_pairs/generated.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            echo "OK: $FILE — $LINES lines"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run generate_qas. The tool reads prompts.jsonl — verify Gate 8
-          passed. Check the tool response for errors (LLM API failures,
-          ContentGuard rejections, thinking-mode JSON extraction errors).
-
-      - name: written_count_significant
-        description: "Written count is >=50% of total prompts"
-        response_field: written
-        operator: gt_percent_of
-        reference_field: total
-        expected: 50
-        pass: "response.written is >=50% of response.total — acceptable yield"
-        fail: "response.written is <50% of response.total — low yield, most LLM calls failed"
-        remediation: >
-          Low yield means most QA generation LLM calls failed. Check:
-          (1) is the QA model (qa_model parameter) available and responding?
-          (2) are there rate-limit errors? Try reducing concurrency to 64.
-          (3) is ContentGuard rejecting too many outputs? Check the failed
-          count and error messages. (4) is the thinking-mode JSON extraction
-          failing? Try a different model that doesn't use thinking mode.
-
-      - name: qa_failure_rate_acceptable
-        description: "QA generation failure rate is <10% of total"
-        response_field: failed
-        operator: lt_percent
-        expected: 10
-        pass: "response.failed is <10% of response.total — acceptable failure rate"
-        fail: "response.failed is >=10% of response.total — high failure rate"
-        remediation: >
-          High failure rate has multiple possible causes — see the remediation
-          for written_count_significant. The most common cause at high
-          concurrency (196) is rate limiting. Reduce concurrency to 64 or 32
-          and re-run. The tool appends to the output file, so a partial re-run
-          may produce duplicates — delete the output file first if doing a
-          full re-run.
-
-      - name: generated_qa_schema_valid
-        description: "Generated QA lines have instruction and output fields (not error lines)"
-        command: |
-          FILE="corpus/qa_pairs/generated.jsonl"
-          TOTAL=$(wc -l < "$FILE")
-          VALID=$(python3 -c "
-          import json
-          valid = 0
-          with open('$FILE') as f:
-              for line in f:
-                  try:
-                      d = json.loads(line)
-                      resp = d.get('response', d)
-                      if resp.get('instruction') and resp.get('output'):
-                          valid += 1
-                  except: pass
-          print(valid)
-          " 2>/dev/null || echo "?")
-          ERRORS=$((TOTAL - ${VALID:-0}))
-          echo "Total lines: $TOTAL, Valid QAs: $VALID, Error lines: $ERRORS"
-        pass: "VALID is a significant majority of TOTAL — most lines are valid QAs"
-        fail: "Many lines are error entries (missing instruction/output) — LLM produced errors instead of QAs"
-        remediation: >
-          Error lines indicate the LLM failed to produce valid QA JSON for
-          those prompts. This is expected for some prompts (ambiguous content,
-          ContentGuard rejection). If the majority are errors, the model or
-          prompt template has a problem. Inspect a few error lines:
-            grep -m 5 '"error"' corpus/qa_pairs/generated.jsonl | python3 -m json.tool
+      Verify every prompt key has a valid QA with non-empty instruction and
+      output, no error records, no orphan keys, and no duplicate questions.
+      Present QA coverage and quality stats to the user before proceeding to
+      ingestion.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      with open("corpus/qa_pairs/prompts.jsonl") as handle:
+          prompt_keys = {(item["chunk_ref"], item["qa_type"]) for item in map(json.loads, handle)}
+      records = []
+      errors = []
+      with open("corpus/qa_pairs/generated.jsonl") as handle:
+          for line_number, line in enumerate(handle, 1):
+              item = json.loads(line)
+              if "error" in item:
+                  errors.append({"line": line_number, "error": str(item["error"])[:200]})
+                  continue
+              response = item.get("response", {})
+              assert response.get("instruction", "").strip(), f"line {line_number}: empty instruction"
+              assert response.get("output", "").strip(), f"line {line_number}: empty output"
+              assert item.get("chunk_ref") and item.get("qa_type"), f"line {line_number}: missing provenance"
+              records.append(item)
+      generated_keys = {(item["chunk_ref"], item["qa_type"]) for item in records}
+      missing = sorted(prompt_keys - generated_keys)
+      orphaned = sorted(generated_keys - prompt_keys)
+      duplicate_questions = [k for k, c in Counter(
+          item["response"]["instruction"].strip().casefold() for item in records).items() if c != 1]
+      instruction_lengths = [len(item["response"]["instruction"]) for item in records]
+      output_lengths = [len(item["response"]["output"]) for item in records]
+      stats = {
+          "prompt_keys": len(prompt_keys),
+          "qa_records": len(records),
+          "error_records": len(errors),
+          "error_samples": errors[:5],
+          "missing_keys": missing[:20],
+          "orphan_keys": orphaned[:20],
+          "duplicate_questions": duplicate_questions[:20],
+          "instruction_chars_min": min(instruction_lengths) if instruction_lengths else 0,
+          "instruction_chars_avg": round(sum(instruction_lengths) / max(len(instruction_lengths), 1)),
+          "output_chars_min": min(output_lengths) if output_lengths else 0,
+          "output_chars_avg": round(sum(output_lengths) / max(len(output_lengths), 1)),
+      }
+      print(json.dumps(stats, indent=2))
+      assert records, "no QA records generated"
+      assert not errors, f"{len(errors)} error records"
+      assert not missing, f"{len(missing)} uncovered prompt keys"
+      assert not orphaned, f"{len(orphaned)} orphan keys"
+      assert not duplicate_questions, f"{len(duplicate_questions)} duplicate questions"
+      print("GATE_PASS qa_generation_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair QA generation, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 7: Ingest QAs (exact-match dedup + h_mem storage)
-  #
-  # corpus_ingest_qa parses generated QAs, quality-filters, applies exact-match
-  # dedup (case-insensitive on instruction), writes training JSONL, and stores QA
-  # h_mems with 5W1H dimension (What) + Dublin Core / PKO metadata. Semantic
-  # dedup (SemDeDup K-means) was removed from the tool — see its inline rationale.
-  # QA vectors are not embedded by this step.
   # ═══════════════════════════════════════════════════════════════════════
   - id: ingest_qas
     description: >
-      Parse generated QAs, quality-filter, exact-match dedup (case-insensitive
-      on instruction). Store QA h_mems with 5W1H + Dublin Core + PKO provenance.
-      Write training-ready JSONL.
+      Parse generated QAs, quality-filter, exact-match dedup, write training
+      JSONL, store QA h_mems with 5W1H + Dublin Core + PKO provenance.
     tool: corpus_ingest_qa
     params:
       generated_jsonl: "corpus/qa_pairs/generated.jsonl"
@@ -1100,101 +725,62 @@ steps:
       db_path: "corpus/memory/john-brooks.db"
       dataset: "capabilities-researcher"
       owner: "john-brooks"
-    verify:
-      - field: stored_h_mems
-        gte: 500
-      - field: deduped
-        gte: 500
-        # Quality filter removes QAs with instruction <30 chars or output <50 chars.
-        # Exact-match dedup removes case-insensitive duplicate instructions.
-        # Floor of 500 ensures a usable training set survived.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 10: qa_ingest_complete
-  # Verifies QA ingestion produced a valid training JSONL and stored h_mems.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_qa_ingest_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 7 QA ingestion produced a valid train.jsonl and stored
-      QA h_mems in the DB. The training JSONL is the input to assemble_chatml
-      — an empty or tiny file means no training data. BLOCKING: do NOT
-      proceed to assemble_chatml if any check fails.
-    checks:
-      - name: train_jsonl_exists
-        description: "corpus/qa_pairs/train.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/qa_pairs/train.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            echo "OK: $FILE — $LINES lines"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run ingest_qas. The tool reads generated.jsonl — verify Gate 9
-          passed. Check the tool response for errors (DB write failures,
-          QA parsing errors). If the quality filter removed all QAs (filtered
-          = 0), the generated QAs may all be too short — check the QA
-          generation step.
-
-      - name: stored_h_mems_nonzero
-        description: "At least some QA h_mems were stored in the DB"
-        response_field: stored_h_mems
-        operator: gte
-        expected: 100
-        pass: "response.stored_h_mems >= 100 — QAs were stored as h_mems"
-        fail: "response.stored_h_mems < 100 — very few or zero QAs stored"
-        remediation: >
-          If stored_h_mems is 0, the DB write failed or all QAs were filtered
-          out. Check: (1) response.parsed — were QAs parsed from generated.jsonl?
-          (2) response.filtered — did the quality filter remove everything?
-          (3) response.deduped — did dedup remove everything? If parsed is 0,
-          the generated.jsonl format may be wrong — check Gate 9. If filtered
-          is 0, the QAs are too short (instruction <30 chars or output <50
-          chars) — check the QA generation model output quality.
-
-      - name: train_jsonl_schema_valid
-        description: "Each line in train.jsonl has instruction, input, and output fields"
-        command: |
-          FILE="corpus/qa_pairs/train.jsonl"
-          TOTAL=$(wc -l < "$FILE")
-          VALID=$(python3 -c "
-          import json
-          valid = 0
-          with open('$FILE') as f:
-              for line in f:
-                  try:
-                      d = json.loads(line)
-                      if d.get('instruction') and d.get('output'):
-                          valid += 1
-                  except: pass
-          print(valid)
-          " 2>/dev/null || echo "?")
-          echo "Total lines: $TOTAL, Valid: $VALID"
-        pass: "VALID equals TOTAL — every line has instruction and output"
-        fail: "Some lines are missing instruction or output fields"
-        remediation: >
-          Malformed training data indicates a bug in ingest_qa's JSONL writer.
-          Re-run ingest_qas. If the issue persists, inspect the malformed lines:
-            head -5 corpus/qa_pairs/train.jsonl
+      Verify the training JSONL has required fields, quality minima, unique
+      instructions, and that DB h_mem count matches the file. Present training
+      dataset stats to the user before proceeding to ChatML assembly.
+      Requires sqlcipher CLI.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      records = []
+      with open("corpus/qa_pairs/train.jsonl") as handle:
+          for line_number, line in enumerate(handle, 1):
+              item = json.loads(line)
+              assert {"instruction", "input", "output"} <= item.keys(), f"line {line_number}: missing field"
+              assert len(item["instruction"].strip()) >= 30, f"line {line_number}: short instruction"
+              assert len(item["output"].strip()) >= 50, f"line {line_number}: short output"
+              records.append(item)
+      duplicates = [k for k, c in Counter(
+          item["instruction"].strip().casefold() for item in records).items() if c != 1]
+      instruction_lengths = [len(item["instruction"]) for item in records]
+      output_lengths = [len(item["output"]) for item in records]
+      stats = {
+          "training_records": len(records),
+          "duplicate_instructions": duplicates[:20],
+          "instruction_chars_min": min(instruction_lengths) if instruction_lengths else 0,
+          "instruction_chars_avg": round(sum(instruction_lengths) / max(len(instruction_lengths), 1)),
+          "output_chars_min": min(output_lengths) if output_lengths else 0,
+          "output_chars_avg": round(sum(output_lengths) / max(len(output_lengths), 1)),
+      }
+      print(json.dumps(stats, indent=2))
+      assert records, "training dataset is empty"
+      assert not duplicates, f"{len(duplicates)} duplicate instructions"
+      PY
+      command -v sqlcipher >/dev/null || { echo "sqlcipher CLI is required for DB reconciliation"; exit 2; }
+      PASSPHRASE="${HKASK_DB_PASSPHRASE:-hkask-default-passphrase-2024}"
+      TRAIN_COUNT=$(wc -l < corpus/qa_pairs/train.jsonl)
+      DB_COUNT=$(sqlcipher -batch corpus/memory/john-brooks.db \
+        "PRAGMA key='$PASSPHRASE'; SELECT COUNT(*) FROM hmems WHERE attribute = 'training_qa_pair' AND value LIKE '%\"dataset\":\"capabilities-researcher\"%';")
+      echo "train_jsonl=$TRAIN_COUNT db_training_qa_pairs=$DB_COUNT"
+      test "$DB_COUNT" -eq "$TRAIN_COUNT" || { echo "MISMATCH: DB $DB_COUNT != train $TRAIN_COUNT"; exit 1; }
+      echo "GATE_PASS qa_ingest_complete"
+    on_failure:
+      action: halt
+      resume: "repair ingestion, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 8: Assemble ChatML dataset (Rust MCP tool — no Python)
-  #
-  # training_assemble_dataset queries training_qa_pair h_mems from the DB
-  # (stored by corpus_ingest_qa in Phase 7), converts to ChatML format with
-  # the Capabilities Researcher system prompt, and writes train/val/test split.
+  # Phase 8: Assemble ChatML dataset (80/20 train/test split)
   # ═══════════════════════════════════════════════════════════════════════
   - id: assemble_chatml
     description: >
-      Assemble stored QA h_mems into ChatML JSONL training dataset with
-      80/20 train/test split. Queries semantic memory for
-      training_qa_pair h_mems from the capabilities-researcher dataset.
+      Assemble stored QA h_mems into ChatML JSONL with 80/20 train/test split
+      and the Capabilities Researcher system prompt.
     tool: training_assemble_dataset
     params:
       dataset: "capabilities-researcher"
@@ -1205,134 +791,69 @@ steps:
         organizations, markets, and systems are capable of and what they
         actually achieve. Your analysis draws on economic theory, systems
         thinking, computing principles, and institutional analysis.
-    verify:
-      - field: train_examples
-        gte: 100
-        # Floor of 100 — a usable LoRA training set needs at least this many
-        # examples. The actual yield depends on how many QAs survived quality
-        # filter + dedup in Phase 7. Tune upward after validating the first
-        # full run's yield.
 
-  # ────────────────────────────────────────────────────────────────────────
-  # GATE 11: chatml_complete
-  # Final gate before training submission. Verifies the ChatML dataset is
-  # valid and large enough for LoRA training.
-  # ────────────────────────────────────────────────────────────────────────
   - id: gate_chatml_complete
     type: gate
+    blocking: true
     description: >
-      Verify Phase 8 ChatML assembly produced a valid training dataset with
-      enough examples for LoRA training. This is the last gate before
-      submitting a training job — a broken dataset wastes GPU time and money.
-      BLOCKING: do NOT proceed to train_lora if any check fails.
-    checks:
-      - name: chatml_jsonl_exists
-        description: "corpus/qa_pairs/train_chat.jsonl exists and is non-empty"
-        command: |
-          FILE="corpus/qa_pairs/train_chat.jsonl"
-          if [ ! -f "$FILE" ]; then
-            echo "MISSING: $FILE does not exist"
-          elif [ ! -s "$FILE" ]; then
-            echo "EMPTY: $FILE exists but is 0 bytes"
-          else
-            LINES=$(wc -l < "$FILE")
-            SIZE=$(du -h "$FILE" | cut -f1)
-            echo "OK: $FILE — $LINES lines, $SIZE"
-          fi
-        pass: "File exists, is non-empty, and line count > 0"
-        fail: "File missing or empty"
-        remediation: >
-          Re-run assemble_chatml. The tool queries the DB for
-          training_qa_pair h_mems — if Gate 10 failed (no stored h_mems),
-          this step will produce nothing. Verify Gate 10 passed first.
-
-      - name: train_examples_sufficient
-        description: "Train examples count is >=100 (minimum viable LoRA training set)"
-        response_field: train_examples
-        operator: gte
-        expected: 100
-        pass: "response.train_examples >= 100 — sufficient for LoRA training"
-        fail: "response.train_examples < 100 — too few examples for effective training"
-        remediation: >
-          Too few training examples will produce a poor adapter. Check:
-          (1) response.total_matched — how many h_mems matched the dataset
-          query? If 0, the dataset name may not match what ingest_qas used.
-          (2) Was the train_split applied correctly? If train_examples is
-          much less than total_matched, the split may be wrong. Go back to
-          Phase 7 and verify more QAs were stored.
-
-      - name: chatml_schema_valid
-        description: "Each line has a messages array with system, user, and assistant roles"
-        command: |
-          FILE="corpus/qa_pairs/train_chat.jsonl"
-          TOTAL=$(wc -l < "$FILE")
-          VALID=$(python3 -c "
-          import json
-          valid = 0
-          with open('$FILE') as f:
-              for line in f:
-                  try:
-                      d = json.loads(line)
-                      msgs = d.get('messages', [])
-                      roles = [m.get('role') for m in msgs]
-                      if 'system' in roles and 'user' in roles and 'assistant' in roles:
-                          valid += 1
-                  except: pass
-          print(valid)
-          " 2>/dev/null || echo "?")
-          echo "Total lines: $TOTAL, Valid ChatML: $VALID"
-        pass: "VALID equals TOTAL — every line has system, user, and assistant messages"
-        fail: "Some lines are missing required message roles"
-        remediation: >
-          Malformed ChatML indicates a bug in training_assemble_dataset.
-          Re-run assemble_chatml. If the issue persists, inspect the output:
-            head -1 corpus/qa_pairs/train_chat.jsonl | python3 -m json.tool
-          The system_prompt may not have been applied correctly, or the QA
-          h_mems may be missing question/answer fields.
-
-      - name: no_oversized_examples
-        description: "No training example exceeds the sequence_len (4096 tokens ≈ 16K chars)"
-        command: |
-          FILE="corpus/qa_pairs/train_chat.jsonl"
-          OVERSIZED=$(python3 -c "
-          import json
-          oversized = 0
-          with open('$FILE') as f:
-              for line in f:
-                  try:
-                      d = json.loads(line)
-                      total_chars = sum(len(m.get('content', '')) for m in d.get('messages', []))
-                      # 4096 tokens ≈ 16K chars (4 chars/token approximation)
-                      if total_chars > 16000:
-                          oversized += 1
-                  except: pass
-          print(oversized)
-          " 2>/dev/null || echo "?")
-          echo "Oversized examples (>16K chars): $OVERSIZED"
-        pass: "OVERSIZED equals 0 or is a small number (<1% of total) — within sequence_len bounds"
-        fail: "OVERSIZED is a significant fraction of total — many examples will be truncated during training"
-        remediation: >
-          Oversized examples will be truncated during training, losing
-          content. If many examples are oversized, either: (1) reduce chunk
-          size in Phase 1 (lower max_tokens) and re-run the pipeline, or
-          (2) increase sequence_len in the train_lora step params (but this
-          increases memory usage). A few oversized examples are acceptable —
-          the training harness truncates them automatically.
+      Final pre-spend gate: verify train/test split counts, ChatML role order,
+      non-empty content, no duplicates or train/test overlap, and no oversized
+      examples. Present dataset stats to the user for approval before authorizing
+      training spend.
+    command: |
+      python3 - <<'PY'
+      import json
+      from collections import Counter
+      from pathlib import Path
+      paths = [Path("corpus/qa_pairs/train_chat.jsonl"), Path("corpus/qa_pairs/train_chat.jsonl.test.jsonl")]
+      datasets = []
+      for path in paths:
+          records = []
+          with path.open() as handle:
+              for line_number, line in enumerate(handle, 1):
+                  item = json.loads(line)
+                  messages = item.get("messages")
+                  assert isinstance(messages, list) and [m.get("role") for m in messages] == ["system", "user", "assistant"], f"{path}:{line_number}: bad roles"
+                  assert all(isinstance(m.get("content"), str) and m["content"].strip() for m in messages), f"{path}:{line_number}: empty content"
+                  total_chars = sum(len(m["content"]) for m in messages)
+                  records.append({"chars": total_chars, "user": messages[1]["content"].strip().casefold()})
+          datasets.append(records)
+      train, test = datasets
+      duplicate_train = [k for k, c in Counter(r["user"] for r in train).items() if c != 1]
+      overlap = sorted(set(r["user"] for r in train) & set(r["user"] for r in test))
+      total = len(train) + len(test)
+      ratio = len(train) / max(total, 1)
+      char_sizes = [r["chars"] for r in train] + [r["chars"] for r in test]
+      oversized = [i for i, r in enumerate(train + test, 1) if r["chars"] > 16_000]
+      stats = {
+          "train": len(train),
+          "test": len(test),
+          "train_ratio": round(ratio, 4),
+          "duplicate_train_users": duplicate_train[:20],
+          "train_test_overlap": overlap[:20],
+          "chars_min": min(char_sizes) if char_sizes else 0,
+          "chars_avg": round(sum(char_sizes) / max(len(char_sizes), 1)),
+          "chars_max": max(char_sizes) if char_sizes else 0,
+          "oversized_examples": len(oversized),
+      }
+      print(json.dumps(stats, indent=2))
+      assert len(train) >= 100, f"only {len(train)} train examples"
+      assert test, "no test examples"
+      assert abs(ratio - 0.80) <= (1 / max(total, 1)), f"split ratio {ratio:.4f} != 0.80"
+      assert not duplicate_train, f"{len(duplicate_train)} duplicate train users"
+      assert not overlap, f"{len(overlap)} train/test overlap"
+      assert not oversized, f"{len(oversized)} examples >16K chars"
+      print("GATE_PASS chatml_complete")
+      PY
+    on_failure:
+      action: halt
+      resume: "repair ChatML assembly, rerun this gate, present stats to user"
 
   # ═══════════════════════════════════════════════════════════════════════
-  # Phase 9: LoRA Training (RunPod H100 via training_submit MCP tool)
+  # Phase 9: LoRA Training (RunPod H100 via training_submit)
   #
-  # training_submit accepts the typed TrainingParams contract. Do not pass a
-  # raw config path or host selector: those bypass the canonical harness seam
-  # and are not part of TrainSubmitRequest.
-  #
-  # The accepted operator configuration uses EVA initialization. The registered
-  # lora-training skill recommends and audits the config; runtime validation
-  # enforces established hard contracts without rewriting operator intent.
-  #
-  # skill_name is retrain-mode-only: it is silently ignored unless feedback_path
-  # is set. For this first-time training run (no feedback_path) the adapter is
-  # not registered under the skill name; re-run with feedback_path for A/B tracking.
+  # training_submit accepts the typed TrainingParams contract. EVA initialization.
+  # skill_name is retrain-mode-only (silently ignored without feedback_path).
   # ═══════════════════════════════════════════════════════════════════════
   - id: train_lora
     description: "Submit typed EVA LoRA training job to RunPod H100"

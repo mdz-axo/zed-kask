@@ -335,18 +335,18 @@ impl SwarmServer {
     /// Clone an ABW agent to the local registry. Fetches the agent card from
     /// ABW via `swarm_get_agent`, sets `min_provider_class: local`, writes it
     /// to `agents/local/curated/<id>/agent_card.json`, and sets `cloud_id` to
-    /// the ABW agent id (marking it as synced). Requires the ABW API key.
+    /// the ABW agent id (marking it as synced). The ABW catalogue is open
+    /// (no API key required) — same as `swarm_list_agents`. The clone is a
+    /// read-from-ABW + write-to-local-filesystem operation with no ABW
+    /// mutation, so `require_auth` is not needed.
     #[tool(
-        description = "Clone an ABW agent to the local registry. Fetches the card from ABW, sets min_provider_class: local, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. Requires ABW API key."
+        description = "Clone an ABW agent to the local registry. Fetches the card from ABW, sets min_provider_class: local, writes to agents/local/curated/<id>/agent_card.json, and sets cloud_id to mark it as synced. The ABW catalogue is open — no API key required."
     )]
     pub(crate) async fn swarm_clone_to_local(
         &self,
         parameters: Parameters<CloneToLocalRequest>,
     ) -> String {
         execute_tool_semantic(self, "swarm_clone_to_local", Some("pko"), async {
-            self.client
-                .require_auth()
-                .map_err(SwarmError::into_tool_error)?;
             let req = parameters.0;
             if req.agent_name.trim().is_empty() {
                 return Err(McpToolError::invalid_argument(

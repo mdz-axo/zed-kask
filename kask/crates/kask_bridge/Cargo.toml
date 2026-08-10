@@ -39,7 +39,6 @@ collections.workspace = true
 schemars = { workspace = true }
 
 # Shared
-anyhow.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 chrono.workspace = true

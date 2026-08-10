@@ -441,7 +441,7 @@ impl Default for KaskCorpusSettings {
             ocr_moderate_max: 0.15,
             ocr_sample_rate: 0.10,
             ocr_tuneable: true,
-            template_root: "registry".to_string(),
+            template_root: "kask/registry".to_string(),
         }
     }
 }

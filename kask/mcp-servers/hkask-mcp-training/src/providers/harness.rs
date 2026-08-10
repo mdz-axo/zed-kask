@@ -428,7 +428,7 @@ impl HarnessAdapter for LudwigHarness {
         let template_root = std::env::var_os("HKASK_TEMPLATE_ROOT")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
-                let working_directory_root = PathBuf::from("registry");
+                let working_directory_root = PathBuf::from("kask/registry");
                 if working_directory_root.is_dir() {
                     working_directory_root
                 } else {

@@ -11235,7 +11235,6 @@ name = "kask_bridge"
 version = "0.33.7"
 dependencies = [
  "agent",
- "anyhow",
  "async-trait",
  "chrono",
  "collections",

@@ -46,7 +46,7 @@ pub(crate) fn render_docproc_template(
     // added under the leaked 'static key.
     if env_guard.get_template(&lookup_key).is_err() {
         let template_root =
-            std::env::var("HKASK_TEMPLATE_ROOT").unwrap_or_else(|_| "registry".to_string());
+            std::env::var("HKASK_TEMPLATE_ROOT").unwrap_or_else(|_| "kask/registry".to_string());
         let template_path = std::path::Path::new(&template_root)
             .join("templates/docproc")
             .join(format!("{template_name}.j2"));
