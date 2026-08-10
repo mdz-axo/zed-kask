@@ -25,6 +25,36 @@ use serde_json::Value;
 /// - `brier_score` — in: `{probability, outcome_occurred}`
 /// - `brier_score_multi` — in: `{probabilities: [f64], outcomes: [bool]}`
 /// - `brier_interpretation` — in: `{score}`
+/// Run a shell command deterministically (compute_ref: "shell.exec").
+///
+/// Used by cleanup steps that must run without an LLM round-trip (e.g.
+/// deleting restored upstream files after a merge/rebase). The command runs
+/// via `sh -c` in the given working directory. Returns stdout, stderr, and
+/// exit code as a JSON object.
+///
+/// This is a sync blocking call — `dispatch_compute` is not async. The clippy
+/// `disallowed_methods` lint flags `std::process::Command::output` because it
+/// can block an async runtime, but this function is called from `execute_compute`
+/// which runs on a background executor, not the GPUI foreground thread.
+#[allow(clippy::disallowed_methods)]
+fn shell_exec(command: &str, cwd: &str) -> Result<Value> {
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(cwd)
+        .output()
+        .map_err(|e| TemplateError::Manifest(format!("shell.exec: {e}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+    Ok(serde_json::json!({
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_code": exit_code,
+        "success": output.status.success(),
+    }))
+}
+
 pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
     use hkask_forecast as forecast;
     let get_f64 = |key: &str| -> Result<f64> {
@@ -672,8 +702,28 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
                     .map_err(|e| TemplateError::Manifest(format!("lisp.eval: {e}")))?;
             Ok(result)
         }
+        // ── Shell execution primitive ──
+        //
+        // Deterministic execution of a shell command. No LLM round-trip.
+        // Used for cleanup steps that must run deterministically (e.g. deleting
+        // restored upstream files after a merge/rebase). The command runs via
+        // `sh -c` in the repo root. Returns stdout, stderr, and exit code.
+        //
+        // Security: same trust level as `lisp.eval` — manifests are authored
+        // by the operator/curator. The caller must gate `shell.exec` to
+        // `category: skill` manifests only.
+        "shell.exec" => {
+            let command = input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    TemplateError::Manifest("compute 'shell.exec': missing 'command' string".into())
+                })?;
+            let cwd = input.get("cwd").and_then(|v| v.as_str()).unwrap_or(".");
+            shell_exec(command, cwd)
+        }
         other => Err(TemplateError::Manifest(format!(
-            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, lisp.eval, swarm.converge_accumulate, swarm.second_order_monitor",
+            "Unknown compute_ref: '{}'. Supported: calibrate_from_fermi, outside_view_adjustment, bayesian_update, apply_calibration_adjustment, brier_score, brier_score_multi, brier_interpretation, kata.object_gap, kata.process_gap, kata.hypotenuse, kata.prediction_vs_result, lisp.eval, shell.exec, swarm.converge_accumulate, swarm.second_order_monitor",
             other
         ))),
     }

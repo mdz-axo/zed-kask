@@ -62,3 +62,7 @@ templates:
       Update DIVERGENCE.md and produce the final report.
     generates_spans:
       - reg.upstream_rebase.document
+
+# Step 7 (collision-surface cleanup) is a deterministic compute step
+# (compute_ref: shell.exec) — no template needed. It deletes restored
+# upstream files and runs check-zed-isolation.sh.

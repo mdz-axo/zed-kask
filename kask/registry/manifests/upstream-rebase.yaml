@@ -207,6 +207,39 @@ steps:
       task: "{{ task }}"
 
   - ordinal: 7
+    action: compute
+    description: >
+      Collision-surface cleanup: after the rebase/merge, git restores upstream
+      Zed files that zed-kask has deliberately deleted or moved to kask-owned
+      paths (icon files, .desktop templates, flatpak/snap packaging, release
+      workflows). This step deterministically re-deletes them and runs the
+      isolation test to verify the collision surface is closed. Without this
+      step, an upstream merge silently recreates the collision surface that
+      caused zed-kask to hijack Zed's desktop identity (commit 853542beab).
+    compute_ref: shell.exec
+    gas_cap: 100
+    timeout_seconds: 60
+    input_mapping:
+      command: >
+        rm -f crates/zed/resources/app-icon.png crates/zed/resources/app-icon@2x.png
+        crates/zed/resources/app-icon-dev.png crates/zed/resources/app-icon-dev@2x.png
+        crates/zed/resources/app-icon-nightly.png crates/zed/resources/app-icon-nightly@2x.png
+        crates/zed/resources/app-icon-preview.png crates/zed/resources/app-icon-preview@2x.png
+        crates/zed/resources/Document.icns
+        crates/zed/resources/windows/app-icon.ico crates/zed/resources/windows/app-icon-dev.ico
+        crates/zed/resources/windows/app-icon-nightly.ico crates/zed/resources/windows/app-icon-preview.ico
+        crates/zed/resources/zed.desktop.in crates/zed/resources/zed.entitlements
+        crates/zed/resources/windows/zed.iss crates/zed/resources/windows/zed.sh
+        .github/workflows/release.yml .github/workflows/release_nightly.yml .github/workflows/run_bundling.yml;
+        rm -rf crates/zed/resources/flatpak crates/zed/resources/snap script/flatpak;
+        bash kask/scripts/build/check-zed-isolation.sh
+      cwd: "."
+      env:
+        step_4_result: "{{ step_4_result }}"
+        step_5_result: "{{ step_5_result }}"
+        task: "{{ task }}"
+
+  - ordinal: 8
     action: loop
     description: >
       Re-enter at step 4 (execute) if verification failed. The loop converges

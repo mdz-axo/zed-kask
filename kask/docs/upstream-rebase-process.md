@@ -117,6 +117,16 @@ Update the D-seam row in `DIVERGENCE.md` to reflect the re-applied file:
 - Document every functional unit's constraint force and pinning test.
 - If the re-application introduced a new D-seam (e.g., a new hook), add a D-row.
 
+### Step 8 — Run post-rebase cleanup
+
+The upstream-rebase skill's step 7 (cleanup) automatically handles this.
+ It re-deletes upstream Zed files that git restored from upstream's tree
+ (icon files, .desktop templates, flatpak/snap packaging, release workflows)
+ and runs the isolation test to verify the collision surface is closed.
+ Skipping this step leaves upstream icon files on disk, recreating the
+ collision surface that caused zed-kask to hijack Zed's desktop identity
+ (commit 853542beab).
+
 ---
 
 ## 3. Verification gate (before committing the re-application)
