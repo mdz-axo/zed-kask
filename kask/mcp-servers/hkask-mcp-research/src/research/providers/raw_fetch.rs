@@ -40,7 +40,7 @@ impl WebExtractProvider for RawFetchProvider {
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "RawFetch error {status}: {}",
-                body.chars().take(200).collect::<String>()
+                hkask_inference::openai_compat::sanitize_error_body(&body)
             )));
         }
         Ok(ExtractedContent {
@@ -102,7 +102,7 @@ impl WebBrowseProvider for RawFetchProvider {
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "RawFetch browse error {status}: {}",
-                body.chars().take(200).collect::<String>()
+                hkask_inference::openai_compat::sanitize_error_body(&body)
             )));
         }
         Ok(BrowseResult {

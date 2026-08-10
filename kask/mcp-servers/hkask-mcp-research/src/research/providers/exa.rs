@@ -48,7 +48,7 @@ impl ExaProvider {
                 429 => WebError::RateLimited(format!("Exa findSimilar rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "Exa findSimilar error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }
@@ -133,7 +133,7 @@ impl WebSearchProvider for ExaProvider {
                 429 => WebError::RateLimited(format!("Exa rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "Exa API error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }

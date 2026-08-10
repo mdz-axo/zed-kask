@@ -56,7 +56,7 @@ impl WebSearchProvider for ArxivProvider {
                 )),
                 _ => WebError::ProviderError(format!(
                     "arXiv error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }

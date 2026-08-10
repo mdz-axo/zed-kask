@@ -806,3 +806,20 @@ diagnostic but not in the lib-root diagnostic. The failure mode is an agent
 loop (retrying stale diagnostics) or a phantom-bug chase (editing code that
 was already correct to silence an error that doesn't exist in the current
 file state).
+
+## LLM-improves-against-LLM-scored-target loops can game the scorer
+
+When an LLM rewrites an artifact to score higher on an LLM-scored instrument
+(EQM, code-quality metric, rubric), the score can rise without genuine
+improvement — the rewriter learns to emit marker-keywords the scorer rewards.
+Three mitigations, all required: (1) the improvement must ground evidence in
+real sources (delegate to research/superforecasting), never fabricate; (2) the
+improvement must preserve the artifact's load-bearing properties (forecast
+probability, code behavior) so the degenerate "change the target to match the
+easy answer" is blocked; (3) the measurement instrument must validate against
+an external ground truth (realized outcomes, test execution) and emit a
+distinct verdict when scores rise without ground-truth improvement. A loop
+without all three mitigations is an echo chamber. Found in `eqm-improvement`
+(forecast rationales scored by `market_score_rationale`); the same pattern
+applies to any future skill that improves an artifact against an LLM-scored
+target.

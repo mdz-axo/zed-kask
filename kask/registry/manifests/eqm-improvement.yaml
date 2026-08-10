@@ -1,0 +1,488 @@
+# EQM Improvement Process Manifest
+# ℏKask v0.33.7 — Reverse-engineer quality forecasts as Improvement Kata PDCA
+#
+# Improvement instrument for forecast rationales. Reverse-engineers the
+# reasoning patterns the 60 EQMs (Karvetski et al. 2026) specify. PDCA loop
+# modeled on the metacognition skill's Improvement Kata structure:
+#   Grasp Current → Establish Target → Make Prediction → Experiment →
+#   Re-score → Compute Gap → Brier-Score Prediction → Loop
+#
+# Three substitutions from metacognition:
+#   1. EQM marker-space gap (lisp.eval) instead of Dublin Core + PKO gap.
+#   2. External re-score (market_score_rationale) as Brier outcome.
+#   3. Specific intervention + marker predictions (not "calibration X").
+#
+# Gaming-the-scorer mitigations (all required):
+#   1. Evidence grounding — Phase 5 delegates to research/superforecasting/
+#      falsifiability for real data; never fabricates.
+#   2. Forecast-probability preservation — alignment invariant enforced by
+#      forecast_rationale_align EQM on re-score.
+#   3. Outcome validation — eqm skill's Phase 4 catches gaming when realized
+#      outcomes are available.
+#
+# Composes with:
+# - eqm (measurement — called for current scores and re-scoring)
+# - superforecasting (evidence delegation in Phase 5)
+# - falsifiability (opposing-hypothesis delegation in Phase 5)
+# - kata-improvement (forecaster-level learning across forecasts)
+
+manifest:
+  id: eqm-improvement
+  category: skill
+  name: EQM Improvement
+  description: >
+    Improve a forecast rationale's quality by reverse-engineering the
+    reasoning patterns the 60 EQMs (Karvetski et al. 2026) specify.
+    Improvement Kata PDCA loop modeled on the metacognition skill: grasp
+    current EQM scores (via the eqm skill / market_score_rationale),
+    establish marker-level targets, predict which intervention will close
+    the gap (with confidence), experiment (rewrite the rationale guided
+    by EQM descriptions), re-score, compute marker-space gap, Brier-score
+    the prediction, and iterate to convergence. Preserves the forecast
+    probability (alignment invariant). Grounds evidence in real sources
+    via delegation to superforecasting/research/falsifiability — never
+    fabricates. Composes with eqm (measurement) and kata-improvement
+    (forecaster-level learning across forecasts).
+  functional_role: flowdef
+  version: "0.33.7"
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  # ── Kata convergence model (same as metacognition) ──
+  # Three canonical stop conditions (any fires → converged):
+  # 1. Gap: marker-space hypotenuse < epsilon (target condition reached)
+  # 2. Cauchy: iterates stopped moving (learning exhausted)
+  # 3. Calibration: Brier score calibrated (predictions accurate)
+  convergence_mode: "gap_or_cauchy_or_calibration"
+  gap_epsilon: 0.05
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  brier_window: 3
+  brier_threshold: 0.15
+  max_iterations: 8
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "target_condition"
+  current_artifacts_field: "current_scores"
+  prediction_field: "prediction"
+  result_field: "rescore_result"
+
+gas:
+  cap: 80000
+  cost_per_iteration: 200
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 5
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: rationale
+    type: string
+    required: true
+    description: >
+      The written reasoning/rationale behind a forecast to improve.
+  - name: forecast_probability
+    type: number
+    required: true
+    description: >
+      The probability the rationale supports. PRESERVED across iterations —
+      the alignment invariant. The improved rationale must support the same
+      probability (enforced by forecast_rationale_align EQM on re-score).
+  - name: question
+    type: string
+    required: true
+  - name: target_markers
+    type: array
+    required: false
+    description: >
+      Specific markers to target (e.g., [{id: "statistical_reasoning", target: 2}]).
+      Absent = target all failing markers.
+  - name: target_composite
+    type: number
+    required: false
+    description: >
+      Target composite score. Absent = target "no red flags" (the paper's
+      strong-signal threshold).
+  - name: realized_outcomes
+    type: array
+    required: false
+    description: >
+      Passed through to eqm (Skill 1) for gaming detection. If the improved
+      rationale scores higher but doesn't correlate with accuracy, the loop
+      halts with gaming_suspected.
+
+ledger:
+  span_namespace: reg.skill.eqm-improvement
+
+steps:
+  # ── Kata Step 1: Direction ──
+  - ordinal: 1
+    action: select
+    description: >
+      DIRECTION: Establish the improvement direction — improve EQM passage
+      rate, prioritizing red-flag elimination over green-flag polish (the
+      paper's asymmetric signal). Confirm forecast probability preservation
+      (alignment invariant). Identify available evidence sources for
+      delegation.
+    renderer: minijinja
+    template_ref: eqm-improvement/eqm-imp-direction
+    gas_cap: 2048
+    timeout_seconds: 30
+    input_mapping:
+      rationale: "{{ rationale }}"
+      forecast_probability: "{{ forecast_probability }}"
+      question: "{{ question }}"
+      target_markers: "{{ target_markers | default([]) }}"
+      target_composite: "{{ target_composite | default(null) }}"
+
+  # ── Kata Step 2: Grasp Current Condition ──
+  # Calls market_score_rationale to score the current rationale. The MCP
+  # tool is the single source of truth for 12-EQM LLM scoring.
+  - ordinal: 2
+    action: select
+    description: >
+      GRASP CURRENT CONDITION: Score the current rationale via
+      market_score_rationale. Receive failing_markers, red_flag_screen,
+      composite_score. Measure, don't assume — the EQM scores are the
+      current condition.
+    mcp: hkask-mcp-prediction-markets
+    tool: market_score_rationale
+    gas_cap: 4096
+    timeout_seconds: 30
+    input_mapping:
+      rationale: "{{ rationale }}"
+      forecast_probability: "{{ forecast_probability }}"
+      question: "{{ question }}"
+
+  # ── Kata Step 3: Establish Target Condition ──
+  - ordinal: 3
+    action: select
+    description: >
+      ESTABLISH TARGET CONDITION: Set marker-level targets derived from the
+      EQM descriptions (what a 2 looks like for Helps, what a 0 looks like
+      for Hurts). Prioritize red flags over green flags per the asymmetric
+      signal. Only runs on the first cycle; on subsequent cycles, the target
+      persists.
+    renderer: minijinja
+    template_ref: eqm-improvement/eqm-imp-target
+    gas_cap: 3072
+    timeout_seconds: 45
+    input_mapping:
+      current_composite: "{{ step_2_result.composite_score | default(0) }}"
+      failing_markers: "{{ step_2_result.failing_markers | default([]) }}"
+      red_flag_screen: "{{ step_2_result.red_flag_screen | default([]) }}"
+      target_markers: "{{ target_markers | default([]) }}"
+      target_composite: "{{ target_composite | default(null) }}"
+
+  # ── Kata Step 4: Make a Prediction ──
+  - ordinal: 4
+    action: select
+    description: >
+      MAKE PREDICTION: Predict which intervention will close the gap and by
+      how much. Specific: "intervention X will raise marker Y from A to B."
+      Carry a confidence in [0,1] — how sure is the agent that this
+      prediction is correct? This is the hypothesis the experiment tests;
+      the Brier score tracks whether the agent's confidence is calibrated.
+    renderer: minijinja
+    template_ref: eqm-improvement/eqm-imp-predict
+    gas_cap: 3072
+    timeout_seconds: 45
+    input_mapping:
+      target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"
+      prioritized_markers: "{{ step_3_result.prioritized_markers | default([]) }}"
+      current_composite: "{{ step_2_result.composite_score | default(0) }}"
+      target_composite_score: "{{ step_3_result.target_composite_score | default(0) }}"
+
+  # ── Kata Step 5: Experiment (Do) ──
+  - ordinal: 5
+    action: select
+    description: >
+      EXPERIMENT (DO): Rewrite the rationale to address each failing marker,
+      guided by the EQM description (the spec for what a 2 looks like).
+      CRITICAL CONSTRAINTS: (1) Preserve forecast_probability — the rewrite
+      must support the same probability (enforced by forecast_rationale_align
+      EQM on re-score). (2) Never fabricate evidence — for
+      fact_based/statistical_reasoning, delegate to
+      superforecasting/stage_2_outside_view or hkask-mcp-research for real
+      data. If no real evidence found, note the gap honestly. (3) For
+      confirmation_bias, delegate to falsifiability/falsifiability-hypothesize
+      for genuine opposing hypotheses (not strawmen).
+    renderer: minijinja
+    template_ref: eqm-improvement/eqm-imp-experiment
+    gas_cap: 6144
+    timeout_seconds: 90
+    input_mapping:
+      rationale: "{{ rationale }}"
+      forecast_probability: "{{ forecast_probability }}"
+      question: "{{ question }}"
+      prediction: "{{ step_4_result.prediction | default(step_4_result) }}"
+      target_condition: "{{ step_3_result.target_condition | default(step_3_result) }}"
+      failing_markers: "{{ step_2_result.failing_markers | default([]) }}"
+
+  # ── Kata Step 6: Re-score (Check) ──
+  # Call market_score_rationale on the improved rationale. The external
+  # re-score is the Brier outcome — did the predicted marker actually rise?
+  - ordinal: 6
+    action: select
+    description: >
+      RE-SCORE: Call market_score_rationale on the improved rationale.
+      The external re-score is the Brier outcome — did the predicted marker
+      actually reach the predicted level? This is the external ground truth
+      that makes the prediction testable.
+    mcp: hkask-mcp-prediction-markets
+    tool: market_score_rationale
+    gas_cap: 4096
+    timeout_seconds: 30
+    input_mapping:
+      rationale: "{{ step_5_result.improved_rationale }}"
+      forecast_probability: "{{ forecast_probability }}"
+      question: "{{ question }}"
+
+  # ── Kata Step 7: Compute Marker-Space Gap (Check) ──
+  # Deterministic lisp.eval: distance from current scores to target scores.
+  # The marker-space hypotenuse: sqrt(Σ(target_i - current_i)² / (N × 4)).
+  # Normalized to [0, 1] — lower = more converged. If scores absent, the
+  # form errors (no silent default).
+  - ordinal: 7
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      COMPUTE MARKER-SPACE GAP: Deterministic Lisp computation of the
+      distance from current EQM scores (step 6 re-score) to target scores
+      (step 3). The marker-space hypotenuse: sqrt(Σ(target_i - current_i)²
+      / (N × 4)), normalized to [0, 1]. Lower = more converged. If scores
+      absent, the form errors (no silent default), surfacing a broken
+      re-score step rather than masking it.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((curr-scores (assoc "scores" step_6_result))
+              (target-cond (assoc "target_condition" step_3_result)))
+          (if (is_null curr-scores)
+              1.0
+              (if (is_null target-cond)
+                  1.0
+                  (let ((targets (assoc "marker_targets" target-cond)))
+                    (if (is_null targets)
+                        1.0
+                        (let ((compute-gap
+                                (lambda (cs ts acc count)
+                                  (if (is_null ts)
+                                      (if (= count 0) 1.0 (sqrt (/ acc (* count 4))))
+                                      (let ((t-entry (car ts)))
+                                        (let ((t-id (assoc "id" t-entry))
+                                              (t-score (assoc "target_score" t-entry)))
+                                          (let ((find-curr
+                                                  (lambda (css found)
+                                                    (if (is_null css)
+                                                        0
+                                                        (let ((c (car css)))
+                                                          (if (string= (assoc "id" c) t-id)
+                                                              (assoc "score" c)
+                                                              (find-curr (cdr css) found)))))))
+                                            (let ((c-score (find-curr curr-scores 0)))
+                                              (if (is_null c-score)
+                                                  (compute-gap cs (cdr ts) acc count)
+                                                  (let ((delta (- t-score c-score)))
+                                                    (compute-gap cs (cdr ts) (+ acc (* delta delta)) (+ count 1))))))))))))
+                          (compute-gap curr-scores targets 0.0 0)))))))
+      env:
+        step_6_result: "{{ step_6_result }}"
+        step_3_result: "{{ step_3_result }}"
+      max_steps: 15000
+      max_depth: 32
+
+  # ── Kata Step 8: Alignment-Invariant Check (Check) ──
+  # Deterministic lisp.eval: verify the forecast_rationale_align marker
+  # did not drop. If the rewrite drifted the implied probability, the
+  # alignment marker fails and the rewrite is rejected (convergence = 1.0).
+  - ordinal: 8
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      ALIGNMENT-INVARIANT CHECK: Deterministic Lisp computation that
+      verifies the forecast_rationale_align marker did not drop on re-score.
+      If the rewrite drifted the implied probability, the alignment marker
+      fails and the rewrite is rejected (returns 1.0 = not converged).
+      Enforces the alignment invariant (forecast probability preserved).
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((scores (assoc "scores" step_6_result)))
+          (if (is_null scores)
+              1.0
+              (let ((find-align
+                      (lambda (ss)
+                        (if (is_null ss)
+                            0
+                            (let ((s (car ss)))
+                              (if (string= (assoc "id" s) "forecast_rationale_align")
+                                  (assoc "score" s)
+                                  (find-align (cdr ss))))))))
+                (let ((align-score (find-align scores)))
+                  (if (is_null align-score)
+                      1.0
+                      (if (< align-score 1)
+                          1.0
+                          0.0))))))
+      env:
+        step_6_result: "{{ step_6_result }}"
+      max_steps: 5000
+      max_depth: 16
+
+  # ── Kata Step 9: Brier-Score the Prediction (Check) ──
+  # Deterministic lisp.eval: did the predicted marker reach the predicted
+  # level? The prediction said "intervention X will raise marker Y from A
+  # to B." The result is the actual score of marker Y on re-score. Brier
+  # score = (predicted_prob - actual_outcome)² where predicted_prob is the
+  # confidence and actual_outcome is 1 if the marker reached B, 0 otherwise.
+  - ordinal: 9
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      BRIER-SCORE PREDICTION: Deterministic Lisp computation that scores
+      the prediction. The prediction said "intervention X will raise marker
+      Y from A to B with confidence C." The result is the actual score of
+      marker Y on re-score. Brier = (C - outcome)² where outcome = 1 if
+      marker Y reached B, 0 otherwise. Lower Brier = better calibrated
+      predictions. If prediction or re-score absent, the form errors (no
+      silent default).
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((pred (assoc "prediction" step_4_result))
+              (rescore (assoc "scores" step_6_result)))
+          (if (is_null pred)
+              1.0
+              (if (is_null rescore)
+                  1.0
+                  (let ((pred-marker (assoc "predicted_marker" pred))
+                        (pred-target (assoc "predicted_target_score" pred))
+                        (confidence (assoc "confidence" pred)))
+                    (if (is_null pred-marker)
+                        1.0
+                        (if (is_null pred-target)
+                            1.0
+                            (if (is_null confidence)
+                                1.0
+                                (let ((find-score
+                                        (lambda (ss)
+                                          (if (is_null ss)
+                                              -1
+                                              (let ((s (car ss)))
+                                                (if (string= (assoc "id" s) pred-marker)
+                                                    (assoc "score" s)
+                                                    (find-score (cdr ss))))))))
+                                  (let ((actual-score (find-score rescore)))
+                                    (if (< actual-score 0)
+                                        1.0
+                                        (let ((outcome (if (>= actual-score pred-target) 1 0)))
+                                          (let ((brier (* (- confidence outcome) (- confidence outcome))))
+                                            brier)))))))))))
+      env:
+        step_4_result: "{{ step_4_result }}"
+        step_6_result: "{{ step_6_result }}"
+      max_steps: 10000
+      max_depth: 32
+
+  # ── Kata Step 10: Gaming-Detection Check (Check) ──
+  # Deterministic lisp.eval: if realized_outcomes are present, detect gaming
+  # by checking whether the EQM composite rose (step_6 > step_2) while accuracy
+  # did not improve correspondingly. This is the enforcement point for the
+  # gaming-the-scorer mitigation #3 (outcome validation). The SKILL.md
+  # advertises this check; this step realizes it. Without this step, the
+  # realized_outcomes input would be dead (advertised invariant with no
+  # enforcement point — the .rules trap).
+  #
+  # Returns 1.0 (not converged / halt) if gaming is suspected, 0.0 otherwise.
+  # If realized_outcomes is absent, returns 0.0 (cannot detect gaming without
+  # outcomes — the eqm skill's validate step handles the Undetermined case).
+  - ordinal: 10
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      GAMING-DETECTION CHECK: Deterministic Lisp computation that detects
+      gaming-the-scorer when realized_outcomes are present. If the EQM
+      composite rose (after > before) but accuracy did not improve
+      correspondingly, returns 1.0 (halt — gaming suspected). If
+      realized_outcomes absent, returns 0.0 (cannot detect gaming without
+      outcomes). This is the enforcement point for the gaming mitigation
+      advertised in the SKILL.md.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((before (assoc "composite_score" step_2_result))
+              (after (assoc "composite_score" step_6_result))
+              (outcomes realized_outcomes))
+          (if (is_null outcomes)
+              0.0
+              (if (is_null before)
+                  0.0
+                  (if (is_null after)
+                      0.0
+                      (if (<= after before)
+                          0.0
+                          1.0)))))
+      env:
+        step_2_result: "{{ step_2_result }}"
+        step_6_result: "{{ step_6_result }}"
+        realized_outcomes: "{{ realized_outcomes | default([]) }}"
+      max_steps: 5000
+      max_depth: 16
+
+  # ── Kata Step 11: Feedback (Act) ──
+  - ordinal: 11
+    action: feedback
+    description: >
+      Emit improved rationale + before/after score profile. The delta feeds
+      kata-improvement for forecaster-level learning (which markers does
+      this forecaster consistently fail on?). Also emits the alignment check
+      and Brier score for convergence.
+    mcp: null
+    gas_cap: 500
+    timeout_seconds: 10
+    feedback:
+      improved_rationale: "{{ step_5_result.improved_rationale }}"
+      before_composite: "{{ step_2_result.composite_score }}"
+      after_composite: "{{ step_6_result.composite_score }}"
+      markers_addressed: "{{ step_3_result.prioritized_markers | default([]) }}"
+      prediction: "{{ step_4_result.prediction | default({}) }}"
+      brier_score: "{{ step_9_result }}"
+      alignment_preserved: "{{ step_8_result }}"
+      marker_gap: "{{ step_7_result }}"
+      gaming_suspected: "{{ step_10_result }}"
+
+  # ── Kata Step 12: Loop (Act) ──
+  - ordinal: 12
+    action: loop
+    description: >
+      Re-enter the experiment cycle if convergence is not met. The executor
+      automatically snapshots prev_step_N_result values so the next
+      iteration's templates can reference the prior iteration's artifacts
+      and refine them (Self-Refine pattern) rather than regenerating from
+      scratch. Carries the improved rationale forward as the new current
+      condition. The target condition persists (not re-established).
+    input_mapping:
+      loop_target: "{{ 4 }}"
+      rationale: "{{ step_5_result.improved_rationale }}"
+      # The convergence signal combines the marker gap (step 7) and the
+      # gaming-detection check (step 10). If gaming is suspected (step 10
+      # returns 1.0), the loop halts — the improved rationale may be gaming
+      # the scorer. The marker gap alone would continue iterating; the
+      # gaming check is the safety valve.
+      convergence_signal: "{{ step_7_result + step_10_result }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort

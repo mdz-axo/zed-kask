@@ -66,7 +66,16 @@ inputs:
   - name: overconfidence_bias
     type: number
     required: false
-    description: Signed calibration bias from a Brier-scored calibration curve (positive = overconfident). Fed to the step-13 compute to close the learning loop. Defaults to 0.0 (no adjustment).
+    description: >
+      Signed calibration bias (positive = overconfident). Fed to the
+      step-16 compute (apply_calibration_adjustment) to close the learning
+      loop. Defaults to 0.0 (no adjustment). Sources, in priority order:
+      (1) the `eqm` skill's feedback step (overconfidence_bias computed from
+      EQM red-flag dominance — `extreme_confidence` + `forecast_rationale_misalign`
+      minus `statistical_reasoning` + `best_practices`), which the invoking
+      agent fetches by running `eqm` on the prior iteration's rationale
+      before re-invoking superforecasting; (2) a Brier-scored calibration
+      curve from `scenario_calibration`; (3) 0.0 (no adjustment).
   - name: market_context
     type: array
     required: false

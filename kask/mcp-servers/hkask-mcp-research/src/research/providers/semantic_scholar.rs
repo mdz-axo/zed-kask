@@ -57,7 +57,7 @@ impl WebSearchProvider for SemanticScholarProvider {
                 429 => WebError::RateLimited(format!("Semantic Scholar rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "Semantic Scholar error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }

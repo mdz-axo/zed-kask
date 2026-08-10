@@ -83,7 +83,7 @@ impl SerapiProvider {
                 429 => WebError::RateLimited(format!("SerpAPI rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "SerpAPI transcript error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }
@@ -203,7 +203,7 @@ impl WebSearchProvider for SerapiProvider {
                 429 => WebError::RateLimited(format!("SerpAPI rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "SerpAPI error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }

@@ -425,6 +425,25 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.codereview.adjudicate",
     "reg.codereview.report",
     "reg.codereview.implement",
+    // ── EQM (forecast-rationale quality measurement — eqm skill) ──
+    // PDCA cascade: select → score → aggregate → validate. Emits the
+    // overconfidence_bias signal that feeds superforecasting's calibration
+    // step (a real cybernetic loop, not performative telemetry).
+    "reg.eqm",
+    "reg.eqm.select",
+    "reg.eqm.score",
+    "reg.eqm.aggregate",
+    "reg.eqm.validate",
+    // ── EQM improvement (rationale improvement Kata — eqm-improvement skill) ──
+    // Improvement Kata PDCA: direction → current → target → predict → experiment.
+    // Iterates to convergence; preserves the forecast probability (alignment
+    // invariant). Sibling to metacognition's Kata loop.
+    "reg.eqm_imp",
+    "reg.eqm_imp.direction",
+    "reg.eqm_imp.current",
+    "reg.eqm_imp.target",
+    "reg.eqm_imp.predict",
+    "reg.eqm_imp.experiment",
     // ── Skill (unified cybernetic feedback — one namespace per skill) ──
     // Every skill emits reg.skill.<skill-id>.<phase> for its six PDCA phases.
     // The hierarchical is_canonical function makes reg.skill.<any-id>.* valid

@@ -9,7 +9,6 @@ description: "Superforecasting pipeline following Tetlock's Good Judgment Projec
 
 Superforecasting pipeline following Tetlock's Good Judgment Project methodology. Eight-stage process from question triage through Fermi decomposition, outside/inside views, Bayesian evidence updating, dragonfly-eye synthesis, probability calibration, and forecast recording.
 
-
 ## When to Use
 
 - When you need to forecast the likelihood of a future event using a rigorous, structured methodology based on Tetlock's Good Judgment Project.
@@ -120,19 +119,47 @@ mid-cascade (per the existing `market_context` pattern). If `rss_search`
 returns no matches for the forecasting question, `expert_prior` is empty and
 the cascade runs without it. Do not fabricate LEAP data.
 
+## EQM Feedback Integration
+
+The superforecasting cascade accepts an optional `overconfidence_bias` number
+input that feeds the step-16 compute (`apply_calibration_adjustment`) to
+close the Brier feedback loop. Before re-invoking superforecasting on a prior
+iteration's forecast, the invoking agent should:
+
+1. Run the `eqm` skill on the prior iteration's rationale (stage_7_record
+   output) to score it against the Explanation Quality Markers (Karvetski et
+   al. 2026).
+2. Extract the `overconfidence_bias` field from the `eqm` skill's feedback
+   output. The signal is signed: positive = overconfident (red flags dominate,
+   especially `extreme_confidence` and `forecast_rationale_misalign`), negative
+   = underconfident (excessive `speculative_terms` without grounding).
+3. Pass the `overconfidence_bias` value when re-invoking superforecasting.
+
+The cascade does not run `eqm` itself — the invoking agent does, because the
+cascade is a single skill invocation and should not reach out to other skills
+mid-cascade (per the existing `market_context` and `expert_prior` pattern). If
+`eqm` is not run, `overconfidence_bias` defaults to 0.0 (no adjustment). Do
+not fabricate the bias value.
+
+For rationale-level improvement (not just calibration feedback), invoke the
+`eqm-improvement` skill on the rationale before re-invoking superforecasting.
+`eqm-improvement` reverse-engineers the reasoning patterns the EQM definitions
+specify, producing an improved rationale with a higher EQM passage rate while
+preserving the forecast probability (alignment invariant).
+
 ## Registry Templates
 
-| Template | Type | Purpose |
-|----------|------|---------|
-| `stage_0_triage.j2` | WordAct | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment.  |
-| `stage_1_fermi_decompose.j2` | WordAct | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions.  |
-| `stage_2_outside_view.j2` | WordAct | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. Consumes `market_context` and `expert_prior` as anchor inputs. |
-| `stage_3_probability_estimate.j2` | WordAct | Inside-view probability estimation — takes pre-generated hypotheses (from `falsifiability/falsifiability-hypothesize`) and counterfactuals (from `falsifiability/falsifiability-counterfactual`), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the former `stage_3_inside_view.j2`. |
-| `stage_4_evidence_update.j2` | WordAct | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. Consumes `market_context` for market price moves and `expert_prior` rationale excerpts as qualitative evidence. |
-,| `stage_5_synthesis.j2` | WordAct | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Applies MCDA-style weighted scoring of models against evidence quality criteria, steel-man dissenting views, and produce a synthesized probability with model weights and compensation masking warnings.  |
-| `stage_6_calibration.j2` | WordAct | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail.  |
-| `stage_7_record.j2` | WordAct | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis.  |
-| `forecast-quality-gate.j2` | KnowAct | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes.  |
+| Template                          | Type                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stage_0_triage.j2`               | WordAct                | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment.                                                                                                                                                                                                                                                                                                      |
+| `stage_1_fermi_decompose.j2`      | WordAct                | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions.                                                                                                                                                                                                                                                                                                       |
+| `stage_2_outside_view.j2`         | WordAct                | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. Consumes `market_context` and `expert_prior` as anchor inputs.                                                                                                                                                                                                                              |
+| `stage_3_probability_estimate.j2` | WordAct                | Inside-view probability estimation — takes pre-generated hypotheses (from `falsifiability/falsifiability-hypothesize`) and counterfactuals (from `falsifiability/falsifiability-counterfactual`), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the former `stage_3_inside_view.j2`. |
+| `stage_4_evidence_update.j2`      | WordAct                | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. Consumes `market_context` for market price moves and `expert_prior` rationale excerpts as qualitative evidence.                                                                                                                                                                                                   |
+| ,                                 | `stage_5_synthesis.j2` | WordAct                                                                                                                                                                                                                                                                                                                                                                                                                                           | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Applies MCDA-style weighted scoring of models against evidence quality criteria, steel-man dissenting views, and produce a synthesized probability with model weights and compensation masking warnings. |
+| `stage_6_calibration.j2`          | WordAct                | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail.                                                                                                                                                                                                                                                                                            |
+| `stage_7_record.j2`               | WordAct                | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis.                                                                                                                                                                                                                                                                                                     |
+| `forecast-quality-gate.j2`        | KnowAct                | Independent quality gate that evaluates forecast calibration realism, confidence justification, evidence trail completeness, and record quality without self-assessment bias. Produces calibrated 0–1 scores plus a gate_pass determination with actionable fix notes.                                                                                                                                                                            |
 
 ## Constraints
 
