@@ -19,6 +19,7 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 - When you need to synthesize multiple causal models and dissenting views into a single calibrated probability.
 - When you need to record a forecast with resolution criteria for later tracking, Brier scoring, and post-mortem analysis.
 - When evaluating generated forecasts through an independent quality gate to assess calibration realism, confidence justification, evidence trail, and record completeness without self-assessment bias.
+- When LEAP expert-judgment forecasts are available for the forecasting question or a close reference class, and you want to anchor the outside view on FRI's longitudinal expert panel rather than (or in addition to) market-implied probabilities.
 
 ## Instructions
 
@@ -95,15 +96,39 @@ The former single inside-view step is split into three FlowDef steps. Generation
 4. If gate_pass is false, each failing dimension must have a specific, actionable fix note.
 5. You are evaluating, not generating — do not rewrite or improve the forecast.
 
+## LEAP Integration
+
+The superforecasting cascade accepts an optional `expert_prior` array input
+alongside `market_context`. Before invoking the cascade, the invoking agent
+should:
+
+1. Call `rss_search` on the `fri-leap` and `fri-leap-reports` streams with
+   keywords from the forecasting question (e.g. "AGI timelines", "GDP growth",
+   "AI risks").
+2. If matches are found, parse the LEAP forecast distribution from the
+   matched entries into the `expert_prior` array. Each element carries:
+   `question`, `median_probability`, `superforecaster_median` (if available),
+   `public_median` (if available), `interquartile_range` (if available),
+   `time_horizon`, `scenario` ('rapid AI progress' / 'slow AI progress' /
+   'unconditional'), `rationale_excerpt` (optional), `source_url`, `wave`.
+3. Pass the `expert_prior` array alongside `market_context` when invoking the
+   superforecasting skill.
+
+The cascade does not fetch LEAP itself — the invoking agent does, because the
+cascade is a single skill invocation and should not reach out to MCP servers
+mid-cascade (per the existing `market_context` pattern). If `rss_search`
+returns no matches for the forecasting question, `expert_prior` is empty and
+the cascade runs without it. Do not fabricate LEAP data.
+
 ## Registry Templates
 
 | Template | Type | Purpose |
 |----------|------|---------|
 | `stage_0_triage.j2` | WordAct | Triage a forecasting question to determine difficulty level and whether it falls in the Goldilocks zone warranting full pipeline investment.  |
 | `stage_1_fermi_decompose.j2` | WordAct | Fermi-decompose the forecasting question into independent, tractable sub-questions. Separate knowns from unknowns and document assumptions.  |
-| `stage_2_outside_view.j2` | WordAct | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability.  |
+| `stage_2_outside_view.j2` | WordAct | Establish base rates by identifying reference classes and determining how often similar events occur. Produces the outside-view starting probability. Consumes `market_context` and `expert_prior` as anchor inputs. |
 | `stage_3_probability_estimate.j2` | WordAct | Inside-view probability estimation — takes pre-generated hypotheses (from `falsifiability/falsifiability-hypothesize`) and counterfactuals (from `falsifiability/falsifiability-counterfactual`), weighs evidence pro/con against each counterfactual's testable consequence, assigns individual probabilities, enforces internal consistency, and combines to adjust from the outside-view anchor. Replaces the former `stage_3_inside_view.j2`. |
-| `stage_4_evidence_update.j2` | WordAct | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength.  |
+| `stage_4_evidence_update.j2` | WordAct | Incorporate new evidence via Bayesian updating with likelihood ratios. Revise the prior probability based on evidence strength. Consumes `market_context` for market price moves and `expert_prior` rationale excerpts as qualitative evidence. |
 ,| `stage_5_synthesis.j2` | WordAct | Synthesize a dragonfly-eye view by integrating multiple causal models and perspectives. Applies MCDA-style weighted scoring of models against evidence quality criteria, steel-man dissenting views, and produce a synthesized probability with model weights and compensation masking warnings.  |
 | `stage_6_calibration.j2` | WordAct | Calibrate the final probability using the full 0-100% scale. Justify precision against known calibration principles and the pipeline's evidence trail.  |
 | `stage_7_record.j2` | WordAct | Create a structured forecast record with resolution criteria and expiration date for later tracking, Brier scoring, and post-mortem analysis.  |
@@ -113,9 +138,9 @@ The former single inside-view step is split into three FlowDef steps. Generation
 
 - `stage_0_triage.j2`: Public.
 - `stage_1_fermi_decompose.j2`: Public.
-- `stage_2_outside_view.j2`: Public.
+- `stage_2_outside_view.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before cascade invocation, parallel to `market_context`.)
 - `stage_3_probability_estimate.j2`: Public. (Inside-view generation + counterfactual analysis are delegated to `falsifiability/falsifiability-hypothesize` and `falsifiability/falsifiability-counterfactual`.)
-- `stage_4_evidence_update.j2`: Public.
+- `stage_4_evidence_update.j2`: Public. (Expert-judgment priors are fetched by the invoking agent from the LEAP RSS feed via `hkask-mcp-research` `rss_search`/`rss_get_entries` before cascade invocation, parallel to `market_context`.)
 - `stage_5_synthesis.j2`: Public.
 - `stage_6_calibration.j2`: Public.
 - `stage_7_record.j2`: Public.

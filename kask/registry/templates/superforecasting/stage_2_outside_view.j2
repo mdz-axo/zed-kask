@@ -6,6 +6,7 @@ contract:
     sub_questions: array
     knowns: array
     market_context: array
+    expert_prior: array
   output:
     reference_classes: array
     base_rates: array
@@ -44,6 +45,24 @@ accordingly rather than taking the price at face value.
 {% endfor %}
 {% endif %}
 
+{% if expert_prior %}
+## Expert-Judgment Anchors (LEAP)
+The following expert-judgment forecasts were fetched from the LEAP
+(Longitudinal Expert AI Panel, FRI) RSS feed or another expert-judgment
+source. Each carries a median expert forecast, optionally a superforecaster
+median and public median, an interquartile range, and a scenario
+conditioning (e.g. 'rapid AI progress', 'slow AI progress',
+'unconditional'). These are epistemically distinct from market-implied
+probabilities: they represent structured expert judgment, not betting
+demand. Treat each as a reference-class entry with its median as the
+base-rate anchor and its IQR as the uncertainty band. When both
+`expert_prior` and `market_context` are present, report both anchors
+separately — do not average them, as they measure different things.
+{% for ep in expert_prior %}
+- [LEAP/{{ ep.wave | default("unknown") }}] {{ ep.question }} — median={{ ep.median_probability }} (superforecaster={{ ep.superforecaster_median | default("n/a") }}, public={{ ep.public_median | default("n/a") }}, IQR={{ ep.interquartile_range | default("n/a") }}, horizon={{ ep.time_horizon | default("n/a") }}, scenario={{ ep.scenario | default("unconditional") }}, source={{ ep.source_url | default("n/a") }})
+{% endfor %}
+{% endif %}
+
 ## Outside View Methodology
 
 The outside view (reference class forecasting) asks: **"How often do things of this sort happen in situations of this sort?"**
@@ -63,6 +82,13 @@ For each reference class:
 - What is the historical frequency of this outcome?
 - What is the sample size and quality of data?
 - Are there trend changes that affect the base rate?
+- If expert-judgment anchors (LEAP) are present, add each as a
+  reference-class entry with its median as the base-rate anchor and its
+  IQR as the uncertainty band, tagged with `source: "LEAP-Wave-N"` and
+  `scenario: "<scenario>"`. When both expert-judgment and market-implied
+  anchors are present, report both separately rather than averaging —
+  they are epistemically distinct (expert judgment vs market-implied) and
+  the synthesis stage needs to see both.
 
 ### Step 3: Establish Starting Probability
 Before considering case-specific details (inside view), establish an anchor:

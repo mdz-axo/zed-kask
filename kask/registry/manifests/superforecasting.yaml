@@ -1,5 +1,5 @@
 # Superforecasting Process Manifest
-# ℏKask v0.33.7 — Tetlock pipeline as convergent PDCA
+# ℏKask v0.33.8 — Tetlock pipeline as convergent PDCA
 # Inside view (stage 3) is split: hypothesis generation → falsifiability-hypothesize,
 # counterfactual necessary-conditions → falsifiability-counterfactual, probability
 # estimation + anchor adjustment → superforecasting/stage_3_probability_estimate.
@@ -16,7 +16,7 @@ manifest:
     update, synthesis, calibration, and forecast recording, then computes
     convergence for iterative refinement.
   functional_role: flowdef
-  version: "0.33.7"
+  version: "0.33.8"
   editor: curator-or-human-admin
   visibility: Public
 
@@ -78,6 +78,25 @@ inputs:
       ontology mapping. Merged into stage 2's outside-view `knowns` so a
       market-implied base rate anchors the reference class. Absent = no
       market anchor (cascade runs on LLM reference classes only).
+  - name: expert_prior
+    type: array
+    required: false
+    description: >
+      Annotated expert-judgment forecast records for the forecasting
+      question, fetched by the invoking agent from the LEAP RSS feed
+      (`rss_get_entries` on the `fri-leap` / `fri-leap-reports` streams)
+      or from any other expert-judgment source. Each element carries:
+      `question` (the LEAP question text), `median_probability` (the
+      median expert forecast), `superforecaster_median` (if available),
+      `public_median` (if available), `interquartile_range` (if
+      available), `time_horizon` (e.g. '2030', '2050', '2100'),
+      `scenario` (e.g. 'rapid AI progress', 'slow AI progress',
+      'unconditional'), `rationale_excerpt` (optional), `source_url`
+      (the LEAP report URL), `wave` (e.g. 'Wave 10'). Merged into stage
+      2's outside-view `knowns` so an expert-judgment base rate anchors the
+      reference class alongside any market-implied base rate. Absent = no
+      expert anchor (cascade runs on LLM reference classes +
+      market_context only).
 
 ledger:
   span_namespace: reg.skill.superforecasting
@@ -132,6 +151,7 @@ steps:
       sub_questions: "{{ step_2_result.sub_questions | default([]) }}"
       knowns: "{{ step_2_result.knowns | default([]) }}"
       market_context: "{{ market_context | default([]) }}"
+      expert_prior: "{{ expert_prior | default([]) }}"
 
   - ordinal: 5
     action: compute
@@ -216,6 +236,7 @@ steps:
       hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
       new_evidence: "{{ new_evidence | default([]) }}"
       market_context: "{{ market_context | default([]) }}"
+      expert_prior: "{{ expert_prior | default([]) }}"
 
   - ordinal: 10
     action: compute

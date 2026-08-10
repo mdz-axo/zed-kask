@@ -25,6 +25,10 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use dbnomics::{
+    DbnomicsGetDatasetRequest, DbnomicsGetSeriesRequest, DbnomicsListProvidersRequest,
+    DbnomicsSearchRequest,
+};
 use fred::{
     FredGetObservationsRequest, FredGetReleaseRequest, FredGetSeriesInfoRequest,
     FredListCategoriesRequest, FredSearchSeriesRequest,
@@ -40,6 +44,7 @@ pub mod calibration;
 pub mod cmp;
 pub mod cmp_index_builder;
 pub mod cmp_portfolio;
+pub mod dbnomics;
 pub mod economic_object;
 pub mod fred;
 pub mod matcher;
@@ -1850,6 +1855,107 @@ impl PredictionMarketsServer {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_get_indicator_info".to_string());
                 let result = worldbank::get_indicator_info(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    // ═══════════════════ DBnomics economic data tools ═══════════════════
+
+    /// Search DBnomics series by full-text query across all providers.
+    /// DBnomics aggregates 1.7B+ series from 700+ providers (IMF, OECD, ECB,
+    /// INSEE, World Bank, FRED mirrors, etc.) — the global superset of FRED
+    /// and the World Bank Indicators API. No API key required.
+    #[tool(
+        description = "Search DBnomics economic time series by full-text query across all providers (IMF, OECD, ECB, INSEE, World Bank, FRED mirrors, etc.). 1.7B+ series, no API key needed. Example: query='GDP' for gross domestic product series."
+    )]
+    pub async fn dbnomics_search(
+        &self,
+        Parameters(req): Parameters<DbnomicsSearchRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "dbnomics_search",
+            Some(Self::ontology_anchor("dbnomics_search")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("dbnomics_search".to_string());
+                let result = dbnomics::search(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// List DBnomics statistical providers (IMF, OECD, ECB, INSEE, etc.).
+    #[tool(
+        description = "List DBnomics statistical providers (700+ institutions: IMF, OECD, ECB, INSEE, World Bank, etc.). Returns provider code, name, region, and website. No API key needed."
+    )]
+    pub async fn dbnomics_list_providers(
+        &self,
+        Parameters(req): Parameters<DbnomicsListProvidersRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "dbnomics_list_providers",
+            Some(Self::ontology_anchor("dbnomics_list_providers")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("dbnomics_list_providers".to_string());
+                let result = dbnomics::list_providers(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Get DBnomics dataset metadata. Supports the `:latest` release alias.
+    #[tool(
+        description = "Get DBnomics dataset metadata (name, description, dimensions, last update). Supports the `:latest` release alias (e.g., dataset_code='WEO:latest'). Example: provider_code='IMF' dataset_code='WEO:latest' for the latest World Economic Outlook dataset."
+    )]
+    pub async fn dbnomics_get_dataset(
+        &self,
+        Parameters(req): Parameters<DbnomicsGetDatasetRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "dbnomics_get_dataset",
+            Some(Self::ontology_anchor("dbnomics_get_dataset")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("dbnomics_get_dataset".to_string());
+                let result = dbnomics::get_dataset(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Get DBnomics series observations (period + value pairs).
+    #[tool(
+        description = "Get DBnomics series observations by provider/dataset/series code. Returns series metadata + observations array [{period, value}]. Example: provider_code='IMF' dataset_code='WEO:latest' series_code='NGDP' for nominal GDP."
+    )]
+    pub async fn dbnomics_get_series(
+        &self,
+        Parameters(req): Parameters<DbnomicsGetSeriesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "dbnomics_get_series",
+            Some(Self::ontology_anchor("dbnomics_get_series")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("dbnomics_get_series".to_string());
+                let result = dbnomics::get_series(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )
