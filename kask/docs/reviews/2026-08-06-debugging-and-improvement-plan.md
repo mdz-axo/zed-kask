@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-06
 **Reviewer:** Lead Rust/GPUI engineer (orchestrated hKask skill pass)
-**Scope:** `kask/`, the D1–D21 seams in `DIVERGENCE.md`, and kask UI on the Zed side
+**Scope:** `kask/`, the D1–D23 seams in `DIVERGENCE.md`, and kask UI on the Zed side
 **Deliverable:** plan only — no code modified in this task
 
 ---
@@ -17,7 +17,7 @@ inputs, MCP envelope extraction, `extract_final_step_result` ordering — are
 all defended in the current tree. Six parallel evidence-gathering audits
 across the scoped surface returned **zero hits** for the highest-severity
 mechanical traps and a small, bounded set of lower-severity findings. The
-D-seam deviations (D1–D21) are uniformly test-pinned; the named pinning tests
+D-seam deviations (D1–D23) are uniformly test-pinned; the named pinning tests
 in `DIVERGENCE.md` all resolve to real, compiling test functions.
 
 **Top 3 risks (none blocker-tier):**
@@ -482,7 +482,7 @@ review to verify the traps are defended.
 
 | Command | Purpose | Result |
 |---------|---------|--------|
-| `sed -n '1,102p' DIVERGENCE.md` | Read the seam inventory | ✅ D1–D21 + supporting files |
+| `sed -n '1,102p' DIVERGENCE.md` | Read the seam inventory | ✅ D1–D23 + supporting files |
 | `grep -rn "// zed-kask:" crates/ kask/` | Find all deviations | ✅ full list (paginated) |
 | `grep -rn "set_manifest_executor\|set_context_injector\|..." crates/agent/src/agent.rs crates/zed/src/main.rs kask/crates/kask_bridge/src/` | Audit `set_*` hooks for startup-failure signals | ✅ all `OnceLock` hooks have `log::warn!` on `Err` branch |
 | `sed -n '1200,2050p' crates/zed/src/main.rs` | Read the composition root wiring | ✅ `auto_inject` else branch warns naming both injectors; no-default-model else branch warns naming all 5 hooks |

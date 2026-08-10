@@ -103,7 +103,7 @@ The full process, with the `main.rs` functional inventory (28 units), DAG, and c
 
 ## Constraints
 
-- Do NOT modify any upstream file outside the D1–D21 seams. If an upstream edit seems necessary, propose a new D-seam entry in `DIVERGENCE.md`.
+- Do NOT modify any upstream file outside the D1–D23 seams. If an upstream edit seems necessary, propose a new D-seam entry in `DIVERGENCE.md`.
 - Do NOT rename or reformat upstream files to "fix" them.
 - Every `// zed-kask:` deviation preserved or introduced must have a corresponding test.
 - The re-application order must be a topological sort of the dependency DAG (no use-before-def).

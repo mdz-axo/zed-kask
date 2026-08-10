@@ -191,7 +191,7 @@ Applying the essentialist G1 deletion test to each "git-merge (clean)" file with
 
 5. **20 files are git-merge (clean)** — ratio < 2.0, markers present, auto-merged cleanly. No action.
 
-**No structural friction requiring refactoring.** The seam architecture is sound: the D1–D21 seams isolate kask wiring into named, documented divergence points. The only systemic issue was `main.rs`'s under-marking (now fixed) and `conversation_view.rs`'s under-marking (fixable with 2 markers).
+**No structural friction requiring refactoring.** The seam architecture is sound: the D1–D23 seams isolate kask wiring into named, documented divergence points. The only systemic issue was `main.rs`'s under-marking (now fixed) and `conversation_view.rs`'s under-marking (fixable with 2 markers).
 
 ### 2.6 Recommendation: should we recompose all modified zed files?
 

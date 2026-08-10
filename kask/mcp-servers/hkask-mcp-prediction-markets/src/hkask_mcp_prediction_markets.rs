@@ -29,6 +29,10 @@ use fred::{
     FredGetObservationsRequest, FredGetReleaseRequest, FredGetSeriesInfoRequest,
     FredListCategoriesRequest, FredSearchSeriesRequest,
 };
+use worldbank::{
+    WbGetIndicatorInfoRequest, WbGetObservationsRequest, WbListCountriesRequest,
+    WbListTopicsRequest, WbSearchIndicatorsRequest,
+};
 
 pub mod base_event;
 pub mod cache;
@@ -47,6 +51,7 @@ pub mod semantic_mapping;
 mod streaming;
 pub mod types;
 pub mod volatility;
+pub mod worldbank;
 
 // ── Request/response types ─────────────────────────────────────────────────
 
@@ -1727,6 +1732,137 @@ impl PredictionMarketsServer {
                 let result =
                     fred::get_release(&self.http, self.fred_api_key.as_deref(), &req)
                         .await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    // ═══════════════════ World Bank economic data tools ═══════════════════
+
+    /// Search World Bank indicators by text.
+    /// Returns indicator IDs with name, unit, source, and topics.
+    /// The World Bank API covers ~29,500 indicators across 45+ databases
+    /// for all countries — the global complement to FRED's US-centric data.
+    #[tool(
+        description = "Search World Bank indicators by text. Returns indicator IDs with name, unit, source, and topics. Covers ~29,500 indicators (global, no API key needed). Example: query='employment' to find labor indicators, query='GDP per capita' for economic indicators."
+    )]
+    pub async fn wb_search_indicators(
+        &self,
+        Parameters(req): Parameters<WbSearchIndicatorsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "wb_search_indicators",
+            Some(Self::ontology_anchor("wb_search_indicators")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("wb_search_indicators".to_string());
+                let result =
+                    worldbank::search_indicators(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Fetch time series observations from the World Bank.
+    /// Returns date-value pairs for a country + indicator.
+    #[tool(
+        description = "Fetch World Bank time series observations by indicator ID and country code. Returns date-value pairs. Example: indicator_id='SP.POP.TOTL' country_code='USA' for US population, indicator_id='NY.GDP.PCAP.PP.KD' country_code='CHN' for China GDP per capita PPP."
+    )]
+    pub async fn wb_get_observations(
+        &self,
+        Parameters(req): Parameters<WbGetObservationsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "wb_get_observations",
+            Some(Self::ontology_anchor("wb_get_observations")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("wb_get_observations".to_string());
+                let result =
+                    worldbank::get_observations(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// List all countries with ISO codes, regions, and income levels.
+    #[tool(
+        description = "List World Bank countries with ISO3 codes, regions, income levels, and capital cities. Optional income_group filter: 'hic' (high income), 'mic' (middle income), 'lic' (low income)."
+    )]
+    pub async fn wb_list_countries(
+        &self,
+        Parameters(req): Parameters<WbListCountriesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "wb_list_countries",
+            Some(Self::ontology_anchor("wb_list_countries")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("wb_list_countries".to_string());
+                let result =
+                    worldbank::list_countries(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Browse the World Bank topic tree.
+    #[tool(
+        description = "Browse World Bank topics (e.g., Poverty, Education, Health, Trade, Climate Change). Returns topic IDs and names for use with wb_search_indicators topic_id filter."
+    )]
+    pub async fn wb_list_topics(
+        &self,
+        Parameters(req): Parameters<WbListTopicsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "wb_list_topics",
+            Some(Self::ontology_anchor("wb_list_topics")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("wb_list_topics".to_string());
+                let result =
+                    worldbank::list_topics(&self.http, &req).await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Get metadata for a single World Bank indicator.
+    #[tool(
+        description = "Get World Bank indicator metadata: name, unit, source, description, source organization, and topics. Example: indicator_id='SP.POP.TOTL' for total population."
+    )]
+    pub async fn wb_get_indicator_info(
+        &self,
+        Parameters(req): Parameters<WbGetIndicatorInfoRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "wb_get_indicator_info",
+            Some(Self::ontology_anchor("wb_get_indicator_info")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("wb_get_indicator_info".to_string());
+                let result =
+                    worldbank::get_indicator_info(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )
