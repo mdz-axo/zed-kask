@@ -250,7 +250,11 @@ pub async fn list_categories(
     let key = require_api_key(api_key)?;
     let cat_id = req.category_id.unwrap_or(0);
     let cat_id_str = cat_id.to_string();
-    let url = fred_url("category/children", key, &[("category_id", cat_id_str.as_str())]);
+    let url = fred_url(
+        "category/children",
+        key,
+        &[("category_id", cat_id_str.as_str())],
+    );
     let body = client.fetch(FRED_PROVIDER, &url).await?;
 
     let categories = body
@@ -299,10 +303,7 @@ pub async fn get_release(
     let series_url = fred_url(
         "release/series",
         key,
-        &[
-            ("release_id", release_id_str.as_str()),
-            ("limit", "50"),
-        ],
+        &[("release_id", release_id_str.as_str()), ("limit", "50")],
     );
     let series_body = client.fetch(FRED_PROVIDER, &series_url).await?;
 
@@ -364,8 +365,7 @@ mod tests {
     #[test]
     fn fred_error_classifies_correctly() {
         use hkask_types::McpErrorKind;
-        let e: hkask_mcp_server::server::McpToolError =
-            EconomicDataError::MissingApiKey.into();
+        let e: hkask_mcp_server::server::McpToolError = EconomicDataError::MissingApiKey.into();
         assert_eq!(e.kind, McpErrorKind::InvalidArgument);
 
         let e: hkask_mcp_server::server::McpToolError = EconomicDataError::RequestFailed {

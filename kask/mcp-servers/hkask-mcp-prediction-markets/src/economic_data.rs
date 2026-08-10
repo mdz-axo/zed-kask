@@ -25,7 +25,10 @@ pub enum EconomicDataError {
     #[error("API key not configured")]
     MissingApiKey,
     #[error("{provider} API request failed: {detail}")]
-    RequestFailed { provider: &'static str, detail: String },
+    RequestFailed {
+        provider: &'static str,
+        detail: String,
+    },
     #[error("{provider} API returned HTTP {status}: {body}")]
     HttpError {
         provider: &'static str,
@@ -33,9 +36,15 @@ pub enum EconomicDataError {
         body: String,
     },
     #[error("{provider} API response parse error: {detail}")]
-    ParseError { provider: &'static str, detail: String },
+    ParseError {
+        provider: &'static str,
+        detail: String,
+    },
     #[error("{provider} API error: {detail}")]
-    ApiError { provider: &'static str, detail: String },
+    ApiError {
+        provider: &'static str,
+        detail: String,
+    },
 }
 
 impl From<EconomicDataError> for McpToolError {
@@ -98,15 +107,15 @@ impl<'a> EconomicDataClient<'a> {
         provider: &'static str,
         url: &str,
     ) -> Result<Value, EconomicDataError> {
-        let response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| EconomicDataError::RequestFailed {
-                provider,
-                detail: e.to_string(),
-            })?;
+        let response =
+            self.http
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| EconomicDataError::RequestFailed {
+                    provider,
+                    detail: e.to_string(),
+                })?;
         let status = response.status().as_u16();
         if !response.status().is_success() {
             let body = response.text().await.unwrap_or_default();
@@ -130,6 +139,6 @@ impl<'a> EconomicDataClient<'a> {
 // files in `src/economic_data/` and are declared here. Each owns its
 // request types and response shaping; the shared client/error live above.
 
+pub mod dbnomics;
 pub mod fred;
 pub mod worldbank;
-pub mod dbnomics;

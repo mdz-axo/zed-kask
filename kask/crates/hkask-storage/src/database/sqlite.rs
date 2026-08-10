@@ -78,9 +78,19 @@ impl SqliteDriver {
     /// create a separate in-memory database per connection. A pool size
     /// greater than 1 would scatter writes across independent databases,
     /// breaking read-your-writes semantics for tests.
+    ///
+    /// Runs `core/sql/schema.sql` on each connection so tests get the real
+    /// schema (the same one `Database::sqlite_pool` runs in production). This
+    /// eliminates the divergent `CREATE TABLE IF NOT EXISTS hmems` that test
+    /// helpers previously duplicated with different column sets.
     pub fn in_memory_pool() -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
-        let manager = SqliteConnectionManager::memory()
-            .with_init(|conn| conn.execute_batch("PRAGMA foreign_keys = ON;"));
+        let manager = SqliteConnectionManager::memory().with_init(|conn| {
+            conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            let schema = include_str!("../core/sql/schema.sql");
+            let dim = crate::core::database::embedding_dim();
+            conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;
+            Ok(())
+        });
         Pool::builder().max_size(1).build(manager)
     }
 

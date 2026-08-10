@@ -167,56 +167,20 @@ pub struct HMemStore {
 impl HMemStore {
     /// Create from a DatabaseDriver — provider-agnostic constructor.
     ///
-    /// Schema init failure is propagated rather than swallowed — proceeding
-    /// with a missing `hmems` table would surface as confusing "no such table"
-    /// errors on every subsequent query.
+    /// The `hmems` table schema is owned by `core/sql/schema.sql`, which
+    /// `Database::sqlite_pool` runs on every pool creation (file and
+    /// in-memory). This constructor does NOT re-create the table — doing so
+    /// would duplicate the schema and drift (the prior `CREATE TABLE IF NOT
+    /// EXISTS` here declared `recalled_at TEXT` nullable while `schema.sql`
+    /// declared it `NOT NULL DEFAULT`, and the `IF NOT EXISTS` no-op meant
+    /// the live schema depended on which ran first).
     pub fn from_driver(
         driver: Arc<dyn crate::database::driver::DatabaseDriver>,
     ) -> Result<Self, InfrastructureError> {
-        let store = Self {
+        Ok(Self {
             driver,
             encryptor: None,
-        };
-        store.driver().execute_batch(
-            "CREATE TABLE IF NOT EXISTS hmems (
-                id TEXT PRIMARY KEY,
-                entity TEXT NOT NULL,
-                attribute TEXT NOT NULL,
-                value TEXT NOT NULL,
-                valid_from TEXT NOT NULL,
-                valid_to TEXT,
-                recalled_at TEXT,
-                confidence REAL NOT NULL DEFAULT 1.0,
-                perspective TEXT,
-                visibility TEXT NOT NULL DEFAULT 'private',
-                owner_webid TEXT NOT NULL,
-                ontology TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_hmems_entity ON hmems(entity);
-            CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
-            CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);",
-        )?;
-        // Add the `ontology` column to legacy `hmems` tables created before
-        // the column existed. `CREATE TABLE IF NOT EXISTS` is a no-op on an
-        // existing table, so a database created under the old schema keeps
-        // the old column set and every insert/query touching `ontology`
-        // fails with "table hmems has no column named ontology". Inspect the
-        // live schema and `ALTER TABLE ... ADD COLUMN` if missing. Existing
-        // rows get SQL NULL for `ontology`, which `row_to_h_mem` reads as
-        // `None` (unclassified legacy h_mem) — the correct interpretation.
-        let rows = store.driver().query(
-            "SELECT name FROM pragma_table_info('hmems')",
-            &[],
-        )?;
-        let has_ontology = rows
-            .iter()
-            .any(|row| row.get_str(0).ok() == Some("ontology"));
-        if !has_ontology {
-            store.driver().execute_batch(
-                "ALTER TABLE hmems ADD COLUMN ontology TEXT",
-            )?;
-        }
-        Ok(store)
+        })
     }
 
     /// Attach an encryptor for value encryption (passphrase-derived).
@@ -295,7 +259,7 @@ impl HMemStore {
                 attribute: row.get(2)?.as_text()?.to_string(),
                 value: value_text,
                 valid_from: row.get(4)?.as_text()?.to_string(),
-                recalled_at: row.get(6)?.as_text()?.to_string(),
+                recalled_at: row.get(6)?.as_text().ok().unwrap_or_default().to_string(),
                 confidence: Confidence::new(row.get(7)?.as_real()?),
                 perspective: row.get(8)?.as_text().ok().and_then(|s| s.parse().ok()),
                 visibility: match row.get(9)?.as_text().unwrap_or("private") {
@@ -516,68 +480,67 @@ impl HMemStore {
     ) -> Result<(), HMemError> {
         let new_confidence = new_confidence.into();
         let now = now_rfc3339();
-        self.driver
-            .execute_batch("BEGIN")
-            .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        let result = (|| -> Result<(), HMemError> {
-            self.driver
-                .execute(
-                    "UPDATE hmems SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
-                    &[DbValue::Text(now.clone()), DbValue::Text(id.to_string())],
-                )
-                .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-            let rows = self.driver.query(
-                "SELECT entity, attribute, perspective, visibility, owner_webid, ontology FROM hmems WHERE id = ?1",
-                &[DbValue::Text(id.to_string())],
-            ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-            let row = rows.first().ok_or_else(|| {
-                HMemError::NotFound(NotFound {
-                    entity_type: "h_mem".to_string(),
-                    id: id.to_string(),
-                })
-            })?;
-            let entity = row.get(0)?.as_text()?.to_string();
-            let attribute = row.get(1)?.as_text()?.to_string();
-            let perspective: Option<String> = row.get(2)?.as_text().ok().map(|s| s.to_string());
-            let visibility = row.get(3)?.as_text()?.to_string();
-            let owner_webid = row.get(4)?.as_text()?.to_string();
-            let ontology: Option<String> = row.get(5)?.as_text().ok().map(|s| s.to_string());
-            let new_id = HMemId::new();
-            self.driver.execute(
-                &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
-                &[
-                    DbValue::Text(new_id.to_string()), DbValue::Text(entity), DbValue::Text(attribute),
-                    DbValue::Text(serde_json::to_string(&new_value)?), DbValue::Text(now.clone()),
-                    DbValue::Null, DbValue::Text(now.clone()),
-                    DbValue::Real(new_confidence.value()),
-                    perspective.map_or(DbValue::Null, DbValue::Text),
-                    DbValue::Text(visibility), DbValue::Text(owner_webid),
-                    ontology.map_or(DbValue::Null, DbValue::Text),
-                ],
-            ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-            Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                self.driver
-                    .execute_batch("COMMIT")
-                    .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-                Ok(())
-            }
-            Err(e) => {
-                if let Err(rb_err) = self.driver.execute_batch("ROLLBACK") {
-                    tracing::warn!(
-                        target: "reg.storage",
-                        error = %rb_err,
-                        original_error = %e,
-                        "ROLLBACK failed after transaction error — \
-                         the connection may be in an uncommitted state. \
-                         Subsequent transactions on this pooled connection may fail."
-                    );
-                }
-                Err(e)
-            }
-        }
+        // Hold a single pooled connection for the entire transaction. The
+        // prior `execute_batch("BEGIN")` / `execute()` / `execute_batch("COMMIT")
+        // pattern acquired a different pool connection per call, so the
+        // writes ran outside any transaction (autocommit on conns B/C, COMMIT
+        // was a no-op on conn D). A crash between the UPDATE (close old
+        // version) and INSERT (new version) left the row closed with no
+        // replacement — silent data loss under `max_size > 1`.
+        let pool = self.driver.sqlite_pool().ok_or_else(|| {
+            HMemError::Infra(InfrastructureError::database(
+                "HMemStore::update requires a SqliteDriver",
+            ))
+        })?;
+        let mut conn = pool.get().map_err(|e| {
+            HMemError::Infra(InfrastructureError::database(e.to_string()))
+        })?;
+        let tx = conn.transaction().map_err(|e| {
+            HMemError::Infra(InfrastructureError::database(e.to_string()))
+        })?;
+        // Close the old version (set valid_to).
+        tx.execute(
+            "UPDATE hmems SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
+            rusqlite::params![now, id.to_string()],
+        ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        // Read the old version's metadata to carry into the new version.
+        let row = tx.query_row(
+            "SELECT entity, attribute, perspective, visibility, owner_webid, ontology FROM hmems WHERE id = ?1",
+            rusqlite::params![id.to_string()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        let (entity, attribute, perspective, visibility, owner_webid, ontology) = row;
+        let new_id = HMemId::new();
+        tx.execute(
+            &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
+            rusqlite::params![
+                new_id.to_string(),
+                entity,
+                attribute,
+                serde_json::to_string(&new_value)?,
+                now,
+                Option::<String>::None,
+                now,
+                new_confidence.value(),
+                perspective,
+                visibility,
+                owner_webid,
+                ontology,
+            ],
+        ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        tx.commit().map_err(|e| {
+            HMemError::Infra(InfrastructureError::database(e.to_string()))
+        })?;
+        Ok(())
     }
     /// Get a h_mem by ID.
     ///
@@ -955,20 +918,7 @@ mod tests {
     use crate::database::value::DbValue;
     fn make_store() -> HMemStore {
         let driver = SqliteDriver::in_memory_driver();
-        let store = HMemStore::from_driver(driver).expect("hmem store init");
-        store
-            .driver()
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS hmems (
-                    id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
-                    value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-                    recalled_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
-                    owner_webid TEXT NOT NULL, ontology TEXT
-                )",
-            )
-            .expect("create hmems table");
-        store
+        HMemStore::from_driver(driver).expect("hmem store init")
     }
     //
     // Before fix, a corrupt valid_from was silently replaced with Utc::now(),
@@ -1024,68 +974,6 @@ mod tests {
         let missing = HMemId::new();
         let result = store.get_by_id(&missing).unwrap();
         assert!(result.is_none());
-    }
-
-    #[test]
-    fn from_driver_adds_ontology_column_to_legacy_table() {
-        // Reproduce the production warning: a database created under the
-        // pre-ontology schema has a `hmems` table with no `ontology` column.
-        // `from_driver` must add the column in-place so inserts/queries
-        // referencing `ontology` stop failing with "no column named ontology".
-        let driver = SqliteDriver::in_memory_driver();
-        driver
-            .execute_batch(
-                "CREATE TABLE hmems (
-                    id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
-                    value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-                    recalled_at TEXT, confidence REAL NOT NULL DEFAULT 1.0,
-                    perspective TEXT, visibility TEXT NOT NULL DEFAULT 'private',
-                    owner_webid TEXT NOT NULL
-                );",
-            )
-            .expect("create legacy hmems table");
-        let webid = WebID::new();
-        let id = HMemId::new();
-        driver
-            .execute(
-                "INSERT INTO hmems (id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, NULL, ?8, ?9)",
-                &[
-                    DbValue::Text(id.to_string()),
-                    DbValue::Text("legacy-entity".into()),
-                    DbValue::Text("attr".into()),
-                    DbValue::Text(serde_json::to_string(&serde_json::json!("val")).unwrap()),
-                    DbValue::Text(now_rfc3339()),
-                    DbValue::Text(now_rfc3339()),
-                    DbValue::Real(1.0),
-                    DbValue::Text("private".into()),
-                    DbValue::Text(webid.to_string()),
-                ],
-            )
-            .expect("insert legacy row");
-
-        // Construct the store from the SAME driver so the in-memory DB
-        // persists — `from_driver` must migrate the legacy table forward.
-        let store = HMemStore::from_driver(driver).expect("migrate legacy store");
-
-        // The legacy row survives and is queryable, with `ontology` as None.
-        let h_mems = store
-            .query_by_entity("legacy-entity")
-            .expect("query after migration");
-        assert_eq!(h_mems.len(), 1, "legacy row should survive migration");
-        assert!(
-            h_mems[0].ontology.is_none(),
-            "migrated legacy row should have no ontology blob"
-        );
-
-        // A new insert that sets an ontology blob must succeed — the column
-        // is now present and the production warning must not recur.
-        let new_h_mem =
-            HMem::new("post-migration", "attr", serde_json::json!("v"), WebID::new())
-                .with_ontology(HMemOntology::default());
-        store
-            .insert(&new_h_mem)
-            .expect("insert with ontology after migration");
     }
 
     #[test]

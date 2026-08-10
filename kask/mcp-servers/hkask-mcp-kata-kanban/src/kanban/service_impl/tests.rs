@@ -7,21 +7,7 @@ use hkask_types::id::BoardId;
 
 fn make_store() -> HMemStore {
     let driver = hkask_storage::database::sqlite::SqliteDriver::in_memory_driver();
-    let store = HMemStore::from_driver(driver).expect("hmem store init");
-    store
-        .driver()
-        .execute_batch(
-            "CREATE TABLE IF NOT EXISTS hmems (
-                id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
-                value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-                recalled_at TEXT NOT NULL DEFAULT (datetime('now')),
-                confidence REAL NOT NULL, perspective TEXT, visibility TEXT NOT NULL,
-                owner_webid TEXT NOT NULL,
-                ontology TEXT
-            )",
-        )
-        .unwrap();
-    store
+    HMemStore::from_driver(driver).expect("hmem store init")
 }
 
 fn make_default_columns() -> Vec<ColumnDef> {

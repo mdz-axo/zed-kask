@@ -113,9 +113,8 @@ pub async fn search_indicators(
         // inline rather than via wb_url.
         let topic_id_str = topic_id.to_string();
         let per_page = limit.to_string();
-        let url = format!(
-            "{WB_API_BASE}/topic/{topic_id_str}/indicator?format=json&per_page={per_page}"
-        );
+        let url =
+            format!("{WB_API_BASE}/topic/{topic_id_str}/indicator?format=json&per_page={per_page}");
         let body = client.fetch(WB_PROVIDER, &url).await?;
 
         let data = wb_extract_data(&body)?;

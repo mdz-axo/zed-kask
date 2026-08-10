@@ -105,10 +105,12 @@ impl BackupArchive {
                     value TEXT NOT NULL,
                     valid_from TEXT NOT NULL,
                     valid_to TEXT,
+                    recalled_at TEXT,
                     confidence REAL NOT NULL DEFAULT 1.0,
                     perspective TEXT,
                     visibility TEXT NOT NULL DEFAULT 'private',
-                    owner_webid TEXT NOT NULL
+                    owner_webid TEXT NOT NULL,
+                    ontology TEXT
                 );",
             )
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
@@ -182,7 +184,7 @@ impl BackupArchive {
             .get()
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM hmems", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM h_mems", [], |row| row.get(0))
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
         Ok(count)
     }
@@ -199,26 +201,37 @@ impl BackupArchive {
     ) -> Result<MigrationReceipt, ArchiveError> {
         let rows = self.read_triples()?;
         let total = rows.len() as i64;
-        let driver = target.driver();
-        for row in rows {
-            let owner = owner_webid.to_string();
-            driver.execute(
-                "INSERT OR REPLACE INTO hmems (id, entity, attribute, value, valid_from, valid_to, confidence, perspective, visibility, owner_webid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                &[
-                    DbValue::Text(row.id),
-                    DbValue::Text(row.entity),
-                    DbValue::Text(row.attribute),
-                    DbValue::Text(row.value),
-                    DbValue::Text(row.valid_from),
-                    row.valid_to.map_or(DbValue::Null, DbValue::Text),
-                    DbValue::Real(row.confidence),
-                    row.perspective.map_or(DbValue::Null, DbValue::Text),
-                    DbValue::Text(row.visibility),
-                    DbValue::Text(owner),
+        // Hold a single pooled connection for the entire import so the target
+        // is either fully imported or unchanged. The prior per-row
+        // `driver.execute()` pattern acquired a separate pool connection per
+        // row (autocommit), so a failure mid-loop left the target half-imported.
+        let pool = target.driver().sqlite_pool().ok_or_else(|| {
+            ArchiveError::Database("restore_into requires a SqliteDriver".to_string())
+        })?;
+        let mut conn = pool.get().map_err(|e| ArchiveError::Database(e.to_string()))?;
+        let tx = conn.transaction().map_err(|e| ArchiveError::Database(e.to_string()))?;
+        let owner = owner_webid.to_string();
+        for row in &rows {
+            tx.execute(
+                "INSERT OR REPLACE INTO hmems (id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![
+                    row.id,
+                    row.entity,
+                    row.attribute,
+                    row.value,
+                    row.valid_from,
+                    row.valid_to,
+                    row.recalled_at,
+                    row.confidence,
+                    row.perspective,
+                    row.visibility,
+                    owner,
+                    row.ontology,
                 ],
-            )?;
+            ).map_err(|e| ArchiveError::Database(e.to_string()))?;
         }
+        tx.commit().map_err(|e| ArchiveError::Database(e.to_string()))?;
         Ok(MigrationReceipt {
             triple_count: total,
         })
@@ -230,7 +243,7 @@ impl BackupArchive {
             .get()
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
         let mut stmt = conn.prepare(
-            "SELECT id, entity, attribute, value, valid_from, valid_to, confidence, perspective, visibility, owner_webid FROM hmems",
+            "SELECT id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology FROM h_mems",
         )
         .map_err(|e| ArchiveError::Database(e.to_string()))?;
         stmt.query_map([], |row| {
@@ -241,10 +254,12 @@ impl BackupArchive {
                 value: row.get(3)?,
                 valid_from: row.get(4)?,
                 valid_to: row.get(5)?,
-                confidence: row.get(6)?,
-                perspective: row.get(7)?,
-                visibility: row.get(8)?,
-                owner_webid: row.get(9)?,
+                recalled_at: row.get(6)?,
+                confidence: row.get(7)?,
+                perspective: row.get(8)?,
+                visibility: row.get(9)?,
+                owner_webid: row.get(10)?,
+                ontology: row.get(11)?,
             })
         })
         .map_err(|e| ArchiveError::Database(e.to_string()))?
@@ -260,7 +275,7 @@ impl BackupArchive {
         let driver = source.driver();
         let rows: Vec<HMemRow> = driver
             .query(
-                "SELECT id, entity, attribute, value, valid_from, valid_to, confidence, perspective, visibility, owner_webid
+                "SELECT id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology
                  FROM hmems WHERE owner_webid = ?1",
                 &[DbValue::Text(webid_str)],
             )?
@@ -273,10 +288,12 @@ impl BackupArchive {
                     value: row.get(3)?.as_text()?.to_string(),
                     valid_from: row.get(4)?.as_text()?.to_string(),
                     valid_to: row.get(5)?.as_text().ok().map(|s| s.to_string()),
-                    confidence: row.get(6)?.as_real()?,
-                    perspective: row.get(7)?.as_text().ok().map(|s| s.to_string()),
-                    visibility: row.get(8)?.as_text()?.to_string(),
-                    owner_webid: row.get(9)?.as_text()?.to_string(),
+                    recalled_at: row.get(6)?.as_text().ok().map(|s| s.to_string()),
+                    confidence: row.get(7)?.as_real()?,
+                    perspective: row.get(8)?.as_text().ok().map(|s| s.to_string()),
+                    visibility: row.get(9)?.as_text()?.to_string(),
+                    owner_webid: row.get(10)?.as_text()?.to_string(),
+                    ontology: row.get(11)?.as_text().ok().map(|s| s.to_string()),
                 })
             })
             .collect::<Result<Vec<_>, DbError>>()?;
@@ -289,8 +306,8 @@ impl BackupArchive {
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
         for row in &rows {
             archive_conn.execute(
-                "INSERT INTO hmems (id, entity, attribute, value, valid_from, valid_to, confidence, perspective, visibility, owner_webid)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO h_mems (id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid, ontology)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 rusqlite::params![
                     row.id,
                     row.entity,
@@ -298,10 +315,12 @@ impl BackupArchive {
                     row.value,
                     row.valid_from,
                     row.valid_to,
+                    row.recalled_at,
                     row.confidence,
                     row.perspective,
                     row.visibility,
                     row.owner_webid,
+                    row.ontology,
                 ],
             )
             .map_err(|e| ArchiveError::Database(e.to_string()))?;
@@ -316,10 +335,12 @@ struct HMemRow {
     value: String,
     valid_from: String,
     valid_to: Option<String>,
+    recalled_at: Option<String>,
     confidence: f64,
     perspective: Option<String>,
     visibility: String,
     owner_webid: String,
+    ontology: Option<String>,
 }
 #[cfg(test)]
 mod tests {
@@ -341,17 +362,19 @@ mod tests {
         for i in 0..3 {
             driver
                 .execute(
-                    "INSERT INTO hmems (id, entity, attribute, value, valid_from, confidence, visibility, owner_webid)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    "INSERT INTO hmems (id, entity, attribute, value, valid_from, recalled_at, confidence, visibility, owner_webid, ontology)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     &[
                         DbValue::Text(format!("triple-{}", i)),
                         DbValue::Text("test:entity".to_string()),
                         DbValue::Text("test:attribute".to_string()),
                         DbValue::Text(format!("value-{}", i)),
                         DbValue::Text("2024-01-01T00:00:00Z".to_string()),
+                        DbValue::Text("2024-01-02T00:00:00Z".to_string()),
                         DbValue::Real(1.0),
                         DbValue::Text("private".to_string()),
                         DbValue::Text(webid.to_string()),
+                        DbValue::Text(format!("{{\"pko_procedure\":\"proc-{}\"}}", i)),
                     ],
                 )
                 .expect("insert");
@@ -442,6 +465,51 @@ mod tests {
             .and_then(|r| r.get(0).ok()?.as_int().ok())
             .unwrap_or(0);
         assert_eq!(count, 3, "target should have imported triples");
+    }
+
+    #[test]
+    fn export_and_restore_preserves_ontology_and_recalled_at() {
+        // The archive `h_mems` table and the live `hmems` table must share
+        // the same column set. Before the fix, the archive dropped `ontology`
+        // and `recalled_at` on export, silently losing ontological anchoring
+        // and recall timestamps. This test pins the round-trip of both.
+        let (source_store, archive_path, webid) = setup_h_mem_store();
+        BackupArchive::create(
+            archive_path.clone(),
+            "test-passphrase-123",
+            &source_store,
+            &webid,
+            "https://test.example",
+        )
+        .expect("create");
+        let archive = BackupArchive::open(archive_path, "test-passphrase-123").expect("open");
+
+        let pool = SqliteDriver::in_memory_pool().expect("pool");
+        let driver: Arc<dyn crate::database::driver::DatabaseDriver> =
+            Arc::new(SqliteDriver::new(pool));
+        let target = HMemStore::from_driver(driver).expect("hmem store init");
+        archive.restore_into(&target, &webid).expect("restore");
+
+        let driver = target.driver();
+        let rows = driver
+            .query(
+                "SELECT ontology, recalled_at FROM hmems WHERE owner_webid = ?1 ORDER BY id",
+                &[DbValue::Text(webid.to_string())],
+            )
+            .expect("query");
+        assert_eq!(rows.len(), 3, "all triples restored");
+        for (i, row) in rows.iter().enumerate() {
+            let ontology = row.get(0).ok().and_then(|v| v.as_text().ok()).unwrap_or("");
+            let recalled_at = row.get(1).ok().and_then(|v| v.as_text().ok()).unwrap_or("");
+            assert!(
+                ontology.contains(&format!("proc-{}", i)),
+                "ontology blob for triple-{i} should survive export+restore, got: {ontology}"
+            );
+            assert_eq!(
+                recalled_at, "2024-01-02T00:00:00Z",
+                "recalled_at should survive export+restore"
+            );
+        }
     }
 
     #[test]

@@ -23,8 +23,8 @@
 //! 3. A composite score computation (weighted sum: +good habits, -warning signs)
 //! 4. Red flag / green flag classification
 
-use hkask_types::template::LLMParameters;
 use hkask_types::InferencePort;
+use hkask_types::template::LLMParameters;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -231,7 +231,9 @@ fn build_scoring_prompt(
         ));
     }
 
-    prompt.push_str("\nRespond with ONLY a JSON object (no markdown, no explanation) in this exact format:\n");
+    prompt.push_str(
+        "\nRespond with ONLY a JSON object (no markdown, no explanation) in this exact format:\n",
+    );
     prompt.push_str(r#"{"eqm_id": score, "eqm_id": score, ...}"#);
     prompt.push_str("\n\nExample: {\"statistical_reasoning\": 2, \"gut_based\": 0, ...}\n");
 
@@ -358,11 +360,7 @@ pub async fn score_rationale(
 }
 
 /// Build a human-readable interpretation of the EQM scores.
-fn build_interpretation(
-    composite: &f64,
-    red_flags: &[String],
-    green_flags: &[String],
-) -> String {
+fn build_interpretation(composite: &f64, red_flags: &[String], green_flags: &[String]) -> String {
     let mut parts = Vec::new();
 
     if *composite >= 6.0 {
@@ -398,8 +396,14 @@ mod tests {
 
     #[test]
     fn key_eqms_have_6_helps_and_6_hurts() {
-        let helps = KEY_EQMS.iter().filter(|e| e.direction == EqmDirection::Helps).count();
-        let hurts = KEY_EQMS.iter().filter(|e| e.direction == EqmDirection::Hurts).count();
+        let helps = KEY_EQMS
+            .iter()
+            .filter(|e| e.direction == EqmDirection::Helps)
+            .count();
+        let hurts = KEY_EQMS
+            .iter()
+            .filter(|e| e.direction == EqmDirection::Hurts)
+            .count();
         assert_eq!(helps, 6);
         assert_eq!(hurts, 6);
         assert_eq!(KEY_EQMS.len(), 12);
@@ -409,11 +413,13 @@ mod tests {
     fn composite_score_range_is_correct() {
         // 6 helps × max 2 = +12, 6 hurts × max 2 = -12
         // Range: [-12, +12]
-        let max_positive: f64 = KEY_EQMS.iter()
+        let max_positive: f64 = KEY_EQMS
+            .iter()
             .filter(|e| e.direction == EqmDirection::Helps)
             .map(|_| 2.0)
             .sum();
-        let max_negative: f64 = KEY_EQMS.iter()
+        let max_negative: f64 = KEY_EQMS
+            .iter()
             .filter(|e| e.direction == EqmDirection::Hurts)
             .map(|_| 2.0)
             .sum();
@@ -423,11 +429,20 @@ mod tests {
 
     #[test]
     fn build_interpretation_classifies_correctly() {
-        assert!(build_interpretation(&8.0, &[], &["Statistical Reasoning".into()]).contains("Strong"));
+        assert!(
+            build_interpretation(&8.0, &[], &["Statistical Reasoning".into()]).contains("Strong")
+        );
         assert!(build_interpretation(&3.0, &[], &[]).contains("Adequate"));
         assert!(build_interpretation(&0.0, &[], &[]).contains("Mixed"));
         assert!(build_interpretation(&-3.0, &["Gut Based".into()], &[]).contains("Weak"));
-        assert!(build_interpretation(&-8.0, &["Gut Based".into(), "Confirmation Bias".into()], &[]).contains("Poor"));
+        assert!(
+            build_interpretation(
+                &-8.0,
+                &["Gut Based".into(), "Confirmation Bias".into()],
+                &[]
+            )
+            .contains("Poor")
+        );
     }
 
     #[test]
@@ -435,7 +450,10 @@ mod tests {
         let interp = build_interpretation(
             &5.0,
             &["Extreme Confidence".to_string()],
-            &["Statistical Reasoning".to_string(), "Fact Based".to_string()],
+            &[
+                "Statistical Reasoning".to_string(),
+                "Fact Based".to_string(),
+            ],
         );
         assert!(interp.contains("strengths: Statistical Reasoning, Fact Based"));
         assert!(interp.contains("red flags: Extreme Confidence"));
@@ -443,10 +461,22 @@ mod tests {
 
     #[test]
     fn scoring_prompt_includes_all_eqms() {
-        let prompt = build_scoring_prompt("test rationale", Some(0.65), Some("Will AI surpass human coding by 2027?"));
+        let prompt = build_scoring_prompt(
+            "test rationale",
+            Some(0.65),
+            Some("Will AI surpass human coding by 2027?"),
+        );
         for eqm in KEY_EQMS {
-            assert!(prompt.contains(eqm.id), "prompt should contain EQM id: {}", eqm.id);
-            assert!(prompt.contains(eqm.name), "prompt should contain EQM name: {}", eqm.name);
+            assert!(
+                prompt.contains(eqm.id),
+                "prompt should contain EQM id: {}",
+                eqm.id
+            );
+            assert!(
+                prompt.contains(eqm.name),
+                "prompt should contain EQM name: {}",
+                eqm.name
+            );
         }
         assert!(prompt.contains("0.65"));
         assert!(prompt.contains("Will AI surpass human coding by 2027?"));
@@ -471,10 +501,12 @@ mod tests {
         let e: hkask_mcp_server::server::McpToolError = EqmError::EmptyRationale.into();
         assert_eq!(e.kind, McpErrorKind::InvalidArgument);
 
-        let e: hkask_mcp_server::server::McpToolError = EqmError::InferenceFailed("timeout".into()).into();
+        let e: hkask_mcp_server::server::McpToolError =
+            EqmError::InferenceFailed("timeout".into()).into();
         assert_eq!(e.kind, McpErrorKind::Unavailable);
 
-        let e: hkask_mcp_server::server::McpToolError = EqmError::ParseError("bad json".into()).into();
+        let e: hkask_mcp_server::server::McpToolError =
+            EqmError::ParseError("bad json".into()).into();
         assert_eq!(e.kind, McpErrorKind::Internal);
     }
 }
