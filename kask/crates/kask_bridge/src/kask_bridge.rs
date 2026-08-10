@@ -30,6 +30,9 @@ pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
 /// types.
 pub use hkask_inference::{InferenceConfig, MediaRouter};
+/// Re-exported so the settings UI can display the resolved default data
+/// directory without a direct `hkask-types` dependency.
+pub use hkask_types::agent_paths::resolve_data_dir;
 pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, provision_agent,
     webid_from_username,

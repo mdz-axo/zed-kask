@@ -3275,7 +3275,7 @@ impl hkask_types::SkillExecPort for AgentSkillExec {
             // `From<String>` conversion (into `SkillExecError::Failed`) bridges
             // that into the typed `SkillExecError` without an upstream change.
             executor
-                .execute_skill(&name, context)
+                .execute_skill(&name, context, None)
                 .await
                 .map_err(Into::into)
         })

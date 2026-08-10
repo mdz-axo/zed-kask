@@ -34,6 +34,15 @@ use collections::HashMap;
 /// deserializes `SettingsContent` and converts via `From`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, RegisterSetting)]
 pub struct KaskSettings {
+    /// Kask data directory — the root for all kask databases, agent state,
+    /// and file-based stores. When empty, `mcp_env()` resolves a default
+    /// via `hkask_types::agent_paths::resolve_data_dir()` (HKASK_DATA_DIR
+    /// env var → XDG_DATA_HOME/hkask → ~/.local/share/hkask) and injects
+    /// it as `HKASK_DATA_DIR` for every MCP server. This ensures servers
+    /// always receive a consistent data directory without requiring the
+    /// operator to set environment variables manually.
+    pub data_dir: String,
+
     /// MCP server configuration — which of the 12 built-in servers to load.
     pub mcp: KaskMcpSettings,
 
@@ -688,12 +697,21 @@ impl KaskSettings {
     pub fn mcp_env(&self) -> std::collections::HashMap<String, String> {
         let mut env = std::collections::HashMap::new();
 
-        // Pass the hKask data directory to all MCP servers so they resolve
-        // agent paths under the same root as the parent process. This is
-        // read by `resolve_under_data_dir` in `agent_paths.rs`.
-        if let Ok(data_dir) = std::env::var("HKASK_DATA_DIR") {
-            env.insert("HKASK_DATA_DIR".to_string(), data_dir);
-        }
+        // Always inject HKASK_DATA_DIR so every MCP server can resolve
+        // paths consistently. Priority: settings field → env var → resolved
+        // platform default. Without this, servers that fall back to
+        // `resolve_under_data_dir` may get an empty HKASK_DATA_DIR and resolve
+        // to different paths depending on the launch context.
+        let data_dir = if !self.data_dir.is_empty() {
+            self.data_dir.clone()
+        } else {
+            std::env::var("HKASK_DATA_DIR").unwrap_or_else(|_| {
+                hkask_types::agent_paths::resolve_data_dir()
+                    .to_string_lossy()
+                    .to_string()
+            })
+        };
+        env.insert("HKASK_DATA_DIR".to_string(), data_dir);
 
         // Map the curator's WebID (stashed in `HKASK_CURATOR_WEBID` by the
         // deferred task) to `HKASK_WEBID` so the curator MCP server picks it
@@ -1307,6 +1325,7 @@ impl From<settings_content::KaskCollabSettingsContent> for KaskCollabSettings {
 impl From<KaskSettingsContent> for KaskSettings {
     fn from(c: KaskSettingsContent) -> Self {
         Self {
+            data_dir: c.data_dir.unwrap_or_default(),
             mcp: c.mcp.map(Into::into).unwrap_or_default(),
             data_services: c.data_services.map(Into::into).unwrap_or_default(),
             curator: c.curator.map(Into::into).unwrap_or_default(),
@@ -1643,7 +1662,9 @@ mod tests {
     // `Default` changed, the comparison would drift and emit env vars for the
     // default case. Now `mcp_env()` reads from `Default::default()`, so changing
     // `Default` automatically updates the comparison. This test pins that: a
-    // `KaskSettings::default()` (all defaults) produces an empty `mcp_env()`.
+    // `KaskSettings::default()` (all defaults) does not emit per-server config
+    // vars. `HKASK_DATA_DIR` is always emitted (it is a kask-wide critical
+    // path, not a per-server toggle) — see `mcp_env_always_emits_data_dir`.
     #[test]
     fn mcp_env_emits_nothing_for_default_settings() {
         let settings = KaskSettings::default();
@@ -1674,6 +1695,40 @@ mod tests {
         assert!(
             !env.contains_key("HKASK_CONDENSE_SALIENCY_WINDOW"),
             "default saliency_window must not be emitted"
+        );
+    }
+
+    // `HKASK_DATA_DIR` is a kask-wide critical path — it must ALWAYS be
+    // injected by `mcp_env()` so every MCP server can resolve databases
+    // consistently, even when the operator never set the env var or the
+    // settings field. The resolved default comes from
+    // `hkask_types::agent_paths::resolve_data_dir()`.
+    #[test]
+    fn mcp_env_always_emits_data_dir() {
+        let settings = KaskSettings::default();
+        let env = settings.mcp_env();
+        assert!(
+            env.contains_key("HKASK_DATA_DIR"),
+            "HKASK_DATA_DIR must always be emitted — without it, MCP servers \
+             cannot resolve database paths consistently"
+        );
+        let dir = env.get("HKASK_DATA_DIR").unwrap();
+        assert!(
+            !dir.is_empty(),
+            "HKASK_DATA_DIR must resolve to a non-empty path even for default settings"
+        );
+    }
+
+    // When the operator sets `data_dir` in settings, `mcp_env()` must use
+    // that value instead of the env var or resolved default.
+    #[test]
+    fn mcp_env_data_dir_setting_overrides_env() {
+        let mut settings = KaskSettings::default();
+        settings.data_dir = "/custom/kask/data".to_string();
+        let env = settings.mcp_env();
+        assert_eq!(
+            env.get("HKASK_DATA_DIR").map(String::as_str),
+            Some("/custom/kask/data")
         );
     }
 

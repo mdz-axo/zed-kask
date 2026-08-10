@@ -6823,6 +6823,24 @@ impl ToolCallEventStream {
             .update_tool_call_fields(&self.tool_call_id, fields, None);
     }
 
+    /// Create a progress sender that emits thinking-trace events to the UI.
+    ///
+    /// The returned callback is `Send + Sync` (it wraps an `mpsc::UnboundedSender`,
+    /// not the `ToolCallEventStream` itself), so it can be passed into async
+    /// cascade execution on a background tokio executor. Each call sends an
+    /// `AgentThinking` event that appears as a thinking trace in the agent UI.
+    ///
+    /// This is the bridge between the tool's event stream and the hKask
+    /// `ManifestExecutor`'s progress callback. Without it, the cascade runs
+    /// silently — the user sees nothing until the final result, and cannot
+    /// steer or cancel mid-cascade. User sovereignty requires visibility.
+    pub fn thinking_sender(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
+        let stream = self.stream.clone();
+        Arc::new(move |text: &str| {
+            stream.send_thinking(text);
+        })
+    }
+
     pub fn update_fields_with_meta(
         &self,
         fields: acp::ToolCallUpdateFields,

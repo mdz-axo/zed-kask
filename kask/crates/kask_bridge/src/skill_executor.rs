@@ -175,6 +175,7 @@ impl BridgeManifestExecutor {
         &self,
         skill_name: &str,
         mut context: HashMap<String, Value>,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<HashMap<String, Value>, String> {
         let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
@@ -196,7 +197,7 @@ impl BridgeManifestExecutor {
         // Inject model defaults (same as execute_skill).
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor();
+        let executor = self.build_executor(progress);
 
         let join_handle = self.tokio_handle.spawn(async move {
             executor
@@ -217,6 +218,7 @@ impl BridgeManifestExecutor {
         &self,
         manifest: &hkask_templates::BundleManifest,
         mut context: HashMap<String, Value>,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<HashMap<String, Value>, String> {
         // Enforce the same `is_skill()` guard as `run_manifest_cascade` — the
         // inline refine manifest is hardcoded (not user-supplied) so this is
@@ -232,7 +234,7 @@ impl BridgeManifestExecutor {
 
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor();
+        let executor = self.build_executor(progress);
 
         let join_handle = self.tokio_handle.spawn({
             let manifest = manifest.clone();
@@ -256,10 +258,11 @@ impl BridgeManifestExecutor {
         &self,
         manifest: &hkask_templates::BundleManifest,
         mut context: HashMap<String, Value>,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<String, String> {
         self.inject_model_defaults(&mut context);
 
-        let executor = self.build_executor();
+        let executor = self.build_executor(progress);
 
         let join_handle = self.tokio_handle.spawn({
             let manifest = manifest.clone();
@@ -273,7 +276,8 @@ impl BridgeManifestExecutor {
 
         let result = join_handle
             .await
-            .map_err(|e| format!("Composed manifest execution task failed: {e}"))??;
+            .map_err(|e| format!("Composed manifest execution task failed: {e}"))?
+            .map_err(|e| format!("Composed manifest execution failed: {e}"))?;
 
         Ok(extract_final_step_result(&result))
     }
@@ -350,7 +354,10 @@ impl BridgeManifestExecutor {
     /// `reg.guard.runtime_policy` span and Block/RequireHuman enforcement
     /// are dead code — `runtime_policy` stays `None` and untrusted input flows
     /// to Sink tools unchecked (OWASP LLM06, RR-0053).
-    fn build_executor(&self) -> ManifestExecutor {
+    fn build_executor(
+        &self,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    ) -> ManifestExecutor {
         let executor = ManifestExecutor::new(
             self.inference.clone(),
             self.tools.clone(),
@@ -361,11 +368,17 @@ impl BridgeManifestExecutor {
             hkask_regulation::DefaultPolicy::default(),
         ));
 
-        if let Some(ref resolver) = self.profile_resolver {
+        let executor = if let Some(ref resolver) = self.profile_resolver {
             let resolver = resolver.clone();
             executor.with_terminal_check(std::sync::Arc::new(move || {
                 resolver.is_tool_enabled("terminal")
             }))
+        } else {
+            executor
+        };
+
+        if let Some(progress) = progress {
+            executor.with_progress(progress)
         } else {
             executor
         }
@@ -476,6 +489,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         &self,
         skill_name: &str,
         mut context: HashMap<String, Value>,
+        progress: Option<agent::CascadeProgress>,
     ) -> Result<String, String> {
         // Load the manifest FIRST so we can validate the caller-supplied context
         // against its declared `inputs` (Layer A) before injecting runtime
@@ -567,7 +581,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // 2. HKASK_* env vars (.env file) — via model_constants functions
         // 3. Compile-time defaults in model_constants.rs
         self.inject_model_defaults(&mut context);
-        let executor = self.build_executor();
+        let executor = self.build_executor(progress);
 
         // Spawn manifest execution on the tokio runtime. ManifestExecutor
         // uses tokio::time::timeout internally, which requires a tokio reactor.
@@ -600,6 +614,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         skill_names: &[String],
         task: &str,
         context: HashMap<String, Value>,
+        progress: Option<agent::CascadeProgress>,
     ) -> Result<agent::BundleExecutionResult, String> {
         // Phase 1: Run the skill-bundler manifest to compose a BundleManifest.
         // The bundler cascade is: goal-extract → compose → synthesize → validate
@@ -624,7 +639,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // just the final text) so we can extract the composed manifest and
         // the composition score structurally.
         let bundler_result = self
-            .run_manifest_cascade("skill-bundler", bundler_context)
+            .run_manifest_cascade("skill-bundler", bundler_context, progress.clone())
             .await?;
 
         // Extract the composed manifest from step_3_result.candidates[0].composite_manifest.
@@ -696,7 +711,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
 
         let execution_context = HashMap::new();
         let output = self
-            .execute_manifest_direct(&manifest, execution_context)
+            .execute_manifest_direct(&manifest, execution_context, progress)
             .await?;
 
         Ok(agent::BundleExecutionResult {
@@ -827,7 +842,7 @@ steps:
             .map_err(|e| format!("Failed to load refine manifest: {e}"))?;
 
         let refine_result = self
-            .run_manifest_cascade_with_manifest(&refine_manifest, evolve_context)
+            .run_manifest_cascade_with_manifest(&refine_manifest, evolve_context, None)
             .await?;
 
         // Extract the evolved manifest from step_1_result.evolved_manifest.
@@ -860,7 +875,7 @@ steps:
 
         let execution_context = HashMap::new();
         let output = self
-            .execute_manifest_direct(&manifest, execution_context)
+            .execute_manifest_direct(&manifest, execution_context, None)
             .await?;
 
         Ok(agent::BundleExecutionResult {
@@ -1287,7 +1302,7 @@ steps:
             PathBuf::from("/tmp/nonexistent-templates"),
             runtime.handle().clone(),
         );
-        let manifest_executor = executor.build_executor();
+        let manifest_executor = executor.build_executor(None);
         assert!(
             manifest_executor.runtime_policy_is_wired(),
             "build_executor must wire with_runtime_policy — without it the FIDES Source→Sink block is dead (OWASP LLM06, RR-0053)"

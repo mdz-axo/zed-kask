@@ -1,12 +1,70 @@
-# Capabilities Researcher — Full Pipeline Manifest v8.0
+# Capabilities Researcher — Full Pipeline Manifest v9.0
 # Traces from raw files through trained LoRA adapter.
 #
 # Type: PipelineManifest
 # Persona: Business and Economics Researcher — Capability-Performance Gap Analysis
-# Source: 106 files (PDF + HTML) from Clones/Library/Researcher
+# Source: 141 files (83 PDF + 49 HTML + 9 other) from Clones/Library/Researcher
 # Target: Bloom-balanced QAs for EVA LoRA training via Axolotl
 #
-# Architecture (v8.0):
+# Architecture (v9.0 — Inter-Phase Gate System):
+#   Same tool architecture as v8.0, with explicit type: gate steps between
+#   every phase. Gates are BLOCKING — the agent MUST evaluate every check in
+#   a gate before proceeding to the next phase. A failed check halts the
+#   pipeline and triggers remediation.
+#
+#   Gate schema:
+#     - id: gate_<name>
+#       type: gate
+#       description: >
+#         What this gate verifies, why it matters, and that it is BLOCKING.
+#       checks:
+#         # Disk-based check (agent runs shell commands and evaluates output):
+#         - name: <check_id>
+#           description: "<what to verify>"
+#           command: |
+#             <POSIX shell commands producing human-readable output>
+#           pass: "<condition for pass — what the agent should see>"
+#           fail: "<condition for fail — what the agent should see>"
+#           remediation: >
+#             <specific, actionable steps to fix each failure mode>
+#
+#         # Response-based check (agent evaluates previous tool's response):
+#         - name: <check_id>
+#           description: "<what to verify>"
+#           response_field: <field_name from tool response>
+#           operator: equals|gte|lte|equals_zero
+#           expected: <value>
+#           pass: "<condition>"
+#           fail: "<condition>"
+#           remediation: >
+#             <steps to fix>
+#
+#   Gate placement (11 gates, one between each phase):
+#     Phase 0: extract_text
+#       → GATE: extract_complete
+#     Phase 1: chunk_all → purge_existing
+#       → GATE: chunk_complete
+#     Phase 2a: tag_chunks
+#       → GATE: tag_complete
+#     Phase 2b: embed_chunks
+#       → GATE: embed_complete
+#     Phase 2c: extract_triples
+#       → GATE: triples_complete
+#     Phase 3: dedup_chunks
+#       → GATE: dedup_complete
+#     Phase 4: consolidate_chunks
+#       → GATE: consolidate_complete
+#     Phase 5: build_prompts
+#       → GATE: prompts_complete
+#     Phase 6: generate_qas
+#       → GATE: qa_generation_complete
+#     Phase 7: ingest_qas
+#       → GATE: qa_ingest_complete
+#     Phase 8: assemble_chatml
+#       → GATE: chatml_complete
+#     Phase 9: train_lora (terminal — no gate after)
+#
+# Architecture (v8.0 — tool layer, unchanged):
 #   Corpus steps (corpus_*) run in-process against the unified hkask-mcp-corpus
 #   server; training steps (training_*) cross to the hkask-mcp-training server.
 #   The former `kask mcp invoke` CLI has been removed — manifests are
@@ -27,27 +85,58 @@
 #     owner_webid = WebID::from_persona("john-brooks") (whose memory it is)
 #     All h_mems queryable via semantic.query_deduped(chunk_ref)
 #
+# Tool response fields (verified from source — used by verify blocks and gates):
+#   corpus_convert (dir):     source_documents, total_documents, extracted, skipped, failed, failures[]
+#   corpus_chunk (dir):       total_documents, total_chunks, indexed
+#   corpus_purge_qa:          embeddings_before, embeddings_purged, embeddings_after, h_mems_purged, h_mem_errors
+#   corpus_tag_chunks:        total_chunks, tagged, failed, dimensions, expertise_levels, time_seconds
+#   corpus_embed:             total, embedded, failed, model
+#   corpus_extract_triples:   total_chunks, succeeded, failed, h_mems_stored
+#   corpus_dedup_chunks:      original, deduped, removed, clusters, sources, reduction_pct
+#   corpus_consolidate_chunks: original, consolidated, multi_chunk_clusters, absorbed, reembedded, reduction_pct
+#   corpus_build_prompts:     total_chunks, prompts_written, output
+#   corpus_generate_qa_batch: total, written, failed, output
+#   corpus_ingest_qa:         parsed, filtered, deduped, stored_h_mems, output
+#   training_assemble_dataset: train_examples, train_path, total_matched, (optional) test_examples, test_path
+#   training_submit:          job_id, provider_job_id, status, base_model, host, estimated_cost_urj
+#
 # Models (approved, in .env):
 #   Classifier/Tagging/Triples: OR/deepseek/deepseek-v4-flash (HKASK_CLASSIFIER_MODEL)
 #   QA generation:              OpenRouter/z-ai/glm-5.2 (HKASK_DEFAULT_MODEL — hkask default)
 #   Embedding:                  DI/Qwen/Qwen3-Embedding-0.6B (HKASK_EMBEDDING_MODEL)
 #
-# Lessons learned (v6.0 → v7.0):
-#   - Combined classify-chunks.j2 template caused bugs: wrong model, bypassed
-#     ContentGuard, stored h_mems with wrong entity (triple.subject vs chunk_ref).
-#     Split into separate tag_chunks + extract_triples tools with separate templates.
-#   - Qwen3.6 and GLM-5.2 have thinking mode — extract_json_from_response finds
-#     { ... } in reasoning + JSON response. All MCP tools now handle this.
-#   - Template name mismatch: code called "extract-h_mems" but file is "extract-hmems.j2"
-#     — fixed in v7.0.
-#   - h_mem owner was hardcoded "corpus" instead of "john-brooks" — fixed with
-#     owner parameter on all tools, defaulting to "john-brooks".
-#   - build-prompts never queried h_mems as knowledge graph — v7.0 adds
-#     semantic.query_deduped(chunk_ref) per chunk, injects as "## Knowledge Graph"
-#     section in system prompt via build-prompts.j2 template.
+# Changelog:
+#   v9.0 (2026-08-10) — Inter-phase gate system:
+#     - Added 11 type: gate steps between every phase (see gate placement above).
+#     - Each gate has disk-based checks (shell commands) AND response-based
+#       checks (tool response field verification).
+#     - Gates are BLOCKING: the agent MUST NOT proceed if any check fails.
+#     - Each check includes specific remediation instructions for its failure mode.
+#     - Gate 1 (extract_complete) would have caught the v8.0 bug where the agent
+#       proceeded to chunking with only 85/141 files extracted (min: 80 threshold
+#       was both too low and checked tool response count, not disk artifacts).
+#     - Strengthened verify blocks on tool steps: min thresholds raised from
+#       token floors (min: 1) to proportional floors; added failed: max: 0
+#       where applicable.
+#     - Updated source count from 106 to 141 (83 PDF + 49 HTML + 9 other).
+#     - Documented all tool response fields in header for gate/verify reference.
+#
+#   v8.0 → v7.0 lessons learned (preserved):
+#     - Combined classify-chunks.j2 template caused bugs: wrong model, bypassed
+#       ContentGuard, stored h_mems with wrong entity (triple.subject vs chunk_ref).
+#       Split into separate tag_chunks + extract_triples tools with separate templates.
+#     - Qwen3.6 and GLM-5.2 have thinking mode — extract_json_from_response finds
+#       { ... } in reasoning + JSON response. All MCP tools now handle this.
+#     - Template name mismatch: code called "extract-h_mems" but file is "extract-hmems.j2"
+#       — fixed in v7.0.
+#     - h_mem owner was hardcoded "corpus" instead of "john-brooks" — fixed with
+#       owner parameter on all tools, defaulting to "john-brooks".
+#     - build-prompts never queried h_mems as knowledge graph — v7.0 adds
+#       semantic.query_deduped(chunk_ref) per chunk, injects as "## Knowledge Graph"
+#       section in system prompt via build-prompts.j2 template.
 
 id: capabilities-researcher-pipeline
-version: "8.0"
+version: "9.0"
 type: pipeline
 energy_budget:
   gas_cap: 500000
@@ -59,6 +148,8 @@ description: >
   Separate embed, tag, and extract_triples steps (no combined classify).
   h_mem knowledge graph injected into build-prompts.
   Exact-match QA dedup. Typed EVA LoRA submission through the training MCP boundary.
+  v9.0: 11 inter-phase gates verify artifact completeness on disk before
+  proceeding — gates are BLOCKING with per-check remediation instructions.
 
 env:
   HKASK_EMBEDDING_DIM: "1024"
@@ -73,14 +164,128 @@ steps:
   # Phase 0: Raw Files → Extracted Text
   # ═══════════════════════════════════════════════════════════════════════
   - id: extract_text
-    description: "Extract text from 106 source files (PDF + HTML)"
+    description: "Extract text from 141 source files (83 PDF + 49 HTML + 9 other) from the Researcher library"
     tool: corpus_convert
     params:
       path: "/home/mdz-axolotl/Clones/Library/Researcher"
       output: "corpus/extracted/researcher"
     verify:
-      field: total_documents
-      min: 80
+      - field: extracted
+        gte: 138
+        # 138 = files matching standard extensions (pdf, html, htm, txt, md).
+        # corpus_convert may handle additional formats, pushing the total to 141.
+        # The gate below does the thorough 1:1 check.
+      - field: failed
+        equals: 0
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 1: extract_complete
+  # Verifies that every source file was extracted to a non-empty .txt with
+  # sane size relative to its source. This gate would have caught the v8.0
+  # bug where the agent proceeded with only 85/141 files.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_extract_complete
+    type: gate
+    description: >
+      Verify Phase 0 extraction completeness before proceeding to chunking.
+      BLOCKING: do NOT proceed to chunk_all if any check fails.
+      This gate checks artifacts on disk, not just the tool response — the
+      tool may report a count that doesn't match what's actually written.
+    checks:
+      - name: file_coverage_1to1
+        description: "Every source file has a corresponding .txt extract (1:1 mapping)"
+        command: |
+          SOURCE_DIR="/home/mdz-axolotl/Clones/Library/Researcher"
+          OUTPUT_DIR="corpus/extracted/researcher"
+          SOURCE_COUNT=$(find "$SOURCE_DIR" -type f \( -name '*.pdf' -o -name '*.html' -o -name '*.htm' -o -name '*.txt' -o -name '*.md' -o -name '*.doc' -o -name '*.docx' \) | wc -l)
+          EXTRACT_COUNT=$(find "$OUTPUT_DIR" -name '*.txt' -type f | wc -l)
+          echo "Source files: $SOURCE_COUNT"
+          echo "Extracted files: $EXTRACT_COUNT"
+          MISSING=0
+          for f in $(find "$SOURCE_DIR" -type f \( -name '*.pdf' -o -name '*.html' -o -name '*.htm' -o -name '*.txt' -o -name '*.md' -o -name '*.doc' -o -name '*.docx' \)); do
+            BASENAME=$(basename "$f" | sed 's/\.[^.]*$//')
+            if ! ls "$OUTPUT_DIR/${BASENAME}.txt" 2>/dev/null 1>&2; then
+              echo "MISSING: $f → $OUTPUT_DIR/${BASENAME}.txt"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+          echo "Missing extracts: $MISSING"
+        pass: "EXTRACT_COUNT >= SOURCE_COUNT and MISSING equals 0"
+        fail: "MISSING > 0 or EXTRACT_COUNT < SOURCE_COUNT — some source files were not extracted"
+        remediation: >
+          Re-run corpus_convert on the missing files. The MCP server may timeout
+          on large PDFs — process in batches of 20-30 files by copying subsets to
+          a temp directory and running corpus_convert on each batch. For PDFs that
+          timeout specifically, use pdftotext as a fallback:
+            pdftotext "$SOURCE_FILE" "corpus/extracted/researcher/$(basename ${SOURCE_FILE%.*}).txt"
+          For scanned PDFs (image-only, no text layer), use corpus_ocr with
+          force_ocr=true on the specific file. Document any files that are
+          genuinely empty/corrupt and exclude them from the pipeline — but
+          only after confirming the source is unusable, not just because the
+          first extraction attempt failed.
+
+      - name: no_empty_extracts
+        description: "All extracted .txt files are >100 bytes (non-empty)"
+        command: |
+          OUTPUT_DIR="corpus/extracted/researcher"
+          EMPTY=$(find "$OUTPUT_DIR" -name '*.txt' -type f -size -100c | wc -l)
+          echo "Files <100 bytes: $EMPTY"
+          find "$OUTPUT_DIR" -name '*.txt' -type f -size -100c -exec echo "  EMPTY: {}" \;
+        pass: "EMPTY equals 0"
+        fail: "EMPTY > 0 — some extracts are empty or near-empty (<100 bytes)"
+        remediation: >
+          Empty extracts indicate extraction failure. For each empty file:
+          1. Check the source file format and integrity (is it a valid PDF/HTML?).
+          2. If PDF: try pdftotext first (fast, handles text-native PDFs). If that
+             also produces empty output, the PDF is likely scanned — use corpus_ocr
+             with force_ocr=true.
+          3. If HTML: check if the page is JavaScript-rendered (view source — if
+             the <body> has no text content, the page needs a headless browser).
+          4. If the source is genuinely empty/blank, document it with a comment
+             in this YAML and exclude it from the expected count.
+
+      - name: zero_extraction_failures
+        description: "The corpus_convert tool response reports failed: 0"
+        response_field: failed
+        operator: equals
+        expected: 0
+        pass: "response.failed equals 0 — no extraction failures reported"
+        fail: "response.failed > 0 — extraction reported failures"
+        remediation: >
+          Review the failures[] array in the tool response for specific error
+          messages. Re-run corpus_convert on each failed path. Common causes:
+          - PDF timeout: use pdftotext fallback or process in smaller batches.
+          - HTML parse error: check if the file is well-formed HTML.
+          - Permission denied: check file permissions on the source.
+
+      - name: size_sanity
+        description: "No extract is suspiciously small relative to its source (large source → tiny extract suggests OCR failure)"
+        command: |
+          SOURCE_DIR="/home/mdz-axolotl/Clones/Library/Researcher"
+          OUTPUT_DIR="corpus/extracted/researcher"
+          SUSPICIOUS=0
+          for f in $(find "$OUTPUT_DIR" -name '*.txt' -type f); do
+            BASENAME=$(basename "$f" .txt)
+            SOURCE_FILE=$(find "$SOURCE_DIR" -name "${BASENAME}.*" -type f | head -1)
+            if [ -n "$SOURCE_FILE" ]; then
+              SOURCE_SIZE=$(stat -c%s "$SOURCE_FILE" 2>/dev/null || stat -f%z "$SOURCE_FILE" 2>/dev/null || echo 0)
+              EXTRACT_SIZE=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
+              # Flag: source >1MB but extract <1KB (0.1% ratio — likely OCR failure)
+              if [ "$SOURCE_SIZE" -gt 1000000 ] && [ "$EXTRACT_SIZE" -lt 1000 ]; then
+                echo "SUSPICIOUS: $SOURCE_FILE ($(numfmt --to=iec $SOURCE_SIZE 2>/dev/null || echo ${SOURCE_SIZE}B)) → $f ($(numfmt --to=iec $EXTRACT_SIZE 2>/dev/null || echo ${EXTRACT_SIZE}B))"
+                SUSPICIOUS=$((SUSPICIOUS + 1))
+              fi
+            fi
+          done
+          echo "Suspicious extracts: $SUSPICIOUS"
+        pass: "SUSPICIOUS equals 0 — no large source files produced tiny extracts"
+        fail: "SUSPICIOUS > 0 — large source files produced tiny extracts (likely OCR failure)"
+        remediation: >
+          For each SUSPICIOUS file, the extraction likely failed silently (OCR
+          returned minimal text). Re-extract using corpus_ocr with force_ocr=true
+          on the specific source file. If the source is a scanned PDF, OCR is the
+          only path — pdftotext will not work. If OCR also fails, the source may
+          be corrupt or in an unsupported image format.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 1: Text → Chunks
@@ -98,6 +303,12 @@ steps:
       max_tokens: 512
       overlap_tokens: 64
       entity_ref_prefix: "corpus:researcher"
+    verify:
+      - field: total_chunks
+        gte: 5000
+        # 141 files × ~200 chunks/file at 512 tokens ≈ 28K chunks.
+        # Floor of 5000 catches a broken run (empty input, misconfigured path)
+        # without being so high that a small but valid corpus fails.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 1b: Purge existing data (pipeline recovery — clean slate)
@@ -111,6 +322,95 @@ steps:
     params:
       prefix: "corpus:researcher:"
       db_path: "corpus/memory/john-brooks.db"
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 2: chunk_complete
+  # Verifies that chunking produced a valid JSONL with proportional volume.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_chunk_complete
+    type: gate
+    description: >
+      Verify Phase 1 chunking produced a valid chunks.jsonl with volume
+      proportional to the extracted text. BLOCKING: do NOT proceed to
+      tag_chunks if any check fails.
+    checks:
+      - name: chunks_jsonl_exists
+        description: "corpus/chunks/chunks.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/chunks/chunks.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            SIZE=$(du -h "$FILE" | cut -f1)
+            echo "OK: $FILE — $LINES lines, $SIZE"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run the chunk_all step. If the file is missing, corpus_chunk may
+          have failed silently — check the tool response for errors. If the file
+          is empty, the input_dir may be wrong or the extracted text directory
+          may be empty (check Gate 1 first).
+
+      - name: chunk_count_proportional
+        description: "Chunk count is proportional to extracted text volume (>=100 chunks per source file on average)"
+        command: |
+          EXTRACT_COUNT=$(find corpus/extracted/researcher -name '*.txt' -type f | wc -l)
+          CHUNK_COUNT=$(wc -l < corpus/chunks/chunks.jsonl)
+          RATIO=$(echo "scale=0; $CHUNK_COUNT / ($EXTRACT_COUNT + 1)" | bc 2>/dev/null || echo "?")
+          echo "Extracts: $EXTRACT_COUNT, Chunks: $CHUNK_COUNT, Chunks/extract: $RATIO"
+          if [ "$CHUNK_COUNT" -lt "$EXTRACT_COUNT" ]; then
+            echo "FAIL: Fewer chunks ($CHUNK_COUNT) than source extracts ($EXTRACT_COUNT) — some files produced zero chunks"
+          fi
+        pass: "CHUNK_COUNT >= EXTRACT_COUNT (every file produced at least one chunk on average)"
+        fail: "CHUNK_COUNT < EXTRACT_COUNT — some extracted files produced zero chunks"
+        remediation: >
+          Some extracted text files may be too short to produce a chunk at
+          512 tokens. This is acceptable for very small files (<100 words).
+          Check which sources have no chunks by comparing distinct source
+          values in chunks.jsonl against the extract filenames:
+            python3 -c "
+            import json
+            sources = set()
+            with open('corpus/chunks/chunks.jsonl') as f:
+                for line in f:
+                    sources.add(json.loads(line)['source'])
+            print(f'Distinct sources in chunks: {len(sources)}')
+            "
+          If large files are missing chunks, re-run chunk_all — the chunker
+          may have crashed on a specific file.
+
+      - name: chunk_schema_valid
+        description: "Each line in chunks.jsonl has entity_ref, source, text, word_count fields"
+        command: |
+          FILE="corpus/chunks/chunks.jsonl"
+          TOTAL=$(wc -l < "$FILE")
+          VALID=$(python3 -c "
+          import json, sys
+          valid = 0
+          required = {'entity_ref', 'source', 'text', 'word_count'}
+          with open('$FILE') as f:
+              for line in f:
+                  try:
+                      d = json.loads(line)
+                      if required.issubset(d.keys()) and d.get('text'):
+                          valid += 1
+                  except: pass
+          print(valid)
+          " 2>/dev/null || echo "?")
+          echo "Total lines: $TOTAL, Valid chunks: $VALID"
+          if [ "$VALID" != "$TOTAL" ]; then
+            echo "FAIL: $((TOTAL - ${VALID:-0})) lines missing required fields or have empty text"
+          fi
+        pass: "VALID equals TOTAL — every line has all required fields with non-empty text"
+        fail: "Some lines are missing required fields or have empty text"
+        remediation: >
+          Malformed chunks indicate a bug in corpus_chunk. Re-run chunk_all.
+          If the issue persists, inspect the malformed lines:
+            head -N corpus/chunks/chunks.jsonl | python3 -c "import json,sys; [print(json.loads(l).keys() if l.strip() else 'EMPTY') for l in sys.stdin]"
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 2a: Tag chunks → ontology tags JSONL (BEFORE embed)
@@ -140,6 +440,91 @@ steps:
       chunks_jsonl: "corpus/chunks/chunks.jsonl"
       output: "corpus/chunks/tagged_ontology.jsonl"
       concurrency: 128
+    verify:
+      - field: tagged
+        gte: 5000
+      - field: failed
+        lte: 100
+        # Tagging is an LLM call per chunk — some failures are expected at scale.
+        # 100 failures on 33K chunks = 0.3% failure rate, acceptable.
+        # The gate below checks the failure rate more precisely.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 3: tag_complete
+  # Verifies ontology tagging coverage and quality.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_tag_complete
+    type: gate
+    description: >
+      Verify Phase 2a tagging produced a complete tagged_ontology.jsonl with
+      1:1 line correspondence to chunks.jsonl. BLOCKING: do NOT proceed to
+      embed_chunks if any check fails.
+    checks:
+      - name: tagged_jsonl_exists
+        description: "corpus/chunks/tagged_ontology.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/chunks/tagged_ontology.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            echo "OK: $FILE — $LINES lines"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run tag_chunks. If the file is missing, the LLM classifier may
+          have failed entirely — check the tool response for error messages.
+          The classifier model (HKASK_CLASSIFIER_MODEL) must be available and
+          the inference router must be wired.
+
+      - name: tagged_line_count_matches_chunks
+        description: "tagged_ontology.jsonl line count matches chunks.jsonl line count (1:1)"
+        command: |
+          CHUNK_LINES=$(wc -l < corpus/chunks/chunks.jsonl)
+          TAG_LINES=$(wc -l < corpus/chunks/tagged_ontology.jsonl)
+          echo "Chunks: $CHUNK_LINES, Tagged: $TAG_LINES"
+          if [ "$CHUNK_LINES" != "$TAG_LINES" ]; then
+            DIFF=$((CHUNK_LINES - TAG_LINES))
+            echo "FAIL: $DIFF chunks missing tags (tagged < chunks)"
+          fi
+        pass: "TAG_LINES equals CHUNK_LINES — every chunk has a corresponding tag entry"
+        fail: "TAG_LINES < CHUNK_LINES — some chunks were not tagged"
+        remediation: >
+          Re-run tag_chunks on the full chunks.jsonl. If the tool processes in
+          batches and some batches failed, identify the failed batch by checking
+          which entity_refs are missing from tagged_ontology.jsonl:
+            python3 -c "
+            import json
+            chunk_refs = set()
+            tagged_refs = set()
+            with open('corpus/chunks/chunks.jsonl') as f:
+                for line in f: chunk_refs.add(json.loads(line)['entity_ref'])
+            with open('corpus/chunks/tagged_ontology.jsonl') as f:
+                for line in f: tagged_refs.add(json.loads(line)['entity_ref'])
+            missing = chunk_refs - tagged_refs
+            print(f'Missing tags: {len(missing)} chunks')
+            if missing: print('First 5:', list(missing)[:5])
+            "
+          Re-run tag_chunks — the tool should resume from where it left off
+          if the output file already has partial results. If not, delete the
+          partial output and re-run from scratch.
+
+      - name: tag_failure_rate_acceptable
+        description: "Tagging failure rate is <5% of total chunks"
+        response_field: failed
+        operator: lt_percent
+        expected: 5
+        pass: "response.failed is <5% of response.total_chunks — acceptable failure rate"
+        fail: "response.failed is >=5% of response.total_chunks — high failure rate"
+        remediation: >
+          High tag failure rate indicates the classifier model is struggling.
+          Check: (1) is HKASK_CLASSIFIER_MODEL available and responding?
+          (2) are there rate-limit errors in the tool response? (3) is the
+          concurrency too high (128 may overwhelm the provider)? Try reducing
+          concurrency to 32 and re-running.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 2b: Embed chunks → ontology-anchored DB vectors (AFTER tag)
@@ -163,8 +548,56 @@ steps:
       db_path: "corpus/memory/john-brooks.db"
       batch_size: 50
     verify:
-      field: embedded
-      min: 1
+      - field: embedded
+        gte: 5000
+      - field: failed
+        lte: 100
+        # Embedding is a batched API call — failures should be rare.
+        # 100 failures on 33K chunks = 0.3%, acceptable.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 4: embed_complete
+  # Verifies embedding coverage matches chunk count.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_embed_complete
+    type: gate
+    description: >
+      Verify Phase 2b embedding produced vectors for all chunks. The embedding
+      count must match the chunk count — unembedded chunks will be invisible
+      to KNN retrieval in dedup, consolidate, and build_prompts. BLOCKING: do
+      NOT proceed to extract_triples if any check fails.
+    checks:
+      - name: embed_count_matches_chunks
+        description: "Embedded count matches total chunk count (1:1)"
+        response_field: embedded
+        operator: gte
+        # No static expected value — compare against chunks.jsonl line count
+        command: |
+          CHUNK_COUNT=$(wc -l < corpus/chunks/chunks.jsonl)
+          echo "Expected (from chunks.jsonl): $CHUNK_COUNT"
+          echo "Check response.embedded against this value"
+        pass: "response.embedded >= CHUNK_COUNT from chunks.jsonl (allowing small variance for retry edge cases)"
+        fail: "response.embedded < CHUNK_COUNT — some chunks were not embedded"
+        remediation: >
+          Re-run embed_chunks. The tool reads chunks.jsonl and embeds each
+          chunk — if some failed, the 'failed' field in the response tells
+          you how many. Check the tool response for the failure reason
+          (embedding API rate limit, network error, etc.). Try reducing
+          batch_size to 25 if the API is rate-limiting.
+
+      - name: embed_failure_rate_acceptable
+        description: "Embedding failure rate is <1% of total"
+        response_field: failed
+        operator: lt_percent
+        expected: 1
+        pass: "response.failed is <1% of response.total — acceptable failure rate"
+        fail: "response.failed is >=1% of response.total — high failure rate"
+        remediation: >
+          Embedding failures are usually transient (API timeout, rate limit).
+          Re-run embed_chunks — the tool stores vectors in the DB, so
+          re-embedding already-stored vectors is idempotent (it overwrites).
+          If failures persist, check HKASK_EMBEDDING_MODEL availability and
+          the inference router configuration.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 2c: Extract triples → RDF triple h_mems in DB
@@ -189,6 +622,67 @@ steps:
       owner: "john-brooks"
       max_triples: 15
       concurrency: 64
+    verify:
+      - field: h_mems_stored
+        gte: 1000
+      - field: succeeded
+        gte: 1000
+        # Triples are LLM-extracted — not every chunk will yield triples.
+        # Floor of 1000 ensures the extraction actually ran and produced output.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 5: triples_complete
+  # Verifies triple extraction produced a usable knowledge graph.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_triples_complete
+    type: gate
+    description: >
+      Verify Phase 2c triple extraction produced a meaningful knowledge graph
+      with h_mems stored in the DB. Triples feed build_prompts' knowledge graph
+      section — an empty or tiny KG degrades QA quality. BLOCKING: do NOT
+      proceed to dedup_chunks if any check fails.
+    checks:
+      - name: triples_stored_nonzero
+        description: "At least some h_mems were stored (h_mems_stored > 0)"
+        response_field: h_mems_stored
+        operator: gte
+        expected: 100
+        pass: "response.h_mems_stored >= 100 — triples were extracted and stored"
+        fail: "response.h_mems_stored < 100 — very few or zero triples stored"
+        remediation: >
+          If h_mems_stored is 0, the classifier model failed to extract any
+          triples. Check: (1) is HKASK_CLASSIFIER_MODEL available? (2) did the
+          tool report all chunks as 'failed'? (3) is the DB writable? Re-run
+          extract_triples after resolving the issue. If only a few triples
+          were stored, the model may be struggling with the content — try
+          reducing concurrency to 16 and re-running.
+
+      - name: triple_failure_rate_acceptable
+        description: "Triple extraction failure rate is <10% of total chunks"
+        response_field: failed
+        operator: lt_percent
+        expected: 10
+        pass: "response.failed is <10% of response.total_chunks — acceptable failure rate"
+        fail: "response.failed is >=10% of response.total_chunks — high failure rate"
+        remediation: >
+          High failure rate indicates the classifier is struggling. Common
+          causes: rate limiting (reduce concurrency), model timeout (use a
+          faster model), or thinking-mode JSON extraction failures (check if
+          the model outputs valid JSON). Re-run extract_triples with reduced
+          concurrency (16 or 32).
+
+      - name: succeeded_nonzero
+        description: "At least some chunks succeeded triple extraction"
+        response_field: succeeded
+        operator: gte
+        expected: 100
+        pass: "response.succeeded >= 100 — a meaningful number of chunks produced triples"
+        fail: "response.succeeded < 100 — very few chunks succeeded"
+        remediation: >
+          If succeeded is near zero, the extraction is fundamentally broken.
+          Check the tool response for error messages. Verify that
+          HKASK_CLASSIFIER_MODEL is set and the model is available via the
+          inference router.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 3: Dedup (near-identical chunk removal, cosine > 0.85)
@@ -202,6 +696,73 @@ steps:
       db_path: "corpus/memory/john-brooks.db"
       prefix: "corpus:researcher:"
       threshold: 0.85
+    verify:
+      - field: deduped
+        gte: 1000
+        # After dedup at 0.85 cosine threshold, we expect most chunks to survive
+        # (near-duplicates are rare in a diverse research library).
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 6: dedup_complete
+  # Verifies dedup produced a valid reduced dataset.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_dedup_complete
+    type: gate
+    description: >
+      Verify Phase 3 dedup produced a valid deduped.jsonl with reasonable
+      reduction. An empty output or >90% reduction signals a problem (all
+      chunks are near-duplicates — unlikely for a diverse research library,
+      and more likely an embedding bug). BLOCKING: do NOT proceed to
+      consolidate_chunks if any check fails.
+    checks:
+      - name: deduped_jsonl_exists
+        description: "corpus/chunks/deduped.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/chunks/deduped.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            echo "OK: $FILE — $LINES lines"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run dedup_chunks. The tool reads tagged_ontology.jsonl and
+          queries the DB for embeddings — if the DB has no embeddings (Gate 4
+          failed), dedup will produce nothing. Verify Gate 4 passed first.
+
+      - name: deduped_count_reasonable
+        description: "Deduped count is >10% of original (reduction <90%)"
+        response_field: deduped
+        operator: gt_percent_of
+        # Compare against 'original' field in the same response
+        reference_field: original
+        expected: 10
+        pass: "response.deduped is >10% of response.original — reasonable reduction"
+        fail: "response.deduped is <=10% of response.original — >90% reduction is suspicious"
+        remediation: >
+          >90% reduction means almost all chunks are near-duplicates. This is
+          unlikely for a diverse research library and more likely indicates an
+          embedding problem (all embeddings are identical or near-identical).
+          Check: (1) did embed_chunks actually produce distinct vectors?
+          (2) is the embedding model producing zero vectors? (3) is the
+          threshold (0.85) too low for this embedding model? Try raising the
+          threshold to 0.90 or 0.95 and re-running.
+
+      - name: deduped_nonzero
+        description: "Deduped count is >0"
+        response_field: deduped
+        operator: gte
+        expected: 1
+        pass: "response.deduped > 0 — some chunks survived dedup"
+        fail: "response.deduped equals 0 — all chunks were removed"
+        remediation: >
+          All chunks being removed means every chunk has a near-duplicate
+          with higher salience. This is almost certainly an embedding bug.
+          Re-run embed_chunks and then dedup_chunks.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 4: Consolidate (LLM synthesis of related chunks, cosine > 0.75)
@@ -220,6 +781,74 @@ steps:
       threshold: 0.75
       concurrency: 12
       max_chunks_per_cluster: 5
+    verify:
+      - field: consolidated
+        gte: 500
+        # After consolidation at 0.75 cosine threshold, multi-chunk clusters
+        # are synthesized into single passages. The output should be smaller
+        # than the deduped input but still substantial.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 7: consolidate_complete
+  # Verifies consolidation produced a valid output with re-embedded vectors.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_consolidate_complete
+    type: gate
+    description: >
+      Verify Phase 4 consolidation produced a valid consolidated.jsonl. The
+      consolidated count should be <= deduped count (consolidation merges
+      clusters) but >0. Re-embedding should have succeeded for synthesized
+      passages. BLOCKING: do NOT proceed to build_prompts if any check fails.
+    checks:
+      - name: consolidated_jsonl_exists
+        description: "corpus/chunks/consolidated.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/chunks/consolidated.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            echo "OK: $FILE — $LINES lines"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run consolidate_chunks. The tool reads deduped.jsonl — verify
+          Gate 6 passed and deduped.jsonl is valid. Check the tool response
+          for error messages (LLM synthesis failures, DB errors).
+
+      - name: consolidated_lte_deduped
+        description: "Consolidated count is <= deduped count (consolidation reduces, not expands)"
+        command: |
+          DEDUPED=$(wc -l < corpus/chunks/deduped.jsonl 2>/dev/null || echo 0)
+          CONSOLIDATED=$(wc -l < corpus/chunks/consolidated.jsonl 2>/dev/null || echo 0)
+          echo "Deduped: $DEDUPED, Consolidated: $CONSOLIDATED"
+          if [ "$CONSOLIDATED" -gt "$DEDUPED" ]; then
+            echo "FAIL: Consolidated ($CONSOLIDATED) > Deduped ($DEDUPED) — consolidation expanded the dataset"
+          fi
+        pass: "CONSOLIDATED <= DEDUPED — consolidation reduced or maintained the chunk count"
+        fail: "CONSOLIDATED > DEDUPED — consolidation expanded the dataset (bug)"
+        remediation: >
+          If consolidated > deduped, the consolidation logic has a bug —
+          it should only merge clusters, not create new entries. Re-run
+          consolidate_chunks. If the issue persists, inspect the output for
+          duplicate entity_refs or entries that don't correspond to input
+          chunks.
+
+      - name: reembedded_count_reasonable
+        description: "Re-embedded count matches the number of multi-chunk clusters synthesized"
+        response_field: reembedded
+        operator: gte
+        expected: 0
+        pass: "response.reembedded >= 0 — re-embedding completed (0 is valid if all clusters were singletons)"
+        fail: "response.reembedded is negative or missing — re-embedding failed"
+        remediation: >
+          If re-embedding failed, the consolidated passages won't have updated
+          embeddings in the DB. This affects KNN retrieval in build_prompts but
+          is not fatal — build_prompts can still use the original chunk embeddings.
+          If you want correct consolidated embeddings, re-run consolidate_chunks.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 5: Build Bloom QA Prompts (5 per chunk, KNN + h_mem knowledge graph)
@@ -251,6 +880,87 @@ steps:
       #   eso (epistemic): more analyze/evaluate — assess evidence, evaluate claims
       ontology_bloom_overrides: "golem:0,1,2,1,1|fibo:2,1,1,1,0|pko:1,1,1,1,1|eso:1,1,2,1,0|epistemic:1,1,2,1,0"
       owner: "john-brooks"
+    verify:
+      - field: prompts_written
+        gte: 2500
+        # 5 prompts per chunk × ~500 consolidated chunks = ~2500 prompts minimum.
+        # If consolidated count is higher, expect proportionally more prompts.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 8: prompts_complete
+  # Verifies prompt building produced a valid prompts.jsonl with expected volume.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_prompts_complete
+    type: gate
+    description: >
+      Verify Phase 5 prompt building produced a valid prompts.jsonl with
+      volume proportional to the consolidated chunk count (5 prompts per
+      chunk). BLOCKING: do NOT proceed to generate_qas if any check fails.
+    checks:
+      - name: prompts_jsonl_exists
+        description: "corpus/qa_pairs/prompts.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/qa_pairs/prompts.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            echo "OK: $FILE — $LINES lines"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run build_prompts. The tool reads consolidated.jsonl — verify
+          Gate 7 passed. Check the tool response for errors (DB query
+          failures, KNN retrieval errors, h_mem query failures).
+
+      - name: prompt_count_proportional
+        description: "Prompt count is approximately 5× the consolidated chunk count"
+        command: |
+          CONSOLIDATED=$(wc -l < corpus/chunks/consolidated.jsonl 2>/dev/null || echo 0)
+          PROMPTS=$(wc -l < corpus/qa_pairs/prompts.jsonl 2>/dev/null || echo 0)
+          EXPECTED=$((CONSOLIDATED * 5))
+          echo "Consolidated chunks: $CONSOLIDATED, Prompts: $PROMPTS, Expected (~5x): $EXPECTED"
+          # Allow 80%-120% range (some chunks may get fewer prompts due to ontology overrides)
+          MIN_EXPECTED=$((CONSOLIDATED * 4))
+          if [ "$PROMPTS" -lt "$MIN_EXPECTED" ]; then
+            echo "FAIL: Prompts ($PROMPTS) < 80% of expected ($MIN_EXPECTED)"
+          fi
+        pass: "PROMPTS >= 80% of (CONSOLIDATED × 5) — proportional prompt volume"
+        fail: "PROMPTS < 80% of expected — some chunks produced no prompts"
+        remediation: >
+          If prompt count is far below expected, some chunks may have failed
+          prompt building (DB query error, KNN retrieval failure, h_mem query
+          timeout). Re-run build_prompts. Check the tool response for the
+          total_chunks vs prompts_written discrepancy.
+
+      - name: prompt_schema_valid
+        description: "Each prompt line has chunk_ref, source, qa_type, system, user fields"
+        command: |
+          FILE="corpus/qa_pairs/prompts.jsonl"
+          TOTAL=$(wc -l < "$FILE")
+          VALID=$(python3 -c "
+          import json
+          valid = 0
+          required = {'chunk_ref', 'source', 'qa_type', 'system', 'user'}
+          with open('$FILE') as f:
+              for line in f:
+                  try:
+                      d = json.loads(line)
+                      if required.issubset(d.keys()) and d.get('user'):
+                          valid += 1
+                  except: pass
+          print(valid)
+          " 2>/dev/null || echo "?")
+          echo "Total lines: $TOTAL, Valid prompts: $VALID"
+        pass: "VALID is close to TOTAL — most lines have all required fields"
+        fail: "Many lines are missing required fields or have empty user prompts"
+        remediation: >
+          Malformed prompts indicate a bug in build_prompts. Re-run the tool.
+          If the issue persists, inspect malformed lines:
+            head -5 corpus/qa_pairs/prompts.jsonl | python3 -m json.tool
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 6: Generate QAs (GLM-5.2, per-Bloom sampling, thinking-mode)
@@ -270,8 +980,104 @@ steps:
       concurrency: 196
       model: "{{ qa_model }}"
     verify:
-      field: written
-      min: 1
+      - field: written
+        gte: 1000
+      - field: failed
+        lte: 500
+        # QA generation is an LLM call per prompt — some failures expected.
+        # 500 failures on ~25K prompts = 2% failure rate, acceptable.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 9: qa_generation_complete
+  # Verifies QA generation produced usable output with acceptable failure rate.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_qa_generation_complete
+    type: gate
+    description: >
+      Verify Phase 6 QA generation produced a valid generated.jsonl with
+      acceptable yield and failure rate. The written count should be a
+      significant fraction of the total prompts — a low yield means most
+      LLM calls failed. BLOCKING: do NOT proceed to ingest_qas if any
+      check fails.
+    checks:
+      - name: generated_jsonl_exists
+        description: "corpus/qa_pairs/generated.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/qa_pairs/generated.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            echo "OK: $FILE — $LINES lines"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run generate_qas. The tool reads prompts.jsonl — verify Gate 8
+          passed. Check the tool response for errors (LLM API failures,
+          ContentGuard rejections, thinking-mode JSON extraction errors).
+
+      - name: written_count_significant
+        description: "Written count is >=50% of total prompts"
+        response_field: written
+        operator: gt_percent_of
+        reference_field: total
+        expected: 50
+        pass: "response.written is >=50% of response.total — acceptable yield"
+        fail: "response.written is <50% of response.total — low yield, most LLM calls failed"
+        remediation: >
+          Low yield means most QA generation LLM calls failed. Check:
+          (1) is the QA model (qa_model parameter) available and responding?
+          (2) are there rate-limit errors? Try reducing concurrency to 64.
+          (3) is ContentGuard rejecting too many outputs? Check the failed
+          count and error messages. (4) is the thinking-mode JSON extraction
+          failing? Try a different model that doesn't use thinking mode.
+
+      - name: qa_failure_rate_acceptable
+        description: "QA generation failure rate is <10% of total"
+        response_field: failed
+        operator: lt_percent
+        expected: 10
+        pass: "response.failed is <10% of response.total — acceptable failure rate"
+        fail: "response.failed is >=10% of response.total — high failure rate"
+        remediation: >
+          High failure rate has multiple possible causes — see the remediation
+          for written_count_significant. The most common cause at high
+          concurrency (196) is rate limiting. Reduce concurrency to 64 or 32
+          and re-run. The tool appends to the output file, so a partial re-run
+          may produce duplicates — delete the output file first if doing a
+          full re-run.
+
+      - name: generated_qa_schema_valid
+        description: "Generated QA lines have instruction and output fields (not error lines)"
+        command: |
+          FILE="corpus/qa_pairs/generated.jsonl"
+          TOTAL=$(wc -l < "$FILE")
+          VALID=$(python3 -c "
+          import json
+          valid = 0
+          with open('$FILE') as f:
+              for line in f:
+                  try:
+                      d = json.loads(line)
+                      resp = d.get('response', d)
+                      if resp.get('instruction') and resp.get('output'):
+                          valid += 1
+                  except: pass
+          print(valid)
+          " 2>/dev/null || echo "?")
+          ERRORS=$((TOTAL - ${VALID:-0}))
+          echo "Total lines: $TOTAL, Valid QAs: $VALID, Error lines: $ERRORS"
+        pass: "VALID is a significant majority of TOTAL — most lines are valid QAs"
+        fail: "Many lines are error entries (missing instruction/output) — LLM produced errors instead of QAs"
+        remediation: >
+          Error lines indicate the LLM failed to produce valid QA JSON for
+          those prompts. This is expected for some prompts (ambiguous content,
+          ContentGuard rejection). If the majority are errors, the model or
+          prompt template has a problem. Inspect a few error lines:
+            grep -m 5 '"error"' corpus/qa_pairs/generated.jsonl | python3 -m json.tool
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 7: Ingest QAs (exact-match dedup + h_mem storage)
@@ -295,8 +1101,87 @@ steps:
       dataset: "capabilities-researcher"
       owner: "john-brooks"
     verify:
-      field: stored_h_mems
-      min: 1
+      - field: stored_h_mems
+        gte: 500
+      - field: deduped
+        gte: 500
+        # Quality filter removes QAs with instruction <30 chars or output <50 chars.
+        # Exact-match dedup removes case-insensitive duplicate instructions.
+        # Floor of 500 ensures a usable training set survived.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 10: qa_ingest_complete
+  # Verifies QA ingestion produced a valid training JSONL and stored h_mems.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_qa_ingest_complete
+    type: gate
+    description: >
+      Verify Phase 7 QA ingestion produced a valid train.jsonl and stored
+      QA h_mems in the DB. The training JSONL is the input to assemble_chatml
+      — an empty or tiny file means no training data. BLOCKING: do NOT
+      proceed to assemble_chatml if any check fails.
+    checks:
+      - name: train_jsonl_exists
+        description: "corpus/qa_pairs/train.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/qa_pairs/train.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            echo "OK: $FILE — $LINES lines"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run ingest_qas. The tool reads generated.jsonl — verify Gate 9
+          passed. Check the tool response for errors (DB write failures,
+          QA parsing errors). If the quality filter removed all QAs (filtered
+          = 0), the generated QAs may all be too short — check the QA
+          generation step.
+
+      - name: stored_h_mems_nonzero
+        description: "At least some QA h_mems were stored in the DB"
+        response_field: stored_h_mems
+        operator: gte
+        expected: 100
+        pass: "response.stored_h_mems >= 100 — QAs were stored as h_mems"
+        fail: "response.stored_h_mems < 100 — very few or zero QAs stored"
+        remediation: >
+          If stored_h_mems is 0, the DB write failed or all QAs were filtered
+          out. Check: (1) response.parsed — were QAs parsed from generated.jsonl?
+          (2) response.filtered — did the quality filter remove everything?
+          (3) response.deduped — did dedup remove everything? If parsed is 0,
+          the generated.jsonl format may be wrong — check Gate 9. If filtered
+          is 0, the QAs are too short (instruction <30 chars or output <50
+          chars) — check the QA generation model output quality.
+
+      - name: train_jsonl_schema_valid
+        description: "Each line in train.jsonl has instruction, input, and output fields"
+        command: |
+          FILE="corpus/qa_pairs/train.jsonl"
+          TOTAL=$(wc -l < "$FILE")
+          VALID=$(python3 -c "
+          import json
+          valid = 0
+          with open('$FILE') as f:
+              for line in f:
+                  try:
+                      d = json.loads(line)
+                      if d.get('instruction') and d.get('output'):
+                          valid += 1
+                  except: pass
+          print(valid)
+          " 2>/dev/null || echo "?")
+          echo "Total lines: $TOTAL, Valid: $VALID"
+        pass: "VALID equals TOTAL — every line has instruction and output"
+        fail: "Some lines are missing instruction or output fields"
+        remediation: >
+          Malformed training data indicates a bug in ingest_qa's JSONL writer.
+          Re-run ingest_qas. If the issue persists, inspect the malformed lines:
+            head -5 corpus/qa_pairs/train.jsonl
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 8: Assemble ChatML dataset (Rust MCP tool — no Python)
@@ -320,11 +1205,119 @@ steps:
         organizations, markets, and systems are capable of and what they
         actually achieve. Your analysis draws on economic theory, systems
         thinking, computing principles, and institutional analysis.
-    # Sanity floor — catches a broken/empty QA pipeline before training is
-    # submitted. Tune upward after validating the first full run's yield.
     verify:
-      field: train_examples
-      min: 10
+      - field: train_examples
+        gte: 100
+        # Floor of 100 — a usable LoRA training set needs at least this many
+        # examples. The actual yield depends on how many QAs survived quality
+        # filter + dedup in Phase 7. Tune upward after validating the first
+        # full run's yield.
+
+  # ────────────────────────────────────────────────────────────────────────
+  # GATE 11: chatml_complete
+  # Final gate before training submission. Verifies the ChatML dataset is
+  # valid and large enough for LoRA training.
+  # ────────────────────────────────────────────────────────────────────────
+  - id: gate_chatml_complete
+    type: gate
+    description: >
+      Verify Phase 8 ChatML assembly produced a valid training dataset with
+      enough examples for LoRA training. This is the last gate before
+      submitting a training job — a broken dataset wastes GPU time and money.
+      BLOCKING: do NOT proceed to train_lora if any check fails.
+    checks:
+      - name: chatml_jsonl_exists
+        description: "corpus/qa_pairs/train_chat.jsonl exists and is non-empty"
+        command: |
+          FILE="corpus/qa_pairs/train_chat.jsonl"
+          if [ ! -f "$FILE" ]; then
+            echo "MISSING: $FILE does not exist"
+          elif [ ! -s "$FILE" ]; then
+            echo "EMPTY: $FILE exists but is 0 bytes"
+          else
+            LINES=$(wc -l < "$FILE")
+            SIZE=$(du -h "$FILE" | cut -f1)
+            echo "OK: $FILE — $LINES lines, $SIZE"
+          fi
+        pass: "File exists, is non-empty, and line count > 0"
+        fail: "File missing or empty"
+        remediation: >
+          Re-run assemble_chatml. The tool queries the DB for
+          training_qa_pair h_mems — if Gate 10 failed (no stored h_mems),
+          this step will produce nothing. Verify Gate 10 passed first.
+
+      - name: train_examples_sufficient
+        description: "Train examples count is >=100 (minimum viable LoRA training set)"
+        response_field: train_examples
+        operator: gte
+        expected: 100
+        pass: "response.train_examples >= 100 — sufficient for LoRA training"
+        fail: "response.train_examples < 100 — too few examples for effective training"
+        remediation: >
+          Too few training examples will produce a poor adapter. Check:
+          (1) response.total_matched — how many h_mems matched the dataset
+          query? If 0, the dataset name may not match what ingest_qas used.
+          (2) Was the train_split applied correctly? If train_examples is
+          much less than total_matched, the split may be wrong. Go back to
+          Phase 7 and verify more QAs were stored.
+
+      - name: chatml_schema_valid
+        description: "Each line has a messages array with system, user, and assistant roles"
+        command: |
+          FILE="corpus/qa_pairs/train_chat.jsonl"
+          TOTAL=$(wc -l < "$FILE")
+          VALID=$(python3 -c "
+          import json
+          valid = 0
+          with open('$FILE') as f:
+              for line in f:
+                  try:
+                      d = json.loads(line)
+                      msgs = d.get('messages', [])
+                      roles = [m.get('role') for m in msgs]
+                      if 'system' in roles and 'user' in roles and 'assistant' in roles:
+                          valid += 1
+                  except: pass
+          print(valid)
+          " 2>/dev/null || echo "?")
+          echo "Total lines: $TOTAL, Valid ChatML: $VALID"
+        pass: "VALID equals TOTAL — every line has system, user, and assistant messages"
+        fail: "Some lines are missing required message roles"
+        remediation: >
+          Malformed ChatML indicates a bug in training_assemble_dataset.
+          Re-run assemble_chatml. If the issue persists, inspect the output:
+            head -1 corpus/qa_pairs/train_chat.jsonl | python3 -m json.tool
+          The system_prompt may not have been applied correctly, or the QA
+          h_mems may be missing question/answer fields.
+
+      - name: no_oversized_examples
+        description: "No training example exceeds the sequence_len (4096 tokens ≈ 16K chars)"
+        command: |
+          FILE="corpus/qa_pairs/train_chat.jsonl"
+          OVERSIZED=$(python3 -c "
+          import json
+          oversized = 0
+          with open('$FILE') as f:
+              for line in f:
+                  try:
+                      d = json.loads(line)
+                      total_chars = sum(len(m.get('content', '')) for m in d.get('messages', []))
+                      # 4096 tokens ≈ 16K chars (4 chars/token approximation)
+                      if total_chars > 16000:
+                          oversized += 1
+                  except: pass
+          print(oversized)
+          " 2>/dev/null || echo "?")
+          echo "Oversized examples (>16K chars): $OVERSIZED"
+        pass: "OVERSIZED equals 0 or is a small number (<1% of total) — within sequence_len bounds"
+        fail: "OVERSIZED is a significant fraction of total — many examples will be truncated during training"
+        remediation: >
+          Oversized examples will be truncated during training, losing
+          content. If many examples are oversized, either: (1) reduce chunk
+          size in Phase 1 (lower max_tokens) and re-run the pipeline, or
+          (2) increase sequence_len in the train_lora step params (but this
+          increases memory usage). A few oversized examples are acceptable —
+          the training harness truncates them automatically.
 
   # ═══════════════════════════════════════════════════════════════════════
   # Phase 9: LoRA Training (RunPod H100 via training_submit MCP tool)

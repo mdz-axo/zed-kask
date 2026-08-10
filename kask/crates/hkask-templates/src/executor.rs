@@ -162,6 +162,17 @@ pub struct ManifestExecutor {
     /// `ToolPort::discover_tools()` (which works with test stubs that
     /// advertise `terminal`).
     terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+
+    /// Optional progress callback for real-time cascade feedback.
+    ///
+    /// When set, `run_cascade` calls it at the start of each step with a
+    /// human-readable description (e.g. "Step 2/5: scope (populate) — scoping
+    /// the diff"). The callback is `Send + Sync` because the cascade runs on
+    /// a background tokio executor. The bridge creates this from the tool's
+    /// `ToolCallEventStream` so progress appears as thinking traces in the
+    /// agent UI — the user can see what the cascade is doing and cancel if
+    /// it goes off track. When `None` (unit tests), no progress is emitted.
+    progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 impl ManifestExecutor {
@@ -188,6 +199,7 @@ impl ManifestExecutor {
             runtime_policy: None,
             taint_labels: Arc::new(std::sync::Mutex::new(HashMap::new())),
             terminal_check: None,
+            progress: None,
         }
     }
 
@@ -201,6 +213,18 @@ impl ManifestExecutor {
     #[must_use]
     pub fn with_terminal_check(mut self, check: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
         self.terminal_check = Some(check);
+        self
+    }
+
+    /// Wire a progress callback for real-time cascade feedback. The callback
+    /// is invoked at the start of each cascade step with a human-readable
+    /// description (e.g. "Step 2/5: scope (populate)"). The bridge creates
+    /// this from the tool's `ToolCallEventStream` so the user sees thinking
+    /// traces during skill execution and can steer or cancel. When absent
+    /// (unit tests, pre-wiring), no progress is emitted.
+    #[must_use]
+    pub fn with_progress(mut self, progress: Arc<dyn Fn(&str) + Send + Sync>) -> Self {
+        self.progress = Some(progress);
         self
     }
 
@@ -582,6 +606,28 @@ impl ManifestExecutor {
                     description = %step.description,
                     "REG"
                 );
+
+                // Emit progress to the tool's event stream so the user can see
+                // what the cascade is doing in real time and steer or cancel.
+                // The callback is set by the bridge from `ToolCallEventStream`;
+                // when absent (unit tests), this is a no-op.
+                if let Some(ref progress) = self.progress {
+                    let total = steps.len();
+                    let desc = if step.description.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" — {}", step.description)
+                    };
+                    let action = &step.action;
+                    if iteration > 1 {
+                        progress(&format!(
+                            "Iteration {iteration}, step {}/{total}: {action}{desc}",
+                            step_idx + 1,
+                        ));
+                    } else {
+                        progress(&format!("Step {}/{total}: {action}{desc}", step_idx + 1,));
+                    }
+                }
 
                 // Evaluate step condition — skip if false.
                 // Conditions may be Jinja expressions ({{ ... }}), which are rendered

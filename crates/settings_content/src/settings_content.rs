@@ -1486,6 +1486,11 @@ impl std::fmt::Display for DelayMs {
 /// The actual settings struct is `kask_bridge::KaskSettings` (D9a).
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskSettingsContent {
+    /// Kask data directory — root for all kask databases and agent state.
+    /// When empty, the runtime resolves a platform default.
+    #[serde(default)]
+    pub data_dir: Option<String>,
+
     /// MCP server configuration.
     #[serde(default)]
     pub mcp: Option<KaskMcpSettingsContent>,

@@ -166,6 +166,12 @@ pub struct SkillTool {
 /// Implemented by `kask_bridge` over the compiled-in `ManifestExecutor`.
 /// This keeps zed's `agent` crate from depending on hKask crates directly —
 /// the bridge provides the implementation.
+///
+/// `CascadeProgress` is a `Send + Sync` callback that emits thinking traces
+/// to the agent UI. Tools create it from `ToolCallEventStream::thinking_sender()`
+/// and pass it through so the user can see cascade progress in real time.
+pub type CascadeProgress = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[async_trait::async_trait]
 pub trait SkillManifestExecutor: Send + Sync {
     /// Execute an hKask skill manifest by name and return the result as text.
@@ -177,12 +183,18 @@ pub trait SkillManifestExecutor: Send + Sync {
     ///
     /// `skill_name` is the hKask skill ID (e.g., "grill-me", "essentialist").
     /// `context` is the initial context for the cascade (user input, etc.).
+    /// `progress` is an optional callback for real-time step-by-step feedback.
+    /// When `Some`, the executor calls it at each cascade step with a
+    /// human-readable description, which appears as a thinking trace in the
+    /// agent UI. When `None` (slash commands without an event stream), no
+    /// progress is emitted.
     ///
     /// Returns the cascade's final output as text, or an error message.
     async fn execute_skill(
         &self,
         skill_name: &str,
         context: std::collections::HashMap<String, serde_json::Value>,
+        progress: Option<CascadeProgress>,
     ) -> Result<String, String>;
 
     /// Compose a bundle from multiple peer-level skills via the `skill-bundler`
@@ -197,6 +209,7 @@ pub trait SkillManifestExecutor: Send + Sync {
     ///    the bundler; fewer should use `execute_skill` directly).
     /// `task` is the user's natural-language request.
     /// `context` carries any extra context entries merged into the cascade.
+    /// `progress` is an optional callback for real-time step-by-step feedback.
     ///
     /// Returns the composed bundle manifest (as JSON), the cascade's final
     /// output text, and the deterministic composition score (for the post-run
@@ -208,6 +221,7 @@ pub trait SkillManifestExecutor: Send + Sync {
         skill_names: &[String],
         task: &str,
         context: std::collections::HashMap<String, serde_json::Value>,
+        progress: Option<CascadeProgress>,
     ) -> Result<BundleExecutionResult, String>;
 
     /// Persist a composed bundle manifest to the registry so it can be
@@ -487,7 +501,12 @@ impl AgentTool for SkillTool {
                         "task".to_string(),
                         serde_json::Value::String(task.clone()),
                     );
-                    match executor.execute_skill(skill_name, context).await {
+                    // Create a progress sender from the event stream so the
+                    // user sees real-time cascade step traces in the agent UI.
+                    // Without this, the cascade runs silently and the user
+                    // cannot steer or cancel — a violation of user sovereignty.
+                    let progress = event_stream.thinking_sender();
+                    match executor.execute_skill(skill_name, context, Some(progress)).await {
                         Ok(result_text) => render_skill_envelope(&skill, &result_text),
                         Err(e) => {
                             return Err(SkillToolOutput::Error {
@@ -1099,6 +1118,7 @@ mod tests {
             &self,
             skill_name: &str,
             context: std::collections::HashMap<String, serde_json::Value>,
+            _progress: Option<CascadeProgress>,
         ) -> Result<String, String> {
             *self
                 .last_context
@@ -1116,6 +1136,7 @@ mod tests {
             skill_names: &[String],
             _task: &str,
             _context: std::collections::HashMap<String, serde_json::Value>,
+            _progress: Option<CascadeProgress>,
         ) -> Result<BundleExecutionResult, String> {
             // The stub doesn't run a real bundler cascade — it returns a
             // minimal result so tests that exercise the skill_bundle tool's

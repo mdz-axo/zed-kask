@@ -159,7 +159,7 @@ impl AgentTool for SkillBundleTool {
     fn run(
         self: Arc<Self>,
         input: ToolInput<Self::Input>,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx| {
@@ -235,6 +235,13 @@ impl AgentTool for SkillBundleTool {
                 });
             }
 
+            // Create a progress sender from the event stream so the user
+            // sees real-time cascade step traces in the agent UI. Without
+            // this, the bundle runs silently — the user cannot see which
+            // skills are being composed, what the cascade steps are, or
+            // whether to cancel. User sovereignty requires visibility.
+            let progress = event_stream.thinking_sender();
+
             // Compose and execute the bundle. The executor handles:
             // 1. Running the skill-bundler cascade (compose → synthesize →
             //    validate → lisp.eval score → evolve → loop)
@@ -242,7 +249,12 @@ impl AgentTool for SkillBundleTool {
             // 3. Executing the composed manifest's cascade
             // 4. Returning the structured result (manifest, score, output)
             let result: BundleExecutionResult = executor
-                .compose_and_execute_bundle(&input.skills, &input.task, input.context)
+                .compose_and_execute_bundle(
+                    &input.skills,
+                    &input.task,
+                    input.context,
+                    Some(progress),
+                )
                 .await
                 .map_err(|e| SkillBundleToolOutput::Error {
                     error: format!("Skill bundle composition/execution failed: {e}"),

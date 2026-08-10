@@ -22,16 +22,17 @@ mod companies;
 mod condenser;
 mod curator;
 mod data_services;
+mod general;
 mod inference_providers;
 pub(crate) use {
     codegraph::render_codegraph_page, collab::render_collab_page, companies::render_companies_page,
     condenser::render_condenser_page, corpus::render_corpus_page,
     curator::render_curator_email_page, curator::render_curator_page,
-    data_services::render_data_services_page, inference_providers::render_inference_providers_page,
-    mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
-    models::render_models_page, prediction_markets::render_prediction_markets_page,
-    research::render_research_page, scenarios::render_scenarios_page, swarm::render_swarm_page,
-    training::render_training_page,
+    data_services::render_data_services_page, general::render_general_page,
+    inference_providers::render_inference_providers_page, mcp_servers::render_mcp_servers_page,
+    media::render_media_page, memory::render_memory_page, models::render_models_page,
+    prediction_markets::render_prediction_markets_page, research::render_research_page,
+    scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -205,7 +206,7 @@ pub(crate) fn delete_credential(
 pub(crate) fn kask_string_input(
     field_id: &'static str,
     label: &'static str,
-    placeholder: &'static str,
+    placeholder: impl Into<SharedString>,
     initial: String,
     struct_name: &'static str,
     field_name: &'static str,
@@ -224,6 +225,12 @@ pub(crate) fn kask_string_input(
                     move |settings, _| {
                         let kask = settings.kask.get_or_insert_default();
                         match (struct_name, field_name) {
+                            ("kask", "data_dir") => {
+                                kask.data_dir = Some(parsed.clone());
+                            }
+                            ("research", "rss_db") => {
+                                kask.research.get_or_insert_default().rss_db = Some(parsed.clone());
+                            }
                             ("codegraph", "db_path") => {
                                 kask.codegraph.get_or_insert_default().db_path =
                                     Some(parsed.clone());
@@ -337,6 +344,22 @@ pub(crate) fn raw_kask_settings(cx: &App) -> Option<settings::KaskSettingsConten
 pub(crate) fn kask_page() -> SettingsPage {
     let items: Vec<SettingsPageItem> = vec![
         SettingsPageItem::SectionHeader("Kask"),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "General".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.data_dir"),
+            description: Some(
+                "Configure the kask data directory — the root for all kask \
+                 databases, agent state, and file-based stores. Every MCP server \
+                 receives this path as HKASK_DATA_DIR. When empty, the runtime \
+                 resolves a platform default (~/.local/share/hkask on Linux)."
+                    .into(),
+            ),
+            search_aliases: &["data dir", "data directory", "hkask data", "database path"],
+            in_json: true,
+            files: USER,
+            render: render_general_page,
+        }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Data Services".into(),
             r#type: Default::default(),
