@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Git pre-push hook: run the fast kask invariant checks before a push lands.
+#
+# Catches the failure class that post-hoc CI reports *after* the commit is
+# already on the remote — fmt drift, reg.* namespace creep, string errors,
+# forecast conformance drift. These checks run in under 2 seconds combined and
+# need only a shell + rustfmt (no full toolchain, no clippy, no tests).
+#
+# Install with: kask/scripts/install-hooks.sh
+# Bypass with:  git push --no-verify
+#
+# Exit 0 = push proceeds; non-zero = push blocked.
+
+set -euo pipefail
+
+# Resolve the repo root (the hook runs from .git/hooks, CWD is the worktree root).
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+KASK_DIR="$REPO_ROOT/kask"
+
+if [ ! -d "$KASK_DIR" ]; then
+  echo "pre-push: no kask/ directory at $KASK_DIR — skipping kask invariants."
+  exit 0
+fi
+
+FAIL=0
+
+echo "pre-push: running kask fast invariants..."
+
+# 1. cargo fmt --check (fast: rustfmt only, no full compile)
+if command -v cargo >/dev/null 2>&1; then
+  if ! cargo fmt --all -- --check >/dev/null 2>&1; then
+    echo "  FAIL: cargo fmt --check (run 'cargo fmt --all' and re-push)"
+    FAIL=1
+  else
+    echo "  ok: cargo fmt --check"
+  fi
+else
+  echo "  skip: cargo not on PATH (cargo fmt --check)"
+fi
+
+# 2. Shell-based invariant gates (each exits 0 on success).
+# These scripts use relative paths (crates/, mcp-servers/) and some lack an
+# internal `cd`, so they must be run from kask/ — matching CI's
+# `cd kask && bash scripts/<script>` invocation.
+for script in \
+  check-reg-canonical.sh \
+  check-reg-creep.sh \
+  check-string-errors.sh \
+  check-forecast-conformance.sh \
+  check-convergence-weights.sh; do
+  if [ -x "$KASK_DIR/scripts/$script" ]; then
+    if ( cd "$KASK_DIR" && bash "scripts/$script" ) >/dev/null 2>&1; then
+      echo "  ok: $script"
+    else
+      echo "  FAIL: $script"
+      FAIL=1
+    fi
+  else
+    echo "  skip: $script not found or not executable"
+  fi
+done
+
+if [ "$FAIL" -ne 0 ]; then
+  echo ""
+  echo "pre-push: one or more invariant checks failed. Fix the issues above and re-push,"
+  echo "or bypass with 'git push --no-verify' (not recommended for kask/ changes)."
+  exit 1
+fi
+
+echo "pre-push: all fast invariants passed."
+exit 0

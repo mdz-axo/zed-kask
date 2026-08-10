@@ -444,8 +444,7 @@ impl KanbanWidget {
     /// medium (`P2`) in the default text color; everything else muted.
     fn render_priority_badge(&self, priority: String) -> impl IntoElement {
         let lower = priority.to_lowercase();
-        let color = if lower.contains("high") || priority_rank(&lower).is_some_and(|r| r <= 1)
-        {
+        let color = if lower.contains("high") || priority_rank(&lower).is_some_and(|r| r <= 1) {
             Color::Accent
         } else if priority_rank(&lower) == Some(2) || lower.contains("medium") {
             Color::Default
@@ -1197,7 +1196,10 @@ mod tests {
         // expects.
         let result = build_move_dispatch_args(&provenance, "t1", "Ready");
         let (_, _, args) = result.expect("display-form status accepted (case-insensitive)");
-        assert_eq!(args["target_status"], "ready", "emitted as lowercase wire string");
+        assert_eq!(
+            args["target_status"], "ready",
+            "emitted as lowercase wire string"
+        );
     }
 
     #[test]

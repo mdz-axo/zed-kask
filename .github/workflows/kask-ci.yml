@@ -63,26 +63,19 @@ jobs:
         with:
           tool: nextest
       - name: Run tests
-        # Exclude tests that cannot pass on a standard GPU-less ubuntu-24.04 runner:
-        #  - wgpu_atlas tests require a real wgpu adapter (no Vulkan ICD on the runner)
-        #  - test_extension_store_with_test_extension has an internal 60s timeout for
-        #    WASM extension install that is exceeded under CI load
-        #  - test_random_worktree_changes / test_random_multibuffer are 100-iteration
-        #    randomized stress tests that exceed the 60s nextest slow-timeout on a
-        #    2-core runner (upstream runs them on 16x32 Namespace runners with 300s
-        #    overrides; see .config/nextest.toml)
-        #  - test_generator_function_outline is an upstream flake: outline() races the
-        #    async tree-sitter parse under workspace-wide load and returns [] when the
-        #    tree isn't ready yet. Passes in isolation (~0.2s). Filed upstream as
-        #    <TODO: insert issue#>. Lives in crates/languages/src/typescript.rs
-        #    (upstream-owned, no kask wiring) — not a kask regression.
-        #  - test_peers_following_each_other / test_editing_files are randomized stress
-        #    tests that exceed the 60s nextest slow-timeout under load (same class as
-        #    test_random_worktree_changes). Upstream-owned.
-        # None of these exercise kask code. The bracket colorization test is deliberately
-        # NOT excluded — reproduce it locally if it fails.
+        # Scope to kask crates only (the 33 packages under kask/). The fork's CI
+        # exists to gate kask changes; upstream Zed's 261 other crates are covered
+        # by upstream's own run_tests.yml (gated on repository_owner ==
+        # 'zed-industries', skipped on forks). Compiling test deps for all 294
+        # workspace packages previously exhausted the 87G runner disk after 38
+        # minutes of building (the job died before running a single test).
+        # Scoping cuts the compile to ~33 crates and ~2945 tests.
+        #
+        # The bracket colorization test is deliberately NOT excluded — reproduce
+        # it locally if it fails.
         run: >-
-          cargo nextest run --workspace --no-fail-fast --no-tests=warn
+          cargo nextest run --no-fail-fast --no-tests=warn
+          -p 'hkask-*' -p kask_bridge
           -E 'not (test(before_frame_skips_uploads_for_removed_texture) | test(remove_deallocates_tile_space_for_reuse) | test(test_extension_store_with_test_extension) | test(test_random_worktree_changes) | test(test_random_multibuffer) | test(test_generator_function_outline) | test(test_peers_following_each_other) | test(test_editing_files))'
       # NOTE: the trace-collection + mutation-testing steps were removed
       # 2026-08-04. They depended on kask/scripts/test, which was deleted in
@@ -214,7 +207,10 @@ jobs:
       - name: Install cargo-machete
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-machete
+          # Pinned to match the version developers run locally, so CI and local
+          # agree on what counts as "unused". taiki-e/install-action@v2 fetches
+          # the latest release tag by default; bump this explicitly when upgrading.
+          tool: cargo-machete@0.9.2
       - name: Check for unused dependencies (cargo-machete)
         run: cargo machete
 
