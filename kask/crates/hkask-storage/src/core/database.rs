@@ -53,7 +53,7 @@ pub fn embedding_dim() -> usize {
 /// connection. The two pointer args are NULL (no error message out-param,
 /// no custom API routines) — the documented static-link invocation.
 #[allow(unsafe_code)]
-fn init_sqlite_vec_on(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+pub(crate) fn init_sqlite_vec_on(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     type Sqlite3ExtInitFn = unsafe extern "C" fn(
         *mut rusqlite::ffi::sqlite3,
         *mut *mut std::os::raw::c_char,

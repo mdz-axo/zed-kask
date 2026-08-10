@@ -189,7 +189,7 @@ impl From<EqmError> for hkask_mcp_server::server::McpToolError {
         match e {
             EqmError::EmptyRationale => McpToolError::invalid_argument(e.to_string()),
             EqmError::InferenceFailed(_) => McpToolError::unavailable(e.to_string()),
-            EqmError::ParseError(_) => McpToolError::internal(e.to_string()),
+            EqmError::ParseError(_) => McpToolError::internal(e.to_string()), // rr0044-ok: mapper-internal-arm
         }
     }
 }

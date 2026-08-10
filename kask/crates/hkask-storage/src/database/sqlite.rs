@@ -86,6 +86,12 @@ impl SqliteDriver {
     pub fn in_memory_pool() -> Result<Pool<SqliteConnectionManager>, r2d2::Error> {
         let manager = SqliteConnectionManager::memory().with_init(|conn| {
             conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+            // Load sqlite-vec before schema init — schema.sql creates a
+            // `vec0` virtual table, which fails with "no such module: vec0"
+            // (aborting the whole batch and leaving zero tables created) if
+            // the extension isn't loaded. Mirrors the production pool init in
+            // `core::database::Database::sqlite_pool`.
+            crate::core::database::init_sqlite_vec_on(conn)?;
             let schema = include_str!("../core/sql/schema.sql");
             let dim = crate::core::database::embedding_dim();
             conn.execute_batch(&schema.replace("$DIM", &dim.to_string()))?;

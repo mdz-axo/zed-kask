@@ -1066,7 +1066,7 @@ impl ResearchServer {
             synth.extractor_kind.parse().map_err(McpToolError::from)?;
         let spec: crate::research::synthetic::ExtractorSpec =
             serde_json::from_str(&synth.extractor_spec).map_err(|e| {
-                McpToolError::internal(format!("invalid stored extractor_spec: {e}"))
+                McpToolError::internal(format!("invalid stored extractor_spec: {e}")) // rr0044-ok: parse-own-stored-data
             })?;
 
         // Validate and fetch the source URL.

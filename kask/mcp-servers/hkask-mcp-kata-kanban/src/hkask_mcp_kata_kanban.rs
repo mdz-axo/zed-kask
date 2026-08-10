@@ -881,7 +881,7 @@ impl KanbanServer {
                             ontology: kanban_type_to_pko("kanban_task_spawn")
                                 .map(|s| s.to_string()),
                         })
-                        .map_err(|e| McpToolError::internal(e.to_string()));
+                        .map_err(|e| McpToolError::internal(e.to_string())); // rr0044-ok: serialize-own-struct
                     }
                     Err(e) => {
                         tracing::info!(

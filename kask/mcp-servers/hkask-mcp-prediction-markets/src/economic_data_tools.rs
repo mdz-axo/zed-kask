@@ -415,7 +415,7 @@ impl PredictionMarketsServer {
                     .map_err(McpToolError::from)
                     .and_then(|eqm_result| {
                         serde_json::to_value(&eqm_result).map_err(|e| {
-                            McpToolError::internal(format!("eqm serialization failed: {e}"))
+                            McpToolError::internal(format!("eqm serialization failed: {e}")) // rr0044-ok: serialize-own-struct
                         })
                     })
             },
