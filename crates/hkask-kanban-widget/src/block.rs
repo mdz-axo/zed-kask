@@ -16,51 +16,26 @@ use serde::Deserialize;
 /// The discriminator-tagged body of a ```` ```kanban ```` block.
 ///
 /// `viz` selects the renderer; `"kanban"` renders the horizontal column layout.
-/// The board data can be a single board (with inline `tasks`) or multiple
-/// boards (with `boards` + `tasks_by_board`). The single-board shape is the
-/// common case (the agent emits one board per block).
+/// The board data is a single board (inline `tasks`). The agent emits one
+/// block per board when multiple boards are needed.
 #[derive(Debug, Clone, Deserialize)]
 pub struct KanbanBlockBody {
     #[serde(default)]
     pub viz: Option<String>,
-    /// Single-board shape: the board's id and name.
+    /// The board's id and name.
     #[serde(default)]
     pub board_id: Option<String>,
     #[serde(default)]
     pub board_name: Option<String>,
-    /// Single-board shape: the tasks for this board.
+    /// The tasks for this board.
     #[serde(default)]
     pub tasks: Vec<TaskBody>,
-    /// Multi-board shape: the list of boards.
-    #[serde(default)]
-    pub boards: Vec<BoardBody>,
-    /// Multi-board shape: tasks keyed by board id.
-    #[serde(default)]
-    pub tasks_by_board: Vec<BoardTasksBody>,
     /// Server-authoritative provenance for re-issuing the originating MCP tool
     /// with modified args (T6 move affordance). `#[serde(default)]` so bodies
     /// emitted before provenance landed parse with an empty (non-dispatchable)
     /// provenance and the widget falls back to its read-only display.
     #[serde(default)]
     pub provenance: BlockProvenance,
-}
-
-/// One board in the multi-board shape.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BoardBody {
-    #[serde(default)]
-    pub board_id: String,
-    #[serde(default)]
-    pub name: String,
-}
-
-/// Tasks for a single board in the multi-board shape.
-#[derive(Debug, Clone, Deserialize)]
-pub struct BoardTasksBody {
-    #[serde(default)]
-    pub board_id: String,
-    #[serde(default)]
-    pub tasks: Vec<TaskBody>,
 }
 
 /// One task on the board. Mirrors the `TaskInfo` struct from the deleted
@@ -73,6 +48,11 @@ pub struct TaskBody {
     pub title: String,
     #[serde(default)]
     pub status: String,
+    /// Optional longer-form description. Rendered clamped to 3 lines with a
+    /// "See more" expand affordance in `render_card`. `None` on tasks without
+    /// a description.
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub assignee: Option<String>,
     #[serde(default)]
@@ -83,46 +63,38 @@ pub struct TaskBody {
     /// dispatch on it. `None` on older blocks.
     #[serde(default)]
     pub ontology: Option<String>,
+    /// Priority label (e.g. `"high"`, `"P1"`). Rendered as a colored badge.
+    /// `None` on tasks without an explicit priority.
+    #[serde(default)]
+    pub priority: Option<String>,
+    /// Labels/tags. Rendered as muted chips.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Acceptance criteria (free-form strings). Rendered as a count
+    /// ("✓ N criteria").
+    #[serde(default)]
+    pub criteria: Vec<String>,
 }
 
 impl KanbanBlockBody {
-    /// Returns the list of (board_id, board_name, tasks) tuples that the widget
-    /// should render. For the single-board shape, this is one entry. For the
-    /// multi-board shape, it's one entry per board (boards with no tasks get
-    /// an empty task list).
-    pub fn boards_with_tasks(&self) -> Vec<(String, String, &[TaskBody])> {
-        // Single-board shape: board_id + board_name + tasks. When `tasks` is
-        // non-empty OR `boards` is empty, treat as single-board.
-        if !self.tasks.is_empty() || self.boards.is_empty() {
-            let id = self.board_id.clone().unwrap_or_default();
-            let name = self.board_name.clone().unwrap_or_else(|| {
-                if id.is_empty() {
-                    "Kanban Board".to_string()
-                } else {
-                    id.clone()
-                }
-            });
-            return vec![(id, name, &self.tasks)];
-        }
-
-        // Multi-board shape: boards + tasks_by_board.
-        self.boards
-            .iter()
-            .map(|board| {
-                let tasks = self
-                    .tasks_by_board
-                    .iter()
-                    .find(|entry| entry.board_id == board.board_id)
-                    .map(|entry| entry.tasks.as_slice())
-                    .unwrap_or(&[]);
-                (board.board_id.clone(), board.name.clone(), tasks)
-            })
-            .collect()
+    /// Returns the (board_id, board_name, tasks) tuple the widget should
+    /// render. The board name falls back to the board id, or `"Kanban Board"`
+    /// when both are absent.
+    pub fn board_with_tasks(&self) -> (String, String, &[TaskBody]) {
+        let id = self.board_id.clone().unwrap_or_default();
+        let name = self.board_name.clone().unwrap_or_else(|| {
+            if id.is_empty() {
+                "Kanban Board".to_string()
+            } else {
+                id.clone()
+            }
+        });
+        (id, name, &self.tasks)
     }
 }
 
-/// Parse a ```` ```kanban ```` block body. Tolerant: missing `viz`/`tasks`/
-/// `boards` default to `None`/empty rather than erroring, so media-shaped and
+/// Parse a ```` ```kanban ```` block body. Tolerant: missing `viz`/`tasks`
+/// default to `None`/empty rather than erroring, so media-shaped and
 /// graph-shaped JSON parse (and are then rejected by the renderer on the `viz`
 /// check) instead of being logged as a malformed kanban block.
 pub fn parse_kanban_body(body: &str) -> anyhow::Result<KanbanBlockBody> {
@@ -152,47 +124,62 @@ mod tests {
     }
 
     #[test]
-    fn parses_multi_board_shape() {
-        let body = r#"{"viz":"kanban","boards":[
-            {"board_id":"b1","name":"Sprint 1"},
-            {"board_id":"b2","name":"Sprint 2"}
-        ],"tasks_by_board":[
-            {"board_id":"b1","tasks":[{"task_id":"t1","title":"A","status":"backlog"}]},
-            {"board_id":"b2","tasks":[]}
-        ]}"#;
-        let parsed = parse_kanban_body(body).expect("valid body parses");
-        assert_eq!(parsed.viz.as_deref(), Some("kanban"));
-        let boards = parsed.boards_with_tasks();
-        assert_eq!(boards.len(), 2);
-        assert_eq!(boards[0].0, "b1");
-        assert_eq!(boards[0].1, "Sprint 1");
-        assert_eq!(boards[0].2.len(), 1);
-        assert_eq!(boards[1].0, "b2");
-        assert_eq!(boards[1].2.len(), 0);
-    }
-
-    #[test]
-    fn single_board_with_tasks_takes_precedence_over_boards() {
-        // When both `tasks` and `boards` are present, the single-board shape
-        // (tasks non-empty) wins.
-        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
-            {"task_id":"t1","title":"A","status":"backlog"}
-        ],"boards":[{"board_id":"b2","name":"Other"}]}"#;
-        let parsed = parse_kanban_body(body).expect("valid body parses");
-        let boards = parsed.boards_with_tasks();
-        assert_eq!(boards.len(), 1);
-        assert_eq!(boards[0].0, "b1");
-    }
-
-    #[test]
     fn empty_body_parses_as_single_empty_board() {
         let body = r#"{"viz":"kanban"}"#;
         let parsed = parse_kanban_body(body).expect("valid body parses");
         assert_eq!(parsed.viz.as_deref(), Some("kanban"));
-        // No tasks and no boards → single-board shape with empty tasks.
-        let boards = parsed.boards_with_tasks();
-        assert_eq!(boards.len(), 1);
-        assert!(boards[0].2.is_empty());
+        // No tasks → empty task slice.
+        let (id, name, tasks) = parsed.board_with_tasks();
+        assert!(id.is_empty());
+        assert_eq!(name, "Kanban Board");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn parses_task_description_field() {
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog","description":"Long-form description."}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert_eq!(parsed.tasks.len(), 1);
+        assert_eq!(
+            parsed.tasks[0].description.as_deref(),
+            Some("Long-form description.")
+        );
+    }
+
+    #[test]
+    fn description_defaults_to_none_when_absent() {
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog"}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert_eq!(parsed.tasks.len(), 1);
+        assert!(parsed.tasks[0].description.is_none());
+    }
+
+    #[test]
+    fn parses_priority_labels_and_criteria_fields() {
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog","priority":"P1","labels":["backend","urgent"],"criteria":["compiles","tests pass"]}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert_eq!(parsed.tasks.len(), 1);
+        assert_eq!(parsed.tasks[0].priority.as_deref(), Some("P1"));
+        assert_eq!(parsed.tasks[0].labels, vec!["backend", "urgent"]);
+        assert_eq!(parsed.tasks[0].criteria, vec!["compiles", "tests pass"]);
+    }
+
+    #[test]
+    fn priority_labels_and_criteria_default_empty_when_absent() {
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog"}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert_eq!(parsed.tasks.len(), 1);
+        assert!(parsed.tasks[0].priority.is_none());
+        assert!(parsed.tasks[0].labels.is_empty());
+        assert!(parsed.tasks[0].criteria.is_empty());
     }
 
     #[test]

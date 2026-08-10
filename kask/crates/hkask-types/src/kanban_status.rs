@@ -19,7 +19,6 @@
 use serde::{Deserialize, Serialize};
 
 /// TaskStatus — lifecycle state of a kanban task.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {

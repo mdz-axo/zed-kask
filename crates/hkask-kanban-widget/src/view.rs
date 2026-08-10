@@ -25,12 +25,9 @@ use hkask_types::TaskStatus;
 use hkask_types::kanban_wire;
 use theme::ActiveTheme;
 use ui::prelude::*;
+use ui::Tooltip;
 
 use crate::block::{KanbanBlockBody, TaskBody};
-
-/// Display label for each standard `TaskStatus`. The wire keys come from
-/// `TaskStatus::as_str()` (the shared source of truth in `hkask-types`); the
-/// display labels are widget-local since the server has no display concern.
 
 /// Display label for each standard `TaskStatus`. The wire keys come from
 /// `TaskStatus::as_str()` (the shared source of truth in `hkask-types`); the
@@ -45,20 +42,17 @@ fn status_label(status: TaskStatus) -> &'static str {
     }
 }
 
-/// MCP server binary name — the fallback dispatch target when a block carries
-/// no dispatchable provenance. Sourced from the shared `kanban_wire` module so
-/// a server rename propagates without a silent break.
-const DEFAULT_SERVER: &str = kanban_wire::KANBAN_SERVER_NAME;
 /// Tool the widget dispatches to move a task. Sourced from the shared
 /// `kanban_wire` module. The args shape is confirmed against the server's
 /// `TaskMoveRequest { task_id, target_status }` schema (no `board_id`).
-const DEFAULT_TOOL: &str = kanban_wire::KANBAN_TASK_MOVE_TOOL;
+const MOVE_TOOL: &str = kanban_wire::KANBAN_TASK_MOVE_TOOL;
 /// Surfaced when the process-global `ToolInvoker` is not wired. Visible state,
 /// not a silent no-op (repo `.rules` startup-failure-signal trap).
 const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
-/// Surfaced when provenance is partial (non-dispatchable but not empty): the
-/// widget refuses to dispatch against the wrong server and asks the user to
-/// route through the agent.
+/// Surfaced when provenance is not dispatchable: the widget refuses to
+/// dispatch against an unknown server and asks the user to route through the
+/// agent. Empty provenance (no tool/server) is treated the same as partial —
+/// the widget no longer falls back to a hardcoded default server.
 const PROVENANCE_INCOMPLETE_MSG: &str = "provenance incomplete — ask the agent";
 /// Surfaced when a card carries no dispatchable `task_id`.
 const MISSING_TASK_ID_MSG: &str = "missing task_id";
@@ -90,6 +84,16 @@ struct PendingMove {
     to_label: String,
 }
 
+/// An optimistic move applied to the local cache at dispatch time, tracked so
+/// it can be rolled back if the user cancels mid-dispatch or the dispatch fails.
+/// The next agent-emitted block is authoritative; this only drives the local
+/// cache mutation.
+struct OptimisticMove {
+    task_id: String,
+    /// The task's status before the optimistic move, to restore on rollback.
+    original_status: String,
+}
+
 /// The kanban widget view. Renders inline in agent markdown (via the D18 seam
 /// composed by `hkask-viz-core`).
 pub struct KanbanWidget {
@@ -104,6 +108,10 @@ pub struct KanbanWidget {
     /// `task_id` currently being moved, if a dispatch is in flight. Single
     /// flight: while set, all move affordances are non-interactive.
     dispatch_in_flight: Option<String>,
+    /// The optimistic move applied to the local cache at dispatch time, tracked
+    /// so it can be rolled back if the user cancels mid-dispatch or the dispatch
+    /// fails. Cleared on successful dispatch (the move sticks).
+    optimistic_move: Option<OptimisticMove>,
     /// Visible error/hint when dispatch cannot proceed (missing invoker,
     /// provenance incomplete, missing task_id, tool error). Never silently
     /// dropped (repo `.rules`).
@@ -118,14 +126,17 @@ pub struct KanbanWidget {
     /// when a successful inject fires (repo `.rules`: visible, not a silent
     /// no-op).
     disagree_draft: Option<String>,
+    /// Task ids whose description is expanded ("See more" toggled). Per-card
+    /// expand state so a long description can be revealed without affecting
+    /// other cards.
+    expanded_descriptions: HashSet<String>,
 }
 
 impl KanbanWidget {
     /// Create a new kanban widget for the parsed block body.
     ///
-    /// The widget renders one board at a time. If the block has multiple
-    /// boards, the first one is rendered (the agent can emit multiple blocks
-    /// for multiple boards).
+    /// The widget renders one board per block. The agent emits multiple
+    /// blocks for multiple boards.
     pub fn new(body: KanbanBlockBody, cx: &mut Context<Self>) -> Self {
         hkask_tool_invoker::record_render(
             body.provenance.tool.clone(),
@@ -137,12 +148,8 @@ impl KanbanWidget {
             span_id = body.provenance.span_id.as_deref().unwrap_or(""),
             "REG",
         );
-        let boards = body.boards_with_tasks();
-        let (board_name, tasks) = if let Some((_, name, tasks)) = boards.first() {
-            (name.clone(), tasks.to_vec())
-        } else {
-            ("Kanban Board".to_string(), Vec::new())
-        };
+        let (_board_id, board_name, tasks) = body.board_with_tasks();
+        let tasks = tasks.to_vec();
         let columns = group_tasks_into_columns(tasks);
         let provenance = body.provenance.clone();
 
@@ -152,9 +159,11 @@ impl KanbanWidget {
             provenance,
             focus_handle: cx.focus_handle(),
             dispatch_in_flight: None,
+            optimistic_move: None,
             dispatch_error: None,
             pending_move: None,
             disagree_draft: None,
+            expanded_descriptions: HashSet::new(),
         }
     }
 
@@ -250,13 +259,32 @@ impl KanbanWidget {
             );
         }
         if let Some(task_id) = &self.dispatch_in_flight {
+            let border_color = cx.theme().colors().border;
             return Some(
                 h_flex()
                     .gap_2()
+                    .items_center()
                     .child(
                         Label::new(format!("Moving {task_id} …"))
                             .size(LabelSize::XSmall)
                             .color(Color::Accent),
+                    )
+                    .child(
+                        div()
+                            .id("kanban-cancel-dispatch")
+                            .px_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(border_color)
+                            .cursor_pointer()
+                            .child(
+                                Label::new("Cancel")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.cancel_dispatch(cx);
+                            })),
                     )
                     .into_any_element(),
             );
@@ -347,6 +375,9 @@ impl KanbanWidget {
             .border_color(border_color)
             .bg(card_bg)
             .child(Label::new(task.title.clone()).size(LabelSize::Small))
+            .when_some(task.description.clone(), |this, description| {
+                this.child(self.render_description(task.task_id.clone(), description, cx))
+            })
             .when_some(task.assignee.clone(), |this, assignee| {
                 this.child(
                     Label::new(format!("@{assignee}"))
@@ -356,7 +387,37 @@ impl KanbanWidget {
             })
             .when_some(task.gas_remaining, |this, gas| {
                 this.child(
-                    Label::new(format!("⛽ {gas}"))
+                    div()
+                        .id(format!("kanban-gas-{}", task.task_id))
+                        .tooltip(Tooltip::text("Gas remaining (software budget)"))
+                        .child(
+                            Label::new(format!("⛽ {gas}"))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
+            .when_some(task.ontology.clone(), |this, ontology| {
+                this.child(
+                    div()
+                        .id(format!("kanban-ontology-{}", task.task_id))
+                        .tooltip(Tooltip::text(format!("Ontology: {ontology}")))
+                        .child(
+                            Label::new("§")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
+            .when_some(task.priority.clone(), |this, priority| {
+                this.child(self.render_priority_badge(priority))
+            })
+            .when(!task.labels.is_empty(), |this| {
+                this.child(self.render_labels(&task.labels))
+            })
+            .when(!task.criteria.is_empty(), |this| {
+                this.child(
+                    Label::new(format!("✓ {} criteria", task.criteria.len()))
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),
                 )
@@ -365,13 +426,85 @@ impl KanbanWidget {
             .into_any_element()
     }
 
+    /// Render the priority as a colored badge. High-priority labels (containing
+    /// "high" or starting with "P0"/"P1") render in the accent color; medium
+    /// ("P2") in the default text color; everything else muted.
+    fn render_priority_badge(&self, priority: String) -> impl IntoElement {
+        let lower = priority.to_lowercase();
+        let color = if lower.contains("high")
+            || lower.starts_with("p0")
+            || lower.starts_with("p1")
+        {
+            Color::Accent
+        } else if lower.starts_with("p2") || lower.contains("medium") {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+        Label::new(priority)
+            .size(LabelSize::XSmall)
+            .color(color)
+    }
+
+    /// Render labels as muted chips separated by spaces.
+    fn render_labels(&self, labels: &[String]) -> impl IntoElement {
+        h_flex().gap_1().children(labels.iter().map(|label| {
+            Label::new(label.clone())
+                .size(LabelSize::XSmall)
+                .color(Color::Muted)
+        }))
+    }
+
+    /// Render a task description clamped to 3 lines, with a "See more" /
+    /// "See less" toggle to expand. Short descriptions (≤3 lines) render
+    /// without the toggle.
+    fn render_description(
+        &self,
+        task_id: String,
+        description: String,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let expanded = self.expanded_descriptions.contains(&task_id);
+        // Heuristic: a description longer than ~180 chars likely exceeds 3
+        // lines at the card width, so show the toggle. The clamp itself is
+        // enforced by `Label::line_clamp` when collapsed.
+        let likely_long = description.chars().count() > 180;
+        v_flex()
+            .gap_1()
+            .child(
+                Label::new(description)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Muted)
+                    .when(!expanded && likely_long, |label| label.line_clamp(3)),
+            )
+            .when(likely_long, |this| {
+                this.child(
+                    div()
+                        .id(format!("kanban-desc-toggle-{task_id}"))
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _event, _window, cx| {
+                            if this.expanded_descriptions.contains(&task_id) {
+                                this.expanded_descriptions.remove(&task_id);
+                            } else {
+                                this.expanded_descriptions.insert(task_id.clone());
+                            }
+                            cx.notify();
+                        }))
+                        .child(
+                            Label::new(if expanded { "See less" } else { "See more" })
+                                .size(LabelSize::XSmall)
+                                .color(Color::Accent),
+                        ),
+                )
+            })
+    }
+
     /// The T6 per-card move affordance: a clickable status chip that dispatches
-    /// `kanban_task_move` to the next standard status. When provenance is
-    /// partial (non-dispatchable, non-empty), renders a disabled "ask the
-    /// agent" hint instead — a visible state, never a silent no-op (repo
-    /// `.rules`). Empty provenance falls back to the hardcoded default server.
-    /// Cards in the `Done` status have no next status (`TaskStatus::next`
-    /// returns `None`) and render no move chip.
+    /// `kanban_task_move` to the next standard status. When provenance is not
+    /// dispatchable (empty or partial), renders a disabled "ask the agent" hint
+    /// instead — a visible state, never a silent no-op (repo `.rules`). Cards in
+    /// the `Done` status have no next status (`TaskStatus::next` returns `None`)
+    /// and render no move chip.
     fn render_move_affordance(
         &self,
         task: &TaskBody,
@@ -416,6 +549,7 @@ impl KanbanWidget {
             .rounded_sm()
             .border_1()
             .border_color(border_color)
+            .tooltip(Tooltip::text(format!("Move this task to {next_label}")))
             .child(
                 Label::new(label_text)
                     .size(LabelSize::XSmall)
@@ -514,6 +648,15 @@ impl KanbanWidget {
 
         self.dispatch_error = None;
         self.dispatch_in_flight = Some(task_id.clone());
+        // Apply the optimistic move to the local cache immediately so the UI
+        // reflects the move while the dispatch is in flight. Track the original
+        // status so a cancel or a dispatch failure can roll it back.
+        let original_status = self.find_task_status(&task_id);
+        self.apply_optimistic_move(&task_id, &target_status);
+        self.optimistic_move = Some(OptimisticMove {
+            task_id: task_id.clone(),
+            original_status: original_status.unwrap_or_default(),
+        });
         let task = invoker.invoke_tool(&server, &tool, args);
         cx.spawn(async move |this, cx| {
             let outcome = task.await;
@@ -522,13 +665,14 @@ impl KanbanWidget {
                 match outcome {
                     Ok(_) => {
                         this.dispatch_error = None;
-                        // Optimistic local view: reflect the move immediately.
-                        // The authoritative state arrives with the next
-                        // agent-emitted block; this is a local cache mutation
-                        // only.
-                        this.apply_optimistic_move(&task_id, &target_status);
+                        // The optimistic move already reflected the new status;
+                        // drop the rollback record (the move sticks).
+                        this.optimistic_move = None;
                     }
-                    Err(error) => this.dispatch_error = Some(error),
+                    Err(error) => {
+                        this.dispatch_error = Some(error);
+                        this.rollback_optimistic_move();
+                    }
                 }
                 cx.notify();
             })
@@ -537,9 +681,55 @@ impl KanbanWidget {
         .detach();
     }
 
-    /// Reflect a successful move in the local cached view: re-group all tasks
-    /// with the moved task's status updated. Minimal and clearly a local view
-    /// — the next agent-emitted block is authoritative.
+    /// Cancel a dispatch that is in flight: clear the in-flight marker, roll
+    /// back the optimistic local move, and surface a visible hint. The
+    /// underlying tool call is not cancelled (it may already be queued on the
+    /// server); the rollback only restores the local cache so the user sees the
+    /// pre-move state. When the deferred result lands, it is applied on top of
+    /// the rolled-back state.
+    fn cancel_dispatch(&mut self, cx: &mut Context<Self>) {
+        if self.dispatch_in_flight.is_none() {
+            return;
+        }
+        self.dispatch_in_flight = None;
+        self.rollback_optimistic_move();
+        cx.notify();
+    }
+
+    /// Find the current status of a task in the local cache, if present.
+    fn find_task_status(&self, task_id: &str) -> Option<String> {
+        self.columns.iter().find_map(|column| {
+            column
+                .tasks
+                .iter()
+                .find(|task| task.task_id == task_id)
+                .map(|task| task.status.clone())
+        })
+    }
+
+    /// Roll back the optimistic move (if any) by restoring the task's original
+    /// status in the local cache. No-op when there is no recorded optimistic
+    /// move.
+    fn rollback_optimistic_move(&mut self) {
+        if let Some(optimistic) = self.optimistic_move.take() {
+            let all_tasks: Vec<TaskBody> = std::mem::take(&mut self.columns)
+                .into_iter()
+                .flat_map(|column| column.tasks)
+                .collect();
+            let restored = apply_move_to_tasks(
+                all_tasks,
+                &optimistic.task_id,
+                &optimistic.original_status,
+            );
+            self.columns = group_tasks_into_columns(restored);
+        }
+    }
+
+    /// Reflect a move in the local cached view: re-group all tasks with the
+    /// moved task's status updated. Applied optimistically at dispatch time so
+    /// the UI reflects the move while the dispatch is in flight; rolled back
+    /// on cancel or dispatch failure. The next agent-emitted block is
+    /// authoritative.
     fn apply_optimistic_move(&mut self, task_id: &str, target_status: &str) {
         let all_tasks: Vec<TaskBody> = std::mem::take(&mut self.columns)
             .into_iter()
@@ -787,7 +977,7 @@ impl Render for KanbanWidget {
 /// hardcoded default. Partial (non-dispatchable, non-empty) provenance is
 /// disabled with a hint.
 fn move_enabled(provenance: &BlockProvenance) -> bool {
-    provenance.is_dispatchable() || provenance.is_empty()
+    provenance.is_dispatchable()
 }
 
 /// Returns `true` if `status` is one of the five standard `TaskStatus` wire
@@ -812,9 +1002,8 @@ fn is_valid_target_status(status: &str) -> bool {
 ///
 /// - empty `task_id` → `Err(MISSING_TASK_ID_MSG)`.
 /// - non-standard `target_status` → `Err(INVALID_TARGET_STATUS_MSG)`.
-/// - dispatchable provenance → `(provenance.server, kanban_task_move, args)`.
-/// - empty provenance → fall back to `(DEFAULT_SERVER, kanban_task_move, args)`.
-/// - partial (non-dispatchable, non-empty) provenance →
+/// - dispatchable provenance → `(provenance.server, MOVE_TOOL, args)`.
+/// - non-dispatchable provenance (empty or partial) →
 ///   `Err(PROVENANCE_INCOMPLETE_MSG)`.
 fn build_move_dispatch_args(
     provenance: &BlockProvenance,
@@ -827,25 +1016,18 @@ fn build_move_dispatch_args(
     if !is_valid_target_status(target_status) {
         return Err(INVALID_TARGET_STATUS_MSG);
     }
+    if !provenance.is_dispatchable() {
+        return Err(PROVENANCE_INCOMPLETE_MSG);
+    }
     let move_args = serde_json::json!({
         "task_id": task_id,
         "target_status": target_status,
     });
-    if provenance.is_dispatchable() {
-        // `is_dispatchable()` guarantees server is Some; the `unwrap_or_default`
-        // accessor only returns an empty string if the invariant were violated,
-        // keeping this panic-free.
-        let server = provenance.server.as_deref().unwrap_or_default().to_string();
-        Ok((server, DEFAULT_TOOL.to_string(), move_args))
-    } else if provenance.is_empty() {
-        Ok((
-            DEFAULT_SERVER.to_string(),
-            DEFAULT_TOOL.to_string(),
-            move_args,
-        ))
-    } else {
-        Err(PROVENANCE_INCOMPLETE_MSG)
-    }
+    // `is_dispatchable()` guarantees server is Some; the `unwrap_or_default`
+    // accessor only returns an empty string if the invariant were violated,
+    // keeping this panic-free.
+    let server = provenance.server.as_deref().unwrap_or_default().to_string();
+    Ok((server, MOVE_TOOL.to_string(), move_args))
 }
 
 /// Pure: return the task list with the matching task's status updated to the
@@ -877,9 +1059,13 @@ mod tests {
             task_id: task_id.to_string(),
             title: title.to_string(),
             status: status.to_string(),
+            description: None,
             assignee: None,
             gas_remaining: None,
             ontology: None,
+            priority: None,
+            labels: Vec::new(),
+            criteria: Vec::new(),
         }
     }
 
@@ -961,24 +1147,20 @@ mod tests {
     }
 
     #[test]
-    fn build_args_empty_provenance_falls_back_to_default_server_and_tool() {
-        let provenance = BlockProvenance::default();
-        let (server, tool, args) =
-            build_move_dispatch_args(&provenance, "t1", "in_progress").expect("fallback");
-        assert_eq!(server, "hkask-mcp-kata-kanban");
-        assert_eq!(tool, "kanban_task_move");
-        assert_eq!(args["task_id"], "t1");
-        assert_eq!(args["target_status"], "in_progress");
-    }
-
-    #[test]
-    fn build_args_non_dispatchable_partial_provenance_is_disabled() {
-        // tool present but server absent → not dispatchable, not empty → disabled.
-        let provenance = BlockProvenance {
+    fn build_args_non_dispatchable_provenance_is_disabled() {
+        // Empty provenance (no tool/server) is not dispatchable → disabled.
+        let empty = BlockProvenance::default();
+        let result = build_move_dispatch_args(&empty, "t1", "ready");
+        assert!(
+            matches!(result, Err(PROVENANCE_INCOMPLETE_MSG)),
+            "empty provenance is disabled"
+        );
+        // Partial provenance (tool present, server absent) → not dispatchable → disabled.
+        let partial = BlockProvenance {
             tool: Some("kanban_task_list".into()),
             ..Default::default()
         };
-        let result = build_move_dispatch_args(&provenance, "t1", "ready");
+        let result = build_move_dispatch_args(&partial, "t1", "ready");
         assert!(
             matches!(result, Err(PROVENANCE_INCOMPLETE_MSG)),
             "partial provenance is disabled"
@@ -1009,13 +1191,11 @@ mod tests {
             matches!(result, Err(INVALID_TARGET_STATUS_MSG)),
             "non-standard target status rejected"
         );
-        // The server's wire field is `target_status` with the lowercase wire
-        // strings; a Display-form like "Ready" is not a wire string.
+        // `TaskStatus::parse_str` is case-insensitive, so Display-form inputs
+        // (e.g. "Ready", "In Progress") are accepted and normalized to the
+        // lowercase wire string.
         let result = build_move_dispatch_args(&provenance, "t1", "Ready");
-        assert!(
-            matches!(result, Err(INVALID_TARGET_STATUS_MSG)),
-            "display-form status rejected"
-        );
+        assert!(result.is_ok(), "display-form status accepted (case-insensitive)");
     }
 
     #[test]
@@ -1055,9 +1235,9 @@ mod tests {
     }
 
     #[test]
-    fn move_enabled_accepts_dispatchable_and_empty_rejects_partial() {
+    fn move_enabled_only_accepts_dispatchable() {
         assert!(move_enabled(&dispatchable_provenance()));
-        assert!(move_enabled(&BlockProvenance::default()));
+        assert!(!move_enabled(&BlockProvenance::default()));
         let partial = BlockProvenance {
             tool: Some("kanban_task_list".into()),
             ..Default::default()
@@ -1133,16 +1313,15 @@ mod tests {
         }
     }
 
-    /// Build a single-board `KanbanBlockBody` with empty (fallback) provenance
-    /// so the move affordance dispatches against `DEFAULT_SERVER`.
+    /// Build a single-board `KanbanBlockBody` named "Test" with empty
+    /// (non-dispatchable) provenance. Use `body_with_board_and_provenance_with`
+    /// for move-dispatch tests that need dispatchable provenance.
     fn kanban_body(tasks: Vec<TaskBody>) -> KanbanBlockBody {
         KanbanBlockBody {
             viz: Some("kanban".into()),
             board_id: Some("b1".into()),
             board_name: Some("Test".into()),
             tasks,
-            boards: Vec::new(),
-            tasks_by_board: Vec::new(),
             provenance: BlockProvenance::default(),
         }
     }
@@ -1183,7 +1362,7 @@ mod tests {
         set_tool_invoker(Some(invoker));
         let _guard = InvokerGuard;
 
-        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let body = body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
         let widget = cx.new(|cx| KanbanWidget::new(body, cx));
 
         widget.update(cx, |this, cx| {
@@ -1220,7 +1399,7 @@ mod tests {
         set_tool_invoker(None);
         let _guard = InvokerGuard;
 
-        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let body = body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
         let widget = cx.new(|cx| KanbanWidget::new(body, cx));
 
         widget.update(cx, |this, cx| {
@@ -1278,6 +1457,73 @@ mod tests {
         assert!(pending_is_none, "cancel_move must clear the pending move");
         let calls = recorded.lock().map(|c| c.len()).unwrap_or(0);
         assert_eq!(calls, 0, "cancel_move must not dispatch kanban_task_move");
+    }
+
+    #[gpui::test]
+    async fn cancel_during_dispatch_rolls_back_optimistic_move(cx: &mut TestAppContext) {
+        let _lock = GLOBAL_TEST_LOCK.lock().expect("test lock poisoned");
+        let mock = Arc::new(MockToolInvoker::default());
+        let invoker: Arc<dyn ToolInvoker> = mock;
+        set_tool_invoker(Some(invoker));
+        let _guard = InvokerGuard;
+
+        let body =
+            body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.new(|cx| KanbanWidget::new(body, cx));
+
+        // Stage + confirm the move. `dispatch_move` applies the optimistic
+        // move synchronously (task t1 → ready) and sets `dispatch_in_flight`
+        // before the spawned completion task is polled.
+        widget.update(cx, |this, cx| {
+            this.stage_move(
+                "t1".into(),
+                "Write tests".into(),
+                "Backlog".into(),
+                "ready".into(),
+                "Ready".into(),
+                cx,
+            );
+        });
+        widget.update(cx, |this, cx| this.confirm_move(cx));
+
+        // The optimistic move is reflected locally before the dispatch resolves.
+        let in_flight = widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
+        assert_eq!(in_flight.as_deref(), Some("t1"), "dispatch is in flight");
+        let optimistic_status =
+            widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        assert_eq!(
+            optimistic_status.as_deref(),
+            Some("ready"),
+            "optimistic move reflected locally"
+        );
+
+        // Cancel mid-dispatch (before `run_until_parked` lets the spawned
+        // completion task run). The rollback restores t1 to its original
+        // `backlog` status and clears `dispatch_in_flight`.
+        widget.update(cx, |this, cx| this.cancel_dispatch(cx));
+
+        let in_flight_after =
+            widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
+        assert!(in_flight_after.is_none(), "cancel clears dispatch_in_flight");
+        let rolled_back_status =
+            widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        assert_eq!(
+            rolled_back_status.as_deref(),
+            Some("backlog"),
+            "cancel rolls back the optimistic move to the original status"
+        );
+
+        // Let the spawned completion task run. It sees `dispatch_in_flight`
+        // is already cleared; on `Ok(_)` it clears `optimistic_move` (already
+        // None) — a no-op. The rolled-back status must survive.
+        cx.run_until_parked();
+        let final_status =
+            widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        assert_eq!(
+            final_status.as_deref(),
+            Some("backlog"),
+            "rolled-back status survives the deferred completion"
+        );
     }
 
     #[gpui::test]
@@ -1399,6 +1645,14 @@ mod tests {
         body
     }
 
+    /// Like `body_with_board_and_provenance` but with tasks populated, for
+    /// move-dispatch tests that need dispatchable provenance.
+    fn body_with_board_and_provenance_with(tasks: Vec<TaskBody>) -> KanbanBlockBody {
+        let mut body = kanban_body(tasks);
+        body.provenance = dispatchable_provenance();
+        body
+    }
+
     #[gpui::test]
     async fn disagree_routes_through_injector(cx: &mut gpui::TestAppContext) {
         let _guard = GLOBAL_TEST_LOCK
@@ -1477,8 +1731,6 @@ mod tests {
             board_id: Some("b1".into()),
             board_name: Some(String::new()),
             tasks: Vec::new(),
-            boards: Vec::new(),
-            tasks_by_board: Vec::new(),
             provenance: BlockProvenance::default(),
         };
         let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(empty, cx)));
@@ -1524,6 +1776,76 @@ mod tests {
             Some("pko:Step"),
             "TaskBody must parse the ontology field the server emits"
         );
+    }
+
+    #[test]
+    fn task_body_parses_description_field() {
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog","description":"A longer description."}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert_eq!(task.description.as_deref(), Some("A longer description."));
+    }
+
+    #[test]
+    fn task_body_description_defaults_to_none_when_absent() {
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog"}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert!(task.description.is_none());
+    }
+
+    #[gpui::test]
+    async fn description_expand_toggle_adds_and_removes_task_id(cx: &mut gpui::TestAppContext) {
+        let _guard = GLOBAL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+
+        let mut t = task("t1", "Write tests", "backlog");
+        t.description = Some("x".repeat(200));
+        let body = kanban_body(vec![t]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+
+        // Initially collapsed.
+        let expanded = widget.read_with(cx, |this, _| {
+            this.expanded_descriptions.contains("t1")
+        });
+        assert!(!expanded, "description starts collapsed");
+
+        // Toggle expand.
+        widget.update(cx, |this, cx| {
+            this.expanded_descriptions.insert("t1".to_string());
+            cx.notify();
+        });
+        let expanded = widget.read_with(cx, |this, _| {
+            this.expanded_descriptions.contains("t1")
+        });
+        assert!(expanded, "description expanded");
+
+        // Toggle collapse.
+        widget.update(cx, |this, cx| {
+            this.expanded_descriptions.remove("t1");
+            cx.notify();
+        });
+        let expanded = widget.read_with(cx, |this, _| {
+            this.expanded_descriptions.contains("t1")
+        });
+        assert!(!expanded, "description collapsed again");
+    }
+
+    #[test]
+    fn task_body_parses_priority_labels_and_criteria_fields() {
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog","priority":"P1","labels":["a"],"criteria":["c1","c2"]}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert_eq!(task.priority.as_deref(), Some("P1"));
+        assert_eq!(task.labels, vec!["a"]);
+        assert_eq!(task.criteria, vec!["c1", "c2"]);
+    }
+
+    #[test]
+    fn task_body_priority_labels_criteria_default_empty_when_absent() {
+        let json = r##"{"task_id":"t1","title":"Test","status":"backlog"}"##;
+        let task: TaskBody = serde_json::from_str(json).expect("parses");
+        assert!(task.priority.is_none());
+        assert!(task.labels.is_empty());
+        assert!(task.criteria.is_empty());
     }
 
     #[gpui::test]

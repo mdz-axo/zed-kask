@@ -146,19 +146,16 @@ impl KanbanService {
                 }
             }
 
-            // rJoule exhaustion: same logic, separate budget.
-            // Known limitation: routes through `task_gas_exhaust`, which marks the
-            // task Done with a "Gas exhausted" verification reason. A dedicated
-            // `task_rjoule_exhaust` with an rJoule-specific reason is not yet
-            // implemented; the completion semantics (auto-complete on budget
-            // exhaustion) are identical, so the shared path is reused intentionally.
+            // rJoule exhaustion: same logic, separate budget. Routes through
+            // `task_rjoule_exhaust`, which stamps an rJoule-specific verification
+            // reason (distinct from the gas-exhaust reason).
             if (task.status == TaskStatus::InProgress || task.status == TaskStatus::Review)
                 && let Some(remaining) = task.rjoule_remaining
                 && remaining == 0
             {
                 let idle = (now - task.updated_at).num_minutes();
                 if idle > 60 {
-                    match self.task_gas_exhaust(task.id) {
+                    match self.task_rjoule_exhaust(task.id) {
                         Ok(_) => fixes.push(UnjamFix {
                             task_id: task.id,
                             task_title: task.title.clone(),
@@ -202,6 +199,41 @@ impl KanbanService {
         tracing::info!(
             target: "hkask.kanban",
             operation = "task_gas_exhausted",
+            task_id = %task_id,
+            board_id = %task.board_id,
+            "REG"
+        );
+
+        Ok(task)
+    }
+
+    /// Mark a task as Done due to rJoule exhaustion.
+    ///
+    /// rJoule exhaustion is a completion path: subagents burn rJoules (inference
+    /// spend) from a budget explicitly set on the task. When rJoules hit zero
+    /// mid-work, the task auto-completes with an rJoule-specific verification
+    /// reason (distinct from the gas-exhaust reason). The delegator can reopen
+    /// with more rJoules to continue.
+    ///
+    /// Internal authority: called only by the regulation/unjam loop, not
+    /// exposed as an MCP tool. Must not be exposed as a tool without an
+    /// actor/authority check.
+    pub fn task_rjoule_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
+        let mut task = self.require_task(task_id)?;
+
+        let v = Verification::new(
+            false,
+            "rJoules exhausted — inference budget consumed.".into(),
+            task.owner,
+        );
+        task.verification = Some(v);
+        task.status = TaskStatus::Done;
+        task.updated_at = chrono::Utc::now();
+        self.update_task_triple(&task)?;
+
+        tracing::info!(
+            target: "hkask.kanban",
+            operation = "task_rjoule_exhausted",
             task_id = %task_id,
             board_id = %task.board_id,
             "REG"

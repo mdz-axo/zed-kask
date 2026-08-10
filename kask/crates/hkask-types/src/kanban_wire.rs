@@ -7,9 +7,9 @@
 //! retains only the server-binary name and the move-tool name — the wire
 //! constants that are *not* derivable from the `TaskStatus` enum.
 
-/// MCP server binary name. Used by the widget as the fallback dispatch target
-/// when a block carries no dispatchable provenance, and by the server's own
-/// `run()` entrypoint.
+/// MCP server binary name. Used by the server's own `run()` entrypoint to
+/// register itself with the MCP runtime. The widget resolves the server name
+/// from block provenance (no hardcoded fallback).
 pub const KANBAN_SERVER_NAME: &str = "hkask-mcp-kata-kanban";
 
 /// The MCP tool the widget dispatches to move a task between columns. The
@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn server_name_and_tool_are_stable() {
         // These are part of the wire contract; a rename is a breaking change
-        // that must update both the server's run() and the widget's fallback.
+        // that must update both the server's run() and the widget's move tool.
         assert_eq!(KANBAN_SERVER_NAME, "hkask-mcp-kata-kanban");
         assert_eq!(KANBAN_TASK_MOVE_TOOL, "kanban_task_move");
     }

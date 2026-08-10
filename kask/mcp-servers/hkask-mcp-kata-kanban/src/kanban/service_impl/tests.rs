@@ -408,3 +408,27 @@ fn board_delete_removes_board_and_tasks() {
     let boards = svc.board_list(&owner).unwrap();
     assert!(boards.iter().all(|b| b.id != board.id));
 }
+
+#[test]
+fn rjoule_exhaust_stamps_rjoule_reason() {
+    // rJoule exhaustion marks the task Done with an rJoule-specific
+    // verification reason, distinct from the gas-exhaust reason.
+    let (svc, board, owner) = make_service_with_board();
+    let spec = TaskSpec::new("Inference-heavy task".into()).with_rjoule_budget(0);
+    let task = svc.task_create(board.id, spec, owner).unwrap();
+
+    let exhausted = svc.task_rjoule_exhaust(task.id).unwrap();
+    assert_eq!(exhausted.status, TaskStatus::Done);
+    let verification = exhausted.verification.expect("verification stamped");
+    assert!(!verification.passed, "exhaustion is a failed verification");
+    assert_eq!(verification.verifier, task.owner, "verifier is the task owner");
+    assert_eq!(
+        verification.reasoning,
+        "rJoules exhausted — inference budget consumed."
+    );
+    assert_ne!(
+        verification.reasoning,
+        "Gas exhausted — subagent budget consumed.",
+        "rJoule reason must not collide with the gas-exhaust reason"
+    );
+}
