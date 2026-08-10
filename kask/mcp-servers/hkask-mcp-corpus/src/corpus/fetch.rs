@@ -7,6 +7,7 @@
 
 use crate::corpus::embed::{ocr_pdf_bytes, strip_html_tags};
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
+use hkask_types::InferencePort;
 
 fn http_error(
     msg: String,
@@ -42,7 +43,10 @@ const USER_AGENT: &str = concat!("hkask-corpus/", env!("CARGO_PKG_VERSION"));
 /// server, which validates the equivalent operation at its pool boundary.
 /// Without it, discover output can drive a GET to `169.254.169.254` or
 /// `localhost`.
-pub(crate) async fn fetch_text(url: &str) -> Result<String, ServiceError> {
+pub(crate) async fn fetch_text(
+    url: &str,
+    inference_port: &dyn InferencePort,
+) -> Result<String, ServiceError> {
     hkask_mcp_server::validate_tool_url_with_dns(url)
         .await
         .map_err(|e| {
@@ -129,7 +133,7 @@ pub(crate) async fn fetch_text(url: &str) -> Result<String, ServiceError> {
                 "PDF text extraction returned near-empty result — attempting OCR fallback"
             );
 
-            match ocr_pdf_bytes(&bytes, url).await {
+            match ocr_pdf_bytes(&bytes, url, inference_port).await {
                 Ok(ocr_text) => {
                     let ocr_words = ocr_text.split_whitespace().count();
                     if ocr_words > word_count {
@@ -191,13 +195,33 @@ pub(crate) async fn fetch_text(url: &str) -> Result<String, ServiceError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_types::InferencePort;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    /// Stub `InferencePort` for SSRF tests. The SSRF gate rejects before any
+    /// outbound request, so OCR (the only inference call in `fetch_text`) is
+    /// never reached — this stub returns an error if ever called, which would
+    /// surface as a test failure rather than a silent pass.
+    struct StubInference;
+    impl InferencePort for StubInference {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<Box<dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>> + Send + '_>>
+        {
+            Box::pin(async { Err(hkask_types::InferenceError::Generation("stub: SSRF gate should have rejected first".into())) })
+        }
+    }
 
     /// The SSRF gate must reject before any outbound request. These addresses
     /// are the canonical cloud-metadata and loopback targets; reaching the
     /// transport at all would be the vulnerability.
     #[tokio::test]
     async fn fetch_text_rejects_link_local_metadata_address() {
-        let err = fetch_text("http://169.254.169.254/latest/meta-data/")
+        let err = fetch_text("http://169.254.169.254/latest/meta-data/", &StubInference)
             .await
             .expect_err("link-local metadata address must be rejected");
         let message = err.to_string();
@@ -209,7 +233,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_text_rejects_loopback() {
-        let err = fetch_text("http://127.0.0.1:8080/")
+        let err = fetch_text("http://127.0.0.1:8080/", &StubInference)
             .await
             .expect_err("loopback must be rejected");
         assert!(
@@ -220,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_text_rejects_non_http_scheme() {
-        let err = fetch_text("file:///etc/passwd")
+        let err = fetch_text("file:///etc/passwd", &StubInference)
             .await
             .expect_err("non-http scheme must be rejected");
         assert!(

@@ -211,7 +211,7 @@ impl DiscoveryService {
                 continue;
             }
 
-            match download_and_cache(&work.url, &cache_path).await {
+            match download_and_cache(&work.url, &cache_path, inference_port).await {
                 Ok(()) => cached += 1,
                 Err(e) => {
                     tracing::warn!(target: "hkask.discover", slug = %work.slug, url = %work.url, error = %e, "Failed to download work — skipping");

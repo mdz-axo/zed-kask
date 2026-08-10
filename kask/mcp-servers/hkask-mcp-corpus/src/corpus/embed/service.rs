@@ -25,6 +25,7 @@ pub struct EmbedService;
 async fn resolve_work_text(
     work: &super::types::Work,
     cache_path: &Path,
+    inference_port: &dyn InferencePort,
 ) -> Result<String, ServiceError> {
     if let Some(ref local) = work.local_path {
         let local_path = std::path::Path::new(local);
@@ -71,10 +72,10 @@ async fn resolve_work_text(
             })
         } else {
             tracing::warn!(work = %work.title, path = %local, "Local file not found, falling back to cache/download");
-            resolve_from_cache_or_download(work, cache_path).await
+            resolve_from_cache_or_download(work, cache_path, inference_port).await
         }
     } else {
-        resolve_from_cache_or_download(work, cache_path).await
+        resolve_from_cache_or_download(work, cache_path, inference_port).await
     }
 }
 
@@ -82,6 +83,7 @@ async fn resolve_work_text(
 async fn resolve_from_cache_or_download(
     work: &super::types::Work,
     cache_path: &Path,
+    inference_port: &dyn InferencePort,
 ) -> Result<String, ServiceError> {
     if cache_path.exists() {
         tracing::info!(work = %work.title, "Using cached");
@@ -96,7 +98,7 @@ async fn resolve_from_cache_or_download(
         })
     } else {
         tracing::info!(work = %work.title, "Downloading");
-        let text = crate::corpus::fetch::fetch_text(&work.url).await?;
+        let text = crate::corpus::fetch::fetch_text(&work.url, inference_port).await?;
         if let Err(e) = std::fs::write(cache_path, &text) {
             tracing::warn!(path = %cache_path.display(), error = %e, "Could not cache download");
         }
@@ -552,7 +554,7 @@ impl EmbedService {
             }
 
             let cache_path = cache.join(format!("{}.txt", work.slug));
-            let text = resolve_work_text(work, &cache_path).await?;
+            let text = resolve_work_text(work, &cache_path, &*inference_port).await?;
 
             let cleaned = crate::text::strip_gutenberg_headers(&text);
             let entity_ref_prefix = format!("style:{}:{}", &config.author, work.slug);

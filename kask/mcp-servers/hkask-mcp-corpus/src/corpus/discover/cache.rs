@@ -7,6 +7,7 @@
 
 use crate::corpus::fetch::fetch_text;
 use hkask_services_core::{DomainKind, ErrorKind, ServiceError};
+use hkask_types::InferencePort;
 use std::path::Path;
 
 /// Download content from a URL and cache it to disk.
@@ -16,10 +17,14 @@ use std::path::Path;
 ///       stripped, and result is written to cache_path; Err on HTTP failure, empty
 ///       content, or I/O error
 #[must_use = "result must be used"]
-pub async fn download_and_cache(url: &str, cache_path: &Path) -> Result<(), ServiceError> {
+pub async fn download_and_cache(
+    url: &str,
+    cache_path: &Path,
+    inference_port: &dyn InferencePort,
+) -> Result<(), ServiceError> {
     tracing::info!(target: "hkask.discover", operation = "download_and_cache", url = %url, cache = %cache_path.display(), "REG");
 
-    let text = fetch_text(url).await?;
+    let text = fetch_text(url, inference_port).await?;
 
     if text.split_whitespace().count() < 10 {
         return Err(ServiceError::Domain {

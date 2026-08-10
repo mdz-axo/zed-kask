@@ -107,10 +107,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // semantic/mod.rs. Without this, the DB is silently encrypted with
             // the hardcoded dev passphrase under governed launch.
             "HKASK_DB_PASSPHRASE",
-            // RunPod OCR fallback credentials — read by runpod_credentials() in
-            // corpus/embed/ocr.rs. Without these, the RunPod OCR fallback is
-            // unconditionally unusable under governed launch.
-            "RUNPOD_API_KEY",
         ]),
         config_env: Some(&[
             "HKASK_EMBEDDING_DIM",
@@ -141,9 +137,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // hkask_mcp_corpus.rs and std::env::var in corpus/embed/ocr.rs.
             // Without this, operator OCR model overrides are silently dropped.
             "HKASK_OCR_MODEL",
-            // RunPod OCR fallback endpoint — read by runpod_credentials() in
-            // corpus/embed/ocr.rs. Non-secret endpoint URL.
-            "RUNPOD_OCR_ENDPOINT",
         ]),
     },
     BuiltinMcpServer {

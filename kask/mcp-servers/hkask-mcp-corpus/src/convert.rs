@@ -301,6 +301,26 @@ mod tests {
         assert_eq!(strip_html(html), "A & B");
     }
 
+    /// S2 unification pin: `strip_html` is the canonical HTML stripper for both
+    /// the convert pipeline (`corpus_convert`) and the embed pipeline
+    /// (`EmbedService::embed_corpus` → `fetch_text` → `strip_html_tags`).
+    /// The embed path previously used a divergent `strip_html_tags` that
+    /// decoded entities but missed block-tag spacing and script/style
+    /// removal. This test pins the unified behavior: block spacing +
+    /// entity decoding + script removal in a single document.
+    #[test]
+    fn strip_html_unifies_block_spacing_entity_decoding_and_script_removal() {
+        // Block spacing prevents word concatenation across block boundaries.
+        assert_eq!(strip_html("<p>a</p><p>b</p>"), "a b");
+        // Entity decoding survives block-tag stripping.
+        assert_eq!(strip_html("<p>a &amp; b</p><p>c</p>"), "a & b c");
+        // script/style content is removed entirely, not leaked into the text.
+        assert_eq!(
+            strip_html("<p>visible</p><script>var x = 1;</script><p>more</p>"),
+            "visible more"
+        );
+    }
+
     // ── sanitize_links tests (moved from tools/document.rs) ──
 
     #[test]

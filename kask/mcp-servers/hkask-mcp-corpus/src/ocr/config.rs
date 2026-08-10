@@ -68,9 +68,10 @@ impl std::fmt::Display for OcrBackend {
 // ── Thresholds Module ─────────────────────────────────────────────────────
 
 /// Default vision LLM model for OCR.
-/// Uses kask-ocr on RunPod (OLMOCR-2, synchronous /runsync endpoint).
+/// Uses kask-ocr on RunPod (OLMOCR-2), routed through the inference port
+/// (the port handles provider credentials — not `RUNPOD_*` env vars read in
+/// this crate).
 /// Override via `HKASK_OCR_MODEL` env var or `llm_model` pipeline parameter.
-/// Requires RUNPOD_API_KEY and RUNPOD_OCR_ENDPOINT env vars.
 pub const DEFAULT_LLM_OCR_MODEL: &str = hkask_inference::model_constants::DEFAULT_OCR_MODEL;
 
 /// Configurable OCR complexity thresholds.
