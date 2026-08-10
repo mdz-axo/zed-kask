@@ -216,10 +216,11 @@ mod tests {
             input in "[A-Za-z0-9_.~-]{0,100}"
         ) {
             let encoded = url_encode_value(&input);
-            prop_assert_eq!(
-                encoded, input,
-                "unreserved chars should not be encoded: input={:?} encoded={:?}",
-                input, encoded
+            let (input_dbg, encoded_dbg) = (format!("{:?}", input), format!("{:?}", encoded));
+            prop_assert!(
+                encoded == input,
+                "unreserved chars should not be encoded: input={} encoded={}",
+                input_dbg, encoded_dbg
             );
         }
 

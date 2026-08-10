@@ -370,6 +370,9 @@ mod tests {
         /// the redacted output must not contain the secret token that followed
         /// the prefix. Covers all 13 prefixes (sk-, ghp_, AKIA, xoxb-, eyJ, etc.)
         /// and arbitrary secret values — the hardcoded tests only cover 3.
+        /// The secret is the token *after* the prefix; the prefix_text before
+        /// the prefix may coincidentally contain the same chars (e.g. secret="z"
+        /// and prefix_text="z"), so we check the substring after [REDACTED].
         #[test]
         fn sanitize_redacts_every_secret_prefix(
             prefix_idx in 0usize..SECRET_PREFIXES.len(),
@@ -380,11 +383,26 @@ mod tests {
             let prefix = SECRET_PREFIXES[prefix_idx];
             let body = format!("{prefix_text}{prefix}{secret}{suffix_text}");
             let sanitized = sanitize_error_body(&body);
-            prop_assert!(
-                !sanitized.contains(&secret),
-                "secret '{}' survived redaction for prefix '{}': body={:?} sanitized={:?}",
-                secret, prefix, body, sanitized
-            );
+            // The secret must not appear after the [REDACTED] marker — the
+            // redactor replaces prefix+token with [REDACTED], so the secret
+            // (which followed the prefix) must be consumed.
+            let redacted_pos = sanitized.find("[REDACTED]");
+            if let Some(pos) = redacted_pos {
+                let after_redacted = &sanitized[pos + "[REDACTED]".len()..];
+                prop_assert!(
+                    !after_redacted.contains(&secret),
+                    "secret '{}' survived after [REDACTED] for prefix '{}': body={:?} sanitized={:?}",
+                    secret, prefix, body, sanitized
+                );
+            } else {
+                // No [REDACTED] marker means the prefix wasn't found — the
+                // secret is still in the body. This is a redaction failure.
+                prop_assert!(
+                    !sanitized.contains(&secret),
+                    "no [REDACTED] marker and secret '{}' survived for prefix '{}': body={:?} sanitized={:?}",
+                    secret, prefix, body, sanitized
+                );
+            }
         }
 
         /// P4 panic-freedom: sanitize_error_body must never panic on any input,

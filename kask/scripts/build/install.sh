@@ -256,16 +256,19 @@ install_binary() {
     log_success "Installed zed-kask + $installed_servers MCP server(s) to $BIN_DIR"
 }
 
-# install_desktop_entry — render zed.desktop.in and install it so the OS
-# routes zed-kask:// URLs to the zed-kask binary. Without this, the
-# x-scheme-handler/zed-kask MIME type declared in the template never reaches
-# the user's applications directory and OS-level deep links won't open.
+# install_desktop_entry — render the kask-specific desktop template and
+# install it so the OS routes zed-kask:// URLs to the zed-kask binary.
+# We use kask/scripts/build/zed-kask.desktop.in (NOT the upstream
+# crates/zed/resources/zed.desktop.in) because the upstream template declares
+# MimeType=text/plain and Keywords=zed — those collide with the user's real
+# Zed install. The kask template only declares x-scheme-handler/zed-kask and
+# Keywords=zed-kask, so there is zero overlap with upstream Zed.
 install_desktop_entry() {
     local workspace_root="$HKASK_SOURCE_DIR"
-    local template="$workspace_root/crates/zed/resources/zed.desktop.in"
+    local template="$workspace_root/kask/scripts/build/zed-kask.desktop.in"
 
     if [ ! -f "$template" ]; then
-        log_warning "zed.desktop.in not found at $template — skipping desktop entry"
+        log_warning "zed-kask.desktop.in not found at $template — skipping desktop entry"
         return 0
     fi
 

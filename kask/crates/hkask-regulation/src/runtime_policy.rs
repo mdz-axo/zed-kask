@@ -271,10 +271,11 @@ mod tests {
         ) {
             let p = DefaultPolicy::default();
             let verdict = p.check(&tool_name, ToolTaint::Sink, true, 1);
+            let got = format!("{:?}", verdict);
             prop_assert!(
                 matches!(verdict, PolicyVerdict::Block(_)),
-                "Sink + untrusted must block for tool '{}', got {:?}",
-                tool_name, verdict
+                "Sink + untrusted must block for tool '{}', got {}",
+                tool_name, got
             );
         }
 
@@ -287,10 +288,11 @@ mod tests {
         ) {
             let p = DefaultPolicy::default();
             let verdict = p.check(&tool_name, ToolTaint::Sink, false, 1);
-            prop_assert_eq!(
-                verdict, PolicyVerdict::Allow,
-                "Sink + trusted must allow for tool '{}', got {:?}",
-                tool_name, verdict
+            let got = format!("{:?}", verdict);
+            prop_assert!(
+                matches!(verdict, PolicyVerdict::Allow),
+                "Sink + trusted must allow for tool '{}', got {}",
+                tool_name, got
             );
         }
 
@@ -303,10 +305,11 @@ mod tests {
         ) {
             let p = DefaultPolicy::default();
             let verdict = p.check(&tool_name, ToolTaint::Pure, has_untrusted, 1);
-            prop_assert_eq!(
-                verdict, PolicyVerdict::Allow,
-                "Pure must allow for tool '{}', got {:?}",
-                tool_name, verdict
+            let got = format!("{:?}", verdict);
+            prop_assert!(
+                matches!(verdict, PolicyVerdict::Allow),
+                "Pure must allow for tool '{}', got {}",
+                tool_name, got
             );
         }
 
@@ -319,10 +322,11 @@ mod tests {
         ) {
             let p = DefaultPolicy::default();
             let verdict = p.check(&tool_name, ToolTaint::Source, false, 1);
+            let got = format!("{:?}", verdict);
             prop_assert!(
                 matches!(verdict, PolicyVerdict::Log(_)),
-                "Source must log for tool '{}', got {:?}",
-                tool_name, verdict
+                "Source must log for tool '{}', got {}",
+                tool_name, got
             );
         }
     }

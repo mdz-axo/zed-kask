@@ -223,11 +223,12 @@ impl ManifestExecutor {
         self
     }
 
-    /// Test-only accessor: returns whether a runtime policy is wired.
-    /// Used by the RR-0053 wiring test to verify `build_executor` attaches
-    /// a `DefaultPolicy` — without it, the FIDES Source→Sink block (Layer 4)
-    /// is dead code in production.
-    #[cfg(test)]
+    /// Accessor: returns whether a runtime policy is wired.
+    /// Used by the RR-0053 wiring test (kask_bridge) to verify `build_executor`
+    /// attaches a `DefaultPolicy` — without it, the FIDES Source→Sink block
+    /// (Layer 4) is dead code in production. Not `#[cfg(test)]`-gated because
+    /// the test lives in a downstream crate (kask_bridge), which compiles this
+    /// crate without `--cfg test`.
     pub fn runtime_policy_is_wired(&self) -> bool {
         self.runtime_policy.is_some()
     }
@@ -2066,6 +2067,7 @@ mod tests {
     use super::*;
     use hkask_capability::{DelegationToken, ToolFuture, ToolInfo};
     use hkask_types::InferenceError;
+    use proptest::prelude::*;
     use std::future::Future;
     use std::pin::Pin;
     use std::result::Result;
@@ -3417,5 +3419,67 @@ audit:
         );
         let out = extract_final_step_result(&map);
         assert_eq!(out, serde_json::json!("{\"answer\": 5}"));
+    }
+
+    proptest! {
+        /// P1 invariant: `extract_referenced_keys` must recognize any key
+        /// present in `taint_labels` — not just `step_`-prefixed keys. This
+        /// pins the fix that closed the FIDES L4 taint blind spot: a
+        /// Source-tainted value bound under a non-`step_`-prefixed name
+        /// (e.g. `user_query`, `crafted_url`) must propagate its taint label
+        /// so the Source→Sink block fires (RR-0053 companion).
+        #[test]
+        fn extract_referenced_keys_recognizes_taint_labels_key(
+            key in "[a-z_][a-z0-9_]{0,20}"
+        ) {
+            let executor = test_executor_with_taint(vec![(&key, ToolTaint::Source)]);
+            // Reference the key via inline Jinja.
+            let value = serde_json::json!(format!("{{{{ {key} }}}}"));
+            let referenced = executor.extract_referenced_keys(&value);
+            prop_assert!(
+                referenced.contains(&key),
+                "extract_referenced_keys must recognize taint-labels key '{}': got {:?}",
+                key, referenced
+            );
+        }
+
+        /// P1 invariant: `propagate_taint_for_binding` must label the new key
+        /// with Source taint when the original value references a Source-tainted
+        /// key — for any key name, not just `step_`-prefixed keys.
+        #[test]
+        fn propagate_taint_for_non_step_prefixed_key(
+            source_key in "[a-z_][a-z0-9_]{0,20}",
+            bound_key in "[a-z_][a-z0-9_]{0,20}"
+        ) {
+            prop_assume!(source_key != bound_key);
+            let executor = test_executor_with_taint(vec![(&source_key, ToolTaint::Source)]);
+            let value = serde_json::json!(format!("{{{{ {source_key} }}}}"));
+            executor.propagate_taint_for_binding(&value, &bound_key);
+            let labels = executor
+                .taint_labels
+                .lock()
+                .expect("taint labels mutex not poisoned");
+            prop_assert_eq!(
+                labels.get(&bound_key).copied(),
+                Some(ToolTaint::Source),
+                "Source taint must propagate from '{}' to '{}' for non-step_-prefixed keys",
+                source_key, bound_key
+            );
+        }
+
+        /// P1 invariant: `check_untrusted_input` must return true when a value
+        /// references a Source-tainted key — for any key name in taint_labels.
+        #[test]
+        fn check_untrusted_input_recognizes_taint_labels_key(
+            key in "[a-z_][a-z0-9_]{0,20}"
+        ) {
+            let executor = test_executor_with_taint(vec![(&key, ToolTaint::Source)]);
+            let value = serde_json::json!(format!("{{{{ {key} }}}}"));
+            prop_assert!(
+                executor.check_untrusted_input(&value),
+                "check_untrusted_input must return true for Source-tainted key '{}'",
+                key
+            );
+        }
     }
 }

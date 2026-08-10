@@ -287,13 +287,13 @@ steps:
       Parse generated QAs, quality-filter, exact-match dedup (case-insensitive
       on instruction). Store QA h_mems with 5W1H + Dublin Core + PKO provenance.
       Write training-ready JSONL.
-      tool: corpus_ingest_qa
-      params:
-        generated_jsonl: "corpus/qa_pairs/generated.jsonl"
-        output: "corpus/qa_pairs/train.jsonl"
-        db_path: "corpus/memory/john-brooks.db"
-        dataset: "capabilities-researcher"
-        owner: "john-brooks"
+    tool: corpus_ingest_qa
+    params:
+      generated_jsonl: "corpus/qa_pairs/generated.jsonl"
+      output: "corpus/qa_pairs/train.jsonl"
+      db_path: "corpus/memory/john-brooks.db"
+      dataset: "capabilities-researcher"
+      owner: "john-brooks"
     verify:
       field: stored_h_mems
       min: 1

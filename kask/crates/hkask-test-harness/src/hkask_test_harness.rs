@@ -398,3 +398,203 @@ pub fn arb_trace_entry() -> BoxedStrategy<TraceEntry> {
         )
         .boxed()
 }
+
+// ── Noop port stubs (enabler for ManifestExecutor tests) ──────────────────
+//
+// These stubs implement InferencePort and ToolPort with no-op/error returns so
+// that ManifestExecutor can be constructed in tests without a real GPUI
+// runtime or MCP server. They are the critical enabler for taint-propagation
+// and runtime-policy end-to-end tests (RR-0053 companion, RR-0049 class).
+//
+// NoopInferencePort returns InferenceError::Generation on every call.
+// NoopToolPort returns ToolPortError::InvocationFailed on invoke, empty
+// discover_tools, and None for get_tool_info — except when configured with
+// a taint map via NoopToolPort::with_taints, which lets get_tool_info return
+// ToolInfo with a specific ToolTaint for FIDES flow tests.
+
+use std::future::Future;
+use std::pin::Pin;
+
+/// No-op InferencePort for testing. Returns `InferenceError::Generation` on
+/// every `generate` call. Use when a test needs to construct a
+/// `ManifestExecutor` but doesn't exercise the inference path.
+#[derive(Debug, Clone)]
+pub struct NoopInferencePort;
+
+impl hkask_types::InferencePort for NoopInferencePort {
+    fn generate(
+        &self,
+        _prompt: &str,
+        _parameters: &hkask_types::template::LLMParameters,
+        _tools: Option<&[hkask_types::ChatToolDefinition]>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Generation(
+                "NoopInferencePort".to_string(),
+            ))
+        })
+    }
+}
+
+/// No-op ToolPort for testing. Returns errors by default, but can be
+/// configured with a taint map so `get_tool_info` returns `ToolInfo` with
+/// a specific `ToolTaint` — enabling FIDES Source→Sink flow tests.
+#[derive(Debug, Clone, Default)]
+pub struct NoopToolPort {
+    taints: std::collections::HashMap<String, hkask_capability::tool_taint::ToolTaint>,
+}
+
+impl NoopToolPort {
+    /// Create a new no-op tool port with no taint mappings.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a tool with a specific FIDES taint label so `get_tool_info`
+    /// returns it. This enables taint-propagation tests: a Source-tainted
+    /// tool's output flows into the context, and a Sink-tainted tool's
+    /// invocation with untrusted input should be blocked by the runtime
+    /// policy.
+    #[must_use]
+    pub fn with_taint(
+        mut self,
+        tool_name: &str,
+        taint: hkask_capability::tool_taint::ToolTaint,
+    ) -> Self {
+        self.taints.insert(tool_name.to_string(), taint);
+        self
+    }
+}
+
+impl hkask_capability::ToolPort for NoopToolPort {
+    fn invoke<'a>(
+        &'a self,
+        _server: &'a str,
+        _tool: &'a str,
+        _args: serde_json::Value,
+        _token: &'a hkask_capability::DelegationToken,
+    ) -> hkask_capability::ToolFuture<'a, Result<serde_json::Value, hkask_capability::ToolPortError>>
+    {
+        Box::pin(async {
+            Err(hkask_capability::ToolPortError::InvocationFailed(
+                "NoopToolPort".to_string(),
+            ))
+        })
+    }
+
+    fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+        Box::pin(async { self.taints.keys().cloned().collect() })
+    }
+
+    fn get_tool_info<'a>(
+        &'a self,
+        tool_name: &'a str,
+    ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+        Box::pin(async move {
+            self.taints
+                .get(tool_name)
+                .map(|taint| hkask_capability::ToolInfo {
+                    name: tool_name.to_string(),
+                    description: "noop tool".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_id: "noop".to_string(),
+                    required_capability: None,
+                    taint: *taint,
+                })
+        })
+    }
+}
+
+// ── Security-oriented proptest strategies ─────────────────────────────────
+
+/// Generate a `HashMap<String, ToolTaint>` with mixed Source/Sink/Pure labels.
+/// Used by taint-propagation tests to build context maps for `ManifestExecutor`
+/// (RR-0053 companion, FIDES L4).
+#[must_use]
+pub fn arb_taint_context()
+-> BoxedStrategy<std::collections::HashMap<String, hkask_capability::tool_taint::ToolTaint>> {
+    let taint = prop_oneof![
+        Just(hkask_capability::tool_taint::ToolTaint::Source),
+        Just(hkask_capability::tool_taint::ToolTaint::Sink),
+        Just(hkask_capability::tool_taint::ToolTaint::Pure),
+        Just(hkask_capability::tool_taint::ToolTaint::Endorser),
+    ];
+    prop::collection::hash_map("[a-z_][a-z0-9_]{0,20}", taint, 1..10).boxed()
+}
+
+/// Generate a Jinja `{{ }}` template expression referencing a random
+/// identifier. Used by taint-propagation tests to verify `extract_referenced_keys`
+/// recognizes keys from the taint-labels map (not just `step_`-prefixed keys).
+/// The generated string is a single `{{ ident }}` or `{{ ident.field }}`.
+#[must_use]
+pub fn arb_jinja_template() -> BoxedStrategy<String> {
+    prop_oneof![
+        "[a-z_][a-z0-9_]{0,20}".prop_map(|ident| format!("{{{{ {ident} }}}}")),
+        ("[a-z_][a-z0-9_]{0,20}", "[a-z_][a-z0-9_]{0,15}")
+            .prop_map(|(ident, field)| format!("{{{{ {ident}.{field} }}}}")),
+    ]
+    .boxed()
+}
+
+/// Generate a string containing a secret prefix + secret value + surrounding
+/// text. The caller provides the secret prefixes (e.g. `SECRET_PREFIXES` from
+/// `hkask-inference`) so the harness doesn't depend on `hkask-inference`.
+/// Used by `sanitize_error_body` proptests to verify no secret survives
+/// redaction (RR-0049/0050/0051).
+#[must_use]
+pub fn arb_secret_body(secret_prefixes: &'static [&'static str]) -> BoxedStrategy<String> {
+    let prefix_idx = (0..secret_prefixes.len()).prop_map(|i| secret_prefixes[i]);
+    (
+        prefix_idx,
+        "[A-Za-z0-9+/=_-]{1,40}",
+        "[a-z ]{0,20}",
+        "[a-z ]{0,20}",
+    )
+        .prop_map(|(prefix, secret, pre, post)| format!("{pre}{prefix}{secret}{post}"))
+        .boxed()
+}
+
+/// Generate a string with URL injection characters (`&`, `#`, `=`, `../`,
+/// percent-encoded sequences, control chars, multi-byte UTF-8). Used by
+/// `url_encode_value` / `build_url` proptests to verify no injection survives
+/// encoding (RR-0052).
+#[must_use]
+pub fn arb_url_with_injection() -> BoxedStrategy<String> {
+    prop_oneof![
+        "[&#=]{1,5}",
+        "%[0-9a-fA-F]{2}",
+        "\\.\\./",
+        "[\\x00-\\x1f]{1,3}",
+        "[éñ漢]{1,5}",
+        "[A-Za-z0-9_.~ -]{0,30}",
+    ]
+    .prop_map(|parts| parts)
+    .boxed()
+}
+
+/// Generate a provider error body mixing JSON, HTML, secrets, control chars,
+/// and multi-byte UTF-8. Used by cross-crate `sanitize_error_body` call-site
+/// tests to fuzz the 13 provider error paths (RR-0049/0050/0051).
+#[must_use]
+pub fn arb_http_error_body() -> BoxedStrategy<String> {
+    prop_oneof![
+        // JSON error bodies
+        arb_json_value().prop_map(|v| v.to_string()),
+        // HTML error pages
+        "<html>[a-z ]{0,50}</html>".prop_map(|s| s),
+        // Bodies with control chars
+        "[\\x00-\\x1f]{1,10}".prop_map(|s| s),
+        // Multi-byte UTF-8
+        "[éñ漢]{1,10}".prop_map(|s| s),
+        // Plain text with mixed content
+        "[a-zA-Z0-9 .,;:!?\"'\\-_/]{0,100}".prop_map(|s| s),
+    ]
+    .boxed()
+}

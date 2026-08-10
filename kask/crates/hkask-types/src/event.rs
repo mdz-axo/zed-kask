@@ -1059,7 +1059,7 @@ mod tests {
             /// (which makes `widget.render` canonical via ancestor match).
             #[test]
             fn non_canonical_returns_none(
-                input in "[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*"
+                input in r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*"
             ) {
                 // Skip if the input or any ancestor is canonical.
                 let mut cur = format!("reg.{input}");

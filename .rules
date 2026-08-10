@@ -793,6 +793,40 @@ field the server emits. The failure mode is silent: the widget renders
 without affordances and the operator cannot distinguish "block has no ontology
 tag" from "widget dropped the tag."
 
+## zed-kask .desktop files must never collide with upstream Zed
+
+zed-kask is a fork that complements Zed, not a replacement. A zed-kask
+install that hijacks the user's real Zed install is a critical failure of
+the project's fundamental premise. The collision surface is the `.desktop`
+file: if zed-kask's `.desktop` declares the same MIME types (`text/plain`,
+`application/x-zerosize`) or keywords (`zed`) as upstream Zed, desktop
+environments treat them as competitors for opening files and app-launcher
+searches. The more recently installed app wins — so installing zed-kask
+silently hijacks the user's Zed.
+
+This happened in commit 853542beab (Jul 26 2026): the agent changed the URL
+scheme in `crates/zed/resources/zed.desktop.in` from `x-scheme-handler/zed`
+to `x-scheme-handler/zed-kask` but left `text/plain`,
+`application/x-zerosize`, and `Keywords=zed` in place. The agent reported
+success because the things it was told to change (app IDs, URL scheme) were
+correct, but it never audited the rest of the file for collision surface.
+
+Rules:
+- zed-kask `.desktop` templates must only declare
+  `MimeType=x-scheme-handler/zed-kask` and `Keywords=zed-kask;`.
+- The forbidden strings are `text/plain`, `application/x-zerosize`,
+  `x-scheme-handler/zed;` (upstream's scheme), and `Keywords=zed;` in any
+  `.desktop` template that gets rendered for zed-kask.
+- The regression test `kask/scripts/build/check-desktop-no-collision.sh`
+  enforces this invariant and is wired into CI (`kask-ci.yml` invariants job).
+  If you add a new bundling path that renders a `.desktop` file, add its
+  template to the `templates` array in that test.
+- The upstream template (`crates/zed/resources/zed.desktop.in`) is a D-seam
+  file already modified for zed-kask (URL scheme, StartupWMClass). All kask
+  edits to it must preserve the no-collision invariant.
+- When modifying any `.desktop` template for zed-kask, run
+  `bash kask/scripts/build/check-desktop-no-collision.sh` before committing.
+
 # Stale diagnostics after bulk edits
 
 After a sequence of `edit_file` calls on the same file, `diagnostics` may

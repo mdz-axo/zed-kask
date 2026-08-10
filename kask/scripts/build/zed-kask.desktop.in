@@ -11,12 +11,11 @@ Icon=$APP_ICON
 StartupWMClass=$APP_WM_CLASS
 Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed-kask;
-# zed-kask: do NOT declare text/plain or application/x-zerosize here.
-# Those MIME types belong to upstream Zed. Declaring them causes desktop
-# environments to treat zed-kask as a competitor for opening text files —
-# the more recently installed app wins, hijacking the user's real Zed.
+# zed-kask must NOT declare text/plain or application/x-zerosize — those MIME
+# types belong to upstream Zed. Declaring them here causes desktop environments
+# to show zed-kask as a competitor for opening text files, and the more recently
+# installed app can become the default, hijacking the user's real Zed install.
 # Only declare the zed-kask-specific URL scheme handler.
-# The check-desktop-no-collision.sh test enforces this invariant.
 MimeType=x-scheme-handler/zed-kask;
 Actions=NewWorkspace;
 

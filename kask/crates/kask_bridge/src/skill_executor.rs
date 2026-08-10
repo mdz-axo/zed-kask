@@ -1275,12 +1275,17 @@ steps:
     /// untrusted input flows to Sink tools unchecked (OWASP LLM06).
     #[test]
     fn build_executor_wires_runtime_policy() {
+        // BridgeManifestExecutor::new requires a tokio Handle — create a
+        // runtime for the test (build_executor doesn't actually run async
+        // code, it just constructs the executor).
+        let runtime = tokio::runtime::Runtime::new().expect("test tokio runtime");
+        let _guard = runtime.enter();
         let executor = BridgeManifestExecutor::new(
             Arc::new(StubInferencePort),
             Arc::new(StubToolPort),
             PathBuf::from("/tmp/nonexistent-manifests"),
             PathBuf::from("/tmp/nonexistent-templates"),
-            tokio::runtime::Handle::current(),
+            runtime.handle().clone(),
         );
         let manifest_executor = executor.build_executor();
         assert!(
