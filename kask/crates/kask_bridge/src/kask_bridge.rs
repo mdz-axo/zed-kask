@@ -11,7 +11,7 @@
 
 mod condenser_bridge;
 mod context_injector;
-mod github_update;
+
 mod identity;
 mod inference;
 mod inference_ipc_server;
@@ -24,7 +24,7 @@ mod skill_executor;
 
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
-pub use github_update::{ZedKaskReleaseAsset, get_zed_kask_release_asset};
+
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two

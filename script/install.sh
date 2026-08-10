@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fork note: Zed-Kask is built from source. Delegate to the fork's installer at
-# kask/scripts/build/install.sh, which builds the binary, installs the desktop
-# entry, and registers the zed-kask:// URL scheme handler.
+# kask/scripts/build/install.sh, which installs only the zed-kask command,
+# MCP server commands, zed-kask settings, and zed-kask icons.
 #
 # The upstream install.sh downloaded a tarball from cloud.zed.dev and installed
 # upstream Zed under dev.zed.* app IDs — wrong for this fork.

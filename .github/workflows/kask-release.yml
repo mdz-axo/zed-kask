@@ -6,7 +6,8 @@
 #
 # Artifacts:
 #   zed-kask-x86_64-unknown-linux-gnu.tar.gz   (zed-kask + hkask-mcp-* binaries)
-#   install.sh, install-common.sh, mcp-servers.txt  (source-build fallback)
+#   install.sh, install-binary.sh, install-common.sh, update-zed-kask.sh, mcp-servers.txt
+#   (source-build and installed safe-updater bundle)
 #   SHA256SUMS                                  (checksums for all of the above)
 #
 # Users install via:
@@ -111,6 +112,20 @@ jobs:
           cd release-artifacts
           ${{ matrix.archive_cmd }} "../${{ matrix.archive }}" ./*
 
+      - name: Audit flat zed-kask archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${{ matrix.archive }}"
+          while IFS= read -r entry; do
+            entry="${entry#./}"
+            case "$entry" in
+              ''|zed-kask|hkask-mcp-*) ;;
+              *) echo "unexpected archive entry: $entry" >&2; exit 1 ;;
+            esac
+          done < <(tar -tzf "$archive")
+          tar -tvzf "$archive" | awk '$1 ~ /^d/ && $NF == "./" { next } $1 !~ /^-/ { print "non-regular archive entry: " $0 > "/dev/stderr"; exit 1 }'
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -151,7 +166,9 @@ jobs:
           # branch. mcp-servers.txt is required because install-common.sh
           # loads it at runtime from the same directory.
           cp kask/scripts/build/install.sh release-artifacts/
+          cp kask/scripts/build/install-binary.sh release-artifacts/
           cp kask/scripts/build/install-common.sh release-artifacts/
+          cp kask/scripts/build/update-zed-kask.sh release-artifacts/
           cp kask/scripts/build/mcp-servers.txt release-artifacts/
           # Generate checksums over every asset (archives + scripts).
           cd release-artifacts

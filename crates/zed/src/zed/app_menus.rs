@@ -70,9 +70,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             disabled: false,
             items: vec![
                 MenuItem::action("About Zed", zed_actions::About),
-                MenuItem::action("Check for Updates", auto_update::Check),
-                // zed-kask: D16 — GitHub-backed zed-kask update menu item.
-                MenuItem::action("Update Zed-Kask", auto_update::UpdateZedKask),
+                MenuItem::action("Update Zed-Kask", super::RunZedKaskUpdate),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu::new("Settings").items([
                     MenuItem::action("Open Settings", zed_actions::OpenSettings),
@@ -296,10 +294,6 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
             name: "Help".into(),
             disabled: false,
             items: vec![
-                MenuItem::action(
-                    "View Release Notes Locally",
-                    auto_update_ui::ViewReleaseNotesLocally,
-                ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", onboarding::ShowWelcome),
@@ -349,24 +343,15 @@ mod tests {
         assert_eq!(leftmost.name.as_ref(), "z-k");
     }
 
-    // zed-kask: D16 — pins the "Update Zed-Kask" menu item exists in the
-    // leftmost menu so an upstream merge cannot silently remove it.
     #[test]
-    fn test_leftmost_menu_has_update_zed_kask_item() {
+    fn test_leftmost_menu_has_zed_kask_update_item() {
         let cx = TestAppContext::single();
         let menus = cx.update(|cx| app_menus(cx));
         let leftmost = menus
             .first()
             .expect("app_menus should return at least one menu");
-        let has_update_item = leftmost.items.iter().any(|item| {
-            matches!(
-                item,
-                MenuItem::Action { name, .. } if name.as_ref() == "Update Zed-Kask"
-            )
-        });
-        assert!(
-            has_update_item,
-            "leftmost menu should contain an 'Update Zed-Kask' action item"
-        );
+        assert!(leftmost.items.iter().any(|item| {
+            matches!(item, MenuItem::Action { name, .. } if name.as_ref() == "Update Zed-Kask")
+        }));
     }
 }

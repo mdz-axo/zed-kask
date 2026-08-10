@@ -149,6 +149,8 @@ actions!(
         TestPanic,
         /// Triggers a hard crash for debugging.
         TestCrash,
+        /// Runs the installed zed-kask-only updater in a visible terminal.
+        RunZedKaskUpdate,
     ]
 );
 
@@ -908,6 +910,41 @@ async fn initialize_agent_panel(
     anyhow::Ok(())
 }
 
+fn zed_kask_update_task() -> anyhow::Result<task::SpawnInTerminal> {
+    let executable = std::env::current_exe().context("could not locate the running zed-kask executable")?;
+    let bin_dir = executable
+        .parent()
+        .context("zed-kask executable has no parent directory")?;
+    let install_dir = bin_dir
+        .parent()
+        .context("zed-kask executable is not installed below a prefix")?;
+    let updater = install_dir
+        .join("share/zed-kask/install/update-zed-kask.sh");
+
+    anyhow::ensure!(
+        updater.is_file(),
+        "zed-kask updater is not installed at {}; reinstall zed-kask to restore it",
+        updater.display()
+    );
+
+    Ok(task::SpawnInTerminal {
+        id: task::TaskId("zed-kask-update".to_string()),
+        full_label: "Update Zed-Kask".to_string(),
+        label: "Update Zed-Kask".to_string(),
+        command: Some(updater.to_string_lossy().into_owned()),
+        command_label: updater.to_string_lossy().into_owned(),
+        use_new_terminal: true,
+        allow_concurrent_runs: false,
+        reveal: task::RevealStrategy::Always,
+        reveal_target: task::RevealTarget::Dock,
+        hide: task::HideStrategy::Never,
+        show_summary: true,
+        show_command: true,
+        show_rerun: true,
+        ..Default::default()
+    })
+}
+
 fn register_actions(
     app_state: Arc<AppState>,
     workspace: &mut Workspace,
@@ -915,6 +952,36 @@ fn register_actions(
     cx: &mut Context<Workspace>,
 ) {
     workspace
+        .register_action(|workspace: &mut Workspace, _: &RunZedKaskUpdate, window, cx| {
+            let update_task = match zed_kask_update_task() {
+                Ok(task) => task,
+                Err(error) => {
+                    drop(window.prompt(
+                        PromptLevel::Critical,
+                        "Could not start zed-kask update",
+                        Some(&error.to_string()),
+                        &["OK"],
+                        cx,
+                    ));
+                    return;
+                }
+            };
+            let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
+                drop(window.prompt(
+                    PromptLevel::Critical,
+                    "Could not start zed-kask update",
+                    Some("The terminal panel is unavailable."),
+                    &["OK"],
+                    cx,
+                ));
+                return;
+            };
+            terminal_panel
+                .update(cx, |terminal_panel, cx| {
+                    terminal_panel.spawn_task(&update_task, window, cx)
+                })
+                .detach_and_log_err(cx);
+        })
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
         .register_action(|_, _: &GetMerch, _, cx| cx.open_url(MERCH_URL))

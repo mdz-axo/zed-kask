@@ -1297,9 +1297,64 @@ mod tests {
             !passed,
             "string \"false\" must be coerced to Bool(false) — verification must fail"
         );
+    }
+
+    /// When step_4_result is a boolean (LLM returned a bare true/false
+    /// instead of a JSON object), the listp guard prevents a type error
+    /// and returns verification_passed=false with convergence_metric=0.0.
+    #[test]
+    fn dispatch_lisp_eval_upstream_rebase_non_list_guard() {
+        let form = r#"
+          (if (not (listp step_4_result))
+              (list (list "verification_passed" false)
+                    (list "marker_density" 0.0)
+                    (list "convergence_metric" 0.0))
+              (let ((checks step_4_result))
+                (let ((compiled-raw (assoc "compiled" checks))
+                      (tests-raw (assoc "tests_passed" checks))
+                      (invariant-raw (assoc "invariant_holds" checks))
+                      (marker_count (assoc "marker_count" checks))
+                      (call_site_count (assoc "call_site_count" checks)))
+                  (let ((compiled (if (string= compiled-raw "false") false compiled-raw))
+                        (tests_passed (if (string= tests-raw "false") false tests-raw))
+                        (invariant_holds (if (string= invariant-raw "false") false invariant-raw)))
+                    (if (and compiled tests_passed invariant_holds
+                             (>= marker_count (* call_site_count 0.5)))
+                        (list (list "verification_passed" true)
+                              (list "marker_density" (/ marker_count call_site_count))
+                              (list "convergence_metric" 1.0))
+                        (list (list "verification_passed" false)
+                              (list "marker_density" (/ marker_count call_site_count))
+                              (list "convergence_metric" 0.0)))))))
+        "#;
+
+        // step_4_result is a boolean — the guard must catch this and return
+        // verification_passed=false without a type error.
+        let boolean_input = serde_json::json!({
+            "form": form,
+            "env": {
+                "step_4_result": true
+            }
+        });
+        let result = dispatch_compute("lisp.eval", &boolean_input).unwrap();
+        let pairs = result.as_array().expect("result should be a list of pairs");
+        let passed = pairs
+            .iter()
+            .find(|p| {
+                p.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    == Some("verification_passed")
+            })
+            .and_then(|p| {
+                p.as_array()
+                    .and_then(|a| a.get(1))
+                    .and_then(|v| v.as_bool())
+            })
+            .unwrap_or(true);
         assert!(
             !passed,
-            "string \"false\" must be coerced to Bool(false) — verification must fail"
+            "boolean step_4_result must be caught by the listp guard — verification must fail"
         );
     }
 

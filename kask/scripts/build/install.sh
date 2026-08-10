@@ -212,6 +212,7 @@ install_binary() {
 
     log "Installing zed-kask binaries..."
 
+    assert_not_zed_owned_path "$BIN_DIR" "binary installation" || return 1
     mkdir -p "$BIN_DIR"
 
     local profile_dir
@@ -233,6 +234,7 @@ install_binary() {
     done
 
     # Install CLI binary
+    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
     cp "$profile_dir/zed-kask" "$BIN_DIR/zed-kask"
     chmod +x "$BIN_DIR/zed-kask"
 
@@ -245,6 +247,7 @@ install_binary() {
     # Install MCP server binaries
     local installed_servers=0
     for server in "${MCP_SERVERS[@]}"; do
+        assert_kask_binary_destination "$BIN_DIR/$server" || return 1
         cp "$profile_dir/$server" "$BIN_DIR/$server"
         chmod +x "$BIN_DIR/$server"
         if command -v strip >/dev/null 2>&1; then
@@ -256,47 +259,52 @@ install_binary() {
     log_success "Installed zed-kask + $installed_servers MCP server(s) to $BIN_DIR"
 }
 
-# install_desktop_entry — render the kask-specific desktop template and
-# install it so the OS routes zed-kask:// URLs to the zed-kask binary.
-# We use kask/scripts/build/zed-kask.desktop.in (NOT the upstream
-# crates/zed/resources/zed.desktop.in) because the upstream template declares
-# MimeType=text/plain and Keywords=zed — those collide with the user's real
-# Zed install. The kask template only declares x-scheme-handler/zed-kask and
-# Keywords=zed-kask, so there is zero overlap with upstream Zed.
-install_desktop_entry() {
+install_updater_bundle() {
+    local updater_dir="$INSTALL_DIR/share/zed-kask/install"
+    assert_not_zed_owned_path "$updater_dir" "updater installation" || return 1
+    mkdir -p "$updater_dir"
+
+    local file
+    for file in install-binary.sh install-common.sh update-zed-kask.sh mcp-servers.txt; do
+        if [ ! -f "$_HKASK_INSTALL_DIR/$file" ]; then
+            log_error "Updater bundle source is missing: $_HKASK_INSTALL_DIR/$file"
+            return 1
+        fi
+        cp "$_HKASK_INSTALL_DIR/$file" "$updater_dir/$file.tmp"
+        mv -f "$updater_dir/$file.tmp" "$updater_dir/$file"
+    done
+    chmod 755 "$updater_dir/install-binary.sh" "$updater_dir/update-zed-kask.sh"
+    log_success "Installed safe updater bundle to $updater_dir"
+}
+
+# install_icon — install the zed-kask icon into the hicolor theme so the
+# running application's window has a proper icon in the taskbar/dock.
+#
+# zed-kask is a CLI development tool, NOT a desktop application. It must NOT
+# have a .desktop file — that would register it in the app launcher, dock,
+# and file associations, where it collides with the user's real Zed install.
+# The icon is needed only for the window manager to display the correct icon
+# when zed-kask is running (the GPUI window references it by name).
+install_icon() {
     local workspace_root="$HKASK_SOURCE_DIR"
-    local template="$workspace_root/kask/scripts/build/zed-kask.desktop.in"
-
-    if [ ! -f "$template" ]; then
-        log_warning "zed-kask.desktop.in not found at $template — skipping desktop entry"
-        return 0
-    fi
-
-    # Render the .desktop template. APP_CLI must point at the installed binary
-    # so the OS can launch it; APP_NAME matches paths::APP_NAME for consistency.
-    local app_cli="$BIN_DIR/zed-kask"
-    local app_name="Zed-Kask"
-    local app_id="dev.zed-kask.Zed-Kask"
     local app_icon="zed-kask"
-    local app_wm_class="dev.zed-kask.Zed-Kask"
 
-    # Install the icon into the hicolor theme so the .desktop file can name it.
-    local icon_dir
     local data_root
     if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
         data_root="/usr/local/share"
     else
         data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
     fi
-    # Install icons at multiple resolutions so the launcher always finds a
-    # crisp variant. Some desktop shells (GNOME on HiDPI, KDE) prefer the
-    # 1024x1024 entry and fall back to 512x512; missing sizes can cause the
-    # launcher to serve a stale or wrong icon from a sibling app.
+
+    # Install icons at multiple resolutions so the WM always finds a crisp
+    # variant. Some desktop shells (GNOME on HiDPI, KDE) prefer the 1024x1024
+    # entry and fall back to 512x512.
     local icon_dir_512="$data_root/icons/hicolor/512x512/apps"
     local icon_dir_1024="$data_root/icons/hicolor/1024x1024/apps"
+    assert_not_zed_owned_path "$icon_dir_512/$app_icon.png" "icon write" || return 1
+    assert_not_zed_owned_path "$icon_dir_1024/$app_icon.png" "icon write" || return 1
     mkdir -p "$icon_dir_512" "$icon_dir_1024"
-    # Icon filename follows the release channel: app-icon.png for stable,
-    # app-icon-<channel>.png otherwise (matches script/bundle-linux logic).
+
     local channel
     if [ -f "$workspace_root/crates/zed/RELEASE_CHANNEL" ]; then
         channel="$(< "$workspace_root/crates/zed/RELEASE_CHANNEL")"
@@ -310,61 +318,35 @@ install_desktop_entry() {
     local src_icon="$workspace_root/crates/zed/resources/app-icon${icon_suffix}.png"
     local src_icon_2x="$workspace_root/crates/zed/resources/app-icon${icon_suffix}@2x.png"
     if [ ! -f "$src_icon" ]; then
-        # Fall back to the stable icon if the channel-specific one is missing.
         src_icon="$workspace_root/crates/zed/resources/app-icon.png"
         src_icon_2x="$workspace_root/crates/zed/resources/app-icon@2x.png"
     fi
-    if [ -f "$src_icon" ]; then
-        cp "$src_icon" "$icon_dir_512/$app_icon.png"
-        log "Installed icon: $icon_dir_512/$app_icon.png (from $(basename "$src_icon"))"
-    else
-        log_warning "No source icon found — desktop entry will lack an icon"
+    if [ ! -f "$src_icon" ]; then
+        log_error "No source icon found at $src_icon"
+        return 1
     fi
+
+    cp "$src_icon" "$icon_dir_512/$app_icon.png"
+    if ! cmp -s "$src_icon" "$icon_dir_512/$app_icon.png"; then
+        log_error "Installed icon does not match its source: $icon_dir_512/$app_icon.png"
+        return 1
+    fi
+    log "Installed icon: $icon_dir_512/$app_icon.png"
+
     if [ -f "$src_icon_2x" ]; then
         cp "$src_icon_2x" "$icon_dir_1024/$app_icon.png"
-        log "Installed icon: $icon_dir_1024/$app_icon.png (from $(basename "$src_icon_2x"))"
+        if ! cmp -s "$src_icon_2x" "$icon_dir_1024/$app_icon.png"; then
+            log_error "Installed icon does not match its source: $icon_dir_1024/$app_icon.png"
+            return 1
+        fi
+        log "Installed icon: $icon_dir_1024/$app_icon.png"
     fi
 
-    # Render the template. envsubst is part of gettext-utils; fall back to sed
-    # if it is unavailable so the script works on minimal images.
-    local desktop_dir="$data_root/applications"
-    mkdir -p "$desktop_dir"
-    local desktop_file="$desktop_dir/$app_id.desktop"
-
-    export DO_STARTUP_NOTIFY="true" APP_CLI="$app_cli" APP_NAME="$app_name" \
-        APP_ARGS="%U" APP_ICON="$app_icon" APP_WM_CLASS="$app_wm_class"
-    if command -v envsubst >/dev/null 2>&1; then
-        envsubst < "$template" > "$desktop_file"
-    else
-        sed -e "s|\$APP_NAME|$app_name|g" \
-            -e "s|\$APP_CLI|$app_cli|g" \
-            -e "s|\$APP_ARGS|%U|g" \
-            -e "s|\$APP_ICON|$app_icon|g" \
-            -e "s|\$APP_WM_CLASS|$app_wm_class|g" \
-            -e "s|\$DO_STARTUP_NOTIFY|true|g" \
-            "$template" > "$desktop_file"
-    fi
-    chmod +x "$desktop_file"
-    log "Installed desktop entry: $desktop_file"
-
-    # Refresh the MIME cache so the new scheme handler is picked up promptly.
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "$desktop_dir" 2>/dev/null || true
-    fi
-    # xdg-mime registers the handler with the desktop database.
-    if command -v xdg-mime >/dev/null 2>&1; then
-        xdg-mime default "$app_id.desktop" x-scheme-handler/zed-kask 2>/dev/null || true
-    fi
-
-    # Best-effort icon cache refresh. GTK resolves icons by scanning the
-    # hicolor directory, so the icon works even when this fails.
+    # Best-effort icon cache refresh.
     local hicolor_root="$data_root/icons/hicolor"
     if [ -d "$hicolor_root" ]; then
         gtk-update-icon-cache -f "$hicolor_root" 2>/dev/null || true
-        touch "$hicolor_root" 2>/dev/null || true
     fi
-
-    log_success "Registered zed-kask:// URL scheme handler"
 }
 
 setup_environment() {
@@ -410,6 +392,19 @@ verify_installation() {
     local binary_size
     binary_size=$(stat -c%s "$BIN_DIR/zed-kask" 2>/dev/null || echo "unknown")
     log "CLI: $BIN_DIR/zed-kask (${binary_size} bytes)"
+
+    local icon_data_root
+    if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
+        icon_data_root="/usr/local/share"
+    else
+        icon_data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
+    fi
+    local installed_icon="$icon_data_root/icons/hicolor/512x512/apps/zed-kask.png"
+    if [ ! -s "$installed_icon" ]; then
+        log_error "Icon not found or empty at $installed_icon"
+        return 1
+    fi
+    log "Icon: $installed_icon ($(stat -c%s "$installed_icon" 2>/dev/null || echo "unknown") bytes)"
 
     # Check MCP server binaries
     local mcp_count=0
@@ -457,6 +452,8 @@ uninstall_hkask() {
     fi
 
     # Remove CLI binary and MCP server binaries
+    assert_not_zed_owned_path "$BIN_DIR" "binary removal" || return 1
+    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
     if [ -f "$BIN_DIR/zed-kask" ]; then
         rm -f "$BIN_DIR/zed-kask"
         log "Removed $BIN_DIR/zed-kask"
@@ -468,8 +465,16 @@ uninstall_hkask() {
     done
     log "Removed MCP server binaries"
 
-    # Remove the desktop entry and icon so the OS stops routing zed-kask://
-    # to a binary that no longer exists.
+    local updater_dir="$INSTALL_DIR/share/zed-kask/install"
+    assert_not_zed_owned_path "$updater_dir" "updater removal" || return 1
+    if [ -d "$updater_dir" ]; then
+        rm -rf "$updater_dir"
+        log "Removed updater bundle: $updater_dir"
+    fi
+
+    # Remove any stale .desktop entry from prior installs (pre-0.34, when
+    # zed-kask erroneously installed a .desktop file). Also remove the icon.
+    # zed-kask is a CLI tool — it must not have a .desktop file.
     local app_id="dev.zed-kask.Zed-Kask"
     local app_icon="zed-kask"
     local data_root
@@ -701,7 +706,8 @@ main() {
             build_hkask
             prepare_install_dir
             install_binary
-            install_desktop_entry
+            install_updater_bundle
+            install_icon
             setup_environment
             write_mcp_server_settings
 

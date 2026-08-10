@@ -167,8 +167,8 @@ pub struct SkillTool {
 /// This keeps zed's `agent` crate from depending on hKask crates directly —
 /// the bridge provides the implementation.
 ///
-/// `CascadeProgress` is a `Send + Sync` callback that emits thinking traces
-/// to the agent UI. Tools create it from `ToolCallEventStream::thinking_sender()`
+/// `CascadeProgress` is a `Send + Sync` callback that updates the active tool
+/// call in the agent UI. Tools create it from `ToolCallEventStream::thinking_sender()`
 /// and pass it through so the user can see cascade progress in real time.
 pub type CascadeProgress = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -185,7 +185,7 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// `context` is the initial context for the cascade (user input, etc.).
     /// `progress` is an optional callback for real-time step-by-step feedback.
     /// When `Some`, the executor calls it at each cascade step with a
-    /// human-readable description, which appears as a thinking trace in the
+    /// human-readable description, which appears as the tool call title in the
     /// agent UI. When `None` (slash commands without an event stream), no
     /// progress is emitted.
     ///

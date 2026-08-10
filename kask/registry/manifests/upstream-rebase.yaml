@@ -163,23 +163,27 @@ steps:
       # convergence_metric feeds the Cauchy criterion via the loop step's
       # convergence_signal binding.
       form: >
-        (let ((checks step_4_result))
-          (let ((compiled-raw (assoc "compiled" checks))
-                (tests-raw (assoc "tests_passed" checks))
-                (invariant-raw (assoc "invariant_holds" checks))
-                (marker_count (assoc "marker_count" checks))
-                (call_site_count (assoc "call_site_count" checks)))
-            (let ((compiled (if (string= compiled-raw "false") false compiled-raw))
-                  (tests_passed (if (string= tests-raw "false") false tests-raw))
-                  (invariant_holds (if (string= invariant-raw "false") false invariant-raw)))
-              (if (and compiled tests_passed invariant_holds
-                       (>= marker_count (* call_site_count 0.5)))
-                  (list (list "verification_passed" true)
-                        (list "marker_density" (/ marker_count call_site_count))
-                        (list "convergence_metric" 1.0))
-                  (list (list "verification_passed" false)
-                        (list "marker_density" (/ marker_count call_site_count))
-                        (list "convergence_metric" 0.0))))))
+        (if (not (listp step_4_result))
+            (list (list "verification_passed" false)
+                  (list "marker_density" 0.0)
+                  (list "convergence_metric" 0.0))
+            (let ((checks step_4_result))
+              (let ((compiled-raw (assoc "compiled" checks))
+                    (tests-raw (assoc "tests_passed" checks))
+                    (invariant-raw (assoc "invariant_holds" checks))
+                    (marker_count (assoc "marker_count" checks))
+                    (call_site_count (assoc "call_site_count" checks)))
+                (let ((compiled (if (string= compiled-raw "false") false compiled-raw))
+                      (tests_passed (if (string= tests-raw "false") false tests-raw))
+                      (invariant_holds (if (string= invariant-raw "false") false invariant-raw)))
+                  (if (and compiled tests_passed invariant_holds
+                           (>= marker_count (* call_site_count 0.5)))
+                      (list (list "verification_passed" true)
+                            (list "marker_density" (/ marker_count call_site_count))
+                            (list "convergence_metric" 1.0))
+                      (list (list "verification_passed" false)
+                            (list "marker_density" (/ marker_count call_site_count))
+                            (list "convergence_metric" 0.0)))))))
       env:
         step_4_result: "{{ step_4_result }}"
 

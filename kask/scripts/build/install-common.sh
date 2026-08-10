@@ -57,6 +57,50 @@ fi
 # System bin path for optional symlink.
 SYSTEM_BIN="/usr/local/bin"
 
+# Reject every destination owned by upstream Zed. This is the installer
+# membrane: zed-kask may coexist with Zed, but may never write into Zed's app,
+# data, config, launcher, or command paths. `readlink -m` resolves existing
+# symlinks and canonicalizes nonexistent leaf paths without creating them.
+assert_not_zed_owned_path() {
+    local requested_path="$1"
+    local operation="${2:-write}"
+    if [ -z "${HOME:-}" ]; then
+        log_error "$operation refused: HOME is not set"
+        return 1
+    fi
+
+    local canonical_path canonical_home
+    canonical_path=$(readlink -m -- "$requested_path") || return 1
+    canonical_home=$(readlink -m -- "$HOME") || return 1
+
+    case "$canonical_path" in
+        "$canonical_home/.local/zed.app"|"$canonical_home/.local/zed.app"/*|\
+        "$canonical_home/.local"/zed-*.app|"$canonical_home/.local"/zed-*.app/*|\
+        "$canonical_home/.local/bin/zed"|\
+        "$canonical_home/.local/share/zed"|"$canonical_home/.local/share/zed"/*|\
+        "$canonical_home/.config/zed"|"$canonical_home/.config/zed"/*|\
+        "$canonical_home/.local/share/applications/dev.zed.Zed.desktop"|\
+        "$canonical_home/.local/share/applications/dev.zed.Zed-"*.desktop)
+            log_error "$operation refused: destination is owned by upstream Zed: $canonical_path"
+            return 1
+            ;;
+    esac
+}
+
+assert_kask_binary_destination() {
+    local destination="$1"
+    assert_not_zed_owned_path "$destination" "binary write" || return 1
+
+    case "$(basename "$destination")" in
+        zed-kask|hkask-mcp-*)
+            ;;
+        *)
+            log_error "binary write refused: destination name is not zed-kask-owned: $destination"
+            return 1
+            ;;
+    esac
+}
+
 # strip_jsonc_comments — strip JSONC comments from a file and emit clean JSON
 # on stdout.
 #
@@ -183,7 +227,10 @@ prepare_install_dir() {
         return 1
     fi
 
+    assert_not_zed_owned_path "$BIN_DIR" "install directory preparation" || return 1
+
     local removed=0
+    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
     if [ -f "$BIN_DIR/zed-kask" ]; then
         rm -f "$BIN_DIR/zed-kask"
         log "Removed previous zed-kask binary"
@@ -195,6 +242,7 @@ prepare_install_dir() {
     local stale
     for stale in "$BIN_DIR"/hkask-mcp-*; do
         [ -f "$stale" ] || continue
+        assert_kask_binary_destination "$stale" || return 1
         rm -f "$stale"
         log "Removed stale MCP server binary: $(basename "$stale")"
         removed=$((removed + 1))
@@ -222,6 +270,10 @@ add_to_path() {
         log_error "add_to_path: BIN_DIR is not set"
         return 1
     fi
+
+    assert_not_zed_owned_path "$BIN_DIR" "PATH setup" || return 1
+    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
+    assert_kask_binary_destination "$SYSTEM_BIN/zed-kask" || return 1
 
     # Strategy 1: symlink into /usr/local/bin.
     local made_symlink=false
@@ -325,7 +377,7 @@ write_mcp_server_settings() {
     # Resolve the zed-kask config directory (matches paths::config_dir).
     # Linux: $XDG_CONFIG_HOME/zed-kask  (default ~/.config/zed-kask)
     # macOS: ~/Library/Application Support/Zed-Kask
-    # The .desktop entry and settings.json live here.
+    # The zed-kask settings.json lives here.
     local config_dir
     if [ -n "${XDG_CONFIG_HOME:-}" ]; then
         config_dir="$XDG_CONFIG_HOME/zed-kask"
@@ -336,6 +388,7 @@ write_mcp_server_settings() {
         return 1
     fi
 
+    assert_not_zed_owned_path "$config_dir" "settings write" || return 1
     mkdir -p "$config_dir"
     local settings_file="$config_dir/settings.json"
 
@@ -403,6 +456,7 @@ remove_mcp_server_settings() {
     else
         return 0
     fi
+    assert_not_zed_owned_path "$config_dir" "settings removal" || return 1
     local settings_file="$config_dir/settings.json"
     if [ ! -f "$settings_file" ]; then
         return 0

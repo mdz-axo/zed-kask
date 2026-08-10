@@ -1,54 +1,7 @@
 #!/usr/bin/env bash
 
-set -euxo pipefail
+set -euo pipefail
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <release_version>"
-  echo ""
-  echo "Builds the zed-kask snap. <release_version> is baked into the snap"
-  echo "version field (e.g. 0.31.0). The release tag defaults to 'weekly'"
-  echo "(the Monday 08:00 UTC build); override with RELEASE_TAG to pin a"
-  echo "specific tag (e.g. v0.31.0)."
-  exit 1
-fi
-
-mkdir -p snap/gui
-
-# zed-kask identity. The snap name, desktop file, icon, and app_id all use
-# the zed-kask brand (dev.zed-kask.Zed-Kask), not upstream Zed.
-export DO_STARTUP_NOTIFY="true"
-export APP_NAME="Zed-Kask"
-export APP_CLI="zed-kask"
-export APP_ICON="\${SNAP}/meta/gui/zed-kask.png"
-export APP_ARGS="%U"
-export APP_WM_CLASS="dev.zed-kask.Zed-Kask"
-envsubst < "crates/zed/resources/zed.desktop.in" > "snap/gui/zed-kask.desktop"
-
-# Channel-specific icon: app-icon.png for stable, app-icon-<channel>.png
-# otherwise (matches script/bundle-linux and kask/scripts/build/install.sh).
-channel="$(<crates/zed/RELEASE_CHANNEL)"
-icon_suffix=""
-if [ "$channel" != "stable" ]; then
-  icon_suffix="-$channel"
-fi
-src_icon="crates/zed/resources/app-icon${icon_suffix}.png"
-if [ ! -f "$src_icon" ]; then
-  # Fall back to the stable icon if the channel-specific one is missing.
-  src_icon="crates/zed/resources/app-icon.png"
-fi
-cp "$src_icon" "snap/gui/zed-kask.png"
-
-# Release tag: default to 'weekly' (Monday 08:00 UTC build, force-moved by
-# .github/workflows/kask-release.yml). Override with RELEASE_TAG to pin a
-# specific release (e.g. v0.31.0).
-export RELEASE_TAG="${RELEASE_TAG:-weekly}"
-export RELEASE_VERSION="$1"
-RELEASE_TAG="$RELEASE_TAG" RELEASE_VERSION="$RELEASE_VERSION" \
-  envsubst < crates/zed/resources/snap/snapcraft.yaml.in > snap/snapcraft.yaml
-
-# Clean seems to be needed to actually check that the snapcraft.yaml
-# works.  For example, when a `stage-package` is removed, it will
-# still remain on rebuild.
-snapcraft clean
-
-snapcraft
+echo "error: script/snap-build is disabled in zed-kask" >&2
+echo "zed-kask is terminal-launched only and does not publish a desktop Snap package." >&2
+exit 1

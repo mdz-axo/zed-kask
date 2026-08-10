@@ -6823,21 +6823,28 @@ impl ToolCallEventStream {
             .update_tool_call_fields(&self.tool_call_id, fields, None);
     }
 
-    /// Create a progress sender that emits thinking-trace events to the UI.
+    /// Create a progress sender that updates the tool call's title in real time.
     ///
-    /// The returned callback is `Send + Sync` (it wraps an `mpsc::UnboundedSender`,
-    /// not the `ToolCallEventStream` itself), so it can be passed into async
-    /// cascade execution on a background tokio executor. Each call sends an
-    /// `AgentThinking` event that appears as a thinking trace in the agent UI.
+    /// The returned callback is `Send + Sync` (it wraps an `mpsc::UnboundedSender`
+    /// + a `ToolCallId`, both `Send + Sync`), so it can be passed into async
+    /// cascade execution on a background tokio executor. Each call updates the
+    /// tool call's displayed title (e.g. "Step 2/9: select — GRASP CURRENT
+    /// CONDITION") so the user sees real-time progress while the cascade runs.
     ///
-    /// This is the bridge between the tool's event stream and the hKask
-    /// `ManifestExecutor`'s progress callback. Without it, the cascade runs
-    /// silently — the user sees nothing until the final result, and cannot
-    /// steer or cancel mid-cascade. User sovereignty requires visibility.
+    /// We use `update_tool_call_fields` with a title (not `send_thinking`)
+    /// because the UI displays tool call title updates during tool execution,
+    /// but does NOT display `AgentThinking` events during tool execution —
+    /// those are only shown during model generation. Using `send_thinking`
+    /// here was the first attempt and it silently produced nothing visible.
     pub fn thinking_sender(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
         let stream = self.stream.clone();
+        let tool_call_id = self.tool_call_id.clone();
         Arc::new(move |text: &str| {
-            stream.send_thinking(text);
+            stream.update_tool_call_fields(
+                &tool_call_id,
+                acp::ToolCallUpdateFields::new().title(text),
+                None,
+            );
         })
     }
 

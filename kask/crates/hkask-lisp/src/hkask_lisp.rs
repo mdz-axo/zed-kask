@@ -726,6 +726,7 @@ fn default_builtins() -> Vec<(&'static str, NativeFn)> {
         ("reverse", reverse),
         ("is_null", is_null),
         ("numberp", numberp),
+        ("listp", listp),
         ("assoc", assoc_fn),
         // List concatenation. (append l1 l2 ...) joins multiple lists.
         // Nil arguments are treated as empty lists. Non-list, non-nil args
@@ -1014,6 +1015,19 @@ fn numberp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, Lis
     Ok(LispValue::Bool(matches!(
         args[0],
         LispValue::Int(_) | LispValue::Float(_)
+    )))
+}
+
+/// List predicate: `(listp x)` returns true if x is a List or Nil.
+/// Used to guard `assoc` against non-list inputs (e.g., when a prior step
+/// returns a boolean instead of a JSON object).
+fn listp(_env: &Rc<RefCell<Env>>, args: &[LispValue]) -> Result<LispValue, LispError> {
+    if args.len() != 1 {
+        return Err(LispError::Arity("listp expects 1 arg".into()));
+    }
+    Ok(LispValue::Bool(matches!(
+        args[0],
+        LispValue::List(_) | LispValue::Nil
     )))
 }
 
@@ -1519,6 +1533,59 @@ mod tests {
         assert_eq!(
             eval_sandboxed("(if (numberp score) score 1.0)", &env).unwrap(),
             json!(0.85)
+        );
+    }
+
+    // ── listp tests ──
+
+    #[test]
+    fn test_listp_list() {
+        assert_eq!(
+            eval_sandboxed("(listp (list 1 2 3))", &json!({})).unwrap(),
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn test_listp_nil() {
+        assert_eq!(
+            eval_sandboxed("(listp nil)", &json!({})).unwrap(),
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn test_listp_boolean() {
+        assert_eq!(
+            eval_sandboxed("(listp true)", &json!({})).unwrap(),
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn test_listp_string() {
+        assert_eq!(
+            eval_sandboxed("(listp \"hello\")", &json!({})).unwrap(),
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn test_listp_json_object() {
+        let env = json!({"step_4_result": {"compiled": true}});
+        assert_eq!(
+            eval_sandboxed("(listp step_4_result)", &env).unwrap(),
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn test_listp_in_conditional_guard() {
+        // Guards assoc against non-list step results (upstream-rebase manifest)
+        let env = json!({"step_4_result": true});
+        assert_eq!(
+            eval_sandboxed("(if (not (listp step_4_result)) 0 1)", &env).unwrap(),
+            json!(0)
         );
     }
 

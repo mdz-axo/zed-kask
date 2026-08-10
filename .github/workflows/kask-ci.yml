@@ -193,8 +193,8 @@ jobs:
         run: cd kask && bash scripts/check-mcp-tool-tests.sh
       - name: Check LoRA training regressions
         run: cd kask && bash scripts/check-lora-training-regressions.sh
-      - name: Check .desktop no collision with upstream Zed
-        run: cd kask && bash scripts/build/check-desktop-no-collision.sh
+      - name: Check zed-kask isolation from upstream Zed
+        run: cd kask && bash scripts/build/check-zed-isolation.sh
 
   deps:
     runs-on: ubuntu-24.04

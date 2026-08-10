@@ -2328,9 +2328,10 @@ fn main() {
             .detach();
         }
 
-        auto_update::init(client.clone(), cx);
+        // zed-kask does not initialize upstream Zed's in-app updater. Its Linux
+        // installer writes `zed*.app` bundles into `~/.local` and can replace
+        // the user's real Zed installation. Updates are CLI-installer-only.
         dap_adapters::init(cx);
-        auto_update_ui::init(cx);
         reliability::init(client.clone(), app_state.workspace_store.clone(), cx);
         extension_host::init(
             extension_host_proxy.clone(),

@@ -1,73 +1,16 @@
 #!/bin/bash
-# zed-kask binary installer — downloads prebuilt binaries from a GitHub Release
-# and installs them to ~/.local/bin (or /usr/local/bin with --system).
-#
-# Falls back to the source-build installer (kask/scripts/build/install.sh)
-# if no matching prebuilt archive exists for the current platform. The
-# fallback is pinned to the same tag being installed and verified against
-# the release's SHA256SUMS — never fetched from a mutable branch.
-#
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
-#   wget -O - https://raw.githubusercontent.com/mdz-axo/zed-kask/main/kask/scripts/build/install-binary.sh | bash
-#
-# Environment variables:
-#   HKASK_VERSION        Pin a release tag (default: latest release from GitHub API).
-#                        Set to "weekly" to install the weekly build.
-#   HKASK_CHANNEL        Alias for HKASK_VERSION=weekly ("weekly" or "stable")
-#   INSTALL_DIR          Install prefix (default: $HOME/.local)
-#   HKASK_SYSTEM_INSTALL Set to "true" to symlink into /usr/local/bin
-#   HKASK_REPO           GitHub owner/repo (default: mdz-axo/zed-kask)
-#   HKASK_NO_FALLBACK    Set to "true" to skip source-build fallback
-#   HKASK_ALLOW_UNVERIFIED  Set to "true" to proceed when SHA256SUMS is missing
-#                        for a non-weekly tag (default: false — hard fail)
+# zed-kask binary installer. Downloads only a verified flat zed-kask archive.
 
 set -euo pipefail
 
-# ============================================================================
-# Shared helpers (log functions, MCP_SERVERS, add_to_path, print_banner)
-# ============================================================================
 _HKASK_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=install-common.sh
 source "$_HKASK_INSTALL_DIR/install-common.sh"
 
-# ============================================================================
-# Configuration
-# ============================================================================
-
 HKASK_REPO="${HKASK_REPO:-mdz-axo/zed-kask}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local}"
 BIN_DIR="${INSTALL_DIR}/bin"
-
-# ============================================================================
-# Platform detection
-# ============================================================================
-
-detect_target() {
-    local os arch
-    os="$(uname -s)"
-    arch="$(uname -m)"
-
-    case "$os-$arch" in
-        Linux-x86_64)  echo "x86_64-unknown-linux-gnu" ;;
-        *)
-            log_error "Unsupported platform: $os-$arch"
-            log_error "Prebuilt binaries are published only for linux-x86_64."
-            log_error "To build from source on another platform, clone the repo and run:"
-            log_error "  cargo build --release --package zed <mcp-servers>"
-            return 1
-            ;;
-    esac
-}
-
-archive_name_for_target() {
-    local target="$1"
-    echo "zed-kask-${target}.tar.gz"
-}
-
-# ============================================================================
-# HTTP helper (curl or wget)
-# ============================================================================
+UPDATER_DIR="${INSTALL_DIR}/share/zed-kask/install"
 
 http_get() {
     if command -v curl >/dev/null 2>&1; then
@@ -81,277 +24,221 @@ http_get() {
 }
 
 http_download() {
-    # http_download <url> <output_path>
-    local url="$1" out="$2"
+    local url="$1" output_path="$2"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$out" "$url"
+        curl -fsSL -o "$output_path" "$url"
     elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$out" "$url"
+        wget -qO "$output_path" "$url"
     else
         log_error "Neither curl nor wget is available"
         return 1
     fi
 }
 
-# ============================================================================
-# Resolve release tag
-# ============================================================================
+detect_target() {
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64) echo "x86_64-unknown-linux-gnu" ;;
+        *) log_error "Prebuilt zed-kask releases support only Linux x86_64"; return 1 ;;
+    esac
+}
 
 resolve_tag() {
-    # Explicit version wins.
     if [ -n "${HKASK_VERSION:-}" ]; then
-        # "weekly" is a special channel tag, not a version — pass through.
-        if [ "$HKASK_VERSION" = "weekly" ]; then
-            echo "weekly"
-            return
-        fi
-        # Strip leading 'v' if user passed a bare version, then re-add it.
-        # Only numeric versions are supported here — SHAs and branch names
-        # are not accepted (use HKASK_SOURCE_DIR + install.sh for those).
-        local stripped="${HKASK_VERSION#v}"
-        echo "v${stripped}"
+        [ "$HKASK_VERSION" = "weekly" ] && { echo weekly; return; }
+        echo "v${HKASK_VERSION#v}"
         return
     fi
+    [ "${HKASK_CHANNEL:-stable}" = weekly ] && { echo weekly; return; }
+    http_get "https://api.github.com/repos/${HKASK_REPO}/releases/latest" \
+        | grep -m1 '"tag_name"' \
+        | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'
+}
 
-    # Channel alias.
-    if [ "${HKASK_CHANNEL:-stable}" = "weekly" ]; then
-        echo "weekly"
-        return
-    fi
+verify_checksum() {
+    local directory="$1" archive="$2" tag="$3"
+    local sums_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/SHA256SUMS"
+    http_download "$sums_url" "$directory/SHA256SUMS" || {
+        log_error "SHA256SUMS is required for every zed-kask update"
+        return 1
+    }
 
-    log "Resolving latest release tag from ${HKASK_REPO}..."
-    local tag
-    # Use the /releases/latest endpoint, which excludes prereleases.
-    # Weekly builds are marked prerelease, so they won't show up here.
-    tag=$(http_get "https://api.github.com/repos/${HKASK_REPO}/releases/latest" \
-          | grep -m1 '"tag_name"' \
-          | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
-    if [ -z "$tag" ]; then
-        log_error "Could not determine latest release tag"
+    local checksum_line
+    checksum_line=$(awk -v archive="$archive" '$2 == archive || $2 == "./" archive { print; exit }' "$directory/SHA256SUMS")
+    if [ -z "$checksum_line" ]; then
+        log_error "SHA256SUMS has no checksum for $archive"
         return 1
     fi
-    echo "$tag"
+    printf '%s\n' "$checksum_line" | (cd "$directory" && sha256sum -c -)
 }
 
-# ============================================================================
-# Download and extract
-# ============================================================================
+validate_archive() {
+    local archive_path="$1"
+    command -v tar >/dev/null 2>&1 || { log_error "tar is required"; return 1; }
+
+    local listing
+    listing=$(tar -tzf "$archive_path") || return 1
+    local entry normalized
+    while IFS= read -r entry; do
+        normalized="${entry#./}"
+        case "$normalized" in
+            '' ) continue ;;
+            zed|zed.app|zed.app/*|*/zed|*/zed.app|*/zed.app/*|/*|../*|*/../*|*/..)
+                log_error "archive contains a forbidden path: $entry"
+                return 1
+                ;;
+            */*)
+                log_error "archive contains a nested path: $entry"
+                return 1
+                ;;
+            zed-kask|hkask-mcp-*)
+                ;;
+            *)
+                log_error "archive contains an unexpected file: $entry"
+                return 1
+                ;;
+        esac
+    done <<< "$listing"
+
+    local verbose
+    verbose=$(tar -tvzf "$archive_path") || return 1
+    while IFS= read -r entry; do
+        case "${entry:0:1}" in
+            -) ;;
+            d)
+                case "$entry" in
+                    *' ./'|*' .') ;;
+                    *)
+                        log_error "archive contains an unexpected directory: $entry"
+                        return 1
+                        ;;
+                esac
+                ;;
+            *)
+                log_error "archive contains a non-regular entry: $entry"
+                return 1
+                ;;
+        esac
+    done <<< "$verbose"
+}
 
 download_and_extract() {
-    local target="$1" tag="$2"
-    local archive archive_url temp_dir
+    local target="$1" tag="$2" archive="zed-kask-${target}.tar.gz"
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    printf '%s\n' "$temp_dir"
 
-    archive=$(archive_name_for_target "$target")
-    archive_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/${archive}"
-
-    temp_dir="$(mktemp -d)"
-    trap 'rm -rf "$temp_dir"' RETURN
-
-    log "Downloading ${archive} from ${tag}..."
-    http_download "$archive_url" "$temp_dir/$archive" || return 1
-
-    # Verify checksum if SHA256SUMS is published alongside the archive.
-    # For non-weekly tags, missing SHA256SUMS is a hard error unless the
-    # user explicitly opts in via HKASK_ALLOW_UNVERIFIED=true. Weekly tags
-    # are force-moved each week, so checksums verify download integrity but
-    # not release pinning — warn but proceed.
-    local sums_url="https://github.com/${HKASK_REPO}/releases/download/${tag}/SHA256SUMS"
-    local sums_path="$temp_dir/SHA256SUMS"
-    if http_download "$sums_url" "$sums_path" 2>/dev/null; then
-        log "Verifying checksum..."
-        ( cd "$temp_dir" && grep -F "$archive" SHA256SUMS | sha256sum -c - )
-    else
-        if [ "$tag" = "weekly" ]; then
-            log_warning "No SHA256SUMS published for weekly — proceeding (weekly tag is force-moved)"
-        elif [ "${HKASK_ALLOW_UNVERIFIED:-false}" = "true" ]; then
-            log_warning "No SHA256SUMS published for ${tag} — HKASK_ALLOW_UNVERIFIED=true, proceeding"
-        else
-            log_error "No SHA256SUMS published for ${tag} — refusing to install unverified archive"
-            log_error "Set HKASK_ALLOW_UNVERIFIED=true to override, or use the source-build installer."
-            return 1
-        fi
-    fi
-
-    # Extract into a staging dir
-    local staging="$temp_dir/extracted"
-    mkdir -p "$staging"
-    case "$archive" in
-        *.tar.gz)
-            command -v tar >/dev/null 2>&1 || { log_error "tar is required to extract $archive"; return 1; }
-            tar -xzf "$temp_dir/$archive" -C "$staging"
-            ;;
-        *.zip)
-            if command -v unzip >/dev/null 2>&1; then
-                unzip -q "$temp_dir/$archive" -d "$staging"
-            else
-                log_error "unzip is required to extract $archive on Windows"
-                return 1
-            fi
-            ;;
-    esac
-
-    echo "$staging"
+    log "Downloading $archive from $tag..." >&2
+    http_download "https://github.com/${HKASK_REPO}/releases/download/${tag}/${archive}" "$temp_dir/$archive"
+    verify_checksum "$temp_dir" "$archive" "$tag"
+    validate_archive "$temp_dir/$archive"
+    mkdir "$temp_dir/extracted"
+    tar -xzf "$temp_dir/$archive" -C "$temp_dir/extracted" --no-same-owner --no-same-permissions
 }
 
-# ============================================================================
-# Install
-# ============================================================================
+install_updater_bundle() {
+    assert_not_zed_owned_path "$UPDATER_DIR" "updater installation" || return 1
+    mkdir -p "$UPDATER_DIR"
+    local file
+    for file in install-binary.sh install-common.sh update-zed-kask.sh mcp-servers.txt; do
+        if [ ! -f "$_HKASK_INSTALL_DIR/$file" ]; then
+            log_error "updater bundle source is missing: $_HKASK_INSTALL_DIR/$file"
+            return 1
+        fi
+        cp "$_HKASK_INSTALL_DIR/$file" "$UPDATER_DIR/$file.tmp"
+        mv -f "$UPDATER_DIR/$file.tmp" "$UPDATER_DIR/$file"
+    done
+    chmod 755 "$UPDATER_DIR/install-binary.sh" "$UPDATER_DIR/update-zed-kask.sh"
+}
+
+move_staged_binary() {
+    mv -f -- "$1" "$2"
+}
 
 install_binaries() {
     local staging="$1"
+    assert_not_zed_owned_path "$BIN_DIR" "binary installation" || return 1
+    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
+
+    local -a binaries=(zed-kask "${MCP_SERVERS[@]}")
+    local binary
+    for binary in "${binaries[@]}"; do
+        assert_kask_binary_destination "$BIN_DIR/$binary" || return 1
+        if [ ! -f "$staging/$binary" ]; then
+            log_error "required release binary is missing: $binary"
+            return 1
+        fi
+    done
+
     mkdir -p "$BIN_DIR"
+    local transaction_dir
+    transaction_dir=$(mktemp -d "$BIN_DIR/.zed-kask-update.XXXXXX") || return 1
 
-    # zed-kask binary
-    local cli_src="$staging/zed-kask"
-    if [ ! -f "$cli_src" ]; then
-        log_error "zed-kask binary not found in archive"
+    for binary in "${binaries[@]}"; do
+        if [ -d "$BIN_DIR/$binary" ]; then
+            log_error "binary replacement refused: destination is a directory: $BIN_DIR/$binary"
+            rm -rf "$transaction_dir"
+            return 1
+        fi
+        if ! cp "$staging/$binary" "$transaction_dir/$binary.new" \
+            || ! chmod 755 "$transaction_dir/$binary.new"; then
+            log_error "could not stage replacement binary: $binary"
+            rm -rf "$transaction_dir"
+            return 1
+        fi
+        if [ -e "$BIN_DIR/$binary" ] && ! cp -p "$BIN_DIR/$binary" "$transaction_dir/$binary.old"; then
+            log_error "could not back up installed binary: $binary"
+            rm -rf "$transaction_dir"
+            return 1
+        fi
+    done
+
+    install_updater_bundle || {
+        rm -rf "$transaction_dir"
         return 1
-    fi
-    cp "$cli_src" "$BIN_DIR/zed-kask"
-    chmod +x "$BIN_DIR/zed-kask"
-
-    # MCP server binaries
-    local installed_servers=0
-    for server in "${MCP_SERVERS[@]}"; do
-        if [ -f "$staging/$server" ]; then
-            cp "$staging/$server" "$BIN_DIR/$server"
-            chmod +x "$BIN_DIR/$server"
-            installed_servers=$((installed_servers + 1))
-        fi
-    done
-
-    log_success "Installed zed-kask + ${installed_servers} MCP server(s) to $BIN_DIR"
-}
-
-# ============================================================================
-# Source-build fallback
-# ============================================================================
-#
-# Pinned to the same tag being installed (not `main`) and verified against the
-# release's SHA256SUMS. Refuses to fall back if the installer script cannot be
-# verified — the user is instructed to download and inspect it manually.
-
-fallback_to_source_build() {
-    local tag="$1"
-    shift  # remaining args are forwarded to install.sh
-
-    if [ "${HKASK_NO_FALLBACK:-false}" = "true" ]; then
-        log_error "No prebuilt binary available and HKASK_NO_FALLBACK=true"
-        exit 1
-    fi
-
-    log_warning "Falling back to source build..."
-    log "This will clone the repo at tag ${tag} and build with cargo (requires Rust toolchain)."
-
-    # Fetch the installer + its sourced helpers pinned to the same tag, not
-    # from a mutable branch. install.sh sources install-common.sh and reads
-    # mcp-servers.txt from ${BASH_SOURCE[0]}'s directory at runtime, so all
-    # three must be co-located in the temp dir.
-    local base_url="https://github.com/${HKASK_REPO}/releases/download/${tag}"
-    local sums_url="${base_url}/SHA256SUMS"
-
-    local temp_dir
-    temp_dir="$(mktemp -d)"
-    trap 'rm -rf "$temp_dir"' EXIT
-
-    local file
-    for file in install.sh install-common.sh mcp-servers.txt; do
-        if ! http_download "${base_url}/${file}" "$temp_dir/${file}" 2>/dev/null; then
-            log_error "Could not download pinned installer file: ${file}"
-            log_error "  URL: ${base_url}/${file}"
-            log_error "Please download and inspect kask/scripts/build/ from the repo manually:"
-            log_error "  https://github.com/${HKASK_REPO}/blob/${tag}/kask/scripts/build/"
-            exit 1
-        fi
-    done
-
-    # Verify the installer files against SHA256SUMS if published.
-    local sums_path="$temp_dir/SHA256SUMS"
-    if http_download "$sums_url" "$sums_path" 2>/dev/null; then
-        log "Verifying installer checksums..."
-        ( cd "$temp_dir" && sha256sum -c SHA256SUMS --ignore-missing ) || {
-            log_error "Installer checksum verification failed"
-            exit 1
-        }
-    elif [ "$tag" = "weekly" ]; then
-        log_warning "No SHA256SUMS for weekly installer — proceeding (weekly is force-moved)"
-    else
-        log_error "No SHA256SUMS published for ${tag} installer — refusing to execute unverified script"
-        log_error "Set HKASK_ALLOW_UNVERIFIED=true to override, or build from source manually."
-        exit 1
-    fi
-
-    exec bash "$temp_dir/install.sh" "$@"
-}
-
-# ============================================================================
-# Verify
-# ============================================================================
-
-verify_installation() {
-    local cli_path="$BIN_DIR/zed-kask"
-    if [ ! -f "$cli_path" ]; then
-        log_error "Binary not found at $cli_path"
-        return 1
-    fi
-
-    local size
-    size=$(stat -c%s "$cli_path" 2>/dev/null || echo "unknown")
-    log "CLI: $cli_path (${size} bytes)"
-
-    local mcp_count=0
-    for server in "${MCP_SERVERS[@]}"; do
-        if [ -x "$BIN_DIR/$server" ]; then
-            mcp_count=$((mcp_count + 1))
-        fi
-    done
-    log "MCP servers: ${mcp_count}/${#MCP_SERVERS[@]} available"
-
-    if command -v zed-kask >/dev/null 2>&1; then
-        log_success "zed-kask is in PATH: $(command -v zed-kask)"
-    else
-        log_warning "zed-kask not yet in PATH for this shell session"
-        log "  export PATH=\"$BIN_DIR:\$PATH\""
-    fi
-}
-
-# ============================================================================
-# Main
-# ============================================================================
-
-main() {
-    print_banner "Binary Installer — Downloads from GitHub Releases"
-
-    local target tag
-    target=$(detect_target) || exit 1
-    log "Detected target: $target"
-
-    tag=$(resolve_tag) || exit 1
-    log "Release tag: $tag"
-
-    local staging
-    staging=$(download_and_extract "$target" "$tag") || {
-        log_error "Download/extract failed for $target"
-        fallback_to_source_build "$tag" "$@"
-        exit 1
     }
 
-    prepare_install_dir
-    install_binaries "$staging"
+    local -a replaced=()
+    for binary in "${binaries[@]}"; do
+        if ! move_staged_binary "$transaction_dir/$binary.new" "$BIN_DIR/$binary"; then
+            log_error "binary replacement failed for $binary; restoring the prior installation"
+            local restored
+            for restored in "${replaced[@]}"; do
+                if [ -f "$transaction_dir/$restored.old" ]; then
+                    mv -f "$transaction_dir/$restored.old" "$BIN_DIR/$restored" || log_error "could not restore $restored"
+                else
+                    rm -f "$BIN_DIR/$restored" || log_error "could not remove partial $restored"
+                fi
+            done
+            rm -rf "$transaction_dir"
+            return 1
+        fi
+        replaced+=("$binary")
+    done
+
+    rm -rf "$transaction_dir"
+    log_success "Installed zed-kask and ${#MCP_SERVERS[@]} MCP servers to $BIN_DIR"
+}
+
+verify_installation() {
+    [ -x "$BIN_DIR/zed-kask" ] || { log_error "zed-kask was not installed"; return 1; }
+    [ -x "$UPDATER_DIR/update-zed-kask.sh" ] || { log_error "safe updater was not installed"; return 1; }
+}
+
+main() {
+    print_banner "Verified Binary Installer"
+    local target tag temporary_directory
+    target=$(detect_target)
+    tag=$(resolve_tag)
+    [ -n "$tag" ] || { log_error "Could not determine a zed-kask release tag"; exit 1; }
+    temporary_directory=$(download_and_extract "$target" "$tag") || exit 1
+    trap 'rm -rf "$temporary_directory"' EXIT
+    install_binaries "$temporary_directory/extracted"
     add_to_path
     write_mcp_server_settings
     verify_installation
-
-    echo ""
-    log_success "Installation complete!"
-    echo ""
-    echo "To get started:"
-    echo "  zed-kask --help"
-    echo ""
-    if ! command -v zed-kask >/dev/null 2>&1; then
-        echo "  Note: start a new shell session for PATH changes to take effect."
-        echo ""
-    fi
+    log_success "Installation complete"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
