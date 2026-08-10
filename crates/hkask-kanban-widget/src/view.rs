@@ -728,12 +728,9 @@ impl KanbanWidget {
                         v_flex()
                             .gap_1()
                             .child(
-                                Label::new(format!(
-                                    "@{} · {}",
-                                    comment.author, comment.created_at
-                                ))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
+                                Label::new(format!("@{} · {}", comment.author, comment.created_at))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
                             )
                             .child(
                                 Label::new(comment.body.clone())
@@ -746,7 +743,11 @@ impl KanbanWidget {
 
         // Verification result.
         if let Some(verification) = task.verification.clone() {
-            let verdict = if verification.passed { "✓ Passed" } else { "✗ Failed" };
+            let verdict = if verification.passed {
+                "✓ Passed"
+            } else {
+                "✗ Failed"
+            };
             let color = if verification.passed {
                 Color::Accent
             } else {
@@ -970,12 +971,14 @@ impl Render for KanbanWidget {
             .p_4()
             .gap_3()
             .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                if event.keystroke.key == "escape" && this.detail_open.is_some() {
-                    this.detail_open = None;
-                    cx.notify();
-                }
-            }))
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    if event.keystroke.key == "escape" && this.detail_open.is_some() {
+                        this.detail_open = None;
+                        cx.notify();
+                    }
+                }),
+            )
             .child(self.render_header(cx))
             // Fallback draft (no active conversation): surface the composed body
             // so the user can copy it into chat — visible, not a silent no-op
@@ -1432,12 +1435,17 @@ mod tests {
             );
         });
         widget.update(cx, |this, cx| {
-            this.move_controller
-                .confirm_move(&mut this.columns, &this.column_meta, &this.provenance, cx);
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
         });
         cx.run_until_parked();
 
-        let pending_is_none = widget.read_with(cx, |this, _| this.move_controller.pending_move().is_none());
+        let pending_is_none =
+            widget.read_with(cx, |this, _| this.move_controller.pending_move().is_none());
         assert!(pending_is_none, "confirm_move must clear the pending move");
 
         let calls = recorded.lock().map(|c| c.clone()).unwrap_or_default();
@@ -1472,12 +1480,19 @@ mod tests {
             );
         });
         widget.update(cx, |this, cx| {
-            this.move_controller
-                .confirm_move(&mut this.columns, &this.column_meta, &this.provenance, cx);
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
         });
 
         let (pending_is_none, error) = widget.read_with(cx, |this, _| {
-            (this.move_controller.pending_move().is_none(), this.move_controller.dispatch_error().map(str::to_string))
+            (
+                this.move_controller.pending_move().is_none(),
+                this.move_controller.dispatch_error().map(str::to_string),
+            )
         });
         assert!(
             pending_is_none,
@@ -1515,7 +1530,8 @@ mod tests {
         widget.update(cx, |this, cx| this.move_controller.cancel_move(cx));
         cx.run_until_parked();
 
-        let pending_is_none = widget.read_with(cx, |this, _| this.move_controller.pending_move().is_none());
+        let pending_is_none =
+            widget.read_with(cx, |this, _| this.move_controller.pending_move().is_none());
         assert!(pending_is_none, "cancel_move must clear the pending move");
         let calls = recorded.lock().map(|c| c.len()).unwrap_or(0);
         assert_eq!(calls, 0, "cancel_move must not dispatch kanban_task_move");
@@ -1546,12 +1562,20 @@ mod tests {
             );
         });
         widget.update(cx, |this, cx| {
-            this.move_controller
-                .confirm_move(&mut this.columns, &this.column_meta, &this.provenance, cx);
+            this.move_controller.confirm_move(
+                &mut this.columns,
+                &this.column_meta,
+                &this.provenance,
+                cx,
+            );
         });
 
         // The optimistic move is reflected locally before the dispatch resolves.
-        let in_flight = widget.read_with(cx, |this, _| this.move_controller.dispatch_in_flight().map(str::to_string));
+        let in_flight = widget.read_with(cx, |this, _| {
+            this.move_controller
+                .dispatch_in_flight()
+                .map(str::to_string)
+        });
         assert_eq!(in_flight.as_deref(), Some("t1"), "dispatch is in flight");
         let optimistic_status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
         assert_eq!(
@@ -1568,7 +1592,11 @@ mod tests {
                 .cancel_dispatch(&mut this.columns, &this.column_meta, cx);
         });
 
-        let in_flight_after = widget.read_with(cx, |this, _| this.move_controller.dispatch_in_flight().map(str::to_string));
+        let in_flight_after = widget.read_with(cx, |this, _| {
+            this.move_controller
+                .dispatch_in_flight()
+                .map(str::to_string)
+        });
         assert!(
             in_flight_after.is_none(),
             "cancel clears dispatch_in_flight"
@@ -1615,7 +1643,8 @@ mod tests {
         // condition directly is the robust check — introspecting the rendered
         // element tree for a `disabled` flag is brittle across GPUI versions.
         let gated = widget.read_with(cx, |this, _| {
-            this.move_controller.dispatch_in_flight().is_some() || this.move_controller.pending_move().is_some()
+            this.move_controller.dispatch_in_flight().is_some()
+                || this.move_controller.pending_move().is_some()
         });
         assert!(
             gated,
@@ -1966,7 +1995,10 @@ mod tests {
                 .map(|task| task.verification.is_some())
                 .unwrap_or(false)
         });
-        assert!(verification_present, "verification rendered in detail panel");
+        assert!(
+            verification_present,
+            "verification rendered in detail panel"
+        );
     }
 
     #[gpui::test]
@@ -1982,7 +2014,11 @@ mod tests {
         });
 
         let open = widget.read_with(cx, |this, _| this.detail_open.clone());
-        assert_eq!(open.as_deref(), Some("t1"), "detail panel opens even with no extras");
+        assert_eq!(
+            open.as_deref(),
+            Some("t1"),
+            "detail panel opens even with no extras"
+        );
 
         let (criteria, comments, verification, gas_spend) = widget.read_with(cx, |this, _| {
             let task = this
@@ -1997,7 +2033,10 @@ mod tests {
                 task.gas_spend.is_empty(),
             )
         });
-        assert!(criteria && comments && verification && gas_spend, "all extras empty");
+        assert!(
+            criteria && comments && verification && gas_spend,
+            "all extras empty"
+        );
     }
 
     #[gpui::test]
@@ -2172,7 +2211,9 @@ mod tests {
         assert!(bodies[0].contains("Ready"), "body references the to label");
 
         // evaluate_move clears the pending move (no double-evaluate).
-        let pending_is_none = widget.read_with(cx, |this, _cx| this.move_controller.pending_move().is_none());
+        let pending_is_none = widget.read_with(cx, |this, _cx| {
+            this.move_controller.pending_move().is_none()
+        });
         assert!(pending_is_none, "evaluate_move clears the pending move");
     }
 
@@ -2209,7 +2250,9 @@ mod tests {
             draft.is_none(),
             "disagree_draft unchanged when no pending move"
         );
-        let pending_is_none = widget.read_with(cx, |this, _cx| this.move_controller.pending_move().is_none());
+        let pending_is_none = widget.read_with(cx, |this, _cx| {
+            this.move_controller.pending_move().is_none()
+        });
         assert!(pending_is_none, "pending_move remains None");
     }
 
@@ -2251,7 +2294,9 @@ mod tests {
             draft.contains("Write tests"),
             "draft carries the task title"
         );
-        let pending_is_none = widget.read_with(cx, |this, _cx| this.move_controller.pending_move().is_none());
+        let pending_is_none = widget.read_with(cx, |this, _cx| {
+            this.move_controller.pending_move().is_none()
+        });
         assert!(
             pending_is_none,
             "evaluate_move clears pending even with no injector"

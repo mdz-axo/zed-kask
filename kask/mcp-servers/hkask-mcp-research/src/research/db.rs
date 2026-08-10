@@ -695,7 +695,13 @@ pub fn insert_synthetic_feed(
         "INSERT OR REPLACE INTO synthetic_feeds
             (feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs],
+        rusqlite::params![
+            feed_id,
+            source_url,
+            extractor_kind,
+            extractor_spec,
+            cadence_hint_secs
+        ],
     )?;
     Ok(())
 }

@@ -1484,8 +1484,10 @@ mod tests {
         let result = validate_dataset_format(file.path(), None, None);
         assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
         assert!(
-            result.findings.iter().any(|f| f.gate_id == "G-D0"
-                && f.severity == ValidationSeverity::Info),
+            result
+                .findings
+                .iter()
+                .any(|f| f.gate_id == "G-D0" && f.severity == ValidationSeverity::Info),
             "expected an Info finding when no trainer/purpose is declared"
         );
     }

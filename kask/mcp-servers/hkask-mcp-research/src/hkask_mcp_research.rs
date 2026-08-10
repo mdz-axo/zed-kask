@@ -176,7 +176,10 @@ impl ResearchServer {
             let num_results = req.num_results.unwrap_or(10).min(50);
 
             let freshness = match req.freshness.as_deref() {
-                Some(f) => Some(f.parse::<crate::research::types::Freshness>().map_err(McpToolError::from)?),
+                Some(f) => Some(
+                    f.parse::<crate::research::types::Freshness>()
+                        .map_err(McpToolError::from)?,
+                ),
                 None => None,
             };
 
@@ -791,10 +794,7 @@ impl ResearchServer {
     #[tool(
         description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
     )]
-    pub async fn rss_synthesize(
-        &self,
-        Parameters(req): Parameters<SynthesizeRequest>,
-    ) -> String {
+    pub async fn rss_synthesize(&self, Parameters(req): Parameters<SynthesizeRequest>) -> String {
         execute_tool(self, "rss_synthesize", async {
             self.rate_limiter.check("rss_synthesize")?;
             let db = require_rss_db!(self);
@@ -1017,10 +1017,7 @@ impl ResearchServer {
 
             // Resolve the feed URL from the stream_id.
             let sid = req.stream_id.clone();
-            let lookup = spawn_db(db, move |conn| {
-                resolve_feed_with_headers(conn, &sid)
-            })
-            .await;
+            let lookup = spawn_db(db, move |conn| resolve_feed_with_headers(conn, &sid)).await;
             let (feed_url, _etag, _lm) = match lookup {
                 Ok(Ok(v)) => v,
                 Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
@@ -1058,9 +1055,7 @@ impl ResearchServer {
         let synth = match synth_row {
             Ok(Ok(Some(row))) => row,
             Ok(Ok(None)) => {
-                return Err(McpToolError::not_found(
-                    "synthetic feed binding not found",
-                ));
+                return Err(McpToolError::not_found("synthetic feed binding not found"));
             }
             Ok(Err(e)) => return Err(map_db_error(e)),
             Err(e) => return Err(map_join_error(e, "db lookup failed")),
@@ -1100,9 +1095,10 @@ impl ResearchServer {
             .await;
             return Err(McpToolError::unavailable(err_msg));
         }
-        let body = response.bytes().await.map_err(|e| {
-            McpToolError::unavailable(format!("read source body: {e}"))
-        })?;
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| McpToolError::unavailable(format!("read source body: {e}")))?;
 
         // For diff_hash: check if content changed.
         if kind == crate::research::synthetic::ExtractorKind::DiffHash {
@@ -1129,13 +1125,7 @@ impl ResearchServer {
                     rusqlite::TransactionBehavior::Deferred,
                 )?;
                 let new_count = insert_entries(&tx, feed_id, &feed.entries)?;
-                update_synthetic_status(
-                    &tx,
-                    feed_id,
-                    new_count,
-                    Some(&hash_for_db),
-                    None,
-                )?;
+                update_synthetic_status(&tx, feed_id, new_count, Some(&hash_for_db), None)?;
                 tx.commit()?;
                 Ok::<usize, anyhow::Error>(new_count)
             })
@@ -1214,18 +1204,17 @@ impl ResearchServer {
         execute_tool(self, "rss_list_synthetic", async {
             let db = require_rss_db!(self);
             let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
-            handle_db_result!(
-                result,
-                |feeds: Vec<serde_json::Value>| serde_json::json!({
-                    "count": feeds.len(),
-                    "synthetic_feeds": feeds
-                })
-            )
+            handle_db_result!(result, |feeds: Vec<serde_json::Value>| serde_json::json!({
+                "count": feeds.len(),
+                "synthetic_feeds": feeds
+            }))
         })
         .await
     }
 
-    #[tool(description = "Delete a synthetic feed and all its entries (stream_id e.g. 'feed/synthetic://123')")]
+    #[tool(
+        description = "Delete a synthetic feed and all its entries (stream_id e.g. 'feed/synthetic://123')"
+    )]
     pub async fn rss_delete_synthetic(
         &self,
         Parameters(req): Parameters<DeleteSyntheticRequest>,
@@ -1264,14 +1253,11 @@ impl ResearchServer {
                 .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
 
             let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
-            handle_db_result!(
-                result,
-                |removed| serde_json::json!({
-                    "stream_id": req.stream_id,
-                    "deleted": removed > 0,
-                    "removed": removed
-                })
-            )
+            handle_db_result!(result, |removed| serde_json::json!({
+                "stream_id": req.stream_id,
+                "deleted": removed > 0,
+                "removed": removed
+            }))
         })
         .await
     }
@@ -1311,7 +1297,8 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .map(|s| s.min(MAX_CACHE_MAX_ENTRIES))
                 .unwrap_or(DEFAULT_CACHE_MAX_ENTRIES);
 
-            let rss_db = match ctx.open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL) {
+            let rss_db = match ctx.open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL)
+            {
                 Ok(db) => db.sqlite_pool().ok(),
                 Err(e) => {
                     tracing::warn!(

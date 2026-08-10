@@ -3198,9 +3198,9 @@ impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
         let panel = self.panel.clone();
         let window = self.window;
         cx.spawn(async move |cx| {
-            let panel = panel.upgrade().ok_or_else(|| {
-                "agent panel no longer available".to_string()
-            })?;
+            let panel = panel
+                .upgrade()
+                .ok_or_else(|| "agent panel no longer available".to_string())?;
             let host = agent_ui::AgentPanelSiblingHost::new(panel.downgrade(), window);
             let request = agent::SiblingThreadRequest {
                 title: title.into(),

@@ -43,9 +43,7 @@ impl From<WbError> for hkask_mcp_server::server::McpToolError {
             WbError::RequestFailed(_) | WbError::HttpError { .. } => {
                 McpToolError::unavailable(e.to_string())
             }
-            WbError::ParseError(_) | WbError::ApiError(_) => {
-                McpToolError::internal(e.to_string())
-            }
+            WbError::ParseError(_) | WbError::ApiError(_) => McpToolError::internal(e.to_string()),
         }
     }
 }
@@ -162,9 +160,8 @@ pub async fn search_indicators(
         // Topic-filtered indicator list.
         let topic_id_str = topic_id.to_string();
         let per_page = limit.to_string();
-        let url = format!(
-            "{WB_API_BASE}/topic/{topic_id_str}/indicator?format=json&per_page={per_page}"
-        );
+        let url =
+            format!("{WB_API_BASE}/topic/{topic_id_str}/indicator?format=json&per_page={per_page}");
         let resp = http
             .get(&url)
             .send()
@@ -229,10 +226,7 @@ pub async fn search_indicators(
     let filtered: Vec<&Value> = data
         .iter()
         .filter(|ind| {
-            let name = ind
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let name = ind.get("name").and_then(|v| v.as_str()).unwrap_or("");
             name.to_lowercase().contains(&query_lower)
         })
         .take(limit as usize)
@@ -290,16 +284,12 @@ pub async fn get_observations(
     if !date_param.is_empty() {
         params.push(("date", date_param));
     }
-    let params_ref: Vec<(&str, &str)> =
-        params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
     let body = wb_fetch(http, &endpoint, &params_ref).await?;
 
     let meta = wb_extract_meta(&body)?;
-    let total = meta
-        .get("total")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let total = meta.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let data = wb_extract_data(&body)?;
 
@@ -309,8 +299,15 @@ pub async fn get_observations(
         .filter_map(|o| {
             let date = o.get("date").and_then(|v| v.as_str())?;
             let value = o.get("value").and_then(|v| v.as_f64())?;
-            let country = o.get("country").and_then(|v| v.get("value")).and_then(|v| v.as_str()).unwrap_or("");
-            let iso3 = o.get("countryiso3code").and_then(|v| v.as_str()).unwrap_or("");
+            let country = o
+                .get("country")
+                .and_then(|v| v.get("value"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let iso3 = o
+                .get("countryiso3code")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             Some(serde_json::json!({
                 "date": date,
                 "value": value,
@@ -465,7 +462,10 @@ mod tests {
 
     #[test]
     fn wb_url_builds_correctly() {
-        let url = wb_url("country/USA/indicator/SP.POP.TOTL", &[("date", "2000:2024")]);
+        let url = wb_url(
+            "country/USA/indicator/SP.POP.TOTL",
+            &[("date", "2000:2024")],
+        );
         assert!(url.contains("api.worldbank.org/v2/country/USA/indicator/SP.POP.TOTL"));
         assert!(url.contains("format=json"));
         assert!(url.contains("date=2000:2024"));
@@ -474,8 +474,7 @@ mod tests {
     #[test]
     fn wb_error_classifies_correctly() {
         use hkask_types::McpErrorKind;
-        let e: hkask_mcp_server::server::McpToolError =
-            WbError::InvalidParam("bad".into()).into();
+        let e: hkask_mcp_server::server::McpToolError = WbError::InvalidParam("bad".into()).into();
         assert_eq!(e.kind, McpErrorKind::InvalidArgument);
 
         let e: hkask_mcp_server::server::McpToolError =

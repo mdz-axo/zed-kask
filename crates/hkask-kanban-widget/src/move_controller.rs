@@ -17,12 +17,12 @@
 
 use gpui::Context;
 use gpui_util::ResultExt as _;
-use hkask_tool_invoker::{shared_tool_invoker, BlockProvenance};
+use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 
 use crate::block::TaskBody;
 use crate::view::{
-    apply_move_to_tasks, build_move_dispatch_args, group_tasks_into_columns, KanbanColumn,
-    INVOKER_NOT_WIRED_MSG,
+    INVOKER_NOT_WIRED_MSG, KanbanColumn, apply_move_to_tasks, build_move_dispatch_args,
+    group_tasks_into_columns,
 };
 
 /// A staged but unconfirmed move (consent gate H). The chip click stages a
@@ -271,13 +271,12 @@ impl KanbanMoveController {
         column_meta: &[crate::block::ColumnBody],
     ) {
         if let Some(optimistic) = self.optimistic_move.take() {
-            let all_tasks: Vec<TaskBody> =
-                std::mem::take(columns).into_iter().flat_map(|column| column.tasks).collect();
-            let restored = apply_move_to_tasks(
-                all_tasks,
-                &optimistic.task_id,
-                &optimistic.original_status,
-            );
+            let all_tasks: Vec<TaskBody> = std::mem::take(columns)
+                .into_iter()
+                .flat_map(|column| column.tasks)
+                .collect();
+            let restored =
+                apply_move_to_tasks(all_tasks, &optimistic.task_id, &optimistic.original_status);
             *columns = group_tasks_into_columns(restored, column_meta);
         }
     }
@@ -305,8 +304,10 @@ fn apply_optimistic_move(
     task_id: &str,
     target_status: &str,
 ) {
-    let all_tasks: Vec<TaskBody> =
-        std::mem::take(columns).into_iter().flat_map(|column| column.tasks).collect();
+    let all_tasks: Vec<TaskBody> = std::mem::take(columns)
+        .into_iter()
+        .flat_map(|column| column.tasks)
+        .collect();
     let moved = apply_move_to_tasks(all_tasks, task_id, target_status);
     *columns = group_tasks_into_columns(moved, column_meta);
 }

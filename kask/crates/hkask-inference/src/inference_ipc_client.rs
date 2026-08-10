@@ -984,10 +984,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
-                worktree_prompt: None,
-                worktree_title: None,
-                worktree_name: None,
-                worktree_base_ref: None,
+            worktree_prompt: None,
+            worktree_title: None,
+            worktree_name: None,
+            worktree_base_ref: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::Generate, params).await }.boxed()
@@ -1031,10 +1031,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
-                worktree_prompt: None,
-                worktree_title: None,
-                worktree_name: None,
-                worktree_base_ref: None,
+            worktree_prompt: None,
+            worktree_title: None,
+            worktree_name: None,
+            worktree_base_ref: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateWithModel, params).await }.boxed()
@@ -1078,10 +1078,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
-                worktree_prompt: None,
-                worktree_title: None,
-                worktree_name: None,
-                worktree_base_ref: None,
+            worktree_prompt: None,
+            worktree_title: None,
+            worktree_name: None,
+            worktree_base_ref: None,
         };
         let this = self;
         async move {
@@ -1129,10 +1129,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
-                worktree_prompt: None,
-                worktree_title: None,
-                worktree_name: None,
-                worktree_base_ref: None,
+            worktree_prompt: None,
+            worktree_title: None,
+            worktree_name: None,
+            worktree_base_ref: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()

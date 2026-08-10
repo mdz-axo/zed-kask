@@ -135,11 +135,10 @@ impl From<SyntheticError> for hkask_mcp_server::server::McpToolError {
     fn from(e: SyntheticError) -> Self {
         use hkask_mcp_server::server::McpToolError;
         match e {
-            SyntheticError::UnsupportedKind(_) | SyntheticError::InvalidSpec(_)
+            SyntheticError::UnsupportedKind(_)
+            | SyntheticError::InvalidSpec(_)
             | SyntheticError::MissingField(_) => McpToolError::invalid_argument(e.to_string()),
-            SyntheticError::ExtractionFailed(_) => {
-                McpToolError::unavailable(e.to_string())
-            }
+            SyntheticError::ExtractionFailed(_) => McpToolError::unavailable(e.to_string()),
         }
     }
 }
@@ -224,10 +223,7 @@ fn extract_css(
 
     let field_selectors = compile_field_selectors_css(&spec.fields)?;
 
-    let template = spec
-        .entry_id_template
-        .as_deref()
-        .unwrap_or("{link}");
+    let template = spec.entry_id_template.as_deref().unwrap_or("{link}");
 
     let mut items = Vec::new();
     for element in document.select(&items_selector) {
@@ -275,40 +271,28 @@ fn compile_field_selectors_css(
     for (field, sel_str) in fields {
         // Split on `@` to separate selector from attribute.
         let (sel_part, attr) = match sel_str.rfind('@') {
-            Some(idx) if !sel_str[..idx].is_empty() => {
-                (sel_str[..idx].to_string(), Some(sel_str[idx + 1..].to_string()))
-            }
+            Some(idx) if !sel_str[..idx].is_empty() => (
+                sel_str[..idx].to_string(),
+                Some(sel_str[idx + 1..].to_string()),
+            ),
             _ => (sel_str.clone(), None),
         };
         let selector = Selector::parse(&sel_part)
             .map_err(|e| SyntheticError::InvalidSpec(format!("field '{field}': {e}")))?;
-        out.push((
-            field.clone(),
-            CompiledCssField {
-                selector,
-                attr,
-            },
-        ));
+        out.push((field.clone(), CompiledCssField { selector, attr }));
     }
     Ok(out)
 }
 
 /// Extract a single field from an element using a compiled CSS selector.
-fn extract_field_css(
-    element: ElementRef,
-    sel: &CompiledCssField,
-    base: &reqwest::Url,
-) -> String {
+fn extract_field_css(element: ElementRef, sel: &CompiledCssField, base: &reqwest::Url) -> String {
     let matched = element.select(&sel.selector).next();
     let matched = match matched {
         Some(m) => m,
         None => return String::new(),
     };
     let value = if let Some(ref attr) = sel.attr {
-        matched
-            .attr(attr)
-            .unwrap_or("")
-            .to_string()
+        matched.attr(attr).unwrap_or("").to_string()
     } else {
         // Concatenate all text nodes, trimmed.
         matched
@@ -349,10 +333,7 @@ fn extract_json_path(
         .query(items_path)
         .map_err(|e| SyntheticError::ExtractionFailed(format!("items_selector: {e}")))?;
 
-    let template = spec
-        .entry_id_template
-        .as_deref()
-        .unwrap_or("{link}");
+    let template = spec.entry_id_template.as_deref().unwrap_or("{link}");
 
     let mut items = Vec::new();
     for item_val in item_refs {
@@ -472,10 +453,7 @@ pub async fn extract_llm_schema(
         other => vec![serde_json::json!({"_raw": other})],
     };
 
-    let template = spec
-        .entry_id_template
-        .as_deref()
-        .unwrap_or("{link}");
+    let template = spec.entry_id_template.as_deref().unwrap_or("{link}");
 
     let mut items = Vec::new();
     for item_val in items_arr {
@@ -547,10 +525,7 @@ pub async fn extract_pdf_ocr(
         ));
     }
 
-    let post_kind = spec
-        .post_ocr_kind
-        .as_deref()
-        .unwrap_or("diff_hash");
+    let post_kind = spec.post_ocr_kind.as_deref().unwrap_or("diff_hash");
 
     match post_kind {
         "diff_hash" => {
@@ -569,19 +544,15 @@ pub async fn extract_pdf_ocr(
             let post_spec: ExtractorSpec = serde_json::from_str(post_spec_str)
                 .map_err(|e| SyntheticError::InvalidSpec(format!("post_ocr_spec: {e}")))?;
 
-            let schema_str = post_spec
-                .json_schema
-                .as_deref()
-                .ok_or_else(|| SyntheticError::MissingField("json_schema in post_ocr_spec".into()))?;
+            let schema_str = post_spec.json_schema.as_deref().ok_or_else(|| {
+                SyntheticError::MissingField("json_schema in post_ocr_spec".into())
+            })?;
             let schema: serde_json::Value = serde_json::from_str(schema_str)
                 .map_err(|e| SyntheticError::InvalidSpec(format!("json_schema: {e}")))?;
 
-            let prompt = post_spec
-                .prompt
-                .clone()
-                .unwrap_or_else(|| {
-                    "Extract a list of items with title, date, and summary from this document.".into()
-                });
+            let prompt = post_spec.prompt.clone().unwrap_or_else(|| {
+                "Extract a list of items with title, date, and summary from this document.".into()
+            });
 
             // Use the pool to extract from the source URL (the PDF URL).
             // The extract provider will fetch the URL; for PDFs, Firecrawl
@@ -615,10 +586,7 @@ pub async fn extract_pdf_ocr(
                 other => vec![serde_json::json!({"_raw": other})],
             };
 
-            let template = post_spec
-                .entry_id_template
-                .as_deref()
-                .unwrap_or("{link}");
+            let template = post_spec.entry_id_template.as_deref().unwrap_or("{link}");
 
             let mut items = Vec::new();
             for item_val in items_arr {
@@ -737,7 +705,7 @@ pub fn items_to_entries(items: Vec<ExtractedItem>, feed_title: &str) -> Vec<feed
 
 /// Construct a `feed_rs::model::Text` with `text/plain` content type.
 fn make_text(content: &str) -> feed_rs::model::Text {
-    use mediatype::{names, MediaTypeBuf};
+    use mediatype::{MediaTypeBuf, names};
     feed_rs::model::Text {
         content_type: MediaTypeBuf::new(names::TEXT, names::PLAIN),
         src: None,
@@ -917,7 +885,14 @@ mod tests {
     #[test]
     fn css_extracts_items() {
         let spec = css_spec();
-        let items = extract(ExtractorKind::Css, &spec, "https://example.com/news", SAMPLE_HTML.as_bytes(), "text/html").unwrap();
+        let items = extract(
+            ExtractorKind::Css,
+            &spec,
+            "https://example.com/news",
+            SAMPLE_HTML.as_bytes(),
+            "text/html",
+        )
+        .unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].title, "First Story");
         assert_eq!(items[0].link, "https://example.com/news/1");
@@ -930,7 +905,14 @@ mod tests {
     #[test]
     fn css_resolves_relative_links() {
         let spec = css_spec();
-        let items = extract(ExtractorKind::Css, &spec, "https://example.com/news", SAMPLE_HTML.as_bytes(), "text/html").unwrap();
+        let items = extract(
+            ExtractorKind::Css,
+            &spec,
+            "https://example.com/news",
+            SAMPLE_HTML.as_bytes(),
+            "text/html",
+        )
+        .unwrap();
         assert!(items[0].link.starts_with("https://example.com/"));
     }
 
@@ -938,7 +920,14 @@ mod tests {
     fn css_entry_id_template_uses_title() {
         let mut spec = css_spec();
         spec.entry_id_template = Some("{title}".into());
-        let items = extract(ExtractorKind::Css, &spec, "https://example.com/news", SAMPLE_HTML.as_bytes(), "text/html").unwrap();
+        let items = extract(
+            ExtractorKind::Css,
+            &spec,
+            "https://example.com/news",
+            SAMPLE_HTML.as_bytes(),
+            "text/html",
+        )
+        .unwrap();
         assert_eq!(items[0].entry_id, "First Story");
     }
 
@@ -946,7 +935,14 @@ mod tests {
     fn css_falls_back_to_hash_when_no_link() {
         let mut spec = css_spec();
         spec.fields.remove("link");
-        let items = extract(ExtractorKind::Css, &spec, "https://example.com/news", SAMPLE_HTML.as_bytes(), "text/html").unwrap();
+        let items = extract(
+            ExtractorKind::Css,
+            &spec,
+            "https://example.com/news",
+            SAMPLE_HTML.as_bytes(),
+            "text/html",
+        )
+        .unwrap();
         // entry_id falls back to blake3 of title since no link and no template match
         assert!(!items[0].entry_id.is_empty());
         assert_ne!(items[0].entry_id, "First Story"); // it's a hash, not the title
@@ -955,7 +951,14 @@ mod tests {
     #[test]
     fn json_path_extracts_items() {
         let spec = json_spec();
-        let items = extract(ExtractorKind::JsonPath, &spec, "https://example.com/api", SAMPLE_JSON.as_bytes(), "application/json").unwrap();
+        let items = extract(
+            ExtractorKind::JsonPath,
+            &spec,
+            "https://example.com/api",
+            SAMPLE_JSON.as_bytes(),
+            "application/json",
+        )
+        .unwrap();
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].title, "Paper A");
         assert_eq!(items[0].link, "https://example.com/a");
@@ -968,7 +971,14 @@ mod tests {
     fn json_path_handles_missing_fields() {
         let json = r#"{"items": [{"title": "Only Title"}]}"#;
         let spec = json_spec();
-        let items = extract(ExtractorKind::JsonPath, &spec, "https://example.com/api", json.as_bytes(), "application/json").unwrap();
+        let items = extract(
+            ExtractorKind::JsonPath,
+            &spec,
+            "https://example.com/api",
+            json.as_bytes(),
+            "application/json",
+        )
+        .unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Only Title");
         assert!(items[0].link.is_empty());
@@ -997,7 +1007,14 @@ mod tests {
             post_ocr_kind: None,
             post_ocr_spec: None,
         };
-        let items = extract(ExtractorKind::DiffHash, &spec, "https://example.com", b"some content", "text/html").unwrap();
+        let items = extract(
+            ExtractorKind::DiffHash,
+            &spec,
+            "https://example.com",
+            b"some content",
+            "text/html",
+        )
+        .unwrap();
         assert!(items.is_empty());
     }
 
@@ -1031,8 +1048,14 @@ mod tests {
     #[test]
     fn extractor_kind_round_trips() {
         assert_eq!("css".parse::<ExtractorKind>().unwrap(), ExtractorKind::Css);
-        assert_eq!("json_path".parse::<ExtractorKind>().unwrap(), ExtractorKind::JsonPath);
-        assert_eq!("diff_hash".parse::<ExtractorKind>().unwrap(), ExtractorKind::DiffHash);
+        assert_eq!(
+            "json_path".parse::<ExtractorKind>().unwrap(),
+            ExtractorKind::JsonPath
+        );
+        assert_eq!(
+            "diff_hash".parse::<ExtractorKind>().unwrap(),
+            ExtractorKind::DiffHash
+        );
         assert!("unknown".parse::<ExtractorKind>().is_err());
     }
 

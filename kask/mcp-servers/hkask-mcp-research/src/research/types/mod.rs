@@ -440,5 +440,4 @@ mod tests {
              (Ollama/Gemini would reject): {violations:?}"
         );
     }
-
 }

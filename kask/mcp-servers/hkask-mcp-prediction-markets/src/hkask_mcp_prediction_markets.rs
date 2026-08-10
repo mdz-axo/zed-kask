@@ -1624,8 +1624,7 @@ impl PredictionMarketsServer {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_search_series".to_string());
                 let result =
-                    fred::search_series(&self.http, self.fred_api_key.as_deref(), &req)
-                        .await;
+                    fred::search_series(&self.http, self.fred_api_key.as_deref(), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1652,8 +1651,7 @@ impl PredictionMarketsServer {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_get_observations".to_string());
                 let result =
-                    fred::get_observations(&self.http, self.fred_api_key.as_deref(), &req)
-                        .await;
+                    fred::get_observations(&self.http, self.fred_api_key.as_deref(), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1678,8 +1676,7 @@ impl PredictionMarketsServer {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_get_series_info".to_string());
                 let result =
-                    fred::get_series_info(&self.http, self.fred_api_key.as_deref(), &req)
-                        .await;
+                    fred::get_series_info(&self.http, self.fred_api_key.as_deref(), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1704,8 +1701,7 @@ impl PredictionMarketsServer {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_list_categories".to_string());
                 let result =
-                    fred::list_categories(&self.http, self.fred_api_key.as_deref(), &req)
-                        .await;
+                    fred::list_categories(&self.http, self.fred_api_key.as_deref(), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1730,8 +1726,7 @@ impl PredictionMarketsServer {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_get_release".to_string());
                 let result =
-                    fred::get_release(&self.http, self.fred_api_key.as_deref(), &req)
-                        .await;
+                    fred::get_release(&self.http, self.fred_api_key.as_deref(), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1760,8 +1755,7 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_search_indicators".to_string());
-                let result =
-                    worldbank::search_indicators(&self.http, &req).await;
+                let result = worldbank::search_indicators(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1786,8 +1780,7 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_get_observations".to_string());
-                let result =
-                    worldbank::get_observations(&self.http, &req).await;
+                let result = worldbank::get_observations(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1811,8 +1804,7 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_list_countries".to_string());
-                let result =
-                    worldbank::list_countries(&self.http, &req).await;
+                let result = worldbank::list_countries(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1823,10 +1815,7 @@ impl PredictionMarketsServer {
     #[tool(
         description = "Browse World Bank topics (e.g., Poverty, Education, Health, Trade, Climate Change). Returns topic IDs and names for use with wb_search_indicators topic_id filter."
     )]
-    pub async fn wb_list_topics(
-        &self,
-        Parameters(req): Parameters<WbListTopicsRequest>,
-    ) -> String {
+    pub async fn wb_list_topics(&self, Parameters(req): Parameters<WbListTopicsRequest>) -> String {
         execute_tool_semantic(
             self,
             "wb_list_topics",
@@ -1836,8 +1825,7 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_list_topics".to_string());
-                let result =
-                    worldbank::list_topics(&self.http, &req).await;
+                let result = worldbank::list_topics(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -1861,8 +1849,7 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_get_indicator_info".to_string());
-                let result =
-                    worldbank::get_indicator_info(&self.http, &req).await;
+                let result = worldbank::get_indicator_info(&self.http, &req).await;
                 result.map_err(McpToolError::from)
             },
         )

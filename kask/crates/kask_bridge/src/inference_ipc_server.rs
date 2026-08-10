@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hkask_types::inference_ipc::{
-    InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest,
-    InferenceResponse, ModelListEntry, WorktreeThreadInfo,
+    InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
+    ModelListEntry, WorktreeThreadInfo,
 };
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -46,8 +46,8 @@ use crate::inference::LanguageModelEmbeddingPort;
 /// `ListModels`). The GPUI-side task calls the `WorktreeSpawner` and returns
 /// the result via the oneshot reply channel.
 pub type WorktreeSpawnRequest = (
-    String, // prompt
-    String, // title
+    String,         // prompt
+    String,         // title
     Option<String>, // worktree_name
     Option<String>, // base_ref
     oneshot::Sender<Result<WorktreeThreadInfo, String>>,
@@ -85,9 +85,7 @@ static WORKTREE_SPAWNER: std::sync::Mutex<Option<Arc<dyn WorktreeSpawner>>> =
 /// when a workspace with an `AgentPanel` opens. Replaces any prior spawner
 /// (e.g. when the user switches workspaces).
 pub fn set_worktree_spawner(spawner: Option<Arc<dyn WorktreeSpawner>>) {
-    *WORKTREE_SPAWNER
-        .lock()
-        .expect("WORKTREE_SPAWNER poisoned") = spawner;
+    *WORKTREE_SPAWNER.lock().expect("WORKTREE_SPAWNER poisoned") = spawner;
 }
 
 /// Read the global worktree spawner. Returns `None` when no workspace with an
@@ -833,8 +831,7 @@ async fn dispatch(
         let title = params.worktree_title.as_deref().unwrap_or("Kanban Task");
         let name = params.worktree_name.clone();
         let base_ref = params.worktree_base_ref.clone();
-        let (tx_reply, rx_reply) =
-            oneshot::channel::<Result<WorktreeThreadInfo, String>>();
+        let (tx_reply, rx_reply) = oneshot::channel::<Result<WorktreeThreadInfo, String>>();
         if tx
             .send((
                 prompt.to_string(),
@@ -864,8 +861,7 @@ async fn dispatch(
             Err(_) => InferenceOutcome::Error {
                 error: InferenceErrorPayload {
                     code: "Connection".to_string(),
-                    message: "GPUI-side worktree_spawn task dropped reply channel"
-                        .to_string(),
+                    message: "GPUI-side worktree_spawn task dropped reply channel".to_string(),
                 },
             },
         };
@@ -1202,10 +1198,10 @@ mod tests {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
-                worktree_prompt: None,
-                worktree_title: None,
-                worktree_name: None,
-                worktree_base_ref: None,
+            worktree_prompt: None,
+            worktree_title: None,
+            worktree_name: None,
+            worktree_base_ref: None,
         }
     }
 
@@ -1234,7 +1230,17 @@ mod tests {
             params: params_with_prompt("hello inference"),
         };
 
-        let outcome = dispatch(&port, None, None, None, None, &list_models_tx, None, request).await;
+        let outcome = dispatch(
+            &port,
+            None,
+            None,
+            None,
+            None,
+            &list_models_tx,
+            None,
+            request,
+        )
+        .await;
 
         match outcome {
             InferenceOutcome::Result { result } => {

@@ -48,7 +48,13 @@ fn make_server() -> KanbanServer {
     let local_registry = Arc::new(LocalAgentRegistry::new("/nonexistent"));
     let worktree_spawn_port: Arc<dyn hkask_types::WorktreeSpawnPort> =
         Arc::new(hkask_inference::UnavailableWorktreeSpawn);
-    KanbanServer::new(WebID::new(), service, local_runtime, local_registry, worktree_spawn_port)
+    KanbanServer::new(
+        WebID::new(),
+        service,
+        local_runtime,
+        local_registry,
+        worktree_spawn_port,
+    )
 }
 
 /// Parse a tool's JSON string response into a serde_json::Value.

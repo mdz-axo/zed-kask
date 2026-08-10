@@ -380,6 +380,7 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.pipeline.ocr.circuit_breaker",
     "reg.pipeline.ocr.collusion",
     "reg.pipeline.ocr.low_confidence",
+    "reg.pipeline.ocr.fal",
     "reg.pipeline.ocr.rate_limit",
     "reg.pipeline.ocr.silent_failure",
     "reg.pipeline.ocr.trust_invert",

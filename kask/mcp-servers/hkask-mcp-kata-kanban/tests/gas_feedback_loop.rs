@@ -12,13 +12,15 @@
 #![cfg(test)]
 
 use hkask_mcp_kata_kanban::{
-    KataEngine, KataManifest, KanbanService, TaskGasAccountantFn, TaskSpec,
+    KanbanService, KataEngine, KataManifest, TaskGasAccountantFn, TaskSpec,
 };
 use hkask_storage::HMemStore;
 use hkask_storage::database::sqlite::SqliteDriver;
 use hkask_templates::SqliteRegistry;
 use hkask_types::WebID;
-use hkask_types::{ChatToolDefinition, InferenceError, InferencePort, InferenceResult, InferenceUsage};
+use hkask_types::{
+    ChatToolDefinition, InferenceError, InferencePort, InferenceResult, InferenceUsage,
+};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -30,14 +32,23 @@ fn make_store() -> HMemStore {
     HMemStore::from_driver(driver).expect("hmem store init")
 }
 
-fn make_service_with_task(gas_budget: u64) -> (Arc<KanbanService>, WebID, hkask_mcp_kata_kanban::Board, hkask_mcp_kata_kanban::Task) {
+fn make_service_with_task(
+    gas_budget: u64,
+) -> (
+    Arc<KanbanService>,
+    WebID,
+    hkask_mcp_kata_kanban::Board,
+    hkask_mcp_kata_kanban::Task,
+) {
     let svc = Arc::new(KanbanService::new(make_store()));
     let owner = WebID::new();
     let board = svc
         .board_create(owner, "Gas Board", &KanbanService::standard_columns())
         .expect("board created");
     let spec = TaskSpec::new("Gas Task".into()).with_gas_budget(gas_budget);
-    let task = svc.task_create(board.id, spec, owner).expect("task created");
+    let task = svc
+        .task_create(board.id, spec, owner)
+        .expect("task created");
     (svc, owner, board, task)
 }
 
@@ -180,7 +191,10 @@ async fn gas_accountant_deducts_from_coaching_kata() {
     assert_eq!(result.steps_completed, 1);
 
     // Verify the task's gas_remaining was decremented by 100 tokens.
-    let updated_task = svc.task_get(task.id).expect("task should exist").expect("task should exist");
+    let updated_task = svc
+        .task_get(task.id)
+        .expect("task should exist")
+        .expect("task should exist");
     assert_eq!(
         updated_task.gas_remaining,
         Some(400),
@@ -225,7 +239,10 @@ async fn gas_accountant_deducts_from_improvement_kata() {
     assert_eq!(result.steps_completed, 1);
 
     // Verify the task's gas_remaining was decremented by 100 tokens.
-    let updated_task = svc.task_get(task.id).expect("task should exist").expect("task should exist");
+    let updated_task = svc
+        .task_get(task.id)
+        .expect("task should exist")
+        .expect("task should exist");
     assert_eq!(
         updated_task.gas_remaining,
         Some(900),
@@ -261,7 +278,10 @@ async fn gas_accountant_no_op_without_accountant() {
     assert_eq!(result.steps_completed, 1);
 
     // Task gas should be unchanged (no accountant wired).
-    let unchanged_task = svc.task_get(task.id).expect("task should exist").expect("task should exist");
+    let unchanged_task = svc
+        .task_get(task.id)
+        .expect("task should exist")
+        .expect("task should exist");
     assert_eq!(
         unchanged_task.gas_remaining,
         Some(500),
@@ -296,7 +316,10 @@ async fn gas_accountant_deducts_across_multiple_steps() {
     assert_eq!(result.steps_completed, 3);
 
     // 3 calls × 100 tokens = 300 deducted from 1000 = 700 remaining.
-    let updated_task = svc.task_get(task.id).expect("task should exist").expect("task should exist");
+    let updated_task = svc
+        .task_get(task.id)
+        .expect("task should exist")
+        .expect("task should exist");
     assert_eq!(
         updated_task.gas_remaining,
         Some(700),

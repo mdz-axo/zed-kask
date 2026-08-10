@@ -210,9 +210,19 @@ mod tests {
             _prompt: &str,
             _parameters: &hkask_types::template::LLMParameters,
             _tools: Option<&[hkask_types::ChatToolDefinition]>,
-        ) -> Pin<Box<dyn Future<Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>> + Send + '_>>
-        {
-            Box::pin(async { Err(hkask_types::InferenceError::Generation("stub: SSRF gate should have rejected first".into())) })
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async {
+                Err(hkask_types::InferenceError::Generation(
+                    "stub: SSRF gate should have rejected first".into(),
+                ))
+            })
         }
     }
 

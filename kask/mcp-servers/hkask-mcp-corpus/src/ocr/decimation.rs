@@ -337,14 +337,18 @@ async fn try_fal_docres(image: &DynamicImage, api_key: &str) -> Option<DynamicIm
         return None;
     }
 
-    let result: serde_json::Value = response.json().await.map_err(|e| {
-        tracing::warn!(
-            target: "reg.pipeline.ocr.fal",
-            error = %e,
-            "fal.ai docres: response JSON parse failed"
-        );
-        e
-    }).ok()?;
+    let result: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                error = %e,
+                "fal.ai docres: response JSON parse failed"
+            );
+            e
+        })
+        .ok()?;
 
     let image_url = match result["image"]["url"].as_str() {
         Some(url) => url,
@@ -385,15 +389,17 @@ async fn try_fal_docres(image: &DynamicImage, api_key: &str) -> Option<DynamicIm
         })
         .ok()?;
 
-    image::load_from_memory(&enhanced_bytes).map_err(|e| {
-        tracing::warn!(
-            target: "reg.pipeline.ocr.fal",
-            error = %e,
-            byte_count = enhanced_bytes.len(),
-            "fal.ai docres: enhanced image decode failed"
-        );
-        e
-    }).ok()
+    image::load_from_memory(&enhanced_bytes)
+        .map_err(|e| {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                error = %e,
+                byte_count = enhanced_bytes.len(),
+                "fal.ai docres: enhanced image decode failed"
+            );
+            e
+        })
+        .ok()
 }
 
 /// Otsu binarization — local, instant, free.

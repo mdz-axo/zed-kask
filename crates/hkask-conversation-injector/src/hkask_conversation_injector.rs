@@ -188,9 +188,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn compose_back_via_injector_returns_some_on_no_injector(
-        cx: &mut TestAppContext,
-    ) {
+    async fn compose_back_via_injector_returns_some_on_no_injector(cx: &mut TestAppContext) {
         let (_dummy, cx) = cx.add_window_view(|_window, _cx| DummyView);
         let draft = cx.update(|window, cx| {
             let widget = cx.new(|_cx| DummyWidget::default()).downgrade();
@@ -208,9 +206,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn compose_back_via_injector_returns_none_on_successful_inject(
-        cx: &mut TestAppContext,
-    ) {
+    async fn compose_back_via_injector_returns_none_on_successful_inject(cx: &mut TestAppContext) {
         let injected = Arc::new(Mutex::new(Vec::new()));
         let injector: Arc<dyn ConversationInjector> = Arc::new(OkInjector {
             injected: injected.clone(),
@@ -237,9 +233,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn compose_back_via_injector_surfaces_draft_on_inject_error(
-        cx: &mut TestAppContext,
-    ) {
+    async fn compose_back_via_injector_surfaces_draft_on_inject_error(cx: &mut TestAppContext) {
         let injector: Arc<dyn ConversationInjector> = Arc::new(ErrInjector);
         cx.update(|cx| set_active_injector(cx, Some(injector)));
 

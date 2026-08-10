@@ -190,9 +190,8 @@ impl AdapterStore {
     fn init_schema(
         driver: &std::sync::Arc<dyn hkask_storage::database::driver::DatabaseDriver>,
     ) -> Result<(), InfrastructureError> {
-        driver
-            .execute_batch(
-                "CREATE TABLE IF NOT EXISTS trained_adapters (
+        driver.execute_batch(
+            "CREATE TABLE IF NOT EXISTS trained_adapters (
                         adapter_id          TEXT PRIMARY KEY NOT NULL,
                         expertise_name      TEXT NOT NULL,
                         expertise_domain    TEXT NOT NULL,
@@ -220,7 +219,7 @@ impl AdapterStore {
                         ON trained_adapters(owner_webid);
                     CREATE INDEX IF NOT EXISTS idx_adapter_skill
                         ON trained_adapters(skill_name);",
-            )?;
+        )?;
         Ok(())
     }
 

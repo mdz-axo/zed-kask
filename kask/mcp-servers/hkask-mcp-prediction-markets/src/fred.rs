@@ -106,11 +106,7 @@ pub struct FredGetReleaseRequest {
 // ── FRED API client ────────────────────────────────────────────────────────
 
 /// Build a FRED API URL with the API key and common parameters.
-fn fred_url(
-    endpoint: &str,
-    api_key: &str,
-    params: &[(&str, &str)],
-) -> String {
+fn fred_url(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> String {
     let mut url = format!("{FRED_API_BASE}/{endpoint}?api_key={api_key}&file_type=json");
     for (k, v) in params {
         url.push_str(&format!("&{k}={v}"));
@@ -172,16 +168,12 @@ pub async fn search_series(
     if let Some(ref tags) = req.tag_names {
         params.push(("tag_names", tags.clone()));
     }
-    let params_ref: Vec<(&str, &str)> =
-        params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
     let body = fred_fetch(http, key, "series/search", &params_ref).await?;
 
     // Extract the series array and simplify.
-    let count = body
-        .get("count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
     let series_list = body
         .get("seriess")
         .and_then(|v| v.as_array())
@@ -237,15 +229,11 @@ pub async fn get_observations(
     if let Some(ref units) = req.units {
         params.push(("units", units.clone()));
     }
-    let params_ref: Vec<(&str, &str)> =
-        params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
     let body = fred_fetch(http, key, "series/observations", &params_ref).await?;
 
-    let count = body
-        .get("count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
     let observations = body
         .get("observations")
         .and_then(|v| v.as_array())
@@ -270,14 +258,8 @@ pub async fn get_observations(
         .collect();
 
     // Get series metadata from the response.
-    let units = body
-        .get("units")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let frequency = body
-        .get("frequency")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let units = body.get("units").and_then(|v| v.as_str()).unwrap_or("");
+    let frequency = body.get("frequency").and_then(|v| v.as_str()).unwrap_or("");
 
     Ok(serde_json::json!({
         "series_id": req.series_id,
@@ -377,10 +359,7 @@ pub async fn get_release(
         http,
         key,
         "release/series",
-        &[
-            ("release_id", release_id_str.as_str()),
-            ("limit", "50"),
-        ],
+        &[("release_id", release_id_str.as_str()), ("limit", "50")],
     )
     .await?;
 
@@ -421,7 +400,11 @@ mod tests {
 
     #[test]
     fn fred_url_builds_correctly() {
-        let url = fred_url("series/observations", "testkey", &[("series_id", "FEDFUNDS")]);
+        let url = fred_url(
+            "series/observations",
+            "testkey",
+            &[("series_id", "FEDFUNDS")],
+        );
         assert!(url.contains("api.stlouisfed.org/fred/series/observations"));
         assert!(url.contains("api_key=testkey"));
         assert!(url.contains("file_type=json"));
@@ -438,8 +421,7 @@ mod tests {
     #[test]
     fn fred_error_classifies_correctly() {
         use hkask_types::McpErrorKind;
-        let e: hkask_mcp_server::server::McpToolError =
-            FredError::MissingApiKey.into();
+        let e: hkask_mcp_server::server::McpToolError = FredError::MissingApiKey.into();
         assert_eq!(e.kind, McpErrorKind::InvalidArgument);
 
         let e: hkask_mcp_server::server::McpToolError =

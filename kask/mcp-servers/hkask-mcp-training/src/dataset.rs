@@ -431,7 +431,6 @@ impl DatasetPipeline {
                     chosen_rejected_ratios.push(chosen_len as f64 / rejected_len as f64);
                 }
             }
-
             // Preference KTO: {"prompt": ..., "completion": ..., "label": bool}
             // `else if` — a line with both chosen/rejected and completion is
             // malformed (DPO/ORPO and KTO are mutually exclusive schemas);

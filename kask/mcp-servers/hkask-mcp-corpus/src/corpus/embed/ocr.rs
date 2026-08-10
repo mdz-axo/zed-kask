@@ -59,10 +59,7 @@ fn map_ocr_error(error: OcrError) -> ServiceError {
             ErrorKind::BadRequest,
             format!("Model '{model}' exists but may not support vision input"),
         ),
-        OcrError::EmptyFile => (
-            ErrorKind::BadRequest,
-            "OCR input file is empty".into(),
-        ),
+        OcrError::EmptyFile => (ErrorKind::BadRequest, "OCR input file is empty".into()),
         OcrError::BackendFailed { backend, message } => (
             ErrorKind::ServiceUnavailable,
             format!("OCR backend {backend} failed: {message}"),
