@@ -238,6 +238,27 @@ fn build_scoring_prompt(
     prompt
 }
 
+// ── LLM response parsing ───────────────────────────────────────────────────
+
+/// Parse the LLM response as JSON. Tries the whole text first, then falls
+/// back to extracting the first `{...}` block (LLMs often wrap JSON in
+/// markdown or prose). Returns `EqmError::ParseError` on failure — never
+/// panics, never fabricates.
+fn parse_llm_json(text: &str) -> Result<Value, EqmError> {
+    let trimmed = text.trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(value);
+    }
+    let start = trimmed
+        .find('{')
+        .ok_or_else(|| EqmError::ParseError("no JSON object found in LLM response".into()))?;
+    let end = trimmed
+        .rfind('}')
+        .ok_or_else(|| EqmError::ParseError("no closing brace in LLM response".into()))?;
+    serde_json::from_str(&trimmed[start..=end])
+        .map_err(|e| EqmError::ParseError(format!("failed to parse LLM response as JSON: {e}")))
+}
+
 // ── Scoring function ───────────────────────────────────────────────────────
 
 /// Score a forecast rationale against the 12 key EQMs using an LLM.
@@ -264,8 +285,13 @@ pub async fn score_rationale(
         top_k: 40,
         frequency_penalty: 0.0,
         presence_penalty: 0.0,
+        min_p: 0.0,
+        typical_p: 0.0,
         max_tokens: 1024,
-        stop: None,
+        seed: None,
+        disable_thinking: false,
+        adapter: None,
+        system_prompt: None,
     };
 
     let result = inference_port
@@ -273,21 +299,9 @@ pub async fn score_rationale(
         .await
         .map_err(|e| EqmError::InferenceFailed(e.to_string()))?;
 
-    // Parse the JSON response from the LLM.
-    let raw_scores: Value = serde_json::from_str(result.text.trim())
-        .or_else(|_| {
-            // The LLM may wrap the JSON in markdown or add text. Try to
-            // extract the JSON object from the response.
-            let text = result.text.as_str();
-            let start = text.find('{').ok_or_else(|| {
-                EqmError::ParseError("no JSON object found in LLM response".into())
-            })?;
-            let end = text.rfind('}').ok_or_else(|| {
-                EqmError::ParseError("no closing brace in LLM response".into())
-            })?;
-            serde_json::from_str(&text[start..=end])
-        })
-        .map_err(|e| EqmError::ParseError(format!("failed to parse LLM response as JSON: {e}")))?;
+    // Parse the JSON response from the LLM. The LLM may wrap the JSON in
+    // markdown or add prose; fall back to extracting the first {...} block.
+    let raw_scores: Value = parse_llm_json(&result.text)?;
 
     // Build the EQM scores from the parsed JSON.
     let mut scores = Vec::new();

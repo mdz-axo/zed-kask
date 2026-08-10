@@ -1,4 +1,4 @@
-//! World Bank Indicators API client and MCP tool implementations.
+//! World Bank Indicators API provider adapter.
 //!
 //! The World Bank Indicators API provides access to ~29,500 time series
 //! indicators across 45+ databases covering development, poverty, health,
@@ -10,43 +10,15 @@
 //!
 //! API docs: https://datahelpdesk.worldbank.org/knowledgebase/articles/889392
 //!
-//! No API key required — the World Bank API is fully open.
+//! No API key required — the World Bank API is fully open. The shared HTTP
+//! fetch/error shape lives in `super::EconomicDataClient` / `EconomicDataError`.
 
+use super::{EconomicDataClient, EconomicDataError};
 use serde::Deserialize;
 use serde_json::Value;
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
 const WB_API_BASE: &str = "https://api.worldbank.org/v2";
-
-// ── Error type ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, thiserror::Error)]
-pub enum WbError {
-    #[error("World Bank API request failed: {0}")]
-    RequestFailed(String),
-    #[error("World Bank API returned HTTP {status}: {body}")]
-    HttpError { status: u16, body: String },
-    #[error("World Bank API response parse error: {0}")]
-    ParseError(String),
-    #[error("invalid parameter: {0}")]
-    InvalidParam(String),
-    #[error("World Bank API returned an error message: {0}")]
-    ApiError(String),
-}
-
-impl From<WbError> for hkask_mcp_server::server::McpToolError {
-    fn from(e: WbError) -> Self {
-        use hkask_mcp_server::server::McpToolError;
-        match e {
-            WbError::InvalidParam(_) => McpToolError::invalid_argument(e.to_string()),
-            WbError::RequestFailed(_) | WbError::HttpError { .. } => {
-                McpToolError::unavailable(e.to_string())
-            }
-            WbError::ParseError(_) | WbError::ApiError(_) => McpToolError::internal(e.to_string()),
-        }
-    }
-}
+const WB_PROVIDER: &str = "World Bank";
 
 // ── Request types (MCP tool parameters) ─────────────────────────────────────
 
@@ -93,9 +65,9 @@ pub struct WbGetIndicatorInfoRequest {
     pub indicator_id: String,
 }
 
-// ── World Bank API client ───────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-/// Build a World Bank API URL with common parameters.
+/// Build a World Bank API URL with `format=json` appended.
 fn wb_url(endpoint: &str, params: &[(&str, &str)]) -> String {
     let mut url = format!("{WB_API_BASE}/{endpoint}?format=json");
     for (k, v) in params {
@@ -104,78 +76,47 @@ fn wb_url(endpoint: &str, params: &[(&str, &str)]) -> String {
     url
 }
 
-/// Fetch JSON from a World Bank API endpoint.
-///
-/// The WB API returns a 2-element JSON array: [metadata_object, data_array].
-/// This function returns the raw `serde_json::Value` (the full array).
-async fn wb_fetch(
-    http: &reqwest::Client,
-    endpoint: &str,
-    params: &[(&str, &str)],
-) -> Result<Value, WbError> {
-    let url = wb_url(endpoint, params);
-    let resp = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| WbError::RequestFailed(e.to_string()))?;
-    let status = resp.status().as_u16();
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(WbError::HttpError { status, body });
-    }
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| WbError::ParseError(e.to_string()))?;
-    Ok(body)
-}
-
 /// Extract the data array (second element) from a WB API response.
 /// The WB API returns `[metadata, data_array]`. Returns the data_array.
-fn wb_extract_data(body: &Value) -> Result<&Vec<Value>, WbError> {
+fn wb_extract_data(body: &Value) -> Result<&Vec<Value>, EconomicDataError> {
     body.as_array()
         .and_then(|arr| arr.get(1))
         .and_then(|v| v.as_array())
-        .ok_or_else(|| WbError::ParseError("expected [meta, data] array".into()))
+        .ok_or_else(|| EconomicDataError::ParseError {
+            provider: WB_PROVIDER,
+            detail: "expected [meta, data] array".into(),
+        })
 }
 
 /// Extract the metadata object (first element) from a WB API response.
-fn wb_extract_meta(body: &Value) -> Result<&Value, WbError> {
+fn wb_extract_meta(body: &Value) -> Result<&Value, EconomicDataError> {
     body.as_array()
         .and_then(|arr| arr.first())
-        .ok_or_else(|| WbError::ParseError("expected [meta, data] array".into()))
+        .ok_or_else(|| EconomicDataError::ParseError {
+            provider: WB_PROVIDER,
+            detail: "expected [meta, data] array".into(),
+        })
 }
 
 // ── Tool implementations ────────────────────────────────────────────────────
 
 /// `wb_search_indicators`: Search World Bank indicators by text.
 pub async fn search_indicators(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     req: &WbSearchIndicatorsRequest,
-) -> Result<Value, WbError> {
+) -> Result<Value, EconomicDataError> {
     let limit = req.limit.unwrap_or(10).min(100);
 
     if let Some(topic_id) = req.topic_id {
-        // Topic-filtered indicator list.
+        // Topic-filtered indicator list — the WB topic endpoint takes the
+        // per_page in the path, not as a query param, so we build the URL
+        // inline rather than via wb_url.
         let topic_id_str = topic_id.to_string();
         let per_page = limit.to_string();
-        let url =
-            format!("{WB_API_BASE}/topic/{topic_id_str}/indicator?format=json&per_page={per_page}");
-        let resp = http
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| WbError::RequestFailed(e.to_string()))?;
-        if !resp.status().is_success() {
-            let status = resp.status().as_u16();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(WbError::HttpError { status, body });
-        }
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| WbError::ParseError(e.to_string()))?;
+        let url = format!(
+            "{WB_API_BASE}/topic/{topic_id_str}/indicator?format=json&per_page={per_page}"
+        );
+        let body = client.fetch(WB_PROVIDER, &url).await?;
 
         let data = wb_extract_data(&body)?;
         let query_lower = req.query.to_lowercase();
@@ -217,9 +158,9 @@ pub async fn search_indicators(
     }
 
     // No topic filter — list all indicators and filter client-side.
-    // Request a larger page to search through.
-    let search_params: Vec<(&str, &str)> = vec![("per_page", "1000"), ("format", "json")];
-    let body = wb_fetch(http, "indicator", &search_params).await?;
+    let body = client
+        .fetch(WB_PROVIDER, &wb_url("indicator", &[("per_page", "1000")]))
+        .await?;
 
     let data = wb_extract_data(&body)?;
     let query_lower = req.query.to_lowercase();
@@ -262,13 +203,12 @@ pub async fn search_indicators(
 
 /// `wb_get_observations`: Fetch time series observations for a country + indicator.
 pub async fn get_observations(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     req: &WbGetObservationsRequest,
-) -> Result<Value, WbError> {
+) -> Result<Value, EconomicDataError> {
     let limit = req.limit.unwrap_or(100).min(1000);
     let limit_str = limit.to_string();
 
-    // Build date range param: "start:end" or just "start" or "end".
     let date_param = match (&req.date_start, &req.date_end) {
         (Some(s), Some(e)) => format!("{s}:{e}"),
         (Some(s), None) => s.clone(),
@@ -285,15 +225,15 @@ pub async fn get_observations(
         params.push(("date", date_param));
     }
     let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let url = wb_url(&endpoint, &params_ref);
 
-    let body = wb_fetch(http, &endpoint, &params_ref).await?;
+    let body = client.fetch(WB_PROVIDER, &url).await?;
 
     let meta = wb_extract_meta(&body)?;
     let total = meta.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let data = wb_extract_data(&body)?;
 
-    // Extract observations: date + value pairs, skipping null values.
     let obs: Vec<Value> = data
         .iter()
         .filter_map(|o| {
@@ -317,7 +257,6 @@ pub async fn get_observations(
         })
         .collect();
 
-    // Get indicator name from the first observation.
     let indicator_name = data
         .first()
         .and_then(|o| o.get("indicator"))
@@ -337,18 +276,17 @@ pub async fn get_observations(
 
 /// `wb_list_countries`: List all countries/regions with ISO codes.
 pub async fn list_countries(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     req: &WbListCountriesRequest,
-) -> Result<Value, WbError> {
+) -> Result<Value, EconomicDataError> {
     let limit = req.limit.unwrap_or(50).min(300);
     let limit_str = limit.to_string();
 
-    let params: Vec<(&str, &str)> = vec![("per_page", limit_str.as_str())];
-    let body = wb_fetch(http, "country", &params).await?;
+    let url = wb_url("country", &[("per_page", limit_str.as_str())]);
+    let body = client.fetch(WB_PROVIDER, &url).await?;
 
     let data = wb_extract_data(&body)?;
 
-    // Filter by income group if specified.
     let income_filter = req.income_group.as_deref();
     let filtered: Vec<&Value> = data
         .iter()
@@ -400,10 +338,11 @@ pub async fn list_countries(
 
 /// `wb_list_topics`: Browse the World Bank topic tree.
 pub async fn list_topics(
-    _http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     _req: &WbListTopicsRequest,
-) -> Result<Value, WbError> {
-    let body = wb_fetch(_http, "topic", &[("per_page", "100")]).await?;
+) -> Result<Value, EconomicDataError> {
+    let url = wb_url("topic", &[("per_page", "100")]);
+    let body = client.fetch(WB_PROVIDER, &url).await?;
     let data = wb_extract_data(&body)?;
 
     let results: Vec<Value> = data
@@ -424,17 +363,19 @@ pub async fn list_topics(
 
 /// `wb_get_indicator_info`: Get metadata for a single indicator.
 pub async fn get_indicator_info(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     req: &WbGetIndicatorInfoRequest,
-) -> Result<Value, WbError> {
+) -> Result<Value, EconomicDataError> {
     let indicator = &req.indicator_id;
     let endpoint = format!("indicator/{indicator}");
-    let body = wb_fetch(http, &endpoint, &[("per_page", "1")]).await?;
+    let url = wb_url(&endpoint, &[("per_page", "1")]);
+    let body = client.fetch(WB_PROVIDER, &url).await?;
 
     let data = wb_extract_data(&body)?;
-    let ind = data
-        .first()
-        .ok_or_else(|| WbError::ParseError("indicator not found".into()))?;
+    let ind = data.first().ok_or_else(|| EconomicDataError::ParseError {
+        provider: WB_PROVIDER,
+        detail: "indicator not found".into(),
+    })?;
 
     Ok(serde_json::json!({
         "id": ind.get("id").and_then(|v| v.as_str()).unwrap_or(""),
@@ -474,15 +415,22 @@ mod tests {
     #[test]
     fn wb_error_classifies_correctly() {
         use hkask_types::McpErrorKind;
-        let e: hkask_mcp_server::server::McpToolError = WbError::InvalidParam("bad".into()).into();
+        let e: hkask_mcp_server::server::McpToolError =
+            EconomicDataError::InvalidParam("bad".into()).into();
         assert_eq!(e.kind, McpErrorKind::InvalidArgument);
 
-        let e: hkask_mcp_server::server::McpToolError =
-            WbError::RequestFailed("timeout".into()).into();
+        let e: hkask_mcp_server::server::McpToolError = EconomicDataError::RequestFailed {
+            provider: WB_PROVIDER,
+            detail: "timeout".into(),
+        }
+        .into();
         assert_eq!(e.kind, McpErrorKind::Unavailable);
 
-        let e: hkask_mcp_server::server::McpToolError =
-            WbError::ParseError("bad json".into()).into();
+        let e: hkask_mcp_server::server::McpToolError = EconomicDataError::ParseError {
+            provider: WB_PROVIDER,
+            detail: "bad json".into(),
+        }
+        .into();
         assert_eq!(e.kind, McpErrorKind::Internal);
     }
 

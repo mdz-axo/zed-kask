@@ -4,10 +4,11 @@
 //! It is `#[ignore]` by default to keep the test suite hermetic; run with
 //! `cargo test -p hkask-mcp-prediction-markets --test dbnomics_smoke -- --ignored`.
 
-use hkask_mcp_prediction_markets::dbnomics::{
+use hkask_mcp_prediction_markets::economic_data::dbnomics::{
     DbnomicsGetDatasetRequest, DbnomicsGetSeriesRequest, DbnomicsListProvidersRequest,
     DbnomicsSearchRequest, get_dataset, get_series, list_providers, search,
 };
+use hkask_mcp_prediction_markets::economic_data::EconomicDataClient;
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -20,12 +21,13 @@ fn http_client() -> reqwest::Client {
 #[ignore = "hits the live DBnomics API (network)"]
 async fn search_gdp_returns_results() {
     let http = http_client();
+    let client = EconomicDataClient::new(&http);
     let request = DbnomicsSearchRequest {
         query: "GDP".to_string(),
         limit: Some(5),
         offset: None,
     };
-    let result = search(&http, &request).await.expect("search succeeds");
+    let result = search(&client, &request).await.expect("search succeeds");
     let num_found = result
         .get("num_found")
         .and_then(|value| value.as_u64())
@@ -51,11 +53,12 @@ async fn search_gdp_returns_results() {
 #[ignore = "hits the live DBnomics API (network)"]
 async fn list_providers_returns_imf() {
     let http = http_client();
+    let client = EconomicDataClient::new(&http);
     let request = DbnomicsListProvidersRequest {
         limit: Some(50),
         offset: None,
     };
-    let result = list_providers(&http, &request).await.expect("list succeeds");
+    let result = list_providers(&client, &request).await.expect("list succeeds");
     let num_found = result
         .get("num_found")
         .and_then(|value| value.as_u64())
@@ -80,11 +83,12 @@ async fn list_providers_returns_imf() {
 #[ignore = "hits the live DBnomics API (network)"]
 async fn get_dataset_imf_weo_returns_metadata() {
     let http = http_client();
+    let client = EconomicDataClient::new(&http);
     let request = DbnomicsGetDatasetRequest {
         provider_code: "IMF".to_string(),
         dataset_code: "WEO".to_string(),
     };
-    let result = get_dataset(&http, &request).await.expect("dataset fetch succeeds");
+    let result = get_dataset(&client, &request).await.expect("dataset fetch succeeds");
     let name = result
         .get("name")
         .and_then(|value| value.as_str())
@@ -96,6 +100,7 @@ async fn get_dataset_imf_weo_returns_metadata() {
 #[ignore = "hits the live DBnomics API (network)"]
 async fn get_series_returns_observations() {
     let http = http_client();
+    let client = EconomicDataClient::new(&http);
     let request = DbnomicsGetSeriesRequest {
         provider_code: "IMF".to_string(),
         dataset_code: "WEO".to_string(),
@@ -103,7 +108,7 @@ async fn get_series_returns_observations() {
         observations: Some(true),
         limit: Some(10),
     };
-    let result = get_series(&http, &request).await.expect("series fetch succeeds");
+    let result = get_series(&client, &request).await.expect("series fetch succeeds");
     let observations = result
         .get("observations")
         .and_then(|value| value.as_array())

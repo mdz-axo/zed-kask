@@ -1,4 +1,4 @@
-//! DBnomics API client and MCP tool implementations.
+//! DBnomics API provider adapter.
 //!
 //! DBnomics is the world's largest open economic time-series aggregator:
 //! 1.7B+ series across 47K+ datasets from 700+ providers (IMF, OECD, ECB,
@@ -7,43 +7,15 @@
 //!
 //! API docs: https://db.nomics.world/api/v22/swagger
 //!
-//! No API key required — DBnomics is fully anonymous. There is no
-//! `HKASK_DBNOMICS_API_KEY` credential and no entry in the server's
-//! credential allowlist.
+//! No API key required — DBnomics is fully anonymous. The shared HTTP
+//! fetch/error shape lives in `super::EconomicDataClient` / `EconomicDataError`.
 
+use super::{EconomicDataClient, EconomicDataError};
 use serde::Deserialize;
 use serde_json::Value;
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
 const DBNOMICS_API_BASE: &str = "https://api.db.nomics.world/v22/";
-
-// ── Error type ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, thiserror::Error)]
-pub enum DbnomicsError {
-    #[error("invalid parameter: {0}")]
-    InvalidParam(String),
-    #[error("DBnomics API request failed: {0}")]
-    RequestFailed(String),
-    #[error("DBnomics API returned HTTP {status}: {body}")]
-    HttpError { status: u16, body: String },
-    #[error("DBnomics API response parse error: {0}")]
-    ParseError(String),
-}
-
-impl From<DbnomicsError> for hkask_mcp_server::server::McpToolError {
-    fn from(error: DbnomicsError) -> Self {
-        use hkask_mcp_server::server::McpToolError;
-        match error {
-            DbnomicsError::InvalidParam(_) => McpToolError::invalid_argument(error.to_string()),
-            DbnomicsError::HttpError { .. } | DbnomicsError::RequestFailed(_) => {
-                McpToolError::unavailable(error.to_string())
-            }
-            DbnomicsError::ParseError(_) => McpToolError::internal(error.to_string()),
-        }
-    }
-}
+const DBNOMICS_PROVIDER: &str = "DBnomics";
 
 // ── Request types (MCP tool parameters) ─────────────────────────────────────
 
@@ -90,59 +62,22 @@ pub struct DbnomicsGetSeriesRequest {
     pub limit: Option<u32>,
 }
 
-// ── DBnomics API client ────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 fn dbnomics_url(endpoint: &str, params: &[(&str, &str)]) -> String {
-    let mut url = format!("{DBNOMICS_API_BASE}{endpoint}");
-    if !params.is_empty() {
-        url.push('?');
-        let mut first = true;
-        for (key, value) in params {
-            if !first {
-                url.push('&');
-            }
-            first = false;
-            url.push_str(key);
-            url.push('=');
-            url.push_str(value);
-        }
-    }
-    url
-}
-
-async fn dbnomics_fetch(
-    http: &reqwest::Client,
-    endpoint: &str,
-    params: &[(&str, &str)],
-) -> Result<Value, DbnomicsError> {
-    let url = dbnomics_url(endpoint, params);
-    let response = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|error| DbnomicsError::RequestFailed(error.to_string()))?;
-    let status = response.status().as_u16();
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(DbnomicsError::HttpError { status, body });
-    }
-    let body: Value = response
-        .json()
-        .await
-        .map_err(|error| DbnomicsError::ParseError(error.to_string()))?;
-    Ok(body)
+    EconomicDataClient::build_url(DBNOMICS_API_BASE, endpoint, params)
 }
 
 // ── Tool implementations ────────────────────────────────────────────────────
 
 /// `dbnomics_search`: Full-text search across all DBnomics series.
 pub async fn search(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     request: &DbnomicsSearchRequest,
-) -> Result<Value, DbnomicsError> {
+) -> Result<Value, EconomicDataError> {
     let query = request.query.trim();
     if query.is_empty() {
-        return Err(DbnomicsError::InvalidParam(
+        return Err(EconomicDataError::InvalidParam(
             "query must not be empty".to_string(),
         ));
     }
@@ -156,8 +91,8 @@ pub async fn search(
         ("limit", limit_str.as_str()),
         ("offset", offset_str.as_str()),
     ];
-
-    let body = dbnomics_fetch(http, "search", &params).await?;
+    let url = dbnomics_url("search", &params);
+    let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
 
     let num_found = body
         .pointer("/results/num_found")
@@ -203,9 +138,9 @@ pub async fn search(
 
 /// `dbnomics_list_providers`: List statistical providers.
 pub async fn list_providers(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     request: &DbnomicsListProvidersRequest,
-) -> Result<Value, DbnomicsError> {
+) -> Result<Value, EconomicDataError> {
     let limit = request.limit.unwrap_or(20).min(100);
     let offset = request.offset.unwrap_or(0);
 
@@ -215,8 +150,8 @@ pub async fn list_providers(
         ("limit", limit_str.as_str()),
         ("offset", offset_str.as_str()),
     ];
-
-    let body = dbnomics_fetch(http, "provider", &params).await?;
+    let url = dbnomics_url("provider", &params);
+    let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
 
     let num_found = body
         .pointer("/providers/num_found")
@@ -250,24 +185,25 @@ pub async fn list_providers(
 
 /// `dbnomics_get_dataset`: Get dataset metadata.
 pub async fn get_dataset(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     request: &DbnomicsGetDatasetRequest,
-) -> Result<Value, DbnomicsError> {
+) -> Result<Value, EconomicDataError> {
     let provider_code = request.provider_code.trim();
     let dataset_code = request.dataset_code.trim();
     if provider_code.is_empty() {
-        return Err(DbnomicsError::InvalidParam(
+        return Err(EconomicDataError::InvalidParam(
             "provider_code must not be empty".to_string(),
         ));
     }
     if dataset_code.is_empty() {
-        return Err(DbnomicsError::InvalidParam(
+        return Err(EconomicDataError::InvalidParam(
             "dataset_code must not be empty".to_string(),
         ));
     }
 
     let endpoint = format!("datasets/{provider_code}/{dataset_code}");
-    let body = dbnomics_fetch(http, &endpoint, &[]).await?;
+    let url = dbnomics_url(&endpoint, &[]);
+    let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
 
     let dataset = body
         .get("dataset")
@@ -297,24 +233,24 @@ pub async fn get_dataset(
 
 /// `dbnomics_get_series`: Get series observations.
 pub async fn get_series(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     request: &DbnomicsGetSeriesRequest,
-) -> Result<Value, DbnomicsError> {
+) -> Result<Value, EconomicDataError> {
     let provider_code = request.provider_code.trim();
     let dataset_code = request.dataset_code.trim();
     let series_code = request.series_code.trim();
     if provider_code.is_empty() {
-        return Err(DbnomicsError::InvalidParam(
+        return Err(EconomicDataError::InvalidParam(
             "provider_code must not be empty".to_string(),
         ));
     }
     if dataset_code.is_empty() {
-        return Err(DbnomicsError::InvalidParam(
+        return Err(EconomicDataError::InvalidParam(
             "dataset_code must not be empty".to_string(),
         ));
     }
     if series_code.is_empty() {
-        return Err(DbnomicsError::InvalidParam(
+        return Err(EconomicDataError::InvalidParam(
             "series_code must not be empty".to_string(),
         ));
     }
@@ -334,8 +270,8 @@ pub async fn get_series(
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect();
-
-    let body = dbnomics_fetch(http, &endpoint, &params_ref).await?;
+    let url = dbnomics_url(&endpoint, &params_ref);
+    let body = client.fetch(DBNOMICS_PROVIDER, &url).await?;
 
     let series = body
         .get("series")
@@ -418,19 +354,29 @@ mod tests {
     #[test]
     fn dbnomics_error_classifies_correctly() {
         let error: hkask_mcp_server::server::McpToolError =
-            DbnomicsError::InvalidParam("bad".into()).into();
+            EconomicDataError::InvalidParam("bad".into()).into();
         assert_eq!(error.kind, McpErrorKind::InvalidArgument);
 
-        let error: hkask_mcp_server::server::McpToolError =
-            DbnomicsError::RequestFailed("timeout".into()).into();
+        let error: hkask_mcp_server::server::McpToolError = EconomicDataError::RequestFailed {
+            provider: DBNOMICS_PROVIDER,
+            detail: "timeout".into(),
+        }
+        .into();
         assert_eq!(error.kind, McpErrorKind::Unavailable);
 
-        let error: hkask_mcp_server::server::McpToolError =
-            DbnomicsError::HttpError { status: 500, body: "err".into() }.into();
+        let error: hkask_mcp_server::server::McpToolError = EconomicDataError::HttpError {
+            provider: DBNOMICS_PROVIDER,
+            status: 500,
+            body: "err".into(),
+        }
+        .into();
         assert_eq!(error.kind, McpErrorKind::Unavailable);
 
-        let error: hkask_mcp_server::server::McpToolError =
-            DbnomicsError::ParseError("bad json".into()).into();
+        let error: hkask_mcp_server::server::McpToolError = EconomicDataError::ParseError {
+            provider: DBNOMICS_PROVIDER,
+            detail: "bad json".into(),
+        }
+        .into();
         assert_eq!(error.kind, McpErrorKind::Internal);
     }
 }

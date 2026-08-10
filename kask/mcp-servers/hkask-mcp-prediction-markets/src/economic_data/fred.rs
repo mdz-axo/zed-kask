@@ -1,53 +1,21 @@
-//! FRED (Federal Reserve Economic Data) API client and MCP tool implementations.
+//! FRED (Federal Reserve Economic Data) provider adapter.
 //!
 //! FRED is the St. Louis Fed's economic data API, offering ~800,000 economic
 //! time series from 80+ sources (BEA, BLS, Census, Fed, etc.). This module
-//! exposes the FRED API as MCP tools within the prediction-markets server,
-//! complementing the existing `base_event.rs` FRED integration (which fetches
-//! only 4 hardcoded series for reference-level pricing).
+//! owns only FRED's request types and response shaping; the shared HTTP
+//! fetch/error shape lives in `super::EconomicDataClient` / `EconomicDataError`.
 //!
 //! API docs: https://fred.stlouisfed.org/docs/api/fred/
 //!
-//! All tools require `HKASK_FRED_API_KEY` (already in the server's credential
-//! allowlist). The key is stored as `self.fred_api_key` on the server struct.
+//! All tools require `HKASK_FRED_API_KEY` (in the server's credential
+//! allowlist). The key is passed through to each tool function.
 
+use super::{EconomicDataClient, EconomicDataError};
 use serde::Deserialize;
 use serde_json::Value;
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
 const FRED_API_BASE: &str = "https://api.stlouisfed.org/fred";
-
-// ── Error type ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, thiserror::Error)]
-pub enum FredError {
-    #[error("FRED API key not configured (set HKASK_FRED_API_KEY)")]
-    MissingApiKey,
-    #[error("FRED API request failed: {0}")]
-    RequestFailed(String),
-    #[error("FRED API returned HTTP {status}: {body}")]
-    HttpError { status: u16, body: String },
-    #[error("FRED API response parse error: {0}")]
-    ParseError(String),
-    #[error("invalid parameter: {0}")]
-    InvalidParam(String),
-}
-
-impl From<FredError> for hkask_mcp_server::server::McpToolError {
-    fn from(e: FredError) -> Self {
-        use hkask_mcp_server::server::McpToolError;
-        match e {
-            FredError::MissingApiKey | FredError::InvalidParam(_) => {
-                McpToolError::invalid_argument(e.to_string())
-            }
-            FredError::HttpError { .. } | FredError::RequestFailed(_) => {
-                McpToolError::unavailable(e.to_string())
-            }
-            FredError::ParseError(_) => McpToolError::internal(e.to_string()),
-        }
-    }
-}
+const FRED_PROVIDER: &str = "FRED";
 
 // ── Request types (MCP tool parameters) ─────────────────────────────────────
 
@@ -103,9 +71,15 @@ pub struct FredGetReleaseRequest {
     pub release_id: u32,
 }
 
-// ── FRED API client ────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────
 
-/// Build a FRED API URL with the API key and common parameters.
+/// Require the FRED API key, returning an error if absent or empty.
+fn require_api_key(key: Option<&str>) -> Result<&str, EconomicDataError> {
+    key.filter(|k| !k.is_empty())
+        .ok_or(EconomicDataError::MissingApiKey)
+}
+
+/// Build a FRED API URL with the API key and `file_type=json` appended.
 fn fred_url(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> String {
     let mut url = format!("{FRED_API_BASE}/{endpoint}?api_key={api_key}&file_type=json");
     for (k, v) in params {
@@ -114,45 +88,14 @@ fn fred_url(endpoint: &str, api_key: &str, params: &[(&str, &str)]) -> String {
     url
 }
 
-/// Fetch JSON from a FRED API endpoint.
-async fn fred_fetch(
-    http: &reqwest::Client,
-    api_key: &str,
-    endpoint: &str,
-    params: &[(&str, &str)],
-) -> Result<Value, FredError> {
-    let url = fred_url(endpoint, api_key, params);
-    let resp = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| FredError::RequestFailed(e.to_string()))?;
-    let status = resp.status().as_u16();
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(FredError::HttpError { status, body });
-    }
-    let body: Value = resp
-        .json()
-        .await
-        .map_err(|e| FredError::ParseError(e.to_string()))?;
-    Ok(body)
-}
-
-/// Require the FRED API key, returning an error if absent.
-fn require_api_key(key: Option<&str>) -> Result<&str, FredError> {
-    key.filter(|k| !k.is_empty())
-        .ok_or(FredError::MissingApiKey)
-}
-
 // ── Tool implementations ────────────────────────────────────────────────────
 
 /// `fred_search_series`: Search FRED series by text.
 pub async fn search_series(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     api_key: Option<&str>,
     req: &FredSearchSeriesRequest,
-) -> Result<Value, FredError> {
+) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
     let limit = req.limit.unwrap_or(10).min(100);
     let order_by = req.order_by.as_deref().unwrap_or("popularity");
@@ -169,10 +112,10 @@ pub async fn search_series(
         params.push(("tag_names", tags.clone()));
     }
     let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let url = fred_url("series/search", key, &params_ref);
 
-    let body = fred_fetch(http, key, "series/search", &params_ref).await?;
+    let body = client.fetch(FRED_PROVIDER, &url).await?;
 
-    // Extract the series array and simplify.
     let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
     let series_list = body
         .get("seriess")
@@ -205,10 +148,10 @@ pub async fn search_series(
 
 /// `fred_get_observations`: Fetch time series observations.
 pub async fn get_observations(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     api_key: Option<&str>,
     req: &FredGetObservationsRequest,
-) -> Result<Value, FredError> {
+) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
     let limit = req.limit.unwrap_or(100).min(1000);
 
@@ -230,8 +173,9 @@ pub async fn get_observations(
         params.push(("units", units.clone()));
     }
     let params_ref: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let url = fred_url("series/observations", key, &params_ref);
 
-    let body = fred_fetch(http, key, "series/observations", &params_ref).await?;
+    let body = client.fetch(FRED_PROVIDER, &url).await?;
 
     let count = body.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
     let observations = body
@@ -257,7 +201,6 @@ pub async fn get_observations(
         })
         .collect();
 
-    // Get series metadata from the response.
     let units = body.get("units").and_then(|v| v.as_str()).unwrap_or("");
     let frequency = body.get("frequency").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -273,13 +216,13 @@ pub async fn get_observations(
 
 /// `fred_get_series_info`: Get metadata for a single series.
 pub async fn get_series_info(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     api_key: Option<&str>,
     req: &FredGetSeriesInfoRequest,
-) -> Result<Value, FredError> {
+) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
-    let params = vec![("series_id", req.series_id.as_str())];
-    let body = fred_fetch(http, key, "series", &params).await?;
+    let url = fred_url("series", key, &[("series_id", req.series_id.as_str())]);
+    let body = client.fetch(FRED_PROVIDER, &url).await?;
 
     let s = &body;
     Ok(serde_json::json!({
@@ -300,15 +243,15 @@ pub async fn get_series_info(
 
 /// `fred_list_categories`: Browse the FRED category tree.
 pub async fn list_categories(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     api_key: Option<&str>,
     req: &FredListCategoriesRequest,
-) -> Result<Value, FredError> {
+) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
     let cat_id = req.category_id.unwrap_or(0);
     let cat_id_str = cat_id.to_string();
-    let params = vec![("category_id", cat_id_str.as_str())];
-    let body = fred_fetch(http, key, "category/children", &params).await?;
+    let url = fred_url("category/children", key, &[("category_id", cat_id_str.as_str())]);
+    let body = client.fetch(FRED_PROVIDER, &url).await?;
 
     let categories = body
         .get("categories")
@@ -336,16 +279,15 @@ pub async fn list_categories(
 
 /// `fred_get_release`: Get release metadata (data release schedule + series list).
 pub async fn get_release(
-    http: &reqwest::Client,
+    client: &EconomicDataClient<'_>,
     api_key: Option<&str>,
     req: &FredGetReleaseRequest,
-) -> Result<Value, FredError> {
+) -> Result<Value, EconomicDataError> {
     let key = require_api_key(api_key)?;
     let release_id_str = req.release_id.to_string();
 
-    // Fetch release metadata.
-    let release_params = vec![("release_id", release_id_str.as_str())];
-    let release_body = fred_fetch(http, key, "release", &release_params).await?;
+    let release_url = fred_url("release", key, &[("release_id", release_id_str.as_str())]);
+    let release_body = client.fetch(FRED_PROVIDER, &release_url).await?;
 
     let release = &release_body
         .get("releases")
@@ -354,14 +296,15 @@ pub async fn get_release(
         .cloned()
         .unwrap_or(Value::Null);
 
-    // Fetch series in this release.
-    let series_body = fred_fetch(
-        http,
-        key,
+    let series_url = fred_url(
         "release/series",
-        &[("release_id", release_id_str.as_str()), ("limit", "50")],
-    )
-    .await?;
+        key,
+        &[
+            ("release_id", release_id_str.as_str()),
+            ("limit", "50"),
+        ],
+    );
+    let series_body = client.fetch(FRED_PROVIDER, &series_url).await?;
 
     let series_list = series_body
         .get("seriess")
@@ -421,15 +364,22 @@ mod tests {
     #[test]
     fn fred_error_classifies_correctly() {
         use hkask_types::McpErrorKind;
-        let e: hkask_mcp_server::server::McpToolError = FredError::MissingApiKey.into();
+        let e: hkask_mcp_server::server::McpToolError =
+            EconomicDataError::MissingApiKey.into();
         assert_eq!(e.kind, McpErrorKind::InvalidArgument);
 
-        let e: hkask_mcp_server::server::McpToolError =
-            FredError::RequestFailed("timeout".into()).into();
+        let e: hkask_mcp_server::server::McpToolError = EconomicDataError::RequestFailed {
+            provider: "FRED",
+            detail: "timeout".into(),
+        }
+        .into();
         assert_eq!(e.kind, McpErrorKind::Unavailable);
 
-        let e: hkask_mcp_server::server::McpToolError =
-            FredError::ParseError("bad json".into()).into();
+        let e: hkask_mcp_server::server::McpToolError = EconomicDataError::ParseError {
+            provider: "FRED",
+            detail: "bad json".into(),
+        }
+        .into();
         assert_eq!(e.kind, McpErrorKind::Internal);
     }
 }
