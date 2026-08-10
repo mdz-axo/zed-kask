@@ -84,8 +84,9 @@ inputs:
     description: >
       Annotated expert-judgment forecast records for the forecasting
       question, fetched by the invoking agent from the LEAP RSS feed
-      (`rss_get_entries` on the `fri-leap` / `fri-leap-reports` streams)
-      or from any other expert-judgment source. Each element carries:
+      (`rss_search` on the `fri-leap` / `fri-leap-reports` streams,
+      optionally paginated via `rss_get_entries`) or from any other
+      expert-judgment source. Each element carries:
       `question` (the LEAP question text), `median_probability` (the
       median expert forecast), `superforecaster_median` (if available),
       `public_median` (if available), `interquartile_range` (if

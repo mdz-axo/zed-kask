@@ -37,6 +37,7 @@ use worldbank::{
     WbGetIndicatorInfoRequest, WbGetObservationsRequest, WbListCountriesRequest,
     WbListTopicsRequest, WbSearchIndicatorsRequest,
 };
+use eqm::ScoreRationaleRequest;
 
 pub mod base_event;
 pub mod cache;
@@ -44,8 +45,8 @@ pub mod calibration;
 pub mod cmp;
 pub mod cmp_index_builder;
 pub mod cmp_portfolio;
-pub mod dbnomics;
 pub mod economic_object;
+pub mod eqm;
 pub mod fred;
 pub mod matcher;
 pub mod ontology;
@@ -299,6 +300,10 @@ hkask_mcp_server::mcp_server!(
         /// Optional FRED API key for live reference-level fetches. When absent,
         /// `market_cmp_context_suggest` uses curated static defaults.
         pub fred_api_key: Option<String>,
+        /// Inference port for LLM-based EQM (Explanation Quality Marker)
+        /// scoring of forecast rationales. Resolved once in `run()` before
+        /// the sync server-construction closure.
+        pub inference_port: std::sync::Arc<dyn hkask_types::InferencePort>,
     }
 );
 
@@ -1961,6 +1966,41 @@ impl PredictionMarketsServer {
         )
         .await
     }
+
+    // ═══════════════════ EQM rationale scoring ═══════════════════
+
+    /// Score a forecast rationale against Explanation Quality Markers (EQMs).
+    ///
+    /// Based on Karvetski et al. (2026), Forecasting Research Institute.
+    /// Scores 12 key reasoning patterns on a 0/1/2 scale using an LLM,
+    /// then computes a composite score. EQMs flag weak reasoning more
+    /// reliably than they identify excellent reasoning (asymmetric signal).
+    #[tool(
+        description = "Score a forecast rationale against Explanation Quality Markers (EQMs). Returns composite score, per-marker scores, red flags (warning signs), and green flags (good habits). Based on Karvetski et al. (2026). Cost: ~$0.007 per rationale."
+    )]
+    pub async fn market_score_rationale(
+        &self,
+        Parameters(req): Parameters<ScoreRationaleRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "market_score_rationale",
+            Some(Self::ontology_anchor("market_score_rationale")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("market_score_rationale".to_string());
+                let result = eqm::score_rationale(
+                    self.inference_port.as_ref(),
+                    &req,
+                )
+                .await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
 }
 
 impl PredictionMarketsServer {
@@ -2066,6 +2106,12 @@ const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_CACHE_TTL_SECS: u64 = 60;
 
 pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
+    // Resolve the inference port once, before entering the sync server-
+    // construction closure. `resolve_inference_port` is async (it may connect
+    // to the zed IPC bridge); the closure passed to `run_server` is sync, so
+    // the await must happen here. Used by the EQM scoring tool.
+    let inference_port = hkask_inference::resolve_inference_port().await;
+
     // A malformed numeric env var must warn, not silently fall back — an
     // operator cannot distinguish "not configured" from "configured but
     // broken" otherwise.
@@ -2129,6 +2175,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 std::sync::Mutex::new(HashSet::new()),
                 portfolio_store,
                 fred_api_key,
+                inference_port.clone(),
             ))
         },
         vec![

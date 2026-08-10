@@ -58,13 +58,14 @@ context, not evidence — do not update on it.
 {% if expert_prior %}
 ## Expert-Judgment Rationales as Evidence
 The following expert-judgment rationale excerpts were extracted from LEAP
-reports. Each carries a `rationale_excerpt` explaining why experts assigned
-their forecast. Treat these as qualitative evidence items with
-`source: "LEAP-rationale"`, `strength: "moderate"` (expert judgment is
-evidence, not ground truth), and `direction` derived from whether the
-rationale supports or contradicts the current posterior. Do not treat the
-expert median probability itself as evidence — it is an anchor, already
-consumed in the outside view. Only the rationale text is new evidence here.
+reports. Only the rationale text is rendered here — the probability fields
+(`median_probability`, `superforecaster_median`, `public_median`) are
+deliberately omitted from this section because they were already consumed
+as outside-view anchors in stage 2. Treating the median as evidence here
+would double-count it. Treat each rendered rationale as a qualitative
+evidence item with `source: "LEAP-rationale"`, `strength: "moderate"`
+(expert judgment is evidence, not ground truth), and `direction` derived
+from whether the rationale supports or contradicts the current posterior.
 {% for ep in expert_prior %}
 {% if ep.rationale_excerpt %}
 - [LEAP-rationale/{{ ep.wave | default("unknown") }}] {{ ep.question }} — scenario: {{ ep.scenario | default("unconditional") }}, horizon: {{ ep.time_horizon | default("n/a") }} — rationale: {{ ep.rationale_excerpt }}

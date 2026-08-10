@@ -1510,6 +1510,10 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub codegraph: Option<KaskCodegraphSettingsContent>,
 
+    /// Research MCP server configuration.
+    #[serde(default)]
+    pub research: Option<KaskResearchSettingsContent>,
+
     /// Companies MCP server configuration.
     #[serde(default)]
     pub companies: Option<KaskCompaniesSettingsContent>,
@@ -1667,6 +1671,13 @@ pub struct KaskCondenserSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskCodegraphSettingsContent {
     pub db_path: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskResearchSettingsContent {
+    /// RSS database path for persistent feed storage. When empty, the server
+    /// resolves a default path under the hKask data directory.
+    pub rss_db: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]

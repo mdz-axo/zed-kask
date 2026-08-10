@@ -885,6 +885,7 @@ hkask-capability = { path = "kask/crates/hkask-capability" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
 hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
+hkask-inference = { path = "kask/crates/hkask-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
 hkask-lisp = { path = "kask/crates/hkask-lisp" }
 hkask-templates = { path = "kask/crates/hkask-templates" }

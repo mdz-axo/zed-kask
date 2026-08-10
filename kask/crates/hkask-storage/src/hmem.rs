@@ -196,7 +196,44 @@ impl HMemStore {
             CREATE INDEX IF NOT EXISTS idx_hmems_attribute ON hmems(attribute);
             CREATE INDEX IF NOT EXISTS idx_hmems_entity_attribute ON hmems(entity, attribute);",
         )?;
+        // Migrate legacy `hmems` tables created before the `ontology` column
+        // was added. `CREATE TABLE IF NOT EXISTS` is a no-op on an existing
+        // table, so a database created under the old schema keeps the old
+        // column set and every insert/query touching `ontology` fails with
+        // "table hmems has no column named ontology". The fix mirrors the
+        // `training_jobs` migration in hkask-mcp-training: inspect the live
+        // schema and `ALTER TABLE ... ADD COLUMN` for any missing column.
+        store.migrate_add_column_if_missing("ontology", "TEXT")?;
         Ok(store)
+    }
+
+    /// Add a column to the `hmems` table if it is missing from the live
+    /// schema. Used to migrate legacy databases forward in-place.
+    ///
+    /// expect: "The system provides durable storage for h_mem data"
+    /// \[P3\] Motivating: Generative Space — schema evolves without data loss
+    /// pre:  the `hmems` table exists (caller ensures `CREATE TABLE` first)
+    /// post: the named column exists on `hmems`; existing rows get SQL NULL
+    fn migrate_add_column_if_missing(
+        &self,
+        column: &str,
+        definition: &str,
+    ) -> Result<(), InfrastructureError> {
+        let rows = self.driver.query(
+            "SELECT name FROM pragma_table_info('hmems')",
+            &[],
+        )?;
+        let has_column = rows
+            .iter()
+            .any(|row| row.get_str(0).ok() == Some(column));
+        if !has_column {
+            // `ALTER TABLE ... ADD COLUMN` does not accept a parameterized
+            // column name or definition, so we interpolate. Both inputs are
+            // hard-coded literals from this module, not user data.
+            let sql = format!("ALTER TABLE hmems ADD COLUMN {column} {definition}");
+            self.driver.execute_batch(&sql)?;
+        }
+        Ok(())
     }
 
     /// Attach an encryptor for value encryption (passphrase-derived).
@@ -1004,6 +1041,73 @@ mod tests {
         let missing = HMemId::new();
         let result = store.get_by_id(&missing).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn from_driver_migrates_legacy_table_missing_ontology_column() {
+        // Simulate a database created under the pre-ontology schema: the
+        // `hmems` table exists but has no `ontology` column. Before the
+        // migration in `from_driver`, every insert/query touching
+        // `ontology` failed with "table hmems has no column named ontology"
+        // (the production warning this test pins).
+        let driver = SqliteDriver::in_memory_driver();
+        driver
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS hmems (
+                    id TEXT PRIMARY KEY, entity TEXT NOT NULL, attribute TEXT NOT NULL,
+                    value TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
+                    recalled_at TEXT, confidence REAL NOT NULL DEFAULT 1.0,
+                    perspective TEXT, visibility TEXT NOT NULL DEFAULT 'private',
+                    owner_webid TEXT NOT NULL
+                );",
+            )
+            .expect("create legacy hmems table");
+        // Insert a legacy row with no ontology column.
+        let webid = WebID::new();
+        let id = HMemId::new();
+        driver
+            .execute(
+                "INSERT INTO hmems (id, entity, attribute, value, valid_from, valid_to, recalled_at, confidence, perspective, visibility, owner_webid) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, NULL, ?8, ?9)",
+                &[
+                    DbValue::Text(id.to_string()),
+                    DbValue::Text("legacy-entity".into()),
+                    DbValue::Text("attr".into()),
+                    DbValue::Text(serde_json::to_string(&serde_json::json!("val")).unwrap()),
+                    DbValue::Text(now_rfc3339()),
+                    DbValue::Text(now_rfc3339()),
+                    DbValue::Real(1.0),
+                    DbValue::Text("private".into()),
+                    DbValue::Text(webid.to_string()),
+                ],
+            )
+            .expect("insert legacy row");
+
+        // `from_driver` must migrate the legacy table forward by adding the
+        // `ontology` column. The store is constructed from the SAME driver
+        // so the in-memory database persists.
+        let store = HMemStore::from_driver(driver).expect("migrate legacy store");
+
+        // The legacy row must survive and be queryable, with `ontology` as
+        // `None` (the column was added with SQL NULL for existing rows).
+        let h_mems = store
+            .query_by_entity("legacy-entity")
+            .expect("query after migration");
+        assert_eq!(h_mems.len(), 1, "legacy row should survive migration");
+        assert!(
+            h_mems[0].ontology.is_none(),
+            "migrated legacy row should have no ontology blob"
+        );
+
+        // A new insert that sets an ontology blob must succeed — the column
+        // is now present and the production warning must not recur.
+        let ont = HMemOntology::default();
+        let new_h_mem =
+            HMem::new("post-migration", "attr", serde_json::json!("v"), WebID::new())
+                .with_ontology(ont);
+        store
+            .insert(&new_h_mem)
+            .expect("insert with ontology after migration");
     }
 
     #[test]

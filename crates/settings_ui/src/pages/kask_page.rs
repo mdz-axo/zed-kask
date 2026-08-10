@@ -30,7 +30,8 @@ pub(crate) use {
     data_services::render_data_services_page, inference_providers::render_inference_providers_page,
     mcp_servers::render_mcp_servers_page, media::render_media_page, memory::render_memory_page,
     models::render_models_page, prediction_markets::render_prediction_markets_page,
-    scenarios::render_scenarios_page, swarm::render_swarm_page, training::render_training_page,
+    research::render_research_page, scenarios::render_scenarios_page, swarm::render_swarm_page,
+    training::render_training_page,
 };
 mod corpus;
 mod mcp_servers;
@@ -38,6 +39,7 @@ mod media;
 mod memory;
 mod models;
 mod prediction_markets;
+mod research;
 mod scenarios;
 mod swarm;
 mod training;
@@ -475,6 +477,18 @@ pub(crate) fn kask_page() -> SettingsPage {
             in_json: true,
             files: USER,
             render: render_codegraph_page,
+        }),
+        SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Research".into(),
+            r#type: Default::default(),
+            json_path: Some("kask.research"),
+            description: Some(
+                "Configure the research MCP server: RSS database path for persistent feed storage.".into(),
+            ),
+            search_aliases: &["research", "rss", "feed", "web search", "leap"],
+            in_json: true,
+            files: USER,
+            render: render_research_page,
         }),
         SettingsPageItem::SubPageLink(SubPageLink {
             title: "Companies".into(),

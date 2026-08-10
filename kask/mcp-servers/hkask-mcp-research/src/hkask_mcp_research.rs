@@ -12,7 +12,7 @@ use std::time::Duration;
 use base64::Engine;
 use hkask_mcp_server::server::{
     CredentialRequirement, McpToolError, ServerContext, execute_tool, map_join_error,
-    validate_tool_url_with_dns,
+    resolve_credential, validate_tool_url_with_dns,
 };
 use reqwest::Client;
 use rmcp::{handler::server::wrapper::Parameters, tool, tool_router};
@@ -1297,17 +1297,75 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .map(|s| s.min(MAX_CACHE_MAX_ENTRIES))
                 .unwrap_or(DEFAULT_CACHE_MAX_ENTRIES);
 
-            let rss_db = match ctx.open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL)
-            {
-                Ok(db) => db.sqlite_pool().ok(),
-                Err(e) => {
-                    tracing::warn!(
-                        target = "hkask.research.init",
-                        error = %e,
-                        "HKASK_RSS_DB open failed; RSS tools will be unavailable. \
-                         Check HKASK_RSS_DB path and HKASK_DB_PASSPHRASE."
-                    );
-                    None
+            let rss_db = {
+                // Resolve the RSS database path. Try credentials first (from
+                // .env, keychain, or process env via resolve_credential), then
+                // fall back to a default path under the data directory — the
+                // same pattern as HKASK_KANBAN_DB in the kata-kanban server.
+                let rss_db_path = ctx
+                    .credentials
+                    .get("HKASK_RSS_DB")
+                    .cloned()
+                    .or_else(|| std::env::var("HKASK_RSS_DB").ok())
+                    .unwrap_or_else(|| {
+                        let default_path = hkask_types::agent_paths::resolve_under_data_dir(
+                            std::path::Path::new("rss.db"),
+                        );
+                        if let Some(parent) = default_path.parent() {
+                            if let Err(error) = std::fs::create_dir_all(parent) {
+                                tracing::warn!(
+                                    target: "hkask.research.init",
+                                    path = %default_path.display(),
+                                    %error,
+                                    "Failed to create default RSS DB directory \
+                                     — the subsequent DB open will surface the failure"
+                                );
+                            }
+                        }
+                        tracing::info!(
+                            target: "hkask.research.init",
+                            path = %default_path.display(),
+                            "Using default RSS database path (HKASK_RSS_DB not set)"
+                        );
+                        default_path.to_string_lossy().to_string()
+                    });
+
+                let passphrase = ctx
+                    .credentials
+                    .get("HKASK_DB_PASSPHRASE")
+                    .cloned()
+                    .or_else(|| resolve_credential("HKASK_DB_PASSPHRASE").ok());
+
+                match passphrase {
+                    Some(passphrase) => {
+                        match hkask_storage::Database::open_with_extensions(
+                            &rss_db_path,
+                            &passphrase,
+                            db::RSS_SCHEMA_DDL,
+                        ) {
+                            Ok(db) => db.sqlite_pool().ok(),
+                            Err(e) => {
+                                tracing::warn!(
+                                    target = "hkask.research.init",
+                                    error = %e,
+                                    path = %rss_db_path,
+                                    "Failed to open RSS database — RSS tools will be \
+                                     unavailable. Check HKASK_RSS_DB path and \
+                                     HKASK_DB_PASSPHRASE."
+                                );
+                                None
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::warn!(
+                            target = "hkask.research.init",
+                            "HKASK_DB_PASSPHRASE not resolved — RSS tools will be \
+                             unavailable. Set HKASK_DB_PASSPHRASE or ensure the \
+                             keychain entry exists."
+                        );
+                        None
+                    }
                 }
             };
 

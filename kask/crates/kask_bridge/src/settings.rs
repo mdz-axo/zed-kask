@@ -14,8 +14,9 @@ use settings_content::{
     KaskCorpusSettingsContent, KaskCuratorEmailSettingsContent, KaskCuratorSettingsContent,
     KaskDataServiceSettingsContent, KaskInferenceProvidersSettingsContent, KaskMcpSettingsContent,
     KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
-    KaskPredictionMarketsSettingsContent, KaskScenariosSettingsContent, KaskSettingsContent,
-    KaskSwarmSettingsContent, KaskTrainingSettingsContent,
+    KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
+    KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
+    KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -47,6 +48,9 @@ pub struct KaskSettings {
 
     /// Condenser configuration for context management in inference threads.
     pub condenser: KaskCondenserSettings,
+
+    /// Research MCP server configuration.
+    pub research: KaskResearchSettings,
 
     /// Codegraph MCP server configuration.
     pub codegraph: KaskCodegraphSettings,
@@ -362,6 +366,14 @@ impl Default for KaskCondenserSettings {
 pub struct KaskCodegraphSettings {
     /// Database path for the codegraph store. When empty, uses in-memory.
     pub db_path: String,
+}
+
+/// Research MCP server configuration.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+pub struct KaskResearchSettings {
+    /// RSS database path for persistent feed storage. When empty, the server
+    /// resolves a default path under the hKask data directory.
+    pub rss_db: String,
 }
 
 /// Companies MCP server configuration.
@@ -731,6 +743,11 @@ impl KaskSettings {
                 "HKASK_CODEGRAPH_DB".to_string(),
                 self.codegraph.db_path.clone(),
             );
+        }
+
+        // ── Research ──
+        if !self.research.rss_db.is_empty() {
+            env.insert("HKASK_RSS_DB".to_string(), self.research.rss_db.clone());
         }
 
         // ── Companies ──
@@ -1132,6 +1149,15 @@ impl From<KaskCodegraphSettingsContent> for KaskCodegraphSettings {
     }
 }
 
+impl From<KaskResearchSettingsContent> for KaskResearchSettings {
+    fn from(c: KaskResearchSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
+            rss_db: c.rss_db.unwrap_or(default.rss_db),
+        }
+    }
+}
+
 impl From<KaskCompaniesSettingsContent> for KaskCompaniesSettings {
     fn from(c: KaskCompaniesSettingsContent) -> Self {
         let default = Self::default();
@@ -1287,6 +1313,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             memory: c.memory.map(Into::into).unwrap_or_default(),
             condenser: c.condenser.map(Into::into).unwrap_or_default(),
             codegraph: c.codegraph.map(Into::into).unwrap_or_default(),
+            research: c.research.map(Into::into).unwrap_or_default(),
             companies: c.companies.map(Into::into).unwrap_or_default(),
             corpus: c.corpus.map(Into::into).unwrap_or_default(),
             media: c.media.map(Into::into).unwrap_or_default(),
