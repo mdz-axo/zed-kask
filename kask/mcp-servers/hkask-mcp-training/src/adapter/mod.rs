@@ -3,11 +3,8 @@
 //! # Architecture
 //!
 //! ```text
-//! AdapterStore      — CRUD for trained LoRA adapters
-//! AdapterConfig     — PEFT adapter_config.json parser
-//! Expertise         — semantic capability descriptor
-//! EndpointLifecycle — state machine (5-phase, cost-tracked)
-//! ProviderCost      — cost model per inference provider
+//! AdapterStore — CRUD for trained LoRA adapters
+//! Expertise    — semantic capability descriptor
 //! ```
 //!
 //! # Design
@@ -23,15 +20,9 @@
 //! was removed — it was dead code with zero production callers. The training
 //! tools use `AdapterStore` (CRUD) and `InferencePort` (inference) directly.
 
-pub mod adapter_config;
 pub mod adapter_store;
-pub mod endpoint_lifecycle;
 pub mod expertise;
-pub mod provider_cost;
 
 // Re-exports — public API
-pub use adapter_config::AdapterConfig;
 pub use adapter_store::{AdapterSource, AdapterStore, AdapterStoreError, TrainedLoRAAdapter};
-pub use endpoint_lifecycle::{EndpointLifecycle, EndpointPhase, EndpointPhaseError};
 pub use expertise::{AdapterLifecycle, Expertise, MdsDomain, TrainingProvenance};
-pub use provider_cost::{CostModel, CostModelError, ProviderCapability, ProviderInfo};

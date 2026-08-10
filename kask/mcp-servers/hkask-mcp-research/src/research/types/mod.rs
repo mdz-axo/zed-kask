@@ -39,9 +39,7 @@ pub const MAX_JSON_SCHEMA_BYTES: usize = 32_768;
 // ── Re-exports ──
 
 pub use freshness::{Freshness, freshness_brave, freshness_serpapi};
-pub use ranking::{
-    apply_rerank, dedup_results, normalize_date_bucket, parse_age_to_days, rrf_score,
-};
+pub use ranking::{apply_rerank, parse_age_to_days, rrf_score};
 pub use rate_limiter::RateLimiter;
 pub use validation::{COMPOUND_PROVIDER_TIMEOUT_SECS, sanitize_health_error};
 
@@ -77,19 +75,6 @@ pub struct ExtractRequest {
     pub json_schema: Option<AnyJsonValue>,
     pub main_content_only: Option<bool>,
     pub wait_for_ms: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CitationGetRequest {
-    pub citation_id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CitationListRequest {
-    /// Maximum number of citations to return (most recent first).
-    pub limit: Option<u32>,
-    /// Restrict the listing to citations for this exact URL.
-    pub url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -339,6 +324,9 @@ pub struct SearchOutput {
     pub answer_box: Option<AnswerBox>,
     pub related_questions: Vec<String>,
     pub count: usize,
+    /// Providers that were queried but failed, so callers can distinguish a
+    /// genuine zero-result search from one where every provider errored.
+    pub providers_failed: Vec<ProviderFailureRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -453,17 +441,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn citation_request_schemas_have_no_boolean_property_values() {
-        for value in [
-            serde_json::to_value(schema_for!(CitationGetRequest)).expect("schema serializes"),
-            serde_json::to_value(schema_for!(CitationListRequest)).expect("schema serializes"),
-        ] {
-            let violations = find_boolean_schema_positions(&value);
-            assert!(
-                violations.is_empty(),
-                "citation request schema has bare-boolean property values: {violations:?}"
-            );
-        }
-    }
 }

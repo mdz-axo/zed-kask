@@ -168,18 +168,17 @@ impl ResearchServer {
                 )));
             }
 
-            let strat = req
-                .strategy
-                .as_deref()
-                .and_then(|s| s.parse::<SearchStrategy>().ok())
-                .unwrap_or(SearchStrategy::Quick);
+            let strat = match req.strategy.as_deref() {
+                Some(s) => s.parse::<SearchStrategy>().map_err(McpToolError::from)?,
+                None => SearchStrategy::Quick,
+            };
 
             let num_results = req.num_results.unwrap_or(10).min(50);
 
-            let freshness = req
-                .freshness
-                .as_deref()
-                .and_then(|f| f.parse::<crate::research::types::Freshness>().ok());
+            let freshness = match req.freshness.as_deref() {
+                Some(f) => Some(f.parse::<crate::research::types::Freshness>().map_err(McpToolError::from)?),
+                None => None,
+            };
 
             let fingerprint = self.pool.provider_fingerprint();
             let ckey = cache_key(
@@ -225,6 +224,7 @@ impl ResearchServer {
                 answer_box: compound.answer_box.clone(),
                 related_questions: compound.related_questions.clone(),
                 count: compound.results.len(),
+                providers_failed: compound.providers_failed.clone(),
             };
 
             let metadata = SearchMetadata::from(&compound);
@@ -813,10 +813,18 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 .map(|s| s.min(MAX_CACHE_MAX_ENTRIES))
                 .unwrap_or(DEFAULT_CACHE_MAX_ENTRIES);
 
-            let rss_db = ctx
-                .open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL)
-                .ok()
-                .and_then(|db| db.sqlite_pool().ok());
+            let rss_db = match ctx.open_database_with_extensions("HKASK_RSS_DB", db::RSS_SCHEMA_DDL) {
+                Ok(db) => db.sqlite_pool().ok(),
+                Err(e) => {
+                    tracing::warn!(
+                        target = "hkask.research.init",
+                        error = %e,
+                        "HKASK_RSS_DB open failed; RSS tools will be unavailable. \
+                         Check HKASK_RSS_DB path and HKASK_DB_PASSPHRASE."
+                    );
+                    None
+                }
+            };
 
             let rss_client = Client::builder()
                 .user_agent(format!("hkask-mcp-research/{}", SERVER_VERSION))

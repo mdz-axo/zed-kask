@@ -163,30 +163,6 @@ fn parse_fuzzy_date(s: &str) -> f64 {
     }
 }
 
-/// Classify a date string into a human-readable bucket.
-///
-/// Returns one of: "today", "this week", "this month", "older", "unknown".
-///
-/// pre:  published is a valid &str
-/// post: returns one of five bucket labels based on age in days
-/// post: returns "unknown" for unparseable input
-pub fn normalize_date_bucket(published: &str) -> &'static str {
-    let days = parse_age_to_days(published);
-    if days < 0.0 {
-        return "unknown";
-    }
-    if days < 1.0 {
-        return "today";
-    }
-    if days < 7.0 {
-        return "this week";
-    }
-    if days < 31.0 {
-        return "this month";
-    }
-    "older"
-}
-
 // ── Web-search-specific ranking ────────────────────────────────────────────
 
 pub fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
@@ -224,24 +200,6 @@ pub fn apply_rerank(results: &mut [RankedResult], signal: RerankSignal) {
     });
 }
 
-pub fn dedup_results(existing: &mut Vec<RankedResult>, incoming: Vec<RankedResult>) {
-    for r in incoming {
-        let key = r.url.to_lowercase();
-        if let Some(idx) = existing.iter().position(|e| e.url.to_lowercase() == key) {
-            if r.rrf_score > existing[idx].rrf_score {
-                existing[idx] = r;
-            }
-        } else {
-            existing.push(r);
-        }
-    }
-    existing.sort_by(|a, b| {
-        b.rrf_score
-            .partial_cmp(&a.rrf_score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,48 +219,6 @@ mod tests {
             semantic_score: None,
             extracted_content: None,
         }
-    }
-
-    #[test]
-    fn dedup_results_merges_disjoint() {
-        let mut existing = vec![mk_result("a.com", 0.9)];
-        let incoming = vec![mk_result("b.com", 0.8)];
-        dedup_results(&mut existing, incoming);
-        assert_eq!(existing.len(), 2);
-        assert_eq!(existing[0].url, "a.com");
-        assert_eq!(existing[1].url, "b.com");
-    }
-
-    #[test]
-    fn dedup_results_keeps_higher_score() {
-        let mut existing = vec![mk_result("a.com", 0.9)];
-        let incoming = vec![mk_result("a.com", 0.5)];
-        dedup_results(&mut existing, incoming);
-        assert_eq!(existing.len(), 1);
-        assert!((existing[0].rrf_score - 0.9).abs() < 0.001);
-    }
-
-    #[test]
-    fn dedup_results_upgrades_lower_score() {
-        let mut existing = vec![mk_result("a.com", 0.5)];
-        let incoming = vec![mk_result("a.com", 0.9)];
-        dedup_results(&mut existing, incoming);
-        assert_eq!(existing.len(), 1);
-        assert!((existing[0].rrf_score - 0.9).abs() < 0.001);
-    }
-
-    #[test]
-    fn dedup_results_sorts_by_score() {
-        let mut existing = vec![];
-        let incoming = vec![
-            mk_result("a.com", 0.5),
-            mk_result("b.com", 0.9),
-            mk_result("c.com", 0.3),
-        ];
-        dedup_results(&mut existing, incoming);
-        assert_eq!(existing[0].url, "b.com");
-        assert_eq!(existing[1].url, "a.com");
-        assert_eq!(existing[2].url, "c.com");
     }
 
     #[test]

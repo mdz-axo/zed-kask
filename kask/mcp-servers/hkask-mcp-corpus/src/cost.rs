@@ -6,11 +6,10 @@
 //! can find efficiencies and inefficiencies in LLM and data-service
 //! interactions.
 //!
-//! The `cost:api/<provider>` accounts are the same accounts
-//! `provider_intel::SelfTrackedProvider::ledger_call_count` reads to report
-//! usage. Before this module existed, those accounts were read but never
-//! credited — the call counts were always zero. Now every API call posts
-//! its cost, so the counts and the USD totals are both available.
+//! The `cost:api/<provider>` accounts are the canonical per-provider cost
+//! accounts: every API call posts its cost here, so both the call counts
+//! and the USD totals are available to any consumer that reads the ledger
+//! balances.
 //!
 //! Error handling follows the `.rules` "unwrap_or(0) on regulation sense
 //! inputs is a broken feedback loop" trap: a failed cost post emits a

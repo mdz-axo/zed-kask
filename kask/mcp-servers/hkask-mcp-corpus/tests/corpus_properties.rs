@@ -1,8 +1,9 @@
 //! Property tests for the corpus server's pure `ModelInfo` conversions.
 //!
 //! The deleted stub-based tests (`MockProvider`, `AlwaysFails`, `EmptyListPort`)
-//! exercised async dispatch paths that needed `InferencePort`/`ProviderIntelligence`
-//! stubs. The genuinely pure, stub-free logic in those three source files is:
+//! exercised async dispatch paths that needed `InferencePort` stubs (and a
+//! provider-intelligence trait that has since been removed). The genuinely
+//! pure, stub-free logic in those three source files is:
 //!
 //! - `inference_svc::ModelInfo::from(hkask_types::ModelEntry)` — parses the
 //!   provider from the prefixed model name (the only branching parser in the
@@ -14,10 +15,6 @@
 //!
 //! # Gaps (pure functions that are NOT testable from `tests/`)
 //!
-//! - `adaptive_monitor::WatchedProvider::interval_for_fraction(f64) -> Duration`
-//!   is the threshold math the deleted `MockProvider` tests indirectly covered,
-//!   but both `WatchedProvider` and the fn are private — unreachable from an
-//!   integration test, and exposing them would require a source edit.
 //! - `model_cache::ttl_from_env` (private) and `ModelCache::is_stale`/
 //!   `invalidate` (public but read/mutate process-global static state with a
 //!   live `Instant` clock, so they are not deterministic pure functions).

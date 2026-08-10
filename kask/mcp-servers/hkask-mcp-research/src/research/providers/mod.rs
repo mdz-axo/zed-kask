@@ -195,19 +195,6 @@ impl ProviderPool {
 }
 
 impl ProviderPool {
-    pub async fn search_with_fallback(
-        &self,
-        query: &SearchQuery,
-        primary: &str,
-    ) -> Result<Vec<SearchResult>, WebError> {
-        let mut ordered: Vec<&dyn WebSearchProvider> =
-            self.search_providers.iter().map(|p| p.as_ref()).collect();
-        if let Some(idx) = ordered.iter().position(|p| p.kind() == primary) {
-            ordered.swap(0, idx);
-        }
-        Self::search_fallback(&ordered, query).await
-    }
-
     pub async fn search_by_capability(
         &self,
         query: &SearchQuery,
