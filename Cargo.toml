@@ -707,6 +707,7 @@ human_bytes = "0.4.1"
 html5ever = "0.27.0"
 scraper = { version = "0.23", default-features = false, features = ["deterministic"] }
 jsonpath-rust = "1"
+mediatype = { version = "0.21", features = ["serde"] }
 http = "1.1"
 http-body = "1.0"
 httparse = "1.10"

@@ -22,7 +22,9 @@ use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::research::rss_types::FetchResult;
+use scraper::{ElementRef, Html, Selector};
+
+// FetchResult is used by the caller (rss_fetch_synthetic), not by this module.
 
 // ── Spec types ─────────────────────────────────────────────────────────────
 
@@ -123,6 +125,7 @@ pub fn extract(
     body: &[u8],
     content_type: &str,
 ) -> Result<Vec<ExtractedItem>, SyntheticError> {
+    let _ = content_type; // reserved for future content-type-based dispatch
     match kind {
         ExtractorKind::Css => {
             let html = std::str::from_utf8(body)
@@ -163,8 +166,6 @@ fn extract_css(
     source_url: &str,
     html: &str,
 ) -> Result<Vec<ExtractedItem>, SyntheticError> {
-    use scraper::{ElementRef, Html, Selector};
-
     let document = Html::parse_document(html);
     let base_url = spec.base_url.as_deref().unwrap_or(source_url);
     let base = reqwest::Url::parse(base_url)
@@ -389,41 +390,72 @@ pub fn items_to_entries(items: Vec<ExtractedItem>, feed_title: &str) -> Vec<feed
     items
         .into_iter()
         .map(|item| {
-            let mut entry = feed_rs::model::Entry::default();
-            entry.id = item.entry_id;
-            if !item.title.is_empty() {
-                entry.title = Some(feed_rs::model::Text {
-                    content: item.title,
-                    ..Default::default()
-                });
-            }
-            if !item.link.is_empty() {
-                entry.links = vec![feed_rs::model::Link {
+            let title = if item.title.is_empty() {
+                None
+            } else {
+                Some(make_text(&item.title))
+            };
+            let links = if item.link.is_empty() {
+                Vec::new()
+            } else {
+                vec![feed_rs::model::Link {
                     href: item.link,
-                    ..Default::default()
-                }];
-            }
-            if !item.summary.is_empty() {
-                entry.summary = Some(feed_rs::model::Text {
-                    content: item.summary,
-                    ..Default::default()
-                });
-            }
-            if !item.date.is_empty() {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(&item.date) {
-                    entry.published = Some(dt.with_timezone(&chrono::Utc).into());
-                }
-            }
-            // Use feed_title as a fallback author if the entry has none.
-            if entry.authors.is_empty() && !feed_title.is_empty() {
-                entry.authors = vec![feed_rs::model::Person {
+                    rel: None,
+                    media_type: None,
+                    href_lang: None,
+                    title: None,
+                    length: None,
+                }]
+            };
+            let summary = if item.summary.is_empty() {
+                None
+            } else {
+                Some(make_text(&item.summary))
+            };
+            let published = item
+                .date
+                .as_str()
+                .parse::<DateTime<chrono::FixedOffset>>()
+                .ok()
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            let authors = if feed_title.is_empty() {
+                Vec::new()
+            } else {
+                vec![feed_rs::model::Person {
                     name: feed_title.to_string(),
-                    ..Default::default()
-                }];
+                    uri: None,
+                    email: None,
+                }]
+            };
+            feed_rs::model::Entry {
+                id: item.entry_id,
+                title,
+                updated: published,
+                authors,
+                content: None,
+                links,
+                summary,
+                categories: Vec::new(),
+                contributors: Vec::new(),
+                published,
+                source: None,
+                rights: None,
+                media: Vec::new(),
+                language: None,
+                base: None,
             }
-            entry
         })
         .collect()
+}
+
+/// Construct a `feed_rs::model::Text` with `text/plain` content type.
+fn make_text(content: &str) -> feed_rs::model::Text {
+    use mediatype::{names, MediaTypeBuf};
+    feed_rs::model::Text {
+        content_type: MediaTypeBuf::new(names::TEXT, names::PLAIN),
+        src: None,
+        content: content.trim().to_string(),
+    }
 }
 
 /// Build a synthetic feed_rs::Feed for upsert_feed. The feed's `url` is
@@ -434,20 +466,33 @@ pub fn build_synthetic_feed(
     title: &str,
     description: &str,
 ) -> feed_rs::model::Feed {
-    let mut feed = feed_rs::model::Feed::default();
-    feed.title = Some(feed_rs::model::Text {
-        content: title.to_string(),
-        ..Default::default()
-    });
-    feed.description = Some(feed_rs::model::Text {
-        content: description.to_string(),
-        ..Default::default()
-    });
-    feed.links = vec![feed_rs::model::Link {
-        href: source_url.to_string(),
-        ..Default::default()
-    }];
-    feed
+    feed_rs::model::Feed {
+        feed_type: feed_rs::model::FeedType::Atom,
+        id: source_url.to_string(),
+        title: Some(make_text(title)),
+        updated: Some(chrono::Utc::now()),
+        authors: Vec::new(),
+        description: Some(make_text(description)),
+        links: vec![feed_rs::model::Link {
+            href: source_url.to_string(),
+            rel: None,
+            media_type: None,
+            href_lang: None,
+            title: None,
+            length: None,
+        }],
+        categories: Vec::new(),
+        contributors: Vec::new(),
+        generator: None,
+        icon: None,
+        language: None,
+        logo: None,
+        published: None,
+        rating: None,
+        rights: None,
+        ttl: None,
+        entries: Vec::new(),
+    }
 }
 
 /// Build a FetchResult-shaped object for the diff_hash path. This is a
@@ -459,25 +504,58 @@ pub fn build_diff_hash_feed(
     title: &str,
 ) -> (feed_rs::model::Feed, String) {
     let hash = content_hash(body);
-    let mut feed = feed_rs::model::Feed::default();
-    feed.title = Some(feed_rs::model::Text {
-        content: title.to_string(),
-        ..Default::default()
-    });
-    feed.links = vec![feed_rs::model::Link {
-        href: source_url.to_string(),
-        ..Default::default()
-    }];
-
-    let mut entry = feed_rs::model::Entry::default();
-    entry.id = format!("diffhash:{hash}");
-    entry.title = Some(feed_rs::model::Text {
-        content: format!("{title} (updated)"),
-        ..Default::default()
-    });
-    entry.published = Some(chrono::Utc::now().into());
-
-    feed.entries = vec![entry];
+    let now = chrono::Utc::now();
+    let entry = feed_rs::model::Entry {
+        id: format!("diffhash:{hash}"),
+        title: Some(make_text(&format!("{title} (updated)"))),
+        updated: Some(now),
+        authors: Vec::new(),
+        content: None,
+        links: vec![feed_rs::model::Link {
+            href: source_url.to_string(),
+            rel: None,
+            media_type: None,
+            href_lang: None,
+            title: None,
+            length: None,
+        }],
+        summary: None,
+        categories: Vec::new(),
+        contributors: Vec::new(),
+        published: Some(now),
+        source: None,
+        rights: None,
+        media: Vec::new(),
+        language: None,
+        base: None,
+    };
+    let feed = feed_rs::model::Feed {
+        feed_type: feed_rs::model::FeedType::Atom,
+        id: source_url.to_string(),
+        title: Some(make_text(title)),
+        updated: Some(now),
+        authors: Vec::new(),
+        description: None,
+        links: vec![feed_rs::model::Link {
+            href: source_url.to_string(),
+            rel: None,
+            media_type: None,
+            href_lang: None,
+            title: None,
+            length: None,
+        }],
+        categories: Vec::new(),
+        contributors: Vec::new(),
+        generator: None,
+        icon: None,
+        language: None,
+        logo: None,
+        published: None,
+        rating: None,
+        rights: None,
+        ttl: None,
+        entries: vec![entry],
+    };
     (feed, hash)
 }
 

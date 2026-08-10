@@ -871,15 +871,53 @@ impl InferenceIpcClient {
                 worktree_base_ref: base_ref.map(str::to_string),
             },
         };
-        let line = self.send_request(request).await?;
+        let request_json = serde_json::to_string(&request)
+            .map_err(|e| InferenceError::Json(format!("IPC serialize failed: {e}")))?;
+
+        let mut guard = self.stream.lock().await;
+        let stream = guard
+            .as_mut()
+            .ok_or_else(|| InferenceError::Connection("IPC socket closed".into()))?;
+        stream
+            .write_all(request_json.as_bytes())
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .write_all(b"\n")
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC write failed: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| InferenceError::Connection(format!("IPC flush failed: {e}")))?;
+
+        let line = match read_response_line(stream).await {
+            Ok(line) => line,
+            Err(e) => {
+                *guard = None;
+                return Err(InferenceError::Connection(format!("IPC read failed: {e}")));
+            }
+        };
+        let Some(line) = line else {
+            *guard = None;
+            return Err(InferenceError::Connection(
+                "IPC socket closed by server".into(),
+            ));
+        };
         let response: InferenceResponse = match serde_json::from_str(&line) {
             Ok(response) => response,
             Err(e) => {
-                return Err(InferenceError::Connection(format!(
-                    "IPC response parse failed: {e}"
-                )));
+                *guard = None;
+                return Err(InferenceError::Json(format!("IPC deserialize failed: {e}")));
             }
         };
+        if response.id != id {
+            *guard = None;
+            return Err(InferenceError::Connection(format!(
+                "IPC ID mismatch: expected {id}, got {}",
+                response.id
+            )));
+        }
         match response.outcome {
             InferenceOutcome::WorktreeThread { thread } => Ok(thread),
             InferenceOutcome::Error { error } => Err(error.into()),

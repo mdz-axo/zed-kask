@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use hkask_types::inference_ipc::{
-    InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest, InferenceResponse,
-    ModelListEntry,
+    InferenceErrorPayload, InferenceMethod, InferenceOutcome, InferenceRequest,
+    InferenceResponse, ModelListEntry, WorktreeThreadInfo,
 };
 use hkask_types::{InferenceError, InferencePort, InferenceResult};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -40,6 +40,37 @@ use tokio::net::UnixListener;
 use tokio::sync::oneshot;
 
 use crate::inference::LanguageModelEmbeddingPort;
+
+/// A request to spawn a worktree-backed agent thread, sent from the tokio
+/// dispatch task to the GPUI-side task via a channel (same pattern as
+/// `ListModels`). The GPUI-side task calls the `WorktreeSpawner` and returns
+/// the result via the oneshot reply channel.
+pub type WorktreeSpawnRequest = (
+    String, // prompt
+    String, // title
+    Option<String>, // worktree_name
+    Option<String>, // base_ref
+    oneshot::Sender<Result<WorktreeThreadInfo, String>>,
+);
+
+/// Spawns a worktree-backed agent thread. Implemented by `main.rs` using
+/// `AgentPanelSiblingHost` (which `kask_bridge` can't depend on directly due to
+/// a cyclic dependency via `auto_update` → `kask_bridge`). The impl holds a
+/// `WeakEntity<AgentPanel>` + `AnyWindowHandle` (both `Send + Sync`) and calls
+/// `SiblingThreadHost::create_sibling_thread` inside the GPUI task.
+pub trait WorktreeSpawner: Send + Sync {
+    /// Create a worktree-backed agent thread. Called from the GPUI-side task
+    /// with `&mut AsyncApp`. Returns a `gpui::Task` that resolves to the
+    /// thread info or an error message.
+    fn spawn(
+        &self,
+        prompt: String,
+        title: String,
+        worktree_name: Option<String>,
+        base_ref: Option<String>,
+        cx: &mut gpui::AsyncApp,
+    ) -> gpui::Task<Result<WorktreeThreadInfo, String>>;
+}
 
 /// The zed-side inference IPC server.
 ///
@@ -51,6 +82,7 @@ pub struct InferenceIpcServer {
     /// The background listener task.
     _task: tokio::task::JoinHandle<()>,
     _list_models_task: gpui::Task<()>,
+    _worktree_spawn_task: gpui::Task<()>,
 }
 
 /// Maximum size of a single newline-delimited IPC message.
@@ -234,6 +266,7 @@ impl InferenceIpcServer {
         media_router: Option<Arc<hkask_inference::MediaRouter>>,
         tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
         skill_exec_port: Option<Arc<dyn hkask_types::SkillExecPort>>,
+        worktree_spawner: Option<Arc<dyn WorktreeSpawner>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -313,6 +346,77 @@ impl InferenceIpcServer {
         });
 
         let list_models_tx = Arc::new(list_models_tx);
+
+        // Worktree spawn channel — same pattern as `list_models_tx`. The
+        // GPUI-side task holds `AsyncApp` and responds to channel requests;
+        // the tokio-side dispatch sends requests via the channel. The GPUI
+        // task looks up the active workspace's `AgentPanel` on each request
+        // (the panel may not exist when the server starts, e.g. before the
+        // user opens a project).
+        let (worktree_spawn_tx, mut worktree_spawn_rx) =
+            tokio::sync::mpsc::unbounded_channel::<WorktreeSpawnRequest>();
+        let worktree_spawn_task = cx.spawn(async move |cx| {
+            while let Some((prompt, title, worktree_name, base_ref, reply)) =
+                worktree_spawn_rx.recv().await
+            {
+                let result = cx.update(|cx| {
+                    use agent::SiblingThreadHost;
+                    // Find the active window's MultiWorkspace → workspace →
+                    // AgentPanel. Same pattern as `spawn_alert_toast_drainer`
+                    // in main.rs.
+                    let window = cx.active_window().ok_or_else(|| {
+                        "no active window — cannot spawn worktree thread".to_string()
+                    })?;
+                    let multi_workspace = window
+                        .downcast::<MultiWorkspace>()
+                        .ok_or_else(|| {
+                            "active window is not a MultiWorkspace".to_string()
+                        })?;
+                    multi_workspace.update(cx, |multi_workspace, _window, cx| {
+                        let workspace = multi_workspace.workspace();
+                        workspace.update(cx, |workspace, cx| {
+                            let panel = workspace
+                                .panel::<agent_ui::AgentPanel>()
+                                .ok_or_else(|| {
+                                    "no agent panel in active workspace".to_string()
+                                })?;
+                            let host = agent_ui::AgentPanelSiblingHost::new(
+                                panel.downgrade(),
+                                window,
+                            );
+                            let request = agent::SiblingThreadRequest {
+                                title: title.into(),
+                                prompt,
+                                agent_id: None,
+                                model: None,
+                                use_new_worktree: true,
+                                worktree_name,
+                                base_ref,
+                            };
+                            let info = host
+                                .create_sibling_thread(request, cx)
+                                .await
+                                .map_err(|e| e.to_string())?;
+                            Ok(WorktreeThreadInfo {
+                                message: format!(
+                                    "Worktree thread created: {} ({})",
+                                    info.title, info.agent_id
+                                ),
+                            })
+                        })
+                    })
+                });
+                let result = match result {
+                    Ok(Ok(Ok(info))) => Ok(info),
+                    Ok(Ok(Err(msg))) => Err(msg),
+                    Ok(Err(msg)) => Err(msg),
+                    Err(e) => Err(format!("GPUI update failed: {e}")),
+                };
+                let _ = reply.send(result);
+            }
+        });
+
+        let worktree_spawn_tx = Arc::new(worktree_spawn_tx);
         let task = tokio_handle.spawn(async move {
             loop {
                 match listener.accept().await {
@@ -323,6 +427,7 @@ impl InferenceIpcServer {
                         let tools = tools.clone();
                         let skill_exec = skill_exec.clone();
                         let list_models_tx = list_models_tx.clone();
+                        let worktree_spawn_tx = worktree_spawn_tx.clone();
                         tokio::spawn(async move {
                             handle_connection(
                                 stream,
@@ -332,6 +437,7 @@ impl InferenceIpcServer {
                                 tools,
                                 skill_exec,
                                 list_models_tx,
+                                Some(worktree_spawn_tx),
                             )
                             .await;
                         });
@@ -352,6 +458,7 @@ impl InferenceIpcServer {
             socket_path,
             _task: task,
             _list_models_task: list_models_task,
+            _worktree_spawn_task: worktree_spawn_task,
         })
     }
 
@@ -394,6 +501,7 @@ async fn handle_connection(
     list_models_tx: Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
+    worktree_spawn_tx: Option<Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
 ) {
     if !peer_is_owner(&stream) {
         return;
@@ -447,6 +555,7 @@ async fn handle_connection(
             tool_port.as_ref(),
             skill_exec_port.as_ref(),
             &list_models_tx,
+            worktree_spawn_tx.as_ref(),
             request,
         )
         .await;
@@ -501,6 +610,7 @@ async fn dispatch(
     list_models_tx: &Arc<
         tokio::sync::mpsc::UnboundedSender<(tokio::sync::oneshot::Sender<Vec<ModelListEntry>>,)>,
     >,
+    worktree_spawn_tx: Option<&Arc<tokio::sync::mpsc::UnboundedSender<WorktreeSpawnRequest>>>,
     request: InferenceRequest,
 ) -> InferenceOutcome {
     let params = request.params;
@@ -723,6 +833,63 @@ async fn dispatch(
         };
     }
 
+    // CreateWorktreeThread requests are dispatched via the GPUI context —
+    // they call `SiblingThreadHost::create_sibling_thread` on the zed side,
+    // which needs `AsyncApp` (not `Send`). Same channel pattern as
+    // `ListModels`.
+    if matches!(request.method, InferenceMethod::CreateWorktreeThread) {
+        let Some(ref tx) = worktree_spawn_tx else {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "worktree spawn port not configured on the zed side \
+                              (no active workspace or SiblingThreadHost)"
+                        .to_string(),
+                },
+            };
+        };
+        let prompt = params.worktree_prompt.as_deref().unwrap_or("");
+        let title = params.worktree_title.as_deref().unwrap_or("Kanban Task");
+        let name = params.worktree_name.clone();
+        let base_ref = params.worktree_base_ref.clone();
+        let (tx_reply, rx_reply) =
+            oneshot::channel::<Result<WorktreeThreadInfo, String>>();
+        if tx
+            .send((
+                prompt.to_string(),
+                title.to_string(),
+                name,
+                base_ref,
+                tx_reply,
+            ))
+            .is_err()
+        {
+            return InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "GPUI-side worktree_spawn task dropped — server shutting down"
+                        .to_string(),
+                },
+            };
+        }
+        return match rx_reply.await {
+            Ok(Ok(thread)) => InferenceOutcome::WorktreeThread { thread },
+            Ok(Err(msg)) => InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "WorktreeSpawn".to_string(),
+                    message: msg,
+                },
+            },
+            Err(_) => InferenceOutcome::Error {
+                error: InferenceErrorPayload {
+                    code: "Connection".to_string(),
+                    message: "GPUI-side worktree_spawn task dropped reply channel"
+                        .to_string(),
+                },
+            },
+        };
+    }
+
     let result: Result<InferenceResult, InferenceError> = match request.method {
         InferenceMethod::Generate => {
             let prompt = params.prompt.as_deref().unwrap_or("");
@@ -767,7 +934,8 @@ async fn dispatch(
         | InferenceMethod::ListModels
         | InferenceMethod::MediaGenerate
         | InferenceMethod::ToolInvoke
-        | InferenceMethod::SkillExecute => unreachable!(),
+        | InferenceMethod::SkillExecute
+        | InferenceMethod::CreateWorktreeThread => unreachable!(),
     };
 
     match result {

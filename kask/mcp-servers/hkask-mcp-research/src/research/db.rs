@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use rusqlite::OptionalExtension;
 
 use crate::research::rss_types::EditTagRequest;
 // P4.3: Use the canonical timestamp helper from `hkask-types` rather than
@@ -86,6 +87,24 @@ pub const RSS_SCHEMA_DDL: &str = "
             VALUES ('delete', old.id, old.title, old.content, old.summary);
     END;
 
+    -- Synthetic feeds: bind a source URL + extractor spec to a feed row.
+    -- The feeds.url for a synthetic feed is `synthetic://<feed_id>`.
+    -- The existing rss_fetch dispatch detects the `synthetic://` scheme and
+    -- routes to rss_fetch_synthetic instead of fetch_feed.
+    CREATE TABLE IF NOT EXISTS synthetic_feeds (
+        feed_id            INTEGER PRIMARY KEY REFERENCES feeds(id) ON DELETE CASCADE,
+        source_url         TEXT NOT NULL,
+        extractor_kind     TEXT NOT NULL,
+        extractor_spec     TEXT NOT NULL,
+        cadence_hint_secs  INTEGER,
+        last_extracted_at  TEXT,
+        last_extract_hash  TEXT,
+        last_new_count     INTEGER DEFAULT 0,
+        last_error         TEXT,
+        created_at         TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_synthetic_source ON synthetic_feeds(source_url);
 
 ";
 
@@ -658,3 +677,149 @@ pub fn import_opml(
     }))
 }
 
+// ── Synthetic feed DB functions ────────────────────────────────────────────
+
+/// Insert a synthetic feed binding. The `feeds` row must already exist
+/// (created via `upsert_feed` with `url = synthetic://<feed_id>`).
+///
+/// Returns the feed_id.
+pub fn insert_synthetic_feed(
+    conn: &Connection,
+    feed_id: i64,
+    source_url: &str,
+    extractor_kind: &str,
+    extractor_spec: &str,
+    cadence_hint_secs: Option<i64>,
+) -> Result<(), anyhow::Error> {
+    conn.execute(
+        "INSERT OR REPLACE INTO synthetic_feeds
+            (feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs],
+    )?;
+    Ok(())
+}
+
+/// Look up a synthetic feed by its `synthetic://` feed URL.
+/// Returns (feed_id, source_url, extractor_kind, extractor_spec, cadence_hint_secs,
+///          last_extract_hash, last_error).
+pub fn lookup_synthetic_by_feed_url(
+    conn: &Connection,
+    feed_url: &str,
+) -> Result<Option<SyntheticFeedRow>, anyhow::Error> {
+    // feed_url is `synthetic://<feed_id>` — parse the feed_id.
+    let feed_id_str = feed_url
+        .strip_prefix("synthetic://")
+        .ok_or_else(|| anyhow::anyhow!("not a synthetic feed URL: {feed_url}"))?;
+    let feed_id: i64 = feed_id_str
+        .parse()
+        .map_err(|e| anyhow::anyhow!("invalid synthetic feed_id '{feed_id_str}': {e}"))?;
+    lookup_synthetic_by_feed_id(conn, feed_id)
+}
+
+/// Look up a synthetic feed by its feed_id (the PK in `feeds`).
+pub fn lookup_synthetic_by_feed_id(
+    conn: &Connection,
+    feed_id: i64,
+) -> Result<Option<SyntheticFeedRow>, anyhow::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT feed_id, source_url, extractor_kind, extractor_spec,
+                cadence_hint_secs, last_extracted_at, last_extract_hash,
+                last_new_count, last_error
+         FROM synthetic_feeds WHERE feed_id = ?1",
+    )?;
+    let row = stmt
+        .query_row([feed_id], |row| {
+            Ok(SyntheticFeedRow {
+                feed_id: row.get(0)?,
+                source_url: row.get(1)?,
+                extractor_kind: row.get(2)?,
+                extractor_spec: row.get(3)?,
+                cadence_hint_secs: row.get(4)?,
+                last_extracted_at: row.get(5)?,
+                last_extract_hash: row.get(6)?,
+                last_new_count: row.get(7)?,
+                last_error: row.get(8)?,
+            })
+        })
+        .optional()?;
+    Ok(row)
+}
+
+/// A row from `synthetic_feeds`.
+pub struct SyntheticFeedRow {
+    pub feed_id: i64,
+    pub source_url: String,
+    pub extractor_kind: String,
+    pub extractor_spec: String,
+    pub cadence_hint_secs: Option<i64>,
+    pub last_extracted_at: Option<String>,
+    pub last_extract_hash: Option<String>,
+    pub last_new_count: Option<i64>,
+    pub last_error: Option<String>,
+}
+
+/// Update the extraction status after a fetch attempt.
+pub fn update_synthetic_status(
+    conn: &Connection,
+    feed_id: i64,
+    new_count: usize,
+    extract_hash: Option<&str>,
+    error: Option<&str>,
+) -> Result<(), anyhow::Error> {
+    conn.execute(
+        "UPDATE synthetic_feeds
+         SET last_extracted_at = datetime('now'),
+             last_new_count = ?2,
+             last_extract_hash = COALESCE(?3, last_extract_hash),
+             last_error = ?4
+         WHERE feed_id = ?1",
+        rusqlite::params![feed_id, new_count as i64, extract_hash, error],
+    )?;
+    Ok(())
+}
+
+/// List all synthetic feeds with their feed metadata.
+pub fn list_synthetic_feeds(conn: &Connection) -> Result<Vec<serde_json::Value>, anyhow::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT sf.feed_id, sf.source_url, sf.extractor_kind, sf.extractor_spec,
+                sf.cadence_hint_secs, sf.last_extracted_at, sf.last_extract_hash,
+                sf.last_new_count, sf.last_error, sf.created_at,
+                f.title, f.url
+         FROM synthetic_feeds sf
+         JOIN feeds f ON sf.feed_id = f.id
+         ORDER BY sf.created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(serde_json::json!({
+            "feed_id": row.get::<_, i64>(0)?,
+            "source_url": row.get::<_, String>(1)?,
+            "extractor_kind": row.get::<_, String>(2)?,
+            "extractor_spec": row.get::<_, String>(3)?,
+            "cadence_hint_secs": row.get::<_, Option<i64>>(4)?,
+            "last_extracted_at": row.get::<_, Option<String>>(5)?,
+            "last_extract_hash": row.get::<_, Option<String>>(6)?,
+            "last_new_count": row.get::<_, Option<i64>>(7)?,
+            "last_error": row.get::<_, Option<String>>(8)?,
+            "created_at": row.get::<_, Option<String>>(9)?,
+            "title": row.get::<_, Option<String>>(10)?,
+            "stream_id": format!("feed/{}", row.get::<_, String>(11)?),
+        }))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
+/// Delete a synthetic feed binding. The `feeds` row is deleted by the
+/// ON DELETE CASCADE on `synthetic_feeds.feed_id`, which in turn cascades
+/// to `entries` and `subscriptions`.
+pub fn delete_synthetic_feed(conn: &Connection, feed_id: i64) -> Result<usize, anyhow::Error> {
+    let removed = conn.execute(
+        "DELETE FROM feeds WHERE id = ?1 AND url LIKE 'synthetic://%'",
+        [feed_id],
+    )?;
+    Ok(removed)
+}

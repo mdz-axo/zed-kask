@@ -270,10 +270,8 @@ pub struct ModelListEntry {
 /// `InferenceMethod::CreateWorktreeThread`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorktreeThreadInfo {
-    /// The new thread's id (a Zed `EntityId` as a string).
-    pub thread_id: String,
-    /// The filesystem path of the new git worktree.
-    pub worktree_path: String,
+    /// A human-readable confirmation message (e.g. "Worktree thread created").
+    pub message: String,
 }
 
 /// Serializable form of `InferenceError`.

@@ -46,3 +46,4 @@ regex.workspace = true
 feed-rs.workspace = true
 scraper.workspace = true
 jsonpath-rust.workspace = true
+mediatype.workspace = true
