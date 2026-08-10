@@ -4752,13 +4752,13 @@ fn parse_provider_slash_model(input: &str) -> Option<language_model::SelectedMod
 /// Bridges agent-side `SiblingThreadHost` calls to `AgentPanel`. Constructed
 /// and installed on a `NativeAgent` by the agent panel when a native-agent
 /// thread is created.
-pub(crate) struct AgentPanelSiblingHost {
+pub struct AgentPanelSiblingHost {
     panel: WeakEntity<AgentPanel>,
     window: gpui::AnyWindowHandle,
 }
 
 impl AgentPanelSiblingHost {
-    pub(crate) fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
+    pub fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
         Self { panel, window }
     }
 }

@@ -27,8 +27,9 @@ pub use cache::{CacheKey, ResponseCache, cache_key};
 pub use feed::{discover_feeds, fetch_feed};
 pub use providers::{ExaProvider, ProviderPool, WebSearchPort};
 pub use rss_types::{
-    Continuation, DiscoverRequest, EditTagRequest, FetchRequest, FetchResult, GetEntriesRequest,
-    ImportOpmlRequest, ListSubscriptionsRequest, MarkReadRequest, SubscribeRequest,
+    Continuation, DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, FetchRequest,
+    FetchResult, FetchSyntheticRequest, GetEntriesRequest, ImportOpmlRequest,
+    ListSubscriptionsRequest, MarkReadRequest, SubscribeRequest, SynthesizeRequest,
     UnreadCountRequest, UnsubscribeRequest,
 };
 pub use types::RateLimiter;

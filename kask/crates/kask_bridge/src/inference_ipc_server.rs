@@ -359,59 +359,14 @@ impl InferenceIpcServer {
             while let Some((prompt, title, worktree_name, base_ref, reply)) =
                 worktree_spawn_rx.recv().await
             {
-                let result = cx.update(|cx| {
-                    use agent::SiblingThreadHost;
-                    // Find the active window's MultiWorkspace → workspace →
-                    // AgentPanel. Same pattern as `spawn_alert_toast_drainer`
-                    // in main.rs.
-                    let window = cx.active_window().ok_or_else(|| {
-                        "no active window — cannot spawn worktree thread".to_string()
-                    })?;
-                    let multi_workspace = window
-                        .downcast::<MultiWorkspace>()
-                        .ok_or_else(|| {
-                            "active window is not a MultiWorkspace".to_string()
-                        })?;
-                    multi_workspace.update(cx, |multi_workspace, _window, cx| {
-                        let workspace = multi_workspace.workspace();
-                        workspace.update(cx, |workspace, cx| {
-                            let panel = workspace
-                                .panel::<agent_ui::AgentPanel>()
-                                .ok_or_else(|| {
-                                    "no agent panel in active workspace".to_string()
-                                })?;
-                            let host = agent_ui::AgentPanelSiblingHost::new(
-                                panel.downgrade(),
-                                window,
-                            );
-                            let request = agent::SiblingThreadRequest {
-                                title: title.into(),
-                                prompt,
-                                agent_id: None,
-                                model: None,
-                                use_new_worktree: true,
-                                worktree_name,
-                                base_ref,
-                            };
-                            let info = host
-                                .create_sibling_thread(request, cx)
-                                .await
-                                .map_err(|e| e.to_string())?;
-                            Ok(WorktreeThreadInfo {
-                                message: format!(
-                                    "Worktree thread created: {} ({})",
-                                    info.title, info.agent_id
-                                ),
-                            })
-                        })
-                    })
-                });
-                let result = match result {
-                    Ok(Ok(Ok(info))) => Ok(info),
-                    Ok(Ok(Err(msg))) => Err(msg),
-                    Ok(Err(msg)) => Err(msg),
-                    Err(e) => Err(format!("GPUI update failed: {e}")),
+                let Some(ref spawner) = worktree_spawner else {
+                    let _ = reply.send(Err(
+                        "worktree spawner not configured (no active workspace)".to_string(),
+                    ));
+                    continue;
                 };
+                let task = spawner.spawn(prompt, title, worktree_name, base_ref, cx);
+                let result = task.await;
                 let _ = reply.send(result);
             }
         });
@@ -1253,7 +1208,7 @@ mod tests {
             params: params_with_prompt("hello inference"),
         };
 
-        let outcome = dispatch(&port, None, None, None, None, &list_models_tx, request).await;
+        let outcome = dispatch(&port, None, None, None, None, &list_models_tx, None, request).await;
 
         match outcome {
             InferenceOutcome::Result { result } => {
@@ -1296,6 +1251,7 @@ mod tests {
             Some(&tool_port),
             None,
             &list_models_tx,
+            None,
             request,
         )
         .await;
@@ -1339,6 +1295,7 @@ mod tests {
             None,
             Some(&skill_port),
             &list_models_tx,
+            None,
             request,
         )
         .await;
@@ -1382,6 +1339,7 @@ mod tests {
             None,
             None,
             &list_models_tx,
+            None,
             request,
         )
         .await;
@@ -1426,6 +1384,7 @@ mod tests {
             Some(&tool_port),
             None,
             &list_models_tx,
+            None,
             request,
         )
         .await;
@@ -1512,6 +1471,7 @@ mod tests {
             None,
             None,
             list_models_tx,
+            None,
         ));
 
         let request = InferenceRequest {
@@ -1568,6 +1528,7 @@ mod tests {
             None,
             None,
             list_models_tx,
+            None,
         ));
 
         // Malformed request: unknown method variant — deserialization fails.

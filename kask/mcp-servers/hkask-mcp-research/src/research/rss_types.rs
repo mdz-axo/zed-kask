@@ -71,6 +71,43 @@ pub struct EditTagRequest {
     pub remove_label: Option<String>,
 }
 
+// ── Synthetic feed request types ──
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SynthesizeRequest {
+    /// Source URL to extract items from.
+    pub source_url: String,
+    /// Extractor kind: "css", "json_path", or "diff_hash".
+    pub extractor_kind: String,
+    /// JSON-encoded `ExtractorSpec`: {"items_selector": "...", "fields": {...}, ...}
+    pub extractor_spec: String,
+    /// Optional feed title. Defaults to the source URL.
+    pub title: Option<String>,
+    /// Optional feed description.
+    pub description: Option<String>,
+    /// Optional label for the auto-created subscription.
+    pub label: Option<String>,
+    /// Optional folder for the auto-created subscription.
+    pub folder: Option<String>,
+    /// Optional suggested poll interval in seconds.
+    pub cadence_hint_secs: Option<i64>,
+    /// If true, subscribe to the synthetic feed after creating it.
+    /// Default: true.
+    pub subscribe: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FetchSyntheticRequest {
+    /// Stream ID of the synthetic feed (e.g. "feed/synthetic://123").
+    pub stream_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeleteSyntheticRequest {
+    /// Stream ID or feed URL of the synthetic feed to delete.
+    pub stream_id: String,
+}
+
 // Internal types
 
 pub struct FetchResult {

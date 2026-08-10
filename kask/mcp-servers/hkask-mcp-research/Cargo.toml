@@ -47,3 +47,4 @@ feed-rs.workspace = true
 scraper.workspace = true
 jsonpath-rust.workspace = true
 mediatype.workspace = true
+pdf-extract.workspace = true

@@ -40,10 +40,10 @@ pub enum ExtractorKind {
     Css,
     JsonPath,
     DiffHash,
+    LlmSchema,
+    PdfOcr,
     // Reserved for future implementation:
     // Xpath,
-    // LlmSchema,
-    // PdfOcr,
 }
 
 impl ExtractorKind {
@@ -52,6 +52,8 @@ impl ExtractorKind {
             Self::Css => "css",
             Self::JsonPath => "json_path",
             Self::DiffHash => "diff_hash",
+            Self::LlmSchema => "llm_schema",
+            Self::PdfOcr => "pdf_ocr",
         }
     }
 }
@@ -63,6 +65,8 @@ impl std::str::FromStr for ExtractorKind {
             "css" => Ok(Self::Css),
             "json_path" => Ok(Self::JsonPath),
             "diff_hash" => Ok(Self::DiffHash),
+            "llm_schema" => Ok(Self::LlmSchema),
+            "pdf_ocr" => Ok(Self::PdfOcr),
             other => Err(SyntheticError::UnsupportedKind(other.to_string())),
         }
     }
@@ -74,9 +78,12 @@ impl std::str::FromStr for ExtractorKind {
 pub struct ExtractorSpec {
     /// CSS selector or JSONPath for the container of each item.
     /// For `diff_hash`, unused (the whole page is the "item").
+    /// For `llm_schema`, unused (the LLM extracts items directly).
+    /// For `pdf_ocr`, unused (the PDF text is passed to post_ocr extraction).
     pub items_selector: Option<String>,
     /// Per-field selectors. Keys: title, link, date, summary, entry_id.
     /// Values are CSS selectors (with optional `@attr`) or JSONPath expressions.
+    /// For `llm_schema`, unused (the JSON schema defines the fields).
     pub fields: HashMap<String, String>,
     /// Optional template for building the entry_id from extracted fields.
     /// e.g. `"{link}"` or `"{title}|{date}"`. Defaults to the link field.
@@ -84,6 +91,20 @@ pub struct ExtractorSpec {
     /// Optional base URL for resolving relative links (css only).
     /// Defaults to the source_url.
     pub base_url: Option<String>,
+    /// For `llm_schema`: a JSON schema (as a string) defining the array of
+    /// items to extract. The schema should describe a single item; the
+    /// extractor wraps it in an array.
+    pub json_schema: Option<String>,
+    /// For `llm_schema`: a natural-language prompt guiding extraction.
+    /// e.g. "Extract a list of datasets with title, url, date, and summary."
+    pub prompt: Option<String>,
+    /// For `pdf_ocr`: the post-OCR extractor kind. After PDF text extraction,
+    /// the text is passed to this extractor. Currently supports "llm_schema"
+    /// and "diff_hash". If None, defaults to "diff_hash".
+    pub post_ocr_kind: Option<String>,
+    /// For `pdf_ocr`: the post-OCR extractor spec (JSON-encoded ExtractorSpec).
+    /// Used when `post_ocr_kind` is "llm_schema".
+    pub post_ocr_spec: Option<String>,
 }
 
 /// A single extracted item, before it becomes a `feed_rs::Entry`.
@@ -110,6 +131,19 @@ pub enum SyntheticError {
     MissingField(String),
 }
 
+impl From<SyntheticError> for hkask_mcp_server::server::McpToolError {
+    fn from(e: SyntheticError) -> Self {
+        use hkask_mcp_server::server::McpToolError;
+        match e {
+            SyntheticError::UnsupportedKind(_) | SyntheticError::InvalidSpec(_)
+            | SyntheticError::MissingField(_) => McpToolError::invalid_argument(e.to_string()),
+            SyntheticError::ExtractionFailed(_) => {
+                McpToolError::unavailable(e.to_string())
+            }
+        }
+    }
+}
+
 // ── Extraction entry point ─────────────────────────────────────────────────
 
 /// Extract items from a fetched page/API response.
@@ -118,6 +152,10 @@ pub enum SyntheticError {
 /// decide whether to parse as HTML or JSON when the extractor kind doesn't
 /// imply it (e.g. `css` always parses as HTML, `json_path` always as JSON,
 /// `diff_hash` doesn't parse at all).
+///
+/// For `llm_schema`, this function does NOT perform the LLM extraction —
+/// that requires the `WebSearchPort` pool and is done by `extract_llm_schema`.
+/// This function returns an empty vec for `llm_schema`.
 pub fn extract(
     kind: ExtractorKind,
     spec: &ExtractorSpec,
@@ -139,8 +177,14 @@ pub fn extract(
         }
         ExtractorKind::DiffHash => {
             // diff_hash doesn't extract items; the caller handles hashing.
-            // Return an empty vec; the caller creates a single "entry" from
-            // the content hash if it changed.
+            Ok(Vec::new())
+        }
+        ExtractorKind::LlmSchema => {
+            // LLM extraction requires the pool; caller uses extract_llm_schema.
+            Ok(Vec::new())
+        }
+        ExtractorKind::PdfOcr => {
+            // PDF text extraction is done by extract_pdf_text; caller handles.
             Ok(Vec::new())
         }
     }
@@ -368,7 +412,250 @@ fn json_value_to_string(v: &Value) -> String {
     }
 }
 
-// ── Template rendering ────────────────────────────────────────────────────
+// ── LLM schema extraction ───────────────────────────────────────────────────
+
+/// Extract items from a URL using the LLM-based `web_extract` provider.
+///
+/// This calls the `WebSearchPort::extract` method with `format="json"`,
+/// a JSON schema, and a prompt. The provider fetches the URL, extracts
+/// content, and returns structured JSON matching the schema.
+///
+/// The returned JSON is expected to be an array of objects with fields
+/// matching the schema (title, url, date, summary, etc.).
+pub async fn extract_llm_schema(
+    pool: &dyn crate::research::providers::WebSearchPort,
+    spec: &ExtractorSpec,
+    source_url: &str,
+) -> Result<Vec<ExtractedItem>, SyntheticError> {
+    let schema_str = spec
+        .json_schema
+        .as_deref()
+        .ok_or_else(|| SyntheticError::MissingField("json_schema".into()))?;
+
+    let schema: serde_json::Value = serde_json::from_str(schema_str)
+        .map_err(|e| SyntheticError::InvalidSpec(format!("json_schema: {e}")))?;
+
+    let prompt = spec
+        .prompt
+        .clone()
+        .unwrap_or_else(|| "Extract a list of items with title, url, date, and summary.".into());
+
+    let opts = crate::research::types::ExtractOptions {
+        format: "json".to_string(),
+        json_prompt: Some(prompt),
+        json_schema: Some(schema),
+        main_content_only: true,
+        wait_for_ms: 0,
+    };
+
+    let result = pool
+        .extract(source_url, &opts)
+        .await
+        .map_err(|e| SyntheticError::ExtractionFailed(format!("web_extract: {e}")))?;
+
+    // The extracted content should be a JSON string.
+    let parsed: serde_json::Value = serde_json::from_str(&result.content)
+        .map_err(|e| SyntheticError::ExtractionFailed(format!("parse extracted JSON: {e}")))?;
+
+    // The parsed value should be an array of items.
+    let items_arr = match parsed {
+        serde_json::Value::Array(arr) => arr,
+        serde_json::Value::Object(obj) => {
+            // Some providers wrap the array in an object with a key like "items".
+            if let Some(arr) = obj.get("items").and_then(|v| v.as_array()) {
+                arr.clone()
+            } else {
+                // Single object — treat as one item.
+                vec![serde_json::json!({"_raw": parsed})]
+            }
+        }
+        other => vec![serde_json::json!({"_raw": other})],
+    };
+
+    let template = spec
+        .entry_id_template
+        .as_deref()
+        .unwrap_or("{link}");
+
+    let mut items = Vec::new();
+    for item_val in items_arr {
+        let mut item = ExtractedItem::default();
+        if let Some(obj) = item_val.as_object() {
+            for (key, val) in obj {
+                let s = json_value_to_string(val);
+                match key.as_str() {
+                    "title" | "name" => item.title = s,
+                    "link" | "url" | "href" => item.link = s,
+                    "date" | "published" | "published_at" | "timestamp" => item.date = s,
+                    "summary" | "description" | "abstract" => item.summary = s,
+                    "entry_id" | "id" => item.entry_id = s,
+                    _ => {} // ignore unknown fields
+                }
+            }
+        }
+        if item.entry_id.is_empty() {
+            item.entry_id = render_template(template, &item);
+        }
+        if item.entry_id.is_empty() {
+            item.entry_id = if !item.link.is_empty() {
+                item.link.clone()
+            } else {
+                blake3::hash(item.title.as_bytes()).to_hex().to_string()
+            };
+        }
+        items.push(item);
+    }
+
+    Ok(items)
+}
+
+// ── PDF text extraction ────────────────────────────────────────────────────
+
+/// Extract text from a PDF byte slice using the `pdf-extract` crate.
+///
+/// This performs text-layer extraction only (no OCR). For scanned PDFs
+/// without a text layer, the result will be empty — the caller should
+/// fall back to the corpus server's `corpus_ocr` tool via MCP dispatch.
+///
+/// Returns the extracted text and whether the text layer was non-empty.
+pub fn extract_pdf_text(body: &[u8]) -> Result<(String, bool), SyntheticError> {
+    let text = pdf_extract::extract_text_from_mem(body)
+        .map_err(|e| SyntheticError::ExtractionFailed(format!("pdf-extract: {e}")))?;
+    let non_empty = !text.trim().is_empty();
+    Ok((text, non_empty))
+}
+
+/// Extract items from a PDF by first extracting text, then applying a
+/// post-OCR extractor (typically `llm_schema` or `diff_hash`).
+///
+/// For `diff_hash` post-processing: hashes the text and returns an empty
+/// item list (caller uses `build_diff_hash_feed`).
+/// For `llm_schema` post-processing: the text is sent to the LLM extractor
+/// as if it were a web page. This requires the pool.
+pub async fn extract_pdf_ocr(
+    pool: &dyn crate::research::providers::WebSearchPort,
+    spec: &ExtractorSpec,
+    source_url: &str,
+    body: &[u8],
+) -> Result<Vec<ExtractedItem>, SyntheticError> {
+    let (text, has_text) = extract_pdf_text(body)?;
+
+    if !has_text {
+        return Err(SyntheticError::ExtractionFailed(
+            "PDF has no text layer; OCR fallback requires the corpus server's corpus_ocr tool"
+                .to_string(),
+        ));
+    }
+
+    let post_kind = spec
+        .post_ocr_kind
+        .as_deref()
+        .unwrap_or("diff_hash");
+
+    match post_kind {
+        "diff_hash" => {
+            // Hash the text and return empty items (caller uses build_diff_hash_feed).
+            Ok(Vec::new())
+        }
+        "llm_schema" => {
+            // Parse the post_ocr_spec as an ExtractorSpec and use it for LLM extraction.
+            // We pass the extracted text as the "body" to the LLM extractor.
+            // Since extract_llm_schema takes a URL (not raw text), we need to
+            // use the pool's extract method directly with the text as content.
+            let post_spec_str = spec
+                .post_ocr_spec
+                .as_deref()
+                .ok_or_else(|| SyntheticError::MissingField("post_ocr_spec".into()))?;
+            let post_spec: ExtractorSpec = serde_json::from_str(post_spec_str)
+                .map_err(|e| SyntheticError::InvalidSpec(format!("post_ocr_spec: {e}")))?;
+
+            let schema_str = post_spec
+                .json_schema
+                .as_deref()
+                .ok_or_else(|| SyntheticError::MissingField("json_schema in post_ocr_spec".into()))?;
+            let schema: serde_json::Value = serde_json::from_str(schema_str)
+                .map_err(|e| SyntheticError::InvalidSpec(format!("json_schema: {e}")))?;
+
+            let prompt = post_spec
+                .prompt
+                .clone()
+                .unwrap_or_else(|| {
+                    "Extract a list of items with title, date, and summary from this document.".into()
+                });
+
+            // Use the pool to extract from the source URL (the PDF URL).
+            // The extract provider will fetch the URL; for PDFs, Firecrawl
+            // or RawFetch may handle PDF content-type. If they don't, the
+            // caller should use the corpus server's corpus_convert tool.
+            let opts = crate::research::types::ExtractOptions {
+                format: "json".to_string(),
+                json_prompt: Some(format!("{prompt}\n\nDocument text:\n{text}")),
+                json_schema: Some(schema),
+                main_content_only: true,
+                wait_for_ms: 0,
+            };
+
+            let result = pool
+                .extract(source_url, &opts)
+                .await
+                .map_err(|e| SyntheticError::ExtractionFailed(format!("web_extract: {e}")))?;
+
+            let parsed: serde_json::Value = serde_json::from_str(&result.content)
+                .map_err(|e| SyntheticError::ExtractionFailed(format!("parse: {e}")))?;
+
+            let items_arr = match parsed {
+                serde_json::Value::Array(arr) => arr,
+                serde_json::Value::Object(obj) => {
+                    if let Some(arr) = obj.get("items").and_then(|v| v.as_array()) {
+                        arr.clone()
+                    } else {
+                        vec![serde_json::json!({"_raw": parsed})]
+                    }
+                }
+                other => vec![serde_json::json!({"_raw": other})],
+            };
+
+            let template = post_spec
+                .entry_id_template
+                .as_deref()
+                .unwrap_or("{link}");
+
+            let mut items = Vec::new();
+            for item_val in items_arr {
+                let mut item = ExtractedItem::default();
+                if let Some(obj) = item_val.as_object() {
+                    for (key, val) in obj {
+                        let s = json_value_to_string(val);
+                        match key.as_str() {
+                            "title" | "name" => item.title = s,
+                            "link" | "url" | "href" => item.link = s,
+                            "date" | "published" | "published_at" => item.date = s,
+                            "summary" | "description" | "abstract" => item.summary = s,
+                            "entry_id" | "id" => item.entry_id = s,
+                            _ => {}
+                        }
+                    }
+                }
+                if item.entry_id.is_empty() {
+                    item.entry_id = render_template(template, &item);
+                }
+                if item.entry_id.is_empty() {
+                    item.entry_id = if !item.link.is_empty() {
+                        item.link.clone()
+                    } else {
+                        blake3::hash(item.title.as_bytes()).to_hex().to_string()
+                    };
+                }
+                items.push(item);
+            }
+
+            Ok(items)
+        }
+        other => Err(SyntheticError::InvalidSpec(format!(
+            "unsupported post_ocr_kind: {other}"
+        ))),
+    }
+}
 
 /// Render a template like `"{link}"` or `"{title}|{date}"` by substituting
 /// field values from an extracted item.

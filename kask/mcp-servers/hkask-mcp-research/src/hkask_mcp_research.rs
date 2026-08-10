@@ -21,14 +21,14 @@ use rusqlite::Connection;
 use crate::research::db::*;
 use crate::research::{
     BrowseOutput, BrowseRequest, Continuation, DEFAULT_CACHE_MAX_ENTRIES, DEFAULT_CACHE_TTL_SECS,
-    DiscoverRequest, EditTagRequest, ExtractOptions, ExtractOutput, ExtractRequest, FetchRequest,
-    FindSimilarOutput, FindSimilarRequest, FindSimilarResultOutput, GetEntriesRequest,
-    ImportOpmlRequest, ListSubscriptionsRequest, MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS,
-    MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH, MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH,
-    MAX_URL_LENGTH, MarkReadRequest, PingOutput, RateLimiter, ResponseCache, SearchMetadata,
-    SearchOutput, SearchQuery, SearchRequest, SearchResultOutput, SearchStrategy, SubscribeRequest,
-    UnreadCountRequest, UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key,
-    discover_feeds, fetch_feed,
+    DeleteSyntheticRequest, DiscoverRequest, EditTagRequest, ExtractOptions, ExtractOutput,
+    ExtractRequest, FetchRequest, FetchSyntheticRequest, FindSimilarOutput, FindSimilarRequest,
+    FindSimilarResultOutput, GetEntriesRequest, ImportOpmlRequest, ListSubscriptionsRequest,
+    MAX_CACHE_MAX_ENTRIES, MAX_CACHE_TTL_SECS, MAX_INSTRUCTION_LENGTH, MAX_JSON_PROMPT_LENGTH,
+    MAX_JSON_SCHEMA_BYTES, MAX_QUERY_LENGTH, MAX_URL_LENGTH, MarkReadRequest, PingOutput,
+    RateLimiter, ResponseCache, SearchMetadata, SearchOutput, SearchQuery, SearchRequest,
+    SearchResultOutput, SearchStrategy, SubscribeRequest, SynthesizeRequest, UnreadCountRequest,
+    UnsubscribeRequest, WebSearchPort, build_provider_pool, cache_key, discover_feeds, fetch_feed,
 };
 
 // ── Constants ──
@@ -564,6 +564,14 @@ impl ResearchServer {
                 }
             };
 
+            // Dispatch: synthetic feeds (url starts with synthetic://) are
+            // re-extracted via the synthetic fetch path rather than fetched as RSS.
+            if feed_url.starts_with("synthetic://") {
+                return self
+                    .fetch_synthetic_inner(&stream_id, feed_url)
+                    .await;
+            }
+
             // Stored-SSRF defense: validate the DB-stored feed URL before
             // fetching. The URL was originally user-supplied via rss_subscribe
             // or rss_import_opml; re-validate at fetch time to catch URLs that
@@ -774,6 +782,496 @@ impl ResearchServer {
             let db = require_rss_db!(self);
             let result = spawn_db(db, move |conn| edit_tags(conn, &req)).await;
             handle_db_result!(result, |v| v)
+        })
+        .await
+    }
+
+    // ═══════════════════ Synthetic feed tools ═══════════════════
+
+    #[tool(
+        description = "Create a synthetic feed from a non-feed website or JSON API. Extracts items using the specified extractor kind (css, json_path, diff_hash) and stores them as feed entries. Optionally subscribes to the created feed."
+    )]
+    pub async fn rss_synthesize(
+        &self,
+        Parameters(req): Parameters<SynthesizeRequest>,
+    ) -> String {
+        execute_tool(self, "rss_synthesize", async {
+            self.rate_limiter.check("rss_synthesize")?;
+            let db = require_rss_db!(self);
+
+            // Parse the extractor kind.
+            let kind: crate::research::synthetic::ExtractorKind =
+                req.extractor_kind.parse().map_err(McpToolError::from)?;
+
+            // Parse the extractor spec JSON.
+            let spec: crate::research::synthetic::ExtractorSpec =
+                serde_json::from_str(&req.extractor_spec).map_err(|e| {
+                    McpToolError::invalid_argument(format!("invalid extractor_spec JSON: {e}"))
+                })?;
+
+            // Validate the source URL (SSRF defense).
+            hkask_mcp_server::server::validate_tool_url_permissive(&req.source_url)?;
+
+            // Fetch the source.
+            let response = self
+                .rss_client
+                .get(&req.source_url)
+                .send()
+                .await
+                .map_err(|e| McpToolError::unavailable(format!("fetch source: {e}")))?;
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
+            let status = response.status();
+            if !status.is_success() {
+                return Err(McpToolError::unavailable(format!(
+                    "source returned HTTP {}",
+                    status
+                )));
+            }
+            let body = response.bytes().await.map_err(|e| {
+                McpToolError::unavailable(format!("read source body: {e}"))
+            })?;
+
+            let title = req.title.clone().unwrap_or_else(|| req.source_url.clone());
+            let description = req.description.clone().unwrap_or_default();
+            let source_url = req.source_url.clone();
+            let extractor_kind_str = req.extractor_kind.clone();
+            let extractor_spec_str = req.extractor_spec.clone();
+            let cadence = req.cadence_hint_secs;
+            let label = req.label.clone();
+            let folder = req.folder.clone();
+            let want_subscribe = req.subscribe.unwrap_or(true);
+
+            // Extract items. For css/json_path/diff_hash, use the sync extract()
+            // function. For llm_schema and pdf_ocr, use the async pool-based
+            // extractors.
+            let (feed, _entry_count, extract_hash) = match kind {
+                crate::research::synthetic::ExtractorKind::DiffHash => {
+                    let (feed, hash) =
+                        crate::research::synthetic::build_diff_hash_feed(&body, &source_url, &title);
+                    let count = feed.entries.len();
+                    (feed, count, Some(hash))
+                }
+                crate::research::synthetic::ExtractorKind::LlmSchema => {
+                    let items = crate::research::synthetic::extract_llm_schema(
+                        self.pool.as_ref(),
+                        &spec,
+                        &source_url,
+                    )
+                    .await
+                    .map_err(McpToolError::from)?;
+                    let entries = crate::research::synthetic::items_to_entries(items, &title);
+                    let count = entries.len();
+                    let mut feed = crate::research::synthetic::build_synthetic_feed(
+                        &source_url,
+                        &title,
+                        &description,
+                    );
+                    feed.entries = entries;
+                    (feed, count, None)
+                }
+                crate::research::synthetic::ExtractorKind::PdfOcr => {
+                    let items = crate::research::synthetic::extract_pdf_ocr(
+                        self.pool.as_ref(),
+                        &spec,
+                        &source_url,
+                        &body,
+                    )
+                    .await
+                    .map_err(McpToolError::from)?;
+                    if items.is_empty() {
+                        // diff_hash post-processing or empty PDF.
+                        let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
+                            &body,
+                            &source_url,
+                            &title,
+                        );
+                        let count = feed.entries.len();
+                        (feed, count, Some(hash))
+                    } else {
+                        let entries = crate::research::synthetic::items_to_entries(items, &title);
+                        let count = entries.len();
+                        let mut feed = crate::research::synthetic::build_synthetic_feed(
+                            &source_url,
+                            &title,
+                            &description,
+                        );
+                        feed.entries = entries;
+                        (feed, count, None)
+                    }
+                }
+                _ => {
+                    // css or json_path — sync extraction.
+                    let items = crate::research::synthetic::extract(
+                        kind,
+                        &spec,
+                        &source_url,
+                        &body,
+                        &content_type,
+                    )
+                    .map_err(McpToolError::from)?;
+                    let entries = crate::research::synthetic::items_to_entries(items, &title);
+                    let count = entries.len();
+                    let mut feed = crate::research::synthetic::build_synthetic_feed(
+                        &source_url,
+                        &title,
+                        &description,
+                    );
+                    feed.entries = entries;
+                    (feed, count, None)
+                }
+            };
+
+            // Insert into DB: create feeds row, synthetic_feeds row, entries.
+            let feed_title = feed
+                .title
+                .as_ref()
+                .map(|t| t.content.clone())
+                .unwrap_or_else(|| source_url.clone());
+            let feed_for_upsert = feed;
+            let result = spawn_db(db, move |conn| {
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+
+                // Insert the feed with a placeholder synthetic:// URL.
+                // We insert with a temporary URL, get the feed_id, then update
+                // the URL to synthetic://<feed_id>.
+                let temp_url = "synthetic://pending".to_string();
+                let feed_id = upsert_feed(&tx, &temp_url, &feed_for_upsert)?;
+
+                // Update the URL to the canonical synthetic:// form.
+                tx.execute(
+                    "UPDATE feeds SET url = ?1 WHERE id = ?2",
+                    rusqlite::params![format!("synthetic://{feed_id}"), feed_id],
+                )?;
+
+                // Insert entries.
+                let new_entries = insert_entries(&tx, feed_id, &feed_for_upsert.entries)?;
+
+                // Insert synthetic_feeds binding.
+                insert_synthetic_feed(
+                    &tx,
+                    feed_id,
+                    &source_url,
+                    &extractor_kind_str,
+                    &extractor_spec_str,
+                    cadence,
+                )?;
+
+                // Update extraction status.
+                update_synthetic_status(
+                    &tx,
+                    feed_id,
+                    new_entries,
+                    extract_hash.as_deref(),
+                    None,
+                )?;
+
+                // Optionally subscribe.
+                let stream_id = format!("feed/synthetic://{feed_id}");
+                let sub_note = if want_subscribe {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO subscriptions (feed_id, stream_id, title, label, folder)
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![feed_id, &stream_id, &feed_title, label, folder],
+                    )?;
+                    "subscribed"
+                } else {
+                    "not_subscribed"
+                };
+
+                tx.commit()?;
+
+                Ok::<serde_json::Value, anyhow::Error>(serde_json::json!({
+                    "feed_id": feed_id,
+                    "stream_id": stream_id,
+                    "source_url": source_url,
+                    "extractor_kind": extractor_kind_str,
+                    "new_entries": new_entries,
+                    "subscribed": want_subscribe,
+                    "subscription_status": sub_note,
+                }))
+            })
+            .await;
+            handle_db_result!(result, |v| v)
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Re-extract from a synthetic feed's source URL and insert new entries. Called by rss_fetch for synthetic feeds, or directly to refresh a synthetic feed."
+    )]
+    pub async fn rss_fetch_synthetic(
+        &self,
+        Parameters(req): Parameters<FetchSyntheticRequest>,
+    ) -> String {
+        execute_tool(self, "rss_fetch_synthetic", async {
+            self.rate_limiter.check("rss_fetch_synthetic")?;
+            let db = require_rss_db!(self);
+
+            // Resolve the feed URL from the stream_id.
+            let sid = req.stream_id.clone();
+            let lookup = spawn_db(db, move |conn| {
+                resolve_feed_with_headers(conn, &sid)
+            })
+            .await;
+            let (feed_url, _etag, _lm) = match lookup {
+                Ok(Ok(v)) => v,
+                Ok(Err(e)) => return Err(McpToolError::not_found(e.to_string())),
+                Err(e) => return Err(map_join_error(e, "rss fetch task failed")),
+            };
+
+            // Check if this is a synthetic feed.
+            if !feed_url.starts_with("synthetic://") {
+                return Err(McpToolError::invalid_argument(
+                    "not a synthetic feed; use rss_fetch instead",
+                ));
+            }
+
+            self.fetch_synthetic_inner(&req.stream_id, feed_url).await
+        })
+        .await
+    }
+
+    /// Shared synthetic feed fetch logic. Called by both `rss_fetch` (when it
+    /// detects a `synthetic://` URL) and `rss_fetch_synthetic` (direct call).
+    /// The `feed_url` must already be resolved and start with `synthetic://`.
+    async fn fetch_synthetic_inner(
+        &self,
+        stream_id: &str,
+        feed_url: String,
+    ) -> Result<serde_json::Value, McpToolError> {
+        let db = require_rss_db!(self);
+
+        // Look up the synthetic feed binding.
+        let feed_url_for_lookup = feed_url.clone();
+        let synth_row = spawn_db(db.clone(), move |conn| {
+            lookup_synthetic_by_feed_url(conn, &feed_url_for_lookup)
+        })
+        .await;
+        let synth = match synth_row {
+            Ok(Ok(Some(row))) => row,
+            Ok(Ok(None)) => {
+                return Err(McpToolError::not_found(
+                    "synthetic feed binding not found",
+                ));
+            }
+            Ok(Err(e)) => return Err(map_db_error(e)),
+            Err(e) => return Err(map_join_error(e, "db lookup failed")),
+        };
+
+        // Parse the extractor kind and spec.
+        let kind: crate::research::synthetic::ExtractorKind =
+            synth.extractor_kind.parse().map_err(McpToolError::from)?;
+        let spec: crate::research::synthetic::ExtractorSpec =
+            serde_json::from_str(&synth.extractor_spec).map_err(|e| {
+                McpToolError::internal(format!("invalid stored extractor_spec: {e}"))
+            })?;
+
+        // Validate and fetch the source URL.
+        hkask_mcp_server::server::validate_tool_url_permissive(&synth.source_url)?;
+        let response = self
+            .rss_client
+            .get(&synth.source_url)
+            .send()
+            .await
+            .map_err(|e| McpToolError::unavailable(format!("fetch source: {e}")))?;
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let status = response.status();
+        if !status.is_success() {
+            // Record the error.
+            let err_msg = format!("source returned HTTP {status}");
+            let feed_id = synth.feed_id;
+            let err_for_db = err_msg.clone();
+            let _ = spawn_db(db.clone(), move |conn| {
+                update_synthetic_status(conn, feed_id, 0, None, Some(&err_for_db))
+            })
+            .await;
+            return Err(McpToolError::unavailable(err_msg));
+        }
+        let body = response.bytes().await.map_err(|e| {
+            McpToolError::unavailable(format!("read source body: {e}"))
+        })?;
+
+        // For diff_hash: check if content changed.
+        if kind == crate::research::synthetic::ExtractorKind::DiffHash {
+            let new_hash = crate::research::synthetic::content_hash(&body);
+            if Some(new_hash.as_str()) == synth.last_extract_hash.as_deref() {
+                return Ok(serde_json::json!({
+                    "stream_id": stream_id,
+                    "new_entries": 0,
+                    "fetched": true,
+                    "not_modified": true,
+                }));
+            }
+            // Content changed — create a new entry.
+            let (feed, hash) = crate::research::synthetic::build_diff_hash_feed(
+                &body,
+                &synth.source_url,
+                &synth.source_url,
+            );
+            let feed_id = synth.feed_id;
+            let hash_for_db = hash.clone();
+            let result = spawn_db(db, move |conn| {
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+                let new_count = insert_entries(&tx, feed_id, &feed.entries)?;
+                update_synthetic_status(
+                    &tx,
+                    feed_id,
+                    new_count,
+                    Some(&hash_for_db),
+                    None,
+                )?;
+                tx.commit()?;
+                Ok::<usize, anyhow::Error>(new_count)
+            })
+            .await;
+            match result {
+                Ok(Ok(new_count)) => Ok(serde_json::json!({
+                    "stream_id": stream_id,
+                    "new_entries": new_count,
+                    "fetched": true,
+                })),
+                Ok(Err(e)) => Err(map_db_error(e)),
+                Err(e) => Err(map_join_error(e, "db task failed")),
+            }
+        } else {
+            // css, json_path, llm_schema, or pdf_ocr extraction.
+            let items = match kind {
+                crate::research::synthetic::ExtractorKind::LlmSchema => {
+                    crate::research::synthetic::extract_llm_schema(
+                        self.pool.as_ref(),
+                        &spec,
+                        &synth.source_url,
+                    )
+                    .await
+                    .map_err(McpToolError::from)?
+                }
+                crate::research::synthetic::ExtractorKind::PdfOcr => {
+                    crate::research::synthetic::extract_pdf_ocr(
+                        self.pool.as_ref(),
+                        &spec,
+                        &synth.source_url,
+                        &body,
+                    )
+                    .await
+                    .map_err(McpToolError::from)?
+                }
+                _ => {
+                    // css or json_path — sync extraction.
+                    crate::research::synthetic::extract(
+                        kind,
+                        &spec,
+                        &synth.source_url,
+                        &body,
+                        &content_type,
+                    )
+                    .map_err(McpToolError::from)?
+                }
+            };
+
+            let entries = crate::research::synthetic::items_to_entries(items, &synth.source_url);
+            let feed_id = synth.feed_id;
+            let result = spawn_db(db, move |conn| {
+                let tx = rusqlite::Transaction::new_unchecked(
+                    conn,
+                    rusqlite::TransactionBehavior::Deferred,
+                )?;
+                let new_count = insert_entries(&tx, feed_id, &entries)?;
+                update_synthetic_status(&tx, feed_id, new_count, None, None)?;
+                tx.commit()?;
+                Ok::<usize, anyhow::Error>(new_count)
+            })
+            .await;
+            match result {
+                Ok(Ok(new_count)) => Ok(serde_json::json!({
+                    "stream_id": stream_id,
+                    "new_entries": new_count,
+                    "fetched": true,
+                })),
+                Ok(Err(e)) => Err(map_db_error(e)),
+                Err(e) => Err(map_join_error(e, "db task failed")),
+            }
+        }
+    }
+
+    #[tool(description = "List all synthetic feeds with their specs and last-extraction stats")]
+    pub async fn rss_list_synthetic(&self) -> String {
+        execute_tool(self, "rss_list_synthetic", async {
+            let db = require_rss_db!(self);
+            let result = spawn_db(db, move |conn| list_synthetic_feeds(conn)).await;
+            handle_db_result!(
+                result,
+                |feeds: Vec<serde_json::Value>| serde_json::json!({
+                    "count": feeds.len(),
+                    "synthetic_feeds": feeds
+                })
+            )
+        })
+        .await
+    }
+
+    #[tool(description = "Delete a synthetic feed and all its entries (stream_id e.g. 'feed/synthetic://123')")]
+    pub async fn rss_delete_synthetic(
+        &self,
+        Parameters(req): Parameters<DeleteSyntheticRequest>,
+    ) -> String {
+        execute_tool(self, "rss_delete_synthetic", async {
+            let db = require_rss_db!(self);
+
+            // Resolve feed_url from stream_id.
+            let sid = req.stream_id.clone();
+            let feed_url_result = spawn_db(db.clone(), move |conn| {
+                // resolve_feed_url returns Option<String>, wrap in Ok for the
+                // spawn_db Result<Result<_, anyhow>, JoinError> shape.
+                Ok::<Option<String>, anyhow::Error>(resolve_feed_url(conn, &sid))
+            })
+            .await;
+
+            let feed_url = match feed_url_result {
+                Ok(Ok(Some(url))) => url,
+                Ok(Ok(None)) => {
+                    return Err(McpToolError::not_found("stream_id not found"));
+                }
+                Ok(Err(e)) => return Err(map_db_error(e)),
+                Err(e) => return Err(map_join_error(e, "db lookup failed")),
+            };
+
+            if !feed_url.starts_with("synthetic://") {
+                return Err(McpToolError::invalid_argument(
+                    "not a synthetic feed; use rss_unsubscribe instead",
+                ));
+            }
+
+            let feed_id: i64 = feed_url
+                .strip_prefix("synthetic://")
+                .unwrap()
+                .parse()
+                .map_err(|e| McpToolError::invalid_argument(format!("invalid feed_id: {e}")))?;
+
+            let result = spawn_db(db, move |conn| delete_synthetic_feed(conn, feed_id)).await;
+            handle_db_result!(
+                result,
+                |removed| serde_json::json!({
+                    "stream_id": req.stream_id,
+                    "deleted": removed > 0,
+                    "removed": removed
+                })
+            )
         })
         .await
     }

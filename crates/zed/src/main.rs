@@ -1955,6 +1955,7 @@ fn main() {
                             Some(media_router),
                             tool_port_for_ipc,
                             skill_exec_port_for_ipc,
+                            None, // worktree_spawner — wired below when a workspace opens
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -2074,6 +2075,7 @@ fn main() {
                             Some(media_router),
                             None,
                             None,
+                            None, // worktree_spawner — wired when a workspace opens
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -3142,6 +3144,59 @@ struct PanelToolInvoker {
 // zed-kask: D1/D8 — F28: skill executor resolution (resolves at call time).
 /// Resolves the executor at call time (it is wired in the deferred
 /// post-login task, after the IPC server starts) — the same resolver
+/// `WorktreeSpawner` impl for `InferenceIpcServer` — creates a worktree-backed
+/// agent thread via `AgentPanelSiblingHost::create_sibling_thread`. Holds a
+/// `WeakEntity<AgentPanel>` + `AnyWindowHandle` (both `Send + Sync`) so it can
+/// be `Arc`-cloned into the GPUI-side task. The `spawn` method runs inside the
+/// GPUI task (which has `&mut AsyncApp`) and calls `create_sibling_thread` with
+/// `use_new_worktree: true`.
+struct AgentPanelWorktreeSpawner {
+    panel: gpui::WeakEntity<AgentPanel>,
+    window: gpui::AnyWindowHandle,
+}
+
+impl kask_bridge::WorktreeSpawner for AgentPanelWorktreeSpawner {
+    fn spawn(
+        &self,
+        prompt: String,
+        title: String,
+        worktree_name: Option<String>,
+        base_ref: Option<String>,
+        cx: &mut gpui::AsyncApp,
+    ) -> gpui::Task<Result<hkask_types::inference_ipc::WorktreeThreadInfo, String>> {
+        use agent::SiblingThreadHost;
+        let panel = self.panel.clone();
+        let window = self.window;
+        cx.spawn(async move |cx| {
+            let panel = panel.upgrade().ok_or_else(|| {
+                "agent panel no longer available".to_string()
+            })?;
+            let host = agent_ui::AgentPanelSiblingHost::new(panel.downgrade(), window);
+            let request = agent::SiblingThreadRequest {
+                title: title.into(),
+                prompt,
+                agent_id: None,
+                model: None,
+                use_new_worktree: true,
+                worktree_name,
+                base_ref,
+            };
+            let info = host
+                .create_sibling_thread(request, cx)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(hkask_types::inference_ipc::WorktreeThreadInfo {
+                message: format!(
+                    "Worktree thread created: {} ({})",
+                    info.title, info.agent_id
+                ),
+            })
+        })
+    }
+}
+
+/// `SkillExecPort` impl that forwards skill execution to the agent's
+/// `ManifestExecutor` (its own call-cap/OCAP enforcement). Same
 /// pattern as `SkillTool`. The cascade runs with the executor's own
 /// call-cap/OCAP enforcement on this side; the wrapper only forwards name + task.
 struct AgentSkillExec;

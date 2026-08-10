@@ -210,6 +210,9 @@ impl InferenceIpcClient {
             InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
                 "received SkillResult outcome for a non-skill-execute request".into(),
             )),
+            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
+                "received WorktreeThread outcome for a non-worktree-thread request".into(),
+            )),
         }
     }
 
@@ -333,6 +336,9 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::SkillResult { .. } => Err(EmbeddingGenerationError::Connection(
                 "received SkillResult outcome for an embed request".into(),
+            )),
+            InferenceOutcome::WorktreeThread { .. } => Err(EmbeddingGenerationError::Connection(
+                "received WorktreeThread outcome for an embed request".into(),
             )),
         }
     }
@@ -466,6 +472,9 @@ impl InferenceIpcClient {
             InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
                 "received SkillResult outcome for a list_models request".into(),
             )),
+            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
+                "received WorktreeThread outcome for a list_models request".into(),
+            )),
         }
     }
 
@@ -587,6 +596,9 @@ impl InferenceIpcClient {
             )),
             InferenceOutcome::SkillResult { .. } => Err(InferenceError::Connection(
                 "received SkillResult outcome for a media request".into(),
+            )),
+            InferenceOutcome::WorktreeThread { .. } => Err(InferenceError::Connection(
+                "received WorktreeThread outcome for a media request".into(),
             )),
         }
     }
@@ -854,10 +866,16 @@ impl InferenceIpcClient {
                 media_op: None,
                 media_prompt: None,
                 media_image_url: None,
+                media_audio_url: None,
+                media_text: None,
+                media_voice: None,
                 media_size: None,
                 media_count: None,
                 media_strength: None,
-                media_model: None,
+                media_scale: None,
+                media_duration: None,
+                media_object_description: None,
+                media_language: None,
                 media_workflow: None,
                 tool_server: None,
                 tool_name: None,
