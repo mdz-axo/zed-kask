@@ -150,7 +150,7 @@ no reactor running."
 - [hkask-types Explanation](../hkask-types/explanation.md): the port trait
   mediation that this crate implements.
 - [`kask/docs/architecture/zed-host-architecture-plan.md`](../../architecture/zed-host-architecture-plan.md):
-  the D1–D20 integration seams.
+  the D1–D23 integration seams.
 
 ---
 

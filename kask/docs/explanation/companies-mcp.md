@@ -395,7 +395,7 @@ Natural-language criteria map to FMP screener parameters (market cap, price, vol
 
 - [Companies MCP Server Reference](../reference/mcp-servers/companies.md) — full tool catalog, configuration, and behavioral boundaries
 - [Tool Routing and Dispatch Flow](../reference/mcp-servers/companies.md) — DIAG-RF-004 dispatch diagram (inline)
-- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D20 integration seams
+- [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) — D1–D23 integration seams
 - [Sovereignty and Observability](../diataxis/hkask-capability/explanation.md) — capability tokens and Regulation alerts
 - [Superforecasting: Layered Model](forecasting-and-scenarios.md) — three-layer forecasting architecture
 - [Earnings Transcript Analysis Design](earnings-transcript-analysis-design.md) — FMP-sourced transcript analysis design exploration

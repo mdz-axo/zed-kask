@@ -108,7 +108,7 @@ All findings are IS (observed facts). Recommended updates are OUGHT (normative).
 - Widget crates (`crates/hkask-*-widget`, `crates/hkask-viz-core`) — D18, render GPUI elements
 - `crates/kask_extensions_ui` — marketplace UI (signing, install verification, credential attachment)
 - `crates/swarm_panel` — hosts `tool_invoker.rs`
-- D-seam boundary files (D1–D20) in upstream `crates/` — where most `.rules` traps live
+- D-seam boundary files (D1–D23) in upstream `crates/` — where most `.rules` traps live
 
 **F9 [Medium] — Regression library doesn't encode `.rules` traps.**
 - Grepped the regression library (`kask/security/regressions/RR-*.yaml`) for key `.rules` trap concepts: `GuardedStream`, `content` envelope, `AnyJsonValue`, `propagate_taint`, `LazyToolRouter`, `background_spawn`, `tokio`, `credential.*allowlist`, `model_override`, `self-events`, `ordinal-keyed`, `input_mapping`.

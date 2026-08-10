@@ -1,7 +1,7 @@
 # Phase 4 — Security Posture Report
 
 **Date:** 2026-08-04
-**Scope:** kask-owned crates (`kask/crates/*`, `kask/mcp-servers/*`, `crates/hkask-*-widget`, `crates/hkask-viz-core`, `crates/kask_extensions_ui`, `crates/swarm_panel`, `crates/marketplace_ui_common`) + D-seam boundary (D1–D20).
+**Scope:** kask-owned crates (`kask/crates/*`, `kask/mcp-servers/*`, `crates/hkask-*-widget`, `crates/hkask-viz-core`, `crates/kask_extensions_ui`, `crates/swarm_panel`, `crates/marketplace_ui_common`) + D-seam boundary (D1–D23).
 **Backward-compat note:** No backward-compatibility constraints apply within kask-owned crates. The D-seam boundary and "do not touch upstream" rule apply in full.
 **Mode:** Security audit. No code was modified.
 

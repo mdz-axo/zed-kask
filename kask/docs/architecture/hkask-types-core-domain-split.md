@@ -121,7 +121,7 @@ This ADR does **not** decide the MCP server error consolidation. A separate anal
 
 ## References
 
-- `kask/docs/architecture/zed-host-architecture-plan.md` — D1–D20 seams, crate inventory.
+- `kask/docs/architecture/zed-host-architecture-plan.md` — D1–D23 seams, crate inventory.
 - `kask/crates/hkask-types/src/loops/mod.rs` — the "moved to break the circular dependency" note that motivates this ADR.
 - `kask/crates/hkask-types/Cargo.toml` — the `description` correction and the `hkask-capability` cycle guard.
 - 2026-08-02 type-system refactoring analysis (essentialist + graph-audit + refactor-architecture skills).

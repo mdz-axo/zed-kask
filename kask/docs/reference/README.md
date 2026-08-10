@@ -18,7 +18,7 @@ into the editor and 12 MCP servers hosted on disk via zed's `context_server` inf
 The standalone `kask` CLI, HTTP API server, Matrix transport, daemon process, and REPL surfaces
 have been **deleted** and are not referenced here as current. See
 [`docs/architecture/zed-host-architecture-plan.md`](../architecture/zed-host-architecture-plan.md)
-for the D1–D20 integration seams and the essentialist split.
+for the D1–D23 integration seams and the essentialist split.
 
 ## Skill & Template Registry
 

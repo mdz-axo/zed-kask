@@ -117,7 +117,7 @@ distinguish "not configured" from "configured but broken".
 
 - [hkask-templates Reference](./reference.md): class diagram of the manifest
   schema and registry.
-- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D20
+- [kask_bridge Explanation](../kask_bridge/explanation.md): the full D1–D23
   composition root wiring.
 - [`kask/docs/explanation/skills-and-composition.md`](../../explanation/skills-and-composition.md):
   cross-cutting skill anatomy and composition.

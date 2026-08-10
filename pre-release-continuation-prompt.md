@@ -38,7 +38,7 @@ Perform a rigorous final security review and code-quality polish pass before rel
 ## Scope (anchored)
 
 - **"kask codebase"** = every crate under `kask/` and every kask-owned crate at the repo root (`kask_bridge`, `hkask-*`, `swarm_panel`, `crates/hkask-*-widget`, `crates/hkask-viz-core`, `crates/kask_extensions_ui`, `crates/marketplace_ui_common`).
-- **"the seam"** = the D1–D20 divergence seams in `DIVERGENCE.md` plus any `// zed-kask:` comments in upstream crates.
+- **"the seam"** = the D1–D23 divergence seams in `DIVERGENCE.md` plus any `// zed-kask:` comments in upstream crates.
 - **Out of scope:** upstream Zed crates outside the D-seams. Do NOT modify, rename, or "fix" upstream files speculatively — see the "Tests must pin deliberate zed-kask deviations" trap in `.rules`.
 
 ## Backward-compatibility constraint

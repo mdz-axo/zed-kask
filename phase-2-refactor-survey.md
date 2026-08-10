@@ -1,7 +1,7 @@
 # Phase 2 — Refactor-Architecture Survey
 
 **Date:** 2026-08-03
-**Scope:** kask-owned crates (`kask/crates/*`, `kask/mcp-servers/*`, `crates/hkask-*-widget`, `crates/hkask-viz-core`, `crates/kask_extensions_ui`, `crates/swarm_panel`, `crates/marketplace_ui_common`) + the D-seam boundary (DIVERGENCE.md D1–D20).
+**Scope:** kask-owned crates (`kask/crates/*`, `kask/mcp-servers/*`, `crates/hkask-*-widget`, `crates/hkask-viz-core`, `crates/kask_extensions_ui`, `crates/swarm_panel`, `crates/marketplace_ui_common`) + the D-seam boundary (DIVERGENCE.md D1–D23).
 **Backward-compat note:** No backward-compatibility constraints apply within kask-owned crates. Renames, restructures, and deletions are permitted. The D-seam boundary and "do not touch upstream" rule apply in full.
 **Mode:** Survey only. No code was modified in this phase.
 
@@ -25,7 +25,7 @@ Three parallel surveys were run using the `refactor-architecture` skill's explor
 
 1. **hKask library crates** (20 crates under `kask/crates/`) — friction, deepening candidates, trait-with-one-impl check
 2. **MCP servers + widget crates** (11 servers + 6 widget crates) — cross-server duplication, widget boilerplate, error-classification audit
-3. **D-seam boundary + widget crates** (D1–D20, `kask_bridge`, `swarm_panel`, `kask_extensions_ui`) — seam isolation, test coverage, bridge width
+3. **D-seam boundary + widget crates** (D1–D23, `kask_bridge`, `swarm_panel`, `kask_extensions_ui`) — seam isolation, test coverage, bridge width
 
 Each finding was validated through the essentialist 3-gate (Exist → Surface → Contract) before entering this report. Findings that failed the gate were excluded.
 

@@ -12,7 +12,7 @@ mds_categories: [domain, curation]
 
 Background, context, and reasoning for hKask's design as it runs in-process inside zed-kask. "This design exists because…"
 
-hKask is compiled into zed-kask as a set of native crates and in-process MCP servers; the standalone `kask` CLI, HTTP API server, Matrix transport, and daemon process have been removed. The documents below describe the systems that survive that consolidation — Regulation, capability-match gate, skills, MCP servers — and how they plug into zed-kask's editor, agent panel, and inference path. For the canonical integration map, see [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (seams D1–D20).
+hKask is compiled into zed-kask as a set of native crates and in-process MCP servers; the standalone `kask` CLI, HTTP API server, Matrix transport, and daemon process have been removed. The documents below describe the systems that survive that consolidation — Regulation, capability-match gate, skills, MCP servers — and how they plug into zed-kask's editor, agent panel, and inference path. For the canonical integration map, see [zed-kask Host Architecture Plan](../architecture/zed-host-architecture-plan.md) (seams D1–D23).
 
 | Guide | Topics | Domain Tier |
 |-------|-------|-------------|
