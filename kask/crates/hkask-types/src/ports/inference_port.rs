@@ -196,6 +196,23 @@ impl SkillExecPort for Arc<dyn SkillExecPort> {
     }
 }
 
+/// Port for spawning worktree-backed agent threads via the zed IPC bridge.
+/// Used by `kanban_task_spawn` to isolate spawned agents in a separate git
+/// worktree (P1: worktree/terminal model). When the port is unavailable (no
+/// IPC socket, no active workspace), the MCP server falls back to the
+/// in-memory `LazyLocalSwarmRuntime::delegate()` path.
+pub trait WorktreeSpawnPort: Send + Sync {
+    /// Create a worktree-backed agent thread. Returns a confirmation message
+    /// on success, or an error when the worktree spawner is not configured.
+    fn create_worktree_thread<'a>(
+        &'a self,
+        prompt: &'a str,
+        title: &'a str,
+        worktree_name: Option<&'a str>,
+        base_ref: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<String, InferenceError>> + Send + 'a>>;
+}
+
 pub trait InferencePort: Send + Sync {
     fn generate(
         &self,

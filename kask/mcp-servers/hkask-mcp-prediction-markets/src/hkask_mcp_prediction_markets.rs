@@ -25,6 +25,11 @@ use rmcp::{tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use fred::{
+    FredGetObservationsRequest, FredGetReleaseRequest, FredGetSeriesInfoRequest,
+    FredListCategoriesRequest, FredSearchSeriesRequest,
+};
+
 pub mod base_event;
 pub mod cache;
 pub mod calibration;
@@ -32,6 +37,7 @@ pub mod cmp;
 pub mod cmp_index_builder;
 pub mod cmp_portfolio;
 pub mod economic_object;
+pub mod fred;
 pub mod matcher;
 pub mod ontology;
 pub mod provider_kalshi;
@@ -1585,6 +1591,143 @@ impl PredictionMarketsServer {
                 .map_err(|e| {
                     McpToolError::internal(format!("context suggest serialization failed: {e}")) // rr0044-ok: serialize-own-struct
                 })
+            },
+        )
+        .await
+    }
+
+    // ═══════════════════ FRED economic data tools ═══════════════════
+
+    /// Search FRED (Federal Reserve Economic Data) series by text.
+    /// Returns series IDs with metadata (title, units, frequency, popularity).
+    /// Use to discover economic time series for analysis, forecasting, or
+    /// the data radar.
+    #[tool(
+        description = "Search FRED economic data series by text. Returns series IDs with title, units, frequency, and popularity. Example: search 'nonfarm payrolls' to find PAYEMS."
+    )]
+    pub async fn fred_search_series(
+        &self,
+        Parameters(req): Parameters<FredSearchSeriesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "fred_search_series",
+            Some(Self::ontology_anchor("fred_search_series")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("fred_search_series".to_string());
+                let result =
+                    fred::search_series(&self.http, self.fred_api_key.as_deref(), &req)
+                        .await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Fetch time series observations from FRED.
+    /// Returns date-value pairs, most recent first. Supports date range
+    /// filtering, frequency transformation, and units transformation.
+    #[tool(
+        description = "Fetch FRED time series observations by series ID. Returns date-value pairs (most recent first). Supports date range, frequency, and units transformations. Example: series_id='PAYEMS' for nonfarm payrolls, series_id='FEDFUNDS' for Fed funds rate."
+    )]
+    pub async fn fred_get_observations(
+        &self,
+        Parameters(req): Parameters<FredGetObservationsRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "fred_get_observations",
+            Some(Self::ontology_anchor("fred_get_observations")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("fred_get_observations".to_string());
+                let result =
+                    fred::get_observations(&self.http, self.fred_api_key.as_deref(), &req)
+                        .await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Get metadata for a single FRED series.
+    #[tool(
+        description = "Get FRED series metadata: title, units, frequency, seasonal adjustment, date range, notes. Example: series_id='CPIAUCSL' for CPI All Items."
+    )]
+    pub async fn fred_get_series_info(
+        &self,
+        Parameters(req): Parameters<FredGetSeriesInfoRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "fred_get_series_info",
+            Some(Self::ontology_anchor("fred_get_series_info")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("fred_get_series_info".to_string());
+                let result =
+                    fred::get_series_info(&self.http, self.fred_api_key.as_deref(), &req)
+                        .await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Browse the FRED category tree.
+    #[tool(
+        description = "Browse FRED category tree. Returns child categories for a given parent (default: root). Use to discover economic data by domain (e.g., Employment, Prices, Interest Rates)."
+    )]
+    pub async fn fred_list_categories(
+        &self,
+        Parameters(req): Parameters<FredListCategoriesRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "fred_list_categories",
+            Some(Self::ontology_anchor("fred_list_categories")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("fred_list_categories".to_string());
+                let result =
+                    fred::list_categories(&self.http, self.fred_api_key.as_deref(), &req)
+                        .await;
+                result.map_err(McpToolError::from)
+            },
+        )
+        .await
+    }
+
+    /// Get FRED release metadata and its series list.
+    #[tool(
+        description = "Get FRED release metadata (name, description, last_updated, next_release) and its series list. Use to track data release schedules. Example: release_id=50 for 'Employment Situation Summary' (the monthly jobs report)."
+    )]
+    pub async fn fred_get_release(
+        &self,
+        Parameters(req): Parameters<FredGetReleaseRequest>,
+    ) -> String {
+        execute_tool_semantic(
+            self,
+            "fred_get_release",
+            Some(Self::ontology_anchor("fred_get_release")),
+            async {
+                self.called_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert("fred_get_release".to_string());
+                let result =
+                    fred::get_release(&self.http, self.fred_api_key.as_deref(), &req)
+                        .await;
+                result.map_err(McpToolError::from)
             },
         )
         .await

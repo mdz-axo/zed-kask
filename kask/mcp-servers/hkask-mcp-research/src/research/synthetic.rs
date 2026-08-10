@@ -466,7 +466,7 @@ pub async fn extract_llm_schema(
                 arr.clone()
             } else {
                 // Single object — treat as one item.
-                vec![serde_json::json!({"_raw": parsed})]
+                vec![serde_json::json!({"_raw": serde_json::Value::Object(obj)})]
             }
         }
         other => vec![serde_json::json!({"_raw": other})],
@@ -609,7 +609,7 @@ pub async fn extract_pdf_ocr(
                     if let Some(arr) = obj.get("items").and_then(|v| v.as_array()) {
                         arr.clone()
                     } else {
-                        vec![serde_json::json!({"_raw": parsed})]
+                        vec![serde_json::json!({"_raw": serde_json::Value::Object(obj)})]
                     }
                 }
                 other => vec![serde_json::json!({"_raw": other})],
@@ -889,6 +889,10 @@ mod tests {
             fields,
             entry_id_template: Some("{link}".into()),
             base_url: Some("https://example.com".into()),
+            json_schema: None,
+            prompt: None,
+            post_ocr_kind: None,
+            post_ocr_spec: None,
         }
     }
 
@@ -903,6 +907,10 @@ mod tests {
             fields,
             entry_id_template: Some("{link}".into()),
             base_url: None,
+            json_schema: None,
+            prompt: None,
+            post_ocr_kind: None,
+            post_ocr_spec: None,
         }
     }
 
@@ -984,6 +992,10 @@ mod tests {
             fields: HashMap::new(),
             entry_id_template: None,
             base_url: None,
+            json_schema: None,
+            prompt: None,
+            post_ocr_kind: None,
+            post_ocr_spec: None,
         };
         let items = extract(ExtractorKind::DiffHash, &spec, "https://example.com", b"some content", "text/html").unwrap();
         assert!(items.is_empty());

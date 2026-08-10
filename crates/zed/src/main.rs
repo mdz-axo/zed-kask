@@ -1955,7 +1955,6 @@ fn main() {
                             Some(media_router),
                             tool_port_for_ipc,
                             skill_exec_port_for_ipc,
-                            None, // worktree_spawner — wired below when a workspace opens
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -2075,7 +2074,6 @@ fn main() {
                             Some(media_router),
                             None,
                             None,
-                            None, // worktree_spawner — wired when a workspace opens
                             cx,
                         ) {
                             Ok(ipc_server) => {
@@ -2395,6 +2393,38 @@ fn main() {
             false,
             cx,
         );
+        // Wire the worktree spawner when an AgentPanel is created. The
+        // spawner is process-global (Mutex-based, re-settable) so the IPC
+        // server's GPUI-side task can read it when a `CreateWorktreeThread`
+        // request arrives. When the panel is dropped (workspace closed), the
+        // spawner is cleared so the MCP server falls back to in-memory spawn.
+        cx.observe_new(|_panel: &mut AgentPanel, window, cx| {
+            let Some(window) = window else {
+                log::warn!(
+                    "AgentPanel created without a window — worktree spawner not wired"
+                );
+                return;
+            };
+            let window_handle = window.window_handle();
+            let spawner: Arc<dyn kask_bridge::WorktreeSpawner> = Arc::new(
+                AgentPanelWorktreeSpawner {
+                    panel: cx.entity().downgrade(),
+                    window: window_handle,
+                },
+            );
+            kask_bridge::set_worktree_spawner(Some(spawner));
+            // Clear the spawner when the panel is dropped.
+            let weak_panel = cx.entity().downgrade();
+            cx.spawn(async move |_this, cx| {
+                while weak_panel.upgrade().is_some() {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_secs(1))
+                        .await;
+                }
+                kask_bridge::set_worktree_spawner(None);
+            }).detach();
+        })
+        .detach();
         kask_extensions_ui::init(cx);
         swarm_panel::init(cx);
         zed::watch_user_agents_md(app_state.fs.clone(), cx);

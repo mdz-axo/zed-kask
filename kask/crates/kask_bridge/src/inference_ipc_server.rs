@@ -72,6 +72,33 @@ pub trait WorktreeSpawner: Send + Sync {
     ) -> gpui::Task<Result<WorktreeThreadInfo, String>>;
 }
 
+/// Process-global worktree spawner. Set by `main.rs` when a workspace with an
+/// `AgentPanel` opens; read by the GPUI-side IPC task when a
+/// `CreateWorktreeThread` request arrives. Mirrors the `set_tool_invoker` /
+/// `shared_tool_invoker` pattern in `hkask-tool-invoker` (Mutex-based,
+/// re-settable). When `None`, worktree spawn requests return an error and the
+/// MCP server falls back to the in-memory `LazyLocalSwarmRuntime` path.
+static WORKTREE_SPAWNER: std::sync::Mutex<Option<Arc<dyn WorktreeSpawner>>> =
+    std::sync::Mutex::new(None);
+
+/// Inject the global worktree spawner (composition root — `main.rs`). Called
+/// when a workspace with an `AgentPanel` opens. Replaces any prior spawner
+/// (e.g. when the user switches workspaces).
+pub fn set_worktree_spawner(spawner: Option<Arc<dyn WorktreeSpawner>>) {
+    *WORKTREE_SPAWNER
+        .lock()
+        .expect("WORKTREE_SPAWNER poisoned") = spawner;
+}
+
+/// Read the global worktree spawner. Returns `None` when no workspace with an
+/// `AgentPanel` is open. Called by the GPUI-side IPC task.
+pub fn shared_worktree_spawner() -> Option<Arc<dyn WorktreeSpawner>> {
+    WORKTREE_SPAWNER
+        .lock()
+        .expect("WORKTREE_SPAWNER poisoned")
+        .clone()
+}
+
 /// The zed-side inference IPC server.
 ///
 /// Listens on a Unix socket and dispatches inference requests to the
@@ -266,7 +293,6 @@ impl InferenceIpcServer {
         media_router: Option<Arc<hkask_inference::MediaRouter>>,
         tool_port: Option<Arc<dyn hkask_capability::ToolPort>>,
         skill_exec_port: Option<Arc<dyn hkask_types::SkillExecPort>>,
-        worktree_spawner: Option<Arc<dyn WorktreeSpawner>>,
         cx: &gpui::App,
     ) -> Result<Self, std::io::Error> {
         // Generate a unique socket path inside a per-user private directory
@@ -359,7 +385,7 @@ impl InferenceIpcServer {
             while let Some((prompt, title, worktree_name, base_ref, reply)) =
                 worktree_spawn_rx.recv().await
             {
-                let Some(ref spawner) = worktree_spawner else {
+                let Some(spawner) = shared_worktree_spawner() else {
                     let _ = reply.send(Err(
                         "worktree spawner not configured (no active workspace)".to_string(),
                     ));

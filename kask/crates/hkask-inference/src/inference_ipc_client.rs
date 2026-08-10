@@ -1219,6 +1219,25 @@ impl SkillExecPort for InferenceIpcClient {
     }
 }
 
+impl hkask_types::WorktreeSpawnPort for InferenceIpcClient {
+    fn create_worktree_thread<'a>(
+        &'a self,
+        prompt: &'a str,
+        title: &'a str,
+        worktree_name: Option<&'a str>,
+        base_ref: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = Result<String, hkask_types::InferenceError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let info = self
+                .create_worktree_thread(prompt, title, worktree_name, base_ref)
+                .await?;
+            Ok(info.message)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

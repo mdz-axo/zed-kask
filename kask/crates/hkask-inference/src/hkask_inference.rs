@@ -342,3 +342,60 @@ impl hkask_types::SkillExecPort for UnavailableSkillExec {
         })
     }
 }
+
+/// Resolve the worktree-spawn port from the zed IPC bridge. Returns an
+/// `UnavailableWorktreeSpawn` stub when the socket is absent or unreachable —
+/// the MCP server falls back to in-memory `LazyLocalSwarmRuntime::delegate()`.
+pub async fn resolve_worktree_spawn_port() -> std::sync::Arc<dyn hkask_types::WorktreeSpawnPort> {
+    match InferenceIpcClient::from_env().await {
+        Some(Ok(client)) => {
+            tracing::info!(
+                target: "hkask.inference",
+                "MCP worktree spawn routed through zed IPC bridge (HKASK_INFERENCE_SOCKET)"
+            );
+            std::sync::Arc::new(client) as std::sync::Arc<dyn hkask_types::WorktreeSpawnPort>
+        }
+        Some(Err(e)) => {
+            tracing::warn!(
+                target: "hkask.inference",
+                error = %e,
+                "IPC bridge connection failed — worktree spawn unavailable, falling back to in-memory spawn"
+            );
+            std::sync::Arc::new(UnavailableWorktreeSpawn)
+        }
+        None => {
+            tracing::info!(
+                target: "hkask.inference",
+                "HKASK_INFERENCE_SOCKET not set — worktree spawn unavailable, falling back to in-memory spawn"
+            );
+            std::sync::Arc::new(UnavailableWorktreeSpawn)
+        }
+    }
+}
+
+/// Worktree-spawn stub for MCP servers without the IPC bridge. Returns an
+/// error so `kanban_task_spawn` falls back to `LazyLocalSwarmRuntime`.
+pub struct UnavailableWorktreeSpawn;
+
+impl hkask_types::WorktreeSpawnPort for UnavailableWorktreeSpawn {
+    fn create_worktree_thread<'a>(
+        &'a self,
+        _prompt: &'a str,
+        _title: &'a str,
+        _worktree_name: Option<&'a str>,
+        _base_ref: Option<&'a str>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<String, hkask_types::InferenceError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Err(hkask_types::InferenceError::Connection(
+                "HKASK_INFERENCE_SOCKET not set or IPC bridge unreachable — worktree spawn requires the zed process"
+                    .to_string(),
+            ))
+        })
+    }
+}

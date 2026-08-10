@@ -23,7 +23,7 @@ Web search, extraction, and feed-based research MCP server.
 | `rss_import_opml`        | Import subscriptions from OPML content                                                                                                                   |
 | `rss_discover_feeds`     | Discover RSS/Atom feeds from a URL via HTML link autodiscovery                                                                                           |
 | `rss_edit_tag`           | Edit tags on entries: mark read/unread, star/unstar, add/remove labels                                                                                   |
-| `rss_synthesize`         | Create a synthetic feed from a non-feed website or JSON API (css, json_path, diff_hash extractors)                                                       |
+| `rss_synthesize`         | Create a synthetic feed from a non-feed website or JSON API (css, json_path, diff_hash, llm_schema, pdf_ocr extractors)                                  |
 | `rss_fetch_synthetic`    | Re-extract from a synthetic feed's source URL and insert new entries                                                                                     |
 | `rss_list_synthetic`     | List all synthetic feeds with their specs and last-extraction stats                                                                                      |
 | `rss_delete_synthetic`   | Delete a synthetic feed and all its entries                                                                                                              |

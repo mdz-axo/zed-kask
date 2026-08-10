@@ -44,11 +44,18 @@ hkask_mcp_server::mcp_server!(
         /// Local swarm runtime — kanban_task_spawn delegates task execution to a
         /// local agent (ledger-funded inference + guard + skill cascade). Shared
         /// ledger path with hkask-mcp-swarm so operator funding is reusable.
+        /// Used as the fallback when the worktree spawn port is unavailable.
         pub local_runtime: Arc<LazyLocalSwarmRuntime>,
         /// Local agent registry — reusable expert agents (cards on disk). When a
         /// spawn's `delegated_skills` are covered by an existing card, it is
         /// reused; otherwise a task-specific agent is built in-memory.
         pub local_registry: Arc<LocalAgentRegistry>,
+        /// Worktree spawn port — when available, `kanban_task_spawn` creates a
+        /// worktree-backed agent thread (isolated git worktree) via the zed IPC
+        /// bridge instead of the in-memory `LazyLocalSwarmRuntime`. When
+        /// unavailable (no IPC socket, no active workspace), falls back to
+        /// in-memory spawn.
+        pub worktree_spawn_port: Arc<dyn hkask_types::WorktreeSpawnPort>,
     }
 );
 
@@ -724,12 +731,14 @@ impl KanbanServer {
 
     // ── Spawn — activate a subagent pod for task execution ─────────────────
 
-    /// Spawn a subagent for task execution. The agent runs in-memory via the
-    /// `LazyLocalSwarmRuntime` (in-process, same working tree as the user —
-    /// no git worktree isolation). The delegation result is recorded on the
-    /// task as a structured `LocalDelegateResult` + verdict. See
-    /// `tasks/kanban-worktree-terminal-model.md` for the worktree isolation
-    /// decision (Option C: status quo, gated on measured need).
+    /// Spawn a subagent for task execution. Tries worktree-isolated spawn
+    /// first (via the `WorktreeSpawnPort` IPC bridge → editor creates a git
+    /// worktree + agent thread). On failure (no IPC socket, no active
+    /// workspace), falls back to in-memory `LazyLocalSwarmRuntime::delegate()`
+    /// (same process, same working tree). The delegation result is recorded
+    /// on the task as a structured `LocalDelegateResult` + verdict. See
+    /// `tasks/kanban-worktree-terminal-model.md` for the design (Option A:
+    /// implemented).
     #[tool(description = "Spawn a subagent for task execution with delegated skills and budgets")]
     pub async fn kanban_task_spawn(
         &self,
@@ -819,10 +828,72 @@ impl KanbanServer {
                     })
                     .unwrap_or_else(|| build_task_agent_card(tid, &task.title, &skills_for_agent));
 
-                // Credits: map the gas budget to local credits (default 10),
-                // capped at the per-dispatch ceiling. The ceiling mirrors
-                // hkask-mcp-swarm (HKASK_ABW_MAX_CREDITS, default 50) — keep in
-                // sync with SwarmConfig::default().max_credits_per_dispatch.
+                // P1: Try worktree-isolated spawn first. When the zed IPC bridge
+                // is available and a workspace with an AgentPanel is open, this
+                // creates a worktree-backed agent thread (isolated git worktree).
+                // On failure (no IPC socket, no workspace, spawn error), fall
+                // back to the in-memory `LazyLocalSwarmRuntime` path below.
+                let spawn_prompt = format!(
+                    "You are working on kanban task '{}' (id: {}).\n\
+                     Task description: {}\n\
+                     Delegated skills: {}\n\
+                     Execute the task and report results via kanban_task_delegate_result.",
+                    task.title, tid, task_text, skills_for_agent.join(", ")
+                );
+                let spawn_title = format!("Kanban: {}", task.title);
+                match self
+                    .worktree_spawn_port
+                    .create_worktree_thread(&spawn_prompt, &spawn_title, None, None)
+                    .await
+                {
+                    Ok(message) => {
+                        // Worktree thread created — record the spawn on the task
+                        // and advance to InProgress. The agent in the worktree
+                        // will call `kanban_task_delegate_result` when done.
+                        let result_note = format!(
+                            "Spawned worktree agent for task '{}' ({}). \
+                             The agent runs in an isolated git worktree and will \
+                             report results via kanban_task_delegate_result.\n\
+                             {}",
+                            task.title, tid, message
+                        );
+                        self.service
+                            .task_comment(tid, self.webid, &result_note)
+                            .map_err(map_kanban_error)?;
+                        if let Err(error) = self
+                            .service
+                            .task_move(tid, TaskStatus::InProgress, self.webid)
+                        {
+                            tracing::warn!(
+                                target: "hkask.mcp.kata_kanban",
+                                task_id = %tid,
+                                %error,
+                                "could not advance task to InProgress after worktree spawn"
+                            );
+                        }
+                        return serde_json::to_value(TaskSpawnResponse {
+                            task_id: tid.to_string(),
+                            message: format!(
+                                "Spawned worktree agent for task '{}' ({}). \
+                                 The agent runs in an isolated worktree.",
+                                task.title, tid
+                            ),
+                            ontology: kanban_type_to_pko("kanban_task_spawn")
+                                .map(|s| s.to_string()),
+                        })
+                        .map_err(|e| McpToolError::internal(e.to_string()));
+                    }
+                    Err(e) => {
+                        tracing::info!(
+                            target: "hkask.mcp.kata_kanban",
+                            task_id = %tid,
+                            error = %e,
+                            "worktree spawn unavailable — falling back to in-memory LazyLocalSwarmRuntime"
+                        );
+                    }
+                }
+
+                // Fallback: in-memory spawn via LazyLocalSwarmRuntime.
                 let ceiling = match std::env::var("HKASK_ABW_MAX_CREDITS") {
                     Ok(raw) => match raw.parse::<u32>() {
                         Ok(value) => value,
@@ -1185,7 +1256,13 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     );
                 }
 
-                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry))
+                let worktree_spawn_port =
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(hkask_inference::resolve_worktree_spawn_port())
+                    });
+
+                Ok(KanbanServer::new(ctx.webid, service, local_runtime, local_registry, worktree_spawn_port))
             })()
             .map_err(|e| hkask_mcp_server::McpError::UnexpectedResponse {
                 context: "kanban server init".into(),
