@@ -561,8 +561,7 @@ impl LanguageModelEmbeddingPort {
         let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
         tokio_handle.spawn(async move {
             while let Some(req) = rx.recv().await {
-                let vectors: Vec<Vec<f32>> =
-                    req.texts.iter().map(|t| embed_fn(t)).collect();
+                let vectors: Vec<Vec<f32>> = req.texts.iter().map(|t| embed_fn(t)).collect();
                 // `embed` returns an error on empty input; mirror that here.
                 let result = if vectors.is_empty() {
                     Err(EmbeddingGenerationError::EmptyResponse)

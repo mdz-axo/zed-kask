@@ -366,10 +366,8 @@ impl ManifestExecutor {
                         if tok.starts_with("step_") || tok == "task" || tok == "prev_step" {
                             keys.push(tok.to_string());
                         } else {
-                            let labels = self
-                                .taint_labels
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner());
+                            let labels =
+                                self.taint_labels.lock().unwrap_or_else(|e| e.into_inner());
                             if labels.contains_key(tok) {
                                 keys.push(tok.to_string());
                             }

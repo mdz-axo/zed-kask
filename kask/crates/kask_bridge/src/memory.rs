@@ -1864,8 +1864,10 @@ mod tests {
             curator_embedding_store,
         ));
 
-        let embedding_port =
-            LanguageModelEmbeddingPort::for_tests_with_embed_fn(embed_fn, tokio::runtime::Handle::current());
+        let embedding_port = LanguageModelEmbeddingPort::for_tests_with_embed_fn(
+            embed_fn,
+            tokio::runtime::Handle::current(),
+        );
 
         RealMemoryPort {
             store,
