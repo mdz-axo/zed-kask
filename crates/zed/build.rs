@@ -229,9 +229,9 @@ fn icon_path() -> std::path::PathBuf {
     };
 
     #[cfg(windows)]
-    let icon = format!("resources/windows/app-icon{}.ico", channel);
+    let icon = format!("../../../kask/assets/icons/windows/app-icon{}.ico", channel);
     #[cfg(not(windows))]
-    let icon = format!("resources/app-icon{}.png", channel);
+    let icon = format!("../../../kask/assets/icons/app-icon{}.png", channel);
 
     std::path::PathBuf::from_str(&icon).unwrap()
 }

@@ -3,10 +3,10 @@
 //! the macOS document-type `.icns`.
 //!
 //! Outputs (relative to repo root):
-//!   crates/zed/resources/app-icon-dev.png         (512x512)
-//!   crates/zed/resources/app-icon-dev@2x.png      (1024x1024)
-//!   crates/zed/resources/windows/app-icon-dev.ico (multi-size)
-//!   crates/zed/resources/Document.icns            (macOS document icon)
+//!   kask/assets/icons/app-icon-dev.png         (512x512)
+//!   kask/assets/icons/app-icon-dev@2x.png      (1024x1024)
+//!   kask/assets/icons/windows/app-icon-dev.ico (multi-size)
+//!   kask/assets/icons/Document.icns            (macOS document icon)
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -171,7 +171,7 @@ fn main() {
     // not just dev. Previously only dev was refreshed and the other channels
     // silently kept the upstream Zed "K" icon, which surfaced as "still
     // seeing the old icon" when a user built on a non-dev channel.
-    let resources = root.join("crates").join("zed").join("resources");
+    let resources = root.join("kask").join("assets").join("icons");
     let windows = resources.join("windows");
     let channels: &[(&str, &str)] = &[
         ("stable", ""),

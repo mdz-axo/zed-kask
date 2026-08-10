@@ -52,6 +52,39 @@ assert_no_match "$repo_root/crates/auto_update/src/auto_update.rs" 'UpdateZedKas
     "removed zed-kask GitHub updater remains"
 assert_absent "$repo_root/kask/crates/kask_bridge/src/github_update.rs"
 
+# zed-kask icons live in kask/assets/icons/ — the upstream icon files in
+# crates/zed/resources/ must NOT exist. Leaving them creates a collision
+# surface where upstream merge could restore upstream Zed icons and
+# zed-kask code might accidentally reference them (commit 853542beab).
+for icon_path in \
+    "$repo_root/crates/zed/resources/app-icon.png" \
+    "$repo_root/crates/zed/resources/app-icon@2x.png" \
+    "$repo_root/crates/zed/resources/app-icon-dev.png" \
+    "$repo_root/crates/zed/resources/app-icon-dev@2x.png" \
+    "$repo_root/crates/zed/resources/app-icon-nightly.png" \
+    "$repo_root/crates/zed/resources/app-icon-nightly@2x.png" \
+    "$repo_root/crates/zed/resources/app-icon-preview.png" \
+    "$repo_root/crates/zed/resources/app-icon-preview@2x.png" \
+    "$repo_root/crates/zed/resources/Document.icns" \
+    "$repo_root/crates/zed/resources/windows/app-icon.ico" \
+    "$repo_root/crates/zed/resources/windows/app-icon-dev.ico" \
+    "$repo_root/crates/zed/resources/windows/app-icon-nightly.ico" \
+    "$repo_root/crates/zed/resources/windows/app-icon-preview.ico"; do
+    assert_absent "$icon_path"
+done
+
+# zed-kask code must reference icons from kask/assets/icons/, not crates/zed/resources/
+for src_file in \
+    "$repo_root/crates/zed/build.rs" \
+    "$repo_root/crates/zed/src/zed.rs" \
+    "$repo_root/crates/zed/src/visual_test_runner.rs" \
+    "$repo_root/crates/windows_resources/src/windows_resources.rs" \
+    "$repo_root/kask/scripts/build/install.sh" \
+    "$repo_root/script/rasterize-zk-icon/src/main.rs"; do
+    assert_no_match "$src_file" 'resources/app-icon|resources/windows/app-icon' \
+        "zed-kask code references upstream Zed icon path instead of kask/assets/icons/"
+done
+
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
 fake_home="$sandbox/home"

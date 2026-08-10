@@ -315,11 +315,11 @@ install_icon() {
     if [ "$channel" != "stable" ]; then
         icon_suffix="-$channel"
     fi
-    local src_icon="$workspace_root/crates/zed/resources/app-icon${icon_suffix}.png"
-    local src_icon_2x="$workspace_root/crates/zed/resources/app-icon${icon_suffix}@2x.png"
+    local src_icon="$workspace_root/kask/assets/icons/app-icon${icon_suffix}.png"
+    local src_icon_2x="$workspace_root/kask/assets/icons/app-icon${icon_suffix}@2x.png"
     if [ ! -f "$src_icon" ]; then
-        src_icon="$workspace_root/crates/zed/resources/app-icon.png"
-        src_icon_2x="$workspace_root/crates/zed/resources/app-icon@2x.png"
+        src_icon="$workspace_root/kask/assets/icons/app-icon.png"
+        src_icon_2x="$workspace_root/kask/assets/icons/app-icon@2x.png"
     fi
     if [ ! -f "$src_icon" ]; then
         log_error "No source icon found at $src_icon"
