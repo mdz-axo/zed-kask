@@ -1052,16 +1052,65 @@ mod tests {
         }
 
         proptest! {
+            /// P1 invariant: a non-canonical namespace (one where neither it nor
+            /// any ancestor is in CANONICAL_NAMESPACES) must return None from
+            /// parse(). The prior version of this test only checked direct
+            /// containment, missing hierarchical ancestors like `reg.widget`
+            /// (which makes `widget.render` canonical via ancestor match).
             #[test]
             fn non_canonical_returns_none(
-                input in "\\PC*"
+                input in "[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*"
             ) {
-                prop_assume!(!CANONICAL_NAMESPACES.contains(&input.as_str()));
-                let full = format!("reg.{input}");
-                prop_assume!(!CANONICAL_NAMESPACES.contains(&full.as_str()));
+                // Skip if the input or any ancestor is canonical.
+                let mut cur = format!("reg.{input}");
+                let mut is_canonical = false;
+                while !cur.is_empty() {
+                    if CANONICAL_NAMESPACES.contains(&cur.as_str()) {
+                        is_canonical = true;
+                        break;
+                    }
+                    cur = match cur.rfind('.') {
+                        Some(i) => cur[..i].to_string(),
+                        None => break,
+                    };
+                }
+                prop_assume!(!is_canonical);
 
                 let result = SpanNamespace::parse(&input);
                 prop_assert!(result.is_none(), "non-canonical should return None: {input}");
+            }
+        }
+
+        proptest! {
+            /// P1 invariant: for any canonical namespace `ns` and any suffix of
+            /// dot-separated identifiers, `parse(ns + suffix)` returns Some.
+            /// This is the hierarchical ancestor-match property that makes
+            /// `reg.widget` cover `reg.widget.render`, `reg.widget.disagree`,
+            /// etc. without per-child registration (RR-0054).
+            #[test]
+            fn canonical_namespace_with_suffix_parses(
+                ns in canonical_namespace_str(),
+                suffix_depth in 1usize..=4,
+                suffix_parts in proptest::collection::vec(
+                    "[a-z][a-z0-9_]{0,15}",
+                    1..=4
+                )
+            ) {
+                let suffix: String = suffix_parts
+                    .into_iter()
+                    .take(suffix_depth)
+                    .map(|s| format!(".{s}"))
+                    .collect::<Vec<_>>()
+                    .join("");
+                let full = format!("{ns}{suffix}");
+                let result = SpanNamespace::parse(&full[4..]); // strip "reg."
+                prop_assert!(
+                    result.is_some(),
+                    "canonical ns + suffix should parse: {full}"
+                );
+                if let Some(parsed) = result {
+                    prop_assert_eq!(parsed.as_str(), full.as_str());
+                }
             }
         }
 

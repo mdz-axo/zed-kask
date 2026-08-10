@@ -951,6 +951,8 @@ fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_js
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::future::Future;
+    use std::pin::Pin;
 
     /// Regression for the non-deterministic `values().last()` extraction bug.
     /// HashMap iteration order is randomized per-process; the extractor must
@@ -1207,5 +1209,83 @@ steps:
                 "input_mapping missing key: {key}"
             );
         }
+    }
+
+    /// Stub InferencePort for testing — returns an error on every call.
+    /// Needed because BridgeManifestExecutor::new requires an InferencePort,
+    /// and no NoopInferencePort exists in the test harness yet.
+    #[cfg(test)]
+    struct StubInferencePort;
+
+    #[cfg(test)]
+    impl InferencePort for StubInferencePort {
+        fn generate(
+            &self,
+            _prompt: &str,
+            _parameters: &hkask_types::template::LLMParameters,
+            _tools: Option<&[hkask_types::ChatToolDefinition]>,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<hkask_types::InferenceResult, hkask_types::InferenceError>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Err(hkask_types::InferenceError::Generation("stub".to_string())) })
+        }
+    }
+
+    /// Stub ToolPort for testing — returns errors on every call.
+    #[cfg(test)]
+    struct StubToolPort;
+
+    #[cfg(test)]
+    impl hkask_capability::ToolPort for StubToolPort {
+        fn invoke<'a>(
+            &'a self,
+            _server: &'a str,
+            _tool: &'a str,
+            _args: serde_json::Value,
+            _token: &'a hkask_capability::DelegationToken,
+        ) -> hkask_capability::ToolFuture<
+            'a,
+            Result<serde_json::Value, hkask_capability::ToolPortError>,
+        > {
+            Box::pin(async {
+                Err(hkask_capability::ToolPortError::InvocationFailed(
+                    "stub".to_string(),
+                ))
+            })
+        }
+        fn discover_tools<'a>(&'a self) -> hkask_capability::ToolFuture<'a, Vec<String>> {
+            Box::pin(async { Vec::new() })
+        }
+        fn get_tool_info<'a>(
+            &'a self,
+            _tool_name: &'a str,
+        ) -> hkask_capability::ToolFuture<'a, Option<hkask_capability::ToolInfo>> {
+            Box::pin(async { None })
+        }
+    }
+
+    /// RR-0053 wiring test: build_executor MUST wire with_runtime_policy so
+    /// the FIDES Source→Sink block (Layer 4) fires on production cascades.
+    /// Without .with_runtime_policy(...), runtime_policy stays None and
+    /// untrusted input flows to Sink tools unchecked (OWASP LLM06).
+    #[test]
+    fn build_executor_wires_runtime_policy() {
+        let executor = BridgeManifestExecutor::new(
+            Arc::new(StubInferencePort),
+            Arc::new(StubToolPort),
+            PathBuf::from("/tmp/nonexistent-manifests"),
+            PathBuf::from("/tmp/nonexistent-templates"),
+            tokio::runtime::Handle::current(),
+        );
+        let manifest_executor = executor.build_executor();
+        assert!(
+            manifest_executor.runtime_policy_is_wired(),
+            "build_executor must wire with_runtime_policy — without it the FIDES Source→Sink block is dead (OWASP LLM06, RR-0053)"
+        );
     }
 }

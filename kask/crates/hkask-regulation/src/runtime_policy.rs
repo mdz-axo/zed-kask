@@ -119,6 +119,7 @@ impl Default for DefaultPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn policy_with_human_tool(tool: &str) -> DefaultPolicy {
         let mut human = HashSet::new();
@@ -255,6 +256,74 @@ mod tests {
             assert!(msg.contains("src"));
         } else {
             panic!("expected Log");
+        }
+    }
+
+    proptest! {
+        /// P1 invariant: Sink taint + untrusted input MUST block for any tool name.
+        /// The hardcoded `rule2_untrusted_to_sink_blocked` test only covers
+        /// `"write_file"`. This proptest covers the full tool-name space so a
+        /// name-based dispatch bug cannot silently let untrusted input reach a
+        /// Sink tool (OWASP LLM06, RR-0053).
+        #[test]
+        fn sink_plus_untrusted_always_blocks(
+            tool_name in "[a-z_][a-z0-9_]{0,47}"
+        ) {
+            let p = DefaultPolicy::default();
+            let verdict = p.check(&tool_name, ToolTaint::Sink, true, 1);
+            prop_assert!(
+                matches!(verdict, PolicyVerdict::Block(_)),
+                "Sink + untrusted must block for tool '{}', got {:?}",
+                tool_name, verdict
+            );
+        }
+
+        /// P1 invariant: Sink taint + trusted input MUST allow for any tool name
+        /// (unless the tool is in the human-in-loop set, which the default
+        /// policy leaves empty).
+        #[test]
+        fn sink_plus_trusted_allows(
+            tool_name in "[a-z_][a-z0-9_]{0,47}"
+        ) {
+            let p = DefaultPolicy::default();
+            let verdict = p.check(&tool_name, ToolTaint::Sink, false, 1);
+            prop_assert_eq!(
+                verdict, PolicyVerdict::Allow,
+                "Sink + trusted must allow for tool '{}', got {:?}",
+                tool_name, verdict
+            );
+        }
+
+        /// P1 invariant: Pure taint MUST allow for any tool name + any input
+        /// trust state (Pure tools don't touch untrusted data).
+        #[test]
+        fn pure_taint_always_allows(
+            tool_name in "[a-z_][a-z0-9_]{0,47}",
+            has_untrusted in proptest::bool::ANY
+        ) {
+            let p = DefaultPolicy::default();
+            let verdict = p.check(&tool_name, ToolTaint::Pure, has_untrusted, 1);
+            prop_assert_eq!(
+                verdict, PolicyVerdict::Allow,
+                "Pure must allow for tool '{}', got {:?}",
+                tool_name, verdict
+            );
+        }
+
+        /// P1 invariant: Source taint MUST return Log (not Block, not Allow) for
+        /// any tool name — Source tools return untrusted data but don't consume
+        /// it, so they're logged for monitoring, not blocked.
+        #[test]
+        fn source_taint_always_logs(
+            tool_name in "[a-z_][a-z0-9_]{0,47}"
+        ) {
+            let p = DefaultPolicy::default();
+            let verdict = p.check(&tool_name, ToolTaint::Source, false, 1);
+            prop_assert!(
+                matches!(verdict, PolicyVerdict::Log(_)),
+                "Source must log for tool '{}', got {:?}",
+                tool_name, verdict
+            );
         }
     }
 }

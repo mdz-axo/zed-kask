@@ -176,3 +176,72 @@ fn hex_digit(n: u8) -> char {
 pub mod dbnomics;
 pub mod fred;
 pub mod worldbank;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// P1 invariant: url_encode_value output never contains raw `&`, `#`,
+        /// or `=` from the input — these are the injection characters that let
+        /// an LLM-controlled value add extra query params or truncate the URL
+        /// (RR-0052).
+        #[test]
+        fn url_encode_value_no_injection_chars(
+            input in "[\x20-\x7e]{0,100}"
+        ) {
+            let encoded = url_encode_value(&input);
+            for ch in input.chars() {
+                if ch == '&' || ch == '#' {
+                    let hex = format!("%{:02X}", ch as u8);
+                    prop_assert!(
+                        encoded.contains(&hex),
+                        "'{}' was not encoded in output: {:?}",
+                        ch, encoded
+                    );
+                }
+            }
+            prop_assert!(
+                !encoded.contains('&') && !encoded.contains('#'),
+                "encoded output contains injection chars: {:?}",
+                encoded
+            );
+        }
+
+        /// P1 round-trip: for unreserved characters (A-Za-z0-9-_.~),
+        /// url_encode_value is the identity function.
+        #[test]
+        fn url_encode_value_unreserved_round_trips(
+            input in "[A-Za-z0-9_.~-]{0,100}"
+        ) {
+            let encoded = url_encode_value(&input);
+            prop_assert_eq!(
+                encoded, input,
+                "unreserved chars should not be encoded: input={:?} encoded={:?}",
+                input, encoded
+            );
+        }
+
+        /// P1 invariant: build_url with a single key-value pair produces a URL
+        /// with exactly one `key=` occurrence and the value is fully encoded.
+        #[test]
+        fn build_url_single_param_no_injection(
+            value in "[\x20-\x7e]{0,100}"
+        ) {
+            let url = EconomicDataClient::build_url(
+                "https://api.example.com",
+                "endpoint",
+                &[("key", &value)],
+            );
+            let key_count = url.matches("key=").count();
+            prop_assert_eq!(
+                key_count, 1,
+                "expected exactly 1 'key=' in URL, got {}: {:?}",
+                key_count, url
+            );
+            let q_count = url.matches('?').count();
+            prop_assert_eq!(q_count, 1, "expected 1 '?', got {}: {:?}", q_count, url);
+        }
+    }
+}

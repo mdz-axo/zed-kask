@@ -310,6 +310,7 @@ pub async fn openai_compatible_generate_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn sanitize_error_body_redacts_authorization_bearer_token() {
@@ -362,5 +363,57 @@ mod tests {
         let body = "é".repeat(250);
         let sanitized = sanitize_error_body(&body);
         assert!(sanitized.starts_with(&"é".repeat(ERROR_BODY_MAX_CHARS)));
+    }
+
+    proptest! {
+        /// P1 invariant: for any body containing a prefix from SECRET_PREFIXES,
+        /// the redacted output must not contain the secret token that followed
+        /// the prefix. Covers all 13 prefixes (sk-, ghp_, AKIA, xoxb-, eyJ, etc.)
+        /// and arbitrary secret values — the hardcoded tests only cover 3.
+        #[test]
+        fn sanitize_redacts_every_secret_prefix(
+            prefix_idx in 0usize..SECRET_PREFIXES.len(),
+            secret in "[A-Za-z0-9+/=_-]{1,40}",
+            prefix_text in "[a-z ]{0,20}",
+            suffix_text in "[a-z ]{0,20}"
+        ) {
+            let prefix = SECRET_PREFIXES[prefix_idx];
+            let body = format!("{prefix_text}{prefix}{secret}{suffix_text}");
+            let sanitized = sanitize_error_body(&body);
+            prop_assert!(
+                !sanitized.contains(&secret),
+                "secret '{}' survived redaction for prefix '{}': body={:?} sanitized={:?}",
+                secret, prefix, body, sanitized
+            );
+        }
+
+        /// P4 panic-freedom: sanitize_error_body must never panic on any input,
+        /// including empty strings, multi-byte UTF-8, control chars, and
+        /// bodies that are just a prefix with no following token.
+        #[test]
+        fn sanitize_never_panics(
+            body in proptest::collection::vec(proptest::num::u8::ANY, 0..500)
+        ) {
+            let body = String::from_utf8_lossy(&body);
+            let _ = sanitize_error_body(&body);
+        }
+
+        /// P1 invariant: the redacted output never contains any prefix from
+        /// SECRET_PREFIXES followed by non-redacted characters. After
+        /// redaction, every prefix occurrence must be replaced by [REDACTED].
+        #[test]
+        fn sanitized_output_has_no_raw_secret_prefixes(
+            prefix_idx in 0usize..SECRET_PREFIXES.len(),
+            filler in "[a-z0-9 ]{0,50}"
+        ) {
+            let prefix = SECRET_PREFIXES[prefix_idx];
+            let body = format!("{filler} {prefix} secret_value_here {filler}");
+            let sanitized = sanitize_error_body(&body);
+            prop_assert!(
+                !sanitized.contains("secret_value_here"),
+                "secret survived for prefix '{}': sanitized={:?}",
+                prefix, sanitized
+            );
+        }
     }
 }

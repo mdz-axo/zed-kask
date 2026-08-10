@@ -223,6 +223,15 @@ impl ManifestExecutor {
         self
     }
 
+    /// Test-only accessor: returns whether a runtime policy is wired.
+    /// Used by the RR-0053 wiring test to verify `build_executor` attaches
+    /// a `DefaultPolicy` — without it, the FIDES Source→Sink block (Layer 4)
+    /// is dead code in production.
+    #[cfg(test)]
+    pub fn runtime_policy_is_wired(&self) -> bool {
+        self.runtime_policy.is_some()
+    }
+
     /// Check whether a JSON value references any tainted (Source) context entries.
     ///
     /// This is the FIDES taint propagation check: recursively scans the value

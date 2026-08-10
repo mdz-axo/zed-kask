@@ -9633,6 +9633,7 @@ dependencies = [
  "hkask-mcp-portfolio",
  "hkask-mcp-server",
  "hkask-types",
+ "proptest",
  "rmcp",
  "schemars 1.2.2",
  "serde",
