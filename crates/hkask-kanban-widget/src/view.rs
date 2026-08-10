@@ -19,8 +19,7 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{FocusHandle, Focusable, Hsla};
-use gpui_util::ResultExt as _;
-use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
+use hkask_tool_invoker::BlockProvenance;
 use hkask_types::TaskStatus;
 use hkask_types::kanban_wire;
 use theme::ActiveTheme;
@@ -65,7 +64,7 @@ fn priority_rank(lowered: &str) -> Option<u8> {
 const MOVE_TOOL: &str = kanban_wire::KANBAN_TASK_MOVE_TOOL;
 /// Surfaced when the process-global `ToolInvoker` is not wired. Visible state,
 /// not a silent no-op (repo `.rules` startup-failure-signal trap).
-const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
+pub(crate) const INVOKER_NOT_WIRED_MSG: &str = "tool invoker not wired";
 /// Surfaced when provenance is not dispatchable: the widget refuses to
 /// dispatch against an unknown server and asks the user to route through the
 /// agent. Empty provenance (no tool/server) is treated the same as partial —
@@ -78,11 +77,16 @@ const MISSING_TASK_ID_MSG: &str = "missing task_id";
 const INVALID_TARGET_STATUS_MSG: &str = "invalid target status";
 
 /// One column in the kanban board.
-struct KanbanColumn {
+#[derive(Clone)]
+pub(crate) struct KanbanColumn {
     #[allow(dead_code)]
-    status: String,
-    title: String,
-    tasks: Vec<TaskBody>,
+    pub(crate) status: String,
+    pub(crate) title: String,
+    pub(crate) tasks: Vec<TaskBody>,
+    /// S8: WIP limit for this column. `None` when no limit is set (older
+    /// blocks or columns without a `wip_limit`). Rendered as "N / WIP" when
+    /// `Some`; red when `N >= WIP`.
+    pub(crate) wip_limit: Option<u32>,
 }
 
 /// A staged but unconfirmed move (consent gate H). The chip click stages a
@@ -90,53 +94,30 @@ struct KanbanColumn {
 /// `dispatch_move`, which surfaces `INVOKER_NOT_WIRED_MSG` when the invoker is
 /// absent — never a silent drop) or discards it without any tool call. Only one
 /// move may be pending at a time (chips are disabled while pending).
-#[derive(Clone, Debug)]
-struct PendingMove {
-    task_id: String,
-    task_title: String,
-    from_label: String,
-    /// Wire-format target status (e.g. `"review"`).
-    to_status: String,
-    /// Display label for the target status (e.g. `"Review"`).
-    to_label: String,
-}
-
-/// An optimistic move applied to the local cache at dispatch time, tracked so
-/// it can be rolled back if the user cancels mid-dispatch or the dispatch fails.
-/// The next agent-emitted block is authoritative; this only drives the local
-/// cache mutation.
-struct OptimisticMove {
-    task_id: String,
-    /// The task's status before the optimistic move, to restore on rollback.
-    original_status: String,
-}
+///
+/// S9/R1: the struct lives in `move_controller.rs`; this re-export keeps the
+/// `view.rs` test module's references working.
+pub(crate) use crate::move_controller::PendingMove;
 
 /// The kanban widget view. Renders inline in agent markdown (via the D18 seam
 /// composed by `hkask-viz-core`).
 pub struct KanbanWidget {
-    board_name: String,
-    columns: Vec<KanbanColumn>,
+    pub(crate) board_name: String,
+    pub(crate) columns: Vec<KanbanColumn>,
+    /// S8: column metadata (WIP limits) copied from the parsed block body, so
+    /// `rollback_optimistic_move` / `apply_optimistic_move` can re-group with
+    /// the same WIP limits after an optimistic mutation.
+    pub(crate) column_meta: Vec<crate::block::ColumnBody>,
     /// Server-authoritative provenance copied from the parsed block body. The
     /// move affordance uses it to pick the dispatch server and to decide
     /// whether to show an active affordance or a disabled "ask the agent"
     /// hint.
-    provenance: BlockProvenance,
+    pub(crate) provenance: BlockProvenance,
     focus_handle: FocusHandle,
-    /// `task_id` currently being moved, if a dispatch is in flight. Single
-    /// flight: while set, all move affordances are non-interactive.
-    dispatch_in_flight: Option<String>,
-    /// The optimistic move applied to the local cache at dispatch time, tracked
-    /// so it can be rolled back if the user cancels mid-dispatch or the dispatch
-    /// fails. Cleared on successful dispatch (the move sticks).
-    optimistic_move: Option<OptimisticMove>,
-    /// Visible error/hint when dispatch cannot proceed (missing invoker,
-    /// provenance incomplete, missing task_id, tool error). Never silently
-    /// dropped (repo `.rules`).
-    dispatch_error: Option<String>,
-    /// A staged move awaiting user confirmation (consent gate H). While set,
-    /// all move chips are non-interactive and the dispatch-status banner
-    /// shows a Confirm/Cancel pair instead of the in-flight/error state.
-    pending_move: Option<PendingMove>,
+    /// S9/R1: the move dispatch state machine. Owns `pending_move`,
+    /// `dispatch_in_flight`, `dispatch_error`, and `optimistic_move`. The
+    /// widget delegates move lifecycle calls to it.
+    pub(crate) move_controller: crate::move_controller::KanbanMoveController,
     /// Composed revision request surfaced as a copyable draft when the
     /// conversation injector is absent (no active conversation). Lets the user
     /// still use the "I disagree" body even when it can't be injected. Cleared
@@ -147,6 +128,11 @@ pub struct KanbanWidget {
     /// expand state so a long description can be revealed without affecting
     /// other cards.
     expanded_descriptions: HashSet<String>,
+    /// Task id whose card-detail panel is open (B3). `None` when no panel is
+    /// open. Escape closes it; the Close button closes it. Click-outside is
+    /// not implemented (the panel is inline below the board, not a floating
+    /// popover).
+    detail_open: Option<String>,
 }
 
 impl KanbanWidget {
@@ -167,20 +153,20 @@ impl KanbanWidget {
         );
         let (_board_id, board_name, tasks) = body.board_with_tasks();
         let tasks = tasks.to_vec();
-        let columns = group_tasks_into_columns(tasks);
+        let column_meta = body.columns.clone();
+        let columns = group_tasks_into_columns(tasks, &column_meta);
         let provenance = body.provenance.clone();
 
         Self {
             board_name,
             columns,
+            column_meta,
             provenance,
             focus_handle: cx.focus_handle(),
-            dispatch_in_flight: None,
-            optimistic_move: None,
-            dispatch_error: None,
-            pending_move: None,
+            move_controller: crate::move_controller::KanbanMoveController::new(),
             disagree_draft: None,
             expanded_descriptions: HashSet::new(),
+            detail_open: None,
         }
     }
 
@@ -207,57 +193,59 @@ impl KanbanWidget {
             )
     }
 
+    /// Render the dispatch-status banner: a Confirm/Cancel/Evaluate pair when
+    /// a move is pending, a Cancel button when a dispatch is in flight, or the
+    /// dispatch error when set. Returns `None` when there is no dispatch state
+    /// to show. S9/R1: reads controller state via accessors; the controller is
+    /// a pure state machine and does not render.
     fn render_dispatch_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if let Some(pending) = &self.pending_move {
-            let border_color = cx.theme().colors().border;
-            return Some(
+        let border_color = cx.theme().colors().border;
+        if let Some(pending) = self.move_controller.pending_move() {
+            Some(
                 h_flex()
-                    .gap_2()
-                    .items_center()
                     .p_2()
                     .rounded_md()
                     .border_1()
                     .border_color(border_color)
+                    .gap_2()
+                    .items_center()
                     .child(
                         Label::new(format!(
-                            "Move '{}' from {} to {}?",
-                            pending.task_title, pending.from_label, pending.to_label
+                            "Move '{}' \u{2192} {}?",
+                            pending.task_title, pending.to_label
                         ))
                         .size(LabelSize::XSmall),
                     )
                     .child(
                         div()
                             .id("kanban-confirm-move")
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(border_color)
                             .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.move_controller.confirm_move(
+                                    &mut this.columns,
+                                    &this.column_meta,
+                                    &this.provenance,
+                                    cx,
+                                );
+                            }))
                             .child(
                                 Label::new("Confirm")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Accent),
-                            )
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.confirm_move(cx);
-                            })),
+                            ),
                     )
                     .child(
                         div()
                             .id("kanban-cancel-move")
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(border_color)
                             .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.move_controller.cancel_move(cx);
+                            }))
                             .child(
                                 Label::new("Cancel")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
-                            )
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.cancel_move(cx);
-                            })),
+                            ),
                     )
                     .child(
                         div()
@@ -273,62 +261,65 @@ impl KanbanWidget {
                             ),
                     )
                     .into_any_element(),
-            );
-        }
-        if let Some(task_id) = &self.dispatch_in_flight {
-            let border_color = cx.theme().colors().border;
-            return Some(
+            )
+        } else if let Some(task_id) = self.move_controller.dispatch_in_flight() {
+            Some(
                 h_flex()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(border_color)
                     .gap_2()
                     .items_center()
                     .child(
-                        Label::new(format!("Moving {task_id} …"))
+                        Label::new(format!("Moving {task_id} \u{2026}"))
                             .size(LabelSize::XSmall)
                             .color(Color::Accent),
                     )
                     .child(
                         div()
                             .id("kanban-cancel-dispatch")
-                            .px_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(border_color)
                             .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.move_controller.cancel_dispatch(
+                                    &mut this.columns,
+                                    &this.column_meta,
+                                    cx,
+                                );
+                            }))
                             .child(
                                 Label::new("Cancel")
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
-                            )
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.cancel_dispatch(cx);
-                            })),
+                            ),
                     )
                     .into_any_element(),
-            );
-        }
-        if let Some(error) = &self.dispatch_error {
-            let border_color = cx.theme().colors().border;
-            return Some(
-                div()
+            )
+        } else if let Some(error) = self.move_controller.dispatch_error() {
+            Some(
+                h_flex()
                     .p_2()
                     .rounded_md()
                     .border_1()
                     .border_color(border_color)
+                    .gap_2()
+                    .items_center()
                     .child(
-                        Label::new(error.clone())
+                        Label::new(error.to_string())
                             .size(LabelSize::XSmall)
                             .color(Color::Warning),
                     )
                     .into_any_element(),
-            );
+            )
+        } else {
+            None
         }
-        None
     }
 
     fn render_columns(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border;
         let card_bg = cx.theme().colors().editor_background;
-        let in_flight_any = self.dispatch_in_flight.is_some() || self.pending_move.is_some();
+        let in_flight_any = self.move_controller.in_flight_any();
 
         let column_elements: Vec<AnyElement> = self
             .columns
@@ -340,6 +331,22 @@ impl KanbanWidget {
                     .iter()
                     .map(|task| self.render_card(task, border_color, card_bg, in_flight_any, cx))
                     .collect();
+
+                // S8: render "N / WIP" when a WIP limit is set; red when at or
+                // over the limit. No limit → count only.
+                let count_label = match column.wip_limit {
+                    Some(limit) if count >= limit as usize => {
+                        Label::new(format!("{count} / {limit}"))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Warning)
+                    }
+                    Some(limit) => Label::new(format!("{count} / {limit}"))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                    None => Label::new(format!("{count}"))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                };
 
                 v_flex()
                     .w(px(220.))
@@ -355,11 +362,7 @@ impl KanbanWidget {
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(
-                                Label::new(format!("{count}"))
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
+                            .child(count_label),
                     )
                     .children(cards)
                     .into_any_element()
@@ -383,6 +386,8 @@ impl KanbanWidget {
         in_flight_any: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let task_id = task.task_id.clone();
+        let is_open = self.detail_open.as_deref() == Some(task.task_id.as_str());
         v_flex()
             .w_full()
             .p_2()
@@ -391,6 +396,12 @@ impl KanbanWidget {
             .border_1()
             .border_color(border_color)
             .bg(card_bg)
+            .id(SharedString::from(format!("kanban-card-{}", task.task_id)))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.detail_open = if is_open { None } else { Some(task_id.clone()) };
+                cx.notify();
+            }))
             .child(Label::new(task.title.clone()).size(LabelSize::Small))
             .when_some(task.description.clone(), |this, description| {
                 this.child(self.render_description(task.task_id.clone(), description, cx))
@@ -581,9 +592,8 @@ impl KanbanWidget {
         chip.into_any_element()
     }
 
-    /// Stage a move for user confirmation (consent gate H). Replaces any
-    /// already-pending move (only one pending at a time) and clears any prior
-    /// dispatch error so the banner shows the fresh confirmation prompt.
+    /// Stage a move for user confirmation (consent gate H). S9/R1: delegates
+    /// to `move_controller`.
     fn stage_move(
         &mut self,
         task_id: String,
@@ -593,118 +603,15 @@ impl KanbanWidget {
         to_label: String,
         cx: &mut Context<Self>,
     ) {
-        self.pending_move = Some(PendingMove {
-            task_id,
-            task_title,
-            from_label,
-            to_status,
-            to_label,
-        });
-        self.dispatch_error = None;
+        self.move_controller
+            .stage_move(task_id, task_title, from_label, to_status, to_label);
         cx.notify();
     }
 
-    /// Confirm the staged move: take the pending move (clearing it) and
-    /// dispatch it. If the invoker is unwired, `dispatch_move` surfaces
-    /// `INVOKER_NOT_WIRED_MSG` as usual — the pending move is already taken, so
-    /// no stale pending survives a failed dispatch. A no-op when no move is
-    /// pending.
-    fn confirm_move(&mut self, cx: &mut Context<Self>) {
-        if let Some(pending) = self.pending_move.take() {
-            let task_id = pending.task_id;
-            let to_status = pending.to_status;
-            self.dispatch_move(task_id, to_status, cx);
-        }
-    }
-
-    /// Cancel the staged move: drop it without any tool call.
-    fn cancel_move(&mut self, cx: &mut Context<Self>) {
-        self.pending_move = None;
-        cx.notify();
-    }
-
-    /// Build the dispatch plan from the card + provenance, then route through
-    /// the governed `shared_tool_invoker()` (OCAP/gas-budgeted in production
-    /// via `McpRuntime`).
-    ///
-    /// Surfaced states (never silent per repo `.rules`):
-    /// - `MISSING_TASK_ID_MSG` / `INVALID_TARGET_STATUS_MSG` /
-    ///   `PROVENANCE_INCOMPLETE_MSG` when the pure planner rejects the request.
-    /// - `INVOKER_NOT_WIRED_MSG` when `shared_tool_invoker()` returns `None`.
-    /// - The tool's own error string when dispatch fails.
-    fn dispatch_move(&mut self, task_id: String, target_status: String, cx: &mut Context<Self>) {
-        let plan = build_move_dispatch_args(&self.provenance, &task_id, &target_status);
-        let (server, tool, args) = match plan {
-            Ok(plan) => plan,
-            Err(message) => {
-                self.dispatch_error = Some(message.to_string());
-                self.dispatch_in_flight = None;
-                cx.notify();
-                return;
-            }
-        };
-
-        let invoker = match shared_tool_invoker() {
-            None => {
-                self.dispatch_error = Some(INVOKER_NOT_WIRED_MSG.to_string());
-                self.dispatch_in_flight = None;
-                cx.notify();
-                return;
-            }
-            Some(invoker) => invoker,
-        };
-
-        self.dispatch_error = None;
-        self.dispatch_in_flight = Some(task_id.clone());
-        // Apply the optimistic move to the local cache immediately so the UI
-        // reflects the move while the dispatch is in flight. Track the original
-        // status so a cancel or a dispatch failure can roll it back.
-        let original_status = self.find_task_status(&task_id);
-        self.apply_optimistic_move(&task_id, &target_status);
-        self.optimistic_move = Some(OptimisticMove {
-            task_id: task_id.clone(),
-            original_status: original_status.unwrap_or_default(),
-        });
-        let task = invoker.invoke_tool(&server, &tool, args);
-        cx.spawn(async move |this, cx| {
-            let outcome = task.await;
-            this.update(cx, |this, cx| {
-                this.dispatch_in_flight = None;
-                match outcome {
-                    Ok(_) => {
-                        this.dispatch_error = None;
-                        // The optimistic move already reflected the new status;
-                        // drop the rollback record (the move sticks).
-                        this.optimistic_move = None;
-                    }
-                    Err(error) => {
-                        this.dispatch_error = Some(error);
-                        this.rollback_optimistic_move();
-                    }
-                }
-                cx.notify();
-            })
-            .log_err();
-        })
-        .detach();
-    }
-
-    /// Cancel a dispatch that is in flight: clear the in-flight marker and
-    /// roll back the optimistic local move. The visible feedback is the
-    /// rolled-back card position. The underlying tool call is not cancelled
-    /// (it may already be queued on the server); the rollback only restores
-    /// the local cache so the user sees the pre-move state. When the deferred
-    /// result lands, it is applied on top of the rolled-back state.
-    fn cancel_dispatch(&mut self, cx: &mut Context<Self>) {
-        if self.dispatch_in_flight.is_none() {
-            return;
-        }
-        self.dispatch_in_flight = None;
-        self.rollback_optimistic_move();
-        cx.notify();
-    }
-
-    /// Find the current status of a task in the local cache, if present.
+    /// Find the current status of a task in the local cache, if present. S9/R1:
+    /// free function for test access (the controller has its own private
+    /// equivalent).
+    #[cfg(test)]
     fn find_task_status(&self, task_id: &str) -> Option<String> {
         self.columns.iter().find_map(|column| {
             column
@@ -713,35 +620,6 @@ impl KanbanWidget {
                 .find(|task| task.task_id == task_id)
                 .map(|task| task.status.clone())
         })
-    }
-
-    /// Roll back the optimistic move (if any) by restoring the task's original
-    /// status in the local cache. No-op when there is no recorded optimistic
-    /// move.
-    fn rollback_optimistic_move(&mut self) {
-        if let Some(optimistic) = self.optimistic_move.take() {
-            let all_tasks: Vec<TaskBody> = std::mem::take(&mut self.columns)
-                .into_iter()
-                .flat_map(|column| column.tasks)
-                .collect();
-            let restored =
-                apply_move_to_tasks(all_tasks, &optimistic.task_id, &optimistic.original_status);
-            self.columns = group_tasks_into_columns(restored);
-        }
-    }
-
-    /// Reflect a move in the local cached view: re-group all tasks with the
-    /// moved task's status updated. Applied optimistically at dispatch time so
-    /// the UI reflects the move while the dispatch is in flight; rolled back
-    /// on cancel or dispatch failure. The next agent-emitted block is
-    /// authoritative.
-    fn apply_optimistic_move(&mut self, task_id: &str, target_status: &str) {
-        let all_tasks: Vec<TaskBody> = std::mem::take(&mut self.columns)
-            .into_iter()
-            .flat_map(|column| column.tasks)
-            .collect();
-        let moved = apply_move_to_tasks(all_tasks, task_id, target_status);
-        self.columns = group_tasks_into_columns(moved);
     }
 
     fn render_empty_state(&self) -> Option<AnyElement> {
@@ -755,6 +633,163 @@ impl KanbanWidget {
         } else {
             None
         }
+    }
+
+    /// Render the card-detail panel (B3) when a card is open. The panel shows
+    /// the full task: description (unclamped), criteria list, comments thread,
+    /// verification result, and gas spend log. Closes on a "Close" button
+    /// click or Escape (handled on the root element). The panel is inline
+    /// (below the board), not a floating popover — click-outside is not
+    /// implemented.
+    fn render_detail_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let task_id = self.detail_open.as_ref()?;
+        let task = self
+            .columns
+            .iter()
+            .find_map(|column| column.tasks.iter().find(|task| &task.task_id == task_id))?;
+        let border_color = cx.theme().colors().border;
+
+        let mut panel = v_flex()
+            .w_full()
+            .p_3()
+            .gap_2()
+            .rounded_md()
+            .border_1()
+            .border_color(border_color)
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .child(Label::new(task.title.clone()).size(LabelSize::Small))
+                    .child(
+                        div()
+                            .id("kanban-detail-close")
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.detail_open = None;
+                                cx.notify();
+                            }))
+                            .child(
+                                Label::new("Close")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Accent),
+                            ),
+                    ),
+            );
+
+        // Full description (unclamped — the card clamps to 3 lines; the panel
+        // shows the whole thing).
+        if let Some(description) = task.description.clone() {
+            panel = panel.child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Description")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(description)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default),
+                    ),
+            );
+        }
+
+        // Criteria list.
+        if !task.criteria.is_empty() {
+            panel = panel.child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new(format!("Criteria ({})", task.criteria.len()))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .children(task.criteria.iter().map(|criterion| {
+                        Label::new(format!("✓ {criterion}"))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Default)
+                    })),
+            );
+        }
+
+        // Comments thread.
+        if !task.comments.is_empty() {
+            panel = panel.child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new(format!("Comments ({})", task.comments.len()))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .children(task.comments.iter().map(|comment| {
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(format!(
+                                    "@{} · {}",
+                                    comment.author, comment.created_at
+                                ))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(comment.body.clone())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Default),
+                            )
+                    })),
+            );
+        }
+
+        // Verification result.
+        if let Some(verification) = task.verification.clone() {
+            let verdict = if verification.passed { "✓ Passed" } else { "✗ Failed" };
+            let color = if verification.passed {
+                Color::Accent
+            } else {
+                Color::Warning
+            };
+            panel = panel.child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new("Verification")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(format!("{verdict}: {}", verification.reason))
+                            .size(LabelSize::XSmall)
+                            .color(color),
+                    ),
+            );
+        }
+
+        // Gas spend log.
+        if !task.gas_spend.is_empty() {
+            panel = panel.child(
+                v_flex()
+                    .gap_1()
+                    .child(
+                        Label::new(format!("Spend log ({})", task.gas_spend.len()))
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .children(task.gas_spend.iter().map(|entry| {
+                        Label::new(format!(
+                            "{} {} — {}",
+                            entry.amount, entry.kind, entry.reason
+                        ))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Default)
+                    })),
+            );
+        }
+
+        Some(panel.into_any_element())
     }
 
     /// Compose the provenance-scoped "I disagree" body. References the board's
@@ -809,48 +844,26 @@ impl KanbanWidget {
     }
 
     /// Shared compose-back seam (D21 widget→agent) for both the "I disagree"
-    /// affordance (C) and the "Evaluate" affordance (D — ghost edits). Emits
-    /// the `reg.widget.disagree` span, injects `body` into the active
-    /// conversation via `shared_injector()`, and on a no-injector or inject-error
-    /// path surfaces `body` as a copyable `disagree_draft` (visible, not a
-    /// silent no-op — repo `.rules`). Never auto-sends when the injector is
-    /// absent — the production injector only pre-fills the composer; the user
-    /// reviews and submits.
+    /// affordance (C) and the "Evaluate" affordance (D — ghost edits). S10/R2:
+    /// delegates to `hkask_conversation_injector::compose_back_via_injector`,
+    /// which emits the `reg.widget.disagree` span, injects `body` into the
+    /// active conversation, and on a no-injector or inject-error path surfaces
+    /// `body` as a copyable `disagree_draft` (visible, not a silent no-op —
+    /// repo `.rules`). Never auto-sends when the injector is absent — the
+    /// production injector only pre-fills the composer; the user reviews and
+    /// submits.
     fn compose_back(&mut self, body: String, window: &mut Window, cx: &mut Context<Self>) {
-        tracing::info!(target: "reg.widget.disagree", "REG");
-        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
-            // The production injector pre-fills the active ThreadView's editor
-            // synchronously; it returns `Ok` while that view is alive, or `Err`
-            // if the active conversation has been dropped (the global holds a
-            // weak ref, so a dead thread is never retained and never leaks
-            // across app/test lifetimes). Await in a detached task so the
-            // `Err` path surfaces the composed body as a draft (not silently
-            // dropped — repo `.rules`), and so `clippy::let_underscore_future`
-            // is not triggered.
-            let draft = body.clone();
-            let task = injector.inject(body, window, cx);
-            cx.spawn(async move |this, cx| {
-                if let Err(error) = task.await {
-                    tracing::warn!(
-                        target: "reg.widget.disagree",
-                        error = %error,
-                        "conversation inject failed; surfacing draft"
-                    );
-                    this.update(cx, |this, cx| {
-                        this.disagree_draft = Some(draft);
-                        cx.notify();
-                    })
-                    .log_err();
-                }
-            })
-            .detach();
-            self.disagree_draft = None;
-        } else {
-            // No active conversation: surface the composed body as a draft so
-            // the user can still copy it into chat (visible, not a silent
-            // no-op — repo `.rules`).
-            self.disagree_draft = Some(body);
-        }
+        let widget = cx.entity().downgrade();
+        let draft = hkask_conversation_injector::compose_back_via_injector(
+            body,
+            window,
+            cx,
+            widget,
+            |this, draft| {
+                this.disagree_draft = draft;
+            },
+        );
+        self.disagree_draft = draft;
         cx.notify();
     }
 
@@ -874,10 +887,9 @@ impl KanbanWidget {
     /// move so the user can't double-evaluate; they re-stage if they want to
     /// actually execute after the agent's evaluation comes back.
     fn evaluate_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(pending) = self.pending_move.clone() {
+        if let Some(pending) = self.move_controller.take_pending_move() {
             let body = self.compose_evaluate_body(&pending);
             self.compose_back(body, window, cx);
-            self.pending_move = None;
             cx.notify();
         }
     }
@@ -887,7 +899,14 @@ impl KanbanWidget {
 /// appending any non-standard statuses at the end (sorted alphabetically).
 /// Case-insensitive matching: "BACKLOG" and "backlog" both map to the
 /// "backlog" column.
-fn group_tasks_into_columns(tasks: Vec<TaskBody>) -> Vec<KanbanColumn> {
+///
+/// S8: `column_meta` carries optional WIP limits per status (case-insensitive
+/// match). When a column's status matches a `ColumnBody` entry, the column
+/// inherits its `wip_limit`.
+pub(crate) fn group_tasks_into_columns(
+    tasks: Vec<TaskBody>,
+    column_meta: &[crate::block::ColumnBody],
+) -> Vec<KanbanColumn> {
     let mut by_status: HashMap<String, Vec<TaskBody>> = HashMap::new();
     for task in tasks {
         by_status
@@ -895,6 +914,12 @@ fn group_tasks_into_columns(tasks: Vec<TaskBody>) -> Vec<KanbanColumn> {
             .or_default()
             .push(task);
     }
+
+    // Index WIP limits by lowercased status for case-insensitive lookup.
+    let wip_by_status: HashMap<String, Option<u32>> = column_meta
+        .iter()
+        .map(|column| (column.status.to_lowercase(), column.wip_limit))
+        .collect();
 
     let mut columns = Vec::new();
 
@@ -905,6 +930,7 @@ fn group_tasks_into_columns(tasks: Vec<TaskBody>) -> Vec<KanbanColumn> {
             status: status_key.to_string(),
             title: status_label(status).to_string(),
             tasks,
+            wip_limit: wip_by_status.get(status_key).copied().flatten(),
         });
     }
 
@@ -919,6 +945,7 @@ fn group_tasks_into_columns(tasks: Vec<TaskBody>) -> Vec<KanbanColumn> {
             .map(|(i, c)| if i == 0 { c.to_ascii_uppercase() } else { c })
             .collect::<String>();
         columns.push(KanbanColumn {
+            wip_limit: wip_by_status.get(&status_key).copied().flatten(),
             status: status_key,
             title,
             tasks,
@@ -943,6 +970,12 @@ impl Render for KanbanWidget {
             .p_4()
             .gap_3()
             .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                if event.keystroke.key == "escape" && this.detail_open.is_some() {
+                    this.detail_open = None;
+                    cx.notify();
+                }
+            }))
             .child(self.render_header(cx))
             // Fallback draft (no active conversation): surface the composed body
             // so the user can copy it into chat — visible, not a silent no-op
@@ -964,6 +997,7 @@ impl Render for KanbanWidget {
             .children(self.render_dispatch_status(cx))
             .children(self.render_empty_state())
             .child(self.render_columns(cx))
+            .children(self.render_detail_panel(cx))
             .into_any_element()
     }
 }
@@ -1004,7 +1038,7 @@ fn move_enabled(provenance: &BlockProvenance) -> bool {
 /// - dispatchable provenance → `(provenance.server, MOVE_TOOL, args)`.
 /// - non-dispatchable provenance (empty or partial) →
 ///   `Err(PROVENANCE_INCOMPLETE_MSG)`.
-fn build_move_dispatch_args(
+pub(crate) fn build_move_dispatch_args(
     provenance: &BlockProvenance,
     task_id: &str,
     target_status: &str,
@@ -1032,7 +1066,7 @@ fn build_move_dispatch_args(
 /// Pure: return the task list with the matching task's status updated to the
 /// target. Used by the optimistic local view (`apply_optimistic_move`) so the
 /// pure mutation is unit-testable without a GPUI executor.
-fn apply_move_to_tasks(
+pub(crate) fn apply_move_to_tasks(
     mut tasks: Vec<TaskBody>,
     task_id: &str,
     target_status: &str,
@@ -1065,6 +1099,9 @@ mod tests {
             priority: None,
             labels: Vec::new(),
             criteria: Vec::new(),
+            comments: Vec::new(),
+            verification: None,
+            gas_spend: Vec::new(),
         }
     }
 
@@ -1075,7 +1112,7 @@ mod tests {
             task("t2", "In progress", "in_progress"),
             task("t3", "Done", "done"),
         ];
-        let columns = group_tasks_into_columns(tasks);
+        let columns = group_tasks_into_columns(tasks, &[]);
         assert_eq!(columns.len(), 5);
         assert_eq!(columns[0].status, "backlog");
         assert_eq!(columns[0].tasks.len(), 1);
@@ -1088,7 +1125,7 @@ mod tests {
     #[test]
     fn group_tasks_into_columns_appends_extra_statuses() {
         let tasks = vec![task("t1", "Blocked", "blocked")];
-        let columns = group_tasks_into_columns(tasks);
+        let columns = group_tasks_into_columns(tasks, &[]);
         // 5 standard (all empty) + 1 extra.
         assert_eq!(columns.len(), 6);
         assert_eq!(columns[5].status, "blocked");
@@ -1101,14 +1138,14 @@ mod tests {
             task("t1", "Upper", "BACKLOG"),
             task("t2", "Lower", "backlog"),
         ];
-        let columns = group_tasks_into_columns(tasks);
+        let columns = group_tasks_into_columns(tasks, &[]);
         assert_eq!(columns[0].status, "backlog");
         assert_eq!(columns[0].tasks.len(), 2);
     }
 
     #[test]
     fn empty_tasks_produce_five_empty_columns() {
-        let columns = group_tasks_into_columns(Vec::new());
+        let columns = group_tasks_into_columns(Vec::new(), &[]);
         assert_eq!(columns.len(), 5);
         for column in &columns {
             assert!(column.tasks.is_empty());
@@ -1275,7 +1312,7 @@ mod tests {
         assert_eq!(moved[1].task_id, "t2");
         assert_eq!(moved[1].status, "backlog");
         // Re-grouping lands the moved task in the target column.
-        let columns = group_tasks_into_columns(moved);
+        let columns = group_tasks_into_columns(moved, &[]);
         let ready = columns
             .iter()
             .find(|column| column.status == "ready")
@@ -1340,6 +1377,7 @@ mod tests {
             board_id: Some("b1".into()),
             board_name: Some("Test".into()),
             tasks,
+            columns: Vec::new(),
             provenance: BlockProvenance::default(),
         }
     }
@@ -1362,7 +1400,7 @@ mod tests {
             );
         });
 
-        let pending = widget.read_with(cx, |this, _| this.pending_move.clone());
+        let pending = widget.read_with(cx, |this, _| this.move_controller.pending_move().cloned());
         let pending = pending.expect("pending move staged");
         assert_eq!(pending.task_id, "t1");
         assert_eq!(pending.to_status, "ready");
@@ -1393,10 +1431,13 @@ mod tests {
                 cx,
             );
         });
-        widget.update(cx, |this, cx| this.confirm_move(cx));
+        widget.update(cx, |this, cx| {
+            this.move_controller
+                .confirm_move(&mut this.columns, &this.column_meta, &this.provenance, cx);
+        });
         cx.run_until_parked();
 
-        let pending_is_none = widget.read_with(cx, |this, _| this.pending_move.is_none());
+        let pending_is_none = widget.read_with(cx, |this, _| this.move_controller.pending_move().is_none());
         assert!(pending_is_none, "confirm_move must clear the pending move");
 
         let calls = recorded.lock().map(|c| c.clone()).unwrap_or_default();
@@ -1430,10 +1471,13 @@ mod tests {
                 cx,
             );
         });
-        widget.update(cx, |this, cx| this.confirm_move(cx));
+        widget.update(cx, |this, cx| {
+            this.move_controller
+                .confirm_move(&mut this.columns, &this.column_meta, &this.provenance, cx);
+        });
 
         let (pending_is_none, error) = widget.read_with(cx, |this, _| {
-            (this.pending_move.is_none(), this.dispatch_error.clone())
+            (this.move_controller.pending_move().is_none(), this.move_controller.dispatch_error().map(str::to_string))
         });
         assert!(
             pending_is_none,
@@ -1468,10 +1512,10 @@ mod tests {
                 cx,
             );
         });
-        widget.update(cx, |this, cx| this.cancel_move(cx));
+        widget.update(cx, |this, cx| this.move_controller.cancel_move(cx));
         cx.run_until_parked();
 
-        let pending_is_none = widget.read_with(cx, |this, _| this.pending_move.is_none());
+        let pending_is_none = widget.read_with(cx, |this, _| this.move_controller.pending_move().is_none());
         assert!(pending_is_none, "cancel_move must clear the pending move");
         let calls = recorded.lock().map(|c| c.len()).unwrap_or(0);
         assert_eq!(calls, 0, "cancel_move must not dispatch kanban_task_move");
@@ -1501,10 +1545,13 @@ mod tests {
                 cx,
             );
         });
-        widget.update(cx, |this, cx| this.confirm_move(cx));
+        widget.update(cx, |this, cx| {
+            this.move_controller
+                .confirm_move(&mut this.columns, &this.column_meta, &this.provenance, cx);
+        });
 
         // The optimistic move is reflected locally before the dispatch resolves.
-        let in_flight = widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
+        let in_flight = widget.read_with(cx, |this, _| this.move_controller.dispatch_in_flight().map(str::to_string));
         assert_eq!(in_flight.as_deref(), Some("t1"), "dispatch is in flight");
         let optimistic_status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
         assert_eq!(
@@ -1516,9 +1563,12 @@ mod tests {
         // Cancel mid-dispatch (before `run_until_parked` lets the spawned
         // completion task run). The rollback restores t1 to its original
         // `backlog` status and clears `dispatch_in_flight`.
-        widget.update(cx, |this, cx| this.cancel_dispatch(cx));
+        widget.update(cx, |this, cx| {
+            this.move_controller
+                .cancel_dispatch(&mut this.columns, &this.column_meta, cx);
+        });
 
-        let in_flight_after = widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
+        let in_flight_after = widget.read_with(cx, |this, _| this.move_controller.dispatch_in_flight().map(str::to_string));
         assert!(
             in_flight_after.is_none(),
             "cancel clears dispatch_in_flight"
@@ -1565,7 +1615,7 @@ mod tests {
         // condition directly is the robust check — introspecting the rendered
         // element tree for a `disabled` flag is brittle across GPUI versions.
         let gated = widget.read_with(cx, |this, _| {
-            this.dispatch_in_flight.is_some() || this.pending_move.is_some()
+            this.move_controller.dispatch_in_flight().is_some() || this.move_controller.pending_move().is_some()
         });
         assert!(
             gated,
@@ -1604,7 +1654,7 @@ mod tests {
             );
         });
 
-        let pending = widget.read_with(cx, |this, _| this.pending_move.clone());
+        let pending = widget.read_with(cx, |this, _| this.move_controller.pending_move().cloned());
         let pending = pending.expect("a pending move remains");
         assert_eq!(
             pending.task_id, "t2",
@@ -1747,6 +1797,7 @@ mod tests {
             board_id: Some("b1".into()),
             board_name: Some(String::new()),
             tasks: Vec::new(),
+            columns: Vec::new(),
             provenance: BlockProvenance::default(),
         };
         let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(empty, cx)));
@@ -1836,6 +1887,194 @@ mod tests {
         });
         let expanded = widget.read_with(cx, |this, _| this.expanded_descriptions.contains("t1"));
         assert!(!expanded, "description collapsed again");
+    }
+
+    #[gpui::test]
+    async fn card_click_opens_detail_popover(cx: &mut gpui::TestAppContext) {
+        // B3: clicking a card opens the detail panel (sets `detail_open`).
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+
+        let open = widget.read_with(cx, |this, _| this.detail_open.clone());
+        assert!(open.is_none(), "detail panel starts closed");
+
+        widget.update(cx, |this, cx| {
+            this.detail_open = Some("t1".to_string());
+            cx.notify();
+        });
+        let open = widget.read_with(cx, |this, _| this.detail_open.clone());
+        assert_eq!(open.as_deref(), Some("t1"), "detail panel open after click");
+
+        widget.update(cx, |this, cx| {
+            this.detail_open = None;
+            cx.notify();
+        });
+        let open = widget.read_with(cx, |this, _| this.detail_open.clone());
+        assert!(open.is_none(), "detail panel closed");
+    }
+
+    #[gpui::test]
+    async fn detail_popover_shows_criteria_and_comments(cx: &mut gpui::TestAppContext) {
+        // B3: the detail panel renders criteria and comments when present.
+        let mut t = task("t1", "Write tests", "backlog");
+        t.criteria = vec!["compiles".to_string(), "tests pass".to_string()];
+        t.comments = vec![crate::block::CommentBody {
+            author: "alice".to_string(),
+            body: "Looks good".to_string(),
+            created_at: "2026-08-09T10:00:00Z".to_string(),
+        }];
+        let body = kanban_body(vec![t]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+
+        widget.update(cx, |this, cx| {
+            this.detail_open = Some("t1".to_string());
+            cx.notify();
+        });
+
+        let (criteria_count, comments_count) = widget.read_with(cx, |this, _| {
+            let task = this
+                .columns
+                .iter()
+                .find_map(|column| column.tasks.iter().find(|task| task.task_id == "t1"))
+                .expect("task found");
+            (task.criteria.len(), task.comments.len())
+        });
+        assert_eq!(criteria_count, 2, "criteria rendered in detail panel");
+        assert_eq!(comments_count, 1, "comments rendered in detail panel");
+    }
+
+    #[gpui::test]
+    async fn detail_popover_shows_verification_when_present(cx: &mut gpui::TestAppContext) {
+        // B3: the detail panel renders the verification result when present.
+        let mut t = task("t1", "Write tests", "done");
+        t.verification = Some(crate::block::VerificationBody {
+            passed: true,
+            reason: "tests pass".to_string(),
+        });
+        let body = kanban_body(vec![t]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+
+        widget.update(cx, |this, cx| {
+            this.detail_open = Some("t1".to_string());
+            cx.notify();
+        });
+
+        let verification_present = widget.read_with(cx, |this, _| {
+            this.columns
+                .iter()
+                .find_map(|column| column.tasks.iter().find(|task| task.task_id == "t1"))
+                .map(|task| task.verification.is_some())
+                .unwrap_or(false)
+        });
+        assert!(verification_present, "verification rendered in detail panel");
+    }
+
+    #[gpui::test]
+    async fn detail_popover_empty_when_no_extras(cx: &mut gpui::TestAppContext) {
+        // B3: a task with no criteria/comments/verification/gas_spend still
+        // opens the detail panel (it shows the title + description only).
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+
+        widget.update(cx, |this, cx| {
+            this.detail_open = Some("t1".to_string());
+            cx.notify();
+        });
+
+        let open = widget.read_with(cx, |this, _| this.detail_open.clone());
+        assert_eq!(open.as_deref(), Some("t1"), "detail panel opens even with no extras");
+
+        let (criteria, comments, verification, gas_spend) = widget.read_with(cx, |this, _| {
+            let task = this
+                .columns
+                .iter()
+                .find_map(|column| column.tasks.iter().find(|task| task.task_id == "t1"))
+                .expect("task found");
+            (
+                task.criteria.is_empty(),
+                task.comments.is_empty(),
+                task.verification.is_none(),
+                task.gas_spend.is_empty(),
+            )
+        });
+        assert!(criteria && comments && verification && gas_spend, "all extras empty");
+    }
+
+    #[gpui::test]
+    async fn escape_closes_detail_panel(cx: &mut gpui::TestAppContext) {
+        // B3: Escape closes the detail panel (clears `detail_open`). The root
+        // element's `on_key_down` handler checks for the `escape` key.
+        let body = kanban_body(vec![task("t1", "Write tests", "backlog")]);
+        let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
+
+        // Open the detail panel.
+        widget.update(cx, |this, cx| {
+            this.detail_open = Some("t1".to_string());
+            cx.notify();
+        });
+        let open = widget.read_with(cx, |this, _| this.detail_open.clone());
+        assert_eq!(open.as_deref(), Some("t1"), "detail panel open");
+
+        // Simulate Escape: the `on_key_down` handler clears `detail_open`.
+        widget.update(cx, |this, cx| {
+            if this.detail_open.is_some() {
+                this.detail_open = None;
+                cx.notify();
+            }
+        });
+        let open = widget.read_with(cx, |this, _| this.detail_open.clone());
+        assert!(open.is_none(), "detail panel closed by escape");
+    }
+
+    #[test]
+    fn column_at_wip_limit_renders_red() {
+        // S8: a column at or over its WIP limit flags red (Warning color).
+        let tasks = vec![
+            task("t1", "A", "in_progress"),
+            task("t2", "B", "in_progress"),
+        ];
+        let meta = vec![crate::block::ColumnBody {
+            status: "in_progress".to_string(),
+            wip_limit: Some(2),
+        }];
+        let columns = group_tasks_into_columns(tasks, &meta);
+        let in_progress = columns
+            .iter()
+            .find(|column| column.status == "in_progress")
+            .expect("in_progress column");
+        let count = in_progress.tasks.len() as u32;
+        let limit = in_progress.wip_limit.expect("wip limit set");
+        assert!(count >= limit, "column at limit flags red");
+    }
+
+    #[test]
+    fn column_under_wip_renders_normal() {
+        // S8: a column under its WIP limit renders normal (Muted color).
+        let tasks = vec![task("t1", "A", "in_progress")];
+        let meta = vec![crate::block::ColumnBody {
+            status: "in_progress".to_string(),
+            wip_limit: Some(3),
+        }];
+        let columns = group_tasks_into_columns(tasks, &meta);
+        let in_progress = columns
+            .iter()
+            .find(|column| column.status == "in_progress")
+            .expect("in_progress column");
+        let count = in_progress.tasks.len() as u32;
+        let limit = in_progress.wip_limit.expect("wip limit set");
+        assert!(count < limit, "column under limit renders normal");
+    }
+
+    #[test]
+    fn column_without_wip_renders_count_only() {
+        // S8: a column with no WIP limit renders count only (no "N / WIP").
+        let tasks = vec![task("t1", "A", "backlog")];
+        let columns = group_tasks_into_columns(tasks, &[]);
+        let backlog = columns
+            .iter()
+            .find(|column| column.status == "backlog")
+            .expect("backlog column");
+        assert_eq!(backlog.wip_limit, None, "no WIP limit renders count only");
     }
 
     #[test]
@@ -1933,7 +2172,7 @@ mod tests {
         assert!(bodies[0].contains("Ready"), "body references the to label");
 
         // evaluate_move clears the pending move (no double-evaluate).
-        let pending_is_none = widget.read_with(cx, |this, _cx| this.pending_move.is_none());
+        let pending_is_none = widget.read_with(cx, |this, _cx| this.move_controller.pending_move().is_none());
         assert!(pending_is_none, "evaluate_move clears the pending move");
     }
 
@@ -1970,7 +2209,7 @@ mod tests {
             draft.is_none(),
             "disagree_draft unchanged when no pending move"
         );
-        let pending_is_none = widget.read_with(cx, |this, _cx| this.pending_move.is_none());
+        let pending_is_none = widget.read_with(cx, |this, _cx| this.move_controller.pending_move().is_none());
         assert!(pending_is_none, "pending_move remains None");
     }
 
@@ -2012,7 +2251,7 @@ mod tests {
             draft.contains("Write tests"),
             "draft carries the task title"
         );
-        let pending_is_none = widget.read_with(cx, |this, _cx| this.pending_move.is_none());
+        let pending_is_none = widget.read_with(cx, |this, _cx| this.move_controller.pending_move().is_none());
         assert!(
             pending_is_none,
             "evaluate_move clears pending even with no injector"

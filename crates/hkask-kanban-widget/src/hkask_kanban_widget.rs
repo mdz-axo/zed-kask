@@ -19,6 +19,7 @@
 #![warn(clippy::let_underscore_future)]
 
 pub mod block;
+pub mod move_controller;
 pub mod view;
 
 pub use view::KanbanWidget;

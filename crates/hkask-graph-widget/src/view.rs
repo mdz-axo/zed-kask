@@ -24,7 +24,6 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, Rgba, ScrollWheelEvent,
     StatefulInteractiveElement, Styled, Window, canvas, div, point, prelude::*, px, rgb,
 };
-use gpui_util::ResultExt as _;
 use theme::ActiveTheme;
 use ui::{Color, Label, LabelCommon, LabelSize};
 
@@ -443,47 +442,24 @@ impl GraphWidget {
     }
 
     /// The "I disagree" affordance handler (C). Composes the revision request
-    /// and injects it back into the active conversation via the kask
-    /// `shared_injector()` (D21 widget→agent seam). When no conversation is
-    /// active, surfaces the composed body as a copyable draft instead of a
-    /// silent no-op (repo `.rules`). Never auto-sends — the production injector
-    /// only pre-fills the composer; the user reviews and submits.
+    /// and injects it back into the active conversation via the shared
+    /// `compose_back_via_injector` (S10/R2). When no conversation is active,
+    /// surfaces the composed body as a copyable draft instead of a silent
+    /// no-op (repo `.rules`). Never auto-sends — the production injector only
+    /// pre-fills the composer; the user reviews and submits.
     fn on_disagree_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let body = self.compose_disagree_body();
-        tracing::info!(target: "reg.widget.disagree", "REG");
-        if let Some(injector) = hkask_conversation_injector::shared_injector(cx) {
-            // The production injector pre-fills the active ThreadView's editor
-            // synchronously; it returns `Ok` while that view is alive, or `Err`
-            // if the active conversation has been dropped (the global holds a
-            // weak ref, so a dead thread is never retained and never leaks
-            // across app/test lifetimes). Await in a detached task so the
-            // `Err` path surfaces the composed body as a draft (not silently
-            // dropped — repo `.rules`), and so `clippy::let_underscore_future`
-            // is not triggered.
-            let draft = body.clone();
-            let task = injector.inject(body, window, cx);
-            cx.spawn(async move |this, cx| {
-                if let Err(error) = task.await {
-                    tracing::warn!(
-                        target: "reg.widget.disagree",
-                        error = %error,
-                        "conversation inject failed; surfacing draft"
-                    );
-                    this.update(cx, |this, cx| {
-                        this.disagree_draft = Some(draft);
-                        cx.notify();
-                    })
-                    .log_err();
-                }
-            })
-            .detach();
-            self.disagree_draft = None;
-        } else {
-            // No active conversation: surface the composed body as a draft so
-            // the user can still copy it into chat (visible, not a silent
-            // no-op — repo `.rules`).
-            self.disagree_draft = Some(body);
-        }
+        let widget = cx.entity().downgrade();
+        let draft = hkask_conversation_injector::compose_back_via_injector(
+            body,
+            window,
+            cx,
+            widget,
+            |this, draft| {
+                this.disagree_draft = draft;
+            },
+        );
+        self.disagree_draft = draft;
         cx.notify();
     }
 }

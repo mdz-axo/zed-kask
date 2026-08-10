@@ -30,6 +30,12 @@ pub struct KanbanBlockBody {
     /// The tasks for this board.
     #[serde(default)]
     pub tasks: Vec<TaskBody>,
+    /// Optional column metadata (S8: WIP limits). When present, each entry's
+    /// `status` matches a task `status` (case-insensitive) and carries a
+    /// `wip_limit`. `#[serde(default)]` so older blocks parse with no column
+    /// metadata (no WIP limits rendered).
+    #[serde(default)]
+    pub columns: Vec<ColumnBody>,
     /// Server-authoritative provenance for re-issuing the originating MCP tool
     /// with modified args (T6 move affordance). `#[serde(default)]` so bodies
     /// emitted before provenance landed parse with an empty (non-dispatchable)
@@ -38,8 +44,25 @@ pub struct KanbanBlockBody {
     pub provenance: BlockProvenance,
 }
 
+/// Column metadata for a kanban board (S8: WIP limits). The `status` matches a
+/// task `status` (case-insensitive); `wip_limit` caps how many tasks may be in
+/// the column simultaneously.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ColumnBody {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub wip_limit: Option<u32>,
+}
+
 /// One task on the board. Mirrors the `TaskInfo` struct from the deleted
 /// `KanbanBoardView`.
+///
+/// B3/RU4: carries the full task detail fields (comments, verification,
+/// gas spend log) so the card-detail popover can render them passively from
+/// the block body (D18 passive-render contract preserved — no `ToolInvoker`
+/// fetch on card click). All extra fields are `#[serde(default)]` so older
+/// blocks parse with empty collections / `None`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TaskBody {
     #[serde(default)]
@@ -71,9 +94,59 @@ pub struct TaskBody {
     #[serde(default)]
     pub labels: Vec<String>,
     /// Acceptance criteria (free-form strings). Rendered as a count
-    /// ("✓ N criteria").
+    /// ("✓ N criteria") on the card and as a full list in the detail popover.
     #[serde(default)]
     pub criteria: Vec<String>,
+    /// Comments thread. Rendered only in the detail popover (B3). Empty on
+    /// tasks with no comments.
+    #[serde(default)]
+    pub comments: Vec<CommentBody>,
+    /// Verification result. Rendered only in the detail popover (B3). `None`
+    /// on unverified tasks.
+    #[serde(default)]
+    pub verification: Option<VerificationBody>,
+    /// Gas/rJoule spend log. Rendered only in the detail popover (B3). Empty
+    /// on tasks with no spend entries.
+    #[serde(default)]
+    pub gas_spend: Vec<GasEntryBody>,
+}
+
+/// One comment on a task. Mirrors the server's `Comment` shape (author, body,
+/// created_at) for passive rendering in the card-detail popover (B3).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommentBody {
+    #[serde(default)]
+    pub author: String,
+    #[serde(default)]
+    pub body: String,
+    /// ISO-8601 timestamp string as emitted by the server. Rendered as-is
+    /// (no parsing — the widget is passive and does not normalize timestamps).
+    #[serde(default)]
+    pub created_at: String,
+}
+
+/// Verification result on a task. Mirrors the server's `Verification` shape
+/// for passive rendering in the card-detail popover (B3).
+#[derive(Debug, Clone, Deserialize)]
+pub struct VerificationBody {
+    #[serde(default)]
+    pub passed: bool,
+    #[serde(default)]
+    pub reason: String,
+}
+
+/// One entry in a task's gas/rJoule spend log. Mirrors the server's `GasEntry`
+/// shape for passive rendering in the card-detail popover (B3). `kind`
+/// distinguishes gas spend from rJoule spend (the server emits `"gas_spend"` /
+/// `"rjoule_spend"`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct GasEntryBody {
+    #[serde(default)]
+    pub amount: u64,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub kind: String,
 }
 
 impl KanbanBlockBody {
@@ -180,6 +253,77 @@ mod tests {
         assert!(parsed.tasks[0].priority.is_none());
         assert!(parsed.tasks[0].labels.is_empty());
         assert!(parsed.tasks[0].criteria.is_empty());
+    }
+
+    #[test]
+    fn parses_full_task_detail_fields() {
+        // B3: comments, verification, and gas_spend parse from the block body.
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog",
+             "criteria":["compiles"],
+             "comments":[
+               {"author":"alice","body":"Looks good","created_at":"2026-08-09T10:00:00Z"}
+             ],
+             "verification":{"passed":true,"reason":"tests pass"},
+             "gas_spend":[
+               {"amount":50,"reason":"inference","kind":"gas_spend"},
+               {"amount":100,"reason":"tool call","kind":"rjoule_spend"}
+             ]}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        let task = &parsed.tasks[0];
+        assert_eq!(task.criteria, vec!["compiles"]);
+        assert_eq!(task.comments.len(), 1);
+        assert_eq!(task.comments[0].author, "alice");
+        assert_eq!(task.comments[0].body, "Looks good");
+        assert_eq!(task.comments[0].created_at, "2026-08-09T10:00:00Z");
+        let verification = task.verification.as_ref().expect("verification present");
+        assert!(verification.passed);
+        assert_eq!(verification.reason, "tests pass");
+        assert_eq!(task.gas_spend.len(), 2);
+        assert_eq!(task.gas_spend[0].amount, 50);
+        assert_eq!(task.gas_spend[0].kind, "gas_spend");
+        assert_eq!(task.gas_spend[1].kind, "rjoule_spend");
+    }
+
+    #[test]
+    fn full_detail_fields_default_empty_when_absent() {
+        // B3: older blocks without comments/verification/gas_spend parse with
+        // empty collections and `None` verification.
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"backlog"}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        let task = &parsed.tasks[0];
+        assert!(task.comments.is_empty());
+        assert!(task.verification.is_none());
+        assert!(task.gas_spend.is_empty());
+    }
+
+    #[test]
+    fn parses_column_wip_limits() {
+        // S8: column metadata with WIP limits parses from the block body.
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[
+            {"task_id":"t1","title":"A","status":"in_progress"}
+        ],"columns":[
+            {"status":"in_progress","wip_limit":3},
+            {"status":"review","wip_limit":2}
+        ]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert_eq!(parsed.columns.len(), 2);
+        assert_eq!(parsed.columns[0].status, "in_progress");
+        assert_eq!(parsed.columns[0].wip_limit, Some(3));
+        assert_eq!(parsed.columns[1].status, "review");
+        assert_eq!(parsed.columns[1].wip_limit, Some(2));
+    }
+
+    #[test]
+    fn columns_default_empty_when_absent() {
+        // S8: older blocks without `columns` parse with an empty vec (no WIP
+        // limits rendered).
+        let body = r#"{"viz":"kanban","board_id":"b1","tasks":[]}"#;
+        let parsed = parse_kanban_body(body).expect("valid body parses");
+        assert!(parsed.columns.is_empty());
     }
 
     #[test]

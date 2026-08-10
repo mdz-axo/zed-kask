@@ -9211,6 +9211,7 @@ name = "hkask-conversation-injector"
 version = "0.33.7"
 dependencies = [
  "gpui",
+ "tracing",
 ]
 
 [[package]]
@@ -9241,7 +9242,6 @@ version = "0.33.7"
 dependencies = [
  "anyhow",
  "gpui",
- "gpui_util",
  "hkask-conversation-injector",
  "hkask-forecast",
  "log",
