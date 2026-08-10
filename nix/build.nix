@@ -4,18 +4,11 @@
   lib,
   stdenv,
 
-  apple-sdk_15,
-  darwin,
-  darwinMinVersionHook,
-
   cargo-about,
-  cargo-bundle,
   crane,
   rustPlatform,
   rustToolchain,
 
-  copyDesktopItems,
-  envsubst,
   fetchFromGitHub,
   makeFontsConf,
   makeWrapper,
@@ -25,7 +18,6 @@
   curl,
   fontconfig,
   freetype,
-  git,
   glib,
   libdrm,
   libgbm,
@@ -38,7 +30,6 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
-  lld,
   libx11,
   libxcb,
   nodejs_22,
@@ -102,7 +93,6 @@ let
 
       nativeBuildInputs = [
         cmake
-        copyDesktopItems
         curl
         perl
         pkg-config
@@ -135,34 +125,7 @@ let
           }
         ))
         rustPlatform.bindgenHook
-      ]
-      ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
-      ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-        # Provides `ld64.lld` for clang's `-fuse-ld=lld`.
-        lld
-        (cargo-bundle.overrideAttrs (
-          new: old: {
-            version = "0.6.1-zed";
-            src = fetchFromGitHub {
-              owner = "zed-industries";
-              repo = "cargo-bundle";
-              rev = "2be2669972dff3ddd4daf89a2cb29d2d06cad7c7";
-              hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
-            };
-            cargoHash = "sha256-urn+A3yuw2uAO4HGmvQnKvWtHqvG9KHxNCCWTiytE4k=";
-
-            # NOTE: can drop once upstream uses `finalAttrs` here:
-            # https://github.com/NixOS/nixpkgs/blob/10214747f5e6e7cb5b9bdf9e018a3c7b3032f5af/pkgs/build-support/rust/build-rust-package/default.nix#L104
-            #
-            # See (for context): https://github.com/NixOS/nixpkgs/pull/382550
-            cargoDeps = rustPlatform.fetchCargoVendor {
-              inherit (new) src;
-              hash = new.cargoHash;
-              patches = new.cargoPatches or [ ];
-              name = new.cargoDepsName or new.finalPackage.name;
-            };
-          }
-        ))
+        makeWrapper
       ];
 
       buildInputs = [
@@ -177,8 +140,6 @@ let
         sqlite
         zlib
         zstd
-      ]
-      ++ lib.optionals stdenv'.hostPlatform.isLinux [
         alsa-lib
         glib
         libva
@@ -196,16 +157,11 @@ let
         libxext
         libxfixes
         libxrandr
-      ]
-      ++ lib.optionals stdenv'.hostPlatform.isDarwin [
-        apple-sdk_15
-        (darwinMinVersionHook "10.15")
       ];
 
       cargoExtraArgs = "-p zed -p cli --locked --features=gpui_platform/runtime_shaders";
 
-      stdenv =
-        pkgs:
+      stdenv = pkgs:
         let
           base = pkgs.llvmPackages.stdenv;
           addBinTools = old: {
@@ -213,12 +169,11 @@ let
               inherit (pkgs.llvmPackages) bintools;
             };
           };
-          custom = lib.pipe base [
-            (stdenv: stdenv.override addBinTools)
-            pkgs.stdenvAdapters.useMoldLinker
-          ];
         in
-        if stdenv'.hostPlatform.isLinux then custom else base;
+        lib.pipe base [
+          (stdenv: stdenv.override addBinTools)
+          pkgs.stdenvAdapters.useMoldLinker
+        ];
 
       env = {
         ZSTD_SYS_USE_PKG_CONFIG = true;
@@ -240,7 +195,7 @@ let
 
         # for some reason these deps being in buildInputs isn't enough, the only thing
         # about them that's special is that they're manually dlopened at runtime
-        NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
+        NIX_LDFLAGS = "-rpath ${
           lib.makeLibraryPath [
             gpu-lib
             wayland
@@ -249,15 +204,10 @@ let
         }";
 
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
-      }
-      // lib.optionalAttrs stdenv'.hostPlatform.isDarwin {
-        # Link with lld on Darwin. nixpkgs' classic open-source ld64 fails to insert
-        # ARM64 branch thunks for this binary, producing `b(l) ARM64 branch out of range`.
-        NIX_CFLAGS_LINK = "-fuse-ld=lld";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
-      dontPatchELF = stdenv'.hostPlatform.isLinux;
+      dontPatchELF = true;
 
       # TODO: try craneLib.cargoNextest separate output
       # for now we're not worried about running our test suite (or tests for deps) in the nix sandbox
@@ -328,71 +278,28 @@ craneLib.buildPackage (
       echo nightly > crates/zed/RELEASE_CHANNEL
     '';
 
-    installPhase =
-      if stdenv.hostPlatform.isDarwin then
-        ''
-          runHook preInstall
+    # zed-kask: installPhase is build-only (consumed by the devshell, not packaged).
+    # The installable zed-kask binary is produced by kask/scripts/build/install.sh.
+    installPhase = ''
+      runHook preInstall
 
-          pushd crates/zed
-          sed -i "s/package.metadata.bundle-nightly/package.metadata.bundle/" Cargo.toml
-          export CARGO_BUNDLE_SKIP_BUILD=true
-          app_path="$(cargo bundle --profile $CARGO_PROFILE | xargs)"
-          popd
+      mkdir -p $out/bin $out/libexec
+      cp $TARGET_DIR/zed $out/libexec/zed-editor
+      cp $TARGET_DIR/cli $out/bin/zed-kask
 
-          mkdir -p $out/Applications $out/bin
-          # Zed expects git next to its own binary
-          ln -s ${git}/bin/git "$app_path/Contents/MacOS/git"
-          mv $TARGET_DIR/cli "$app_path/Contents/MacOS/cli"
-          mv "$app_path" $out/Applications/
+      runHook postInstall
+    '';
 
-          # Physical location of the CLI must be inside the app bundle as this is used
-          # to determine which app to start
-          ln -s "$out/Applications/Zed Nightly.app/Contents/MacOS/cli" $out/bin/zed
-
-          runHook postInstall
-        ''
-      else
-        ''
-          runHook preInstall
-
-          mkdir -p $out/bin $out/libexec
-          cp $TARGET_DIR/zed $out/libexec/zed-editor
-          cp $TARGET_DIR/cli  $out/bin/zed
-          ln -s $out/bin/zed $out/bin/zeditor  # home-manager expects the CLI binary to be here
-
-
-          install -D "crates/zed/resources/app-icon-nightly@2x.png" \
-            "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"
-          install -D crates/zed/resources/app-icon-nightly.png \
-            $out/share/icons/hicolor/512x512/apps/zed.png
-
-          # TODO: icons should probably be named "zed-nightly"
-          (
-            export DO_STARTUP_NOTIFY="true"
-            export APP_CLI="zed"
-            export APP_ICON="zed"
-            export APP_NAME="Zed Nightly"
-            export APP_ARGS="%U"
-            mkdir -p "$out/share/applications"
-            ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed-Nightly.desktop"
-            chmod +x "$out/share/applications/dev.zed.Zed-Nightly.desktop"
-          )
-
-          runHook postInstall
-        '';
-
-    # TODO: why isn't this also done on macOS?
-    postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
+    postFixup = ''
       wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
 
     meta = {
-      description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
-      homepage = "https://zed.dev";
-      changelog = "https://zed.dev/releases/preview";
+      description = "zed-kask — fork of the Zed code editor with hKask agent infrastructure";
+      homepage = "https://github.com/mdz-axo/zed-kask";
       license = lib.licenses.gpl3Only;
-      mainProgram = "zed";
-      platforms = lib.platforms.linux ++ lib.platforms.darwin;
+      mainProgram = "zed-kask";
+      platforms = lib.platforms.linux;
     };
   }
 )

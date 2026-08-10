@@ -85,6 +85,30 @@ for src_file in \
         "zed-kask code references upstream Zed icon path instead of kask/assets/icons/"
 done
 
+assert_no_match "$repo_root/crates/zed/Cargo.toml" 'osx_url_schemes.*"zed"' \
+    "crates/zed/Cargo.toml has osx_url_schemes = [\"zed\"] (must be absent or zed-kask)"
+
+# nix/build.nix must not produce a binary named "zed", icons named "zed.png",
+# .desktop files with upstream Zed app IDs, or declare mainProgram = "zed".
+# The derivation is consumed by the devshell only; the installable binary is
+# produced by kask/scripts/build/.
+assert_no_match "$repo_root/nix/build.nix" '\$out/bin/zed[^-]|\$out/bin/zeditor|zed\.png|dev\.zed\.Zed|APP_CLI=.zed.|APP_ICON=.zed.|APP_NAME=.Zed' \
+    "nix/build.nix installPhase produces colliding artifacts"
+assert_no_match "$repo_root/nix/build.nix" 'mainProgram = "zed"' \
+    "nix/build.nix declares mainProgram = \"zed\""
+assert_no_match "$repo_root/nix/build.nix" 'zed\.dev' \
+    "nix/build.nix references upstream Zed homepage/changelog"
+assert_no_match "$repo_root/flake.nix" 'zed\.dev|Zed is a minimal' \
+    "flake.nix references upstream Zed identity"
+
+# nix/modules/packages.nix must not export a package that builds the zed derivation.
+assert_no_match "$repo_root/nix/modules/packages.nix" 'packages\s*=\s*\{' \
+    "nix/modules/packages.nix exports a nix package (zed-kask is not packaged via nix)"
+
+# flake.nix must not reference upstream Zed's cachix.
+assert_no_match "$repo_root/flake.nix" 'zed\.cachix' \
+    "flake.nix references upstream Zed's cachix"
+
 sandbox="$(mktemp -d)"
 trap 'rm -rf "$sandbox"' EXIT
 fake_home="$sandbox/home"
