@@ -145,7 +145,7 @@ impl WebExtractProvider for FirecrawlProvider {
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "Firecrawl extract error {status}: {}",
-                body.chars().take(200).collect::<String>()
+                hkask_inference::openai_compat::sanitize_error_body(&body)
             )));
         }
 

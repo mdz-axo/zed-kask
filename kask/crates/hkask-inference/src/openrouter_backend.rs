@@ -9,7 +9,7 @@
 
 use crate::chat_protocol::{stream_chat_completion, vision_infer};
 use crate::config::InferenceConfig;
-use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages};
+use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages, sanitize_error_body};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
     ChatMessage, ChatToolDefinition, InferenceError, InferenceResult, InferenceStreamChunk,
@@ -277,7 +277,7 @@ impl OpenRouterBackend {
             tracing::warn!(
                 target: "reg.inference",
                 "OpenRouter models error {}: {}",
-                status, body
+                status, sanitize_error_body(&body)
             );
             return Vec::new();
         }

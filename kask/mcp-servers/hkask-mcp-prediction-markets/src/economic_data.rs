@@ -76,6 +76,12 @@ impl<'a> EconomicDataClient<'a> {
     /// responsible for any required API-key query param (FRED appends it
     /// in its adapter; WB/DBnomics are keyless). If the base ends with `/`, no
     /// extra slash is inserted between base and endpoint.
+    ///
+    /// Query param values are URL-encoded so LLM-controlled values (e.g.
+    /// `series_code`, `query`) cannot inject extra params (`&limit=...`) or
+    /// truncate the URL (`#`). Path segments are NOT encoded here — callers
+    /// must validate path-segment inputs against `^[A-Za-z0-9_-]+$` before
+    /// interpolating them into `endpoint` (RR-0052).
     pub fn build_url(base: &str, endpoint: &str, params: &[(&str, &str)]) -> String {
         let mut url = if endpoint.is_empty() {
             base.trim_end_matches('/').to_string()
@@ -94,7 +100,7 @@ impl<'a> EconomicDataClient<'a> {
                 first = false;
                 url.push_str(k);
                 url.push('=');
-                url.push_str(v);
+                url.push_str(&url_encode_value(v));
             }
         }
         url
@@ -132,6 +138,34 @@ impl<'a> EconomicDataClient<'a> {
                 provider,
                 detail: e.to_string(),
             })
+    }
+}
+
+/// Percent-encode a query-parameter value per RFC 3986 (unreserved + `+` for
+/// space). Prevents LLM-controlled values from injecting extra query params
+/// (`&limit=...`) or truncating the URL (`#`) (RR-0052).
+fn url_encode_value(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            b' ' => encoded.push('+'),
+            _ => {
+                encoded.push('%');
+                encoded.push(hex_digit(byte >> 4));
+                encoded.push(hex_digit(byte & 0x0f));
+            }
+        }
+    }
+    encoded
+}
+
+fn hex_digit(n: u8) -> char {
+    match n {
+        0..=9 => (b'0' + n) as char,
+        _ => (b'A' + (n - 10)) as char,
     }
 }
 

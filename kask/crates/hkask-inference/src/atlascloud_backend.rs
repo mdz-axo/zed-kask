@@ -13,6 +13,7 @@
 //! `DeepInfraBackend`. Auth: `Authorization: Bearer {ATLASCLOUD_API_KEY}`.
 
 use crate::config::InferenceConfig;
+use crate::openai_compat::sanitize_error_body;
 use crate::provider::{MediaOp, MediaProvider};
 use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
@@ -68,7 +69,8 @@ impl AtlasCloudBackend {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             return Err(InferenceError::Connection(format!(
-                "AtlasCloud submit {status}: {text}"
+                "AtlasCloud submit {status}: {}",
+                sanitize_error_body(&text)
             )));
         }
 
@@ -96,7 +98,8 @@ impl AtlasCloudBackend {
                 let status = result.status();
                 let text = result.text().await.unwrap_or_default();
                 return Err(InferenceError::Connection(format!(
-                    "AtlasCloud poll {status}: {text}"
+                    "AtlasCloud poll {status}: {}",
+                    sanitize_error_body(&text)
                 )));
             }
 

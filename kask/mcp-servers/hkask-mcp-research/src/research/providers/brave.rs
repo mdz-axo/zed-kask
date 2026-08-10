@@ -55,7 +55,7 @@ impl WebSearchProvider for BraveProvider {
                 429 => WebError::RateLimited(format!("Brave rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "Brave API error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }

@@ -24,7 +24,7 @@ use hkask_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResu
 use reqwest::Client;
 
 /// Maximum length of a provider response body embedded in an error string.
-const ERROR_BODY_MAX_CHARS: usize = 200;
+pub const ERROR_BODY_MAX_CHARS: usize = 200;
 
 /// Secret-shaped prefixes that a provider error page or proxy debug dump may
 /// echo back (CWE-209). Redaction is a simple prefix scan, not a parser:
@@ -32,13 +32,34 @@ const ERROR_BODY_MAX_CHARS: usize = 200;
 ///
 /// All prefixes MUST be lowercase — they are matched against the lowercased
 /// body in `redact_secret_tokens`.
-const SECRET_PREFIXES: &[&str] = &["authorization:", "bearer ", "sk-", "api_key"];
+pub const SECRET_PREFIXES: &[&str] = &[
+    "authorization:",
+    "bearer ",
+    "sk-",
+    "api_key",
+    // Common credential prefixes beyond OpenAI's `sk-` (RR-0049/0050/0051):
+    // GitHub PATs, AWS keys, Slack tokens, GitLab tokens, JWTs.
+    "ghp_",
+    "gho_",
+    "ghu_",
+    "ghs_",
+    "ghr_",
+    "akaa", // AWS access key id prefix (case-insensitive match)
+    "xoxb-",
+    "xoxp-",
+    "glpat-",
+    "eyj", // JWT header base64 prefix (eyJ...)
+];
 
 /// Sanitizes a raw provider response body before embedding it in an error
 /// string: redacts secret-shaped substrings (prefix through the end of the
 /// whitespace-delimited token) and truncates to [`ERROR_BODY_MAX_CHARS`]
 /// (char-boundary safe) with a total-length suffix.
-fn sanitize_error_body(body: &str) -> String {
+///
+/// Shared across inference backends, the MCP `classify_http_error` helper,
+/// and research providers (RR-0035 class — RR-0049/0050/0051).
+#[must_use]
+pub fn sanitize_error_body(body: &str) -> String {
     let redacted = redact_secret_tokens(body);
     let total_bytes = body.len();
     if redacted.chars().count() <= ERROR_BODY_MAX_CHARS {
@@ -53,7 +74,7 @@ fn sanitize_error_body(body: &str) -> String {
     }
 }
 
-fn redact_secret_tokens(body: &str) -> String {
+pub fn redact_secret_tokens(body: &str) -> String {
     // Case-insensitive byte-index scan; prefixes are ASCII so byte matching is exact.
     let lower = body.to_ascii_lowercase();
     let mut output = String::with_capacity(body.len());

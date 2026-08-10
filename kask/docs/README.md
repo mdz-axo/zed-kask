@@ -21,6 +21,7 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 | Document                                                                                | Description                                                                                                                                               |
 | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`zed-host-architecture-plan.md`](architecture/zed-host-architecture-plan.md)           | **Canonical architecture** — D1–D23 integration seams, composition root, crate inventory, deletion history.                                               |
+| [`memory-system-specification.md`](architecture/memory-system-specification.md)         | **Memory system spec** — vector + relational lookup, ingestion, recall, consolidation, decay, configuration.                                              |
 | [`salience-specification.md`](architecture/salience-specification.md)                   | Passage salience algorithm for `hkask-memory` (`compute_salience_batch`).                                                                                 |
 | [`core/PRINCIPLES.md`](architecture/core/PRINCIPLES.md)                                 | Architecture principles P1–P12.                                                                                                                           |
 | [`core/magna-carta.md`](architecture/core/magna-carta.md)                               | The Magna Carta — 4 sovereignty principles (P1–P4).                                                                                                       |
@@ -44,17 +45,18 @@ mds_categories: [domain, composition, trust, lifecycle, curation]
 
 ## Explanation
 
-| Document                                                                                   | Description                                                |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md)           | Skill anatomy, invocation, composition.                    |
-| [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md)             | Scenario forecasting, ν-event semantics, Companies server. |
-| [`explanation/companies-mcp.md`](explanation/companies-mcp.md)                             | Companies MCP server design.                               |
-| [`explanation/forecasting-and-scenarios.md`](explanation/forecasting-and-scenarios.md)     | Forecasting across skill, library, and scenarios layers.   |
-| [`explanation/ontology-anchored-embedding.md`](explanation/ontology-anchored-embedding.md) | Tag→embed corpus pipeline.                                 |
-| [`explanation/training-and-adapters.md`](explanation/training-and-adapters.md)             | RunPod/Unsloth LoRA training path.                         |
-| [`explanation/runpod-lora-training-guide.md`](explanation/runpod-lora-training-guide.md)   | RunPod LoRA training lessons.                              |
-| [`explanation/security-skills-smoke-test.md`](explanation/security-skills-smoke-test.md)   | Manual smoke-test procedure.                               |
-| [`explanation/abw-swarm-orchestration.md`](explanation/abw-swarm-orchestration.md)         | Agent Bestiary World swarm orchestration design.           |
+| Document                                                                                   | Description                                                                   |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| [`explanation/skills-and-composition.md`](explanation/skills-and-composition.md)           | Skill anatomy, invocation, composition.                                       |
+| [`explanation/memory-system.md`](explanation/memory-system.md)                             | **Memory system** — why vector + relational, the entity_ref bug, decay model. |
+| [`explanation/cognition-and-replica.md`](explanation/cognition-and-replica.md)             | Scenario forecasting, ν-event semantics, Companies server.                    |
+| [`explanation/companies-mcp.md`](explanation/companies-mcp.md)                             | Companies MCP server design.                                                  |
+| [`explanation/forecasting-and-scenarios.md`](explanation/forecasting-and-scenarios.md)     | Forecasting across skill, library, and scenarios layers.                      |
+| [`explanation/ontology-anchored-embedding.md`](explanation/ontology-anchored-embedding.md) | Tag→embed corpus pipeline.                                                    |
+| [`explanation/training-and-adapters.md`](explanation/training-and-adapters.md)             | RunPod/Unsloth LoRA training path.                                            |
+| [`explanation/runpod-lora-training-guide.md`](explanation/runpod-lora-training-guide.md)   | RunPod LoRA training lessons.                                                 |
+| [`explanation/security-skills-smoke-test.md`](explanation/security-skills-smoke-test.md)   | Manual smoke-test procedure.                                                  |
+| [`explanation/abw-swarm-orchestration.md`](explanation/abw-swarm-orchestration.md)         | Agent Bestiary World swarm orchestration design.                              |
 
 ## Research
 

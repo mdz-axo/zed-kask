@@ -1,5 +1,6 @@
 //! HTTP helpers — tool output wrapper, error classification, and REST convenience functions.
 
+use hkask_inference::openai_compat::sanitize_error_body;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -33,7 +34,8 @@ impl McpToolOutput {
 /// post: returns McpToolError with appropriate kind based on status code
 #[must_use]
 pub fn classify_http_error(service: &str, status: reqwest::StatusCode, body: &str) -> McpToolError {
-    let msg = format!("{service} API returned {status}: {}", body.trim());
+    let sanitized = sanitize_error_body(body);
+    let msg = format!("{service} API returned {status}: {}", sanitized.trim());
     match status.as_u16() {
         401 | 403 => McpToolError::permission_denied(msg),
         404 => McpToolError::not_found(msg),

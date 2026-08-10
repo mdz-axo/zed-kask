@@ -12,7 +12,7 @@ use crate::chat_protocol::{
 };
 use crate::config::InferenceConfig;
 use crate::fal_workflow::{ExecutionMode, WorkflowResult};
-use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages};
+use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages, sanitize_error_body};
 use crate::provider::{MediaOp, MediaProvider};
 use crate::workflow::NodeExecutor;
 use hkask_types::template::LLMParameters;
@@ -162,7 +162,7 @@ impl FalBackend {
             let body = response.text().await.unwrap_or_default();
             return Err(InferenceError::Connection(format!(
                 "fal.ai {}: {}",
-                status, body
+                status, sanitize_error_body(&body)
             )));
         }
         let body = response
@@ -261,7 +261,7 @@ impl FalBackend {
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "fal.ai {} status {}: {}",
-                endpoint, status, text
+                endpoint, status, sanitize_error_body(&text)
             )));
         }
         serde_json::from_str(&text)

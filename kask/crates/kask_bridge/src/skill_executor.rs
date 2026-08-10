@@ -344,13 +344,22 @@ impl BridgeManifestExecutor {
     /// Construct a `ManifestExecutor` with the bridge's inference/tools and
     /// profile resolver. Factored out of `execute_skill` so both paths share
     /// the same executor wiring.
+    ///
+    /// Wires `DefaultPolicy` as the runtime policy so the FIDES Source→Sink
+    /// block (Layer 4) fires on every production cascade. Without this, the
+    /// `reg.guard.runtime_policy` span and Block/RequireHuman enforcement
+    /// are dead code — `runtime_policy` stays `None` and untrusted input flows
+    /// to Sink tools unchecked (OWASP LLM06, RR-0053).
     fn build_executor(&self) -> ManifestExecutor {
         let executor = ManifestExecutor::new(
             self.inference.clone(),
             self.tools.clone(),
             hkask_types::template::LLMParameters::default(),
         )
-        .with_template_base_path(self.registry_templates_dir.clone());
+        .with_template_base_path(self.registry_templates_dir.clone())
+        .with_runtime_policy(std::sync::Arc::new(
+            hkask_regulation::DefaultPolicy::default(),
+        ));
 
         if let Some(ref resolver) = self.profile_resolver {
             let resolver = resolver.clone();

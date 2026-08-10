@@ -1197,7 +1197,7 @@ impl MemoryPort for RealMemoryPort {
             // back to the h_mem holding the full turn text. A separate
             // `embedding:thread:...` namespace was dead code — no h_mem was
             // ever stored under it, so the semantic recall leg always
-            // returned zero snippets. See the `recall_context_finds_turn_by_embedding_similarity`
+            // returned zero snippets. See the `recall_context_finds_turn_by_embedding_only`
             // test for the end-to-end pin.
             let embedding_entity = entity.clone();
             // Spawn the embedding HTTP call on the tokio runtime so the

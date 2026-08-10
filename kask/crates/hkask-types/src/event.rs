@@ -444,6 +444,10 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.training.provider.runpod.upload",
     // ── Training checkpoint (pod restart → Axolotl auto-resume) ──
     "reg.training.checkpoint.resume",
+    // ── Widget (viz widget render + compose-back telemetry — D18/D21 seams) ──
+    // Hierarchical: reg.widget.* children (render, disagree, graph_render,
+    // evidence_set, whatif_discarded, reask) are valid via ancestor match.
+    "reg.widget",
 ];
 
 /// Hierarchical namespace validation — a sub-namespace like

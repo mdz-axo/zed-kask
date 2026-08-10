@@ -52,7 +52,7 @@ impl WebBrowseProvider for BrowserbaseProvider {
         if !status.is_success() {
             return Err(WebError::ProviderError(format!(
                 "Browserbase error {status}: {}",
-                body.chars().take(200).collect::<String>()
+                hkask_inference::openai_compat::sanitize_error_body(&body)
             )));
         }
 

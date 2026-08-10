@@ -56,7 +56,7 @@ impl WebSearchProvider for TavilyProvider {
                 429 => WebError::RateLimited(format!("Tavily rate limited: {status}")),
                 _ => WebError::ProviderError(format!(
                     "Tavily API error {status}: {}",
-                    body.chars().take(200).collect::<String>()
+                    hkask_inference::openai_compat::sanitize_error_body(&body)
                 )),
             });
         }

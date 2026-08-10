@@ -26,11 +26,11 @@ The `hkask-mcp-scenarios` server integrates three complementary research framewo
 
 #### Theoretical Foundations
 
-| Framework | Author | Core Question | Tool Stage |
-|-----------|--------|---------------|------------|
-| **Schwartz Method** | Peter Schwartz, *The Art of the Long View* (1991) | "What could happen?" | `scenario-builder` skill's 2×2 pipeline; companies 2×2 bridge |
-| **Superforecasting** | Philip Tetlock, *Superforecasting* (2015) | "How likely is each event?" | `scenario_calibrate`, `scenario_update`, `scenario_score`, `scenario_synthesize`, `scenario_calibration` |
-| **Performance-Based Scenario System** | Thomas Chermack, *Scenario Planning in Organizations* (2011) | "Did the project improve decision quality?" | `scenario_frame`, `scenario_assess` |
+| Framework                             | Author                                                       | Core Question                               | Tool Stage                                                                                               |
+| ------------------------------------- | ------------------------------------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Schwartz Method**                   | Peter Schwartz, _The Art of the Long View_ (1991)            | "What could happen?"                        | `scenario-builder` skill's 2×2 pipeline; companies 2×2 bridge                                            |
+| **Superforecasting**                  | Philip Tetlock, _Superforecasting_ (2015)                    | "How likely is each event?"                 | `scenario_calibrate`, `scenario_update`, `scenario_score`, `scenario_synthesize`, `scenario_calibration` |
+| **Performance-Based Scenario System** | Thomas Chermack, _Scenario Planning in Organizations_ (2011) | "Did the project improve decision quality?" | `scenario_frame`, `scenario_assess`                                                                      |
 
 Schwartz developed his method at Royal Dutch Shell, anticipating the 1973 oil crisis, 1986 price collapse, and Soviet collapse — not by predicting any of them, but by having strategies ready for worlds where they could happen. Key concepts: focal question, driving forces (STEEP: Society, Technology, Economy, Environment, Politics), critical uncertainties (importance × uncertainty → 2×2 matrix), scenario narratives, robust strategies, early-warning indicators.
 
@@ -48,15 +48,15 @@ The `scenario_frame` tool is designed to invite rather than interrogate. Most sc
 
 **Behavioral Psychology**: Foot-in-the-door (Cialdini), curiosity gap (Loewenstein), loss aversion (Kahneman), social proof (Cialdini), peak-end rule (Kahneman), processing fluency, IKEA effect (Norton, Mochon, Ariely).
 
-| Turn | Opening | Improv Mode | Psychology | What it captures |
-|------|---------|-------------|------------|------------------|
-| 1 | "So — tell me a bit about what's on your mind." | Plussing | Foot-in-the-door | Subject, context, emotional stakes |
-| 2 | "If you had a clearer picture, what would you actually do differently?" | Yes, And | Curiosity gap | Decision at stake, focal question |
-| 3 | "When do you actually need to make this call?" | Coaching | Temporal anchoring | Time horizon, action deadline |
-| 4 | "Let's start with what's definitely NOT on the table." | Yes, But | Loss aversion | Out-of-scope, then in-scope |
-| 5 | "Who else has skin in this game?" | Plussing | Social proof + contrarian | Stakeholders and perspectives |
-| 6 | "What does 'good enough' look like?" | Yes, And | Peak-end begins | Success criteria, use case |
-| 7 | "What are we assuming that might be completely wrong?" | Yes, But | Peak-end closes | Assumptions, constraints |
+| Turn | Opening                                                                 | Improv Mode | Psychology                | What it captures                   |
+| ---- | ----------------------------------------------------------------------- | ----------- | ------------------------- | ---------------------------------- |
+| 1    | "So — tell me a bit about what's on your mind."                         | Plussing    | Foot-in-the-door          | Subject, context, emotional stakes |
+| 2    | "If you had a clearer picture, what would you actually do differently?" | Yes, And    | Curiosity gap             | Decision at stake, focal question  |
+| 3    | "When do you actually need to make this call?"                          | Coaching    | Temporal anchoring        | Time horizon, action deadline      |
+| 4    | "Let's start with what's definitely NOT on the table."                  | Yes, But    | Loss aversion             | Out-of-scope, then in-scope        |
+| 5    | "Who else has skin in this game?"                                       | Plussing    | Social proof + contrarian | Stakeholders and perspectives      |
+| 6    | "What does 'good enough' look like?"                                    | Yes, And    | Peak-end begins           | Success criteria, use case         |
+| 7    | "What are we assuming that might be completely wrong?"                  | Yes, But    | Peak-end closes           | Assumptions, constraints           |
 
 #### The Integrated Pipeline
 
@@ -118,6 +118,7 @@ flowchart TD
     SYNTH --> TRACK
     TRACK --> ASSESS
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-002
 verified_date: 2026-08-05
@@ -177,14 +178,14 @@ The emission contract has three participants:
 
 The `RegulationSpan` enum at `crates/hkask-types/src/regulation.rs` defines the core span identifiers:
 
-| Variant | Namespace | Purpose |
-|---------|-----------|--------|
+| Variant              | Namespace              | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `Tool { subsystem }` | `reg.tool.{subsystem}` | MCP subsystems for the 11 on-disk servers (codegraph, companies, condenser, corpus, curator, kata-kanban, media, research, scenarios, swarm, training) plus legacy `ToolSubsystem` variants (`communication`, `filesystem`, `memory`, `registry`, `wallet`, `web_search`) retained in the enum for span-name stability. The deleted `communication`, `filesystem`, `memory`, `skill`, and `regulation` MCP servers no longer emit spans. `codegraph` routes through `ToolSubsystem::Other` (no dedicated variant). |
-| `Inference` | `reg.inference` | LLM request/response |
-| `Gas` | `reg.gas` | Energy consumption tracking |
-| `Curation` | `reg.curation` | Registry sync, pod sync, directive issuance |
-| `SelfHeal` | `reg.heal` | Self-healing operations |
-| `MemoryEncode` | `reg.memory.encode` | Memory encoding events |
+| `Inference`          | `reg.inference`        | LLM request/response                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `Gas`                | `reg.gas`              | Energy consumption tracking                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `Curation`           | `reg.curation`         | Registry sync, pod sync, directive issuance                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `SelfHeal`           | `reg.heal`             | Self-healing operations                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `MemoryEncode`       | `reg.memory.encode`    | Memory encoding events                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 The `SpanKind` enum at `event.rs` provides typed construction for common spans, eliminating string typos: `ToolInvoked`, `ToolCompleted`, `ToolError`, `GasReserved`, `GasSettled`, `GasDepleted`, `CurationDirectiveAcknowledged`, `CurationEscalation`, `VarietyAlgedonicAlert`, `DepositCredited`, and the v0.31.0 regulation spans (`ImpactVerified`, `ActionSubstituted`, `ActionBlocked`, `RegulatoryPlateauDetected`, `LoopMetricsTelemetry`).
 
@@ -224,6 +225,7 @@ flowchart TD
     STORE -->|"algedonic events"| CURATOR
     STORE -->|"replay_weighted()"| Regulation
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-003
 verified_date: 2026-07-29
@@ -295,7 +297,7 @@ The active DCF model uses a Gordon-growth terminal value and subtracts net debt 
   "forecast_date": "2025-01-01",
   "horizon": "1yr",
   "forecast_multiple": 30.0,
-  "forecast_price_change": 0.10,
+  "forecast_price_change": 0.1,
   "outcome_date": "2026-01-01",
   "actual_multiple": 28.0,
   "actual_price_change": 0.03,
@@ -348,6 +350,7 @@ flowchart TD
     REQ -->|"ledger_import"| LEDGER
     LEDGER -->|"portfolio_returns,\nattribution"| REQ
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-004
 verified_date: 2026-08-05
@@ -365,23 +368,23 @@ The owner-scoped portfolio storage is P1 (User Sovereignty) and P12 (Authenticat
 
 ## References
 
-[^schwartz]: Schwartz, P. (1991). *The Art of the Long View: Planning for the Future in an Uncertain World*. Currency Doubleday.
+[^schwartz]: Schwartz, P. (1991). _The Art of the Long View: Planning for the Future in an Uncertain World_. Currency Doubleday.
 
-[^tetlock]: Tetlock, P. E., & Gardner, D. (2015). *Superforecasting: The Art and Science of Prediction*. Crown.
+[^tetlock]: Tetlock, P. E., & Gardner, D. (2015). _Superforecasting: The Art and Science of Prediction_. Crown.
 
-[^chermack]: Chermack, T. J. (2011). *Scenario Planning in Organizations: How to Create, Use, and Assess Scenarios*. Berrett-Koehler.
+[^chermack]: Chermack, T. J. (2011). _Scenario Planning in Organizations: How to Create, Use, and Assess Scenarios_. Berrett-Koehler.
 
-- Brier, G. W. (1950). "Verification of forecasts expressed in terms of probability." *Monthly Weather Review*, 78(1), 1–3.
-- Murphy, A. H. (1973). "A New Vector Partition of the Probability Score." *Journal of Applied Meteorology*, 12(4), 595–600.
-- Cialdini, R. B. (2007). *Influence: The Psychology of Persuasion*. HarperCollins. (Foot-in-the-door, social proof)
-- Loewenstein, G. (1994). "The Psychology of Curiosity: A Review and Reinterpretation." *Psychological Bulletin*, 116(1), 75–98.
-- Kahneman, D. (2011). *Thinking, Fast and Slow*. Farrar, Straus and Giroux. (Loss aversion, peak-end rule)
-- Norton, M. I., Mochon, D., & Ariely, D. (2012). "The IKEA effect: When labor leads to love." *Journal of Consumer Psychology*, 22(3), 453–460.
+- Brier, G. W. (1950). "Verification of forecasts expressed in terms of probability." _Monthly Weather Review_, 78(1), 1–3.
+- Murphy, A. H. (1973). "A New Vector Partition of the Probability Score." _Journal of Applied Meteorology_, 12(4), 595–600.
+- Cialdini, R. B. (2007). _Influence: The Psychology of Persuasion_. HarperCollins. (Foot-in-the-door, social proof)
+- Loewenstein, G. (1994). "The Psychology of Curiosity: A Review and Reinterpretation." _Psychological Bulletin_, 116(1), 75–98.
+- Kahneman, D. (2011). _Thinking, Fast and Slow_. Farrar, Straus and Giroux. (Loss aversion, peak-end rule)
+- Norton, M. I., Mochon, D., & Ariely, D. (2012). "The IKEA effect: When labor leads to love." _Journal of Consumer Psychology_, 22(3), 453–460.
 - Companies MCP Server Reference at `docs/reference/mcp-servers/README.md` (Companies MCP Server section)
+
 ---
 
 ## Embedding Architecture (Merged from EMBEDDING_ARCHITECTURE.md)
-
 
 # Embedding Architecture — QA Pipeline
 
@@ -389,33 +392,33 @@ The owner-scoped portfolio storage is P1 (User Sovereignty) and P12 (Authenticat
 
 ## Current State
 
-| Component | Uses Embeddings? | How |
-|-----------|-----------------|-----|
-| `corpus_embed` | ✅ Produces | Embeds 20K+ chunks → EmbeddingStore |
-| `corpus_salience` | ❌ No | Graph-centrality only |
-| `build-prompts` | ❌ No | Salience + concepts only |
-| `generate-qa` | ❌ No | Raw text → LLM |
-| `ingest-qa` | ✅ Produces | Embeds QAs AFTER generation |
-| `corpus_build_persona` | ✅ Produces | Embeds corpus for persona centroids |
+| Component              | Uses Embeddings? | How                                 |
+| ---------------------- | ---------------- | ----------------------------------- |
+| `corpus_embed`         | ✅ Produces      | Embeds 20K+ chunks → EmbeddingStore |
+| `corpus_salience`      | ❌ No            | Graph-centrality only               |
+| `build-prompts`        | ❌ No            | Salience + concepts only            |
+| `generate-qa`          | ❌ No            | Raw text → LLM                      |
+| `ingest-qa`            | ✅ Produces      | Embeds QAs AFTER generation         |
+| `corpus_build_persona` | ✅ Produces      | Embeds corpus for persona centroids |
 
 ## Gap: Embeddings Not Used in QA Generation
 
-| Opportunity | Impact | Difficulty |
-|-------------|--------|------------|
-| **Chunk dedup** (cosine >0.95) | −15% inference cost | Medium — needs DB access in build-prompts |
-| **MMR selection** (salience + diversity) | Fewer redundant QAs | Medium — needs vec0 KNN queries |
-| **Semantic cross-ref** (embedding groups) | Better synthesis QAs | Hard — O(n²) without index |
-| **QA-chunk alignment** (cosine validation) | Catch hallucinations | Easy — already have both embeddings |
+| Opportunity                                | Impact               | Difficulty                                |
+| ------------------------------------------ | -------------------- | ----------------------------------------- |
+| **Chunk dedup** (cosine >0.95)             | −15% inference cost  | Medium — needs DB access in build-prompts |
+| **MMR selection** (salience + diversity)   | Fewer redundant QAs  | Medium — needs vec0 KNN queries           |
+| **Semantic cross-ref** (embedding groups)  | Better synthesis QAs | Hard — O(n²) without index                |
+| **QA-chunk alignment** (cosine validation) | Catch hallucinations | Easy — already have both embeddings       |
 
 ## Why Keep Qwen3-Embedding-0.6B
 
-| Factor | Analysis |
-|--------|----------|
-| MTEB retrieval | ~60% (adequate for dedup at 0.95 threshold) |
-| Upgrade cost | Re-embed 20K chunks + 7K QAs → 4+ hours |
-| Dim compatibility | 1024 matches EMBEDDING_DIM hardcoded everywhere |
+| Factor             | Analysis                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| MTEB retrieval     | ~60% (adequate for dedup at 0.95 threshold)                                                  |
+| Upgrade cost       | Re-embed 20K chunks + 7K QAs → 4+ hours                                                      |
+| Dim compatibility  | 1024 matches EMBEDDING_DIM hardcoded everywhere                                              |
 | Academic consensus | Simple embeddings beat complex methods for data selection (Large-Scale Data Selection, 2025) |
-| DEITA threshold | 0.9-0.95 for Repr Filter on OpenHermes/Tulu3 pools |
+| DEITA threshold    | 0.9-0.95 for Repr Filter on OpenHermes/Tulu3 pools                                           |
 
 ## Upgrade Path (when justified)
 
@@ -427,6 +430,7 @@ The owner-scoped portfolio storage is P1 (User Sovereignty) and P12 (Authenticat
 ## Ontological Anchoring
 
 The `concepts` field in tagged_chunks.jsonl serves as a lightweight investment ontology:
+
 - Competitive positioning: `competitive advantage`, `moat`, `barriers to entry`
 - Valuation: `discounted cash flow`, `DCF`, `multiples`, `intrinsic value`
 - Return analysis: `return on capital`, `ROIC`, `ROE`, `economic profit`
@@ -443,31 +447,35 @@ The following Mermaid diagrams were inlined from the former `docs/diagrams/` dir
 
 ### Memory Pipeline — Episodic → Semantic
 
-*Inlined from `docs/diagrams/sequence-memory-pipeline.md`*
+> **Superseded (2026-08-10):** The diagram and description below referenced the
+> deleted `EpisodicMemory` / `SemanticMemory` / `ConsentManager` /
+> `ConsolidationBridge` / `generate_narrative` architecture from the standalone
+> daemon era. The current memory system is a simpler vector + relational
+> lookup design. See:
+>
+> - [Memory System Specification](../architecture/memory-system-specification.md) — the current architecture
+> - [Memory System — Why It Works This Way](./memory-system.md) — the explanation
+> - [Memory Ingest Sequence](../diagrams/sequence-memory-ingest.md) — the write-side diagram
+> - [Memory Recall Flow](../diagrams/flowchart-memory-recall.md) — the read-side diagram
+> - [Memory Store ERD](../diagrams/erd-memory-store.md) — the storage schema
+>
+> The stale diagram is retained below for historical reference only.
 
+### Visibility and Perspective Rules (current)
 
-# Memory Pipeline — Episodic → Semantic with Visibility Gating
+| Store                       | `visibility` | `perspective`         | Who can read?              |
+| --------------------------- | ------------ | --------------------- | -------------------------- |
+| Episodic (user `memory.db`) | `Private`    | `Some(user_webid)`    | Only owning user           |
+| Episodic (curator `pod.db`) | `Private`    | `Some(curator_webid)` | Only curator               |
+| Semantic (curator `pod.db`) | `Shared`     | `Some(curator_webid)` | Curator + user recall path |
 
-## Description
+### Consolidation Rules (current)
 
-The hKask memory pipeline implements a two-layer (episodic + semantic) psycho-cybernetic memory architecture. Tool call experiences enter through `record_experience()` into the private episodic store, scoped to the agent's `perspective` (WebID). Every 10 experiences, a narrative generation loop (`generate_narrative()`) triggers the `ConsolidationBridge` to promote episodic hMems into the shared semantic store. The consolidation is one-way and irreversible: episodic perspective is stripped, confidence is decayed via the Wozniak-Gorzelanczyk forgetting curve, and hMems are either Bayesian-combined with existing semantic matches or seeded as new entries. A `ConsentManager` gates visibility transitions: episodic stays private (sovereign), semantic requires Public/Shared visibility.
-
-**Key source:** `crates/hkask-memory/src/episodic.rs:51-220` (`EpisodicMemory`), `crates/hkask-memory/src/semantic.rs:61-130` (`SemanticMemory`), `crates/hkask-memory/src/consolidation.rs:26-168` (`ConsolidationBridge`), `crates/hkask-memory/src/consolidation_service.rs:10-100` (`ConsolidationService`). In zed-kask, experience recording is driven in-process by the thread→memory bridge (D6) and the `ToolSpanGuard` experience callback; the former `daemon_impl::store_experience` / `generate_narrative` functions were removed when the standalone daemon was deleted.
-
-### Visibility and Perspective Rules
-
-| Store | `visibility` | `perspective` | Who can read? |
-|-------|-------------|--------------|---------------|
-| Episodic | `Private` only | `Some(agent_webid)` | Only owning agent |
-| Semantic | `Shared` / `Public` | `None` | Any agent with capability token |
-
-### Consolidation Rules
-
-| Scenario | Action | Confidence |
-|----------|--------|------------|
-| EAV match in semantic | Bayesian combine | `combine_confidences(existing, episodic_decayed)` |
-| No EAV match | Seed new semantic hMem | Decayed episodic confidence |
-| Episodic hMem expired | Soft-delete via `valid_to` | Source removed from episodic |
+| Scenario              | Action                     | Confidence                                        |
+| --------------------- | -------------------------- | ------------------------------------------------- |
+| EAV match in semantic | Bayesian combine           | `combine_confidences(existing, episodic_decayed)` |
+| No EAV match          | Seed new semantic hMem     | Decayed episodic confidence                       |
+| Episodic hMem expired | Soft-delete via `valid_to` | Source removed from episodic                      |
 
 ```mermaid
 sequenceDiagram
@@ -610,11 +618,12 @@ sequenceDiagram
         Note over Sem: recall_dedup::dedup_h_mems(filtered)
     end
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-005
 verified_date: 2026-07-24
 verified_against: crates/hkask-memory/src/episodic.rs, crates/hkask-memory/src/consolidation_service.rs, crates/hkask-mcp-server/src/server/tool_span.rs (in-process experience callback, D6)
-status: VERIFIED
+status: SUPERSEDED 2026-08-10 — references deleted EpisodicMemory/SemanticMemory/ConsentManager/ConsolidationBridge. See ../architecture/memory-system-specification.md for the current architecture.
 -->
 
 ## Confidence Flow Through Pipeline
@@ -647,14 +656,15 @@ sequenceDiagram
         Bridge->>+Sem: store_consolidated(episodic_c)
     end
 ```
+
 ## Per-Agent SQLCipher Isolation
 
-| Dimension | Episodic | Semantic |
-|-----------|----------|----------|
-| Filter column | `perspective = agent_webid` | `visibility IN (Shared, Public)` |
-| Encryption | Per-agent SQLCipher key | Shared encryption key |
-| Dedup strategy | `recall_dedup::dedup_h_mems()` | `recall_dedup::dedup_h_mems()` |
-| Confidence at read | Wozniak-Gorzelanczyk decay applied | Wozniak-Gorzelanczyk decay applied |
+| Dimension          | Episodic                              | Semantic                                              |
+| ------------------ | ------------------------------------- | ----------------------------------------------------- |
+| Filter column      | `perspective = agent_webid`           | `visibility IN (Shared, Public)`                      |
+| Encryption         | Per-agent SQLCipher key               | Shared encryption key                                 |
+| Dedup strategy     | `recall_dedup::dedup_h_mems()`        | `recall_dedup::dedup_h_mems()`                        |
+| Confidence at read | Wozniak-Gorzelanczyk decay applied    | Wozniak-Gorzelanczyk decay applied                    |
 | Budget enforcement | (EpisodicLoop removed — aspirational) | `ConsolidationService` (confidence floor + max count) |
 
 ---
@@ -676,26 +686,24 @@ status: VERIFIED
 
 ## Cross-Reference
 
-| Reference | Description |
-|-----------|-------------|
-| [`EpisodicMemory`](crates/hkask-memory/src/episodic.rs:51-220) | Private, perspective-scoped memory with confidence decay |
-| [`SemanticMemory`](crates/hkask-memory/src/semantic.rs:61-175) | Shared, public memory with confidence decay and similarity-augmented recall |
-| [`ConsolidationBridge`](crates/hkask-memory/src/consolidation.rs:26-168) | One-way episodic→semantic promotion with Bayesian combination |
-| [`ConsolidationService`](crates/hkask-memory/src/consolidation_service.rs:10-100) | Combined consolidation + semantic cleanup |
-| ~~`EpisodicLoop`~~ (removed — aspirational, never constructed) | Cybernetic loop with budget regulation — was never constructed; budget enforcement moved to `ConsolidationService` |
-| [`recall_dedup`](crates/hkask-memory/src/recall_dedup.rs:10-57) | BLAKE3 EAV-hash deduplication layer |
-| ~~`MemoryPorts`~~ (removed — aspirational) | Episodic and Semantic storage port traits (`EpisodicStoragePort`/`SemanticStoragePort`) were aspirational and removed |
-| [`store_experience` / `generate_narrative`](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | In-process experience recording (thread→memory bridge, D6) and narrative generation; the former daemon-based implementations were removed |
-| [`ToolSpanGuard` experience callback](crates/hkask-mcp-server/src/server/tool_span.rs:78-84) | Experience callback wiring for tool span guards |
-| [Magna Carta P1](../reference/magna-carta.md#p1-user-sovereignty) | User Sovereignty — episodic memory as sovereign first-person |
-| Consent flow sequence (deleted — `sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | Consent flow for visibility gating (DIAG-TO-006-CM) |
-| Regulation span emission sequence (inlined in `regulation-and-loops.md`) | Regulation span emission for memory encode spans (DIAG-TO-004) |
-
+| Reference                                                                                           | Description                                                                                                                               |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| [`EpisodicMemory`](crates/hkask-memory/src/episodic.rs:51-220)                                      | Private, perspective-scoped memory with confidence decay                                                                                  |
+| [`SemanticMemory`](crates/hkask-memory/src/semantic.rs:61-175)                                      | Shared, public memory with confidence decay and similarity-augmented recall                                                               |
+| [`ConsolidationBridge`](crates/hkask-memory/src/consolidation.rs:26-168)                            | One-way episodic→semantic promotion with Bayesian combination                                                                             |
+| [`ConsolidationService`](crates/hkask-memory/src/consolidation_service.rs:10-100)                   | Combined consolidation + semantic cleanup                                                                                                 |
+| ~~`EpisodicLoop`~~ (removed — aspirational, never constructed)                                      | Cybernetic loop with budget regulation — was never constructed; budget enforcement moved to `ConsolidationService`                        |
+| [`recall_dedup`](crates/hkask-memory/src/recall_dedup.rs:10-57)                                     | BLAKE3 EAV-hash deduplication layer                                                                                                       |
+| ~~`MemoryPorts`~~ (removed — aspirational)                                                          | Episodic and Semantic storage port traits (`EpisodicStoragePort`/`SemanticStoragePort`) were aspirational and removed                     |
+| [`store_experience` / `generate_narrative`](crates/hkask-mcp-server/src/server/tool_span.rs:78-84)  | In-process experience recording (thread→memory bridge, D6) and narrative generation; the former daemon-based implementations were removed |
+| [`ToolSpanGuard` experience callback](crates/hkask-mcp-server/src/server/tool_span.rs:78-84)        | Experience callback wiring for tool span guards                                                                                           |
+| [Magna Carta P1](../reference/magna-carta.md#p1-user-sovereignty)                                   | User Sovereignty — episodic memory as sovereign first-person                                                                              |
+| Consent flow sequence (deleted — `sovereignty-and-ocap.md` removed 2026-07-24; recoverable via git) | Consent flow for visibility gating (DIAG-TO-006-CM)                                                                                       |
+| Regulation span emission sequence (inlined in `regulation-and-loops.md`)                            | Regulation span emission for memory encode spans (DIAG-TO-004)                                                                            |
 
 ### Memory Remember — Template Cascade
 
-*Inlined from `docs/diagrams/flowchart-memory-remember.md`*
-
+_Inlined from `docs/diagrams/flowchart-memory-remember.md`_
 
 # Memory Remember — Template Cascade
 
@@ -732,6 +740,7 @@ flowchart TD
         SE
     end
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-007
 verified_date: 2026-07-12
@@ -739,11 +748,9 @@ verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.r
 status: VERIFIED
 -->
 
-
 ### Classification-to-Memory Sequence
 
-*Inlined from `docs/diagrams/sequence-classify-to-memory.md`*
-
+_Inlined from `docs/diagrams/sequence-classify-to-memory.md`_
 
 # Classification-to-Memory Sequence
 
@@ -782,6 +789,7 @@ sequenceDiagram
         I->>Memory: store_passage_h_mems()
     end
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-008
 verified_date: 2026-07-12
@@ -789,11 +797,9 @@ verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.r
 status: VERIFIED
 -->
 
-
 ### Classification Flow
 
-*Inlined from `docs/diagrams/flowchart-algo-classification.md`*
-
+_Inlined from `docs/diagrams/flowchart-algo-classification.md`_
 
 # Classification Flow
 
@@ -835,10 +841,10 @@ flowchart TD
         I
     end
 ```
+
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-COG-009
 verified_date: 2026-07-12
 verified_against: crates/hkask-types/src/event.rs, crates/hkask-memory/src/lib.rs
 status: VERIFIED
 -->
-

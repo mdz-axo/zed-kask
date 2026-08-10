@@ -11,6 +11,7 @@ path = "src/hkask_mcp_server.rs"
 
 [dependencies]
 hkask-types.workspace = true
+hkask-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-memory.workspace = true
 hkask-storage = { path = "../hkask-storage" }

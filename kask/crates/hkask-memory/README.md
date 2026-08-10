@@ -1,9 +1,25 @@
 # hkask-memory
 
-Semantic and episodic memory pipelines for hKask.
+Vector embedding + relational lookup memory for hKask.
 
-Implements the memory consolidation pipeline (L2 in the loop architecture):
-episodic → consolidation → semantic.
+Implements the memory pipeline: turn ingestion → episodic h_mem + prompt
+embedding → consolidation → semantic recall.
+
+## Architecture
+
+The memory system is a **vector + relational** store following the ABW/OpenClaw
+model. One entity_ref string (`chat:thread:{thread_id}`) links each embedding
+vector to its relational h_mem row, so KNN search results join back to the
+full turn text.
+
+- **`MemoryStore`** — wraps `HMemStore` (relational EAV) + `EmbeddingStore`
+  (sqlite-vec vectors). Provides `store`, `store_embedding`, `search_similar`,
+  `query_deduped`, and decay/touch operations.
+- **`MemoryConsolidator`** — background episodic → semantic promotion
+  (Bayesian confidence combine, budget-gated pruning).
+
+The bridge that wires thread turns into this store lives in `kask_bridge`
+(`RealMemoryPort`), not in this crate.
 
 ## Forgetting Curve
 
@@ -13,64 +29,37 @@ Where S is memory life in days (configurable, default 180 = 6 months × 30).
 After S days without recall, confidence decays to exp(-1) ≈ 36.8%.
 
 At recall (when a memory is pulled into a prompt as context), the decay clock
-resets — t goes back to 0, R = 1.0.
+resets — t goes back to 0, R = 1.0. Only h_mems that survive the
+`recall_limit` truncation are touched (prevents a write storm under
+concurrent recall).
 
 ## Configuration
 
-| Variable                 | Description                            | Default |
-| ------------------------ | -------------------------------------- | ------- |
-| `HKASK_MEMORY_LIFE_DAYS` | Memory life S in days                  | 180     |
-| `HKASK_DB_PATH`          | SQLite database path                   | —       |
-| `HKASK_DB_PASSPHRASE`    | SQLite SQLCipher encryption passphrase | —       |
-| `HKASK_EMBEDDING_DIM`    | Embedding vector dimension             | 1024    |
-
-`ServiceConfig.memory_life_days` also accepts the value programmatically.
-
-## Template Pipeline
-
-Two separate Jinja2 templates for hMem extraction from agent operations.
-
-### Single-Model Extraction
-
-Classification runs the configured classifier model — each passage receives
-the same few-shot prompt, and extractions are merged into the corpus. The
-classifier model is configured via `HkaskSettings::classifier_model()` (env
-var `HKASK_CLASSIFIER_MODEL`), falling back to the registry's default
-classifier config.
-
-| Setting          | Env Var                  | Default                                        |
-| ---------------- | ------------------------ | ---------------------------------------------- |
-| Classifier model | `HKASK_CLASSIFIER_MODEL` | `DeepInfra/Qwen/Qwen3-235B-A22B-Instruct-2507` |
-
-### Content Safety
-
-All LLM boundaries are protected by `hkask-guard` — mandatory input/output
-scanning aligned with OWASP LLM Top 10. Prompt injection, role override, and
-secret leakage detection are always active at every classification call.
-
-### Memory Templates
-
-Templates invoked via `memory_remember.yaml` FlowDef manifest. Each step
-runs single-model extraction through the configured classifier model.
-
-| Template               | Memory Type | Perspective  | Extraction Focus                |
-| ---------------------- | ----------- | ------------ | ------------------------------- |
-| `remember-episodic.j2` | Episodic    | First-person | Process, actions, observations  |
-| `remember-semantic.j2` | Semantic    | Third-person | Facts, relationships, knowledge |
-
-### Content Safety
-
-The FlowDef selector (`operation-selector.j2`) classifies the request and
-routes to the appropriate template.
+| Variable                          | Description                            | Default |
+| --------------------------------- | -------------------------------------- | ------- |
+| `HKASK_MEMORY_LIFE_DAYS`          | Memory life S in days                  | 180     |
+| `HKASK_MEMORY_STORAGE_BUDGET`     | Max h_mems before consolidation prunes | 10000   |
+| `HKASK_MEMORY_INGEST_CONCURRENCY` | Ingestion semaphore permits            | 1       |
+| `HKASK_EMBEDDING_DIM`             | Embedding vector dimension             | 1024    |
 
 ## Consolidation
 
-Episodic → Semantic is a one-way bridge. Consolidation:
+Episodic → Semantic is a one-way bridge. Runs on a background timer
+(cadence from `kask.memory.consolidation_cadence_secs`, default 300s):
 
-1. Selects oldest, lowest-confidence episodic hMems
-2. Decays confidence at point of use: `memory_decay(days_since, memory_life_days)`
-3. Strips perspective, sets Public visibility
-4. Bayesian combines with existing semantic hMems (log-odds pooling)
-5. Expires episodic source (soft-delete via valid_to)
+1. Selects oldest, lowest-confidence episodic candidates
+2. Re-tags ontology from episodic (PKO) to semantic (DC+BIBO)
+3. Sets visibility to Shared
+4. Bayesian combines with existing semantic h_mems (log-odds pooling)
+5. Expires episodic source (soft-delete via `valid_to`)
+6. Prunes by confidence floor and storage budget
 
-No token or authorization required — consolidation is always permitted.
+Decoupled from ingestion — runs on the timer, not in the `ingest_turn` path.
+
+## Documentation
+
+- [Memory System Specification](../../docs/architecture/memory-system-specification.md) — the architecture spec
+- [Memory System — Why It Works This Way](../../docs/explanation/memory-system.md) — the explanation
+- [Memory Ingest Sequence](../../docs/diagrams/sequence-memory-ingest.md) — write-side diagram
+- [Memory Recall Flow](../../docs/diagrams/flowchart-memory-recall.md) — read-side diagram
+- [Memory Store ERD](../../docs/diagrams/erd-memory-store.md) — storage schema

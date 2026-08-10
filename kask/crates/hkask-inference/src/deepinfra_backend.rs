@@ -9,7 +9,7 @@
 
 use crate::chat_protocol::{stream_chat_completion, vision_infer};
 use crate::config::InferenceConfig;
-use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages};
+use crate::openai_compat::{openai_compatible_generate, openai_compatible_generate_messages, sanitize_error_body};
 use crate::provider::{MediaOp, MediaProvider};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
@@ -262,7 +262,7 @@ impl DeepInfraBackend {
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "DeepInfra {} status {}: {}",
-                model, status, text
+                model, status, sanitize_error_body(&text)
             )));
         }
         serde_json::from_str(&text)
@@ -367,7 +367,7 @@ impl DeepInfraBackend {
             let error_text = resp.text().await.unwrap_or_default();
             return Err(InferenceError::Connection(format!(
                 "DeepInfra TTS status {}: {}",
-                status, error_text
+                status, sanitize_error_body(&error_text)
             )));
         }
 
@@ -428,7 +428,7 @@ impl DeepInfraBackend {
         if !status.is_success() {
             return Err(InferenceError::Connection(format!(
                 "DeepInfra STT status {}: {}",
-                status, text
+                status, sanitize_error_body(&text)
             )));
         }
 

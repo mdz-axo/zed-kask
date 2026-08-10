@@ -356,11 +356,23 @@ impl ManifestExecutor {
                                 )
                         });
                     if let Some(tok) = token {
-                        // Only treat as a context key if it looks like a step
-                        // result or a known context variable. Step results are
-                        // the primary Source-tainted entries.
+                        // Treat as a context key if it is a known step-result
+                        // prefix OR is present in the taint-labels map. The
+                        // taint-labels lookup closes the blind spot where a
+                        // Source-tainted value bound under a non-`step_`-prefixed
+                        // name (e.g. `user_query`, `crafted_url`) lost its
+                        // taint label and bypassed the Source→Sink block
+                        // (FIDES L4, RR-0053 companion).
                         if tok.starts_with("step_") || tok == "task" || tok == "prev_step" {
                             keys.push(tok.to_string());
+                        } else {
+                            let labels = self
+                                .taint_labels
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            if labels.contains_key(tok) {
+                                keys.push(tok.to_string());
+                            }
                         }
                     }
                     remaining = &after_open[close + 2..];
