@@ -1190,7 +1190,16 @@ impl MemoryPort for RealMemoryPort {
             // injection. Written to the user's semantic store always; for
             // curator turns, also written to the curator's semantic store so
             // the curator can recall its own turns by similarity.
-            let embedding_entity = format!("embedding:thread:{thread_id}:user_input");
+            //
+            // The embedding's `entity_ref` MUST match the episodic h_mem's
+            // `entity` (`chat:thread:{thread_id}`) so the recall path's
+            // `query_deduped_untouched(entity_ref)` can join the KNN neighbor
+            // back to the h_mem holding the full turn text. A separate
+            // `embedding:thread:...` namespace was dead code — no h_mem was
+            // ever stored under it, so the semantic recall leg always
+            // returned zero snippets. See the `recall_context_finds_turn_by_embedding_similarity`
+            // test for the end-to-end pin.
+            let embedding_entity = entity.clone();
             // Spawn the embedding HTTP call on the tokio runtime so the
             // GPUI-side channel task (which holds the AsyncApp) can resolve
             // credentials and make the HTTP call. The rest of ingest_turn
@@ -1829,6 +1838,52 @@ mod tests {
         }
     }
 
+    /// Construct an in-memory `RealMemoryPort` whose embedding port is backed
+    /// by `embed_fn` (a deterministic text→vector closure) instead of the
+    /// channel-closed `for_tests()` stub. For tests that exercise the
+    /// end-to-end embedding recall path. The receiver task runs on the
+    /// current tokio runtime (the test's `#[tokio::test]` reactor).
+    fn in_memory_port_with_embed_fn<F>(embed_fn: Arc<F>) -> RealMemoryPort
+    where
+        F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
+    {
+        let driver: Arc<dyn hkask_storage::DatabaseDriver> = SqliteDriver::in_memory_driver();
+        let h_mem_store = HMemStore::from_driver(Arc::clone(&driver)).expect("hmem store init");
+        let embedding_store =
+            EmbeddingStore::from_driver(driver, 1024).expect("embedding store init");
+        let store = Arc::new(MemoryStore::new(h_mem_store, embedding_store));
+
+        let curator_driver: Arc<dyn hkask_storage::DatabaseDriver> =
+            SqliteDriver::in_memory_driver();
+        let curator_h_mem_store =
+            HMemStore::from_driver(Arc::clone(&curator_driver)).expect("curator hmem store init");
+        let curator_embedding_store =
+            EmbeddingStore::from_driver(curator_driver, 1024).expect("embedding store init");
+        let curator_store_inner = Arc::new(MemoryStore::new(
+            curator_h_mem_store,
+            curator_embedding_store,
+        ));
+
+        let embedding_port =
+            LanguageModelEmbeddingPort::for_tests_with_embed_fn(embed_fn, tokio::runtime::Handle::current());
+
+        RealMemoryPort {
+            store,
+            curator_store: Arc::new(CuratorStore::for_tests(Some(curator_store_inner))),
+            embedding_port,
+            embedding_model: "test-model".to_string(),
+            user_webid: test_webid(),
+            curator_webid: WebID::from_persona(b"curator"),
+            consolidation: None,
+            curator_consolidation: RwLock::new(None),
+            consolidation_cadence_secs: 0,
+            confidence_floor: 0.3,
+            last_consolidation: Mutex::new(None),
+            tokio_handle: tokio::runtime::Handle::current(),
+            ingest_semaphore: tokio::sync::Semaphore::new(1),
+        }
+    }
+
     #[tokio::test]
     async fn ingest_turn_stores_episodic_h_mem() {
         let port = in_memory_port();
@@ -2130,6 +2185,59 @@ mod tests {
         assert!(
             has_rust && has_python,
             "recall should match ANY query word, got: {snippets:?}"
+        );
+    }
+
+    /// Pin that the semantic (embedding KNN) recall leg works end-to-end.
+    /// Before the fix, the embedding was stored under `embedding:thread:...`
+    /// while the h_mem text lived under `chat:thread:...`, so the KNN
+    /// neighbor's `entity_ref` joined to no h_mem and the semantic leg
+    /// always returned zero snippets — silently degrading recall to the
+    /// keyword leg only. The fix stores the embedding under the same
+    /// `chat:thread:{id}` entity as the h_mem.
+    ///
+    /// This test isolates the semantic leg from the keyword leg by using a
+    /// stub embedding function that returns the same unit vector for any
+    /// non-empty input, so every query is a KNN match for every stored
+    /// embedding (cosine distance 0). The query shares NO words with the
+    /// stored turn, so the keyword leg misses — the only path to recall is
+    /// the semantic leg. Before the entity_ref fix, this returned zero
+    /// snippets.
+    #[tokio::test]
+    async fn recall_context_finds_turn_by_embedding_only() {
+        // Constant embedding: every text maps to the same unit vector. KNN
+        // search returns every stored embedding at cosine distance 0, so the
+        // semantic leg always finds every stored turn regardless of word
+        // overlap. The keyword leg is the only thing that could miss.
+        let embed_fn = Arc::new(|_text: &str| -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[0] = 1.0;
+            v
+        });
+        let port = in_memory_port_with_embed_fn(embed_fn);
+
+        // Ingest a turn whose text contains none of the query words.
+        let record = TurnRecord {
+            thread_id: "t-unique-thread-id".to_string(),
+            user_input: "alpha beta gamma delta epsilon".to_string(),
+            agent_response: "zeta eta theta iota kappa".to_string(),
+            model: "test-model".to_string(),
+            thread_title: None,
+            agent_id: None,
+        };
+        port.ingest_turn(record).await.expect("ingest succeeds");
+
+        // Query with words that share NO tokens with the stored turn. All
+        // query words are >3 chars (pass the keyword filter) but none appear
+        // in the stored text — the keyword leg returns nothing. The semantic
+        // leg must find the turn via KNN (constant embedding → distance 0).
+        let snippets = port
+            .recall_context("kangaroo wallaby emu cassowary", 10)
+            .await
+            .expect("recall succeeds");
+        assert!(
+            snippets.iter().any(|s| s.text.contains("alpha beta gamma")),
+            "semantic-only recall should find the turn despite zero word overlap, got: {snippets:?}"
         );
     }
 

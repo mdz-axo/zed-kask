@@ -23,20 +23,20 @@ a hostile in-process caller.
 
 ## Source citations
 
-| Symbol | Location |
-|--------|----------|
-| `DelegationToken` struct | `kask/crates/hkask-capability/src/token_types.rs` |
-| `SYSTEM_MAX_RECURSION` const | `kask/crates/hkask-capability/src/token_types.rs` |
-| `panel_default_token` (minting) | `kask/crates/hkask-capability/src/auth.rs` |
-| `ToolPort` trait | `kask/crates/hkask-capability/src/tool_port.rs` |
-| `ToolPortError` enum | `kask/crates/hkask-capability/src/tool_port.rs` |
-| `ToolInfo` struct | `kask/crates/hkask-capability/src/tool_port.rs` |
+| Symbol                              | Location                                                                      |
+| ----------------------------------- | ----------------------------------------------------------------------------- |
+| `DelegationToken` struct            | `kask/crates/hkask-capability/src/token_types.rs`                             |
+| `SYSTEM_MAX_RECURSION` const        | `kask/crates/hkask-capability/src/token_types.rs`                             |
+| `panel_default_token` (minting)     | `kask/crates/hkask-capability/src/auth.rs`                                    |
+| `ToolPort` trait                    | `kask/crates/hkask-capability/src/tool_port.rs`                               |
+| `ToolPortError` enum                | `kask/crates/hkask-capability/src/tool_port.rs`                               |
+| `ToolInfo` struct                   | `kask/crates/hkask-capability/src/tool_port.rs`                               |
 | Capability-match gate (enforcement) | `kask/crates/hkask-mcp/src/runtime.rs` (`invoke`, `verify_capability_domain`) |
-| `CapabilitySpec` struct | `kask/crates/hkask-capability/src/resources.rs` |
-| `DelegationResource` enum | `kask/crates/hkask-capability/src/resources.rs` |
-| `DelegationAction` enum | `kask/crates/hkask-capability/src/resources.rs` |
-| `capabilities_match` fn | `kask/crates/hkask-capability/src/resources.rs` |
-| `capability_from_server_id` fn | `kask/crates/hkask-capability/src/resources.rs` |
+| `CapabilitySpec` struct             | `kask/crates/hkask-capability/src/resources.rs`                               |
+| `DelegationResource` enum           | `kask/crates/hkask-capability/src/resources.rs`                               |
+| `DelegationAction` enum             | `kask/crates/hkask-capability/src/resources.rs`                               |
+| `capabilities_match` fn             | `kask/crates/hkask-capability/src/resources.rs`                               |
+| `capability_from_server_id` fn      | `kask/crates/hkask-capability/src/resources.rs`                               |
 
 Removed in the 2026-07-31 token-ceremony collapse: `signature`/`public_key`
 fields, `verify()`/`verify_cryptographic()`, `TokenSignature`,
@@ -156,6 +156,14 @@ access.
 and subgoal nesting, consulted by the manifest executor and the registry
 bootstrap.
 
+**Empirical context:** Wang (2026, arXiv:2603.02615v1) demonstrates that RLM
+recursion depth=2 already degrades model performance across all tested
+models and tasks — format collapse, parametric hallucination, and latency
+explosion (3.6s → 344.5s). The cap of 7 is structural headroom for future
+native-RLM-aligned models; skill authors should self-limit flowdef nesting
+to depth 1–2 in practice. The matryoshka guard is a hard ceiling, not a
+recommended operating point.
+
 ## See also
 
 - [hkask-capability Explanation](./explanation.md): why the gate is a
@@ -165,4 +173,4 @@ bootstrap.
 
 ---
 
-[^miller-ocap]: Miller, M. S. (2006). *Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control.* Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model as inspiration for capability-based dispatch. Note: zed-kask implements capability *matching* in-process, not the unforgeable-token model — there is no trust boundary to defend with cryptography.
+[^miller-ocap]: Miller, M. S. (2006). _Robust Composition: Towards a Unified Approach to Access Control and Concurrency Control._ Johns Hopkins University. <https://www.erights.org/talks/thesis/markm-thesis.pdf>. The Object Capability model as inspiration for capability-based dispatch. Note: zed-kask implements capability _matching_ in-process, not the unforgeable-token model — there is no trust boundary to defend with cryptography.

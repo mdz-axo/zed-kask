@@ -34,20 +34,12 @@ impl_from_db_error!(KataHistoryError, Infra);
 
 impl KataHistoryStore {
     fn init_schema(
-        driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
+        _driver: &std::sync::Arc<dyn crate::database::driver::DatabaseDriver>,
     ) -> Result<(), InfrastructureError> {
-        driver.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kata_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_name TEXT NOT NULL,
-                date TEXT NOT NULL,
-                kata_type TEXT NOT NULL,
-                practice_name TEXT NOT NULL,
-                steps_completed INTEGER NOT NULL DEFAULT 0,
-                gas_consumed INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );",
-        )?;
+        // The `kata_history` table is owned by `core/sql/schema.sql`, which
+        // `Database::sqlite_pool` and `SqliteDriver::in_memory_pool` run on
+        // every pool creation. This method is a no-op retained for the
+        // `define_driver_store!` macro's `from_driver` contract.
         Ok(())
     }
 

@@ -543,6 +543,38 @@ impl LanguageModelEmbeddingPort {
         Self { tx }
     }
 
+    /// Construct a port whose `embed` calls are answered by `embed_fn`,
+    /// which maps each input text to a vector. The receiver task runs on the
+    /// provided tokio handle. For tests that exercise the end-to-end
+    /// embedding recall path without a real HTTP call — the closure must
+    /// produce vectors where similar texts have small cosine distance and
+    /// dissimilar texts have large distance, so KNN `search` returns the
+    /// right neighbors.
+    #[cfg(test)]
+    pub fn for_tests_with_embed_fn<F>(
+        embed_fn: Arc<F>,
+        tokio_handle: tokio::runtime::Handle,
+    ) -> Self
+    where
+        F: Fn(&str) -> Vec<f32> + Send + Sync + 'static,
+    {
+        let (tx, mut rx) = mpsc::unbounded_channel::<EmbedRequest>();
+        tokio_handle.spawn(async move {
+            while let Some(req) = rx.recv().await {
+                let vectors: Vec<Vec<f32>> =
+                    req.texts.iter().map(|t| embed_fn(t)).collect();
+                // `embed` returns an error on empty input; mirror that here.
+                let result = if vectors.is_empty() {
+                    Err(EmbeddingGenerationError::EmptyResponse)
+                } else {
+                    Ok(vectors)
+                };
+                let _ = req.reply.send(result);
+            }
+        });
+        Self { tx }
+    }
+
     /// Generate embeddings for a batch of texts.
     ///
     /// `model` is the provider-prefixed model string (e.g.

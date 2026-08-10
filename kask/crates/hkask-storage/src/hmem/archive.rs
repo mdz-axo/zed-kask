@@ -208,8 +208,12 @@ impl BackupArchive {
         let pool = target.driver().sqlite_pool().ok_or_else(|| {
             ArchiveError::Database("restore_into requires a SqliteDriver".to_string())
         })?;
-        let mut conn = pool.get().map_err(|e| ArchiveError::Database(e.to_string()))?;
-        let tx = conn.transaction().map_err(|e| ArchiveError::Database(e.to_string()))?;
+        let mut conn = pool
+            .get()
+            .map_err(|e| ArchiveError::Database(e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| ArchiveError::Database(e.to_string()))?;
         let owner = owner_webid.to_string();
         for row in &rows {
             tx.execute(
@@ -231,7 +235,8 @@ impl BackupArchive {
                 ],
             ).map_err(|e| ArchiveError::Database(e.to_string()))?;
         }
-        tx.commit().map_err(|e| ArchiveError::Database(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| ArchiveError::Database(e.to_string()))?;
         Ok(MigrationReceipt {
             triple_count: total,
         })

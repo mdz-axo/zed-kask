@@ -492,17 +492,18 @@ impl HMemStore {
                 "HMemStore::update requires a SqliteDriver",
             ))
         })?;
-        let mut conn = pool.get().map_err(|e| {
-            HMemError::Infra(InfrastructureError::database(e.to_string()))
-        })?;
-        let tx = conn.transaction().map_err(|e| {
-            HMemError::Infra(InfrastructureError::database(e.to_string()))
-        })?;
+        let mut conn = pool
+            .get()
+            .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
         // Close the old version (set valid_to).
         tx.execute(
             "UPDATE hmems SET valid_to = ?1 WHERE id = ?2 AND valid_to IS NULL",
             rusqlite::params![now, id.to_string()],
-        ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        )
+        .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
         // Read the old version's metadata to carry into the new version.
         let row = tx.query_row(
             "SELECT entity, attribute, perspective, visibility, owner_webid, ontology FROM hmems WHERE id = ?1",
@@ -521,7 +522,9 @@ impl HMemStore {
         let (entity, attribute, perspective, visibility, owner_webid, ontology) = row;
         let new_id = HMemId::new();
         tx.execute(
-            &format!("INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"),
+            &format!(
+                "INSERT INTO hmems ({HMEM_COLUMNS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)"
+            ),
             rusqlite::params![
                 new_id.to_string(),
                 entity,
@@ -536,10 +539,10 @@ impl HMemStore {
                 owner_webid,
                 ontology,
             ],
-        ).map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
-        tx.commit().map_err(|e| {
-            HMemError::Infra(InfrastructureError::database(e.to_string()))
-        })?;
+        )
+        .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
+        tx.commit()
+            .map_err(|e| HMemError::Infra(InfrastructureError::database(e.to_string())))?;
         Ok(())
     }
     /// Get a h_mem by ID.

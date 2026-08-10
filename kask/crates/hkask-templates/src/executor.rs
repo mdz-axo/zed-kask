@@ -67,6 +67,7 @@ use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatToolDefinition, InferencePort, InferenceResult};
 use serde_json::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -1934,9 +1935,14 @@ impl ManifestExecutor {
 ///
 /// Used by `execute_flowdef` to extract the sub-cascade's final result without
 /// merging the full sub-context back into the parent.
+///
+/// Applies `normalize_model_output` to strip `<thinking>` reasoning wrappers
+/// that reasoning models emit before the final answer — without this, the
+/// tags pollute downstream step inputs and break JSON parsing (Wang 2026,
+/// arXiv:2603.02615v1, Appendix A.4).
 pub fn extract_final_step_result(context: &HashMap<String, Value>) -> Value {
     extract_final_step_entry(context)
-        .map(|(_, value)| value)
+        .map(|(_, value)| normalize_model_output(&value).into_owned())
         .unwrap_or(Value::Null)
 }
 
@@ -1955,6 +1961,49 @@ fn extract_final_step_entry(context: &HashMap<String, Value>) -> Option<(String,
         })
         .max_by_key(|(ordinal, _, _)| *ordinal)
         .map(|(_, key, value)| (key.clone(), value.clone()))
+}
+
+/// Strip model-emitted reasoning wrappers from a step result value.
+///
+/// Reasoning models (e.g. Kimi K2, DeepSeek-R1) emit `<thinking>...</thinking>`
+/// blocks before the final answer. Without stripping, these tags pollute
+/// downstream step inputs and break JSON parsing. This is the failure mode
+/// documented in Wang (2026, arXiv:2603.02615v1, Appendix A.4): the RLM
+/// framework's `find_code_blocks` / `find_final_answer` parsers missed
+/// answers entirely until a `strip_think_tags` helper was added.
+///
+/// Also strips a stray closing `</thinking>` token when the opening tag was
+/// truncated by a streaming chunk boundary. Non-string values pass through
+/// unchanged (the wrapper only appears in model-generated text).
+///
+/// Returns `Cow::Borrowed` when no stripping is needed (the common path),
+/// `Cow::Owned` when tags were removed — avoiding a clone on clean output.
+fn normalize_model_output(value: &Value) -> Cow<'_, Value> {
+    let Value::String(s) = value else {
+        return Cow::Borrowed(value);
+    };
+    if !s.contains("<thinking") && !s.contains("</thinking>") {
+        return Cow::Borrowed(value);
+    }
+    let mut cleaned = s.to_string();
+    // Strip paired `<thinking>...</thinking>` blocks iteratively. A model may
+    // emit several; each pass removes the first complete pair. An unclosed
+    // opening tag (truncated stream) breaks out of the loop and falls through
+    // to the stray-tag strip below.
+    while let Some(start) = cleaned.find("<thinking") {
+        let after_open = match cleaned[start..].find('>') {
+            Some(i) => start + i + 1,
+            None => break,
+        };
+        let end = match cleaned[after_open..].find("</thinking>") {
+            Some(i) => after_open + i,
+            None => break,
+        };
+        cleaned = format!("{}{}", &cleaned[..start], &cleaned[end + 11..]);
+    }
+    // Strip stray closing tags (opening was truncated by streaming).
+    cleaned = cleaned.replace("</thinking>", "");
+    Cow::Owned(Value::String(cleaned))
 }
 
 /// Parse a JSON response from an inference call.
@@ -3283,5 +3332,71 @@ audit:
         );
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ── normalize_model_output: <thinking> tag stripping (Wang 2026, A.4) ──
+
+    #[test]
+    fn normalize_model_output_passes_through_non_string() {
+        let value = serde_json::json!({"answer": 42});
+        let out = normalize_model_output(&value);
+        assert!(matches!(out, Cow::Borrowed(_)), "non-string must borrow");
+        assert_eq!(*out, value);
+    }
+
+    #[test]
+    fn normalize_model_output_borrows_clean_string() {
+        let value = serde_json::json!("Answer: 5");
+        let out = normalize_model_output(&value);
+        assert!(matches!(out, Cow::Borrowed(_)), "clean string must borrow");
+        assert_eq!(*out, value);
+    }
+
+    #[test]
+    fn normalize_model_output_strips_paired_thinking_tags() {
+        let value = serde_json::json!("<thinking>let me reason</thinking>Answer: 5");
+        let out = normalize_model_output(&value);
+        assert!(matches!(out, Cow::Owned(_)), "dirty string must own");
+        assert_eq!(*out, serde_json::json!("Answer: 5"));
+    }
+
+    #[test]
+    fn normalize_model_output_strips_multiple_paired_blocks() {
+        let value = serde_json::json!(
+            "<thinking>first</thinking>Step 1 done<thinking>second</thinking>Step 2 done"
+        );
+        let out = normalize_model_output(&value);
+        assert_eq!(*out, serde_json::json!("Step 1 doneStep 2 done"));
+    }
+
+    #[test]
+    fn normalize_model_output_strips_stray_closing_tag() {
+        // Streaming chunk boundary may truncate the opening tag, leaving
+        // only the closing tag. This is the Kimi K2 failure mode from the
+        // paper's Appendix A.4.
+        let value = serde_json::json!("Answer: 5</thinking>");
+        let out = normalize_model_output(&value);
+        assert_eq!(*out, serde_json::json!("Answer: 5"));
+    }
+
+    #[test]
+    fn normalize_model_output_leaves_unclosed_opening_tag_untouched() {
+        // An unclosed `<thinking` (no `>`) breaks out of the strip loop; the
+        // stray `</thinking>` pass removes only closing tags. The opening
+        // fragment is left as-is rather than corrupting the string.
+        let value = serde_json::json!("<thinking without close Answer: 5");
+        let out = normalize_model_output(&value);
+        assert_eq!(*out, value, "unclosed opening must pass through unchanged");
+    }
+
+    #[test]
+    fn extract_final_step_result_strips_thinking_tags_from_result() {
+        let mut map: HashMap<String, Value> = HashMap::new();
+        map.insert(
+            "step_1_result".to_string(),
+            serde_json::json!("<thinking>reasoning</thinking>{\"answer\": 5}"),
+        );
+        let out = extract_final_step_result(&map);
+        assert_eq!(out, serde_json::json!("{\"answer\": 5}"));
     }
 }
