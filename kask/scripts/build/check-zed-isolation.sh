@@ -29,7 +29,10 @@ for path in \
     "$repo_root/kask/scripts/build/zed-kask.desktop.in" \
     "$repo_root/.github/workflows/release.yml" \
     "$repo_root/.github/workflows/release_nightly.yml" \
-    "$repo_root/.github/workflows/run_bundling.yml"; do
+    "$repo_root/.github/workflows/run_bundling.yml" \
+    "$repo_root/crates/zed/resources/info" \
+    "$repo_root/crates/zed/resources/windows" \
+    "$repo_root/.github/actions/run_tests_windows"; do
     assert_absent "$path"
 done
 

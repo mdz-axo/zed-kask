@@ -231,7 +231,9 @@ steps:
         crates/zed/resources/zed.desktop.in crates/zed/resources/zed.entitlements
         crates/zed/resources/windows/zed.iss crates/zed/resources/windows/zed.sh
         .github/workflows/release.yml .github/workflows/release_nightly.yml .github/workflows/run_bundling.yml;
-        rm -rf crates/zed/resources/flatpak crates/zed/resources/snap script/flatpak;
+        rm -rf crates/zed/resources/flatpak crates/zed/resources/snap script/flatpak
+        crates/zed/resources/info crates/zed/resources/windows
+        .github/actions/run_tests_windows;
         bash kask/scripts/build/check-zed-isolation.sh
       cwd: "."
       env:
