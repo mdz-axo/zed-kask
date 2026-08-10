@@ -98,6 +98,13 @@ pub enum InferenceMethod {
     /// Uses `skill_name`, `skill_task` from `InferenceParams`. The result is
     /// returned as `InferenceOutcome::SkillResult`.
     SkillExecute,
+    /// Create a sibling agent thread in a new git worktree workspace. Uses
+    /// `worktree_prompt`, `worktree_title`, `worktree_name`, `worktree_base_ref`
+    /// from `InferenceParams`. The result is returned as
+    /// `InferenceOutcome::WorktreeThread`. Used by `kanban_task_spawn` to
+    /// isolate spawned agents in a separate worktree (P1: worktree/terminal
+    /// model).
+    CreateWorktreeThread,
 }
 
 /// Parameters for an inference request.
@@ -162,6 +169,21 @@ pub struct InferenceParams {
     pub skill_name: Option<String>,
     /// Task text the skill cascade acts on.
     pub skill_task: Option<String>,
+    // ── Worktree thread fields (for `InferenceMethod::CreateWorktreeThread`) ──
+    /// The initial prompt for the new agent thread.
+    #[serde(default)]
+    pub worktree_prompt: Option<String>,
+    /// A short title for the new thread, shown in the sidebar.
+    #[serde(default)]
+    pub worktree_title: Option<String>,
+    /// Optional name for the new worktree directory. When omitted, the
+    /// editor generates a random non-colliding name.
+    #[serde(default)]
+    pub worktree_name: Option<String>,
+    /// Git ref (branch, tag, or commit) to base the new worktree on.
+    /// Defaults to `HEAD`.
+    #[serde(default)]
+    pub worktree_base_ref: Option<String>,
 }
 
 /// A response from the zed inference bridge to the MCP server.
@@ -215,6 +237,15 @@ pub enum InferenceOutcome {
         #[serde(rename = "skill_result")]
         result: String,
     },
+    /// Worktree thread creation result from
+    /// `InferenceMethod::CreateWorktreeThread`. The value is the new
+    /// thread's id + worktree path. The key is `worktree_thread` (distinct
+    /// from `result`/`tool_result`/`skill_result` for the untagged-enum
+    /// reason).
+    WorktreeThread {
+        #[serde(rename = "worktree_thread")]
+        thread: WorktreeThreadInfo,
+    },
     /// Error from the inference port.
     Error {
         #[serde(rename = "error")]
@@ -233,6 +264,16 @@ pub struct ModelListEntry {
     pub provider: String,
     /// Whether the model supports vision/multimodal input.
     pub supports_vision: bool,
+}
+
+/// Info about a worktree-backed agent thread created via
+/// `InferenceMethod::CreateWorktreeThread`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeThreadInfo {
+    /// The new thread's id (a Zed `EntityId` as a string).
+    pub thread_id: String,
+    /// The filesystem path of the new git worktree.
+    pub worktree_path: String,
 }
 
 /// Serializable form of `InferenceError`.
@@ -342,6 +383,10 @@ mod tests {
                 tool_allowlist: Some(vec!["codegraph/codegraph_query".to_string()]),
                 skill_name: None,
                 skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let json = serde_json::to_string(&request).expect("serialize");
@@ -393,6 +438,10 @@ mod tests {
                 tool_allowlist: None,
                 skill_name: Some("grill-me".to_string()),
                 skill_task: Some("probe the delegate".to_string()),
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let json = serde_json::to_string(&request).expect("serialize");

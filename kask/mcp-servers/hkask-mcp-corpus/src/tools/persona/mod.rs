@@ -794,9 +794,22 @@ impl CorpusServer {
                     let refs = store
                         .query_by_prefix(&prefix)
                         .map_err(|e| map_embedding_error(e, "query author embeddings"))?;
-                    let emb_count = refs.len();
+                    let emb_total = refs.len();
+                    let mut emb_deleted = 0usize;
+                    let mut emb_delete_failed = 0usize;
                     for entity_ref in &refs {
-                        let _ = store.delete(entity_ref);
+                        match store.delete(entity_ref) {
+                            Ok(()) => emb_deleted += 1,
+                            Err(e) => {
+                                tracing::warn!(
+                                    target: "hkask.mcp.replica",
+                                    entity_ref = %entity_ref,
+                                    error = %e,
+                                    "failed to delete embedding"
+                                );
+                                emb_delete_failed += 1;
+                            }
+                        }
                     }
                     let pool = db
                         .sqlite_pool()
@@ -806,20 +819,41 @@ impl CorpusServer {
                         hkask_storage::HMemStore::from_driver(driver).map_err(|e| {
                             hkask_mcp_server::server::map_infra_error(&e, "HMemStore::from_driver")
                         })?;
-                    let mut triple_count = 0usize;
-                    for entity_ref in refs {
-                        if let Ok(h_mems) = h_mem_store.query_by_entity(&entity_ref) {
+                    let mut triple_deleted = 0usize;
+                    let mut triple_delete_failed = 0usize;
+                    for entity_ref in &refs {
+                        if let Ok(h_mems) = h_mem_store.query_by_entity(entity_ref) {
                             for t in &h_mems {
-                                let _ = h_mem_store.close_by_id(&t.id);
-                                triple_count += 1;
+                                match h_mem_store.close_by_id(&t.id) {
+                                    Ok(()) => triple_deleted += 1,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            target: "hkask.mcp.replica",
+                                            h_mem_id = %t.id,
+                                            error = %e,
+                                            "failed to close h_mem"
+                                        );
+                                        triple_delete_failed += 1;
+                                    }
+                                }
                             }
                         }
                     }
-                    serde_json::to_string(&RegistryResult {
-                        message: format!(
+                    let message = if emb_delete_failed == 0 && triple_delete_failed == 0 {
+                        format!(
                             "Removed {} embeddings and {} h_mems for author '{}'",
-                            emb_count, triple_count, author
-                        ),
+                            emb_deleted, triple_deleted, author
+                        )
+                    } else {
+                        format!(
+                            "Removed {}/{} embeddings ({} failed) and {}/{} h_mems ({} failed) for author '{}'",
+                            emb_deleted, emb_total, emb_delete_failed,
+                            triple_deleted, triple_deleted + triple_delete_failed, triple_delete_failed,
+                            author
+                        )
+                    };
+                    serde_json::to_string(&RegistryResult {
+                        message,
                         entries: vec![],
                     })
                     .map_err(|e| McpToolError::internal(e.to_string()))? // rr0044-ok: serialize-own-struct

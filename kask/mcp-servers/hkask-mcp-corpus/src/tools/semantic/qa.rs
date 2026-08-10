@@ -97,12 +97,30 @@ pub(crate) fn write_qa_result(
     output_writer: &Arc<Mutex<std::io::BufWriter<std::fs::File>>>,
     write_count: &std::sync::atomic::AtomicUsize,
 ) {
-    let mut w = output_writer.lock().unwrap();
-    let _ = serde_json::to_writer(&mut *w, result);
-    let _ = writeln!(&mut *w);
+    let mut w = output_writer.lock().unwrap_or_else(|e| e.into_inner());
+    if let Err(e) = serde_json::to_writer(&mut *w, result) {
+        tracing::warn!(
+            target: "hkask.mcp.docproc.qa_batch",
+            error = %e,
+            "failed to write QA result JSON"
+        );
+    }
+    if let Err(e) = writeln!(&mut *w) {
+        tracing::warn!(
+            target: "hkask.mcp.docproc.qa_batch",
+            error = %e,
+            "failed to write QA result newline"
+        );
+    }
     let count = write_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     if count.is_multiple_of(10) {
-        let _ = w.flush();
+        if let Err(e) = w.flush() {
+            tracing::warn!(
+                target: "hkask.mcp.docproc.qa_batch",
+                error = %e,
+                "failed to flush QA result writer"
+            );
+        }
     }
 }
 

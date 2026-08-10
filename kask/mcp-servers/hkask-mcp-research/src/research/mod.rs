@@ -10,6 +10,7 @@ pub mod feed;
 pub mod providers;
 pub mod rss_types;
 pub mod strip_html;
+pub mod synthetic;
 pub mod types;
 
 use std::collections::HashMap;

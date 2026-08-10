@@ -363,12 +363,24 @@ impl CorpusServer {
             }
 
             for handle in handles {
-                let _ = handle.await;
+                if let Err(join_err) = handle.await {
+                    tracing::warn!(
+                        target: "hkask.mcp.docproc.qa_batch",
+                        error = %join_err,
+                        "QA batch task join failed"
+                    );
+                }
             }
 
             {
-                let mut w = output_writer.lock().unwrap();
-                let _ = w.flush();
+                let mut w = output_writer.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = w.flush() {
+                    tracing::warn!(
+                        target: "hkask.mcp.docproc.qa_batch",
+                        error = %e,
+                        "failed to flush QA batch output writer"
+                    );
+                }
             }
             let written = write_count.load(std::sync::atomic::Ordering::Relaxed);
             let failed = failed_count.load(std::sync::atomic::Ordering::Relaxed);

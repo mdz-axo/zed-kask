@@ -44,3 +44,5 @@ blake3.workspace = true
 futures-util.workspace = true
 regex.workspace = true
 feed-rs.workspace = true
+scraper.workspace = true
+jsonpath-rust.workspace = true

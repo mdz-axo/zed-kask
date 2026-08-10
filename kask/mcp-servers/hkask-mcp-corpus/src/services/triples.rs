@@ -370,7 +370,13 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
         }
 
         for handle in handles {
-            let _ = handle.await;
+            if let Err(join_err) = handle.await {
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.triples",
+                    error = %join_err,
+                    "triple extraction batch task join failed"
+                );
+            }
         }
 
         let succeeded = succeeded.load(std::sync::atomic::Ordering::Relaxed);

@@ -1053,6 +1053,10 @@ mod tests {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
         }
     }
 

@@ -258,7 +258,13 @@ impl ConsolidationService {
         }
 
         for handle in handles {
-            let _ = handle.await;
+            if let Err(join_err) = handle.await {
+                tracing::warn!(
+                    target: "hkask.mcp.docproc.consolidation",
+                    error = %join_err,
+                    "consolidation batch task join failed"
+                );
+            }
         }
 
         // Phase 3: Build consolidated TaggedChunks (collect data, then drop guard)

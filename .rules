@@ -308,6 +308,16 @@ disabled/default via a `.filter(|c| *c > 0)?` / `.and_then(parse)?` chain —
 otherwise the operator cannot distinguish "not configured" from "configured
 but broken" (the same trap as a missing `else` branch).
 
+This also covers runtime feature gates, not just startup config: an opt-in
+`HKASK_USE_*` feature that fails silently via `.ok()?` (collapsing 401, 429,
+500, timeout, and malformed-response to `None` with no log) leaves the
+operator unable to distinguish "not configured" from "configured but broken."
+The operator set the env var — they opted in — so silence is a broken
+feedback loop, not graceful degradation. Log the failure classification (HTTP
+status, error variant) at each fallible step; `.ok()?` is for the fallback
+(the caller proceeds without the feature), `tracing::warn!` is for the
+diagnostic (it precedes the `?`).
+
 ## Cross-thread GPUI communication uses channels, not `AsyncApp` handles
 
 `AsyncApp` is not `Send` (GPUI is single-threaded; it holds `Rc`/`Weak<AppCell>`).
@@ -603,13 +613,20 @@ that does not exist in the codebase advertises a migration that never
 landed — grep the symbol, and if absent, delete the comment or land the
 migration. The `.rules` trap "Process-global hooks set at runtime need a
 startup-failure signal" generalizes: every advertised invariant needs an
-enforcement point, or the doc must say "not yet enforced."
+an enforcement point, or the doc must say "not yet enforced."
 
 This includes documented config behavior, not just code doc comments: an
 env-var description or README row that promises runtime behavior ("warnings
 fire at 80%") must point to the line that evaluates it, or say "not yet
 enforced" — the rule broadens from `///` comments to any user-facing
 documentation of behavior.
+
+This also covers validation-gate return values, not just doc comments: a gate
+that returns `Ready`/`Success` with an empty findings list when it could not
+perform the check advertises a check that didn't happen. The gate must return
+a distinct verdict (`Undetermined`, `Skipped`) or emit an `Info` finding
+stating the check was skipped and why. Do not return `Ready` with empty
+findings when the check was not performed.
 
 ## Manifest `ocap:` is declared config, not a security gate
 
@@ -740,6 +757,29 @@ convention is load-bearing, not advisory. This generalizes the
 "Trait-with-one-impl is speculative generality" rule from traits to
 functions: a public function whose only callers are tests is dead surface
 regardless of whether it pins a convention.
+
+## Folded-service dead surface
+
+When a crate is assembled by folding in a former standalone service crate
+(the `hkask-services-{compose,corpus,inference,runtime}` → `hkask-mcp-corpus`
+merge is the canonical example), the fold brings in modules that were wired in
+the old service but have no consumer in the new host. The leftover modules
+compile, pass their own unit tests, and often carry doc comments advertising
+invariants (P9 spans, cost models, citation storage) with no enforcement point
+in the new host — the "Advertised invariants need enforcement points" trap at
+module scale.
+
+This is the *module* form of "Trait-with-one-impl is speculative generality"
+(trait form) and "Convention helpers with only test callers are dead code"
+(function form): an entire submodule re-exported from a `mod.rs` with zero
+production callers outside the submodule tree.
+
+After folding a service crate into a host, grep the host for every `pub use`
+the fold introduced. For each re-exported symbol, grep the host's `src/`
+(outside the folded subtree) for a production caller. Zero hits = delete the
+module in the same PR or the next cleanup PR. Do not keep folded modules on
+the speculation that "a future tool will use them" — the port-promotion rule
+applies: re-add when the first consumer materializes.
 
 ## Ontology tag field-drop trap
 

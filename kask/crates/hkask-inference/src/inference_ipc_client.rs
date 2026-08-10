@@ -252,6 +252,10 @@ impl InferenceIpcClient {
                 tool_allowlist: None,
                 skill_name: None,
                 skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -386,6 +390,10 @@ impl InferenceIpcClient {
                 tool_allowlist: None,
                 skill_name: None,
                 skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -504,6 +512,10 @@ impl InferenceIpcClient {
                 tool_allowlist: None,
                 skill_name: None,
                 skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -640,6 +652,10 @@ impl InferenceIpcClient {
                 tool_allowlist: Some(allowed.to_vec()),
                 skill_name: None,
                 skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -743,6 +759,10 @@ impl InferenceIpcClient {
                 tool_allowlist: None,
                 skill_name: Some(name.to_string()),
                 skill_task: Some(task.to_string()),
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
             },
         };
         let request_json = serde_json::to_string(&request)
@@ -805,6 +825,69 @@ impl InferenceIpcClient {
             ))),
         }
     }
+
+    /// Create a sibling agent thread in a new git worktree workspace on the
+    /// zed side. The thread runs in an isolated worktree (separate from the
+    /// user's working tree). Used by `kanban_task_spawn` to isolate spawned
+    /// agents (P1: worktree/terminal model). Returns the new thread's id and
+    /// worktree path.
+    pub async fn create_worktree_thread(
+        &self,
+        prompt: &str,
+        title: &str,
+        worktree_name: Option<&str>,
+        base_ref: Option<&str>,
+    ) -> Result<hkask_types::inference_ipc::WorktreeThreadInfo, InferenceError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let request = InferenceRequest {
+            id,
+            method: InferenceMethod::CreateWorktreeThread,
+            params: InferenceParams {
+                prompt: None,
+                messages: None,
+                images: None,
+                parameters: LLMParameters::default(),
+                model_override: None,
+                tools: None,
+                embed_model: None,
+                embed_texts: None,
+                media_op: None,
+                media_prompt: None,
+                media_image_url: None,
+                media_size: None,
+                media_count: None,
+                media_strength: None,
+                media_model: None,
+                media_workflow: None,
+                tool_server: None,
+                tool_name: None,
+                tool_args: None,
+                tool_allowlist: None,
+                skill_name: None,
+                skill_task: None,
+                worktree_prompt: Some(prompt.to_string()),
+                worktree_title: Some(title.to_string()),
+                worktree_name: worktree_name.map(str::to_string),
+                worktree_base_ref: base_ref.map(str::to_string),
+            },
+        };
+        let line = self.send_request(request).await?;
+        let response: InferenceResponse = match serde_json::from_str(&line) {
+            Ok(response) => response,
+            Err(e) => {
+                return Err(InferenceError::Connection(format!(
+                    "IPC response parse failed: {e}"
+                )));
+            }
+        };
+        match response.outcome {
+            InferenceOutcome::WorktreeThread { thread } => Ok(thread),
+            InferenceOutcome::Error { error } => Err(error.into()),
+            other => Err(InferenceError::Connection(format!(
+                "received non-worktree-thread outcome for a worktree-thread request: {other:?}"
+            ))),
+        }
+    }
 }
 
 impl InferencePort for InferenceIpcClient {
@@ -845,6 +928,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::Generate, params).await }.boxed()
@@ -888,6 +975,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateWithModel, params).await }.boxed()
@@ -931,6 +1022,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
         };
         let this = self;
         async move {
@@ -978,6 +1073,10 @@ impl InferencePort for InferenceIpcClient {
             tool_allowlist: None,
             skill_name: None,
             skill_task: None,
+                worktree_prompt: None,
+                worktree_title: None,
+                worktree_name: None,
+                worktree_base_ref: None,
         };
         let this = self;
         async move { this.call(InferenceMethod::GenerateVision, params).await }.boxed()

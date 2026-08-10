@@ -319,7 +319,13 @@ impl CorpusServer {
             }
 
             for handle in handles {
-                let _ = handle.await;
+                if let Err(join_err) = handle.await {
+                    tracing::warn!(
+                        target: "hkask.mcp.docproc.tagging",
+                        error = %join_err,
+                        "tagging batch task join failed"
+                    );
+                }
             }
 
             let c = completed.load(std::sync::atomic::Ordering::Relaxed);
