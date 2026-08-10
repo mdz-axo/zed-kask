@@ -1,7 +1,7 @@
 ---
 title: "hKask Kanban Widget — Class Diagram"
 audience: [architects, developers]
-last_updated: 2026-08-04
+last_updated: 2026-08-09
 version: "1.0.0"
 status: "Active"
 domain: "Composition"
@@ -14,8 +14,12 @@ mds_categories: [composition]
 column layout (Backlog → Ready → In Progress → Review → Done). It is a passive
 renderer: the data comes from the parsed `KanbanBlockBody` (JSON already in the
 chat stream, mirroring the combined `kanban_board_list` + `kanban_task_list`
-tool responses), not from live MCP fetches. Read-only — task moves are done by
-the agent calling `kanban_task_move` directly.
+tool responses), not from live MCP fetches. Task moves are interactive (S4/Wave
+1): the move affordance stages a pending move, the user confirms/cancels, and
+the controller dispatches `kanban_task_move` via the governed
+`shared_tool_invoker()` (OCAP/gas-budgeted). See the [Move Controller State
+Diagram](state-kanban-move-controller.md) and the [Task Status State
+Diagram](state-task-status.md).
 
 ```mermaid
 classDiagram

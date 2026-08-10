@@ -93,7 +93,13 @@ impl DatasetFormat {
         let ext = path.extension()?.to_str()?;
         match ext.to_lowercase().as_str() {
             "jsonl" => {
-                // Could be ChatML, ShareGPT, or preference — read first line to disambiguate.
+                // Could be ChatML, ShareGPT, Alpaca, or preference — read
+                // first line and disambiguate by parsing it as JSON and
+                // inspecting the object's keys (not substring presence).
+                //
+                // Homogeneity assumption: the first line is assumed to
+                // represent the format of the whole file. Heterogeneous
+                // JSONL (mixed schemas across lines) will be misdetected.
                 if let Ok(content) = std::fs::read_to_string(path) {
                     let first_line = content.lines().next().unwrap_or("");
                     // Empty file or empty first line — cannot detect format.
@@ -102,46 +108,74 @@ impl DatasetFormat {
                     if first_line.trim().is_empty() {
                         return None;
                     }
-                    // Preference formats take precedence over ChatML when preference
-                    // fields are present — a DPO dataset with conversational chosen/rejected
-                    // might also contain "messages" in the prompt, but the top-level
-                    // chosen/rejected fields identify it as preference data.
-                    if first_line.contains("\"chosen\"") && first_line.contains("\"rejected\"") {
-                        // DPO (has prompt) or ORPO (no prompt)
-                        if first_line.contains("\"prompt\"") {
-                            return Some(Self::PreferenceDpo);
-                        }
-                        return Some(Self::PreferenceOrpo);
-                    }
-                    // KTO: has prompt + completion + label (no chosen/rejected)
-                    if first_line.contains("\"completion\"") && first_line.contains("\"label\"") {
-                        return Some(Self::PreferenceKto);
-                    }
-                    if first_line.contains("\"messages\"") {
-                        return Some(Self::ChatML);
-                    }
-                    if first_line.contains("\"conversations\"") {
-                        return Some(Self::ShareGPT);
-                    }
-                    // Non-empty .jsonl with unrecognized content — return None
-                    // so G-D0 warns rather than silently defaulting to ChatML.
-                    return None;
+                    return Self::detect_from_json_line(first_line);
                 }
                 None // cannot read file
             }
             "json" => {
-                // Single JSON array of Alpaca objects.
+                // Single JSON array of Alpaca objects. Parse and check keys
+                // rather than substring matching, so a content field whose
+                // value happens to contain the literal "instruction" does
+                // not produce a false positive.
                 if let Ok(content) = std::fs::read_to_string(path)
-                    && content.contains("\"instruction\"")
-                    && content.contains("\"output\"")
+                    && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
                 {
-                    return Some(Self::Alpaca);
+                    // Alpaca may be a top-level array of objects or a single
+                    // object; check the first object's keys in either case.
+                    let first_obj = match &parsed {
+                        serde_json::Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
+                        serde_json::Value::Object(_) => parsed.as_object(),
+                        _ => None,
+                    };
+                    if let Some(obj) = first_obj {
+                        if obj.contains_key("instruction") && obj.contains_key("output") {
+                            return Some(Self::Alpaca);
+                        }
+                    }
                 }
                 None
             }
             "txt" => Some(Self::RawText),
             _ => None,
         }
+    }
+
+    /// Disambiguate a JSONL format by parsing the first line as JSON and
+    /// inspecting the object's keys. Returns `None` when the line does not
+    /// parse as a JSON object or when the key set does not match a known
+    /// schema.
+    ///
+    /// Preference formats take precedence over ChatML when preference fields
+    /// are present — a DPO dataset with conversational chosen/rejected might
+    /// also contain "messages" in the prompt, but the top-level
+    /// chosen/rejected fields identify it as preference data.
+    fn detect_from_json_line(line: &str) -> Option<Self> {
+        let parsed = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        let obj = parsed.as_object()?;
+        // Preference formats take precedence over ChatML when preference
+        // fields are present.
+        if obj.contains_key("chosen") && obj.contains_key("rejected") {
+            // DPO (has prompt) or ORPO (no prompt)
+            if obj.contains_key("prompt") {
+                return Some(Self::PreferenceDpo);
+            }
+            return Some(Self::PreferenceOrpo);
+        }
+        // KTO: has prompt + completion + label (no chosen/rejected)
+        if obj.contains_key("completion") && obj.contains_key("label") {
+            return Some(Self::PreferenceKto);
+        }
+        if obj.contains_key("messages") {
+            return Some(Self::ChatML);
+        }
+        if obj.contains_key("conversations") {
+            return Some(Self::ShareGPT);
+        }
+        // Alpaca: instruction + output (input is optional)
+        if obj.contains_key("instruction") && obj.contains_key("output") {
+            return Some(Self::Alpaca);
+        }
+        None
     }
 
     /// Whether this format is a preference format (DPO/KTO/ORPO).
@@ -399,7 +433,10 @@ impl DatasetPipeline {
             }
 
             // Preference KTO: {"prompt": ..., "completion": ..., "label": bool}
-            if let Some(completion) = json.get("completion") {
+            // `else if` — a line with both chosen/rejected and completion is
+            // malformed (DPO/ORPO and KTO are mutually exclusive schemas);
+            // counting both would double-count the line's content.
+            else if let Some(completion) = json.get("completion") {
                 let comp_len = Self::json_content_len(completion);
                 total_chars += comp_len;
                 if comp_len > max_chars {

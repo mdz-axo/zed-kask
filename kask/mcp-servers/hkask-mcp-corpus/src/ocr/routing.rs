@@ -40,7 +40,15 @@ impl SamplingState {
     }
 
     /// Determine whether the current Moderate page should be dual-routed.
+    ///
+    /// When `sample_every_nth == usize::MAX` (the zero-rate sentinel),
+    /// returns `false` without incrementing the counter — otherwise the
+    /// counter would eventually overflow and wrap to 0, which is a multiple
+    /// of any value and would falsely trigger dual-routing.
     fn should_dual_route(&mut self) -> bool {
+        if self.sample_every_nth == usize::MAX {
+            return false;
+        }
         self.counter += 1;
         self.counter.is_multiple_of(self.sample_every_nth)
     }

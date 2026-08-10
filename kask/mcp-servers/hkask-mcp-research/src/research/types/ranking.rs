@@ -1,8 +1,8 @@
-//! Web-search ranking: deduplication, re-ranking, and domain-agnostic utilities.
+//! Web-search ranking: re-ranking and domain-agnostic utilities.
 //!
-//! The domain-agnostic functions (`rrf_score`, `parse_age_to_days`,
-//! `normalize_date_bucket`) were moved here from `hkask-memory::ranking`.
-//! They have a single consumer (this crate) and had nothing to do with memory.
+//! The domain-agnostic functions (`rrf_score`, `parse_age_to_days`) were
+//! moved here from `hkask-memory::ranking`. They have a single consumer (this
+//! crate) and had nothing to do with memory.
 
 use chrono::Datelike;
 

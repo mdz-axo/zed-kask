@@ -270,16 +270,23 @@ pub(crate) async fn preprocess_via_fal(image: &mut DynamicImage) {
 }
 
 /// Try fal.ai docres binarization. Returns None on any failure.
+///
+/// Every failure path emits a `tracing::warn!` under
+/// `reg.pipeline.ocr.fal` so an operator can distinguish 401/429/500/network/
+/// parse failures from each other instead of seeing only the caller's
+/// generic "fal.ai docres failed" line.
 async fn try_fal_docres(image: &DynamicImage, api_key: &str) -> Option<DynamicImage> {
     // Encode image as PNG base64 data URI
     let mut png_bytes: Vec<u8> = Vec::new();
-    if image
-        .write_to(
-            &mut std::io::Cursor::new(&mut png_bytes),
-            image::ImageFormat::Png,
-        )
-        .is_err()
-    {
+    if let Err(e) = image.write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    ) {
+        tracing::warn!(
+            target: "reg.pipeline.ocr.fal",
+            error = %e,
+            "fal.ai docres: failed to encode source image as PNG"
+        );
         return None;
     }
 
@@ -289,6 +296,14 @@ async fn try_fal_docres(image: &DynamicImage, api_key: &str) -> Option<DynamicIm
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
+        .map_err(|e| {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                error = %e,
+                "fal.ai docres: reqwest client construction failed"
+            );
+            e
+        })
         .ok()?;
 
     let request_body = serde_json::json!({
@@ -303,24 +318,82 @@ async fn try_fal_docres(image: &DynamicImage, api_key: &str) -> Option<DynamicIm
         .json(&request_body)
         .send()
         .await
+        .map_err(|e| {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                error = %e,
+                "fal.ai docres: POST request failed"
+            );
+            e
+        })
         .ok()?;
 
     if !response.status().is_success() {
+        tracing::warn!(
+            target: "reg.pipeline.ocr.fal",
+            status = %response.status().as_u16(),
+            "fal.ai docres: non-success HTTP status"
+        );
         return None;
     }
 
-    let result: serde_json::Value = response.json().await.ok()?;
-    let image_url = result["image"]["url"].as_str()?;
+    let result: serde_json::Value = response.json().await.map_err(|e| {
+        tracing::warn!(
+            target: "reg.pipeline.ocr.fal",
+            error = %e,
+            "fal.ai docres: response JSON parse failed"
+        );
+        e
+    }).ok()?;
+
+    let image_url = match result["image"]["url"].as_str() {
+        Some(url) => url,
+        None => {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                "fal.ai docres: response missing image.url field"
+            );
+            return None;
+        }
+    };
 
     let enhanced_bytes = client
         .get(image_url)
         .send()
         .await
-        .ok()?
+        .map_err(|e| {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                image_url,
+                error = %e,
+                "fal.ai docres: enhanced image download failed"
+            );
+            e
+        })
+        .ok()?;
+
+    let enhanced_bytes = enhanced_bytes
         .bytes()
         .await
+        .map_err(|e| {
+            tracing::warn!(
+                target: "reg.pipeline.ocr.fal",
+                error = %e,
+                "fal.ai docres: enhanced image bytes read failed"
+            );
+            e
+        })
         .ok()?;
-    image::load_from_memory(&enhanced_bytes).ok()
+
+    image::load_from_memory(&enhanced_bytes).map_err(|e| {
+        tracing::warn!(
+            target: "reg.pipeline.ocr.fal",
+            error = %e,
+            byte_count = enhanced_bytes.len(),
+            "fal.ai docres: enhanced image decode failed"
+        );
+        e
+    }).ok()
 }
 
 /// Otsu binarization — local, instant, free.

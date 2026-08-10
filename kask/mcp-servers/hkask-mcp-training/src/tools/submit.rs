@@ -86,10 +86,15 @@ impl TrainingServer {
             let mut version: u32 = 1;
             let resolved_skill_name: Option<String> = skill_name.clone();
             let mut resolved_adapter_name: Option<String> = adapter_name.clone();
+            // Hoisted to the outer scope so the result JSON can report retrain
+            // provenance to the operator. Only meaningful when `retrain_mode`.
+            let mut previous_adapter_exists: bool = false;
+            let mut original_examples: usize = 0;
+            let mut feedback_examples: usize = 0;
 
             let normalized_path = if retrain_mode {
                 let feedback = hkask_mcp_server::contain_for_read(
-                    feedback_path.as_ref().unwrap(),
+                    feedback_path.as_ref().expect("retrain_mode guard ensures feedback_path is Some"),
                 )?;
                 let skill = skill_name.clone().unwrap_or_default();
                 if skill.is_empty() {
@@ -103,8 +108,6 @@ impl TrainingServer {
 
                 let mut merged = String::new();
                 let mut seen_questions: std::collections::HashSet<String> = std::collections::HashSet::new();
-                let mut original_examples = 0usize;
-                let mut feedback_examples = 0usize;
 
                 for (content, counter) in [(&original_content, &mut original_examples), (&feedback_content, &mut feedback_examples)] {
                     for line in content.lines() {
@@ -146,7 +149,6 @@ impl TrainingServer {
                 };
                 std::fs::write(&merged_path, &merged).map_err(|e| map_io_error(e, "Failed to write merged dataset"))?;
 
-                let previous_adapter_exists: bool;
                 match self.adapter_store.get_by_skill_name(&skill) {
                     Ok(Some(prev)) => {
                         let prev_version = prev.version.as_deref().and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
@@ -164,7 +166,6 @@ impl TrainingServer {
                 if resolved_adapter_name.is_none() {
                     resolved_adapter_name = Some(format!("{skill}-v{version}"));
                 }
-                let _ = (previous_adapter_exists, original_examples, feedback_examples);
 
                 match self.pipeline.lock().unwrap_or_else(|e| e.into_inner()).ingest(&merged_path) {
                     Ok(path) => path,
@@ -338,6 +339,9 @@ impl TrainingServer {
                         result["skill_name"] = json!(resolved_skill_name);
                         result["adapter_name"] = json!(resolved_adapter_name);
                         result["version"] = json!(version);
+                        result["previous_adapter_exists"] = json!(previous_adapter_exists);
+                        result["original_examples"] = json!(original_examples);
+                        result["feedback_examples"] = json!(feedback_examples);
                         if let Some(b) = &ab_baseline {
                             result["ab_baseline"] = json!({"previous_version": b.previous_version, "previous_loss": b.previous_loss, "previous_perplexity": b.previous_perplexity, "description": "A/B baseline from previous adapter."});
                         }

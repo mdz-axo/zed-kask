@@ -143,12 +143,12 @@ pub fn parse_target_pages(spec: &str) -> Result<Vec<usize>, TriageError> {
                 TriageError::InvalidPageSpec(format!("invalid range bound '{}'", hi))
             })?;
             if lo == 0 || hi == 0 {
-                return Err(TriageError::PdftotextFailed(
+                return Err(TriageError::InvalidPageSpec(
                     "target_pages are 1-based; page 0 is invalid".into(),
                 ));
             }
             if lo > hi {
-                return Err(TriageError::PdftotextFailed(format!(
+                return Err(TriageError::InvalidPageSpec(format!(
                     "inverted target_pages range {lo}-{hi}"
                 )));
             }
@@ -158,7 +158,7 @@ pub fn parse_target_pages(spec: &str) -> Result<Vec<usize>, TriageError> {
                 .parse()
                 .map_err(|_| TriageError::InvalidPageSpec(format!("invalid page '{}'", part)))?;
             if p == 0 {
-                return Err(TriageError::PdftotextFailed(
+                return Err(TriageError::InvalidPageSpec(
                     "target_pages are 1-based; page 0 is invalid".into(),
                 ));
             }

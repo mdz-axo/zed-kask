@@ -100,6 +100,7 @@ impl TrainingServer {
                         lora_validation::DatasetFormatVerdict::Ready => "ready",
                         lora_validation::DatasetFormatVerdict::NeedsMapping => "needs_mapping",
                         lora_validation::DatasetFormatVerdict::Incompatible => "incompatible",
+                        lora_validation::DatasetFormatVerdict::Undetermined => "undetermined",
                     },
                     "detected_format": format!("{:?}", r.detected_format),
                     "expected_format": format!("{:?}", r.expected_format),

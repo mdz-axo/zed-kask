@@ -7,7 +7,7 @@
 //! Adapter weights live on disk; only metadata is stored in SQLite.
 
 use crate::adapter::expertise::{AdapterLifecycle, Expertise, MdsDomain, TrainingProvenance};
-use hkask_storage::database::driver::{query_map, query_row};
+use hkask_storage::database::driver::query_map;
 use hkask_storage::database::value::DbValue;
 use hkask_storage::define_driver_store;
 use hkask_types::InfrastructureError;
@@ -532,48 +532,6 @@ mod tests {
         let retrieved = store.get_by_id(id).unwrap().expect("adapter should exist");
         assert_eq!(retrieved.id, id);
         assert_eq!(retrieved.expertise.name, "test-expertise");
-    }
-
-    #[test]
-    fn retrieve_by_expertise() {
-        let store = make_store();
-        let a1 = make_test_adapter();
-        let mut a2 = make_test_adapter();
-        a2.expertise.name = "other-expertise".into();
-        store.store(&a1).unwrap();
-        store.store(&a2).unwrap();
-
-        let results = store.get_by_expertise("test-expertise").unwrap();
-        assert_eq!(results.len(), 1);
-    }
-
-    #[test]
-    fn list_by_owner() {
-        let store = make_store();
-        let owner = WebID::from_uuid(Uuid::new_v4());
-        let mut a1 = make_test_adapter();
-        a1.owner = owner;
-        store.store(&a1).unwrap();
-
-        let results = store.list_owner(owner).unwrap();
-        assert_eq!(results.len(), 1);
-    }
-
-    #[test]
-    fn delete_adapter() {
-        let store = make_store();
-        let adapter = make_test_adapter();
-        let id = adapter.id;
-        store.store(&adapter).unwrap();
-        store.delete(id).unwrap();
-        assert!(store.get_by_id(id).unwrap().is_none());
-    }
-
-    #[test]
-    fn delete_non_existent_returns_error() {
-        let store = make_store();
-        let result = store.delete(Uuid::new_v4());
-        assert!(result.is_err());
     }
 
     #[test]

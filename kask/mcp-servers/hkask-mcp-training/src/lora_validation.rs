@@ -549,6 +549,12 @@ pub enum DatasetFormatVerdict {
     NeedsMapping,
     /// Dataset cannot be used for the selected method (e.g., SFT data for DPO).
     Incompatible,
+    /// Dataset format could not be detected, so compatibility with the
+    /// expected format could not be determined. Callers should treat this
+    /// like `Incompatible` for refusal purposes (an expected format was
+    /// derivable but the dataset could not be matched against it), or surface
+    /// it distinctly to the operator.
+    Undetermined,
 }
 
 /// Result of G-D0 dataset format validation.
@@ -596,7 +602,33 @@ pub fn validate_dataset_format(
     let expected_format = derive_expected_format(trainer_preference, adapter_purpose);
 
     match (&detected_format, &expected_format) {
-        (None, _) => {
+        (None, Some(_)) => {
+            // Detection failed but an expected format was derivable — the
+            // dataset could not be matched against the expected format, so a
+            // caller branching on `verdict` must not treat this as ready.
+            findings.push(ValidationFinding {
+                gate_id: "G-D0",
+                severity: ValidationSeverity::Warn,
+                message: format!(
+                    "Could not detect dataset format from file: {} — format compatibility with the expected format could not be verified",
+                    dataset_path.display()
+                ),
+                source: "hKask dataset pipeline — DatasetFormat::detect",
+                remediation: "Ensure the dataset file has a .jsonl, .json, or .txt extension and is non-empty with a recognized schema".to_string(),
+            });
+            DatasetFormatResult {
+                verdict: DatasetFormatVerdict::Undetermined,
+                detected_format,
+                expected_format,
+                mapping_code: String::new(),
+                findings,
+            }
+        }
+        (None, None) => {
+            // Detection failed and no expected format was derivable either —
+            // nothing to compare against. Warn the operator but keep Ready
+            // (the dataset may well be fine; the operator just didn't declare
+            // a trainer and detection couldn't classify it).
             findings.push(ValidationFinding {
                 gate_id: "G-D0",
                 severity: ValidationSeverity::Warn,
@@ -617,7 +649,16 @@ pub fn validate_dataset_format(
         }
         (Some(_detected), None) => {
             // No expected format derivable — cannot check compatibility.
-            // This is not a failure; the operator may not have declared a trainer.
+            // This is not a failure; the operator may not have declared a
+            // trainer. But the "not checked" state must be visible so it is
+            // distinguishable from "validated and compatible."
+            findings.push(ValidationFinding {
+                gate_id: "G-D0",
+                severity: ValidationSeverity::Info,
+                message: "No trainer or adapter_purpose declared — dataset format compatibility not checked".to_string(),
+                source: "hKask dataset pipeline — derive_expected_format",
+                remediation: "Declare a trainer (sft/dpo/kto/orpo) or adapter_purpose (instruction/preference) to enable format compatibility checking".to_string(),
+            });
             DatasetFormatResult {
                 verdict: DatasetFormatVerdict::Ready,
                 detected_format,
@@ -712,7 +753,20 @@ fn derive_expected_format(
             "dpo" => return Some(DatasetFormat::PreferenceDpo),
             "kto" => return Some(DatasetFormat::PreferenceKto),
             "orpo" => return Some(DatasetFormat::PreferenceOrpo),
-            "reward" | "grpo" => return Some(DatasetFormat::ChatML),
+            // Reward models consume preference pairs (chosen/rejected) —
+            // ORPO format (prompt implicit in chosen/rejected) is the closest
+            // match in the current DatasetFormat taxonomy.
+            "reward" => return Some(DatasetFormat::PreferenceOrpo),
+            // GRPO consumes preference data (prompt + chosen + rejected +
+            // optionally per-token logprobs), but the current DatasetFormat
+            // taxonomy has no GRPO-specific variant and GRPO is not a TRL
+            // trainer supported by this pipeline (it is Ludwig-only and
+            // deferred per TrlTrainer). Return None so G-D0 surfaces
+            // "expected format not derivable" rather than silently mapping
+            // to ChatML (GRPO does not consume ChatML).
+            // TODO: verify against TRL GRPOTrainer's expected format when
+            // GRPO support lands (P7 — evolutionary architecture).
+            "grpo" => return None,
             _ => {}
         }
     }
@@ -1417,7 +1471,11 @@ mod tests {
     }
 
     #[test]
-    fn gd0_no_trainer_no_purpose_returns_ready_without_findings() {
+    fn gd0_no_trainer_no_purpose_returns_ready_with_info_finding() {
+        // No trainer/purpose declared → format compatibility not checked.
+        // Verdict stays Ready (the dataset may be fine) but an Info finding
+        // makes the "not checked" state visible, distinguishing it from
+        // "validated and compatible."
         let file = write_temp_dataset(
             r#"{"messages":[{"role":"user","content":"hi"}]}
 "#,
@@ -1425,14 +1483,21 @@ mod tests {
         );
         let result = validate_dataset_format(file.path(), None, None);
         assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
-        assert!(result.findings.is_empty());
+        assert!(
+            result.findings.iter().any(|f| f.gate_id == "G-D0"
+                && f.severity == ValidationSeverity::Info),
+            "expected an Info finding when no trainer/purpose is declared"
+        );
     }
 
     #[test]
     fn gd0_unrecognized_extension_warns() {
+        // .csv with an expected format derivable (sft → ChatML) but detection
+        // failed → Undetermined (not Ready), so a caller branching on verdict
+        // does not treat an undetectable dataset as ready-to-train.
         let file = write_temp_dataset("some content", "csv");
         let result = validate_dataset_format(file.path(), Some("sft"), None);
-        assert_eq!(result.verdict, DatasetFormatVerdict::Ready);
+        assert_eq!(result.verdict, DatasetFormatVerdict::Undetermined);
         assert!(result.findings.iter().any(|f| f.gate_id == "G-D0"));
     }
 

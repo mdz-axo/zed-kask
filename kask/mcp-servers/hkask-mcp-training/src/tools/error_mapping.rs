@@ -17,12 +17,9 @@ use hkask_mcp_server::server::McpToolError;
 pub fn map_adapter_store_error(e: AdapterStoreError) -> McpToolError {
     let message = e.to_string();
     match e {
-        AdapterStoreError::NotFound(_) | AdapterStoreError::ExpertiseNotFound(_) => {
-            McpToolError::not_found(message)
-        }
+        AdapterStoreError::NotFound(_) => McpToolError::not_found(message),
         AdapterStoreError::InvalidState(_) => McpToolError::failed_precondition(message),
-        AdapterStoreError::ChecksumMismatch { .. }
-        | AdapterStoreError::Database(_)
+        AdapterStoreError::Database(_)
         | AdapterStoreError::Infra(_)
         | AdapterStoreError::Serialization(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
     }

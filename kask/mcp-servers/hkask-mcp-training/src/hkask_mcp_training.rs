@@ -375,7 +375,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                         let memory_store =
                             Some(hkask_memory::MemoryStore::new(h_mem_store, embedding_store));
                         // Canonical adapter store: crate::adapter::AdapterStore stores
-                        // TrainedLoRAAdapter in trained_adapters + active_endpoints + lora_blobs.
+                        // TrainedLoRAAdapter in trained_adapters.
                         // Schema initialized by from_driver().
                         let adapter_store = crate::adapter::AdapterStore::from_driver(hmem_driver)
                             .map_err(|e| anyhow::anyhow!("adapter store init: {e}"))?;
@@ -385,6 +385,10 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                     None => {
                         // No passphrase configured — fall back to an in-memory driver
                         // so the server still runs (no persistence across restarts).
+                        tracing::warn!(
+                            target = "hkask.training.init",
+                            "HKASK_DB_PASSPHRASE not resolved — falling back to in-memory DB; job/adapter state will NOT persist across restarts. Set HKASK_DB_PASSPHRASE via keychain (kask keystore load) or env var."
+                        );
                         let pool = hkask_storage::database::sqlite::SqliteDriver::in_memory_pool()
                             .map_err(|e| anyhow::anyhow!("in-memory pool: {e}"))?;
                         let driver: Arc<dyn hkask_storage::database::driver::DatabaseDriver> =
