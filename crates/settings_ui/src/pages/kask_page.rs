@@ -107,7 +107,8 @@ pub(crate) const BUILT_IN_MCP_SERVERS: &[(&str, &str)] = kask_bridge::BUILT_IN_M
 /// the former parallel `DATA_SERVICES` 4-tuple that drifted from the bridge's
 /// `DATA_SERVICE_CREDENTIALS` 2-tuple (different field order, overlapping but
 /// not identical entries).
-pub(crate) fn data_service_descriptors() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+pub(crate) fn data_service_descriptors()
+-> Vec<(&'static str, &'static str, &'static str, &'static str)> {
     kask_bridge::DATA_SERVICES
         .iter()
         .filter(|d| d.shows_in_ui())
@@ -137,7 +138,10 @@ pub(crate) fn has_credential(
     // `.is_ok()`) to match `mcp_env_with_credentials`'s predicate — an empty
     // env var (`FOO=`) is not a meaningful value and would cause the runtime
     // to skip keychain injection, so the UI should not show it as "configured".
-    if std::env::var(env_var).map(|v| !v.is_empty()).unwrap_or(false) {
+    if std::env::var(env_var)
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+    {
         return true;
     }
     // Check the session cache for keys written via the settings UI.

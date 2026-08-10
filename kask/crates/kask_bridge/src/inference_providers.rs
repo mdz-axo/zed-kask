@@ -665,7 +665,7 @@ pub fn mirror_env_keys_to_keychain(
                     Ok(()) => {}
                     Err(e) => {
                         tracing::warn!(
-                            target: "reg.kask_bridge",
+                            target: "hkask.kask_bridge",
                             env_var = %target.env_var(),
                             api_url = %api_url,
                             error = %e,
@@ -693,7 +693,7 @@ pub fn mirror_env_keys_to_keychain(
             {
                 Ok(()) => {
                     tracing::info!(
-                        target: "reg.kask_bridge",
+                        target: "hkask.kask_bridge",
                         env_var = %target.env_var(),
                         credential_url = %credential_url,
                         "Mirrored env key to keychain for MCP server env injection"
@@ -701,7 +701,7 @@ pub fn mirror_env_keys_to_keychain(
                 }
                 Err(e) => {
                     tracing::warn!(
-                        target: "reg.kask_bridge",
+                        target: "hkask.kask_bridge",
                         env_var = %target.env_var(),
                         credential_url = %credential_url,
                         error = %e,
@@ -901,7 +901,12 @@ mod tests {
             .find(|t| t.env_var() == "FALAI_API_KEY")
             .expect("FALAI_API_KEY entry should be present");
         match fal_entry {
-            MirrorTarget::InferenceProvider { api_url, credential_url, key, .. } => {
+            MirrorTarget::InferenceProvider {
+                api_url,
+                credential_url,
+                key,
+                ..
+            } => {
                 assert_eq!(api_url, "https://api.fal.ai/v1", "api_url");
                 assert_eq!(credential_url, "kask://credentials/fal", "credential_url");
                 assert_eq!(key, "fal-test-key", "key");
@@ -951,19 +956,31 @@ mod tests {
             .iter()
             .find(|t| t.env_var() == "RUNPOD_API_KEY")
             .expect("RUNPOD_API_KEY entry should be present");
-        assert_eq!(runpod_entry.credential_url(), "kask://credentials/runpod", "credential_url");
+        assert_eq!(
+            runpod_entry.credential_url(),
+            "kask://credentials/runpod",
+            "credential_url"
+        );
         assert_eq!(runpod_entry.key(), "runpod-test-key", "key");
         let hf_entry = collected
             .iter()
             .find(|t| t.env_var() == "HF_TOKEN")
             .expect("HF_TOKEN entry should be present");
-        assert_eq!(hf_entry.credential_url(), "kask://credentials/hf_token", "credential_url");
+        assert_eq!(
+            hf_entry.credential_url(),
+            "kask://credentials/hf_token",
+            "credential_url"
+        );
         assert_eq!(hf_entry.key(), "hf-test-token", "key");
         let fred_entry = collected
             .iter()
             .find(|t| t.env_var() == "HKASK_FRED_API_KEY")
             .expect("HKASK_FRED_API_KEY entry should be present");
-        assert_eq!(fred_entry.credential_url(), "kask://credentials/fred", "credential_url");
+        assert_eq!(
+            fred_entry.credential_url(),
+            "kask://credentials/fred",
+            "credential_url"
+        );
         assert_eq!(fred_entry.key(), "fred-test-key", "key");
         unsafe {
             std::env::remove_var("RUNPOD_API_KEY");
@@ -1005,9 +1022,7 @@ mod tests {
                     .find(|d| d.env_var == *env_var)
                     .map(|d| d.is_secret())
                     .unwrap_or(false);
-                let in_inference = INFERENCE_PROVIDERS
-                    .iter()
-                    .any(|p| p.env_var == *env_var);
+                let in_inference = INFERENCE_PROVIDERS.iter().any(|p| p.env_var == *env_var);
                 assert!(
                     in_data_services || in_inference,
                     "MCP server `{}` credential allowlist contains `{env_var}` \

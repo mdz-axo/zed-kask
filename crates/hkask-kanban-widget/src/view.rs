@@ -24,8 +24,8 @@ use hkask_tool_invoker::{BlockProvenance, shared_tool_invoker};
 use hkask_types::TaskStatus;
 use hkask_types::kanban_wire;
 use theme::ActiveTheme;
-use ui::prelude::*;
 use ui::Tooltip;
+use ui::prelude::*;
 
 use crate::block::{KanbanBlockBody, TaskBody};
 
@@ -40,6 +40,23 @@ fn status_label(status: TaskStatus) -> &'static str {
         TaskStatus::Review => "Review",
         TaskStatus::Done => "Done",
     }
+}
+
+/// Parse the numeric rank from a `pN`-style priority label (e.g. `"p1"`,
+/// `"P1-high"`). Returns `Some(rank)` only when the label starts with `p`
+/// followed by a single digit — so `"p1"` → `Some(1)` but `"p10"` → `None`
+/// (avoids the `starts_with("p1")` trap where `"p10"` would match `"p1"`).
+fn priority_rank(lowered: &str) -> Option<u8> {
+    let bytes = lowered.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'p' && bytes[1].is_ascii_digit() {
+        // Only single-digit ranks are recognized; `p10` is not rank 1.
+        let next = bytes.get(2);
+        if next.is_some_and(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        return Some(bytes[1] - b'0');
+    }
+    None
 }
 
 /// Tool the widget dispatches to move a task. Sourced from the shared
@@ -402,11 +419,7 @@ impl KanbanWidget {
                     div()
                         .id(format!("kanban-ontology-{}", task.task_id))
                         .tooltip(Tooltip::text(format!("Ontology: {ontology}")))
-                        .child(
-                            Label::new("§")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        ),
+                        .child(Label::new("§").size(LabelSize::XSmall).color(Color::Muted)),
                 )
             })
             .when_some(task.priority.clone(), |this, priority| {
@@ -427,23 +440,19 @@ impl KanbanWidget {
     }
 
     /// Render the priority as a colored badge. High-priority labels (containing
-    /// "high" or starting with "P0"/"P1") render in the accent color; medium
-    /// ("P2") in the default text color; everything else muted.
+    /// "high" or matching the `P0`/`P1` token) render in the accent color;
+    /// medium (`P2`) in the default text color; everything else muted.
     fn render_priority_badge(&self, priority: String) -> impl IntoElement {
         let lower = priority.to_lowercase();
-        let color = if lower.contains("high")
-            || lower.starts_with("p0")
-            || lower.starts_with("p1")
+        let color = if lower.contains("high") || priority_rank(&lower).is_some_and(|r| r <= 1)
         {
             Color::Accent
-        } else if lower.starts_with("p2") || lower.contains("medium") {
+        } else if priority_rank(&lower) == Some(2) || lower.contains("medium") {
             Color::Default
         } else {
             Color::Muted
         };
-        Label::new(priority)
-            .size(LabelSize::XSmall)
-            .color(color)
+        Label::new(priority).size(LabelSize::XSmall).color(color)
     }
 
     /// Render labels as muted chips separated by spaces.
@@ -681,12 +690,12 @@ impl KanbanWidget {
         .detach();
     }
 
-    /// Cancel a dispatch that is in flight: clear the in-flight marker, roll
-    /// back the optimistic local move, and surface a visible hint. The
-    /// underlying tool call is not cancelled (it may already be queued on the
-    /// server); the rollback only restores the local cache so the user sees the
-    /// pre-move state. When the deferred result lands, it is applied on top of
-    /// the rolled-back state.
+    /// Cancel a dispatch that is in flight: clear the in-flight marker and
+    /// roll back the optimistic local move. The visible feedback is the
+    /// rolled-back card position. The underlying tool call is not cancelled
+    /// (it may already be queued on the server); the rollback only restores
+    /// the local cache so the user sees the pre-move state. When the deferred
+    /// result lands, it is applied on top of the rolled-back state.
     fn cancel_dispatch(&mut self, cx: &mut Context<Self>) {
         if self.dispatch_in_flight.is_none() {
             return;
@@ -716,11 +725,8 @@ impl KanbanWidget {
                 .into_iter()
                 .flat_map(|column| column.tasks)
                 .collect();
-            let restored = apply_move_to_tasks(
-                all_tasks,
-                &optimistic.task_id,
-                &optimistic.original_status,
-            );
+            let restored =
+                apply_move_to_tasks(all_tasks, &optimistic.task_id, &optimistic.original_status);
             self.columns = group_tasks_into_columns(restored);
         }
     }
@@ -892,11 +898,9 @@ fn group_tasks_into_columns(tasks: Vec<TaskBody>) -> Vec<KanbanColumn> {
     }
 
     let mut columns = Vec::new();
-    let mut seen: HashSet<&str> = HashSet::new();
 
     for status in TaskStatus::STANDARD_ORDER {
         let status_key = status.as_str();
-        seen.insert(status_key);
         let tasks = by_status.remove(status_key).unwrap_or_default();
         columns.push(KanbanColumn {
             status: status_key.to_string(),
@@ -973,19 +977,11 @@ impl Render for KanbanWidget {
 // pure function with `shared_tool_invoker()`.
 
 /// Whether the move affordance is enabled: dispatchable provenance re-issues
-/// against the originating server; empty provenance falls back to the
-/// hardcoded default. Partial (non-dispatchable, non-empty) provenance is
-/// disabled with a hint.
+/// against the originating server. Non-dispatchable provenance (empty or
+/// partial) is disabled — `build_move_dispatch_args` returns
+/// `Err(PROVENANCE_INCOMPLETE_MSG)` and the affordance is hidden.
 fn move_enabled(provenance: &BlockProvenance) -> bool {
     provenance.is_dispatchable()
-}
-
-/// Returns `true` if `status` is one of the five standard `TaskStatus` wire
-/// strings. Delegates to `TaskStatus::parse_str` so the widget and server
-/// agree on the valid set via the shared enum (single source of truth in
-/// `hkask-types`).
-fn is_valid_target_status(status: &str) -> bool {
-    TaskStatus::parse_str(status).is_some()
 }
 
 /// Pure: decide the `(server, tool, args)` dispatch tuple for a move, given the
@@ -994,11 +990,15 @@ fn is_valid_target_status(status: &str) -> bool {
 /// The dispatch tool is always `kanban_task_move` (the move affordance invokes
 /// a different tool than the one that produced the block — `kanban_task_list`
 /// — so the tool is hardcoded, not copied from provenance). The server is
-/// taken from provenance when dispatchable, else the hardcoded default.
+/// taken from provenance when dispatchable; non-dispatchable provenance
+/// (empty or partial) yields `Err(PROVENANCE_INCOMPLETE_MSG)`.
 ///
 /// The args shape matches the server's confirmed `TaskMoveRequest` schema:
 /// `{ "task_id": <id>, "target_status": <status> }` — no `board_id` (the
-/// server resolves the task's board internally).
+/// server resolves the task's board internally). `target_status` is accepted
+/// case-insensitively (via `TaskStatus::parse_str`) and emitted as the
+/// lowercase wire string (`TaskStatus::as_str`), so display-form input like
+/// `"Ready"` round-trips to the server's `rename_all = "lowercase"` serde.
 ///
 /// - empty `task_id` → `Err(MISSING_TASK_ID_MSG)`.
 /// - non-standard `target_status` → `Err(INVALID_TARGET_STATUS_MSG)`.
@@ -1013,15 +1013,15 @@ fn build_move_dispatch_args(
     if task_id.trim().is_empty() {
         return Err(MISSING_TASK_ID_MSG);
     }
-    if !is_valid_target_status(target_status) {
-        return Err(INVALID_TARGET_STATUS_MSG);
-    }
+    // Validate case-insensitively, then emit the canonical lowercase wire
+    // string so the server's `rename_all = "lowercase"` serde accepts it.
+    let target = TaskStatus::parse_str(target_status).ok_or(INVALID_TARGET_STATUS_MSG)?;
     if !provenance.is_dispatchable() {
         return Err(PROVENANCE_INCOMPLETE_MSG);
     }
     let move_args = serde_json::json!({
         "task_id": task_id,
-        "target_status": target_status,
+        "target_status": target.as_str(),
     });
     // `is_dispatchable()` guarantees server is Some; the `unwrap_or_default`
     // accessor only returns an empty string if the invariant were violated,
@@ -1193,9 +1193,11 @@ mod tests {
         );
         // `TaskStatus::parse_str` is case-insensitive, so Display-form inputs
         // (e.g. "Ready", "In Progress") are accepted and normalized to the
-        // lowercase wire string.
+        // lowercase wire string the server's `rename_all = "lowercase"` serde
+        // expects.
         let result = build_move_dispatch_args(&provenance, "t1", "Ready");
-        assert!(result.is_ok(), "display-form status accepted (case-insensitive)");
+        let (_, _, args) = result.expect("display-form status accepted (case-insensitive)");
+        assert_eq!(args["target_status"], "ready", "emitted as lowercase wire string");
     }
 
     #[test]
@@ -1232,6 +1234,20 @@ mod tests {
         assert_eq!(status_label(TaskStatus::Backlog), "Backlog");
         assert_eq!(status_label(TaskStatus::InProgress), "In Progress");
         assert_eq!(status_label(TaskStatus::Done), "Done");
+    }
+
+    #[test]
+    fn priority_rank_parses_single_digit_and_rejects_p10() {
+        // `p0`/`p1`/`p2` parse to their ranks; `p10` does NOT parse as rank 1
+        // (the `starts_with("p1")` trap).
+        assert_eq!(priority_rank("p0"), Some(0));
+        assert_eq!(priority_rank("p1"), Some(1));
+        assert_eq!(priority_rank("p2"), Some(2));
+        assert_eq!(priority_rank("p3"), Some(3));
+        assert_eq!(priority_rank("p10"), None, "p10 is not rank 1");
+        assert_eq!(priority_rank("p1-high"), Some(1), "suffix after digit ok");
+        assert_eq!(priority_rank("high"), None);
+        assert_eq!(priority_rank(""), None);
     }
 
     #[test]
@@ -1467,8 +1483,7 @@ mod tests {
         set_tool_invoker(Some(invoker));
         let _guard = InvokerGuard;
 
-        let body =
-            body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
+        let body = body_with_board_and_provenance_with(vec![task("t1", "Write tests", "backlog")]);
         let widget = cx.new(|cx| KanbanWidget::new(body, cx));
 
         // Stage + confirm the move. `dispatch_move` applies the optimistic
@@ -1489,8 +1504,7 @@ mod tests {
         // The optimistic move is reflected locally before the dispatch resolves.
         let in_flight = widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
         assert_eq!(in_flight.as_deref(), Some("t1"), "dispatch is in flight");
-        let optimistic_status =
-            widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        let optimistic_status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
         assert_eq!(
             optimistic_status.as_deref(),
             Some("ready"),
@@ -1502,11 +1516,12 @@ mod tests {
         // `backlog` status and clears `dispatch_in_flight`.
         widget.update(cx, |this, cx| this.cancel_dispatch(cx));
 
-        let in_flight_after =
-            widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
-        assert!(in_flight_after.is_none(), "cancel clears dispatch_in_flight");
-        let rolled_back_status =
-            widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        let in_flight_after = widget.read_with(cx, |this, _| this.dispatch_in_flight.clone());
+        assert!(
+            in_flight_after.is_none(),
+            "cancel clears dispatch_in_flight"
+        );
+        let rolled_back_status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
         assert_eq!(
             rolled_back_status.as_deref(),
             Some("backlog"),
@@ -1517,8 +1532,7 @@ mod tests {
         // is already cleared; on `Ok(_)` it clears `optimistic_move` (already
         // None) — a no-op. The rolled-back status must survive.
         cx.run_until_parked();
-        let final_status =
-            widget.read_with(cx, |this, _| this.find_task_status("t1"));
+        let final_status = widget.read_with(cx, |this, _| this.find_task_status("t1"));
         assert_eq!(
             final_status.as_deref(),
             Some("backlog"),
@@ -1794,19 +1808,15 @@ mod tests {
 
     #[gpui::test]
     async fn description_expand_toggle_adds_and_removes_task_id(cx: &mut gpui::TestAppContext) {
-        let _guard = GLOBAL_TEST_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-
+        // Only mutates the widget's own `expanded_descriptions` field — no
+        // process global is touched, so `GLOBAL_TEST_LOCK` is not needed.
         let mut t = task("t1", "Write tests", "backlog");
         t.description = Some("x".repeat(200));
         let body = kanban_body(vec![t]);
         let widget = cx.update(|cx| cx.new(|cx| KanbanWidget::new(body, cx)));
 
         // Initially collapsed.
-        let expanded = widget.read_with(cx, |this, _| {
-            this.expanded_descriptions.contains("t1")
-        });
+        let expanded = widget.read_with(cx, |this, _| this.expanded_descriptions.contains("t1"));
         assert!(!expanded, "description starts collapsed");
 
         // Toggle expand.
@@ -1814,9 +1824,7 @@ mod tests {
             this.expanded_descriptions.insert("t1".to_string());
             cx.notify();
         });
-        let expanded = widget.read_with(cx, |this, _| {
-            this.expanded_descriptions.contains("t1")
-        });
+        let expanded = widget.read_with(cx, |this, _| this.expanded_descriptions.contains("t1"));
         assert!(expanded, "description expanded");
 
         // Toggle collapse.
@@ -1824,9 +1832,7 @@ mod tests {
             this.expanded_descriptions.remove("t1");
             cx.notify();
         });
-        let expanded = widget.read_with(cx, |this, _| {
-            this.expanded_descriptions.contains("t1")
-        });
+        let expanded = widget.read_with(cx, |this, _| this.expanded_descriptions.contains("t1"));
         assert!(!expanded, "description collapsed again");
     }
 

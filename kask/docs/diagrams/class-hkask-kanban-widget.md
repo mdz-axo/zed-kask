@@ -31,9 +31,13 @@ classDiagram
         +task_id: String
         +title: String
         +status: String
+        +description: Option~String~
         +assignee: Option~String~
         +gas_remaining: Option~u64~
         +ontology: Option~String~
+        +priority: Option~String~
+        +labels: Vec~String~
+        +criteria: Vec~String~
     }
     class KanbanColumn {
         +status: String
@@ -43,7 +47,14 @@ classDiagram
     class KanbanWidget {
         +board_name: String
         +columns: Vec~KanbanColumn~
+        +provenance: BlockProvenance
         +focus_handle: FocusHandle
+        +dispatch_in_flight: Option~String~
+        +optimistic_move: Option~OptimisticMove~
+        +dispatch_error: Option~String~
+        +pending_move: Option~PendingMove~
+        +disagree_draft: Option~String~
+        +expanded_descriptions: HashSet~String~
         +new(body, cx) KanbanWidget
     }
     class create_kanban_widget {
@@ -70,7 +81,7 @@ non-standard statuses sorted alphabetically (title-cased).
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-VIZ-KANBAN
-verified_date: 2026-08-09
 verified_against: crates/hkask-kanban-widget/src/block.rs; crates/hkask-kanban-widget/src/view.rs
-status: VERIFIED
+status: STALE
+note: Fields synced to S5/S7 (TaskBody: description/priority/labels/criteria) and S4/S5 (KanbanWidget: dispatch_in_flight/optimistic_move/dispatch_error/pending_move/disagree_draft/expanded_descriptions). Method bodies and render-tree relationships not re-verified.
 -->

@@ -129,21 +129,14 @@ impl KanbanService {
                 && let Some(remaining) = task.gas_remaining
                 && remaining == 0
             {
-                let idle = (now - task.updated_at).num_minutes();
-                if idle > 60 {
-                    match self.task_gas_exhaust(task.id) {
-                        Ok(_) => fixes.push(UnjamFix {
-                            task_id: task.id,
-                            task_title: task.title.clone(),
-                            action: "Auto-completed (gas exhausted, no response)".into(),
-                        }),
-                        Err(e) => fixes.push(UnjamFix {
-                            task_id: task.id,
-                            task_title: task.title.clone(),
-                            action: format!("Gas-exhaust failed: {}", e),
-                        }),
-                    }
-                }
+                self.push_exhaust_fix(
+                    task,
+                    now,
+                    &mut fixes,
+                    |id| self.task_gas_exhaust(id),
+                    "Auto-completed (gas exhausted, no response)",
+                    "Gas-exhaust failed",
+                );
             }
 
             // rJoule exhaustion: same logic, separate budget. Routes through
@@ -153,25 +146,49 @@ impl KanbanService {
                 && let Some(remaining) = task.rjoule_remaining
                 && remaining == 0
             {
-                let idle = (now - task.updated_at).num_minutes();
-                if idle > 60 {
-                    match self.task_rjoule_exhaust(task.id) {
-                        Ok(_) => fixes.push(UnjamFix {
-                            task_id: task.id,
-                            task_title: task.title.clone(),
-                            action: "Auto-completed (rJoules exhausted, no response)".into(),
-                        }),
-                        Err(e) => fixes.push(UnjamFix {
-                            task_id: task.id,
-                            task_title: task.title.clone(),
-                            action: format!("rJoule-exhaust failed: {}", e),
-                        }),
-                    }
-                }
+                self.push_exhaust_fix(
+                    task,
+                    now,
+                    &mut fixes,
+                    |id| self.task_rjoule_exhaust(id),
+                    "Auto-completed (rJoules exhausted, no response)",
+                    "rJoule-exhaust failed",
+                );
             }
         }
 
         Ok(fixes)
+    }
+
+    /// Shared branch for the gas/rJoule exhaustion auto-complete in `unjam_fix`:
+    /// if the task has been at zero budget for > 1 hour (grace period for the
+    /// delegator to respond), call `exhaust` and push an `UnjamFix` recording
+    /// the outcome. `ok_action` is the success label; `err_prefix` prefixes the
+    /// failure label (followed by `: {error}`).
+    fn push_exhaust_fix<E>(
+        &self,
+        task: &Task,
+        now: chrono::DateTime<chrono::Utc>,
+        fixes: &mut Vec<UnjamFix>,
+        exhaust: impl Fn(TaskId) -> Result<Task, E>,
+        ok_action: &'static str,
+        err_prefix: &'static str,
+    ) where
+        E: std::fmt::Display,
+    {
+        let idle = (now - task.updated_at).num_minutes();
+        if idle <= 60 {
+            return;
+        }
+        let action = match exhaust(task.id) {
+            Ok(_) => ok_action.to_string(),
+            Err(error) => format!("{}: {}", err_prefix, error),
+        };
+        fixes.push(UnjamFix {
+            task_id: task.id,
+            task_title: task.title.clone(),
+            action,
+        });
     }
 
     /// Mark a task as Done due to gas exhaustion.
@@ -184,27 +201,11 @@ impl KanbanService {
     /// exposed as an MCP tool. Must not be exposed as a tool without an
     /// actor/authority check.
     pub fn task_gas_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
-        let mut task = self.require_task(task_id)?;
-
-        let v = Verification::new(
-            false,
-            "Gas exhausted — subagent budget consumed.".into(),
-            task.owner,
-        );
-        task.verification = Some(v);
-        task.status = TaskStatus::Done;
-        task.updated_at = chrono::Utc::now();
-        self.update_task_triple(&task)?;
-
-        tracing::info!(
-            target: "hkask.kanban",
-            operation = "task_gas_exhausted",
-            task_id = %task_id,
-            board_id = %task.board_id,
-            "REG"
-        );
-
-        Ok(task)
+        self.exhaust_task(
+            task_id,
+            "Gas exhausted — subagent budget consumed.",
+            "task_gas_exhausted",
+        )
     }
 
     /// Mark a task as Done due to rJoule exhaustion.
@@ -219,21 +220,34 @@ impl KanbanService {
     /// exposed as an MCP tool. Must not be exposed as a tool without an
     /// actor/authority check.
     pub fn task_rjoule_exhaust(&self, task_id: TaskId) -> Result<Task, KanbanError> {
+        self.exhaust_task(
+            task_id,
+            "rJoules exhausted — inference budget consumed.",
+            "task_rjoule_exhausted",
+        )
+    }
+
+    /// Shared completion path for budget exhaustion: stamp a failed
+    /// `Verification`, set `Done`, and emit the `REG` span. The `reason`
+    /// distinguishes gas vs rJoule in the verification record; `operation`
+    /// distinguishes them in the tracing span.
+    fn exhaust_task(
+        &self,
+        task_id: TaskId,
+        reason: &str,
+        operation: &'static str,
+    ) -> Result<Task, KanbanError> {
         let mut task = self.require_task(task_id)?;
 
-        let v = Verification::new(
-            false,
-            "rJoules exhausted — inference budget consumed.".into(),
-            task.owner,
-        );
-        task.verification = Some(v);
+        let verification = Verification::new(false, reason.to_string(), task.owner);
+        task.verification = Some(verification);
         task.status = TaskStatus::Done;
         task.updated_at = chrono::Utc::now();
         self.update_task_triple(&task)?;
 
         tracing::info!(
             target: "hkask.kanban",
-            operation = "task_rjoule_exhausted",
+            operation = operation,
             task_id = %task_id,
             board_id = %task.board_id,
             "REG"

@@ -421,14 +421,16 @@ fn rjoule_exhaust_stamps_rjoule_reason() {
     assert_eq!(exhausted.status, TaskStatus::Done);
     let verification = exhausted.verification.expect("verification stamped");
     assert!(!verification.passed, "exhaustion is a failed verification");
-    assert_eq!(verification.verifier, task.owner, "verifier is the task owner");
+    assert_eq!(
+        verification.verifier, task.owner,
+        "verifier is the task owner"
+    );
     assert_eq!(
         verification.reasoning,
         "rJoules exhausted — inference budget consumed."
     );
     assert_ne!(
-        verification.reasoning,
-        "Gas exhausted — subagent budget consumed.",
+        verification.reasoning, "Gas exhausted — subagent budget consumed.",
         "rJoule reason must not collide with the gas-exhaust reason"
     );
 }

@@ -95,7 +95,11 @@ fn render_inference_provider_row(
 ) -> AnyElement {
     let credential_url = desc.credential_url();
     let api_url = desc.api_url.to_string();
-    let has_key = has_credential(&credentials_provider, &[&api_url, &credential_url], desc.env_var);
+    let has_key = has_credential(
+        &credentials_provider,
+        &[&api_url, &credential_url],
+        desc.env_var,
+    );
     let provider_id = desc.id;
     let provider_name = desc.name;
     let dashboard_url = desc.dashboard_url;

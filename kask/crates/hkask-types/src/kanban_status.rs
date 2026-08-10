@@ -125,8 +125,14 @@ mod tests {
 
     #[test]
     fn parse_str_accepts_aliases() {
-        assert_eq!(TaskStatus::parse_str("inprogress"), Some(TaskStatus::InProgress));
-        assert_eq!(TaskStatus::parse_str("in-progress"), Some(TaskStatus::InProgress));
+        assert_eq!(
+            TaskStatus::parse_str("inprogress"),
+            Some(TaskStatus::InProgress)
+        );
+        assert_eq!(
+            TaskStatus::parse_str("in-progress"),
+            Some(TaskStatus::InProgress)
+        );
     }
 
     #[test]
