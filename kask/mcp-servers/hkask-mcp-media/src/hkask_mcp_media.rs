@@ -1511,8 +1511,8 @@ impl MediaServer {
 
         for model in &models {
             // Check the provider prefix in the model name (case-insensitive —
-            // the IPC bridge returns zed provider ids like "deepinfra", while
-            // the standalone InferenceRouter returns full names like "DeepInfra").
+            // the IPC bridge returns zed provider ids like "deepinfra" (a
+            // standalone MediaRouter is media-only and returns no chat models).
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
             match prefix.to_ascii_lowercase().as_str() {
                 "fal.ai" | "fal" => {
@@ -2028,7 +2028,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
 
     // Resolve the inference port — routes through zed's LanguageModelRegistry
     // via the IPC bridge when `HKASK_INFERENCE_SOCKET` is set, falling back to
-    // a standalone `InferenceRouter` with env-var keys otherwise. The same
+    // a standalone `MediaRouter` with env-var keys otherwise. The same
     // port handles vision/chat AND media generation (image/video/speech/
     // transcription) — `InferencePort::media_generate` is overridden by
     // `InferenceIpcClient` to proxy media calls through the IPC bridge.

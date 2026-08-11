@@ -88,9 +88,9 @@ impl ProviderId {
     /// *looks* like a provider-prefixed name even when the prefix is not
     /// recognized.
     ///
-    /// `InferenceRouter::parse_provider` uses this to reject unknown prefixes
-    /// with a clear error rather than silently routing them to the default
-    /// provider as a garbage model name.
+    /// Callers use this to reject unrecognized provider prefixes with a clear
+    /// error rather than silently routing them to the default provider as a
+    /// garbage model name.
     ///
     /// A model name has the prefix shape if it contains a `/` and the segment
     /// before the first `/` is non-empty. This catches both full-name prefixes

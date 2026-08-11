@@ -380,7 +380,7 @@ pub fn credential_urls_for_mcp(settings: &super::KaskSettings) -> Vec<(String, S
     }
 
     // Inference providers — inject the API key as the env var the MCP servers
-    // and hKask's InferenceRouter expect.
+    // and hKask's InferenceConfig expect.
     for provider in INFERENCE_PROVIDERS {
         let enabled = match provider.credential_key {
             "deepinfra" => settings.inference_providers.deepinfra_enabled,

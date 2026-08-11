@@ -24,6 +24,21 @@ pub type StepId = u32;
 /// The entry point of every cascade — always step 0.
 pub const ENTRY: StepId = 0;
 
+/// Advisory capacity cap for process-manifest execution. A manifest exceeding
+/// this step count is allowed (the warn is non-breaking) but is outside the
+/// measured performance envelope — per-step clones in `run_pass` and the
+/// per-iteration `snapshot_prev` clone are O(N), so a large N × iterations
+/// regressions latency and memory. Hard enforcement (returning an error) is
+/// sequenced for the K5 slice, which changes `execute_manifest`'s return type
+/// to `Result<CascadeOutcome>`; until then the warn is the diagnostic so an
+/// operator can distinguish "measured" from "out of envelope."
+///
+/// This is *not* the bundle-composition 7-step limit in
+/// `BundleManifest::validate` — that applies to composed multi-skill bundles,
+/// not single-skill process manifests (e.g. the 10-step `swarm-intelligence`
+/// process manifest).
+pub const MAX_STEPS: usize = 4096;
+
 /// How a step hands control to the next step.
 ///
 /// This is the *static* control flow declared by the step's position and
@@ -108,6 +123,18 @@ impl StepGraph {
     /// `max_iterations: 1`).
     pub fn new(steps: &[BundleManifestStep], max_iterations: u32) -> Self {
         let loops = max_iterations != 1;
+        if steps.len() > MAX_STEPS {
+            tracing::warn!(
+                target: "hkask.templates.step_graph",
+                step_count = steps.len(),
+                cap = MAX_STEPS,
+                "Manifest has {} steps — exceeds the measured capacity cap of {}. \
+                 Execution is allowed (advisory) but latency/memory may regress; \
+                 hard enforcement lands when execute_manifest returns Result (K5).",
+                steps.len(),
+                MAX_STEPS,
+            );
+        }
         let mut nodes: Vec<StepNode> = Vec::with_capacity(steps.len());
         let mut by_ordinal: HashMap<u32, StepId> = HashMap::with_capacity(steps.len());
 

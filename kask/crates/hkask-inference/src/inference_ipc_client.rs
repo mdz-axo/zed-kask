@@ -4,7 +4,7 @@
 //! This is the MCP-server side of the inference IPC bridge. When zed launches
 //! an MCP server child process, it passes a Unix socket path via the
 //! `HKASK_INFERENCE_SOCKET` env var. The MCP server constructs an
-//! `InferenceIpcClient` instead of an `InferenceRouter`, and all inference
+//! `InferenceIpcClient` instead of a standalone `MediaRouter`, and all inference
 //! calls are routed back to zed's `LanguageModelRegistry` (with guard,
 //! and zed's configured API keys).
 //!
@@ -119,7 +119,7 @@ impl InferenceIpcClient {
     /// Construct from the `HKASK_INFERENCE_SOCKET` env var.
     ///
     /// Returns `None` if the env var is not set (MCP server falls back to
-    /// `InferenceRouter::from_env()` in that case).
+    /// `resolve_inference_port()`, which constructs a `MediaRouter`, in that case).
     pub async fn from_env() -> Option<Result<Self, InferenceError>> {
         let path = std::env::var(INFERENCE_SOCKET_ENV).ok()?;
         if path.is_empty() {
@@ -444,7 +444,6 @@ impl InferenceIpcClient {
                 media_strength: params.strength,
                 media_scale: params.scale,
                 media_duration: params.duration,
-                media_object_description: params.object_description.clone(),
                 media_language: params.language.clone(),
                 ..Default::default()
             },

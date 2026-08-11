@@ -19,7 +19,6 @@ Media generation MCP server — image, video, audio, and 3D generation via Atlas
 | `face_scan_folder` | Scan a folder of reference face images and register each one in the face_registry. Each image must have a YAML sidecar (e.g. `alice.jpg.yaml`) with `first_name`, `last_name`, and optional `notes`. Default folder: `~/.hkask/faces/` |
 | `face_list` | List all registered faces in the face registry. Optionally filter by status: valid, rejected, or pending |
 | `face_remove` | Remove a face from the registry by its ID |
-| `extract_object` | Extract a specific object from an image using AI segmentation. Returns the isolated object as a new image |
 | `gallery_timeline` | Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade |
 | `image_remove_background` | Remove background from a gallery image. Delegates to DeepInfra Bria RMBG 2.0 |
 | `image_apply_style` | Apply style transfer to a gallery image. Delegates to AtlasCloud |

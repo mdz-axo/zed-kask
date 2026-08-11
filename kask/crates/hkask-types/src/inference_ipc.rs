@@ -142,8 +142,6 @@ pub struct InferenceParams {
     pub media_scale: Option<u32>,
     /// Duration for video generation.
     pub media_duration: Option<f32>,
-    /// Object description for segmentation.
-    pub media_object_description: Option<String>,
     /// Language hint for transcription.
     pub media_language: Option<String>,
     // ── Tool dispatch fields (for `InferenceMethod::ToolInvoke`) ──
@@ -369,7 +367,6 @@ mod tests {
                 media_strength: None,
                 media_scale: None,
                 media_duration: None,
-                media_object_description: None,
                 media_language: None,
                 tool_server: Some("codegraph".to_string()),
                 tool_name: Some("codegraph_query".to_string()),
@@ -423,7 +420,6 @@ mod tests {
                 media_strength: None,
                 media_scale: None,
                 media_duration: None,
-                media_object_description: None,
                 media_language: None,
                 tool_server: None,
                 tool_name: None,

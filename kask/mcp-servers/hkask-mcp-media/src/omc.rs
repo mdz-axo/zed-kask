@@ -34,8 +34,8 @@ pub fn tool_to_omc(tool: &str) -> Option<OmcConcept> {
         "generate_speech" | "audio_capture" | "record_and_transcribe" => Some(MEDIA_SOURCE),
         // Video processing — produces a sequence (a clip is a sequence of shots).
         "video_clip" | "video_to_gif" | "image_to_video" | "video_concat" => Some(SEQUENCE),
-        // Collage / extract — produces a new creative work from sources.
-        "image_create_collage" | "extract_object" => Some(CREATIVE_WORK),
+        // Collage — produces a new creative work from sources.
+        "image_create_collage" => Some(CREATIVE_WORK),
         // Not covered by OMC (pure metadata / registry tools).
         _ => None,
     }

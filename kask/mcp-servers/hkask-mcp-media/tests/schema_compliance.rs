@@ -15,16 +15,15 @@
 
 use hkask_mcp_media::types::{
     ApplyStyleRequest, AudioCaptureRequest, CreateCollageRequest, DescribeImageRequest,
-    ExpandPromptRequest, ExtractObjectRequest, FaceListRequest, FaceRegisterRequest,
-    FaceRemoveRequest, FaceScanFolderRequest, FaceValidateRequest, GalleryAnalyzeRequest,
-    GalleryFindSimilarRequest, GalleryLineageRequest, GalleryNameFaceRequest,
-    GalleryOrganizeRequest, GalleryRecordGenerationRequest, GalleryRefreshRequest,
-    GalleryReproduceRequest, GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest,
-    GenerateSpeechRequest, GenerateVideoRequest, ImageToVideoRequest, RecordAndTranscribeRequest,
-    RemoveBackgroundRequest, TranscribeRequest, TransformImageRequest, UpscaleImageRequest,
-    VideoAddCaptionRequest, VideoCaptionRequest, VideoClipRequest, VideoConcatRequest,
-    VideoFromImagesRequest, VideoMemeRequest, VideoRemixRequest, VideoToGifRequest,
-    VoiceDesignRequest,
+    ExpandPromptRequest, FaceListRequest, FaceRegisterRequest, FaceRemoveRequest,
+    FaceScanFolderRequest, FaceValidateRequest, GalleryAnalyzeRequest, GalleryFindSimilarRequest,
+    GalleryLineageRequest, GalleryNameFaceRequest, GalleryOrganizeRequest,
+    GalleryRecordGenerationRequest, GalleryRefreshRequest, GalleryReproduceRequest,
+    GallerySearchRequest, GalleryTimelineRequest, GenerateImageRequest, GenerateSpeechRequest,
+    GenerateVideoRequest, ImageToVideoRequest, RecordAndTranscribeRequest, RemoveBackgroundRequest,
+    TranscribeRequest, TransformImageRequest, UpscaleImageRequest, VideoAddCaptionRequest,
+    VideoCaptionRequest, VideoClipRequest, VideoConcatRequest, VideoFromImagesRequest,
+    VideoMemeRequest, VideoRemixRequest, VideoToGifRequest, VoiceDesignRequest,
 };
 use hkask_mcp_server::find_boolean_schema_positions;
 use schemars::schema_for;
@@ -67,7 +66,6 @@ schema_clean_test!(face_register_request_schema, FaceRegisterRequest);
 schema_clean_test!(face_scan_folder_request_schema, FaceScanFolderRequest);
 schema_clean_test!(face_list_request_schema, FaceListRequest);
 schema_clean_test!(face_remove_request_schema, FaceRemoveRequest);
-schema_clean_test!(extract_object_request_schema, ExtractObjectRequest);
 schema_clean_test!(gallery_timeline_request_schema, GalleryTimelineRequest);
 schema_clean_test!(
     gallery_record_generation_request_schema,

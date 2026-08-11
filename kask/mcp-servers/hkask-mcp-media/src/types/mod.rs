@@ -231,14 +231,6 @@ impl std::str::FromStr for FaceStatus {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExtractObjectRequest {
-    /// Gallery image index containing the object.
-    pub image_index: usize,
-    /// Description of the object to extract (e.g., "the golden retriever on the left").
-    pub object_description: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GalleryTimelineRequest {
     /// Time period: "year", "month", or "decade".
     #[serde(default = "default_period")]

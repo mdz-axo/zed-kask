@@ -122,7 +122,7 @@ impl KataEngine {
     ///
     /// Routes through zed's `LanguageModelRegistry` via the IPC bridge when
     /// available (`HKASK_INFERENCE_SOCKET` set), falling back to
-    /// `InferenceRouter` with env-var keys when running standalone.
+    /// `resolve_inference_port()`'s `MediaRouter` (media-only) when standalone.
     ///
     /// `[P5]` Motivating: Essentialism — service-layer orchestration earns its existence; no raw domain logic.
     /// pre:  registry must be initialized

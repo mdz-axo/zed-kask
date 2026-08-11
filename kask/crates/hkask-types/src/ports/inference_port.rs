@@ -58,14 +58,12 @@ pub struct MediaGenerateParams {
     pub scale: Option<u32>,
     /// Duration for video generation.
     pub duration: Option<f32>,
-    /// Object description for segmentation.
-    pub object_description: Option<String>,
     /// Language hint for transcription.
     pub language: Option<String>,
 }
 
 /// LLM invocation boundary. Uses ``Pin<Box<dyn Future>>`` (not `async_trait`) for object-safety.
-/// Impls: `InferenceRouter` (hkask-inference), `Arc<dyn InferencePort>` (blanket).
+/// Impls: `MediaRouter` and `InferenceIpcClient` (hkask-inference), `Arc<dyn InferencePort>` (blanket).
 /// A model available from an inference provider.
 ///
 /// Simplified version of `hkask_inference::RouterModelEntry` that lives in
@@ -356,9 +354,10 @@ pub trait InferencePort: Send + Sync {
 
     /// List available models across all configured providers.
     ///
-    /// Default: returns an empty vec. `InferenceRouter` overrides this to
-    /// enumerate models from its backends. The IPC client returns empty
-    /// (model listing is not available when routed through zed's bridge).
+    /// Default: returns an empty vec. `InferenceIpcClient` overrides this to
+    /// enumerate models from zed's `LanguageModelRegistry` via the IPC bridge.
+    /// `MediaRouter` returns empty (media-only; model listing is not available
+    /// when running standalone without the IPC bridge).
     #[must_use]
     fn list_models<'a>(&'a self) -> Pin<Box<dyn Future<Output = Vec<ModelEntry>> + Send + 'a>> {
         Box::pin(async { Vec::new() })
@@ -385,9 +384,9 @@ pub trait InferencePort: Send + Sync {
     ///
     /// `op` selects the backend method (see `MediaGenerateParams::op`). The
     /// default returns an error — `InferenceIpcClient` overrides this to route
-    /// through zed's IPC bridge, which dispatches to the hKask `InferenceRouter`
+    /// through zed's IPC bridge, which dispatches to the hKask `MediaRouter`
     /// held by the zed process. The media MCP server calls this through its
-    /// `Arc<dyn InferencePort>` so it no longer needs its own `InferenceRouter`.
+    /// `Arc<dyn InferencePort>` so it no longer needs its own `MediaRouter`.
     fn media_generate<'a>(&'a self, _op: &str, _params: &MediaGenerateParams) -> MediaFuture<'a> {
         let op = _op.to_string();
         Box::pin(async move {

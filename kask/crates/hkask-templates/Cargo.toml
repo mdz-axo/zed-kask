@@ -59,6 +59,10 @@ name = "executor_properties"
 path = "tests/executor_properties.rs"
 
 [[test]]
+name = "executor_baseline_contract"
+path = "tests/executor_baseline_contract.rs"
+
+[[test]]
 name = "compute_properties"
 path = "tests/compute_properties.rs"
 

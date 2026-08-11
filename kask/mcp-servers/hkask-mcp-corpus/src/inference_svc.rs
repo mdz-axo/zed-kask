@@ -97,14 +97,14 @@ impl InferenceService {
             // The shared port (InferenceIpcClient) routes through zed's
             // LanguageModelRegistry. It supports `generate_with_model` with
             // a `model_override`, so any model can be routed through zed's
-            // configured providers — no standalone InferenceRouter needed.
+            // configured providers — no standalone MediaRouter fallback needed.
             return Ok(Arc::clone(port));
         }
 
         // No shared port — the IPC bridge isn't configured. This means
         // the MCP server wasn't launched by zed (or the socket is down).
         // Return an error rather than silently falling back to a standalone
-        // InferenceRouter with env-var credentials.
+        // MediaRouter with env-var credentials.
         Err(ServiceError::Domain {
             domain: hkask_services_core::DomainKind::Wallet,
             kind: hkask_services_core::ErrorKind::ServiceUnavailable,

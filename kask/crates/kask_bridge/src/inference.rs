@@ -5,7 +5,7 @@
 //! This adapter collects the stream into a single `InferenceResult`, mapping the
 //! event types. Streaming is lost in this adapter — that's acceptable for the
 //! ManifestExecutor cascade (which needs complete results for PDCA convergence),
-//! and for MCP servers that already use the non-streaming `InferenceRouter`.
+//! and for MCP servers that already use the non-streaming `InferencePort`.
 //!
 //! `AsyncApp` is not `Send` (GPUI's `ForegroundExecutor` holds `Rc`-based state),
 //! so the bridge uses a channel: trait methods send a request to a GPUI-side task
@@ -851,7 +851,7 @@ impl KaskCompletionPort for BridgeEditPredictionPort {
 // on every call. Used to start the `InferenceIpcServer` unconditionally —
 // even when no default `LanguageModel` is configured at startup — so MCP
 // server child processes receive `HKASK_INFERENCE_SOCKET` and route inference
-// through the IPC bridge rather than falling back to `InferenceRouter::from_env()`.
+// through the IPC bridge rather than falling back to a standalone `MediaRouter`.
 //
 // Without this, the `else` branch of the model-dependent wiring block (in
 // `crates/zed/src/main.rs`) left `INFERENCE_SOCKET_PATH` unset, forcing the

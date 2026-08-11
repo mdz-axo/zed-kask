@@ -833,53 +833,6 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Extract a specific object from an image using AI segmentation. Returns the isolated object as a new image."
-    )]
-    pub async fn extract_object(
-        &self,
-        Parameters(ExtractObjectRequest {
-            image_index,
-            object_description,
-        }): Parameters<ExtractObjectRequest>,
-    ) -> String {
-        execute_tool(self, "extract_object", async {
-            if object_description.trim().is_empty() {
-                return Err(McpToolError::invalid_argument(
-                    "object_description must not be empty",
-                ));
-            }
-            let image_url = self
-                .resolve_image_url(image_index)
-                .map_err(map_media_error)?;
-
-            let media_params = hkask_types::MediaGenerateParams {
-                image_url: Some(image_url.clone()),
-                object_description: Some(object_description.clone()),
-                ..Default::default()
-            };
-            let args = serde_json::to_value(&media_params).unwrap_or(serde_json::Value::Null);
-            let result = self
-                .vision_port
-                .media_generate("segment_object", &media_params)
-                .await
-                .map_err(|e| {
-                    McpToolError::unavailable(format!("Object extraction failed: {}", e))
-                })?;
-            // Connect the extracted object to the inline widget: emit an
-            // OMC-tagged, provenance-carrying ```media display_hint so the
-            // agent can copy the block and the D18 MediaWidget renders it.
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
-                "extract_object",
-                "image",
-                args,
-                None,
-            ))
-        })
-        .await
-    }
-
-    #[tool(
         description = "Organize gallery images by time period using EXIF dates. Returns images grouped by year, month, or decade."
     )]
     pub async fn gallery_timeline(
@@ -1042,7 +995,7 @@ impl MediaServer {
     }
 
     #[tool(
-        description = "Re-run the generation that produced a gallery image, using its stored lineage (op + prompt + params). For image-ops (image_to_image, upscale, image_to_video, segment_object) the current gallery image is used as the source. Returns the new generation result. Call gallery_record_generation first to record lineage."
+        description = "Re-run the generation that produced a gallery image, using its stored lineage (op + prompt + params). For image-ops (image_to_image, upscale, image_to_video) the current gallery image is used as the source. Returns the new generation result. Call gallery_record_generation first to record lineage."
     )]
     pub async fn gallery_reproduce(
         &self,
@@ -1070,8 +1023,7 @@ impl MediaServer {
             if let Some(prompt) = lineage.prompt {
                 media_params.prompt = Some(prompt);
             }
-            const IMAGE_OPS: &[&str] =
-                &["image_to_image", "upscale", "image_to_video", "segment_object"];
+            const IMAGE_OPS: &[&str] = &["image_to_image", "upscale", "image_to_video"];
             if IMAGE_OPS.contains(&lineage.op.as_str()) {
                 media_params.image_url =
                     Some(self.resolve_image_url(image_index).map_err(map_media_error)?);

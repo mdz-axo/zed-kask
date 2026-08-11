@@ -1172,7 +1172,6 @@ mod tests {
             media_strength: None,
             media_scale: None,
             media_duration: None,
-            media_object_description: None,
             media_language: None,
             tool_server: None,
             tool_name: None,
