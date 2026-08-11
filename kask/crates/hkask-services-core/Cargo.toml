@@ -10,9 +10,9 @@ description = "hKask service-layer foundation — ServiceError, ServiceConfig, H
 path = "src/hkask_services_core.rs"
 
 [dependencies]
-hkask-storage = { path = "../hkask-storage" }
+hkask-storage.workspace = true
 hkask-types.workspace = true
-hkask-inference = { path = "../hkask-inference" }
+hkask-inference.workspace = true
 hkask-keystore.workspace = true
 thiserror.workspace = true
 serde.workspace = true

@@ -67,13 +67,12 @@ acp_tools.workspace = true
 activity_indicator.workspace = true
 agent.workspace = true
 agent-client-protocol.workspace = true
-kask_bridge = { path = "../../kask/crates/kask_bridge" }
-hkask-mcp = { path = "../../kask/crates/hkask-mcp" }
-hkask-capability = { path = "../../kask/crates/hkask-capability" }
-hkask-types = { path = "../../kask/crates/hkask-types" }
-hkask-regulation = { path = "../../kask/crates/hkask-regulation" }
-hkask-email = { path = "../../kask/crates/hkask-email" }
-zed_credentials_provider.workspace = true
+kask_bridge.workspace = true
+hkask-mcp.workspace = true
+hkask-capability.workspace = true
+hkask-types.workspace = true
+hkask-regulation.workspace = true
+hkask-email.workspace = true
 
 kask_extensions_ui.workspace = true
 swarm_panel.workspace = true

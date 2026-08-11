@@ -42,6 +42,7 @@ members = [
     "crates/context_server",
     "crates/copilot",
     "crates/copilot_chat",
+    "crates/copilot_ui",
     "crates/crashes",
     "crates/credentials_provider",
     "crates/csv_preview",
@@ -373,7 +374,7 @@ copilot_ui = { path = "crates/copilot_ui" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 crossbeam = "0.8.4"
-csv_preview = { path = "crates/csv_preview"}
+csv_preview = { path = "crates/csv_preview" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
@@ -899,6 +900,21 @@ rmcp = "3"
 tokio-util = { version = "0.7", features = ["rt"] }
 hkask-regulation = { path = "kask/crates/hkask-regulation" }
 hkask-ledger = { path = "kask/crates/hkask-ledger" }
+hkask-storage = { path = "kask/crates/hkask-storage" }
+hkask-condenser = { path = "kask/crates/hkask-condenser" }
+hkask-services-core = { path = "kask/crates/hkask-services-core" }
+hkask-mcp = { path = "kask/crates/hkask-mcp" }
+hkask-mcp-scenarios = { path = "kask/mcp-servers/hkask-mcp-scenarios" }
+hkask-mcp-research = { path = "kask/mcp-servers/hkask-mcp-research" }
+hkask-mcp-codegraph = { path = "kask/mcp-servers/hkask-mcp-codegraph" }
+hkask-mcp-condenser = { path = "kask/mcp-servers/hkask-mcp-condenser" }
+hkask-mcp-curator = { path = "kask/mcp-servers/hkask-mcp-curator" }
+hkask-mcp-kata-kanban = { path = "kask/mcp-servers/hkask-mcp-kata-kanban" }
+hkask-mcp-media = { path = "kask/mcp-servers/hkask-mcp-media" }
+hkask-mcp-training = { path = "kask/mcp-servers/hkask-mcp-training" }
+hkask-mcp-companies = { path = "kask/mcp-servers/hkask-mcp-companies" }
+hkask-mcp-corpus = { path = "kask/mcp-servers/hkask-mcp-corpus" }
+hkask-mcp-swarm = { path = "kask/mcp-servers/hkask-mcp-swarm" }
 ed25519-dalek = "2"
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
 aes-gcm = "0.10"

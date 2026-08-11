@@ -8,18 +8,16 @@ description = "Kata-Kanban workflow coordination MCP server"
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-storage.workspace = true
 # Folded from hkask-services-kata-kanban
-hkask-services-core = { path = "../../crates/hkask-services-core" }
+hkask-services-core.workspace = true
 hkask-regulation.workspace = true
 hkask-templates.workspace = true
-hkask-inference = { path = "../../crates/hkask-inference" }
+hkask-inference.workspace = true
 # Local swarm delegation — kanban_task_spawn delegates to local agents via the
 # shared local-swarm runtime (ledger + inference + guard + agent executor).
-hkask-mcp-swarm = { path = "../hkask-mcp-swarm" }
+hkask-mcp-swarm.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
-
-
 
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde.workspace = true
@@ -32,8 +30,6 @@ anyhow.workspace = true
 minijinja.workspace = true
 schemars.workspace = true
 dirs = { workspace = true }
-
-
 
 [lib]
 name = "hkask_mcp_kata_kanban"

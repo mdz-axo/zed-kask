@@ -11,7 +11,7 @@ path = "src/hkask_memory.rs"
 
 [dependencies]
 hkask-types.workspace = true
-hkask-storage = { path = "../hkask-storage" }
+hkask-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

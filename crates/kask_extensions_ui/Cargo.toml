@@ -38,12 +38,12 @@ urlencoding.workspace = true
 chrono.workspace = true
 # kask-extensions: Phase 1 of the skill signing plan (D4) — the client signs
 # manifests with the publisher's Ed25519 keypair stored in the OS keychain.
-hkask-keystore = { path = "../../kask/crates/hkask-keystore" }
-hkask-types = { path = "../../kask/crates/hkask-types" }
+hkask-keystore.workspace = true
+hkask-types.workspace = true
 # Embedded registry content (manifest.yaml + *.j2) for full-package hashing
 # of bundled skills (the "Modified" badge compares the on-disk package to
 # the shipped embedded package).
-hkask-templates = { path = "../../kask/crates/hkask-templates" }
+hkask-templates.workspace = true
 # Multiplayer channel access for discreet-piggyback skill discovery: the
 # panel scans opened channel buffers' text for `kask-skill://` references.
 channel.workspace = true

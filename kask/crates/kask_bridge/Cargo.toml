@@ -15,13 +15,13 @@ hkask-types.workspace = true
 hkask-capability.workspace = true
 hkask-templates.workspace = true
 hkask-memory.workspace = true
-hkask-storage = { path = "../hkask-storage" }
-hkask-inference = { path = "../hkask-inference" }
+hkask-storage.workspace = true
+hkask-inference.workspace = true
 hkask-keystore.workspace = true
 hkask-regulation.workspace = true
 hkask-email.workspace = true
-hkask-services-core = { path = "../hkask-services-core" }
-hkask-condenser = { path = "../hkask-condenser" }
+hkask-services-core.workspace = true
+hkask-condenser.workspace = true
 hkask_tool_invoker.workspace = true
 
 # zed-kask side — the facilities the bridge adapts over

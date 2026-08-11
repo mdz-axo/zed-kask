@@ -376,7 +376,7 @@ impl AgentTool for CuratorDirectiveTool {
     const NAME: &'static str = "curator_directive";
 
     fn kind() -> acp::ToolKind {
-        acp::ToolKind::Write
+        acp::ToolKind::Other
     }
 
     fn initial_title(
@@ -440,7 +440,7 @@ impl AgentTool for CuratorDirectiveTool {
 }
 
 impl CuratorDirectiveRequest {
-    fn variant_name(&self) -> &'static str {
+    pub fn variant_name(&self) -> &'static str {
         match self {
             Self::CalibrateThreshold { .. } => "calibrate_threshold",
             Self::UpdateCapabilities { .. } => "update_capabilities",

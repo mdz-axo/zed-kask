@@ -11,10 +11,10 @@ hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 
 # Ontology bridges — vocabulary constants for metadata, provenance, and domain predicates
-hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
+hkask-bridge-ontology.workspace = true
 
 # OCR pipeline (from markitdown)
-hkask-inference = { path = "../../crates/hkask-inference" }
+hkask-inference.workspace = true
 
 
 image.workspace = true
@@ -32,7 +32,7 @@ pptx-to-md.workspace = true
 
 # Knowledge pipeline (from doc-knowledge)
 hkask-memory.workspace = true
-hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-storage.workspace = true
 
 # Persona/style services (folded in from hkask-services-{compose,corpus,inference,runtime})
 hkask-keystore.workspace = true
@@ -64,7 +64,7 @@ pdf-extract.workspace = true
 anyhow.workspace = true
 
 # Service layer (shared settings, models, paths)
-hkask-services-core = { path = "../../crates/hkask-services-core" }
+hkask-services-core.workspace = true
 
 [lib]
 name = "hkask_mcp_corpus"

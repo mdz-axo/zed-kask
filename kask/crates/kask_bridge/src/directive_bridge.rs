@@ -6,8 +6,6 @@
 //! `hkask_types::CuratorDirective` (WebIDs) and sends it via the tokio
 //! unbounded channel that `CyberneticsLoop::process_inbox` drains.
 
-use std::sync::Arc;
-
 use agent::CuratorDirectiveRequest;
 use agent::CuratorDirectiveSink;
 use hkask_types::WebID;
@@ -102,7 +100,7 @@ impl CuratorDirectiveSink for BridgeCuratorDirectiveSink {
         let hkask_directive = convert(directive);
         self.tx
             .send(hkask_directive)
-            .map_err(|e| format!("regulation loop channel closed: {}", e.0))?;
+            .map_err(|e| format!("regulation loop channel closed: {:?}", e.0))?;
         tracing::info!(
             target: "reg.curator_directive",
             directive_type = %directive_type,

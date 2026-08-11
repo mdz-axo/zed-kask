@@ -8,7 +8,7 @@ description = "Code understanding MCP server — semantic code graph with tree-s
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-inference = { path = "../../crates/hkask-inference" }
+hkask-inference.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -17,8 +17,6 @@ schemars = { workspace = true }
 tracing = { workspace = true }
 
 rusqlite = { workspace = true, features = ["bundled"] }
-
-
 
 # Codegraph engine dependencies
 sqlite-vec.workspace = true

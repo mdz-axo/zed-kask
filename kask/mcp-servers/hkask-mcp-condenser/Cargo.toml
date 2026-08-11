@@ -6,12 +6,12 @@ license.workspace = true
 description = "Context condensation MCP server — thin wrapper around hkask-condenser domain crate"
 
 [dependencies]
-hkask-condenser = { path = "../../crates/hkask-condenser" }
+hkask-condenser.workspace = true
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
 hkask-memory.workspace = true
-hkask-storage = { path = "../../crates/hkask-storage" }
-hkask-inference = { path = "../../crates/hkask-inference" }
+hkask-storage.workspace = true
+hkask-inference.workspace = true
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 serde.workspace = true
@@ -34,7 +34,5 @@ path = "src/main.rs"
 workspace = true
 
 [dev-dependencies]
-
-
 proptest.workspace = true
 hkask-test-harness.workspace = true

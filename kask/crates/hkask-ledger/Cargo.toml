@@ -10,7 +10,7 @@ description = "Double-entry accounting ledger — immutable transactions for cos
 path = "src/hkask_ledger.rs"
 
 [dependencies]
-hkask-storage = { path = "../hkask-storage" }
+hkask-storage.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 serde.workspace = true

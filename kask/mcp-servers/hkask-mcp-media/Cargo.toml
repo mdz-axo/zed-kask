@@ -11,11 +11,11 @@ default = []
 [dependencies]
 hkask-mcp-server.workspace = true
 hkask-types.workspace = true
-hkask-inference = { path = "../../crates/hkask-inference" }
-hkask-bridge-ontology = { path = "../../crates/hkask-bridge-ontology" }
+hkask-inference.workspace = true
+hkask-bridge-ontology.workspace = true
 
 hkask-templates.workspace = true
-hkask-storage = { path = "../../crates/hkask-storage" }
+hkask-storage.workspace = true
 
 rmcp = { workspace = true, features = ["server", "macros", "transport-io"] }
 minijinja.workspace = true
