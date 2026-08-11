@@ -160,9 +160,28 @@ impl ManifestExecutor {
     /// checks convergence in one place (the `Reenter` arm), and checks budget
     /// in one place. Returns the final context map with convergence metadata
     /// under `_convergence`.
+    /// Execute the full manifest cascade (borrowed interface — delegates to
+    /// `execute_manifest_into` via clone). For callers that hold a borrowed
+    /// executor/manifest and await directly (tests). Callers that need a
+    /// `'static + Send` future for `tokio::spawn` must use `execute_manifest_into`
+    /// (owned `self` + `manifest`) so the future owns both and has no borrows.
     pub async fn execute_manifest(
         &self,
         manifest: &crate::bundle::BundleManifest,
+        initial_context: HashMap<String, Value>,
+    ) -> Result<CascadeOutcome> {
+        self.clone()
+            .execute_manifest_into(manifest.clone(), initial_context)
+            .await
+    }
+
+    /// Owned-args variant — consumes `self` and `manifest` so the returned
+    /// future owns both (no borrows) and is `Send + 'static`, making it safe to
+    /// `tokio::spawn`. The bridge (`skill_executor.rs`) uses this for the
+    /// GPUI→tokio handoff; the borrowed `execute_manifest` above delegates here.
+    pub async fn execute_manifest_into(
+        self,
+        manifest: crate::bundle::BundleManifest,
         initial_context: HashMap<String, Value>,
     ) -> Result<CascadeOutcome> {
         // (K5) hard-enforce the capacity cap at the public entry point. The
@@ -193,7 +212,7 @@ impl ManifestExecutor {
         };
 
         let machine = StepMachine::new(graph, context, budget, convergence);
-        let outcome = machine.run(&infra).await?;
+        let outcome = machine.run(infra).await?;
 
         // (K5) return the typed outcome directly — callers extract the final
         // result via `extract_final_step_result(&outcome)` (last_result_step),

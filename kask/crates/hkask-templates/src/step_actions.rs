@@ -519,7 +519,7 @@ impl StepMachine {
             StepMachine::new(sub_graph, self.context.clone(), sub_budget, sub_convergence);
         sub_machine.depth = self.depth + 1;
 
-        let sub_outcome = Box::pin(sub_machine.run(infra)).await?;
+        let sub_outcome = Box::pin(sub_machine.run(infra.clone())).await?;
 
         // Extract the sub-cascade's final result.
         let result_value = sub_outcome
@@ -563,11 +563,10 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<Effect> {
-        let mapping = node.input_mapping.as_deref().ok_or_else(|| {
+        let mapping = node.input_mapping.as_deref().cloned().ok_or_else(|| {
             TemplateError::Manifest(format!(
-                "Step {} (action 'parallel') has no input_mapping — the branch \
+                "Step {step_ordinal} (action 'parallel') has no input_mapping — the branch \
                  list lives under input_mapping.branches.",
-                node.ordinal,
             ))
         })?;
         let branches = mapping
@@ -575,9 +574,8 @@ impl StepMachine {
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
                 TemplateError::Manifest(format!(
-                    "Step {} (action 'parallel') has no `branches` array in \
+                    "Step {step_ordinal} (action 'parallel') has no `branches` array in \
                      input_mapping.",
-                    node.ordinal,
                 ))
             })?;
         let concurrency_cap = mapping
@@ -589,7 +587,6 @@ impl StepMachine {
             .get("join")
             .and_then(|v| v.as_str())
             .unwrap_or("list");
-        let step_ordinal = node.ordinal;
 
         // Shared gas (enforced during the wave); per-branch rJoule (settled after).
         let shared_gas = self.budget.gas_atomic();
@@ -599,6 +596,11 @@ impl StepMachine {
 
         let branch_futs = branches.iter().enumerate().map(|(branch_id, spec)| {
             let shared_gas = Arc::clone(&shared_gas);
+            // `run` now owns the `Infra` (so its future is `Send + 'static` and
+            // tokio-spawnable); clone `infra` + `context_template` per branch so
+            // each `async move` owns its own.
+            let infra = infra.clone();
+            let context_template = context_template.clone();
             let template_ref = spec
                 .get("template_ref")
                 .and_then(|v| v.as_str())
@@ -653,7 +655,7 @@ impl StepMachine {
                     &sub_manifest.steps,
                     sub_manifest.convergence.max_iterations,
                 );
-                let mut sub_machine = StepMachine::new(
+                let sub_machine = StepMachine::new(
                     sub_graph,
                     context_template.clone(),
                     sub_budget,
@@ -694,7 +696,7 @@ impl StepMachine {
         self.budget.charge_rjoule(sum_rjoule);
 
         Ok(Effect::Stored {
-            step_id: node.id,
+            step_id,
             value: joined,
             taint: ToolTaint::Pure,
         })

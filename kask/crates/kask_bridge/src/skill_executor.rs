@@ -202,7 +202,7 @@ impl BridgeManifestExecutor {
 
         let join_handle = self.tokio_handle.spawn(async move {
             executor
-                .execute_manifest(&manifest, context)
+                .execute_manifest_into(manifest, context)
                 .await
                 .map_err(|e| format!("Manifest execution failed: {e}"))
         });
@@ -242,7 +242,7 @@ impl BridgeManifestExecutor {
             let manifest = manifest.clone();
             async move {
                 executor
-                    .execute_manifest(&manifest, context)
+                    .execute_manifest_into(manifest, context)
                     .await
                     .map_err(|e| format!("Manifest execution failed: {e}"))
             }
@@ -271,7 +271,7 @@ impl BridgeManifestExecutor {
             let manifest = manifest.clone();
             async move {
                 executor
-                    .execute_manifest(&manifest, context)
+                    .execute_manifest_into(manifest, context)
                     .await
                     .map_err(|e| format!("Composed manifest execution failed: {e}"))
             }
@@ -601,7 +601,7 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // on the tokio handle and awaiting the JoinHandle is the Send-safe way.
         let join_handle = self.tokio_handle.spawn(async move {
             executor
-                .execute_manifest(&manifest, context)
+                .execute_manifest_into(manifest, context)
                 .await
                 .map_err(|e| format!("Manifest execution failed: {e}"))
         });

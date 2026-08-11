@@ -129,16 +129,17 @@ pub fn outside_view_adjustment(
 
 /// Standard Bayesian update: posterior = prior × likelihood / evidence_rate.
 ///
-/// If `evidence_base_rate` is zero, the Bayesian ratio is undefined (division by
-/// zero yields ±∞ or `NaN`, and `f64::clamp` cannot rescue `NaN` — it
-/// propagates). This is treated as "evidence is impossible under the model": the
-/// prior is returned unchanged (clamped) rather than letting `NaN` escape into
-/// downstream probabilities. Callers should still pass a genuine non-zero base
-/// rate when the evidence is possible; the guard is a fail-safe, not a license to
-/// pass zero.
+/// If `evidence_base_rate` is zero or negative, the Bayesian ratio is undefined
+/// (division by zero yields ±∞ or `NaN`; a negative base rate yields a
+/// sign-flipped posterior that `clamp` would push to 0.01 — the wrong answer
+/// for impossible evidence). This is treated as "evidence is impossible under
+/// the model": the prior is returned unchanged (clamped) rather than letting
+/// `NaN` or a nonsensical negative posterior escape. Callers should pass a
+/// genuine positive base rate; the guard is a fail-safe, not a license to pass
+/// zero or negative.
 #[must_use = "posterior probability should be used"]
 pub fn bayesian_update(prior: f64, evidence_likelihood: f64, evidence_base_rate: f64) -> f64 {
-    if evidence_base_rate == 0.0 {
+    if evidence_base_rate <= 0.0 {
         return prior.clamp(0.01, 0.99);
     }
     (evidence_likelihood * prior / evidence_base_rate).clamp(0.01, 0.99)
@@ -1205,6 +1206,17 @@ mod tests {
         // A prior outside the clamp range is clamped, not NaN.
         let q = bayesian_update(0.0, 0.9, 0.0);
         assert!(q.is_finite() && q >= 0.01, "clamped prior, got {q}");
+    }
+
+    #[test]
+    fn bayesian_negative_evidence_base_rate_returns_prior() {
+        // Negative base rate is invalid (P(E) < 0 is impossible). The guard
+        // returns the clamped prior, not a sign-flipped posterior clamped to 0.01.
+        let p = bayesian_update(0.3, 0.9, -1.0);
+        assert!(
+            (p - 0.3).abs() < 1e-9,
+            "negative base rate should return prior, got {p}"
+        );
     }
 
     #[test]

@@ -31,12 +31,13 @@ Superforecasting pipeline following Tetlock's Good Judgment Project methodology.
 
 ### stage_1_fermi_decompose
 
-1. Decompose the forecasting question into tractable, independent sub-questions.
+1. Decompose the forecasting question into tractable sub-questions.
 2. Unpack the question by asking what it would take for the answer to be yes or no.
 3. Separate knowable from unknowable factors and expose assumptions.
-4. Generate 3-7 independent sub-questions that are specific and answerable.
-5. List all assumptions, noting whether they are reasonable and what happens if they are false.
-6. Identify established facts (knowns) and uncertain factors requiring estimation (unknowns).
+4. Generate 3-7 sub-questions that are specific and answerable. Emit both a flat list (`sub_questions`, consumed by the Fermi calibration step) and a conditional probability tree (`sub_question_tree`) encoding how they combine into the outcome.
+5. Structure the tree so correlated sub-questions share a common-cause parent (never co-parents of the same child — `marginalize` assumes parent independence). Keep fan-in ≤ 3 and depth ≤ 3.
+6. List all assumptions, noting whether they are reasonable and what happens if they are false.
+7. Identify established facts (knowns) and uncertain factors requiring estimation (unknowns).
 
 ### stage_2_outside_view
 
@@ -51,7 +52,7 @@ The former single inside-view step is split into three FlowDef steps. Generation
 
 1. **Generate causal hypotheses (delegate to falsifiability).** Invoke `falsifiability/falsifiability-hypothesize` with `admitted_target` = the forecasting question, `domain` = "forecasting", `context` = the sub-questions and outside-view output. Produces 3–7 ranked candidate causal pathways with forced diversity (≥1 primary, ≥1 alternative, ≥1 contamination/false-positive, ≥1 opposing-outcome), each with a Platt-form prediction and a falsifier; discards vibes at generation.
 2. **Construct counterfactuals / necessary conditions (delegate to falsifiability).** Invoke `falsifiability/falsifiability-counterfactual` with the generated `hypotheses`, `admitted_target`, `domain`. For each hypothesis construct the minimal do(not X) counterfactual, hold confounders fixed, and derive the testable consequence that distinguishes the counterfactual world from the factual one. Flag irreducible causes.
-3. **Estimate probabilities and combine (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), and `outside_view_output`. For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, enforce internal consistency, and combine to adjust from the outside-view anchor — producing `hypothesis_probabilities.combined_probability` (the inside-view posterior fed to stage 4 as the prior).
+3. **Estimate probabilities and emit the tree (superforecasting).** Invoke `superforecasting/stage_3_probability_estimate` with the `hypotheses`, `counterfactuals`, `starting_probability` (the outside-view anchor), `outside_view_output`, and the conditional probability tree from stage 1 (`sub_question_tree`, `topological_order`, `outcome_node_id`). For each hypothesis weigh evidence pro/con against its counterfactual's testable consequence, assign an individual probability, and enforce internal consistency. For each tree node estimate a marginal (roots) or a conditional table (dependents) — the combinator (AND/OR/mixture) is encoded structurally in the conditional values, not as a separate field. The `combine_tree_probabilities` compute step (next ordinal) walks the tree via `hkask_forecast::marginalize` and produces `tree_combined_probability` — the exact inside-view posterior fed to stage 4 as the prior. The LLM no longer estimates `combined_probability`; the compute step owns that.
 
 ### stage_4_evidence_update
 

@@ -157,3 +157,28 @@ the edits introduce no new errors; they will compile once BD-06 is resolved.
   fields). This is a substantial refactor outside the bridge scope and should be
   its own change; it unblocks the build and lets the bridge edits be
   compile/test-verified.
+
+### BD-06 update (2026-08-11, during remediation)
+
+The `legacy`-map migration in `step_machine.rs` was completed by the refactor
+author (the file is now 495 lines, all `legacy`/`legacy_map`/`legacy_map_mut`
+calls gone). One remaining `hkask-templates` error was a `FnMut`+`async move`
+move error in `step_actions.rs:606` (the `parallel`-action branch-fan-out) —
+**fixed in this session** (per-branch `context_template.clone()` before
+`async move`); `hkask-templates` now compiles.
+
+That exposed the **next pre-existing layer**: 8 `Send`-not-general-enough errors
+in `kask/crates/kask_bridge/src/skill_executor.rs` (4 `tokio_handle.spawn`
+sites: L203, L241, L270, L602). Root cause: the committed refactor's
+`StepMachine::run(mut self, infra: &Infra)` returns a future borrowing a
+non-`'static` `&Infra`; `execute_manifest` calls it with a local `Infra`, so the
+returned future is not `Send + 'static` and can't be `tokio_spawn`ed by the
+bridge. The fix is a **core `hkask-templates` API change** — `run` (and/or
+`execute_manifest`) must own the `Infra` (e.g. `run(mut self, infra: Infra)` with
+`Infra: Clone`, or `Arc<Infra>`) so the future is `'static + Send`. This is the
+refactor author's in-flight work, not the bridge edits, and not attempted here.
+
+None of the 8 `Send` errors are in the BD-edited bridge files
+(`inference_providers.rs`, `settings.rs`, `memory.rs`, `inference_ipc_server.rs`,
+`kask_bridge.rs`) — those remain rust-analyzer-clean. They will compile-verify
+once the `run(&Infra)`→owned-`Infra` change lands.

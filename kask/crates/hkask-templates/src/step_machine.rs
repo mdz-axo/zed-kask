@@ -68,6 +68,7 @@ pub enum CascadeEvent {
 /// Infrastructure ports and callbacks passed to each `StepAction::execute`.
 /// Replaces the 10+ fields on `ManifestExecutor` that were accessed via
 /// `&self` inside the 720-line `run_cascade`.
+#[derive(Clone)]
 pub struct Infra {
     pub inference: Arc<dyn InferencePort>,
     pub tools: Arc<dyn ToolPort>,
@@ -126,7 +127,7 @@ impl StepMachine {
     }
 
     /// Run the cascade to completion.
-    pub async fn run(mut self, infra: &Infra) -> Result<CascadeOutcome> {
+    pub async fn run(mut self, infra: Infra) -> Result<CascadeOutcome> {
         // Matryoshka guard — only FlowDefAction recurses, but the guard is
         // checked here so it's in one place, not threaded through every call.
         if self.depth > hkask_capability::SYSTEM_MAX_RECURSION {
@@ -192,7 +193,7 @@ impl StepMachine {
             }
 
             // Execute steps until we hit a Reenter, Exit, or the end of the graph.
-            match self.run_pass(infra).await? {
+            match self.run_pass(&infra).await? {
                 PassResult::Reenter(target) => {
                     // Convergence check — exactly one place, not four.
                     self.context.read_convergence_signal();
