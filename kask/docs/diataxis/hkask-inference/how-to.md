@@ -21,7 +21,7 @@ This guide shows how to add a new inference provider. There are two shapes:
 - **Media provider** (image/video/speech/transcription, served by
   `MediaRouter`): all of the chat-provider steps **plus** a backend struct
   that implements `MediaProvider`, registered in `MediaRouter::new`.
-  DeepInfra / fal.ai / AtlasCloud are this shape.
+  DeepInfra / AtlasCloud are this shape.
 
 ## Source citations
 
@@ -72,7 +72,7 @@ model-name prefix — the prefix is registered separately in Step 2.
 
 Add an entry to the `PREFIXES` const in `ProviderId::parse_from_model`
 (`config.rs:77`). The prefix is the full provider name followed by `/`
-(e.g. `"DeepInfra/"`, `"fal.ai/"`). This is what the router matches
+(e.g. `"DeepInfra/"`, `"OpenRouter/"`). This is what the router matches
 against model-name strings.
 
 ### Step 3: Add the as_str match arm

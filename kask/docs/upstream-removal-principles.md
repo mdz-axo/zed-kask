@@ -417,19 +417,23 @@ load-bearing).
 
 ---
 
-## Suggested `.rules` additions (for reviewer decision — not committed inline)
+## Essentialist review of candidate `.rules` additions (both eliminated)
 
-Per `.rules:184-208`, these are proposed for a dedicated commit, not edited
-during this review:
+Two `.rules` additions were drafted during this review and then run through
+the `essentialist` 3-gate eliminative loop (G1 Exist → G2 Surface → G3
+Contract). **Both were eliminated** — each is a pass-through restatement of an
+existing rule, and neither trap has a single ground-truth instance (failing
+`.rules:194` "Repeatedly encountered"). Per `.rules:184-208`, neither is
+committed; the findings are recorded here for traceability.
 
-1. **Upstream removal is disable-behind-D-seam, not file deletion.** For
-   upstream surface (outside `kask/`), "remove" means disable via a D-seam
-   entry + test pin. File deletion is `kask/`-side only. A `// zed-kask:`
-   comment that disables upstream behavior must have a test asserting the
-   disabled behavior stays disabled (already in `.rules:267-274` — this
-   sharpens the *removal* form).
-2. **A removal category with zero ground-truth instances is not added.**
-   Generalizes `.rules:202-208` (no drive-by rule additions) from rules to
-   removal-taxonomy categories: a candidate removal reason with no prior
-   instance is recorded as an open question, not a category, until the first
-   real instance validates its decision test.
+| Candidate | Eliminated because | Existing rule that already covers it |
+| --- | --- | --- |
+| "Upstream removal is disable-behind-D-seam, not file deletion" | G1+G3 pass-through: "disable via D-seam + test pin" restates `.rules:255-259`; "disabling comment needs a test" restates `.rules:267-274` (the candidate said so itself); "disable not delete" is *entailed* by DIVERGENCE.md L9-11 ("the only divergences are the D-seams"). 0 instances of an agent deleting an upstream file when it should have disabled it. | `.rules:255-259`, `.rules:267-274`, DIVERGENCE.md L9-11 |
+| "A removal category with zero ground-truth instances is not added" | G1+G3 pass-through: it is a *re-scope* of the no-drive-by principle to taxonomy categories, not a new constraint (the candidate said so itself: "Generalizes `.rules:202-208`"). The discipline already worked without the rule — Category 5 was recorded as an open question, not added. | `.rules:202-208`, `.rules:191-195` |
+
+**Where the content survives (as prose, not as `.rules` traps):** the
+disable-vs-delete distinction is the meta-constraint paragraph at the top of
+this document; the zero-instance discipline is the rationale recorded in the
+metacognition section for not adding Category 5. Both are documentary, which
+is the correct home — a principles document may state its own operating
+mechanism without that constituting a `.rules` entry.

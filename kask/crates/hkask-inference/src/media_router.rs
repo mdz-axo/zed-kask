@@ -53,7 +53,7 @@ impl MediaRouter {
     /// configuration is valid (non-empty API key). Providers that fail to
     /// construct are not registered and emit a `reg.inference` warn. The
     /// registry order is DeepInfra-first so the runtime fallback preserves
-    /// the prior DeepInfra-first / fal-fallback policy for the three shared
+    /// the prior DeepInfra-first / AtlasCloud-fallback policy for the three shared
     /// ops (remove_background, generate_speech, transcribe).
     ///
     /// expect: "The system creates provider membranes requiring valid API keys"

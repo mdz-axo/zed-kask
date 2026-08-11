@@ -1,6 +1,6 @@
 //! Shared OpenAI-compatible chat completion logic.
 //!
-//! All five chat backends (DeepInfra, OpenRouter, KiloCode, Fal, Ollama)
+//! All five chat backends (DeepInfra, OpenRouter, KiloCode, AtlasCloud, Ollama)
 //! use [`openai_compatible_generate`] for their `generate()`
 //! method. The function parameterizes the chat endpoint path and auth header
 //! prefix to accommodate provider-specific differences:

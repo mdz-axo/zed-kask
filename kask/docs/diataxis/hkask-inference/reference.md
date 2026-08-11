@@ -29,8 +29,7 @@ architecture plan replaces this with `InferencePort` over zed's
 | `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs` |
 | `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs` |
 | `DeepInfraBackend` | `kask/crates/hkask-inference/src/deepinfra_backend.rs:25` |
-| `FalBackend` | `kask/crates/hkask-inference/src/fal_backend.rs:30` |
-| `OpenRouterBackend` | `kask/crates/hkask-inference/src/openrouter_backend.rs:22` |
+| `AtlasCloudBackend` | `kask/crates/hkask-inference/src/atlascloud_backend.rs:25` |
 | `RouterModelEntry` | `kask/crates/hkask-inference/src/hkask_inference.rs:65` |
 
 ## Provider model
@@ -52,48 +51,42 @@ classDiagram
     class ProviderId {
         <<enumeration>>
         DeepInfra
-        Fal
         Runpod
         OpenRouter
         KiloCode
         Ollama
-        Cline
     }
     class InferenceConfig {
         +default_provider: ProviderId
         +deepinfra_base_url: String
         +deepinfra_api_key: String
-        +fal_media_base_url: String
-        +fal_queue_base_url: String
-        +fal_api_key: String
         +openrouter_base_url: String
         +openrouter_api_key: String
         +kilocode_base_url: String
         +kilocode_api_key: String
         +ollama_base_url: String
         +ollama_api_key: String
-        +runpod_* : String
+        +atlascloud_base_url: String
+        +atlascloud_api_key: String
+        +timeout_secs: u64
         +default_model: String
     }
     class MediaRouter {
-        -config: InferenceConfig
-        -deepinfra: Option~DeepInfraBackend~
-        -fal: Option~FalBackend~
-        -openrouter: Option~OpenRouterBackend~
+        -registry: ProviderRegistry
     }
     class InferenceIpcClient {
         +generate_with_model(model, prompt, params) Result
         +media_generate(op, params) Result
     }
 
-    MediaRouter --> InferenceConfig : holds
+    MediaRouter --> InferenceConfig : constructed from
     InferenceIpcClient --> MediaRouter : falls back to
     InferenceConfig --> ProviderId : defaults to
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-INF-001
-verified_date: 2026-08-03
+verified_date: 2026-08-11
 verified_against: kask/crates/hkask-inference/src/config.rs:38,161; kask/crates/hkask-inference/src/media_router.rs; kask/crates/hkask-inference/src/inference_ipc_client.rs
 status: VERIFIED
 -->
@@ -118,31 +111,27 @@ by `resolve_inference_port()` (`hkask_inference.rs`):
 
 The `MediaProvider` trait (`provider.rs:87`) defines the media generation
 interface: `id()`, `supports(op)`, and `execute(op, params)`. The
-`ProviderRegistry` (`provider.rs:114`) holds an ordered list of
+The `ProviderRegistry` (`provider.rs:114`) holds an ordered list of
 `Arc<dyn MediaProvider>` and dispatches each `MediaOp` to the first
 supporting provider, falling back to the next on runtime error. The registry
 order encodes the preference policy (DeepInfra first for the ops it is
-cheapest for, fal.ai fallback).
+cheapest for, AtlasCloud fallback).
 
 ## Provider backends
 
-Four backend structs are defined, each holding a base URL, API key, and a
-shared `reqwest::Client`: `DeepInfraBackend` (`deepinfra_backend.rs:25`),
-`FalBackend` (`fal_backend.rs:30`), `OpenRouterBackend`
-(`openrouter_backend.rs:22`), and `AtlasCloudBackend`
-(`atlascloud_backend.rs:25`). The media backends (`DeepInfraBackend`,
-`FalBackend`, `AtlasCloudBackend`) implement `MediaProvider` and are
-registered in `MediaRouter::new` — only those whose API key is present are
-constructed. Each backend also has inherent `generate` /
-`generate_with_messages` / vision methods that call the shared
+Two backend structs are defined, each holding a base URL, API key, and a
+shared `reqwest::Client`: `DeepInfraBackend` (`deepinfra_backend.rs:25`)
+and `AtlasCloudBackend` (`atlascloud_backend.rs:25`). Both implement
+`MediaProvider` and are registered in `MediaRouter::new` — only those whose
+API key is present are constructed. Each backend also has inherent `generate`
+/ `generate_with_messages` / vision methods that call the shared
 `openai_compat::openai_compatible_generate[_messages]` helper for direct
 OpenAI-compatible chat (the standalone path; zed-kask chat routes through the
 IPC bridge instead).
 
-The `ProviderId` enum has seven variants (DeepInfra, fal.ai, RunPod,
-OpenRouter, KiloCode, Ollama, Cline), but only four have a backend struct
-here. The chat-only providers (KiloCode, Ollama, Cline) and RunPod are routed
-by `ProviderId` prefix but their inference is served through the zed IPC
+The `ProviderId` enum has five variants (DeepInfra, RunPod, OpenRouter,
+KiloCode, Ollama). The chat-only providers (KiloCode, Ollama) and RunPod are
+routed by `ProviderId` prefix but their inference is served through the zed IPC
 bridge / `LanguageModelRegistry`, not by a backend struct in this crate.
 `AtlasCloudBackend` is a media provider that is not a `ProviderId` variant
 (media-only, not prefix-routed).

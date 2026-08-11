@@ -58,15 +58,23 @@ substantive findings live in this directory's reports.
   simplification, UI consistency, cost-inverted. AC: ranked table + ±20%
   sensitivity analysis. ✓ (top-3 weight-sensitive — see report)
 
-### Phase 4 — Act / remediate (bounded)
-- [ ] **T8 Apply top-ranked remediations** — apply only MCDA top-ranked that
-  survive essentialist; pin behavioral changes with tests. **Status: not
-  applied in-session.** Rationale: top remediation (KS-01) requires taint-bridge
-  surgery + a regression test verified against a workspace compile; dead-code
-  deletions (RA-02/03/08) are verified safe (zero callers) but require workspace
-  compile verification exceeding a safe single-session bound. Remediations are
-  presented as a test-pinning plan in `mcda-remediation.md` for the operator to
-  apply via the FlowDef manifest. No hard-stop triggered.
+### Phase 4 — Act / remediate (partial)
+- [x] **T8a Doc/template cleanup (KS-03)** — applied 2026-08-11: corrected the
+  `kask/registry/templates/kali-audit/select-surface.j2` FIDES-taint `present_if`
+  (pointed auditors at the removed `propagate_taint_for_binding` — guaranteed
+  false negative); updated `kask/docs/architecture/guard-taint-pipeline.md` and
+  `kask/docs/diataxis/hkask-templates/reference.md` to cite the live symbols
+  (`step_context.rs:40`, `step_actions.rs:705`, `runtime_policy.rs:71`,
+  `tool_taint.rs:34`, `runtime.rs:370`) with honest "not yet enforced — pending
+  KS-01/KS-02" framing, and fixed the broader `executor.rs` refactor line-rot in
+  the cascade-actions table. See `suggested-rules-additions.md` for the proposed
+  `.rules`/`GEMINI.md` replacement (not edited inline — hygiene + seam).
+- [ ] **T8b Code remediations** — KS-01 (bridge `StepResult.taint` → gate read
+  path) + KS-02 (per-tool `ToolTaint`) + RA-02/03/08 (verified-zero-caller
+  deletions). **Deferred.** Rationale: KS-01/02 require taint-bridge surgery + a
+  regression test verified against a workspace compile; the dead-code deletions
+  require workspace compile verification exceeding a safe single-session bound.
+  No hard-stop triggered (no upstream non-D-seam edit required).
 - [x] **T9 metacognition log** — Brier-scored prediction per track. ✓ (see
   `metacognition-log.md`)
 

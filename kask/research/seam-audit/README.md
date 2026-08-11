@@ -40,11 +40,14 @@ Kask↔Zed seam (DIVERGENCE.md D1–D24), encoded as the reproducible
   rank-1 stable only under security-emphasis. Single pass → the "two
   consecutive slices stable" criterion is not satisfiable; a re-audit is
   recommended.
-- **Remediation**: not applied in-session. Top remediation (KS-01) requires
-  taint-bridge surgery + a regression test; dead-code deletions require
-  workspace compile verification exceeding a safe single-session bound.
-  Remediations are presented as a test-pinning plan in `mcda-remediation.md`.
-  No hard-stop triggered.
+- **Remediation**: doc/template cleanup (KS-03) applied 2026-08-11 — corrected
+  the `kali-audit/select-surface.j2` FIDES-taint trap and updated
+  `guard-taint-pipeline.md` + `reference.md` to cite live symbols with "not yet
+  enforced — pending KS-01/KS-02" framing. Code remediations (KS-01/02 taint
+  bridge, RA-02/03/08 dead-code deletions) deferred — require taint-bridge
+  surgery + regression test / workspace-compile verification. Proposed `.rules`/
+  `GEMINI.md` replacement in `suggested-rules-additions.md` (PR-description entry,
+  not an inline `.rules` edit). No hard-stop triggered.
 - **Metacognition**: Brier scores 0.040 (security) / 0.090 (architecture) /
   0.123 (UI) — all well-calibrated (< 0.25 threshold).
 

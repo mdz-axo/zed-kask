@@ -150,7 +150,7 @@ impl ProviderRegistry {
     /// `reg.media.select` span, and the fallback chain is ordered by descending
     /// weighted score. With a single candidate there is no selection to make —
     /// the lone provider is used directly. The default score table reproduces
-    /// the prior registration-order policy (DeepInfra-first / fal-fallback), so
+    /// the prior registration-order policy (DeepInfra-first / AtlasCloud-fallback), so
     /// dispatch behavior is preserved.
     ///
     /// expect: "The system routes media ops through the configured provider membrane"
