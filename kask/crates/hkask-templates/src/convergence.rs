@@ -18,6 +18,7 @@
 
 use crate::bundle::config::{AggregationSource, ConvergenceConfig};
 use crate::input_mapping::resolve_dot_path;
+use crate::step_context::{ContextLookup, ContextMap};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -226,7 +227,7 @@ impl ConvergenceTracker {
     /// For the legacy model, reads the self-grade metric from the convergence
     /// field. Called by the executor after each iteration's compute steps have
     /// run, BEFORE `check_met`.
-    pub fn push_cycle_from_context(&mut self, context: &HashMap<String, Value>) {
+    pub fn push_cycle_from_context<C: ContextLookup>(&mut self, context: &C) {
         if self.kata_enabled() {
             // Kata model: read convergence signal and Brier from context
             let signal = context
@@ -271,7 +272,7 @@ impl ConvergenceTracker {
 
     /// Capture the baseline quality on the first full pass. Called once,
     /// after the first pass completes; subsequent calls are no-ops.
-    pub fn capture_baseline(&mut self, context: &HashMap<String, Value>) {
+    pub fn capture_baseline<C: ContextLookup>(&mut self, context: &C) {
         if self.baseline_quality.is_none() {
             self.baseline_quality = self.resolve_quality(context);
         }
@@ -289,7 +290,7 @@ impl ConvergenceTracker {
     /// `_convergence_score` fallback the baseline stayed `None` and the
     /// improvement gate (`both`) was silently disabled — convergence could
     /// never fire even though `check_legacy_met` saw a below-threshold value.
-    fn resolve_quality(&self, context: &HashMap<String, Value>) -> Option<f64> {
+    fn resolve_quality<C: ContextLookup>(&self, context: &C) -> Option<f64> {
         let current = context
             .get(&self.field)
             .and_then(|v| v.as_f64())
@@ -318,7 +319,7 @@ impl ConvergenceTracker {
     ///
     /// Otherwise, falls back to the legacy self-grade model (threshold +
     /// improvement gate + stability).
-    pub fn check_met(&self, context: &HashMap<String, Value>, iteration: u32) -> bool {
+    pub fn check_met<C: ContextLookup>(&self, context: &C, iteration: u32) -> bool {
         if iteration <= self.min_iterations {
             return false;
         }
@@ -441,7 +442,7 @@ impl ConvergenceTracker {
     }
 
     /// Legacy self-grade convergence check (threshold + improvement + stability).
-    fn check_legacy_met(&self, context: &HashMap<String, Value>) -> bool {
+    fn check_legacy_met<C: ContextLookup>(&self, context: &C) -> bool {
         let current = self.resolve_quality(context);
         let threshold_met = current.map(|q| q <= self.threshold).unwrap_or(false);
 
@@ -463,9 +464,9 @@ impl ConvergenceTracker {
 
     /// Compute compound quality from nested inner skill convergence reports.
     /// Used when `aggregation != "none"` and `aggregation_sources` is non-empty.
-    pub fn compute_compound_quality(
+    pub fn compute_compound_quality<C: ContextLookup>(
         &self,
-        context: &HashMap<String, Value>,
+        context: &C,
         method: &str,
         sources: &[AggregationSource],
     ) -> f64 {
@@ -534,9 +535,9 @@ impl ConvergenceTracker {
     /// Writes the 14-field `_convergence` JSON into the context. This is the
     /// single source of truth for the `_convergence` shape — previously
     /// assembled ad-hoc at 11 call sites in the executor.
-    pub fn finalize_report(
+    pub fn finalize_report<M: ContextMap>(
         &self,
-        context: &mut HashMap<String, Value>,
+        context: &mut M,
         status: ConvergenceStatus,
         reason: &str,
         iteration: u32,
@@ -591,9 +592,9 @@ impl ConvergenceTracker {
     /// Inject the live (running) convergence context for template awareness.
     /// Called at the start of each iteration so templates can reference
     /// `{{ _convergence.iterations_completed }}` etc.
-    pub fn inject_running(
+    pub fn inject_running<M: ContextMap>(
         &self,
-        context: &mut HashMap<String, Value>,
+        context: &mut M,
         iteration: u32,
         gas_used: u64,
         gas_cap: u64,

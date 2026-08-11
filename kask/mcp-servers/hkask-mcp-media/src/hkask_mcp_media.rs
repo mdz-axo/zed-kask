@@ -1504,7 +1504,7 @@ impl MediaServer {
     }
 
     /// Resolve the best available vision model with fallback chain.
-    /// Tries: fal.ai → DeepInfra → OpenRouter.
+    /// Tries: DeepInfra → OpenRouter.
     /// Returns (model_name, label) or None if no vision provider is configured.
     async fn resolve_vision_model(&self) -> Option<(&'static str, &'static str)> {
         let models = self.vision_port.list_vision_models().await;
@@ -1515,10 +1515,6 @@ impl MediaServer {
             // standalone MediaRouter is media-only and returns no chat models).
             let prefix = model.prefixed_name.split('/').next().unwrap_or("");
             match prefix.to_ascii_lowercase().as_str() {
-                "fal.ai" | "fal" => {
-                    // Qwen2.5-VL 72B — Apache 2.0 open-weight, served by fal.ai
-                    return Some(("fal.ai/Qwen/Qwen2.5-VL-72B-Instruct", "qwen2.5-vl-72b"));
-                }
                 "deepinfra" => {
                     return Some((
                         "DeepInfra/meta-llama/Llama-3.2-11B-Vision-Instruct",

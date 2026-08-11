@@ -34,6 +34,54 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+// ── Context map interface (K1) ─────────────────────────────────────────────
+//
+// A shared read/write interface over the context map so readers (convergence,
+// condition, input_mapping, budget) are generic over the backing store:
+// `HashMap<String, Value>` (tests, the materialized return map) and
+// `HashMap<String, Arc<Value>>` (the executor's shared-value map from K1).
+// The trait methods are named `get`/`insert` so call-site bodies are unchanged
+// — for a generic `C: ContextLookup`, `context.get(k)` resolves to the trait
+// method. Two impls at birth (both live: tests use `Value`, the executor uses
+// `Arc<Value>`), so this is not the one-impl speculative-generality trap.
+
+/// Read-only string-key lookup over a context map.
+pub(crate) trait ContextLookup {
+    fn get(&self, key: &str) -> Option<&Value>;
+}
+
+/// Mutable string-key map: `ContextLookup` plus `insert`. Writers (convergence
+/// `inject_running`/`finalize_report`, budget `inject_into_context`) are
+/// generic over this so the `Arc<Value>` store wraps on insert while the
+/// `Value` store moves.
+pub(crate) trait ContextMap: ContextLookup {
+    fn insert(&mut self, key: String, value: Value);
+}
+
+impl ContextLookup for HashMap<String, Value> {
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.get(key)
+    }
+}
+
+impl ContextMap for HashMap<String, Value> {
+    fn insert(&mut self, key: String, value: Value) {
+        self.insert(key, value);
+    }
+}
+
+impl ContextLookup for HashMap<String, Arc<Value>> {
+    fn get(&self, key: &str) -> Option<&Value> {
+        self.get(key).map(|v| v.as_ref())
+    }
+}
+
+impl ContextMap for HashMap<String, Arc<Value>> {
+    fn insert(&mut self, key: String, value: Value) {
+        self.insert(key, Arc::new(value));
+    }
+}
+
 /// A step's result, with its taint label inline.
 #[derive(Debug, Clone)]
 pub struct StepResult {

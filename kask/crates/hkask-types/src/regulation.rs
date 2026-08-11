@@ -165,7 +165,7 @@ impl ToolSubsystem {
             "research" => ToolSubsystem::Research,
             "companies" => ToolSubsystem::Companies,
             "communication" => ToolSubsystem::Communication,
-            "fal" | "media" => ToolSubsystem::Media,
+            "media" => ToolSubsystem::Media,
             "corpus" => ToolSubsystem::Corpus,
             "training" => ToolSubsystem::Training,
             "kanban" => ToolSubsystem::Kanban,

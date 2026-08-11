@@ -7,6 +7,7 @@
 //! Both resolve context references via `input_mapping::resolve_dot_path`.
 
 use crate::input_mapping::resolve_dot_path;
+use crate::step_context::ContextLookup;
 use serde_json::Value;
 use std::collections::HashMap;
 use tracing::warn;
@@ -14,7 +15,7 @@ use tracing::warn;
 /// Evaluate a step condition expression against the context.
 /// Supported: "var_name" (truthy), "NOT var_name" (falsy),
 /// "a AND b" (both truthy), "a OR b" (either truthy).
-pub(crate) fn evaluate_step_condition(condition: &str, context: &HashMap<String, Value>) -> bool {
+pub(crate) fn evaluate_step_condition<C: ContextLookup>(condition: &str, context: &C) -> bool {
     let condition = condition.trim();
 
     // Check for boolean operators
@@ -90,7 +91,7 @@ fn parse_step_comparison(condition: &str) -> Option<(&str, &str, &str)> {
 
 /// Resolve an operand to a JSON value: a quoted literal, a context dot-path/key,
 /// a number literal, or a bare-word string literal.
-fn resolve_operand(s: &str, context: &HashMap<String, Value>) -> Option<Value> {
+fn resolve_operand<C: ContextLookup>(s: &str, context: &C) -> Option<Value> {
     let s = s.trim();
     if s.len() >= 2
         && ((s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')))
@@ -131,7 +132,7 @@ fn resolve_operand(s: &str, context: &HashMap<String, Value>) -> Option<Value> {
 
 /// Evaluate a leaf comparison. Numeric for ordering ops; structural (==/!=) for
 /// equality. Falls back to string ordering for non-numeric <, <=, >, >=.
-fn eval_step_comparison(lhs: &str, op: &str, rhs: &str, context: &HashMap<String, Value>) -> bool {
+fn eval_step_comparison<C: ContextLookup>(lhs: &str, op: &str, rhs: &str, context: &C) -> bool {
     let l = match resolve_operand(lhs, context) {
         Some(v) => v,
         None => return false,

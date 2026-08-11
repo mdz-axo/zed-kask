@@ -8,6 +8,7 @@
 //! `InferencePort`). Everything else is deterministic.
 
 use crate::ports::{Result, TemplateError};
+use crate::step_context::ContextLookup;
 use crate::step_graph::{ExitKind, StepId};
 use crate::step_machine::{Infra, StepMachine};
 use hkask_capability::ToolPort;
@@ -702,7 +703,7 @@ async fn call_inference_stream(
 /// Check whether a JSON value references any tainted (Source) context entries.
 /// Replaces the old `check_untrusted_input` — but reads from the legacy map
 /// since taint markers are stored there.
-fn check_untrusted_input(value: &Value, context: &HashMap<String, Value>) -> bool {
+fn check_untrusted_input<C: ContextLookup>(value: &Value, context: &C) -> bool {
     // Walk the value for $ref and {{ }} references, check if any referenced
     // key has a taint marker in the legacy map.
     let mut keys = Vec::new();

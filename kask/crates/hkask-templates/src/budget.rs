@@ -14,6 +14,7 @@
 //! module that the executor composes.
 
 use crate::bundle::config::{BundleGasConfig, RjouleConfig};
+use crate::step_context::ContextMap;
 use serde_json::{Value, json};
 use tracing::info;
 
@@ -254,7 +255,7 @@ impl BudgetTracker {
     }
 
     /// Inject the `_gas` and `_rjoule` context keys (for template awareness).
-    pub fn inject_into_context(&self, context: &mut std::collections::HashMap<String, Value>) {
+    pub fn inject_into_context<M: ContextMap>(&self, context: &mut M) {
         let snap = self.snapshot();
         context.insert("_gas".to_string(), snap.gas_json());
         context.insert("_rjoule".to_string(), snap.rjoule_json());
