@@ -189,12 +189,17 @@ pub trait SkillManifestExecutor: Send + Sync {
     /// agent UI. When `None` (slash commands without an event stream), no
     /// progress is emitted.
     ///
+    /// `title` is an optional callback for step-label updates (short labels
+    /// like "Step 2/5: scope"). When `Some`, the executor calls it at each
+    /// cascade step so the tool call header shows which step is running.
+    ///
     /// Returns the cascade's final output as text, or an error message.
     async fn execute_skill(
         &self,
         skill_name: &str,
         context: std::collections::HashMap<String, serde_json::Value>,
         progress: Option<CascadeProgress>,
+        title: Option<CascadeProgress>,
     ) -> Result<String, String>;
 
     /// Compose a bundle from multiple peer-level skills via the `skill-bundler`
@@ -222,6 +227,7 @@ pub trait SkillManifestExecutor: Send + Sync {
         task: &str,
         context: std::collections::HashMap<String, serde_json::Value>,
         progress: Option<CascadeProgress>,
+        title: Option<CascadeProgress>,
     ) -> Result<BundleExecutionResult, String>;
 
     /// Persist a composed bundle manifest to the registry so it can be
@@ -501,12 +507,15 @@ impl AgentTool for SkillTool {
                         "task".to_string(),
                         serde_json::Value::String(task.clone()),
                     );
-                    // Create a progress sender from the event stream so the
-                    // user sees real-time cascade step traces in the agent UI.
+                    // Create a thinking-trace sender from the event stream so
+                    // the user sees the LLM's live reasoning during the cascade.
                     // Without this, the cascade runs silently and the user
                     // cannot steer or cancel — a violation of user sovereignty.
                     let progress = event_stream.thinking_sender();
-                    match executor.execute_skill(skill_name, context, Some(progress)).await {
+                    // Create a title sender for step-label updates (short labels
+                    // like "Step 2/5: scope" in the tool call header).
+                    let title = event_stream.title_sender();
+                    match executor.execute_skill(skill_name, context, Some(progress), Some(title)).await {
                         Ok(result_text) => render_skill_envelope(&skill, &result_text),
                         Err(e) => {
                             return Err(SkillToolOutput::Error {
@@ -1119,6 +1128,7 @@ mod tests {
             skill_name: &str,
             context: std::collections::HashMap<String, serde_json::Value>,
             _progress: Option<CascadeProgress>,
+            _title: Option<CascadeProgress>,
         ) -> Result<String, String> {
             *self
                 .last_context
@@ -1137,6 +1147,7 @@ mod tests {
             _task: &str,
             _context: std::collections::HashMap<String, serde_json::Value>,
             _progress: Option<CascadeProgress>,
+            _title: Option<CascadeProgress>,
         ) -> Result<BundleExecutionResult, String> {
             // The stub doesn't run a real bundler cascade — it returns a
             // minimal result so tests that exercise the skill_bundle tool's

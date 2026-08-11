@@ -6830,6 +6830,21 @@ impl ToolCallEventStream {
             .update_tool_call_fields(&self.tool_call_id, fields, None);
     }
 
+    /// Create a title sender that updates the tool call's header label.
+    /// Used for step-label updates (e.g. "Step 2/5: scope") so the user
+    /// sees which cascade step is running in the tool call header.
+    pub fn title_sender(&self) -> Arc<dyn Fn(&str) + Send + Sync> {
+        let stream = self.stream.clone();
+        let tool_call_id = self.tool_call_id.clone();
+        Arc::new(move |text: &str| {
+            stream.update_tool_call_fields(
+                &tool_call_id,
+                acp::ToolCallUpdateFields::new().title(text),
+                None,
+            );
+        })
+    }
+
     /// Create a progress sender that emits real-time thinking traces for
     /// the tool call. Each call sends a `ToolCallThinking` event through the
     /// thread event channel, which the foreground drainer appends to the

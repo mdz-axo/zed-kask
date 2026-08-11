@@ -101,6 +101,66 @@ assert_kask_binary_destination() {
     esac
 }
 
+# assert_not_zed_contaminated_env — refuse to build or install zed-kask when
+# the environment is contaminated by the upstream Zed editor. zed-kask must be
+# built and installed from a clean shell; a build run inside the upstream
+# Zed's integrated terminal inherits Zed's LD_LIBRARY_PATH (pointing at its
+# bundled-lib dir, e.g. the Flatpak Zed's files/lib) and produces a binary
+# coupled to upstream Zed's libraries — exactly the collision zed-kask exists
+# to avoid. The same contamination also makes gtk-update-icon-cache / gdbus
+# silently load Zed's mismatched libs (the icon-cache refresh then fails
+# silently, so the running gnome-shell never picks up the installed icon).
+#
+# This is the environmental counterpart of assert_not_zed_owned_path: that
+# guards *paths* from colliding with upstream Zed; this guards the *build
+# and install environment* from being coupled to upstream Zed. zed-kask's own
+# binary is named "zed-kask" (see crates/zed/Cargo.toml [[bin]] name), so
+# detecting an ancestor named "zed-editor" unambiguously identifies upstream
+# Zed, never zed-kask itself.
+#
+# Detection: (1) LD_LIBRARY_PATH pointing at an upstream Zed bundled-lib
+# dir (Flatpak Zed or an app bundle), or (2) an ancestor process is the
+# upstream Zed editor (comm "zed-editor") — i.e. the script is running inside
+# Zed's integrated terminal. Hard-fails so the operator runs from a clean
+# shell (Ptyxis / a plain terminal / the app launcher), not upstream Zed's
+# terminal.
+assert_not_zed_contaminated_env() {
+    local operation="${1:-build}"
+
+    # (1) LD_LIBRARY_PATH poisoned by upstream Zed's bundled libraries.
+    if [ -n "${LD_LIBRARY_PATH:-}" ]; then
+        case "$LD_LIBRARY_PATH" in
+            *flatpak/app/dev.zed*|*/dev.zed.Zed*/files/lib*)
+                log_error "$operation refused: LD_LIBRARY_PATH is contaminated by the upstream Zed editor:"
+                log_error "    $LD_LIBRARY_PATH"
+                log_error "A build/install run here would couple zed-kask to upstream Zed's libraries."
+                log_error "Run from a clean shell (Ptyxis / a plain terminal / the app launcher),"
+                log_error "NOT from inside the upstream Zed (or Flatpak Zed) integrated terminal."
+                return 1
+                ;;
+        esac
+    fi
+
+    # (2) Running inside the upstream Zed editor's integrated terminal. Walk
+    # ancestors; an ancestor named "zed-editor" is upstream Zed. zed-kask's own
+    # binary is "zed-kask", so this never false-positives on zed-kask itself.
+    local pid=$$ depth=0
+    while [ -n "${pid:-}" ] && [ "$pid" != "0" ] && [ "$pid" != "1" ] && [ "$depth" -lt 12 ]; do
+        local comm=""
+        comm=$(ps -o comm= -p "$pid" 2>/dev/null | tr -d '[:space:]') || comm=""
+        if [ "$comm" = "zed-editor" ]; then
+            log_error "$operation refused: running inside the upstream Zed editor (ancestor pid $pid is 'zed-editor')."
+            log_error "Building or installing zed-kask from inside Zed's integrated terminal couples it to upstream Zed."
+            log_error "Run from a clean shell (Ptyxis / a plain terminal / the app launcher), not inside Zed."
+            return 1
+        fi
+        pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d '[:space:]') || pid=""
+        depth=$((depth + 1))
+    done
+
+    return 0
+}
+
 # strip_jsonc_comments — strip JSONC comments from a file and emit clean JSON
 # on stdout.
 #

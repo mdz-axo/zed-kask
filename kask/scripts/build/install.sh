@@ -714,6 +714,11 @@ main() {
         install)
             log "Starting hKask installation..."
 
+            # Refuse to build/install from inside the upstream Zed (or Flatpak
+            # Zed) terminal — a contaminated LD_LIBRARY_PATH couples the
+            # build to upstream Zed's libraries. See assert_not_zed_contaminated_env.
+            assert_not_zed_contaminated_env "install" || exit 1
+
             # Resolve the source dir early so install_system_dependencies can
             # find script/linux (which lives at the repo root).
             clone_repo
@@ -753,9 +758,11 @@ main() {
             fi
             ;;
         uninstall)
+            assert_not_zed_contaminated_env "uninstall" || exit 1
             uninstall_hkask
             ;;
         build-only)
+            assert_not_zed_contaminated_env "build" || exit 1
             clone_repo
             if [ "$skip_deps" = false ]; then
                 install_system_dependencies "$HKASK_SOURCE_DIR"

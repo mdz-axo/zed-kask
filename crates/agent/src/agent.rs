@@ -2237,7 +2237,7 @@ impl NativeAgent {
                         "task".to_string(),
                         serde_json::Value::String(task_text),
                     );
-                    match executor.execute_skill(skill_name, context, None).await {
+                    match executor.execute_skill(skill_name, context, None, None).await {
                         Ok(result_text) => {
                             crate::tools::render_skill_envelope(&skill, &result_text)
                         }

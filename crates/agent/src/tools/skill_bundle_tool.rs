@@ -235,12 +235,13 @@ impl AgentTool for SkillBundleTool {
                 });
             }
 
-            // Create a progress sender from the event stream so the user
-            // sees real-time cascade step traces in the agent UI. Without
+            // Create a thinking-trace sender from the event stream so the user
+            // sees the LLM's live reasoning during the bundle cascade. Without
             // this, the bundle runs silently — the user cannot see which
             // skills are being composed, what the cascade steps are, or
             // whether to cancel. User sovereignty requires visibility.
             let progress = event_stream.thinking_sender();
+            let title = event_stream.title_sender();
 
             // Compose and execute the bundle. The executor handles:
             // 1. Running the skill-bundler cascade (compose → synthesize →
@@ -254,6 +255,7 @@ impl AgentTool for SkillBundleTool {
                     &input.task,
                     input.context,
                     Some(progress),
+                    Some(title),
                 )
                 .await
                 .map_err(|e| SkillBundleToolOutput::Error {

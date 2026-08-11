@@ -226,6 +226,9 @@ verify_installation() {
 
 main() {
     print_banner "Verified Binary Installer"
+    # Refuse to install from inside the upstream Zed (or Flatpak Zed) terminal —
+    # a contaminated LD_LIBRARY_PATH couples the install to upstream Zed's libs.
+    assert_not_zed_contaminated_env "install" || exit 1
     local target tag temporary_directory
     target=$(detect_target)
     tag=$(resolve_tag)
