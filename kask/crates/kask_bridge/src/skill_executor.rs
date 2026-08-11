@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use fs::Fs;
-use hkask_templates::{ManifestExecutor, load_manifest_from_yaml, validate_inputs};
+use hkask_templates::{CascadeOutcome, ManifestExecutor, load_manifest_from_yaml, validate_inputs};
 use hkask_types::InferencePort;
 use serde_json::Value;
 use std::path::Path;
@@ -175,9 +175,9 @@ impl BridgeManifestExecutor {
         &self,
         skill_name: &str,
         mut context: HashMap<String, Value>,
-        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-    ) -> Result<HashMap<String, Value>, String> {
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>,
+        title: Option<Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> Result<CascadeOutcome, String> {
         let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
                 "No manifest found for skill '{skill_name}' on disk at {}",
@@ -219,9 +219,9 @@ impl BridgeManifestExecutor {
         &self,
         manifest: &hkask_templates::BundleManifest,
         mut context: HashMap<String, Value>,
-        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
-    ) -> Result<HashMap<String, Value>, String> {
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>,
+        title: Option<Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> Result<CascadeOutcome, String> {
         // Enforce the same `is_skill()` guard as `run_manifest_cascade` — the
         // inline refine manifest is hardcoded (not user-supplied) so this is
         // defense in depth, but the guard must be uniform to prevent an infra
@@ -610,11 +610,9 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
             .await
             .map_err(|e| format!("Manifest execution task failed: {e}"))??;
 
-        // The cascade returns a HashMap<String, Value> whose iteration order is
-        // randomized (HashMap uses RandomState). Extract the final step's result
-        // deterministically by selecting the highest-ordinal `step_N_result` key.
-        // This is the convention enforced by ManifestExecutor (executor.rs stores
-        // every step's output under `step_{ordinal}_result`).
+        // (K5) `result` is the typed `CascadeOutcome`; `extract_final_step_result`
+        // selects `last_result_step`'s value (deterministic — the machine tracks
+        // it, no randomized HashMap scan).
         let output = extract_final_step_result(&result);
 
         Ok(output)
@@ -663,7 +661,8 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // The synthesize step produces a `candidates` array; the first candidate's
         // `composite_manifest` is the governed BundleManifest.
         let bundle_manifest_json = bundler_result
-            .get("step_3_result")
+            .context
+            .lookup("step_3_result")
             .and_then(|v| v.get("candidates"))
             .and_then(|c| c.get(0))
             .and_then(|c| c.get("composite_manifest"))
@@ -679,14 +678,18 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // (the lisp.eval step). This is the falsifier anchor — if lisp.eval
         // were removed, this would be absent and the UI's score display
         // would degrade to "unavailable".
-        let composition_score = bundler_result.get("step_5_result").and_then(|v| v.as_f64());
+        let composition_score = bundler_result
+            .context
+            .lookup("step_5_result")
+            .and_then(|v| v.as_f64());
 
         // Extract the goal-extract step's output (step_1_result) so the
         // `Refine` action can pass it to `bundler-evolve` as `goal_context`.
         // Without it, the evolve step runs blind — it can't reference the
         // original goal. `Null` if the bundler cascade didn't produce it.
         let goal_context = bundler_result
-            .get("step_1_result")
+            .context
+            .lookup("step_1_result")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
 
@@ -694,7 +697,8 @@ impl agent::SkillManifestExecutor for BridgeManifestExecutor {
         // (may differ from the input if the bundler dropped a skill via
         // dead-letter resolution).
         let composed_skill_names = bundler_result
-            .get("step_2_result")
+            .context
+            .lookup("step_2_result")
             .and_then(|v| v.get("bundle_manifest"))
             .and_then(|bm| bm.get("skills"))
             .and_then(|s| s.as_array())
@@ -864,7 +868,8 @@ steps:
 
         // Extract the evolved manifest from step_1_result.evolved_manifest.
         let evolved_manifest_json = refine_result
-            .get("step_1_result")
+            .context
+            .lookup("step_1_result")
             .and_then(|v| v.get("evolved_manifest"))
             .cloned()
             .ok_or_else(|| {
@@ -905,17 +910,16 @@ steps:
     }
 }
 
-/// Deterministically extract the final step's result from the cascade context,
-/// reusing the canonical ordinal-keyed selector `hkask_templates::extract_final_step_result`
-/// (the .rules "ManifestExecutor final-result extraction must be ordinal-keyed"
-/// trap — do not re-implement the ordinal parse). Falls back to the full context
-/// JSON when no `step_N_result` keys exist (e.g. manifests whose final step is
-/// `populate`, emitting only `step_N_populated`); this fallback is a bridge
-/// policy layer on top of the shared selector, which returns `Value::Null`.
-fn extract_final_step_result(result: &std::collections::HashMap<String, Value>) -> String {
-    let value = hkask_templates::extract_final_step_result(result);
+/// Extract the cascade's final result as a string, reusing the canonical
+/// typed selector `hkask_templates::extract_final_step_result` (K5:
+/// `last_result_step`, not the retired ordinal-keyed HashMap scan). Falls back
+/// to the full context JSON (materialized) when no step stored a result — a
+/// bridge policy layer on top of the shared selector, which returns
+/// `Value::Null`.
+fn extract_final_step_result(outcome: &CascadeOutcome) -> String {
+    let value = hkask_templates::extract_final_step_result(outcome);
     if value.is_null() {
-        serde_json::to_string(result).unwrap_or_default()
+        serde_json::to_string(&outcome.context.materialize()).unwrap_or_default()
     } else {
         value.to_string()
     }

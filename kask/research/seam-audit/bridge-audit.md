@@ -111,3 +111,49 @@ toggles are inert.
    Lowest risk is the `alert_escalation.rs` extraction (zero coupling); the
    `curator_stores.rs` extraction is medium-risk (shared `curator_db_path`).
    Optional — the core is cohesive and earns its size.
+
+## Remediation applied (2026-08-11)
+
+BD-01, BD-02, BD-03, BD-05 were applied. BD-04 (the `memory.rs` split) was
+left as optional.
+
+| ID | Status | file:line | Verification |
+|----|--------|-----------|-------------|
+| BD-01 | **applied** | `inference_providers.rs:371` | Gated the 7 toggleable data services on `*_enabled`; no-toggle services stay unconditional. Added test `credential_urls_for_mcp_gates_data_service_toggles`. rust-analyzer: clean. |
+| BD-02 | **applied** | `settings.rs:640,646,662,672` | Deleted `DEFAULT_EMBEDDING_MODEL`/`DEFAULT_CLASSIFIER_MODEL` consts + `effective_embedding_model`/`effective_classifier_model` (zero callers). rust-analyzer: clean. |
+| BD-03 | **applied** | `memory.rs:235-282` | Deleted `RealMemoryPort::from_env` (~40 lines, zero callers). rust-analyzer: clean. |
+| BD-05 | **applied** | `inference_ipc_server.rs:93`; `kask_bridge.rs:43` | Narrowed `shared_worktree_spawner` to `pub(crate)`; dropped orphaned re-export. rust-analyzer: clean. |
+| BD-04 | deferred | `memory.rs:695-993` | Optional deepening (extract `alert_escalation.rs`). Left for a separate change. |
+
+**Compile verification:** `cargo check -p kask_bridge` could NOT complete — the
+dependency `hkask-templates` is pre-existing broken (see BD-06 below). All five
+edited files pass rust-analyzer (refreshed diagnostics, no errors/warnings), so
+the edits introduce no new errors; they will compile once BD-06 is resolved.
+
+## BD-06 — `hkask-templates` is mid-refactor broken (CRITICAL, pre-existing)
+
+- **file:line**: `kask/crates/hkask-templates/src/step_context.rs:78` (new
+  `StepContext`); callers in `step_machine.rs:453,467,491` + `step_actions.rs`.
+- **Evidence**: `cargo check -p kask_bridge` fails with 30 errors in
+  `hkask-templates`: `no method named 'legacy' / 'legacy_map' / 'legacy_map_mut'
+  found for struct 'StepContext'`. The committed `StepContext` (the "Add
+  ContextLookup and ContextMap traits" change) replaced the old
+  `HashMap<String, Value>` legacy map with typed `results: HashMap<StepId,
+  StepResult>` + `by_ordinal` + `named` + `protocol` fields, but the callers in
+  `step_machine.rs`/`step_actions.rs` were NOT migrated — they still call
+  `self.context.legacy(...)`, `self.context.legacy_map()`,
+  `self.context.legacy_map_mut()`, which no longer exist. The crate (and every
+  downstream crate including `kask_bridge`) does not compile at HEAD.
+- **Relation to KS-01**: the audit's KS-01 found `check_untrusted_input` reads
+  the legacy `__taint__` markers; the deeper truth is the legacy map itself was
+  being removed in this refactor, so the whole `check_untrusted_input` /
+  `invoke_tool` taint-gate path doesn't compile, not just "markers never written".
+- **This is pre-existing** — none of the bridge edits (BD-01..05) touched
+  `hkask-templates`. It blocks `cargo check`/`cargo test` verification of the
+  bridge edits.
+- **Remediation**: migrate the `step_machine.rs`/`step_actions.rs` callers from
+  the removed `legacy`/`legacy_map`/`legacy_map_mut` API to the new
+  `ContextLookup`/`ContextMap` (or the typed `results`/`named`/`protocol`
+  fields). This is a substantial refactor outside the bridge scope and should be
+  its own change; it unblocks the build and lets the bridge edits be
+  compile/test-verified.

@@ -38,7 +38,7 @@ use std::sync::Arc;
 // is not the one-impl speculative-generality trap.
 
 /// Read-only string-key lookup over a context map.
-pub(crate) trait ContextLookup {
+pub trait ContextLookup {
     fn get(&self, key: &str) -> Option<&Value>;
 }
 
@@ -46,7 +46,7 @@ pub(crate) trait ContextLookup {
 /// `inject_running`/`finalize_report`, budget `inject_into_context`) are
 /// generic over this; the `StepContext` impl routes inserts to its `protocol`
 /// map, the `HashMap` impl moves.
-pub(crate) trait ContextMap: ContextLookup {
+pub trait ContextMap: ContextLookup {
     fn insert(&mut self, key: String, value: Value);
 }
 

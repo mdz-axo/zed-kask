@@ -19,8 +19,7 @@
 use crate::bundle::config::{AggregationSource, ConvergenceConfig};
 use crate::input_mapping::resolve_dot_path;
 use crate::step_context::{ContextLookup, ContextMap};
-use serde_json::{Value, json};
-use std::collections::HashMap;
+use serde_json::json;
 
 /// Convergence status at cascade exit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -637,6 +636,7 @@ impl ConvergenceTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn config(threshold: f64, field: &str, max_iter: u32, min_iter: u32) -> ConvergenceConfig {
         ConvergenceConfig {

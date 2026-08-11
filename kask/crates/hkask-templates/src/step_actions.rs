@@ -8,7 +8,7 @@
 //! `InferencePort`). Everything else is deterministic.
 
 use crate::ports::{Result, TemplateError};
-use crate::step_context::ContextLookup;
+use crate::step_context::{ContextLookup, StepContext};
 use crate::step_graph::{ExitKind, StepId};
 use crate::step_machine::{Infra, StepMachine};
 use hkask_capability::ToolPort;
@@ -17,7 +17,6 @@ use hkask_types::ChatToolDefinition;
 use hkask_types::ports::inference_port::InferencePort;
 use hkask_types::template::LLMParameters;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// What a step action produced. The machine merges this with the node's
@@ -51,9 +50,8 @@ pub(crate) fn apply_input_mapping(
 ) {
     if let Value::Object(map) = mapping {
         for (key, value) in map {
-            let bound =
-                crate::input_mapping::resolve_mapping_value(value, ctx.legacy_map(), renderer);
-            ctx.insert_legacy(key.clone(), bound);
+            let bound = crate::input_mapping::resolve_mapping_value(value, ctx, renderer);
+            ctx.insert_protocol(key.clone(), bound);
         }
     }
 }
@@ -92,7 +90,7 @@ impl StepMachine {
                         {
                             let current = self
                                 .context
-                                .legacy(field)
+                                .lookup(field)
                                 .and_then(|v| v.as_f64())
                                 .unwrap_or(1.0);
                             let target: f64 = val_str.parse().unwrap_or(0.0);
@@ -160,7 +158,7 @@ impl StepMachine {
             .and_then(|s| {
                 infra
                     .template_renderer
-                    .render(s, self.context.legacy_map())
+                    .render(s, &self.context)
                     .ok()
                     .and_then(|rendered| rendered.trim().parse::<u32>().ok())
             })
@@ -176,10 +174,10 @@ impl StepMachine {
                 }
                 let bound = crate::input_mapping::resolve_mapping_value(
                     value,
-                    self.context.legacy_map(),
+                    &self.context,
                     &infra.template_renderer,
                 );
-                self.context.insert_legacy(key.clone(), bound);
+                self.context.insert_protocol(key.clone(), bound);
             }
         }
 
@@ -212,7 +210,7 @@ impl StepMachine {
 
         // Render the template.
         let (prompt, raw_template_content) =
-            render_step_template_with_raw(node, self.context.legacy_map(), infra)?;
+            render_step_template_with_raw(node, &self.context, infra)?;
 
         // Resolve output schema for structured tool calling.
         let output_schema = crate::output_schema::resolve_output_schema(
@@ -268,8 +266,7 @@ impl StepMachine {
         };
 
         // Inject budget context for template awareness.
-        self.budget
-            .inject_into_context(self.context.legacy_map_mut());
+        self.budget.inject_into_context(&mut self.context);
 
         Ok(Effect::Stored {
             step_id: node.id,
@@ -293,7 +290,7 @@ impl StepMachine {
             );
         }
 
-        let populated = render_step_template(node, self.context.legacy_map(), infra)?;
+        let populated = render_step_template(node, &self.context, infra)?;
 
         Ok(Effect::StoredNamed {
             step_id: node.id,
@@ -322,7 +319,7 @@ impl StepMachine {
                     for (key, value) in map {
                         let bound = crate::input_mapping::resolve_mapping_value(
                             value,
-                            self.context.legacy_map(),
+                            &self.context,
                             &infra.template_renderer,
                         );
                         out.insert(key.clone(), bound);
@@ -356,7 +353,7 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<Effect> {
-        let rendered = render_step_template(node, self.context.legacy_map(), infra)?;
+        let rendered = render_step_template(node, &self.context, infra)?;
         Ok(Effect::Stored {
             step_id: node.id,
             value: Value::String(rendered),
@@ -378,16 +375,14 @@ impl StepMachine {
         })?;
 
         // Resolve ${variable} references in the MCP reference.
-        let mcp_ref = crate::template_renderer::TemplateRenderer::render_inline(
-            mcp_ref_raw,
-            self.context.legacy_map(),
-        );
+        let mcp_ref =
+            crate::template_renderer::TemplateRenderer::render_inline(mcp_ref_raw, &self.context);
 
         // Check for untrusted input (FIDES taint check).
         let has_untrusted_input = node
             .input_mapping
             .as_ref()
-            .is_some_and(|mapping| check_untrusted_input(mapping, self.context.legacy_map()));
+            .is_some_and(|mapping| check_untrusted_input(mapping, &self.context));
 
         // Resolve the tool input.
         let input: Value = node
@@ -396,16 +391,15 @@ impl StepMachine {
             .map(|mapping| {
                 crate::input_mapping::resolve_mapping_value(
                     mapping,
-                    self.context.legacy_map(),
+                    &self.context,
                     &infra.template_renderer,
                 )
             })
             .unwrap_or_else(|| {
                 Value::Object(
                     self.context
-                        .legacy_map()
-                        .iter()
-                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .entries()
+                        .map(|(k, v)| (k, v.clone()))
                         .collect(),
                 )
             });
@@ -416,7 +410,7 @@ impl StepMachine {
             &infra.runtime_policy,
             &mcp_ref,
             input,
-            self.context.legacy_map().len() as u64,
+            self.context.entries().count() as u64,
             has_untrusted_input,
         )
         .await?;
@@ -442,10 +436,8 @@ impl StepMachine {
         })?;
 
         // Resolve {{key}} references from context.
-        let template_ref = crate::template_renderer::TemplateRenderer::render_inline(
-            template_ref,
-            self.context.legacy_map(),
-        );
+        let template_ref =
+            crate::template_renderer::TemplateRenderer::render_inline(template_ref, &self.context);
 
         // Load the sub-manifest YAML.
         let manifest_yaml = if let Ok(content) = infra
@@ -510,9 +502,15 @@ impl StepMachine {
         let sub_convergence =
             crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
 
-        // Snapshot the parent's context keys.
-        let parent_keys: std::collections::HashSet<String> =
-            self.context.legacy_map().keys().cloned().collect();
+        // Snapshot the parent's keys (so we merge back only parent-key updates
+        // from the sub-cascade, dropping sub-only keys). Computed before the
+        // sub-cascade; `merge_back_sub_cascade` keeps the parent intact (the
+        // sub-cascade ran on a clone).
+        let parent_step_ids: std::collections::HashSet<StepId> =
+            self.context.results_iter().map(|(id, _)| *id).collect();
+        let parent_protocol_keys: Vec<String> =
+            self.context.protocol_map().keys().cloned().collect();
+        let parent_named_keys: Vec<String> = self.context.named_map().keys().cloned().collect();
 
         // Run the sub-cascade.
         let mut sub_machine =
@@ -528,27 +526,15 @@ impl StepMachine {
             .map(|r| crate::executor::normalize_model_output(&r.value).into_owned())
             .unwrap_or(Value::Null);
 
-        // Reconstruct the parent context — keep only the parent's original keys.
-        let mut parent_context = crate::step_context::StepContext::new(self.context.inputs.clone());
-        for (key, value) in sub_outcome.context.legacy_map() {
-            if parent_keys.contains(key) {
-                parent_context.insert_legacy(key.clone(), value.clone());
-            }
-        }
-        // Copy back the typed results for parent keys.
-        for (step_id, result) in sub_outcome.context.results_iter() {
-            if parent_keys.contains(&format!("step_{}_result", result.ordinal)) {
-                parent_context.store_result(
-                    *step_id,
-                    result.ordinal,
-                    result.value.as_ref().clone(),
-                    result.taint,
-                );
-            }
-        }
-
-        // Replace our context with the reconstructed parent context.
-        self.context = parent_context;
+        // Merge the sub-cascade's updates back into the parent — keep only the
+        // parent's original keys (step ids, protocol keys, named keys); drop
+        // sub-only keys.
+        self.context.merge_back_sub_cascade(
+            &sub_outcome.context,
+            &parent_step_ids,
+            &parent_protocol_keys,
+            &parent_named_keys,
+        );
 
         // Deduct the sub-cascade's actual gas/rJoule consumption.
         self.budget.consume_child(
@@ -569,10 +555,10 @@ impl StepMachine {
 /// Render a step's template and return the rendered string.
 fn render_step_template(
     node: &crate::step_graph::StepNode,
-    context: &HashMap<String, Value>,
+    ctx: &StepContext,
     infra: &Infra,
 ) -> Result<String> {
-    let (rendered, _) = render_step_template_with_raw(node, context, infra)?;
+    let (rendered, _) = render_step_template_with_raw(node, ctx, infra)?;
     Ok(rendered)
 }
 
@@ -580,7 +566,7 @@ fn render_step_template(
 /// template content (for output-schema extraction).
 fn render_step_template_with_raw(
     node: &crate::step_graph::StepNode,
-    context: &HashMap<String, Value>,
+    ctx: &StepContext,
     infra: &Infra,
 ) -> Result<(String, String)> {
     let renderer = node.renderer.as_deref().unwrap_or("");
@@ -593,10 +579,8 @@ fn render_step_template_with_raw(
                     node.ordinal
                 ))
             })?;
-            let template_ref = crate::template_renderer::TemplateRenderer::render_inline(
-                template_ref_raw,
-                context,
-            );
+            let template_ref =
+                crate::template_renderer::TemplateRenderer::render_inline(template_ref_raw, ctx);
 
             let template_content = infra.template_renderer.load(&template_ref, node.ordinal)?;
 
@@ -607,7 +591,7 @@ fn render_step_template_with_raw(
                 "Rendering minijinja template"
             );
 
-            let prompt = infra.template_renderer.render(&template_content, context)?;
+            let prompt = infra.template_renderer.render(&template_content, ctx)?;
             Ok((prompt, template_content))
         }
         _ => {
@@ -622,10 +606,8 @@ fn render_step_template_with_raw(
                     ))
                 })?;
 
-            let rendered = crate::template_renderer::TemplateRenderer::render_inline(
-                template_content,
-                context,
-            );
+            let rendered =
+                crate::template_renderer::TemplateRenderer::render_inline(template_content, ctx);
             Ok((rendered, template_content.to_string()))
         }
     }

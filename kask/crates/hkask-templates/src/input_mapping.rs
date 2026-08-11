@@ -14,10 +14,9 @@
 //! rendering), so the last `bind_parameters` call site (execute_populate)
 //! switched to it and the dead pair was deleted.
 
-use crate::step_context::ContextLookup;
+use crate::step_context::{ContextLookup, StepContext};
 use crate::template_renderer::TemplateRenderer;
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// Resolve a dot-path like "step_1_result.field" from the context.
 pub(crate) fn resolve_dot_path<C: ContextLookup>(path: &str, context: &C) -> Option<Value> {
@@ -52,7 +51,7 @@ pub(crate) fn resolve_dot_path<C: ContextLookup>(path: &str, context: &C) -> Opt
 /// bindings avoids rebuilding the Environment per `{{ }}` expression.
 pub(crate) fn resolve_mapping_value(
     value: &Value,
-    context: &HashMap<String, Value>,
+    context: &StepContext,
     renderer: &TemplateRenderer,
 ) -> Value {
     match value {

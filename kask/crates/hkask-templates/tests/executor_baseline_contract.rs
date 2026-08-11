@@ -207,7 +207,8 @@ async fn concurrency_field_has_no_effect_today() {
         .expect("serial-concurrency manifest must execute");
 
     assert_eq!(
-        result_p, result_s,
+        result_p.context.materialize(),
+        result_s.context.materialize(),
         "concurrency field changed output without any dispatch wiring — \
          either the field is partially wired (a hidden enforcement point) or \
          the test manifest is non-deterministic"

@@ -136,14 +136,12 @@ impl StepMachine {
             )));
         }
 
-        // Merge user inputs into the legacy map so Jinja templates can
-        // reference them by name.
-        self.context.merge_inputs_into_legacy();
-
-        // Inject initial convergence context (status: running, iteration 0).
+        // (K1) inputs are read directly via `StepContext::lookup`/`Serialize` —
+        // no merge into a parallel map. Inject initial convergence context
+        // (status: running, iteration 0).
         let snap = self.budget.snapshot();
         self.convergence.inject_running(
-            self.context.legacy_map_mut(),
+            &mut self.context,
             0,
             snap.gas_used,
             snap.gas_cap,
@@ -156,7 +154,7 @@ impl StepMachine {
             self.iteration += 1;
             let snap = self.budget.snapshot();
             self.convergence.inject_running(
-                self.context.legacy_map_mut(),
+                &mut self.context,
                 self.iteration,
                 snap.gas_used,
                 snap.gas_cap,
@@ -198,8 +196,7 @@ impl StepMachine {
                 PassResult::Reenter(target) => {
                     // Convergence check — exactly one place, not four.
                     self.context.read_convergence_signal();
-                    self.convergence
-                        .push_cycle_from_context(self.context.legacy_map());
+                    self.convergence.push_cycle_from_context(&self.context);
 
                     let max_iterations = self.convergence.max_iterations();
                     if self.iteration >= max_iterations {
@@ -207,10 +204,7 @@ impl StepMachine {
                         break ExitKind::MaxedOut;
                     }
 
-                    if self
-                        .convergence
-                        .check_met(self.context.legacy_map(), self.iteration)
-                    {
+                    if self.convergence.check_met(&self.context, self.iteration) {
                         self.finalize(ExitKind::Converged, "quality_met");
                         break ExitKind::Converged;
                     }
@@ -430,7 +424,7 @@ impl StepMachine {
                     let result_key = format!("step_{}_result", node.ordinal);
                     if let Some(routing) = self
                         .context
-                        .legacy(&result_key)
+                        .lookup(&result_key)
                         .and_then(|v| v.get(field_name))
                         .and_then(|v| v.as_str())
                     {
@@ -449,22 +443,12 @@ impl StepMachine {
     /// Evaluate a step condition. Renders Jinja expressions first, then
     /// evaluates the truthy/comparison expression.
     fn evaluate_condition(&self, cond: &str) -> Result<bool> {
-        let resolved = if cond.contains("{{") {
-            match self.context.legacy("__renderer__").map(|_| ()) {
-                Some(()) => {
-                    // We have a renderer — but it's on the Infra, not the context.
-                    // For now, use the condition evaluator directly on the raw
-                    // expression (it handles context lookups).
-                    cond.to_string()
-                }
-                None => cond.to_string(),
-            }
-        } else {
-            cond.to_string()
-        };
+        // (K1) the old `__renderer__` probe was dead (the key was never set, so
+        // both arms produced `cond.to_string()`); dropped. `cond` is evaluated
+        // directly against the typed context via `ContextLookup`.
         Ok(crate::condition::evaluate_step_condition(
-            &resolved,
-            self.context.legacy_map(),
+            cond,
+            &self.context,
         ))
     }
 
@@ -488,7 +472,7 @@ impl StepMachine {
         };
         let snap = self.budget.snapshot();
         self.convergence.finalize_report(
-            self.context.legacy_map_mut(),
+            &mut self.context,
             status,
             reason,
             self.iteration,

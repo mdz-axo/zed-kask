@@ -9,7 +9,6 @@
 use crate::input_mapping::resolve_dot_path;
 use crate::step_context::ContextLookup;
 use serde_json::Value;
-use std::collections::HashMap;
 use tracing::warn;
 
 /// Evaluate a step condition expression against the context.
@@ -191,6 +190,7 @@ pub(crate) fn parse_choice_condition(condition: &str) -> Option<(&str, &str, &st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     // Boolean `step.condition` gating — `resolve_operand` now recognizes unquoted
     // `true`/`false`/`null` as JSON literals. Before this fix, a gate like

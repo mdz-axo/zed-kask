@@ -11,8 +11,8 @@ use crate::budget::BudgetTracker;
 use crate::convergence::ConvergenceTracker;
 use crate::ports::{Result, TemplateError};
 use crate::step_context::StepContext;
-use crate::step_graph::StepGraph;
-use crate::step_machine::{Infra, StepMachine};
+use crate::step_graph::{MAX_STEPS, StepGraph};
+use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
 use crate::template_renderer::TemplateRenderer;
 use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
@@ -164,7 +164,18 @@ impl ManifestExecutor {
         &self,
         manifest: &crate::bundle::BundleManifest,
         initial_context: HashMap<String, Value>,
-    ) -> Result<HashMap<String, Value>> {
+    ) -> Result<CascadeOutcome> {
+        // (K5) hard-enforce the capacity cap at the public entry point. The
+        // advisory `tracing::warn!` in `StepGraph::new` remains for the flowdef
+        // sub-cascade path; this is the operator-facing hard gate.
+        if manifest.steps.len() > MAX_STEPS {
+            return Err(TemplateError::Manifest(format!(
+                "Manifest '{}' has {} steps — exceeds the capacity cap of {}. Remediation: split the manifest, or raise the cap in `step_graph::MAX_STEPS`.",
+                manifest.id,
+                manifest.steps.len(),
+                MAX_STEPS,
+            )));
+        }
         let graph = StepGraph::new(&manifest.steps, manifest.convergence.max_iterations);
         let context = StepContext::new(initial_context);
         let budget = BudgetTracker::new(&manifest.gas, &manifest.rjoule);
@@ -184,30 +195,26 @@ impl ManifestExecutor {
         let machine = StepMachine::new(graph, context, budget, convergence);
         let outcome = machine.run(&infra).await?;
 
-        // Extract the legacy map (string-keyed context) for backward compat
-        // with the bridge and `extract_final_step_result`.
-        Ok(outcome.context.legacy_map().clone())
+        // (K5) return the typed outcome directly — callers extract the final
+        // result via `extract_final_step_result(&outcome)` (last_result_step),
+        // not by scanning a string-keyed map.
+        Ok(outcome)
     }
 }
 
-/// Deterministically extract the final step's result from a cascade context.
-///
-/// Scans for `step_N_result` keys, parses the ordinal, and returns the value
-/// of the highest ordinal. Falls back to `Value::Null` if no `step_N_result`
-/// keys are present. Used by the bridge to extract the cascade's final output.
+/// Deterministically extract the cascade's final result from the typed
+/// outcome. (K5) replaced the `step_N_result` ordinal-keyed HashMap scan with
+/// the machine-tracked `last_result_step` — deterministic by construction (no
+/// randomized HashMap order), and correct for `populate`/`render`-final
+/// manifests (their stored value is the result, not a fallback to the whole
+/// context). Returns `Value::Null` when no step stored a result.
 ///
 /// Applies `normalize_model_output` to strip `<thinking>` reasoning wrappers.
-pub fn extract_final_step_result(context: &HashMap<String, Value>) -> Value {
-    context
-        .iter()
-        .filter_map(|(key, value)| {
-            key.strip_prefix("step_")
-                .and_then(|rest| rest.strip_suffix("_result"))
-                .and_then(|ordinal_str| ordinal_str.parse::<u32>().ok())
-                .map(|ordinal| (ordinal, value))
-        })
-        .max_by_key(|(ordinal, _)| *ordinal)
-        .map(|(_, value)| normalize_model_output(value).into_owned())
+pub fn extract_final_step_result(outcome: &CascadeOutcome) -> Value {
+    outcome
+        .last_result_step
+        .and_then(|step_id| outcome.context.result(step_id))
+        .map(|r| normalize_model_output(&r.value).into_owned())
         .unwrap_or(Value::Null)
 }
 
@@ -264,10 +271,38 @@ pub(crate) fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::budget::BudgetSnapshot;
+    use crate::step_context::StepContext;
+    use crate::step_graph::{ExitKind, StepId};
+    use crate::step_machine::CascadeOutcome;
+    use hkask_capability::tool_taint::ToolTaint;
     use hkask_capability::{DelegationToken, ToolFuture, ToolInfo};
     use hkask_types::InferenceError;
     use std::future::Future;
     use std::pin::Pin;
+
+    /// Build a minimal `CascadeOutcome` for `extract_final_step_result` tests:
+    /// the typed context + the machine-tracked `last_result_step` (what the
+    /// machine sets in `apply_effect`). A zeroed `BudgetSnapshot` — irrelevant
+    /// to final-result extraction.
+    fn outcome_with_last(context: StepContext, last: Option<StepId>) -> CascadeOutcome {
+        CascadeOutcome {
+            context,
+            iterations: 1,
+            exit_kind: ExitKind::Converged,
+            last_result_step: last,
+            budget_snapshot: BudgetSnapshot {
+                gas_used: 0,
+                gas_cap: 0,
+                gas_remaining: 0,
+                gas_cost_per_iteration: 0,
+                rjoule_used: 0.0,
+                rjoule_cap: 0.0,
+                rjoule_remaining: 0.0,
+                rjoule_enabled: false,
+            },
+        }
+    }
 
     /// Stub `InferencePort` — returns an error if called.
     struct StubInference;
@@ -420,43 +455,63 @@ steps:
     }
 
     #[test]
+    fn extract_final_step_result_returns_last_result_step_value() {
+        let mut ctx = StepContext::new(HashMap::new());
+        ctx.store_result(0, 1, serde_json::json!("first"), ToolTaint::Pure);
+        ctx.store_result(2, 3, serde_json::json!("third"), ToolTaint::Pure);
+        ctx.store_result(1, 2, serde_json::json!("second"), ToolTaint::Pure);
+        // last_result_step = step_id 2 (ordinal 3), the last step to store in a
+        // linear manifest. (K5) the ordinal-keyed HashMap scan is retired; the
+        // machine-tracked last_result_step is deterministic by construction.
+        let outcome = outcome_with_last(ctx, Some(2));
+        assert_eq!(
+            extract_final_step_result(&outcome),
+            serde_json::json!("third")
+        );
+    }
+
+    #[test]
     fn extract_final_step_result_strips_thinking_tags_from_result() {
-        let mut map: HashMap<String, Value> = HashMap::new();
-        map.insert(
-            "step_1_result".to_string(),
-            serde_json::json!("<thinking>reasoning</thinking>{\"answer\": 5}"),
+        let mut ctx = StepContext::new(HashMap::new());
+        ctx.store_result(
+            0,
+            1,
+            Value::String(r#"<thinking>reasoning</thinking>{"answer": 5}"#.into()),
+            ToolTaint::Pure,
         );
-        let out = extract_final_step_result(&map);
-        assert_eq!(out, serde_json::json!("{\"answer\": 5}"));
+        let outcome = outcome_with_last(ctx, Some(0));
+        assert_eq!(
+            extract_final_step_result(&outcome),
+            serde_json::json!({"answer": 5})
+        );
     }
 
     #[test]
-    fn extract_final_step_result_picks_highest_ordinal() {
-        let mut map: HashMap<String, Value> = HashMap::new();
-        map.insert("step_1_result".to_string(), serde_json::json!("first"));
-        map.insert("step_3_result".to_string(), serde_json::json!("third"));
-        map.insert("step_2_result".to_string(), serde_json::json!("second"));
-        let out = extract_final_step_result(&map);
-        assert_eq!(out, serde_json::json!("third"));
-    }
-
-    #[test]
-    fn extract_final_step_result_ignores_non_result_keys() {
-        let mut map: HashMap<String, Value> = HashMap::new();
-        map.insert(
-            "step_1_populated".to_string(),
+    fn extract_final_step_result_ignores_protocol_and_named_keys() {
+        let mut ctx = StepContext::new(HashMap::new());
+        ctx.store_result(0, 1, serde_json::json!("result"), ToolTaint::Pure);
+        ctx.insert_protocol("task".into(), serde_json::json!("user request"));
+        ctx.store_named(
+            1,
+            2,
+            "populated",
             serde_json::json!("populated"),
+            ToolTaint::Pure,
         );
-        map.insert("step_1_result".to_string(), serde_json::json!("result"));
-        let out = extract_final_step_result(&map);
-        assert_eq!(out, serde_json::json!("result"));
+        // last_result_step points at step_id 0 (ordinal 1), NOT step 2's named
+        // result. extract returns last_result_step's value only.
+        let outcome = outcome_with_last(ctx, Some(0));
+        assert_eq!(
+            extract_final_step_result(&outcome),
+            serde_json::json!("result")
+        );
     }
 
     #[test]
     fn extract_final_step_result_falls_back_to_null_when_no_step_results() {
-        let map: HashMap<String, Value> = HashMap::new();
-        let out = extract_final_step_result(&map);
-        assert_eq!(out, Value::Null);
+        let ctx = StepContext::new(HashMap::new());
+        let outcome = outcome_with_last(ctx, None);
+        assert_eq!(extract_final_step_result(&outcome), Value::Null);
     }
 
     #[test]
