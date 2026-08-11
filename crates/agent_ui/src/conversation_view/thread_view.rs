@@ -8610,6 +8610,25 @@ impl ThreadView {
                     )
                 }
             })
+            // Render the live thinking trace from the skill cascade (if any).
+            // This is the accumulating reasoning the user sees while the
+            // cascade runs — not just a one-line title.
+            .when_some(tool_call.thoughts.clone(), |this, thoughts| {
+                this.child(
+                    div()
+                        .id(("tool-call-thinking", entry_ix))
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .child(
+                            self.render_markdown(
+                                thoughts,
+                                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                cx,
+                            )
+                        ),
+                )
+            })
             .children(tool_output_display)
             .when_some(
                 self.render_skill_bundle_actions(tool_call, cx),

@@ -411,6 +411,11 @@ pub struct InferenceStreamChunk {
     pub finish_reason: Option<String>,
     pub usage: Option<InferenceUsage>,
     pub tool_calls: Vec<StructuredToolCall>,
+    /// USD cost of this inference call. Populated on the final chunk (or the
+    /// single chunk from the default `generate_stream` impl). `None` for
+    /// intermediate streaming chunks (cost is only known when the provider
+    /// completes the response).
+    pub cost_usd: Option<f64>,
 }
 
 impl From<InferenceResult> for InferenceStreamChunk {
@@ -422,6 +427,7 @@ impl From<InferenceResult> for InferenceStreamChunk {
             finish_reason: Some(r.finish_reason),
             usage: Some(r.usage),
             tool_calls: r.tool_calls,
+            cost_usd: r.cost_usd,
         }
     }
 }

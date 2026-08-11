@@ -534,6 +534,7 @@ pub fn parse_sse_stream(
             } else {
                 vec![]
             },
+            cost_usd: None,
         }));
     }
 
@@ -545,6 +546,7 @@ pub fn parse_sse_stream(
             finish_reason: Some("stop".to_string()),
             usage: None,
             tool_calls: vec![],
+            cost_usd: None,
         }));
     }
 

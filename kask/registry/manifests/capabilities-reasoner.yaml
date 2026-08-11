@@ -38,6 +38,7 @@ manifest:
   id: capabilities-reasoner
   category: skill
   name: Capabilities Reasoner
+  concurrency: 32
   description: >
     Convergent capability-reasoning process. Builds a typed capability
     registry with floor, ceiling, and maturity-gate limits (Nussbaum +

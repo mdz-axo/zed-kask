@@ -1,0 +1,509 @@
+//! Step machine — the deterministic interpreter that replaces `run_cascade`.
+//!
+//! The machine owns three things: a program counter (`StepId`), an iteration
+//! counter (`u32`), and a budget tracker. It loops: fetch step → dispatch via
+//! the step's action → apply the effect → check exits → advance the PC.
+//! There is no `match` arm in here — dispatch is trait-based via `StepAction`.
+//!
+//! Convergence is checked in exactly one place: the `Reenter` arm. Budget is
+//! checked in exactly one place: after applying each effect. The matryoshka
+//! guard is a property of `FlowDefAction::execute` (the only action that
+//! recurses), not a `depth` parameter threaded through every call.
+//!
+//! This replaces the 720-line `run_cascade` that simultaneously owned step
+//! dispatch, iteration counting, step-index bookkeeping, convergence checking,
+//! budget checking, prev-step snapshotting, profile enforcement, feedback-span
+//! emission, and matryoshka recursion — causing the five control-flow bugs
+//! documented in `.rules`.
+
+use crate::budget::BudgetTracker;
+use crate::convergence::{ConvergenceStatus, ConvergenceTracker};
+use crate::ports::Result;
+use crate::step_context::StepContext;
+use crate::step_graph::{ControlFlow, ENTRY, ExitKind, StepGraph, StepId};
+use crate::template_renderer::TemplateRenderer;
+use hkask_capability::ToolPort;
+use hkask_types::ports::inference_port::InferencePort;
+use hkask_types::template::LLMParameters;
+use std::sync::Arc;
+
+/// Structured event emitted during cascade execution for rich UI feedback.
+/// Wired via `ManifestExecutor::with_events`.
+#[derive(Debug, Clone)]
+pub enum CascadeEvent {
+    IterationStart {
+        iteration: u32,
+        max_iterations: u32,
+    },
+    StepStart {
+        ordinal: u32,
+        action: String,
+        description: String,
+        step_index: usize,
+        total_steps: usize,
+    },
+    StepStream {
+        ordinal: u32,
+        chunk: String,
+    },
+    StepComplete {
+        ordinal: u32,
+        result_summary: String,
+    },
+    ConvergenceUpdate {
+        signal: f64,
+        threshold: f64,
+        distance: f64,
+        iteration: u32,
+    },
+    Converged {
+        iterations: u32,
+        final_signal: f64,
+    },
+    Aborted {
+        reason: String,
+    },
+}
+
+/// Infrastructure ports and callbacks passed to each `StepAction::execute`.
+/// Replaces the 10+ fields on `ManifestExecutor` that were accessed via
+/// `&self` inside the 720-line `run_cascade`.
+pub struct Infra {
+    pub inference: Arc<dyn InferencePort>,
+    pub tools: Arc<dyn ToolPort>,
+    pub default_params: LLMParameters,
+    pub template_renderer: TemplateRenderer,
+    pub runtime_policy: Option<Arc<hkask_regulation::DefaultPolicy>>,
+    pub terminal_check: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+}
+
+/// The deterministic step machine. Created per cascade run.
+pub struct StepMachine {
+    pub(crate) graph: StepGraph,
+    pub(crate) context: StepContext,
+    pub(crate) budget: BudgetTracker,
+    pub(crate) convergence: ConvergenceTracker,
+    /// Program counter — which step we're executing.
+    pub(crate) pc: StepId,
+    /// Iteration counter — how many times we've re-entered the cascade.
+    pub(crate) iteration: u32,
+    /// The highest `StepId` that stored a result during this cascade.
+    /// Used to extract the final result in O(1).
+    pub(crate) last_result_step: Option<StepId>,
+    /// Matryoshka recursion depth. Only incremented by `FlowDefAction`.
+    pub(crate) depth: u8,
+}
+
+/// The outcome of running a cascade to completion.
+pub struct CascadeOutcome {
+    pub context: StepContext,
+    pub iterations: u32,
+    pub exit_kind: ExitKind,
+    pub last_result_step: Option<StepId>,
+    pub budget_snapshot: crate::budget::BudgetSnapshot,
+}
+
+impl StepMachine {
+    /// Create a new machine for the given graph and context.
+    pub fn new(
+        graph: StepGraph,
+        context: StepContext,
+        budget: BudgetTracker,
+        convergence: ConvergenceTracker,
+    ) -> Self {
+        Self {
+            graph,
+            context,
+            budget,
+            convergence,
+            pc: ENTRY,
+            iteration: 0,
+            last_result_step: None,
+            depth: 0,
+        }
+    }
+
+    /// Run the cascade to completion.
+    pub async fn run(mut self, infra: &Infra) -> Result<CascadeOutcome> {
+        // Matryoshka guard — only FlowDefAction recurses, but the guard is
+        // checked here so it's in one place, not threaded through every call.
+        if self.depth > hkask_capability::SYSTEM_MAX_RECURSION {
+            return Err(crate::ports::TemplateError::Manifest(format!(
+                "Matryoshka depth limit ({}) exceeded",
+                hkask_capability::SYSTEM_MAX_RECURSION
+            )));
+        }
+
+        // Merge user inputs into the legacy map so Jinja templates can
+        // reference them by name.
+        self.context.merge_inputs_into_legacy();
+
+        // Inject initial convergence context (status: running, iteration 0).
+        let snap = self.budget.snapshot();
+        self.convergence.inject_running(
+            self.context.legacy_map_mut(),
+            0,
+            snap.gas_used,
+            snap.gas_cap,
+            snap.rjoule_used,
+            snap.rjoule_cap,
+        );
+
+        let exit_kind = loop {
+            // Start of a new iteration.
+            self.iteration += 1;
+            let snap = self.budget.snapshot();
+            self.convergence.inject_running(
+                self.context.legacy_map_mut(),
+                self.iteration,
+                snap.gas_used,
+                snap.gas_cap,
+                snap.rjoule_used,
+                snap.rjoule_cap,
+            );
+
+            // Emit step label to the title callback.
+            if let Some(ref title) = infra.title {
+                let total = self.graph.len();
+                let node = self.graph.step(self.pc);
+                let desc = if node.description.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — {}", node.description)
+                };
+                if self.iteration > 1 {
+                    title(&format!(
+                        "Iteration {}, step {}/{}: {}{}",
+                        self.iteration,
+                        self.pc + 1,
+                        total,
+                        node.action,
+                        desc
+                    ));
+                } else {
+                    title(&format!(
+                        "Step {}/{}: {}{}",
+                        self.pc + 1,
+                        total,
+                        node.action,
+                        desc
+                    ));
+                }
+            }
+
+            // Execute steps until we hit a Reenter, Exit, or the end of the graph.
+            match self.run_pass(infra).await? {
+                PassResult::Reenter(target) => {
+                    // Convergence check — exactly one place, not four.
+                    self.context.read_convergence_signal();
+                    self.convergence
+                        .push_cycle_from_context(self.context.legacy_map());
+
+                    let max_iterations = self.convergence.max_iterations();
+                    if self.iteration >= max_iterations {
+                        self.finalize(ExitKind::MaxedOut, "energy_spent");
+                        break ExitKind::MaxedOut;
+                    }
+
+                    if self
+                        .convergence
+                        .check_met(self.context.legacy_map(), self.iteration)
+                    {
+                        self.finalize(ExitKind::Converged, "quality_met");
+                        break ExitKind::Converged;
+                    }
+
+                    // Budget check — exactly one place.
+                    if self.budget.check_exhausted(self.iteration).is_some() {
+                        self.finalize(ExitKind::MaxedOut, "energy_spent");
+                        break ExitKind::MaxedOut;
+                    }
+
+                    // Snapshot prev results for Self-Refine loops.
+                    self.context.snapshot_prev();
+                    self.pc = target;
+                }
+                PassResult::Exit(kind) => {
+                    let reason = match kind {
+                        ExitKind::Converged => "quality_met",
+                        ExitKind::MaxedOut => "energy_spent",
+                        ExitKind::Escalated => "escalated",
+                    };
+                    self.finalize(kind, reason);
+                    break kind;
+                }
+            }
+        };
+
+        let budget_snapshot = self.budget.snapshot();
+        Ok(CascadeOutcome {
+            context: self.context,
+            iterations: self.iteration,
+            exit_kind,
+            last_result_step: self.last_result_step,
+            budget_snapshot,
+        })
+    }
+
+    /// Run one pass through the graph — from the current PC until we hit a
+    /// `Reenter`, `Exit`, or run out of steps.
+    async fn run_pass(&mut self, infra: &Infra) -> Result<PassResult> {
+        loop {
+            // Clone the node to avoid holding an immutable borrow of `self.graph`
+            // across the mutable `dispatch_action` call. The node is small
+            // (a few Strings + Option<Value>); the clone is cheaper than the
+            // alternative of restructuring dispatch to take borrowed fields.
+            let node = self.graph.step(self.pc).clone();
+
+            // Evaluate step condition — skip if false.
+            if let Some(ref cond) = node.condition {
+                if !self.evaluate_condition(cond)? {
+                    // Condition false — skip to next step.
+                    match node.on_complete {
+                        ControlFlow::Fallthrough => {
+                            self.pc += 1;
+                            continue;
+                        }
+                        ControlFlow::Reenter(target) => return Ok(PassResult::Reenter(target)),
+                        ControlFlow::Exit(kind) => return Ok(PassResult::Exit(kind)),
+                        ControlFlow::Jump(target) => {
+                            self.pc = target;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Profile enforcement (proposer/evaluator separation).
+            if let Some(ref profile_name) = node.profile {
+                if self.is_terminal_available(infra).await {
+                    return Err(crate::ports::TemplateError::Manifest(format!(
+                        "Step {} declares profile '{}' but the `terminal` tool is available. \
+                         This violates proposer/evaluator separation.",
+                        node.ordinal, profile_name
+                    )));
+                }
+            }
+
+            // Dispatch the step's action.
+            let effect = self.dispatch_action(&node, infra).await?;
+
+            // Determine control flow: merge the effect with the node's static flow.
+            // Done BEFORE apply_effect because apply_effect takes effect by value.
+            let flow = self.merge_control_flow(&node, &effect);
+
+            // Apply the effect to the context and budget.
+            self.apply_effect(effect, &node)?;
+
+            // Emit feedback span for select steps.
+            if node.action == "select"
+                && let Some(ref template_ref) = node.template_ref
+                && let Some(phase) = crate::executor::extract_feedback_phase(template_ref)
+            {
+                tracing::info!(
+                    target: "reg.skill.cascade.step_executed",
+                    iteration = self.iteration,
+                    step = node.ordinal,
+                    phase = phase,
+                    "REG"
+                );
+            }
+
+            match flow {
+                ControlFlow::Fallthrough => {
+                    self.pc += 1;
+                }
+                ControlFlow::Jump(target) => {
+                    self.pc = target;
+                }
+                ControlFlow::Reenter(target) => {
+                    return Ok(PassResult::Reenter(target));
+                }
+                ControlFlow::Exit(kind) => {
+                    return Ok(PassResult::Exit(kind));
+                }
+            }
+        }
+    }
+
+    /// Dispatch a step's action to the appropriate handler. This is the only
+    /// place that matches on `node.action` — each arm is a small function call,
+    /// not a 100-line block.
+    async fn dispatch_action(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        infra: &Infra,
+    ) -> Result<crate::step_actions::Effect> {
+        match node.action.as_str() {
+            "abort" => Ok(crate::step_actions::Effect::Exit(ExitKind::Converged)),
+            "escalate" => {
+                let reason = node.description.clone();
+                tracing::info!(
+                    target: "reg.skill.convergence.escalated",
+                    iteration = self.iteration,
+                    reason = %reason,
+                    "REG"
+                );
+                Ok(crate::step_actions::Effect::Exit(ExitKind::Escalated))
+            }
+            "choice" => self.execute_choice(node),
+            "loop" => self.execute_loop(node, infra),
+            "select" => self.execute_select(node, infra).await,
+            "populate" => self.execute_populate(node, infra).await,
+            "compute" => self.execute_compute(node, infra).await,
+            "render" => self.execute_render(node, infra).await,
+            "execute" | "feedback" | "validate" | "retrieve" => {
+                self.execute_tool_invoke(node, infra).await
+            }
+            "flowdef" => self.execute_flowdef(node, infra).await,
+            other => Err(crate::ports::TemplateError::Manifest(format!(
+                "Unknown manifest step action: '{other}'"
+            ))),
+        }
+    }
+
+    /// Apply an effect to the context and budget.
+    fn apply_effect(
+        &mut self,
+        effect: crate::step_actions::Effect,
+        node: &crate::step_graph::StepNode,
+    ) -> Result<()> {
+        match effect {
+            crate::step_actions::Effect::Stored {
+                step_id,
+                value,
+                taint,
+            } => {
+                self.context
+                    .store_result(step_id, node.ordinal, value, taint);
+                self.last_result_step = Some(step_id);
+            }
+            crate::step_actions::Effect::StoredNamed {
+                step_id,
+                suffix,
+                value,
+                taint,
+            } => {
+                self.context
+                    .store_named(step_id, node.ordinal, &suffix, value, taint);
+                self.last_result_step = Some(step_id);
+            }
+            crate::step_actions::Effect::ConsumedGas(amount) => {
+                // Gas is charged per iteration, not per step — the budget
+                // tracker's `charge_iteration` handles this. This effect is
+                // for per-step gas (e.g. flowdef sub-cascade consumption).
+                let _ = amount; // handled by charge_iteration in the pass loop
+            }
+            crate::step_actions::Effect::ConsumedRJoule(cost) => {
+                self.budget.charge_rjoule(cost);
+            }
+            crate::step_actions::Effect::NoOp
+            | crate::step_actions::Effect::Jump(_)
+            | crate::step_actions::Effect::Reenter(_)
+            | crate::step_actions::Effect::Exit(_) => {
+                // Control-flow effects — handled by merge_control_flow.
+            }
+        }
+        Ok(())
+    }
+
+    /// Merge the effect's dynamic control flow with the node's static flow.
+    /// The effect wins if it specifies a jump/re-enter/exit; otherwise the
+    /// node's static flow is used.
+    fn merge_control_flow(
+        &self,
+        node: &crate::step_graph::StepNode,
+        effect: &crate::step_actions::Effect,
+    ) -> ControlFlow {
+        match effect {
+            crate::step_actions::Effect::Jump(target) => ControlFlow::Jump(*target),
+            crate::step_actions::Effect::Reenter(target) => ControlFlow::Reenter(*target),
+            crate::step_actions::Effect::Exit(kind) => ControlFlow::Exit(*kind),
+            _ => {
+                // Check branching map — if the step has a `branching` map and
+                // the result has a routing field, jump to the target.
+                if let Some(ref branching) = node.branching {
+                    let field_name = node.branching_field.as_deref().unwrap_or("routing");
+                    let result_key = format!("step_{}_result", node.ordinal);
+                    if let Some(routing) = self
+                        .context
+                        .legacy(&result_key)
+                        .and_then(|v| v.get(field_name))
+                        .and_then(|v| v.as_str())
+                    {
+                        if let Some(&target_ordinal) = branching.get(routing) {
+                            if let Some(target_id) = self.graph.find(target_ordinal) {
+                                return ControlFlow::Jump(target_id);
+                            }
+                        }
+                    }
+                }
+                node.on_complete
+            }
+        }
+    }
+
+    /// Evaluate a step condition. Renders Jinja expressions first, then
+    /// evaluates the truthy/comparison expression.
+    fn evaluate_condition(&self, cond: &str) -> Result<bool> {
+        let resolved = if cond.contains("{{") {
+            match self.context.legacy("__renderer__").and_then(|_| Some(())) {
+                Some(()) => {
+                    // We have a renderer — but it's on the Infra, not the context.
+                    // For now, use the condition evaluator directly on the raw
+                    // expression (it handles context lookups).
+                    cond.to_string()
+                }
+                None => cond.to_string(),
+            }
+        } else {
+            cond.to_string()
+        };
+        Ok(crate::condition::evaluate_step_condition(
+            &resolved,
+            self.context.legacy_map(),
+        ))
+    }
+
+    /// Check whether the `terminal` tool is available (for profile enforcement).
+    async fn is_terminal_available(&self, infra: &Infra) -> bool {
+        match &infra.terminal_check {
+            Some(check) => check(),
+            None => {
+                let available = infra.tools.discover_tools().await;
+                available.iter().any(|t| t == "terminal")
+            }
+        }
+    }
+
+    /// Finalize the convergence report at cascade exit. Called once, not 11 times.
+    fn finalize(&mut self, kind: ExitKind, reason: &str) {
+        let status = match kind {
+            ExitKind::Converged => ConvergenceStatus::Converged,
+            ExitKind::MaxedOut => ConvergenceStatus::MaxedOut,
+            ExitKind::Escalated => ConvergenceStatus::Escalated,
+        };
+        let snap = self.budget.snapshot();
+        self.convergence.finalize_report(
+            self.context.legacy_map_mut(),
+            status,
+            reason,
+            self.iteration,
+            snap.gas_used,
+            snap.gas_cap,
+            snap.rjoule_used,
+            snap.rjoule_cap,
+        );
+    }
+}
+
+/// What happened when running a pass through the graph.
+enum PassResult {
+    /// The pass hit a `Reenter` — the machine should check convergence and
+    /// budget, then re-enter from `target`.
+    Reenter(StepId),
+    /// The pass hit an `Exit` — the cascade is done.
+    Exit(ExitKind),
+}

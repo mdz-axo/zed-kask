@@ -24,10 +24,15 @@ pub mod prompt_strategy;
 pub mod registry;
 pub mod registry_sqlite;
 pub mod skill_loader;
+pub mod step_actions;
+pub mod step_context;
+pub mod step_graph;
+pub mod step_machine;
 pub mod template_renderer;
 
 pub use bundle::BundleManifest;
 pub use bundle::BundleRegistryIndex;
+pub use executor::CascadeEvent;
 pub use executor::ManifestExecutor;
 pub use executor::extract_final_step_result;
 

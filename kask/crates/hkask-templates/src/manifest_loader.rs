@@ -6,6 +6,7 @@
 //! This module provides a deserialization wrapper that flattens this structure
 //! into the canonical `BundleManifest` type.
 
+use crate::bundle::manifest::default_concurrency;
 use crate::bundle::{
     BundleAuditConfig, BundleComplementarity, BundleConflict, BundleGasConfig, BundleLedgerConfig,
     BundleManifest, BundleManifestStep, BundleSkill, ConvergenceConfig, ErrorHandlingConfig,
@@ -94,6 +95,8 @@ struct ManifestHeader {
     /// Defaults to `None` (no validation) for back-compat.
     #[serde(default)]
     enforce_inputs: Option<bool>,
+    #[serde(default = "default_concurrency")]
+    concurrency: u32,
 }
 
 /// Deserialize visibility in a case-insensitive manner.
@@ -162,6 +165,7 @@ pub fn load_manifest_from_yaml(yaml: &str) -> Result<BundleManifest, ManifestLoa
         inputs: file.inputs,
         enforce_inputs: file.manifest.enforce_inputs,
         principles: file.principles,
+        concurrency: file.manifest.concurrency,
     };
 
     // Sort steps by ordinal once at load time. The executor's `run_cascade`

@@ -231,6 +231,16 @@ if [ "$zed_before" != "$zed_after" ]; then
     fail "installer confinement test modified a Zed-owned sentinel"
 fi
 
+# assert_not_zed_contaminated_env must block a build/install when the
+# environment is coupled to the upstream Flatpak Zed (LD_LIBRARY_PATH pointing
+# at a flatpak dev.zed lib dir). Pins the guard added to install.sh /
+# install-binary.sh so the build can never silently couple to upstream Zed.
+# (install-common.sh is sourced above, so the function is in scope.)
+if LD_LIBRARY_PATH="/var/lib/flatpak/app/dev.zed.Zed/x86_64/stable/0000000000000000000000000000000000000000000000000000000000000000/files/lib" \
+   assert_not_zed_contaminated_env "test" >/dev/null 2>&1; then
+    fail "assert_not_zed_contaminated_env allowed a Flatpak-Zed-contaminated LD_LIBRARY_PATH"
+fi
+
 if [ "$errors" -gt 0 ]; then
     echo "REGRESSION: $errors Zed isolation violation(s) detected." >&2
     exit 1

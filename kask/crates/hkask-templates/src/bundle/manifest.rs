@@ -18,6 +18,16 @@ use super::config::{
 use hkask_types::SkillPolarity;
 use hkask_types::Visibility;
 
+/// Default concurrency for step execution within a PDCA iteration.
+const DEFAULT_CONCURRENCY: u32 = 32;
+
+pub(crate) fn default_concurrency() -> u32 {
+    DEFAULT_CONCURRENCY
+}
+
+/// Maximum allowed concurrency (safety cap).
+pub const MAX_CONCURRENCY: u32 = 128;
+
 /// A skill reference within a bundle
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
@@ -145,6 +155,13 @@ pub struct BundleManifest {
     pub enforce_inputs: Option<bool>,
     #[serde(default)]
     pub principles: Option<serde_json::Value>,
+    /// Maximum number of steps to execute concurrently within a single PDCA
+    /// iteration. Steps with no data dependency on each other (determined by
+    /// `input_mapping` references to `step_N_result` keys) are run in parallel
+    /// via `FuturesUnordered`. Default 32, max 128. Set to 1 for strictly
+    /// serial execution (back-compat).
+    #[serde(default = "default_concurrency")]
+    pub concurrency: u32,
 }
 
 impl BundleManifest {

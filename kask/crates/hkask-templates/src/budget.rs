@@ -110,6 +110,38 @@ impl BudgetTracker {
         self.gas_used = self.gas_used.saturating_add(self.gas_cost_per_iter);
     }
 
+    /// Construct a per-task budget tracker from remaining capacity.
+    /// Used by the concurrent wave executor — each concurrent step gets
+    /// its own tracker so they don't share mutable state. The caller
+    /// merges consumption back into the parent tracker after the wave.
+    pub fn from_remaining(gas_remaining: u32, rjoule_remaining: f64) -> Self {
+        Self {
+            gas_used: 0,
+            gas_cap: gas_remaining as u64,
+            gas_cost_per_iter: 1,
+            gas_alert_threshold: 0.8,
+            gas_hard_limit: true,
+            gas_alerted: false,
+            rjoule_used: 0.0,
+            rjoule_cap: rjoule_remaining,
+            rjoule_alert_threshold: 0.8,
+            rjoule_hard_limit: true,
+            rjoule_enabled: rjoule_remaining > 0.0,
+            rjoule_alerted: false,
+        }
+    }
+
+    /// Return the rJoule cost charged by the most recent `charge_rjoule` call.
+    /// Used by the concurrent wave executor to merge per-task costs back
+    /// into the parent tracker.
+    pub fn last_rjoule_cost(&self) -> Option<f64> {
+        if self.rjoule_used > 0.0 {
+            Some(self.rjoule_used)
+        } else {
+            None
+        }
+    }
+
     /// Charge rJoule for an inference call. The executor calls this with the
     /// inference result's observed USD cost (`InferenceResult.cost_usd`, which
     /// prefers the provider's `market_cost` over `cost`) once per `select` step.
