@@ -16,7 +16,7 @@ use settings_content::{
     KaskMediaSettingsContent, KaskMemorySettingsContent, KaskModelsSettingsContent,
     KaskPredictionMarketsSettingsContent, KaskResearchSettingsContent,
     KaskScenariosSettingsContent, KaskSettingsContent, KaskSwarmSettingsContent,
-    KaskTrainingSettingsContent,
+    KaskToolRouterSettingsContent, KaskTrainingSettingsContent,
 };
 
 use collections::HashMap;
@@ -86,6 +86,11 @@ pub struct KaskSettings {
 
     /// Kask-wide model configuration: default, embedding, and classifier models.
     pub models: KaskModelsSettings,
+
+    /// Tool-router thresholds for narrowing the MCP tool set on complex or
+    /// tool-directed requests. Defaults match the historical
+    /// `LazyToolRouter::new()` hardcoded values (`0.30` / `40`).
+    pub tool_router: KaskToolRouterSettings,
 
     /// Inference provider toggles (non-secret — API keys are in the keychain).
     pub inference_providers: KaskInferenceProvidersSettings,
@@ -669,6 +674,45 @@ impl KaskModelsSettings {
             Self::DEFAULT_CLASSIFIER_MODEL
         } else {
             &self.classifier_model
+        }
+    }
+}
+
+/// Tool-router thresholds for narrowing the MCP tool set on complex or
+/// tool-directed requests.
+///
+/// `Default` is the single source of truth — `From<Content>` reads from it
+/// via `unwrap_or(default.field)`. These defaults match the historical
+/// `LazyToolRouter::new()` hardcoded values (`0.30` / `40`) so behavior is
+/// unchanged unless the operator overrides them in settings.json.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct KaskToolRouterSettings {
+    /// Score threshold for tool inclusion (0.0–1.0). Messages scoring above
+    /// this threshold get the narrowed tool set.
+    pub threshold: f64,
+
+    /// Minimum word count for a message to be considered "complex" enough to
+    /// trigger routing.
+    pub complex_word_threshold: usize,
+}
+
+impl Default for KaskToolRouterSettings {
+    fn default() -> Self {
+        Self {
+            threshold: 0.30,
+            complex_word_threshold: 40,
+        }
+    }
+}
+
+impl From<KaskToolRouterSettingsContent> for KaskToolRouterSettings {
+    fn from(c: KaskToolRouterSettingsContent) -> Self {
+        let default = Self::default();
+        Self {
+            threshold: c.threshold.unwrap_or(default.threshold),
+            complex_word_threshold: c
+                .complex_word_threshold
+                .unwrap_or(default.complex_word_threshold),
         }
     }
 }
@@ -1331,6 +1375,7 @@ impl From<KaskSettingsContent> for KaskSettings {
             swarm: c.swarm.map(Into::into).unwrap_or_default(),
             training: c.training.map(Into::into).unwrap_or_default(),
             models: c.models.map(Into::into).unwrap_or_default(),
+            tool_router: c.tool_router.map(Into::into).unwrap_or_default(),
             inference_providers: c
                 .inference_providers
                 .map(Into::into)

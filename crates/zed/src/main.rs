@@ -1467,7 +1467,10 @@ fn main() {
                                 // reducing the tool list the model must reason about
                                 // when hKask's MCP servers expose many tools.
                                 agent::set_tool_router(Some(std::sync::Arc::new(
-                                    agent::tool_router::LazyToolRouter::new(),
+                                    agent::tool_router::LazyToolRouter::new_with_thresholds(
+                                        kask_settings.tool_router.threshold,
+                                        kask_settings.tool_router.complex_word_threshold,
+                                    ),
                                 )));
                                 log::info!("hKask lazy tool router wired");
                             }

@@ -150,6 +150,14 @@ pub struct LazyToolRouter {
 
 impl LazyToolRouter {
     pub fn new() -> Self {
+        Self::new_with_thresholds(0.30, 40)
+    }
+
+    /// Construct with explicit thresholds. The composition root (main.rs)
+    /// wires `KaskToolRouterSettings` into the router via this constructor so
+    /// the activation threshold and complex-word threshold are
+    /// operator-tunable instead of hardcoded.
+    pub fn new_with_thresholds(threshold: f64, complex_word_threshold: usize) -> Self {
         Self {
             always_on: [
                 "spawn_agent",
@@ -159,8 +167,8 @@ impl LazyToolRouter {
             ]
             .into_iter()
             .collect(),
-            threshold: 0.30,
-            complex_word_threshold: 40,
+            threshold,
+            complex_word_threshold,
         }
     }
 }

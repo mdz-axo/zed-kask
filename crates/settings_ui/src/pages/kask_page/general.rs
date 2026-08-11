@@ -9,7 +9,14 @@ pub(crate) fn render_general_page(
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let raw = raw_kask_settings(cx);
-    let data_dir: String = raw.and_then(|c| c.data_dir).unwrap_or_default();
+    let (data_dir, tool_router): (String, kask_bridge::KaskToolRouterSettings) = raw
+        .map(|c| {
+            (
+                c.data_dir.unwrap_or_default(),
+                c.tool_router.map(Into::into).unwrap_or_default(),
+            )
+        })
+        .unwrap_or_default();
 
     let resolved_default = kask_bridge::resolve_data_dir()
         .to_string_lossy()
@@ -22,6 +29,22 @@ pub(crate) fn render_general_page(
         data_dir,
         "kask",
         "data_dir",
+    );
+    let threshold_input = kask_string_input(
+        "kask-tool-router-threshold",
+        "Activation Threshold",
+        "Default: 0.30",
+        tool_router.threshold.to_string(),
+        "tool_router",
+        "threshold",
+    );
+    let complex_word_threshold_input = kask_string_input(
+        "kask-tool-router-complex-word-threshold",
+        "Complex-Word Threshold",
+        "Default: 40",
+        tool_router.complex_word_threshold.to_string(),
+        "tool_router",
+        "complex_word_threshold",
     );
 
     v_flex()
@@ -64,6 +87,25 @@ pub(crate) fn render_general_page(
                     .color(Color::Muted),
                 )
                 .child(data_dir_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(SettingsSectionHeader::new("Tool Router"))
+                .child(
+                    Label::new(
+                        "The lazy tool router narrows the MCP tool set on complex or \
+                         tool-directed requests, reducing the tool list the model must \
+                         reason about. Activation threshold is the score for inclusion \
+                         (0.0–1.0); complex-word threshold is the minimum word count \
+                         that triggers routing. Defaults: 0.30 / 40.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(threshold_input)
+                .child(complex_word_threshold_input),
         )
         .into_any_element()
 }

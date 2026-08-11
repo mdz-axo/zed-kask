@@ -2244,7 +2244,7 @@ impl NativeAgent {
                         Err(e) => {
                             crate::tools::render_skill_envelope(
                                 &skill,
-                                &format!("Skill '{}' manifest execution failed: {}", skill_name, e),
+                                &crate::tools::manifest_execution_failed_body(skill_name, &e),
                             )
                         }
                     }

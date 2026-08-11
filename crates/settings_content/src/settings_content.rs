@@ -1553,6 +1553,11 @@ pub struct KaskSettingsContent {
     #[serde(default)]
     pub models: Option<KaskModelsSettingsContent>,
 
+    /// Tool-router thresholds for narrowing the MCP tool set on complex or
+    /// tool-directed requests.
+    #[serde(default)]
+    pub tool_router: Option<KaskToolRouterSettingsContent>,
+
     /// Inference provider toggles and API key configuration.
     ///
     /// API keys are stored in the keychain under the provider's `api_url`
@@ -1766,6 +1771,13 @@ pub enum SwarmModeContent {
 pub struct KaskTrainingSettingsContent {
     pub host: Option<String>,
     pub cache_dir: Option<String>,
+}
+
+/// Tool-router thresholds (the `"kask.tool_router"` section in settings.json).
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct KaskToolRouterSettingsContent {
+    pub threshold: Option<f64>,
+    pub complex_word_threshold: Option<usize>,
 }
 
 /// Kask-wide model configuration (the `"kask.models"` section in settings.json).

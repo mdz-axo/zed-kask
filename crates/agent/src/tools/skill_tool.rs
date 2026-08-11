@@ -83,6 +83,17 @@ pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
     out
 }
 
+/// Body text for a skill manifest-execution failure. Shared by the
+/// model-invocation path (`SkillTool`) and the slash-command path
+/// (`NativeAgent::send_skill_invocation`) so the failure message stays
+/// identical across both activation routes.
+pub fn manifest_execution_failed_body(skill_name: &str, error: &dyn std::fmt::Display) -> String {
+    format!(
+        "Skill '{}' manifest execution failed: {}",
+        skill_name, error
+    )
+}
+
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkillToolInput {
@@ -462,7 +473,6 @@ impl AgentTool for SkillTool {
             // When a ManifestExecutor is present (D1), the skill's manifest
             // cascade is executed instead of body injection. The SKILL.md
             // frontmatter stays the discovery-only catalog entry.
-            let _skill_name = input.name.clone();
             // Clone the task and context before `input` is moved into
             // `initial_title` below, so we can inject them into the manifest
             // cascade context.
@@ -519,10 +529,7 @@ impl AgentTool for SkillTool {
                         Ok(result_text) => render_skill_envelope(&skill, &result_text),
                         Err(e) => {
                             return Err(SkillToolOutput::Error {
-                                error: format!(
-                                    "Skill '{}' manifest execution failed: {}",
-                                    skill_name, e
-                                ),
+                                error: manifest_execution_failed_body(skill_name, &e),
                             });
                         }
                     }
