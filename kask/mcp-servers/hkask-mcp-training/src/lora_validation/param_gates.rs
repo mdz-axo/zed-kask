@@ -510,4 +510,3 @@ pub fn has_refusals(findings: &[ValidationFinding]) -> bool {
         .iter()
         .any(|f| f.severity == ValidationSeverity::Refuse)
 }
-

@@ -986,3 +986,41 @@ async fn invoke_tool(
 
     Ok((result, tool_info.taint))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::step_context::StepContext;
+    use std::collections::HashMap;
+
+    #[test]
+    fn check_untrusted_input_detects_source_tainted_step_ref() {
+        let mut ctx = StepContext::new(HashMap::new());
+        ctx.store_result(0, 1, Value::Null, ToolTaint::Source);
+        ctx.store_result(1, 2, Value::Null, ToolTaint::Pure);
+
+        // Mapping referencing a Source-tainted step result -> true.
+        let mapping = serde_json::json!({
+            "query": "{{ step_1_result }}"
+        });
+        assert!(check_untrusted_input(&mapping, &ctx));
+
+        // Mapping referencing only Pure step results -> false.
+        let mapping = serde_json::json!({
+            "query": "{{ step_2_result }}"
+        });
+        assert!(!check_untrusted_input(&mapping, &ctx));
+
+        // Mapping referencing a $ref to a Source-tainted step -> true.
+        let mapping = serde_json::json!({
+            "$ref": "step_1_result.data"
+        });
+        assert!(check_untrusted_input(&mapping, &ctx));
+
+        // No references -> false.
+        let mapping = serde_json::json!({
+            "query": "static text"
+        });
+        assert!(!check_untrusted_input(&mapping, &ctx));
+    }
+}

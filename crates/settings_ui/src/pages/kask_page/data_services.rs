@@ -32,7 +32,9 @@ pub(crate) fn render_data_services_page(
             // These services don't have individual toggles — they're enabled
             // when their API key is present. We show them as enabled if the
             // key is in the keychain (checked via env var for display).
-            "serpapi" | "firecrawl" | "browserbase" | "hf_token" => std::env::var(env_var).is_ok(),
+            "serpapi" | "firecrawl" | "browserbase" | "hf_token" | "fred" => {
+                std::env::var(env_var).is_ok()
+            }
             _ => false,
         };
         rows.push(render_data_service_row(

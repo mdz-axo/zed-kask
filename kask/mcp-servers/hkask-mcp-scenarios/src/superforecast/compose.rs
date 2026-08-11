@@ -451,4 +451,3 @@ pub fn propagate_prior_update(
         journal,
     })
 }
-

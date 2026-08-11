@@ -349,14 +349,16 @@ pub static DATA_SERVICES: &[DataServiceDescriptor] = &[
     // MCP server via `ctx.credentials.get("HKASK_FRED_API_KEY")` for live
     // reference-level fetches. Optional (curated static fallback when absent),
     // but an operator who sets it in `.env` expects it to reach the server.
-    // Not shown in the Data Services UI (no toggle; set via `.env`).
+    // Shown in the Data Services UI as an always-on row (no enable toggle —
+    // enabled when the key is present, mirroring `hf_token`/`serpapi`); also
+    // autoloaded from `.env` into the keychain by `mirror_env_keys_to_keychain`.
     DataServiceDescriptor {
         env_var: "HKASK_FRED_API_KEY",
         credential_key: "fred",
         label: "FRED API Key",
         dashboard_url: "https://fred.stlouisfed.org/docs/api/api_key.html",
         kind: DataServiceKind::Secret,
-        ui_toggle: None,
+        ui_toggle: Some("fred"),
     },
 ];
 
@@ -966,6 +968,25 @@ mod tests {
             std::env::remove_var("DEEPINFRA_API_KEY");
             std::env::remove_var("HF_TOKEN");
         }
+    }
+
+    #[test]
+    fn fred_descriptor_shows_in_data_services_ui() {
+        // FRED must appear as a row in the Data Services settings screen so an
+        // operator can see/enter the key. `shows_in_ui()` gates on `ui_toggle`,
+        // so FRED carries `ui_toggle: Some("fred")` (mirroring `hf_token` and
+        // the other always-on-when-key-present services). Regressing to `None`
+        // silently hides FRED from the UI with no compile error — this test
+        // makes that a test-time failure.
+        let fred = DATA_SERVICES
+            .iter()
+            .find(|d| d.credential_key == "fred")
+            .expect("FRED descriptor present in DATA_SERVICES");
+        assert!(
+            fred.shows_in_ui(),
+            "FRED must show in the Data Services UI (ui_toggle = Some(\"fred\")); \
+             `None` hides it silently"
+        );
     }
 
     #[test]

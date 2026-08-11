@@ -19,12 +19,17 @@ use super::economic_data::worldbank::{
     WbListTopicsRequest, WbSearchIndicatorsRequest,
 };
 use super::economic_data::{EconomicDataClient, dbnomics, fred, worldbank};
-use super::eqm::ScoreRationaleRequest;
 use super::eqm;
+use super::eqm::ScoreRationaleRequest;
 use super::{McpToolError, PredictionMarketsServer, execute_tool_semantic};
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::tool;
+use rmcp::{tool, tool_router};
 
+// `#[tool_router]` generates `economic_data_tools_router()`, merged into the
+// server's `combined_router()` in the lib root. Without this attribute the
+// `#[tool]` methods below compile (they emit `*_tool_attr` associated fns) but
+// are never added to any router, so they vanish from the MCP tool list silently.
+#[tool_router(router = economic_data_tools_router, vis = "pub")]
 impl PredictionMarketsServer {
     // ═══════════════════ FRED economic data tools ═══════════════════
 
@@ -48,8 +53,12 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_search_series".to_string());
-                let result =
-                    fred::search_series(&EconomicDataClient::new(&self.http), self.fred_api_key.as_deref(), &req).await;
+                let result = fred::search_series(
+                    &EconomicDataClient::new(&self.http),
+                    self.fred_api_key.as_deref(),
+                    &req,
+                )
+                .await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -75,8 +84,12 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_get_observations".to_string());
-                let result =
-                    fred::get_observations(&EconomicDataClient::new(&self.http), self.fred_api_key.as_deref(), &req).await;
+                let result = fred::get_observations(
+                    &EconomicDataClient::new(&self.http),
+                    self.fred_api_key.as_deref(),
+                    &req,
+                )
+                .await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -100,8 +113,12 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_get_series_info".to_string());
-                let result =
-                    fred::get_series_info(&EconomicDataClient::new(&self.http), self.fred_api_key.as_deref(), &req).await;
+                let result = fred::get_series_info(
+                    &EconomicDataClient::new(&self.http),
+                    self.fred_api_key.as_deref(),
+                    &req,
+                )
+                .await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -125,8 +142,12 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_list_categories".to_string());
-                let result =
-                    fred::list_categories(&EconomicDataClient::new(&self.http), self.fred_api_key.as_deref(), &req).await;
+                let result = fred::list_categories(
+                    &EconomicDataClient::new(&self.http),
+                    self.fred_api_key.as_deref(),
+                    &req,
+                )
+                .await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -150,8 +171,12 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("fred_get_release".to_string());
-                let result =
-                    fred::get_release(&EconomicDataClient::new(&self.http), self.fred_api_key.as_deref(), &req).await;
+                let result = fred::get_release(
+                    &EconomicDataClient::new(&self.http),
+                    self.fred_api_key.as_deref(),
+                    &req,
+                )
+                .await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -180,7 +205,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_search_indicators".to_string());
-                let result = worldbank::search_indicators(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    worldbank::search_indicators(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -205,7 +231,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_get_observations".to_string());
-                let result = worldbank::get_observations(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    worldbank::get_observations(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -229,7 +256,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_list_countries".to_string());
-                let result = worldbank::list_countries(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    worldbank::list_countries(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -250,7 +278,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_list_topics".to_string());
-                let result = worldbank::list_topics(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    worldbank::list_topics(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -274,7 +303,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("wb_get_indicator_info".to_string());
-                let result = worldbank::get_indicator_info(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    worldbank::get_indicator_info(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -327,7 +357,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("dbnomics_list_providers".to_string());
-                let result = dbnomics::list_providers(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    dbnomics::list_providers(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -351,7 +382,8 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("dbnomics_get_dataset".to_string());
-                let result = dbnomics::get_dataset(&EconomicDataClient::new(&self.http), &req).await;
+                let result =
+                    dbnomics::get_dataset(&EconomicDataClient::new(&self.http), &req).await;
                 result.map_err(McpToolError::from)
             },
         )
@@ -406,18 +438,12 @@ impl PredictionMarketsServer {
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert("market_score_rationale".to_string());
-                let result = eqm::score_rationale(
-                    self.inference_port.as_ref(),
-                    &req,
-                )
-                .await;
-                result
-                    .map_err(McpToolError::from)
-                    .and_then(|eqm_result| {
-                        serde_json::to_value(&eqm_result).map_err(|e| {
-                            McpToolError::internal(format!("eqm serialization failed: {e}")) // rr0044-ok: serialize-own-struct
-                        })
+                let result = eqm::score_rationale(self.inference_port.as_ref(), &req).await;
+                result.map_err(McpToolError::from).and_then(|eqm_result| {
+                    serde_json::to_value(&eqm_result).map_err(|e| {
+                        McpToolError::internal(format!("eqm serialization failed: {e}")) // rr0044-ok: serialize-own-struct
                     })
+                })
             },
         )
         .await
