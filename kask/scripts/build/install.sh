@@ -284,10 +284,17 @@ install_updater_bundle() {
 # have a .desktop file — that would register it in the app launcher, dock,
 # and file associations, where it collides with the user's real Zed install.
 # The icon is needed only for the window manager to display the correct icon
-# when zed-kask is running (the GPUI window references it by name).
+# when zed-kask is running.
+#
+# On Wayland the compositor (GNOME Shell, KDE) resolves the taskbar/dock icon
+# by looking up the xdg_toplevel app_id as an icon name in the hicolor theme.
+# The app_id is dev.zed-kask.Zed-Kask (see ReleaseChannel::app_id in
+# crates/release_channel/src/lib.rs), so the icon MUST be installed under that
+# name — a bare "zed-kask" name is never looked up and the WM falls back to a
+# generic icon. We also install the friendly "zed-kask" alias for human
+# inspection; it is not load-bearing.
 install_icon() {
     local workspace_root="$HKASK_SOURCE_DIR"
-    local app_icon="zed-kask"
 
     local data_root
     if [ "${HKASK_SYSTEM_INSTALL:-false}" = "true" ]; then
@@ -301,8 +308,6 @@ install_icon() {
     # entry and fall back to 512x512.
     local icon_dir_512="$data_root/icons/hicolor/512x512/apps"
     local icon_dir_1024="$data_root/icons/hicolor/1024x1024/apps"
-    assert_not_zed_owned_path "$icon_dir_512/$app_icon.png" "icon write" || return 1
-    assert_not_zed_owned_path "$icon_dir_1024/$app_icon.png" "icon write" || return 1
     mkdir -p "$icon_dir_512" "$icon_dir_1024"
 
     local channel
@@ -326,21 +331,36 @@ install_icon() {
         return 1
     fi
 
-    cp "$src_icon" "$icon_dir_512/$app_icon.png"
-    if ! cmp -s "$src_icon" "$icon_dir_512/$app_icon.png"; then
-        log_error "Installed icon does not match its source: $icon_dir_512/$app_icon.png"
-        return 1
-    fi
-    log "Installed icon: $icon_dir_512/$app_icon.png"
+    # app_id must match ReleaseChannel::app_id() in crates/release_channel.
+    local app_id_name
+    case "$channel" in
+        stable)  app_id_name="dev.zed-kask.Zed-Kask" ;;
+        nightly) app_id_name="dev.zed-kask.Zed-Kask-Nightly" ;;
+        preview) app_id_name="dev.zed-kask.Zed-Kask-Preview" ;;
+        *)       app_id_name="dev.zed-kask.Zed-Kask" ;;
+    esac
 
-    if [ -f "$src_icon_2x" ]; then
-        cp "$src_icon_2x" "$icon_dir_1024/$app_icon.png"
-        if ! cmp -s "$src_icon_2x" "$icon_dir_1024/$app_icon.png"; then
-            log_error "Installed icon does not match its source: $icon_dir_1024/$app_icon.png"
+    local name
+    for name in "$app_id_name" "zed-kask"; do
+        assert_not_zed_owned_path "$icon_dir_512/$name.png" "icon write" || return 1
+        assert_not_zed_owned_path "$icon_dir_1024/$name.png" "icon write" || return 1
+
+        cp "$src_icon" "$icon_dir_512/$name.png"
+        if ! cmp -s "$src_icon" "$icon_dir_512/$name.png"; then
+            log_error "Installed icon does not match its source: $icon_dir_512/$name.png"
             return 1
         fi
-        log "Installed icon: $icon_dir_1024/$app_icon.png"
-    fi
+        log "Installed icon: $icon_dir_512/$name.png"
+
+        if [ -f "$src_icon_2x" ]; then
+            cp "$src_icon_2x" "$icon_dir_1024/$name.png"
+            if ! cmp -s "$src_icon_2x" "$icon_dir_1024/$name.png"; then
+                log_error "Installed icon does not match its source: $icon_dir_1024/$name.png"
+                return 1
+            fi
+            log "Installed icon: $icon_dir_1024/$name.png"
+        fi
+    done
 
     # Best-effort icon cache refresh.
     local hicolor_root="$data_root/icons/hicolor"
@@ -399,7 +419,10 @@ verify_installation() {
     else
         icon_data_root="${XDG_DATA_HOME:-$HOME/.local/share}"
     fi
-    local installed_icon="$icon_data_root/icons/hicolor/512x512/apps/zed-kask.png"
+    # The app_id-named icon is the one the Wayland compositor resolves for the
+    # taskbar/dock (see install_icon). Verify it exists; the friendly
+    # "zed-kask" alias is installed alongside but is not load-bearing.
+    local installed_icon="$icon_data_root/icons/hicolor/512x512/apps/dev.zed-kask.Zed-Kask.png"
     if [ ! -s "$installed_icon" ]; then
         log_error "Icon not found or empty at $installed_icon"
         return 1

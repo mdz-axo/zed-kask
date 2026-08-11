@@ -69,7 +69,6 @@ agent.workspace = true
 agent-client-protocol.workspace = true
 kask_bridge = { path = "../../kask/crates/kask_bridge" }
 hkask-mcp = { path = "../../kask/crates/hkask-mcp" }
-hkask-guard = { path = "../../kask/crates/hkask-guard" }
 hkask-capability = { path = "../../kask/crates/hkask-capability" }
 hkask-types = { path = "../../kask/crates/hkask-types" }
 hkask-regulation = { path = "../../kask/crates/hkask-regulation" }

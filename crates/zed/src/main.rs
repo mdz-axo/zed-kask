@@ -201,9 +201,9 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 
 /// The Unix socket path for the inference IPC bridge.
 ///
-/// Set by the model-dependent kask wiring block after the `GuardedInferencePort`
-/// is constructed. Read by the deferred MCP server launch task to pass the
-/// socket path to MCP server child processes via the `HKASK_INFERENCE_SOCKET`
+/// Set by the model-dependent kask wiring block after the inference IPC
+/// server is started. Read by the deferred MCP server launch task to pass
+/// the socket path to MCP server child processes via the `HKASK_INFERENCE_SOCKET`
 /// env var.
 static INFERENCE_SOCKET_PATH: OnceLock<String> = OnceLock::new();
 
@@ -1908,18 +1908,12 @@ fn main() {
                             );
                         inference_task.detach();
 
-                        let guard_config = hkask_guard::GuardConfig::from_env();
-                        let content_guard = hkask_guard::ContentGuard::mandatory(&guard_config);
-                        let guarded_inference = std::sync::Arc::new(
-                            hkask_guard::GuardedInferencePort::new(
-                                std::sync::Arc::new(inference_port),
-                                content_guard,
-                            )
-                        );
+                        let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
+                            std::sync::Arc::new(inference_port);
 
                         // Start the inference IPC server so MCP server child processes
                         // can route inference through zed's LanguageModelRegistry (with
-                        // guard and zed's configured API keys) instead of
+                        // zed's configured API keys) instead of
                         // constructing their own MediaRouter with separate keys.
                         //
                         // The media router is a hKask `MediaRouter` used for
@@ -1950,7 +1944,7 @@ fn main() {
                             std::sync::Arc<dyn hkask_types::SkillExecPort>,
                         > = Some(std::sync::Arc::new(AgentSkillExec));
                         match kask_bridge::InferenceIpcServer::start(
-                            guarded_inference,
+                            inference_port,
                             embedding_port_for_ipc.clone(),
                             Some(media_router),
                             tool_port_for_ipc,
@@ -1999,13 +1993,12 @@ fn main() {
                         // had skills silently disabled. The model registry is
                         // populated from settings.json, not from cloud auth.
                         //
-                        // `guarded_inference` is still constructed here
+                        // The inference port is still constructed here
                         // because the IPC server (below) needs it. The
-                        // model-dependent task constructs its own
-                        // `GuardedInferencePort` for the manifest executor.
-                        // This is a small duplication (two guarded ports),
-                        // but they wrap the same underlying model and the
-                        // guard is stateless — the duplication is harmless.
+                        // model-dependent task constructs its own inference
+                        // port for the manifest executor. This is a small
+                        // duplication (two ports), but they wrap the same
+                        // underlying model — the duplication is harmless.
                         if kask_settings.memory.auto_inject {
                             log::info!("hKask context injection enabled — injector will be wired after agent resolves");
                         } else {
@@ -2196,11 +2189,11 @@ fn main() {
         // The registry path resolution (dev source vs seeded) is duplicated
         // from the deferred task because it doesn't need the user and must
         // run here for the manifest executor. The `tool_port` is the same
-        // `McpRuntime` Arc used by the deferred task. The `GuardedInferencePort`
+        // `McpRuntime` Arc used by the deferred task. The inference port
         // is constructed independently from the resolved model — this is a
-        // second guarded port (the deferred task's IPC server constructs its
-        // own), but they wrap the same underlying model and the guard is
-        // stateless, so the duplication is harmless.
+        // second port (the deferred task's IPC server constructs its own),
+        // but they wrap the same underlying model, so the duplication is
+        // harmless.
         //
         // What stays in the user-login-gated deferred task:
         // - Memory port, context injector, curator injector (need username
@@ -2933,12 +2926,8 @@ async fn try_wire_manifest_executor(
             kask_bridge::LanguageModelInferencePort::new(inference_model.clone(), async_cx);
         inference_task.detach();
 
-        let guard_config = hkask_guard::GuardConfig::from_env();
-        let content_guard = hkask_guard::ContentGuard::mandatory(&guard_config);
-        let guarded_inference = std::sync::Arc::new(hkask_guard::GuardedInferencePort::new(
-            std::sync::Arc::new(inference_port),
-            content_guard,
-        ));
+        let inference_port: std::sync::Arc<dyn hkask_types::InferencePort> =
+            std::sync::Arc::new(inference_port);
 
         // Snapshot the default agent profile's `terminal` tool state for
         // proposer/evaluator separation. Same logic as the deferred task —
@@ -2957,7 +2946,7 @@ async fn try_wire_manifest_executor(
 
         let executor = std::sync::Arc::new(
             kask_bridge::BridgeManifestExecutor::new(
-                guarded_inference,
+                inference_port,
                 tool_port.clone(),
                 registry_manifests_dir.to_path_buf(),
                 registry_templates_dir.to_path_buf(),
@@ -2968,7 +2957,7 @@ async fn try_wire_manifest_executor(
         agent::set_manifest_executor(Some(executor));
         log::info!(
             "hKask manifest executor wired (model-dependent task) — \
-             skills will run the guarded cascade"
+             skills will run the manifest cascade"
         );
         Ok(())
     })

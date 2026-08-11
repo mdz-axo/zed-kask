@@ -14,7 +14,7 @@
 //! zed process
 //!   ├── InferenceIpcServer (Unix socket listener)
 //!   │     └── dispatches to Arc<dyn InferencePort>
-//!   │           └── GuardedInferencePort → zed's LanguageModelRegistry
+//!   │           └── LanguageModelInferencePort → zed's LanguageModelRegistry
 //!   │
 //!   └── spawns MCP server child process
 //!         └── InferenceIpcClient (connects to the socket)
@@ -270,7 +270,7 @@ impl InferenceIpcServer {
     /// directory. The socket is removed when the server is dropped.
     ///
     /// `inference_port` is the port to dispatch chat requests to (typically
-    /// the `GuardedInferencePort` wrapping `LanguageModelInferencePort`).
+    /// the `LanguageModelInferencePort` backed by zed's `LanguageModelRegistry`).
     /// `embedding_port` is the port to dispatch embedding requests to (the
     /// `LanguageModelEmbeddingPort`). When `None`, `embed` requests return an
     /// error.

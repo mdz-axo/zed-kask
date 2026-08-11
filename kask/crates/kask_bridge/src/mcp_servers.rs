@@ -279,17 +279,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             // (Zed's working dir, typically home or project root — not the
             // zed-kask repo), and local agent cards are never found.
             "HKASK_DATA_DIR",
-            // The swarm server constructs a `ContentGuard` via
-            // `hkask_guard::GuardConfig::from_env()`, which reads
-            // `HKASK_GUARD_TOKEN_LIMIT` (the input-token DoS budget, OWASP
-            // LLM04). Without this entry a kask-settings-derived override
-            // would be silently dropped (the `.rules` trap: allowlists must
-            // align with actual env-var reads). A shell-exported value still
-            // A shell-exported value still
-            // reaches the child via parent-env inheritance (no `env_clear`),
-            // but the allowlist is the record of what the server is permitted
-            // to read.
-            "HKASK_GUARD_TOKEN_LIMIT",
             // Skills corpus dir — read by `AgentExecutor::build_skill_catalog`
             // via `HKASK_SKILLS_DIR` in `config.rs` (Slice 6 — local agent
             // skill-awareness). Without this entry, a kask-settings-derived
@@ -985,7 +974,6 @@ mod tests {
             "/custom/dir".to_string(),
         );
         config_env.insert("HKASK_DATA_DIR".to_string(), "/data/hkask".to_string());
-        config_env.insert("HKASK_GUARD_TOKEN_LIMIT".to_string(), "64000".to_string());
         config_env.insert(
             "HKASK_SMTP_USERNAME".to_string(),
             "ops@example.com".to_string(),
@@ -1041,10 +1029,6 @@ mod tests {
             "HKASK_SWARM_CONSENT_STORE",
             "HKASK_MCP_SERVER_IDS",
             "HKASK_DATA_DIR",
-            // Transitive: read by `hkask_guard::GuardConfig::from_env()` which
-            // the swarm server calls in `LocalSwarmRuntime::new` (now via
-            // `AgentExecutor::new`).
-            "HKASK_GUARD_TOKEN_LIMIT",
         ];
         let mut config_env = std::collections::HashMap::new();
         for v in &read_config_vars {
