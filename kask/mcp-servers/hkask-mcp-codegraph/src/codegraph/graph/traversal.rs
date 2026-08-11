@@ -70,18 +70,7 @@ pub fn traverse(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(rusqlite::params![symbol_id, max_depth as i64], |row| {
         Ok(TraversalNode {
-            symbol: Symbol {
-                id: Some(row.get(0)?),
-                name: row.get(1)?,
-                kind: super::store::parse_kind(&row.get::<_, String>(2)?),
-                file: row.get(3)?,
-                signature: row.get(4)?,
-                visibility: super::store::parse_visibility(&row.get::<_, String>(5)?),
-                start_line: row.get::<_, i64>(6)? as usize,
-                end_line: row.get::<_, i64>(7)? as usize,
-                doc_comment: row.get(8)?,
-                complexity: super::store::parse_complexity(&row.get::<_, String>(9)?),
-            },
+            symbol: super::store::map_symbol_row(row)?,
             depth: row.get::<_, i64>(12)? as usize,
             edge_kind: row.get(11)?,
         })
@@ -170,12 +159,14 @@ fn classify_risk(symbol: &Symbol) -> RiskLevel {
 }
 
 /// Find the symbol ID by name. Returns `None` if not found.
-pub fn find_symbol_id(conn: &Connection, name: &str) -> Result<Option<i64>> {
-    let mut stmt = conn.prepare("SELECT id FROM symbols WHERE name = ?1 LIMIT 1")?;
-    let result = stmt
-        .query_row(rusqlite::params![name], |row| row.get(0))
-        .ok();
-    Ok(result)
+///
+/// Delegates to `GraphStore::find_symbol_by_name` — the single implementation
+/// of this query. Previously duplicated as a free function here and a method
+/// on `GraphStore`, with the same SQL and the same `.ok()` error-swallowing
+/// pattern. The method now uses `optional_query_row` to distinguish "not found"
+/// from database errors.
+pub fn find_symbol_id(store: &super::store::GraphStore, name: &str) -> Result<Option<i64>> {
+    store.find_symbol_by_name(name)
 }
 
 #[cfg(test)]
@@ -252,7 +243,7 @@ mod tests {
     #[test]
     fn test_traverse_forward() {
         let store = setup_graph();
-        let caller_id = find_symbol_id(store.conn(), "caller").unwrap().unwrap();
+        let caller_id = find_symbol_id(&store, "caller").unwrap().unwrap();
 
         let results = traverse(store.conn(), caller_id, Direction::Forward, 10).unwrap();
 
@@ -271,9 +262,7 @@ mod tests {
     #[test]
     fn test_traverse_reverse() {
         let store = setup_graph();
-        let deep_id = find_symbol_id(store.conn(), "deep_callee")
-            .unwrap()
-            .unwrap();
+        let deep_id = find_symbol_id(&store, "deep_callee").unwrap().unwrap();
 
         let results = traverse(store.conn(), deep_id, Direction::Reverse, 10).unwrap();
 
@@ -291,7 +280,7 @@ mod tests {
     #[test]
     fn test_impact_analysis() {
         let store = setup_graph();
-        let callee_id = find_symbol_id(store.conn(), "callee").unwrap().unwrap();
+        let callee_id = find_symbol_id(&store, "callee").unwrap().unwrap();
 
         let results = impact_analysis(store.conn(), callee_id, 10).unwrap();
 

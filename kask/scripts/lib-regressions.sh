@@ -157,7 +157,13 @@ check_regressions() {
       local matches
       if [ ${#include_array[@]} -gt 0 ]; then
         # shellcheck disable=SC2068 # intentional: each element is a separate grep flag
-        matches=$(grep -rPn ${include_array[@]} "$rr_pattern" . \
+        # NOTE: prefix `LD_LIBRARY_PATH=` so grep loads the SYSTEM libpcre2,
+        # not an incompatible one from a polluted LD_LIBRARY_PATH (e.g. a flatpak
+        # app's files/lib on the Zed-embedded terminal). Without this, `grep -P`
+        # fails with "unrecognised compile-time option bit(s)" and every presence
+        # check falsely reports "required pattern not found" while every absence
+        # check falsely passes — the gate becomes vacuous.
+        matches=$(LD_LIBRARY_PATH= grep -rPn ${include_array[@]} "$rr_pattern" . \
           --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules \
           --exclude-dir=regressions \
           2>/dev/null || true)
@@ -184,7 +190,7 @@ check_regressions() {
           violations=$((violations + 1))
           continue
         fi
-        matches=$(grep -rPn "$rr_pattern" $rr_include \
+        matches=$(LD_LIBRARY_PATH= grep -rPn "$rr_pattern" $rr_include \
           --exclude-dir=target --exclude-dir=.git --exclude-dir=node_modules \
           --exclude-dir=regressions \
           2>/dev/null || true)

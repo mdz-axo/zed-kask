@@ -16,4 +16,5 @@ detection:
 mitigation: "Call DefaultPolicy::check() before every MCP tool invocation in execute_tool_invoke. Block, require human, or log based on the verdict."
 source: "https://arxiv.org/html/2509.23864v1 — AgentGuard runtime verification"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: pending
+note: "Ratcheted 2026-08-11: the verification test (runtime_policy_block_prevents_tool_invocation) is missing and the runtime-policy check before tool invocation is not wired in execute_tool_invoke. with_runtime_policy/runtime_policy_is_wired exist but no test proves a blocking policy actually blocks. Flip to enforced once the check + test land."

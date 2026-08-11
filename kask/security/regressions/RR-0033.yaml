@@ -16,4 +16,5 @@ detection:
 mitigation: "When the refinement loop snapshots step_N_result to prev_step_N_result, copy the taint label alongside the value — context.insert is taint-blind, so an unlabeled prev_ key lets Source-tainted refinement input reach Sink tools unchecked. Same closure-break class as RR-0026/RR-0027."
 source: "Cycle 3 kali-audit — IFC label-coverage review (defense layer 5)"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: pending
+note: "Ratcheted 2026-08-11: snapshot_prev copies result values to prev_step_N_result but the verification test (loop_snapshot_propagates_source_taint_to_prev_key) asserting the Source taint label is carried is missing. Flip to enforced once the taint-carrying assertion test lands."

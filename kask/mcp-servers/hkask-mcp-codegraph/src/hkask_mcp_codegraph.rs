@@ -236,8 +236,7 @@ impl CodeGraphServer {
         execute_tool(self, "codegraph_traverse", async {
             self.ensure_indexed()?;
             let pipeline = self.pipeline_guard()?;
-            let id =
-                traversal::find_symbol_id(pipeline.store().conn(), &req.symbol).map_err(db_err)?;
+            let id = traversal::find_symbol_id(pipeline.store(), &req.symbol).map_err(db_err)?;
             match id {
                 Some(id) => {
                     let nodes = traversal::traverse(
@@ -262,8 +261,7 @@ impl CodeGraphServer {
         execute_tool(self, "codegraph_impact", async {
             self.ensure_indexed()?;
             let pipeline = self.pipeline_guard()?;
-            let id =
-                traversal::find_symbol_id(pipeline.store().conn(), &req.symbol).map_err(db_err)?;
+            let id = traversal::find_symbol_id(pipeline.store(), &req.symbol).map_err(db_err)?;
             match id {
                 Some(id) => {
                     let results = traversal::impact_analysis(
@@ -463,11 +461,7 @@ impl CodeGraphServer {
             let model = req
                 .model
                 .unwrap_or_else(hkask_inference::model_constants::embedding_model);
-            let dim: usize = std::env::var("HKASK_EMBEDDING_DIM")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .filter(|&d: &usize| d > 0)
-                .unwrap_or(1024);
+            let dim: usize = crate::codegraph::graph::schema::resolve_embedding_dim();
 
             // Collect all symbols for embedding — drop the lock before any
             // async API calls. GraphStore is not Send (RefCell<LruCache>),

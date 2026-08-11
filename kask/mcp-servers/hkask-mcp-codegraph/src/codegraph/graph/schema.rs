@@ -30,7 +30,12 @@ pub const DEFAULT_EMBEDDING_DIM: usize = 1024;
 /// Resolve the embedding dimension from the `HKASK_EMBEDDING_DIM` env var,
 /// falling back to `DEFAULT_EMBEDDING_DIM` (1024, matching the default model
 /// `DeepInfra/Qwen/Qwen3-Embedding-0.6B`).
-fn resolve_embedding_dim() -> usize {
+///
+/// This is the single source of truth for the embedding dimension — both
+/// `initialize_schema` and `codegraph_index_embeddings` call it. Previously
+/// the server re-implemented the same env-var parsing with a hardcoded `1024`
+/// fallback, which would drift if `DEFAULT_EMBEDDING_DIM` changed.
+pub fn resolve_embedding_dim() -> usize {
     std::env::var("HKASK_EMBEDDING_DIM")
         .ok()
         .and_then(|v| v.parse().ok())

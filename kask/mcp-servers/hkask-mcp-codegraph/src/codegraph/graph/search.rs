@@ -43,18 +43,7 @@ pub fn search(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Search
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(rusqlite::params![query, limit as i64], |row| {
         Ok(SearchResult {
-            symbol: Symbol {
-                id: Some(row.get(0)?),
-                name: row.get(1)?,
-                kind: super::store::parse_kind(&row.get::<_, String>(2)?),
-                file: row.get(3)?,
-                signature: row.get(4)?,
-                visibility: super::store::parse_visibility(&row.get::<_, String>(5)?),
-                start_line: row.get::<_, i64>(6)? as usize,
-                end_line: row.get::<_, i64>(7)? as usize,
-                doc_comment: row.get(8)?,
-                complexity: super::store::parse_complexity(&row.get::<_, String>(9)?),
-            },
+            symbol: super::store::map_symbol_row(row)?,
             rank: row.get(10)?,
         })
     })?;
@@ -77,18 +66,7 @@ pub fn search(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Search
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt.query_map(rusqlite::params![like_query, limit as i64], |row| {
             Ok(SearchResult {
-                symbol: Symbol {
-                    id: Some(row.get(0)?),
-                    name: row.get(1)?,
-                    kind: super::store::parse_kind(&row.get::<_, String>(2)?),
-                    file: row.get(3)?,
-                    signature: row.get(4)?,
-                    visibility: super::store::parse_visibility(&row.get::<_, String>(5)?),
-                    start_line: row.get::<_, i64>(6)? as usize,
-                    end_line: row.get::<_, i64>(7)? as usize,
-                    doc_comment: row.get(8)?,
-                    complexity: super::store::parse_complexity(&row.get::<_, String>(9)?),
-                },
+                symbol: super::store::map_symbol_row(row)?,
                 rank: 0.0, // no FTS5 rank for LIKE fallback
             })
         })?;
@@ -114,18 +92,7 @@ pub fn search_prefix(conn: &Connection, prefix: &str, limit: usize) -> Result<Ve
 
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(rusqlite::params![like, limit as i64], |row| {
-        Ok(Symbol {
-            id: Some(row.get(0)?),
-            name: row.get(1)?,
-            kind: super::store::parse_kind(&row.get::<_, String>(2)?),
-            file: row.get(3)?,
-            signature: row.get(4)?,
-            visibility: super::store::parse_visibility(&row.get::<_, String>(5)?),
-            start_line: row.get::<_, i64>(6)? as usize,
-            end_line: row.get::<_, i64>(7)? as usize,
-            doc_comment: row.get(8)?,
-            complexity: super::store::parse_complexity(&row.get::<_, String>(9)?),
-        })
+        super::store::map_symbol_row(row)
     })?;
 
     let mut results = Vec::new();

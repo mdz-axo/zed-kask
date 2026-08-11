@@ -3,7 +3,7 @@
 //! Provides batched insert for symbols and edges with automatic ID assignment
 //! and call-target resolution. Uses prepared statement caching for performance.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Row, params};
 
 use crate::codegraph::error::Result;
 use crate::codegraph::types::{EdgeKind, Symbol};
@@ -106,7 +106,7 @@ impl GraphStore {
         let mut stmt = self
             .conn
             .prepare("SELECT content_hash FROM code_files WHERE path = ?1")?;
-        let result = stmt.query_row(params![path], |row| row.get(0)).ok();
+        let result = optional_query_row(&mut stmt, params![path], |row| row.get(0))?;
         Ok(result)
     }
 
@@ -164,7 +164,7 @@ impl GraphStore {
         let mut stmt = self
             .conn
             .prepare("SELECT id FROM symbols WHERE name = ?1 LIMIT 1")?;
-        let result = stmt.query_row(params![name], |row| row.get(0)).ok();
+        let result = optional_query_row(&mut stmt, params![name], |row| row.get(0))?;
         Ok(result)
     }
 
@@ -196,22 +196,7 @@ impl GraphStore {
              FROM symbols s JOIN code_files f ON s.file_id = f.id
              WHERE s.id = ?1",
         )?;
-        let result = stmt
-            .query_row(params![id], |row| {
-                Ok(Symbol {
-                    id: Some(row.get(0)?),
-                    name: row.get(1)?,
-                    kind: parse_kind(&row.get::<_, String>(2)?),
-                    file: row.get(3)?,
-                    signature: row.get(4)?,
-                    visibility: parse_visibility(&row.get::<_, String>(5)?),
-                    start_line: row.get::<_, i64>(6)? as usize,
-                    end_line: row.get::<_, i64>(7)? as usize,
-                    doc_comment: row.get(8)?,
-                    complexity: parse_complexity(&row.get::<_, String>(9)?),
-                })
-            })
-            .ok();
+        let result = optional_query_row(&mut stmt, params![id], map_symbol_row)?;
         Ok(result)
     }
 
@@ -352,7 +337,61 @@ pub(crate) fn parse_visibility(s: &str) -> crate::codegraph::types::Visibility {
 }
 
 pub(crate) fn parse_complexity(json: &str) -> crate::codegraph::types::Complexity {
-    serde_json::from_str(json).unwrap_or_default()
+    serde_json::from_str(json).unwrap_or_else(|e| {
+        tracing::warn!(
+            target: "hkask.codegraph",
+            error = %e,
+            "malformed complexity_json in database, falling back to Unparseable"
+        );
+        crate::codegraph::types::Complexity::Unparseable
+    })
+}
+
+/// Map a `rusqlite::Row` to a `Symbol`.
+///
+/// Expects the standard 10-column SELECT order:
+/// `s.id, s.name, s.kind, f.path, s.signature, s.visibility,
+///  s.start_line, s.end_line, s.doc_comment, s.complexity_json`
+///
+/// Any column added or reordered in a SELECT must be reflected here.
+/// This is the single enforcement point for the column-to-index mapping —
+/// previously duplicated across 4 call sites (search.rs, traversal.rs, store.rs),
+/// where a column reorder silently shifted indices and returned wrong values.
+pub(crate) fn map_symbol_row(row: &Row<'_>) -> rusqlite::Result<Symbol> {
+    Ok(Symbol {
+        id: Some(row.get(0)?),
+        name: row.get(1)?,
+        kind: parse_kind(&row.get::<_, String>(2)?),
+        file: row.get(3)?,
+        signature: row.get(4)?,
+        visibility: parse_visibility(&row.get::<_, String>(5)?),
+        start_line: row.get::<_, i64>(6)? as usize,
+        end_line: row.get::<_, i64>(7)? as usize,
+        doc_comment: row.get(8)?,
+        complexity: parse_complexity(&row.get::<_, String>(9)?),
+    })
+}
+
+/// Run a `query_row` that may return no row, distinguishing "not found" from
+/// database errors. Returns `Ok(None)` for `QueryReturnedNoRows`, `Ok(Some(v))`
+/// for a successful row, and `Err(e)` for any other SQLite error.
+///
+/// Previously, `.ok()` on `query_row` conflated "no row" with "database error"
+/// (locked DB, corrupted index, etc.), silently returning `None` for both.
+pub(crate) fn optional_query_row<P, F, T>(
+    stmt: &mut rusqlite::Statement<'_>,
+    params: P,
+    f: F,
+) -> Result<Option<T>>
+where
+    P: rusqlite::Params,
+    F: FnOnce(&Row<'_>) -> rusqlite::Result<T>,
+{
+    match stmt.query_row(params, f) {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 #[cfg(test)]
