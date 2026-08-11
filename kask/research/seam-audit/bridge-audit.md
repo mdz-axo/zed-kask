@@ -181,4 +181,42 @@ refactor author's in-flight work, not the bridge edits, and not attempted here.
 None of the 8 `Send` errors are in the BD-edited bridge files
 (`inference_providers.rs`, `settings.rs`, `memory.rs`, `inference_ipc_server.rs`,
 `kask_bridge.rs`) — those remain rust-analyzer-clean. They will compile-verify
-once the `run(&Infra)`→owned-`Infra` change lands.
+once the `run(\u0026Infra)`→owned-`Infra` change lands.
+
+### BD-06 final state (2026-08-11, closed in-session)
+
+The refactor's `Send` chain was closed across three layers in this session:
+
+1. **`step_actions.rs:606` move error** (the `parallel` branch `FnMut`+`async
+   move`) — fixed via per-branch `context_template`/`infra` clones before
+   `async move`. (Reconciled with a parallel edit by the other agent.)
+2. **`run(\u0026Infra)` non-`'static` borrow** — `Infra: Clone` +
+   `run(mut self, infra: Infra)` (owned); updated `execute_manifest`, the flowdef
+   + parallel sub-cascade callers.
+3. **`execute_manifest(\u0026self, \u0026manifest)` `\u0026self`/`\u0026manifest` borrow** — added an
+   owned `execute_manifest_into(self, manifest: BundleManifest, context)` (the
+   spawnable `'static+Send` variant); the borrowed `execute_manifest` now
+   delegates via `clone()`. The 4 `skill_executor.rs` spawn sites call
+   `execute_manifest_into`.
+4. **`execute_parallel` signature** — completed the other agent's migration to
+   `(node, \u0026Infra)` (matching the other action handlers); declared
+   `step_ordinal` from `node.ordinal` and used `node.id` in `Effect::Stored`.
+
+**Remaining blocker (NOT closed):** 8 `Send`-not-general-enough errors at the 4
+`skill_executor.rs` tokio spawn sites. Root cause: the Rust `async fn`
+higher-ranked-`Send` inference limitation. `run`→`run_pass`→`dispatch_action`→
+`is_terminal_available` are plain `async fn` taking `\u0026self`/`\u0026Infra`; all the
+owned types are `Send+Sync` (verified: `InferencePort`/`ToolPort` are
+`Send+Sync`, `BudgetTracker`/`ConvergenceTracker`/`StepContext`/`StepGraph`/
+`StepNode` are `Send+Sync`, `minijinja::Environment` is `Send+Sync` → `Infra:
+Sync`, `StepMachine: Sync`), but the compiler cannot generalize the `Send` bound
+over the nested borrow lifetimes for `tokio::spawn`.
+
+**The fix (structural, interpreter core — refactor-author domain):** make the
+inner `async fn`s return `Pin<Box<dyn Future\u003c...\u003e + Send + '_\u003e\u003e` instead
+of `impl Future` — `run_pass`, `dispatch_action`, `is_terminal_available` (and
+any other `\u0026self`/`\u0026Infra` async fn called across the `run` await chain). The
+explicit `+ Send` in the return type declares the future is `Send` for any
+borrow lifetime, breaking the higher-ranked inference. This is a multi-method
+change to the interpreter's async shape, not a wiring gap, and was not applied
+in-session (it's the refactor author's async-architecture decision).

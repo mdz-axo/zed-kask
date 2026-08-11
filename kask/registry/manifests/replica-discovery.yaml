@@ -63,9 +63,8 @@ manifest:
 # validates and the Curator approves (or agentic mode skips the gate).
 # Effort scales max_iterations: low=1, medium=3, high=5.
 convergence:
-  convergence_mode: "cauchy"
-  cauchy_epsilon: 0.03
-  cauchy_window: 3
+  convergence_mode: ""
+  # No convergence-check compute step: the loop runs N iterations then escalates.
   max_iterations: 10
   min_iterations: 2
   on_not_reached: escalate

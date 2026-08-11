@@ -563,6 +563,7 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<Effect> {
+        let step_ordinal = node.ordinal;
         let mapping = node.input_mapping.as_deref().cloned().ok_or_else(|| {
             TemplateError::Manifest(format!(
                 "Step {step_ordinal} (action 'parallel') has no input_mapping — the branch \
@@ -696,7 +697,7 @@ impl StepMachine {
         self.budget.charge_rjoule(sum_rjoule);
 
         Ok(Effect::Stored {
-            step_id,
+            step_id: node.id,
             value: joined,
             taint: ToolTaint::Pure,
         })

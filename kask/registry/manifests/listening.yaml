@@ -31,9 +31,7 @@ convergence:
   # terminates per quarter (one pass over one transcript, fixed template, no
   # iteration) — it is a sense→act loop, not an optimizing loop." So
   # min=max=1; convergence is trivially satisfied on the first pass.
-  convergence_mode: "cauchy"
-  cauchy_epsilon: 0.03
-  cauchy_window: 1
+  convergence_mode: ""
   max_iterations: 1
   min_iterations: 1
   on_not_reached: escalate
