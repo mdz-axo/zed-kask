@@ -435,18 +435,28 @@ the agent `read_file`-ing `~/.agents/skills/<name>/SKILL.md` and then
 researching/questioning the skill instead of running its cascade — observed
 when asked to run `skill-maintenance` across the corpus.
 
-## ManifestExecutor final-result extraction must be ordinal-keyed
+## ManifestExecutor final-result extraction uses last_result_step (K5 retired the ordinal scan)
 
-`ManifestExecutor::execute_manifest` returns `HashMap<String, Value>` with step
-results under `step_{ordinal}_result` keys. HashMap iteration order is
-randomized (`RandomState`), so `values().last()` picks an arbitrary step, not
-the final one. Any caller that extracts a "final result" must parse the ordinal
-from `step_N_result` keys and pick the highest. The canonical extractors are
-`extract_final_step_result` in `kask_bridge/src/skill_executor.rs` (for the
-bridge) and the same-named free function in `hkask-templates/src/executor.rs`
-(for `execute_flowdef`'s sub-cascade result). Reuse them — do not re-implement
-with `.last()`. This bug was found independently in both call sites in the
-same audit.
+`ManifestExecutor::execute_manifest` returns `Result<CascadeOutcome>` (K5). The
+`CascadeOutcome` carries `last_result_step: Option<StepId>` — the highest `StepId`
+that stored a result during the cascade, tracked by the machine as it runs.
+`extract_final_step_result(&CascadeOutcome)` reads that field directly (O(1),
+deterministic) — no HashMap iteration, no ordinal parsing, no `.last()` call.
+
+**Historical context (pre-K5):** `execute_manifest` returned
+`HashMap<String, Value>` with step results under `step_{ordinal}_result` keys.
+HashMap iteration order is randomized (`RandomState`), so `values().last()`
+picked an arbitrary step, not the final one. The ordinal-keyed extraction
+(parsed `step_N_result` keys, picked the highest ordinal) was the fix. That
+fix is now retired — the machine tracks `last_result_step` by construction.
+
+The canonical extractors are `extract_final_step_result` in
+`hkask-templates/src/executor.rs` (for the typed `CascadeOutcome`) and the
+bridge-local copy in `kask_bridge/src/skill_executor.rs` (for the bridge's
+`CascadeOutcome` → `Value` handoff). Reuse them — do not re-implement with
+`.last()` or a manual ordinal scan. The `parallel` action (K2) also uses
+`extract_final_step_result` to extract each branch's final result before
+joining.
 
 ## Skill cascade context must carry the user's task
 

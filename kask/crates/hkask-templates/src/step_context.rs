@@ -40,6 +40,14 @@ use std::sync::Arc;
 /// Read-only string-key lookup over a context map.
 pub trait ContextLookup {
     fn get(&self, key: &str) -> Option<&Value>;
+
+    /// Resolve a string key to its taint label. Default: no taint metadata
+    /// available (flat maps don't carry taint); `StepContext` overrides to
+    /// read `StepResult.taint` for `step_N_result` / `prev_step_N_result` keys.
+    /// Used by `check_untrusted_input` for the FIDES Source→Sink guard.
+    fn taint_of_key(&self, _key: &str) -> ToolTaint {
+        ToolTaint::Pure
+    }
 }
 
 /// Mutable string-key map: `ContextLookup` plus `insert`. Writers (convergence
@@ -370,6 +378,32 @@ impl ContextLookup for StepContext {
     fn get(&self, key: &str) -> Option<&Value> {
         self.lookup(key)
     }
+
+    fn taint_of_key(&self, key: &str) -> ToolTaint {
+        // Resolve `step_N_result` → ordinal → StepId → StepResult.taint.
+        if let Some(rest) = key.strip_prefix("step_")
+            && let Some(rest) = rest.strip_suffix("_result")
+            && let Ok(ordinal) = rest.parse::<u32>()
+        {
+            if let Some(step_id) = self.by_ordinal.get(&ordinal)
+                && let Some(result) = self.results.get(step_id)
+            {
+                return result.taint;
+            }
+        }
+        // Resolve `prev_step_N_result` → prev ordinal → StepId → prev taint.
+        if let Some(rest) = key.strip_prefix("prev_step_")
+            && let Some(rest) = rest.strip_suffix("_result")
+            && let Ok(ordinal) = rest.parse::<u32>()
+        {
+            if let Some(step_id) = self.prev_by_ordinal.get(&ordinal)
+                && let Some(result) = self.prev_results.get(step_id)
+            {
+                return result.taint;
+            }
+        }
+        ToolTaint::Pure
+    }
 }
 
 impl ContextMap for StepContext {
@@ -514,5 +548,140 @@ mod tests {
         assert_eq!(obj["step_1_result"], serde_json::json!(6));
         assert_eq!(obj["target"], Value::String("x".into()));
         assert_eq!(obj["convergence_signal"], serde_json::json!(0.1));
+    }
+
+    // ── Follow-up #2: taint_of_key (FIDES Source→Sink guard) ──────────────
+
+    #[test]
+    fn taint_of_key_resolves_step_result_taint() {
+        let mut ctx = StepContext::new(HashMap::new());
+        ctx.store_result(0, 1, Value::Null, ToolTaint::Pure);
+        ctx.store_result(1, 2, Value::Null, ToolTaint::Source);
+
+        // `step_1_result` is Pure, `step_2_result` is Source.
+        assert_eq!(
+            ContextLookup::taint_of_key(&ctx, "step_1_result"),
+            ToolTaint::Pure
+        );
+        assert_eq!(
+            ContextLookup::taint_of_key(&ctx, "step_2_result"),
+            ToolTaint::Source
+        );
+        // Unknown keys default to Pure (no false-positive taint).
+        assert_eq!(
+            ContextLookup::taint_of_key(&ctx, "step_99_result"),
+            ToolTaint::Pure
+        );
+        // Non-result keys default to Pure.
+        assert_eq!(ContextLookup::taint_of_key(&ctx, "target"), ToolTaint::Pure);
+    }
+
+    #[test]
+    fn taint_of_key_resolves_prev_step_result_taint() {
+        let mut ctx = StepContext::new(HashMap::new());
+        ctx.store_result(0, 1, Value::Null, ToolTaint::Source);
+        ctx.snapshot_prev();
+        // Overwrite step 1 with Pure in the current iteration.
+        ctx.store_result(0, 1, Value::Null, ToolTaint::Pure);
+
+        // `step_1_result` is Pure (current), `prev_step_1_result` is Source.
+        assert_eq!(
+            ContextLookup::taint_of_key(&ctx, "step_1_result"),
+            ToolTaint::Pure
+        );
+        assert_eq!(
+            ContextLookup::taint_of_key(&ctx, "prev_step_1_result"),
+            ToolTaint::Source
+        );
+    }
+
+    // ── Follow-up #1: merge_back_sub_cascade (FlowDef integration) ────────
+
+    #[test]
+    fn merge_back_sub_cascade_keeps_only_parent_keys() {
+        // Parent has results at StepIds 0, 1, 2 (ordinals 1, 2, 3).
+        let mut parent = StepContext::new(HashMap::new());
+        parent.store_result(0, 1, Value::from(10), ToolTaint::Pure);
+        parent.store_result(1, 2, Value::from(20), ToolTaint::Pure);
+        parent.store_result(2, 3, Value::from(30), ToolTaint::Pure);
+        parent.insert_protocol("target".into(), Value::String("x".into()));
+
+        // Sub-cascade is a clone of parent, then step 1 is updated and a
+        // sub-only step 3 (StepId 3) is added.
+        let mut sub = parent.clone();
+        sub.store_result(1, 2, Value::from(99), ToolTaint::Pure); // update
+        sub.store_result(3, 4, Value::from(40), ToolTaint::Pure); // sub-only
+        sub.insert_protocol("sub_only".into(), Value::from(7)); // sub-only
+
+        let parent_step_ids: HashSet<StepId> = parent.results_iter().map(|(id, _)| *id).collect();
+        let parent_protocol_keys: Vec<String> = parent.protocol_map().keys().cloned().collect();
+        let parent_named_keys: Vec<String> = Vec::new();
+
+        parent.merge_back_sub_cascade(
+            &sub,
+            &parent_step_ids,
+            &parent_protocol_keys,
+            &parent_named_keys,
+        );
+
+        // Step 1 updated from sub.
+        assert_eq!(parent.result(1).unwrap().value.as_ref(), &Value::from(99));
+        // Sub-only StepId 3 is NOT merged.
+        assert!(parent.result(3).is_none());
+        // Parent's original step 0 and 2 are preserved.
+        assert_eq!(parent.result(0).unwrap().value.as_ref(), &Value::from(10));
+        assert_eq!(parent.result(2).unwrap().value.as_ref(), &Value::from(30));
+        // Sub-only protocol key is NOT merged.
+        assert!(parent.protocol("sub_only").is_none());
+        // Parent protocol key is preserved.
+        assert_eq!(
+            parent.protocol("target").unwrap(),
+            &Value::String("x".into())
+        );
+    }
+
+    #[test]
+    fn merge_back_sub_cascade_step_id_collision_overwrites_parent() {
+        // Documents the known StepId collision limitation: when the parent
+        // has gapped ordinals and the sub-cascade has different ordinals,
+        // StepIds (vector indices) can collide across manifests even though
+        // the ordinals differ. The sub's result overwrites the parent's at
+        // the same StepId.
+        //
+        // Parent: ordinals [1, 3, 5] → StepIds [0, 1, 2].
+        let mut parent = StepContext::new(HashMap::new());
+        parent.store_result(0, 1, Value::from("parent-ord-1"), ToolTaint::Pure);
+        parent.store_result(1, 3, Value::from("parent-ord-3"), ToolTaint::Pure);
+        parent.store_result(2, 5, Value::from("parent-ord-5"), ToolTaint::Pure);
+
+        // Sub-cascade starts as a clone of parent, then overwrites StepId 1
+        // (which was ordinal 3 in the parent) with its own ordinal 2 result.
+        let mut sub = parent.clone();
+        sub.store_result(1, 2, Value::from("sub-ord-2"), ToolTaint::Source);
+
+        let parent_step_ids: HashSet<StepId> = parent.results_iter().map(|(id, _)| *id).collect();
+
+        parent.merge_back_sub_cascade(&sub, &parent_step_ids, &[], &[]);
+
+        // StepId 1 is now the sub's ordinal-2 result — the parent's
+        // ordinal-3 result is lost. This is the known limitation from
+        // bug-hunt finding #1: StepId is a vector index, not a globally
+        // unique identifier, so two manifests with different ordinal sets
+        // can have StepId collisions.
+        assert_eq!(
+            parent.result(1).unwrap().value.as_ref(),
+            &Value::from("sub-ord-2")
+        );
+        assert_eq!(parent.result(1).unwrap().ordinal, 2);
+        assert_eq!(parent.result(1).unwrap().taint, ToolTaint::Source);
+        // StepIds 0 and 2 are unaffected (sub didn't touch them).
+        assert_eq!(
+            parent.result(0).unwrap().value.as_ref(),
+            &Value::from("parent-ord-1")
+        );
+        assert_eq!(
+            parent.result(2).unwrap().value.as_ref(),
+            &Value::from("parent-ord-5")
+        );
     }
 }

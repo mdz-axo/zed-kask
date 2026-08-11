@@ -159,11 +159,17 @@ pub struct BundleManifest {
     /// PDCA iteration. Default 32, max 128 (`MAX_CONCURRENCY`); set to 1 for
     /// strictly serial execution.
     ///
-    /// **Not yet enforced.** The kernel's `run_pass` is strictly sequential
-    /// today; this field is parsed and round-tripped but has no scheduling
-    /// effect. The `parallel` step action (slice K2) will wire it. Until then,
-    /// `concurrency: 1` and `concurrency: 32` produce identical output — pinned
-    /// by `executor_baseline_contract::concurrency_field_has_no_effect_today`.
+    /// **Not yet enforced at the manifest level.** The kernel's `run_pass` is
+    /// strictly sequential; this field is parsed and round-tripped but has no
+    /// scheduling effect on the top-level iteration loop. `concurrency: 1` and
+    /// `concurrency: 32` produce identical output — pinned by
+    /// `executor_baseline_contract::concurrency_field_has_no_effect_today`.
+    ///
+    /// Concurrency is wired at the `parallel` step action level (slice K2) via
+    /// `input_mapping.concurrency_cap`, which bounds in-flight branch futures
+    /// (`futures::stream::buffer_unordered`). That is a per-step cap, not a
+    /// manifest-wide scheduler — the manifest-level `concurrency` field remains
+    /// advisory.
     #[serde(default = "default_concurrency")]
     pub concurrency: u32,
 }

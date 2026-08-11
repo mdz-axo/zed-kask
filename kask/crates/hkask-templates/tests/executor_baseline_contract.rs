@@ -188,11 +188,14 @@ async fn concurrency_field_has_no_effect_today() {
     // but the kernel's run_pass is a strict sequential loop. Therefore the two
     // manifests below must produce *identical* output maps today.
     //
-    // UPDATE IN K2: when execute_parallel / parallel dispatch is wired, this
-    // test must be revisited. The regression it guards is silently *dropping*
-    // the field's effect, not adding it. If K2 makes concurrency observably
-    // schedule steps, replace the equality assertion with one that asserts the
-    // SCHEDULED order is deterministic (by StepId, not completion order).
+    // K2 LANDED: the `parallel` step action now wires concurrency at the
+    // per-step level via `input_mapping.concurrency_cap` (bounded
+    // `buffer_unordered`). The manifest-level `concurrency` field remains
+    // unwired (advisory) — it does not drive the top-level sequential
+    // `run_pass`. This test still pins that the manifest-level field has no
+    // effect on the bench manifest (which uses compute/choice/loop/abort, no
+    // `parallel` step). The regression it guards is silently *dropping* the
+    // field's semantics without updating this test.
     let manifest_p = load(BENCH_MANIFEST_YAML_PARALLEL);
     let manifest_s = load(BENCH_MANIFEST_YAML_SERIAL);
     let executor = build_executor();
@@ -281,6 +284,130 @@ fn over_cap_graph_builds_without_panic() {
         over,
         "over-cap graph should build with MAX_STEPS+1 nodes (advisory, non-breaking)"
     );
+}
+
+// ── K2: parallel action ──────────────────────────────────────────────────
+
+/// Sub-manifest for `parallel` branch A: single compute step, `(+ 1 10)` → 11.
+const PARALLEL_BRANCH_A_YAML: &str = "\
+manifest:
+  id: parallel-branch-a
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: compute-a
+    input_mapping:
+      form: \"(+ 1 10)\"
+";
+
+/// Sub-manifest for `parallel` branch B: single compute step, `(* 2 20)` → 40.
+const PARALLEL_BRANCH_B_YAML: &str = "\
+manifest:
+  id: parallel-branch-b
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: compute
+    compute_ref: lisp.eval
+    description: compute-b
+    input_mapping:
+      form: \"(* 2 20)\"
+";
+
+/// Parent manifest: a single `parallel` step with two branches.
+const PARALLEL_PARENT_YAML: &str = "\
+manifest:
+  id: parallel-test
+  category: skill
+convergence:
+  max_iterations: 1
+  threshold: 0.5
+  convergence_field: convergence_signal
+  on_not_reached: abort
+gas:
+  cap: 10000
+rjoule:
+  cap: 10000
+steps:
+  - ordinal: 1
+    action: parallel
+    description: run two branches concurrently
+    input_mapping:
+      branches:
+        - template_ref: \"parallel-branch-a\"
+        - template_ref: \"parallel-branch-b\"
+      concurrency_cap: 2
+      join: list
+";
+
+#[tokio::test]
+async fn parallel_step_joins_branch_results_in_order() {
+    // K2 enforcement point: the `parallel` action dispatches N sub-cascades
+    // with bounded concurrency (`buffer_unordered`), then joins results in
+    // `branch_id` order (deterministic, not completion order). This test pins:
+    //
+    // 1. The action compiles, dispatches, and returns a `Value::Array`.
+    // 2. Branch results are in `branch_id` order (0 before 1), not
+    //    completion order — the sort by `branch_id` is the deterministic join.
+    // 3. Each branch result is the sub-cascade's `extract_final_step_result`
+    //    (the compute step's value), not the whole sub-cascade context.
+    // 4. Gas is shared (both branches charge the parent's `Arc<AtomicU64>`);
+    //    rJoule is settled after the wave (parent charges the sum).
+
+    // Write sub-manifests to a temp dir so `load_from_disk` resolves them.
+    let tmp = std::env::temp_dir().join("hkask-parallel-test-");
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).expect("temp dir");
+    std::fs::write(tmp.join("parallel-branch-a.yaml"), PARALLEL_BRANCH_A_YAML)
+        .expect("write branch-a");
+    std::fs::write(tmp.join("parallel-branch-b.yaml"), PARALLEL_BRANCH_B_YAML)
+        .expect("write branch-b");
+
+    let manifest = load(PARALLEL_PARENT_YAML);
+    let executor = ManifestExecutor::new(
+        Arc::new(NoopInferencePort),
+        Arc::new(NoopToolPort::new()),
+        LLMParameters::default(),
+    )
+    .with_template_base_path(tmp.clone());
+
+    let result = executor
+        .execute_manifest(&manifest, HashMap::new())
+        .await
+        .expect("parallel manifest must execute");
+
+    let final_value = extract_final_step_result(&result);
+
+    // The joined result is a 2-element array in branch_id order.
+    let expected = Value::Array(vec![Value::from(11), Value::from(40)]);
+    assert_eq!(
+        final_value, expected,
+        "parallel step must join branch results in branch_id order, \
+         not completion order"
+    );
+
+    // Cleanup.
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 /// Opt-in tail-latency harness. Not run by default (it is slow and measures

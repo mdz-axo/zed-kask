@@ -570,7 +570,12 @@ impl StepMachine {
                  list lives under input_mapping.branches.",
             ))
         })?;
-        let branches = mapping
+        // Clone the branches array into an owned vec so the branch futures
+        // don't borrow from the local `mapping`. Without this, the
+        // `buffer_unordered` stream holds `&mapping`, creating a
+        // self-referential future that is not `'static` — `tokio::spawn`
+        // (used by the bridge) rejects it with "Send is not general enough".
+        let branches: Vec<Value> = mapping
             .get("branches")
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
@@ -578,7 +583,8 @@ impl StepMachine {
                     "Step {step_ordinal} (action 'parallel') has no `branches` array in \
                      input_mapping.",
                 ))
-            })?;
+            })?
+            .clone();
         let concurrency_cap = mapping
             .get("concurrency_cap")
             .and_then(|v| v.as_u64())
@@ -588,6 +594,8 @@ impl StepMachine {
             .get("join")
             .and_then(|v| v.as_str())
             .unwrap_or("list");
+        // Drop `mapping` — everything below is owned, no borrows from locals.
+        drop(mapping);
 
         // Shared gas (enforced during the wave); per-branch rJoule (settled after).
         let shared_gas = self.budget.gas_atomic();
@@ -595,7 +603,7 @@ impl StepMachine {
         let rjoule_remaining = self.budget.remaining_rjoule();
         let context_template = self.context.clone();
 
-        let branch_futs = branches.iter().enumerate().map(|(branch_id, spec)| {
+        let branch_futs = branches.into_iter().enumerate().map(|(branch_id, spec)| {
             let shared_gas = Arc::clone(&shared_gas);
             // `run` now owns the `Infra` (so its future is `Send + 'static` and
             // tokio-spawnable); clone `infra` + `context_template` per branch so
@@ -675,8 +683,7 @@ impl StepMachine {
             .collect::<Vec<Result<(usize, CascadeOutcome)>>>()
             .await
             .into_iter()
-            .collect::<Result<Vec<_>>>()
-            .map_err(|e| e)?;
+            .collect::<Result<Vec<_>>>()?;
         let mut ordered = outcomes;
         ordered.sort_by_key(|(id, _)| *id);
 
@@ -837,20 +844,15 @@ async fn call_inference_stream(
 }
 
 /// Check whether a JSON value references any tainted (Source) context entries.
-/// Replaces the old `check_untrusted_input` — but reads from the legacy map
-/// since taint markers are stored there.
+/// Walks the value for `$ref` and `{{ }}` references, then resolves each
+/// referenced key's taint label via `ContextLookup::taint_of_key` — the typed
+/// `StepContext` reads `StepResult.taint` for `step_N_result` keys. Returns
+/// true iff any referenced key is `ToolTaint::Source`.
 fn check_untrusted_input<C: ContextLookup>(value: &Value, context: &C) -> bool {
-    // Walk the value for $ref and {{ }} references, check if any referenced
-    // key has a taint marker in the legacy map.
     let mut keys = Vec::new();
     collect_referenced_keys(value, &mut keys);
-    keys.iter().any(|key| {
-        let marker = format!("__taint__{key}");
-        context
-            .get(&marker)
-            .and_then(|v| v.as_u64())
-            .is_some_and(|t| t == 1) // 1 = Source
-    })
+    keys.iter()
+        .any(|key| context.taint_of_key(key) == ToolTaint::Source)
 }
 
 /// Collect all context keys referenced in a mapping value.
