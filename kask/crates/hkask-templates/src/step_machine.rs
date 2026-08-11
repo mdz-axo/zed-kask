@@ -252,9 +252,10 @@ impl StepMachine {
     async fn run_pass(&mut self, infra: &Infra) -> Result<PassResult> {
         loop {
             // Clone the node to avoid holding an immutable borrow of `self.graph`
-            // across the mutable `dispatch_action` call. The node is small
-            // (a few Strings + Option<Value>); the clone is cheaper than the
-            // alternative of restructuring dispatch to take borrowed fields.
+            // across the mutable `dispatch_action` call. After K4 the heavy
+            // fields are `Arc`-backed, so this clone is a shallow refcount bump,
+            // not a deep String/Value copy — the original justification (restructure
+            // dispatch to take borrowed fields) is no longer worth the surface.
             let node = self.graph.step(self.pc).clone();
 
             // Evaluate step condition — skip if false.
@@ -298,7 +299,7 @@ impl StepMachine {
             self.apply_effect(effect, &node)?;
 
             // Emit feedback span for select steps.
-            if node.action == "select"
+            if node.action.as_ref() == "select"
                 && let Some(ref template_ref) = node.template_ref
                 && let Some(phase) = crate::executor::extract_feedback_phase(template_ref)
             {
@@ -336,7 +337,7 @@ impl StepMachine {
         node: &crate::step_graph::StepNode,
         infra: &Infra,
     ) -> Result<crate::step_actions::Effect> {
-        match node.action.as_str() {
+        match node.action.as_ref() {
             "abort" => Ok(crate::step_actions::Effect::Exit(ExitKind::Converged)),
             "escalate" => {
                 let reason = node.description.clone();

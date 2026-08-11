@@ -166,7 +166,7 @@ impl StepMachine {
             .unwrap_or(0);
 
         // Bind loop input_mapping (except loop_target) into context.
-        if let Some(ref mapping) = node.input_mapping
+        if let Some(mapping) = node.input_mapping.as_deref()
             && let Value::Object(map) = mapping
         {
             for (key, value) in map {
@@ -215,7 +215,7 @@ impl StepMachine {
 
         // Resolve output schema for structured tool calling.
         let output_schema = crate::output_schema::resolve_output_schema(
-            &step_node_to_bundle_step(node),
+            node.output_schema.as_deref(),
             &raw_template_content,
         );
         let structured_tool = output_schema
@@ -314,7 +314,7 @@ impl StepMachine {
 
         let input: Value = node
             .input_mapping
-            .as_ref()
+            .as_deref()
             .map(|mapping| {
                 if let Value::Object(map) = mapping {
                     let mut out = serde_json::Map::new();
@@ -540,7 +540,7 @@ impl StepMachine {
                 parent_context.store_result(
                     *step_id,
                     result.ordinal,
-                    result.value.clone(),
+                    result.value.as_ref().clone(),
                     result.taint,
                 );
             }
@@ -846,31 +846,4 @@ async fn invoke_tool(
         })?;
 
     Ok((result, tool_info.taint))
-}
-
-/// Convert a `StepNode` back to a `BundleManifestStep` for the output-schema
-/// resolver (which still expects the old type). This is a temporary adapter —
-/// once `output_schema` is migrated to take a `StepNode`, this goes away.
-fn step_node_to_bundle_step(
-    node: &crate::step_graph::StepNode,
-) -> crate::bundle::manifest::BundleManifestStep {
-    use crate::bundle::cascade::CascadePhase;
-    crate::bundle::manifest::BundleManifestStep {
-        ordinal: node.ordinal,
-        action: node.action.clone(),
-        description: node.description.clone(),
-        renderer: node.renderer.clone(),
-        template_ref: node.template_ref.clone(),
-        mcp: node.mcp.clone(),
-        compute_ref: node.compute_ref.clone(),
-        gas_cap: node.gas_cap,
-        timeout_seconds: node.timeout_seconds,
-        input_mapping: node.input_mapping.clone(),
-        output_schema: node.output_schema.clone(),
-        phase: CascadePhase::default(), // simplified — phase is not load-bearing for schema resolution
-        condition: node.condition.clone(),
-        branching: node.branching.clone(),
-        branching_field: node.branching_field.clone(),
-        profile: node.profile.clone(),
-    }
 }

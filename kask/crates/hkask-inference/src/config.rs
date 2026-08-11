@@ -84,28 +84,30 @@ impl ProviderId {
         None
     }
 
-    /// Returns true if `model` has a provider-prefix shape — i.e. it
-    /// *looks* like a provider-prefixed name even when the prefix is not
-    /// recognized.
+    /// Classify a provider prefix segment (the text before the first `/` in a
+    /// model name) to a `ProviderId`, case-insensitively, recognizing short
+    /// aliases. Unrecognized segments fall back to `OpenRouter`.
     ///
-    /// Callers use this to reject unrecognized provider prefixes with a clear
-    /// error rather than silently routing them to the default provider as a
-    /// garbage model name.
+    /// This is the lenient counterpart to [`ProviderId::parse_from_model`]:
+    /// `parse_from_model` does strict case-sensitive full-prefix stripping and
+    /// returns the rest of the model name; `from_prefix_segment` classifies an
+    /// already-split segment and accepts aliases (`"di"`, `"or"`, …).
+    /// Centralizing the alias table here keeps provider knowledge in one place,
+    /// so adding or removing a variant updates one match instead of several.
     ///
-    /// A model name has the prefix shape if it contains a `/` and the segment
-    /// before the first `/` is non-empty. This catches both full-name prefixes
-    /// ("DeepInfra/...", "fal.ai/...") and any future prefix format.
-    ///
-    /// expect: "The system rejects unrecognized provider prefixes explicitly"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — fail fast on unknown prefix
-    /// pre:  model may be any string
-    /// post: returns true iff model contains a non-empty segment before the first `/`
-    /// post: recognized prefixes return false here (handled by `parse_from_model`)
+    /// expect: "The system classifies a provider prefix segment to a ProviderId"
+    /// \[P9\] Motivating: Homeostatic Self-Regulation — provider classification from model-name prefix
+    /// pre:  segment may be any string (caller splits on `/`)
+    /// post: returns the matching ProviderId, or OpenRouter for unrecognized segments
     #[must_use]
-    pub fn looks_like_prefix(model: &str) -> bool {
-        match model.find('/') {
-            Some(slash_idx) if slash_idx > 0 => !model[slash_idx + 1..].is_empty(),
-            _ => false,
+    pub fn from_prefix_segment(segment: &str) -> Self {
+        match segment.to_lowercase().as_str() {
+            "deepinfra" | "di" => ProviderId::DeepInfra,
+            "runpod" | "rp" => ProviderId::Runpod,
+            "openrouter" | "or" => ProviderId::OpenRouter,
+            "kilocode" | "kc" => ProviderId::KiloCode,
+            "ollama" | "om" => ProviderId::Ollama,
+            _ => ProviderId::OpenRouter,
         }
     }
 
@@ -528,27 +530,46 @@ mod tests {
         assert_eq!(resolve_api_key("HKASK_TEST_KEY_NO_FALLBACK"), "");
     }
 
-    // ── looks_like_prefix ──────────────────────────────────────────────────
+    // ── from_prefix_segment ────────────────────────────────────────────────
 
-    /// expect: "Prefix-shape detection distinguishes unrecognized XX/ prefixes from unprefixed names" [P9]
+    /// expect: "Provider prefix segment classification matches aliases case-insensitively" [P9]
     #[test]
-    fn looks_like_prefix_detects_shape() {
-        // Any non-empty segment before a `/` = prefix-shaped.
-        assert!(ProviderId::looks_like_prefix("BT/foo"));
-        assert!(ProviderId::looks_like_prefix("XX/model"));
-        assert!(ProviderId::looks_like_prefix("DeepInfra/foo"));
-        assert!(ProviderId::looks_like_prefix("fal.ai/bar"));
-        assert!(ProviderId::looks_like_prefix("SomeUnknown/model"));
-        // No slash, too short, or empty prefix segment = not prefix-shaped.
-        // No slash, too short, or empty prefix segment = not prefix-shaped.
-        assert!(!ProviderId::looks_like_prefix("qwen3:8b"));
-        assert!(!ProviderId::looks_like_prefix("deepseek-v4-pro"));
-        assert!(!ProviderId::looks_like_prefix("DI"));
-        assert!(!ProviderId::looks_like_prefix("DeepInfra/"));
-        assert!(!ProviderId::looks_like_prefix("/model"));
-        // `ab/c` has the prefix shape (non-empty segment before `/`) —
-        // `looks_like_prefix` only checks shape, not whether the prefix is
-        // recognized. `parse_from_model` handles recognition.
-        assert!(ProviderId::looks_like_prefix("ab/c"));
+    fn from_prefix_segment_classifies_aliases_case_insensitively() {
+        // Full names, case-insensitive.
+        assert_eq!(
+            ProviderId::from_prefix_segment("DeepInfra"),
+            ProviderId::DeepInfra
+        );
+        assert_eq!(
+            ProviderId::from_prefix_segment("openrouter"),
+            ProviderId::OpenRouter
+        );
+        assert_eq!(
+            ProviderId::from_prefix_segment("RUNPOD"),
+            ProviderId::Runpod
+        );
+        assert_eq!(
+            ProviderId::from_prefix_segment("KiloCode"),
+            ProviderId::KiloCode
+        );
+        assert_eq!(
+            ProviderId::from_prefix_segment("ollama"),
+            ProviderId::Ollama
+        );
+        // Short aliases.
+        assert_eq!(ProviderId::from_prefix_segment("di"), ProviderId::DeepInfra);
+        assert_eq!(
+            ProviderId::from_prefix_segment("or"),
+            ProviderId::OpenRouter
+        );
+        assert_eq!(ProviderId::from_prefix_segment("rp"), ProviderId::Runpod);
+        assert_eq!(ProviderId::from_prefix_segment("kc"), ProviderId::KiloCode);
+        assert_eq!(ProviderId::from_prefix_segment("om"), ProviderId::Ollama);
+        // Unrecognized → OpenRouter fallback.
+        assert_eq!(
+            ProviderId::from_prefix_segment("unknown"),
+            ProviderId::OpenRouter
+        );
+        assert_eq!(ProviderId::from_prefix_segment(""), ProviderId::OpenRouter);
     }
 }

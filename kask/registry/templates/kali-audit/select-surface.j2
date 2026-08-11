@@ -96,7 +96,7 @@ Respond with a JSON object:
       "name": "Information flow control (taint labels)",
       "source": "Microsoft Research arXiv:2505.23643 (FIDES)",
       "check": "Are taint labels (Source/Sink/Pure/Endorser) propagated on MCP tool outputs?",
-      "present_if": "propagate_taint_for_binding call present in the input_mapping path"
+      "present_if": "StepResult.taint field populated on store (step_context.rs) AND check_untrusted_input gate wired to read it (step_actions.rs); the legacy propagate_taint_for_binding was removed — do not grep for it"
     },
     {
       "ordinal": 3,

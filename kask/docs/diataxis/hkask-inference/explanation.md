@@ -26,7 +26,7 @@ implementations selected at startup by `resolve_inference_port()`
   clear error for chat/vision/embed.
 
 Provider selection is prefix-based: a caller chooses the provider by
-prefixing the model name (`DeepInfra/...`, `fal.ai/...`, `OpenRouter/...`).
+prefixing the model name (`DeepInfra/...`, `AtlasCloud/...`, `OpenRouter/...`).
 `ProviderId::parse_from_model` parses the prefix; an unprefixed name uses
 `default_provider`. This keeps the provider choice explicit and auditable
 — a span that records the model name also records the provider.
@@ -39,9 +39,8 @@ immediately.
 
 | Symbol | Location |
 |--------|----------|
-| `ProviderId` enum | `kask/crates/hkask-inference/src/config.rs:38` |
-| `parse_from_model` | `kask/crates/hkask-inference/src/config.rs:77` |
-| `looks_like_prefix` | `kask/crates/hkask-inference/src/config.rs:118` |
+| `ProviderId` enum | `kask/crates/hkask-inference/src/config.rs:36` |
+| `from_prefix_segment` | `kask/crates/hkask-inference/src/config.rs:103` |
 | `MediaRouter` struct | `kask/crates/hkask-inference/src/media_router.rs:47` |
 | `InferenceIpcClient` struct | `kask/crates/hkask-inference/src/inference_ipc_client.rs` |
 | `resolve_inference_port` | `kask/crates/hkask-inference/src/hkask_inference.rs` |
@@ -52,33 +51,31 @@ immediately.
 stateDiagram-v2
     [*] --> ParsePrefix: receive model name
     ParsePrefix --> Route: prefix matches PREFIXES
-    ParsePrefix --> Reject: looks_like_prefix but unknown
-    ParsePrefix --> Default: no prefix shape
+    ParsePrefix --> Default: no recognized prefix
     Default --> Route: use default_provider
-    Reject --> [*]: return error
     Route --> [*]: InferenceIpcClient (chat/vision/embed) or MediaRouter (media)
 ```
 
 <!-- DIAGRAM_ALIGNMENT
 id: DIAG-DIA-INF-004
-verified_date: 2026-08-03
-verified_against: kask/crates/hkask-inference/src/config.rs:38,77,118; kask/crates/hkask-inference/src/media_router.rs:47; kask/crates/hkask-inference/src/inference_ipc_client.rs
-status: VERIFIED
+verified_date: 2026-08-11
+verified_against: kask/crates/hkask-inference/src/config.rs:36,103; kask/crates/hkask-inference/src/media_router.rs:47; kask/crates/hkask-inference/src/inference_ipc_client.rs
+status: STALE
+note: The ParsePrefix→Route prefix-routing transition describes the removed in-process InferenceRouter (parse_from_model has no production caller); rewrite pending the parse_from_model dead-surface decision. The Reject state was removed with looks_like_prefix.
 -->
 
 ## Why prefix-based selection
 
-Prefix-based selection (`DeepInfra/model`, `fal.ai/model`) makes the
+Prefix-based selection (`DeepInfra/model`, `OpenRouter/model`) makes the
 provider choice visible in the model name string. This is auditable: a log
 entry or span that records the model name also records the provider. A
 configuration-based approach (where the provider is selected by a separate
 setting) would hide the provider from the model name, making audit harder.
 
-The router rejects unrecognized prefixes explicitly via
-`looks_like_prefix` (`config.rs:118`) rather than silently routing them to
-the default provider as a garbage model name. This is a fail-fast
-property: a typo like `Deepinfra/model` (wrong casing) produces an error,
-not a silent dispatch to the default.
+Unrecognized prefixes are not rejected — the model name is passed through to
+zed's `LanguageModelRegistry` (via the IPC bridge), which does the actual
+provider routing. `from_prefix_segment` classifies a model name's provider
+prefix segment for model-listing labels; it does not gate routing.
 
 ## See also
 

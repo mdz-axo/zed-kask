@@ -29,7 +29,7 @@ pub type MediaFuture<'a> =
 /// Parameters for [`InferencePort::media_generate`].
 ///
 /// Carries the media-generation fields (image/video/speech/transcription)
-/// that the IPC bridge forwards to fal.ai/DeepInfra. Grouped into a struct
+/// that the IPC bridge forwards to AtlasCloud/DeepInfra. Grouped into a struct
 /// so the trait method signature doesn't grow 12+ optional parameters.
 ///
 /// The `op` string (e.g. "generate_image", "transcribe") is passed as the
@@ -380,7 +380,7 @@ pub trait InferencePort: Send + Sync {
         })
     }
 
-    /// Generate media (image, video, speech, transcription) via fal.ai/DeepInfra.
+    /// Generate media (image, video, speech, transcription) via AtlasCloud/DeepInfra.
     ///
     /// `op` selects the backend method (see `MediaGenerateParams::op`). The
     /// default returns an error — `InferenceIpcClient` overrides this to route

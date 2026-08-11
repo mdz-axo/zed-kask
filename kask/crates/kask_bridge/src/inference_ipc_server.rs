@@ -275,7 +275,7 @@ impl InferenceIpcServer {
     /// `LanguageModelEmbeddingPort`). When `None`, `embed` requests return an
     /// error.
     /// `media_router` is the hKask `MediaRouter` used for media generation
-    /// (image, video, speech, transcription via fal.ai/DeepInfra). When `None`,.
+    /// (image, video, speech, transcription via AtlasCloud/DeepInfra). When `None`,.
     /// `media_generate` requests return an error.
     /// `tool_port` is the governed `McpRuntime` (as `ToolPort`) used for
     /// `tool_invoke` requests from MCP servers that run agent loops (e.g.
@@ -648,7 +648,7 @@ async fn dispatch(
     }
 
     // Media generation requests are dispatched to the hKask `MediaRouter`,
-    // which holds the fal.ai/DeepInfra backends. Unlike `ListModels`, the
+    // which holds the AtlasCloud/DeepInfra backends. Unlike `ListModels`, the
     // `MediaRouter` is `Send + Sync` and needs no GPUI access, so it can
     // be called directly from the tokio task.
     if matches!(request.method, InferenceMethod::MediaGenerate) {

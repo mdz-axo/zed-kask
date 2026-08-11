@@ -49,12 +49,11 @@ non-empty API keys or base URLs. Backends that fail to construct emit a
 ## Steps 3-4: Call generate and trace the dispatch
 
 Call `media_generate` with an op name and params. The `MediaRouter`
-dispatches to the `FalBackend` or `DeepInfraBackend` based on the op.
+dispatches to the `DeepInfraBackend` or `AtlasCloudBackend` based on the op.
 Chat inference is not handled here — it routes through the IPC bridge
-(`InferenceIpcClient`) to zed's `LanguageModelRegistry`. Model-name
-prefix parsing (`ProviderId::parse_from_model`, `config.rs:77`) and the
-fail-fast `looks_like_prefix` check (`config.rs:118`) are still used by
-the IPC client for routing chat requests.
+(`InferenceIpcClient`) to zed's `LanguageModelRegistry`, which does the
+provider routing. `ProviderId::from_prefix_segment` (`config.rs:103`)
+classifies a model name's provider prefix segment for model-listing labels.
 
 ## See also
 

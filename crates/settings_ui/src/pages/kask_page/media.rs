@@ -20,7 +20,7 @@ pub(crate) fn render_media_page(
     let image_gen_model = media.image_gen_model;
 
     // Placeholders mirror hkask_inference::model_constants::DEFAULT_*_MODEL
-    // (DeepInfra defaults; fal.ai is deprecated for TTS/STT/image-gen).
+    // (DeepInfra defaults).
     let tts_input = kask_string_input(
         "kask-media-tts-model",
         "TTS Model",

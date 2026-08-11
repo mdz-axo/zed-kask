@@ -64,14 +64,7 @@ impl From<hkask_types::ModelEntry> for ModelInfo {
             .split('/')
             .next()
             .unwrap_or("openrouter");
-        let provider = match provider_str.to_lowercase().as_str() {
-            "deepinfra" | "di" => ProviderId::DeepInfra,
-            "runpod" | "rp" => ProviderId::Runpod,
-            "openrouter" | "or" => ProviderId::OpenRouter,
-            "kilocode" | "kc" => ProviderId::KiloCode,
-            "ollama" | "om" => ProviderId::Ollama,
-            _ => ProviderId::OpenRouter,
-        };
+        let provider = ProviderId::from_prefix_segment(provider_str);
         Self {
             name: entry.prefixed_name,
             provider,

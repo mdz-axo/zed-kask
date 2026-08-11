@@ -605,7 +605,7 @@ impl LanguageModelEmbeddingPort {
 
 /// Strip the provider prefix from a model string, case-insensitive.
 ///
-/// Accepts long-form prefixes (`DeepInfra/`, `OpenRouter/`, `fal.ai/`,
+/// Accepts long-form prefixes (`DeepInfra/`, `OpenRouter/`,
 /// `RunPod/`, `KiloCode/`, `ollama/`).
 /// Returns the bare model id. If no prefix is recognized, returns the
 /// string unchanged (the API will reject it, which surfaces a clear error).
@@ -614,7 +614,6 @@ fn strip_provider_prefix(model: &str) -> String {
     // overlapping prefixes; none overlap here.
     const LONG_FORM: &[&str] = &[
         "DeepInfra/",
-        "fal.ai/",
         "RunPod/",
         "OpenRouter/",
         "KiloCode/",

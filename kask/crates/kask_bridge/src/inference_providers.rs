@@ -1,6 +1,6 @@
 //! Inference provider descriptors and `openai_compatible` settings sync.
 //!
-//! Each inference provider (DeepInfra, fal.ai, OpenRouter, KiloCode,
+//! Each inference provider (DeepInfra, OpenRouter, KiloCode,
 //! Cline, AtlasCloud) is exposed as a zed OpenAI-compatible provider. When the user enables
 //! a provider in the kask settings UI, the composition root calls
 //! `ensure_openai_compatible_entries` to write the corresponding
