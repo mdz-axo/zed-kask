@@ -161,17 +161,11 @@ pub struct KaskInferenceProvidersSettings {
     /// Enable DeepInfra (OpenAI-compatible inference).
     pub deepinfra_enabled: bool,
 
-    /// Enable fal.ai (OpenAI-compatible inference + media).
-    pub fal_enabled: bool,
-
     /// Enable OpenRouter (unified API for 200+ models).
     pub openrouter_enabled: bool,
 
     /// Enable KiloCode (unified API for 200+ models + tools).
     pub kilocode_enabled: bool,
-
-    /// Enable Cline (open source unified API for models and tools).
-    pub cline_enabled: bool,
 
     /// Enable AtlasCloud (task-based media + OpenAI-compatible LLM).
     pub atlascloud_enabled: bool,
@@ -187,10 +181,8 @@ impl KaskInferenceProvidersSettings {
     pub fn from_env() -> Self {
         Self {
             deepinfra_enabled: std::env::var("DEEPINFRA_API_KEY").is_ok(),
-            fal_enabled: std::env::var("FALAI_API_KEY").is_ok(),
             openrouter_enabled: std::env::var("OPENROUTER_API_KEY").is_ok(),
             kilocode_enabled: std::env::var("KILOCODE_API_KEY").is_ok(),
-            cline_enabled: std::env::var("CLINE_API_KEY").is_ok(),
             atlascloud_enabled: std::env::var("ATLASCLOUD_API_KEY").is_ok(),
         }
     }
@@ -1300,10 +1292,8 @@ impl From<KaskInferenceProvidersSettingsContent> for KaskInferenceProvidersSetti
         let from_env = Self::from_env();
         Self {
             deepinfra_enabled: c.deepinfra_enabled.unwrap_or(from_env.deepinfra_enabled),
-            fal_enabled: c.fal_enabled.unwrap_or(from_env.fal_enabled),
             openrouter_enabled: c.openrouter_enabled.unwrap_or(from_env.openrouter_enabled),
             kilocode_enabled: c.kilocode_enabled.unwrap_or(from_env.kilocode_enabled),
-            cline_enabled: c.cline_enabled.unwrap_or(from_env.cline_enabled),
             atlascloud_enabled: c.atlascloud_enabled.unwrap_or(from_env.atlascloud_enabled),
         }
     }
@@ -1835,10 +1825,8 @@ mod tests {
     fn inference_providers_default_is_all_false() {
         let default = KaskInferenceProvidersSettings::default();
         assert!(!default.deepinfra_enabled);
-        assert!(!default.fal_enabled);
         assert!(!default.openrouter_enabled);
         assert!(!default.kilocode_enabled);
-        assert!(!default.cline_enabled);
         assert!(!default.atlascloud_enabled);
     }
 

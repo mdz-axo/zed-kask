@@ -553,13 +553,17 @@ uninstall_hkask() {
     # BIN_DIR, so a re-install to a different BIN_DIR doesn't lose user data.
     remove_mcp_server_settings
 
-    # Remove config (optional)
+    # Remove config (optional). The runtime dirs are named `zed-kask`
+    # (matching the app id used everywhere else — settings.json path in
+    # remove_mcp_server_settings, the data dir, logs, db, threads). An earlier
+    # version of this block targeted `hkask`, which does not exist on disk, so
+    # HKASK_REMOVE_CONFIG silently no-op'd and left real config/data behind.
     if [ "${HKASK_REMOVE_CONFIG:-false}" = "true" ]; then
-        local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/hkask"
+        local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/zed-kask"
         rm -rf "$config_dir"
         log "Removed config directory: $config_dir"
 
-        local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/hkask"
+        local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask"
         rm -rf "$data_dir"
         log "Removed data directory: $data_dir"
     fi
@@ -758,7 +762,15 @@ main() {
             fi
             ;;
         uninstall)
-            assert_not_zed_contaminated_env "uninstall" || exit 1
+            # --uninstall is exempt from assert_not_zed_contaminated_env.
+            # That guard prevents a *build/install* from linking zed-kask against
+            # upstream Zed's bundled libraries (LD_LIBRARY_PATH / ancestor
+            # zed-editor detection). Uninstall does no compilation or linking —
+            # it only removes files (rm/sed/jq), so there is nothing to couple.
+            # Applying the guard here would block the user from uninstalling
+            # zed-kask from Zed's own integrated terminal — the terminal they
+            # are most likely sitting in when they decide to remove it —
+            # turning a safe, file-only operation into a hard failure.
             uninstall_hkask
             ;;
         build-only)

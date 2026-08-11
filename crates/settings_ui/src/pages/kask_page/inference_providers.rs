@@ -44,10 +44,9 @@ pub(crate) fn render_inference_providers_page(
         // must agree or every toggle renders off and writes no-op.
         let enabled = match desc.credential_key {
             "deepinfra" => inference.deepinfra_enabled,
-            "fal" => inference.fal_enabled,
             "openrouter" => inference.openrouter_enabled,
             "kilocode" => inference.kilocode_enabled,
-            "cline" => inference.cline_enabled,
+            "atlascloud" => inference.atlascloud_enabled,
             _ => false,
         };
         rows.push(render_inference_provider_row(
@@ -262,10 +261,8 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
     // nothing because none of the lowercase arms match the display-form id.
     let credential_key = match provider_id {
         "DeepInfra" => "deepinfra",
-        "fal.ai" => "fal",
         "OpenRouter" => "openrouter",
         "KiloCode" => "kilocode",
-        "Cline" => "cline",
         "AtlasCloud" => "atlascloud",
         other => other,
     }
@@ -275,10 +272,8 @@ fn set_inference_provider_enabled(provider_id: &str, enabled: bool, cx: &mut App
         let inference = kask.inference_providers.get_or_insert_default();
         match credential_key.as_str() {
             "deepinfra" => inference.deepinfra_enabled = Some(enabled),
-            "fal" => inference.fal_enabled = Some(enabled),
             "openrouter" => inference.openrouter_enabled = Some(enabled),
             "kilocode" => inference.kilocode_enabled = Some(enabled),
-            "cline" => inference.cline_enabled = Some(enabled),
             "atlascloud" => inference.atlascloud_enabled = Some(enabled),
             _ => {}
         }

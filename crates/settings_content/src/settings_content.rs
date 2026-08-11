@@ -1612,10 +1612,8 @@ pub struct KaskDataServiceSettingsContent {
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct KaskInferenceProvidersSettingsContent {
     pub deepinfra_enabled: Option<bool>,
-    pub fal_enabled: Option<bool>,
     pub openrouter_enabled: Option<bool>,
     pub kilocode_enabled: Option<bool>,
-    pub cline_enabled: Option<bool>,
     pub atlascloud_enabled: Option<bool>,
 }
 
