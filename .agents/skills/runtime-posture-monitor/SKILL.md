@@ -3,21 +3,18 @@ name: runtime-posture-monitor
 visibility: public
 description: >
   Runtime security posture monitoring skill for hKask (v0.31.0). Observes
-  runtime telemetry (reg.* canonical spans, reg.outcome events) to
-  detect runtime threats: API endpoint abuse, bot traffic, LLM usage
-  anomalies, and runtime dependency behavior anomalies. Distinct from
-  supply-chain-sentinel (static manifest audit, P4 manifest boundary)
-  — this skill observes runtime behavior (P4 runtime boundary). Anchored
-  to MITRE CWE (CWE-1357, CWE-829, CWE-200), OWASP LLM Top 10 (LLM06,
-  LLM07), MITRE ATLAS (AML.TA0010). Consumes security/regressions/;
-  proposes RR-NNNN.yaml entries with surface: runtime. Emits
-  reg.runtime.* spans (P9 — all registered in CANONICAL_NAMESPACES).
-  Decomposed into 4 phases matching bug-hunt, kali-audit, and
-  supply-chain-sentinel pipeline. Minimal (P5): answers all 5W1H; single
-  skill, no bundle; complements supply-chain-sentinel (distinct P4
-  boundaries) and adversarial-red-team (synthetic vs real traffic —
-  zero overlap). NOTE 2026-08-10: the `hkask-guard` crate was removed;
-  `reg.guard.*` spans no longer fire and are not observed by this skill.
+  runtime telemetry (reg.* canonical spans, reg.outcome events) to detect
+  runtime threats: API endpoint abuse, bot traffic, LLM usage anomalies, and
+  runtime dependency behavior anomalies. Distinct from supply-chain-sentinel
+  (static manifest audit, P4 manifest boundary) — this skill observes runtime
+  behavior (P4 runtime boundary). Anchored to MITRE CWE (CWE-1357, CWE-829,
+  CWE-200), OWASP LLM Top 10 (LLM06, LLM07), MITRE ATLAS (AML.TA0010).
+  Consumes security/regressions/; proposes RR-NNNN.yaml entries with
+  surface: runtime. Emits reg.runtime.* spans (P9). Decomposed into 4 phases
+  matching bug-hunt, kali-audit, and supply-chain-sentinel pipeline. Minimal
+  (P5): answers all 5W1H; single skill, no bundle; complements
+  supply-chain-sentinel (distinct P4 boundaries) and adversarial-red-team
+  (synthetic vs real traffic — zero overlap).
 ---
 
 # Runtime Posture Monitor
@@ -148,15 +145,15 @@ longer available as runtime signal sources. The remaining signal sources are
 
 1. Observe each signal source in `signal_sources` within the observation
    window. Record span target, timestamp, signal value, baseline reference.
-2. For `reg.guard.*` signals: count violations per scanner. Note violation
-   frequency vs baseline.
-3. For `reg.outcome.*` signals: count regulation actions. Note whether
+2. For `reg.outcome.*` signals: count regulation actions. Note whether
    actions are increasing (system struggling) or decreasing (stable).
-4. For `reg.tool.*` signals: count tool invocations per tool type. Note
+   (The former `reg.guard.*` violation-counting step is no longer
+   applicable — `hkask-guard` was removed 2026-08-10.)
+3. For `reg.tool.*` signals: count tool invocations per tool type. Note
    invocation rate, error rate, unusual tool call chains.
-5. For `reg.inference` signals: count LLM inference calls. Note inference
+4. For `reg.inference` signals: count LLM inference calls. Note inference
    rate, token consumption, usage spikes.
-6. Apply pragmatic-cybernetics (embedded in instructions — like `bug-hunt`
+5. Apply pragmatic-cybernetics (embedded in instructions — like `bug-hunt`
    `oracle` phase):
    - IS vs OUGHT: describe observed signal pattern (`IS`) vs expected
      baseline (`OUGHT` — stable, regulated, firing defenses).
@@ -166,23 +163,23 @@ longer available as runtime signal sources. The remaining signal sources are
    - Provenance: `Direct measurement` (read span), `Inference` (pattern
      analysis), `Assessment` (security taxonomy mapping) — label each
      finding explicitly.
-7. Apply grill-me self-challenge: Could this signal pattern be intentional?
+6. Apply grill-me self-challenge: Could this signal pattern be intentional?
    Is the usage spike a deliberate load test? Would a reviewer dismiss?
    If yes, downgrade or omit. Only propose concrete findings with quoted
    span evidence.
-8. Apply pragmatic-cybernetics analysis (feedback loops): trace signal
+7. Apply pragmatic-cybernetics analysis (feedback loops): trace signal
    polarity (increasing/decreasing risk?), check variety (alternative
    signal sources for same threat?), Good Regulator (is defense layer
    regulating the threat?).
-9. For each classified threat, produce structured finding:
+8. For each classified threat, produce structured finding:
    `threat_type`, `signal_target`, `timestamp`, `signal_value`,
    `baseline_value`, `deviation_pct`, `severity` (critical/high/medium/low
    — justified by evidence), `provenance`, `epistemic_mode`,
    `defense_layers_firing`, `defense_layers_silent`, `evidence_snippet`
    (quoted span target + timestamp + value), `source_citation` (MITRE
-   CWE reference URL, OWASP LLM reference, ATLAS reference, hkask-guard
-   docs, hkask-regulation docs).
-10. Emit `reg.runtime.classify` Regulation span per classified threat
+   CWE reference URL, OWASP LLM reference, ATLAS reference,
+   hkask-regulation docs).
+9. Emit `reg.runtime.classify` Regulation span per classified threat
     (`target: "reg.runtime.classify"`, message: `"Regulation"`, operation:
     `"classify_threat"`, threat_type, signal_target, severity,
     userpod_host, latency_ms).
@@ -198,7 +195,7 @@ CONSTRAINT — Evidence integrity (P8):
   exposure). These are taxonomy mappings, not vulnerability claims.
 - Source citations must reference concrete URLs or documents actually
   consulted: MITRE CWE definitions, OWASP LLM Top 10 2025, MITRE ATLAS,
-  hkask-guard pipeline docs, hkask-regulation cybernetics loop docs.
+  hkask-regulation cybernetics loop docs.
 - Every finding must include `userpod_host` identity (P12) — no
   anonymous runtime scanning.
 - When referencing `security/regressions/`, read actual YAML files; do
@@ -221,12 +218,13 @@ CONSTRAINT — Evidence integrity (P8):
    `evidence_snippet`, `severity`, `cwe_reference`, `owasp_reference`,
    `atlas_reference`, `taxonomy_mapping`, `defense_layers_firing`,
    `defense_layers_silent`, `remediation_recommendation`,
-   `regulation_action_emitted`, `guard_violation_emitted`, `userpod_host`.
+   `regulation_action_emitted`, `userpod_host`.
 3. For each critical/high threat:
    a. Emit `reg.outcome` event (feeds CyberneticsLoop for regulation
       action selection).
-   b. If blocking warranted (critical severity, defense-layer bypass),
-      emit `reg.guard.violation` (triggers defensive blocking).
+   b. (The former `reg.guard.violation` emission for defensive blocking
+      is no longer applicable — `hkask-guard` was removed 2026-08-10 and
+      `reg.guard.*` spans no longer fire.)
 4. Propose regression entry for findings with severity >= medium (only
    when evidence is concrete). Use exact YAML format from
    `security/regressions/README.md`: `surface: runtime`, `cwe: CWE-XXX`,
@@ -234,16 +232,15 @@ CONSTRAINT — Evidence integrity (P8):
    `discovered_in: <span_target>`, `status: pending`,
    `detection: kind: grep`, `pattern: "..."` (concrete regex against
    span target or signal value).
-5. Identify defense-layer firing gaps (e.g., `input_filtering` firing but
-   `regulation_loop` silent). Propose top 3 highest-priority fixes.
+5. Identify defense-layer firing gaps (e.g., `regulation_loop` firing
+   but `tool_dispatch` silent). Propose top 3 highest-priority fixes.
 6. Produce verdict:
-   - Pass: zero critical/high threats, >= 5 defense layers firing.
-   - Conditional: medium threats present or 3-4 defense layers firing.
-   - Fail: critical/high threats present or < 3 defense layers firing.
+   - Pass: zero critical/high threats, >= 3 defense layers firing.
+   - Conditional: medium threats present or 2 defense layers firing.
+   - Fail: critical/high threats present or < 2 defense layers firing.
 7. Emit `reg.runtime.regulate` Regulation span with threats count by severity,
    defense layers firing/silent, proposed regression count, regulation
-   events emitted, guard violations emitted, verdict, userpod host,
-   latency metric.
+   events emitted, verdict, userpod host, latency metric.
 
 ## Registry Templates
 
@@ -251,22 +248,31 @@ CONSTRAINT — Evidence integrity (P8):
 |----------|------|---------|
 | `select-signal.j2` | KnowAct | Discover runtime signal sources; read regression library; emit `reg.runtime.select` span. |
 | `classify-threat.j2` | KnowAct | Observe runtime signals; classify threats; apply pragmatic-cybernetics; emit `reg.runtime.classify` spans. |
-| `emit-regulation.j2` | KnowAct | Synthesize threats with CWE/OWASP/ATLAS taxonomy; emit `reg.outcome` and `reg.guard.violation`; propose `RR-NNNN.yaml` entries (`surface: runtime`); emit `reg.runtime.regulate` span. |
+| `emit-regulation.j2` | KnowAct | Synthesize threats with CWE/OWASP/ATLAS taxonomy; emit `reg.outcome`; propose `RR-NNNN.yaml` entries (`surface: runtime`); emit `reg.runtime.regulate` span. |
 
 ## Defense-Layer Catalog (Runtime Specific)
 
+> **NOTE 2026-08-10:** The `hkask-guard` crate was removed. The former
+> layers 1–4 (input filtering, output filtering, canary detection, runtime
+> policy enforcement via `reg.guard.*` spans) are no longer available as
+> runtime signal sources. The catalog below reflects the remaining runtime
+> layers. New layers can be added as real runtime patterns justify them
+> (P7) — not speculatively. This catalog is distinct from `kali-audit`'s
+> 8-layer static catalog and `supply-chain-sentinel`'s 4-layer manifest
+> catalog.
+
 | Layer | Name | Evidence Source | Source Citation |
 |-------|------|-----------------|-----------------|
-| 1 | Input filtering (runtime firing) | `reg.guard.input` span emission count | `hkask-guard` pipeline |
-| 2 | Output filtering (runtime firing) | `reg.guard.output` span emission count | `hkask-guard` pipeline |
-| 3 | Canary token detection (runtime firing) | `reg.guard.canary` span emission count | `hkask-guard` pipeline |
-| 4 | Runtime policy enforcement | `reg.guard.runtime_policy` span emission count | `hkask-templates` executor |
-| 5 | Regulation loop active | `reg.outcome` span emission count | `hkask-regulation` cybernetics loop |
-| 6 | Action distribution monitoring | `reg.outcome.loop_quality` span | `hkask-regulation` regulation policy |
+| 1 | Regulation loop active | `reg.outcome` span emission count | `hkask-regulation` cybernetics loop |
+| 2 | Action distribution monitoring | `reg.outcome.loop_quality` span | `hkask-regulation` regulation policy |
+| 3 | Tool dispatch monitoring | `reg.tool.*` span emission count | `hkask-templates` executor |
+| 4 | Inference usage monitoring | `reg.inference` span emission count | `hkask-templates` executor |
 
-New layers can be added as real runtime patterns justify them (P7) — not
-speculatively. This catalog is distinct from `kali-audit`'s 8-layer static
-catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
+> **Removed layers (2026-08-10, `hkask-guard` deletion):**
+> - ~~Input filtering (runtime firing) — `reg.guard.input`~~
+> - ~~Output filtering (runtime firing) — `reg.guard.output`~~
+> - ~~Canary token detection (runtime firing) — `reg.guard.canary`~~
+> - ~~Runtime policy enforcement — `reg.guard.runtime_policy`~~
 
 ## Relationship to Existing Skills
 
@@ -277,8 +283,9 @@ catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
   Zero overlap — distinct P4 boundaries.
 - **`kali-audit`:** `kali-audit` checks static defense-layer presence
   (8 layers in code). `runtime-posture-monitor` observes whether those
-  layers actually fire at runtime (6 runtime firing layers). Complementary
-  — static presence vs runtime firing.
+  layers actually fire at runtime (4 runtime firing layers after the
+  2026-08-10 removal of `hkask-guard`). Complementary — static presence
+  vs runtime firing.
 - **`adversarial-red-team`:** Covers synthetic LLM I/O adversarial
   robustness (prompt injection, exfiltration, 7 attack categories).
   `runtime-posture-monitor` observes real runtime traffic. Zero overlap —
@@ -332,11 +339,11 @@ catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
   actual span observation.
 - Source citations must reference concrete sources: MITRE CWE definitions
   (mitre.org), OWASP LLM Top 10 2025 (owasp.org), MITRE ATLAS
-  (atlas.mitre.org), `security/regressions/README.md`, hkask-guard docs,
+  (atlas.mitre.org), `security/regressions/README.md`,
   hkask-regulation docs.
 - If signal discovery finds zero runtime signals, return empty
-  `signal_sources` and recommend `signal: guard` or `signal: regulation`
-  based on deployed components — do NOT invent signals.
+  `signal_sources` and recommend `signal: regulation` based on deployed
+  components — do NOT invent signals.
 - Before proposing any regression entry, verify span target was actually
   emitted and evidence snippet can be quoted from Regulation span history.
 - This skill does NOT scan OS-level endpoints or download external
@@ -345,11 +352,13 @@ catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
 - Propose `surface: runtime` regression entries only; do NOT reuse
   `surface: code`, `surface: template`, `surface: mcp`, `surface: config`,
   or `surface: supply-chain` — runtime threats have distinct defense-layer
-  catalog (6 firing layers) distinct from `kali-audit`'s 8-layer static
-  catalog and `supply-chain-sentinel`'s 4-layer manifest catalog.
+  catalog (4 firing layers after the 2026-08-10 `hkask-guard` removal)
+  distinct from `kali-audit`'s 8-layer static catalog and
+  `supply-chain-sentinel`'s 4-layer manifest catalog.
 - Convergence metric must reflect actual runtime coverage, not aspirational:
-  defense layers only count as firing when actual `reg.guard.*` or
-  `reg.outcome.*` span emissions confirm them.
+  defense layers only count as firing when actual `reg.outcome.*` span
+  emissions confirm them. (The former `reg.guard.*` confirmation path was
+  removed with `hkask-guard` on 2026-08-10.)
 
 ## Source References and Taxonomy Anchors
 
@@ -364,10 +373,12 @@ This skill is anchored to concrete, verifiable taxonomy sources (P8):
   Source: `owasp.org/www-project-top-10-for-large-language-model-applications/`.
 - **MITRE ATLAS:** AML.TA0010 (Exfiltration — runtime data exfiltration
   detection). Source: `atlas.mitre.org`.
-- **`hkask-guard` pipeline:** `reg.guard.*` span sources (runtime evidence).
-  Source: `crates/hkask-guard/src/pipeline.rs`.
 - **`hkask-regulation` cybernetics loop:** `reg.outcome` span sink (downstream
   regulation action). Source: `crates/hkask-regulation/src/cybernetics_loop.rs`.
+- **~~`hkask-guard` pipeline~~ (removed 2026-08-10):** The former
+  `reg.guard.*` span sources (`reg.guard.input`, `reg.guard.output`,
+  `reg.guard.canary`, `reg.guard.runtime_policy`) no longer fire. The
+  crate `crates/hkask-guard/src/pipeline.rs` was deleted.
 - **`security/regressions/README.md`:** Regression YAML format and ratchet
   lifecycle. Source: local project standard — authoritative.
 - **Aikido Security** (`aikido.dev`): ASPM, auto-triage, runtime blocking

@@ -668,15 +668,6 @@ This is the OCAP-specific form of "Advertised invariants need enforcement
 points": the manifest block advertises a security membrane; the membrane is
 the two runtime gates above, not the YAML.
 
-## `GuardedStream` is post-hoc redaction, not real-time blocking
-
-`GuardedStream` redacts streaming output *after* the stream completes — the
-leaked text has already been forwarded to the consumer in real-time chunks.
-The redaction chunk (`finish_reason: "redacted"`) sanitizes the *stored*
-version, not the *displayed* version. Do not assume streaming output scanning
-provides real-time blocking; it is post-hoc redaction, not pre-emission
-filtering.
-
 ## `input_mapping` bindings must propagate taint before `context.insert`
 
 `input_mapping` bindings must call `propagate_taint_for_binding(v, k)` before
