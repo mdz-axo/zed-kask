@@ -10,7 +10,9 @@
 use crate::ports::{Result, TemplateError};
 use crate::step_context::{ContextLookup, StepContext};
 use crate::step_graph::{ExitKind, StepId};
-use crate::step_machine::{Infra, StepMachine};
+use crate::step_machine::{CascadeOutcome, Infra, StepMachine};
+use futures_util::StreamExt;
+use futures_util::stream;
 use hkask_capability::ToolPort;
 use hkask_capability::tool_taint::ToolTaint;
 use hkask_types::ChatToolDefinition;
@@ -545,6 +547,155 @@ impl StepMachine {
         Ok(Effect::Stored {
             step_id: node.id,
             value: result_value,
+            taint: ToolTaint::Pure,
+        })
+    }
+
+    /// **Parallel** — run a list of sub-cascades concurrently (K2). Branches
+    /// live under `input_mapping.branches`; `concurrency_cap` bounds in-flight
+    /// branches; `join` is `"list"` (first cut). Each branch: its own
+    /// `ConvergenceTracker` + a `BudgetTracker` that shares the parent's gas
+    /// `Arc<AtomicU64>` (enforced during the wave) + owns its rJoule (joined
+    /// after via `charge_rjoule`). Results join by `branch_id` — deterministic,
+    /// not completion order.
+    pub(crate) async fn execute_parallel(
+        &mut self,
+        node: &crate::step_graph::StepNode,
+        infra: &Infra,
+    ) -> Result<Effect> {
+        let mapping = node.input_mapping.as_deref().ok_or_else(|| {
+            TemplateError::Manifest(format!(
+                "Step {} (action 'parallel') has no input_mapping — the branch \
+                 list lives under input_mapping.branches.",
+                node.ordinal,
+            ))
+        })?;
+        let branches = mapping
+            .get("branches")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                TemplateError::Manifest(format!(
+                    "Step {} (action 'parallel') has no `branches` array in \
+                     input_mapping.",
+                    node.ordinal,
+                ))
+            })?;
+        let concurrency_cap = mapping
+            .get("concurrency_cap")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(branches.len() as u64)
+            .max(1) as usize;
+        let _join_mode = mapping
+            .get("join")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
+        let step_ordinal = node.ordinal;
+
+        // Shared gas (enforced during the wave); per-branch rJoule (settled after).
+        let shared_gas = self.budget.gas_atomic();
+        let gas_cap = self.budget.gas_cap();
+        let rjoule_remaining = self.budget.remaining_rjoule();
+        let context_template = self.context.clone();
+
+        let branch_futs = branches.iter().enumerate().map(|(branch_id, spec)| {
+            let shared_gas = Arc::clone(&shared_gas);
+            let template_ref = spec
+                .get("template_ref")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            async move {
+                let template_ref = template_ref.ok_or_else(|| {
+                    TemplateError::Manifest(format!(
+                        "Step {} (action 'parallel') branch {} has no \
+                         template_ref.",
+                        step_ordinal, branch_id,
+                    ))
+                })?;
+                let template_ref = crate::template_renderer::TemplateRenderer::render_inline(
+                    &template_ref,
+                    &context_template,
+                );
+                let manifest_yaml = if let Ok(content) = infra
+                    .template_renderer
+                    .load_from_disk(&template_ref, step_ordinal)
+                {
+                    content
+                } else if let Some(content) = crate::template_yaml_file(&template_ref) {
+                    content.to_string()
+                } else if let Some(content) = crate::template_file(&template_ref) {
+                    content.to_string()
+                } else {
+                    return Err(TemplateError::NotFound(hkask_types::NotFound {
+                        entity_type: "parallel sub-manifest".to_string(),
+                        id: format!(
+                            "Step {} parallel branch {}: sub-manifest '{}' \
+                             not found",
+                            step_ordinal, branch_id, template_ref,
+                        ),
+                    }));
+                };
+                let sub_manifest = crate::manifest_loader::load_manifest_from_yaml(&manifest_yaml)
+                    .map_err(|e| {
+                        TemplateError::Manifest(format!(
+                            "Step {} parallel branch {}: failed to parse \
+                             sub-manifest '{}': {}",
+                            step_ordinal, branch_id, template_ref, e,
+                        ))
+                    })?;
+                let sub_budget = crate::budget::BudgetTracker::from_remaining_shared(
+                    Arc::clone(&shared_gas),
+                    gas_cap,
+                    rjoule_remaining,
+                );
+                let sub_convergence =
+                    crate::convergence::ConvergenceTracker::new(&sub_manifest.convergence);
+                let sub_graph = crate::step_graph::StepGraph::new(
+                    &sub_manifest.steps,
+                    sub_manifest.convergence.max_iterations,
+                );
+                let mut sub_machine = StepMachine::new(
+                    sub_graph,
+                    context_template.clone(),
+                    sub_budget,
+                    sub_convergence,
+                );
+                let outcome = sub_machine.run(infra).await?;
+                Ok::<(usize, CascadeOutcome), TemplateError>((branch_id, outcome))
+            }
+        });
+
+        // Bounded concurrency: poll up to `concurrency_cap` branch futures at
+        // once. `buffer_unordered` yields in completion order; we sort by
+        // `branch_id` below for a deterministic join.
+        let outcomes: Vec<(usize, CascadeOutcome)> = stream::iter(branch_futs)
+            .buffer_unordered(concurrency_cap)
+            .collect::<Vec<Result<(usize, CascadeOutcome)>>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()
+            .map_err(|e| e)?;
+        let mut ordered = outcomes;
+        ordered.sort_by_key(|(id, _)| *id);
+
+        // Deterministic join: results in branch_id order. `list` mode (first
+        // cut) → Value::Array.
+        let branch_results: Vec<Value> = ordered
+            .iter()
+            .map(|(_, o)| crate::executor::extract_final_step_result(o))
+            .collect();
+        let joined = Value::Array(branch_results);
+
+        // After the wave: parent rJoule = sum of branch rJoule. Gas already in
+        // the shared `Arc<AtomicU64>` (branches charged it during the wave).
+        let sum_rjoule: f64 = ordered
+            .iter()
+            .map(|(_, o)| o.budget_snapshot.rjoule_used)
+            .sum();
+        self.budget.charge_rjoule(sum_rjoule);
+
+        Ok(Effect::Stored {
+            step_id: node.id,
+            value: joined,
             taint: ToolTaint::Pure,
         })
     }

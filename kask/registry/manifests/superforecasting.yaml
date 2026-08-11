@@ -217,11 +217,15 @@ steps:
     action: select
     description: >
       Estimate per-hypothesis probabilities (informed by each counterfactual's
-      testable consequence), enforce internal consistency, and combine to adjust
-      from the outside-view anchor. The remaining inside-view work after
+      testable consequence), enforce internal consistency, and estimate the
+      conditional probability tree. The remaining inside-view work after
       generation and counterfactual analysis were delegated. The starting
       probability now comes from the deterministic outside-view compute step
-      (step_5_result.calibrated), not the LLM's raw starting_probability.
+      (step_5_result.calibrated), not the LLM's raw starting_probability. The
+      tree combination is no longer LLM-estimated — stage 3 emits the tree
+      (tree_nodes) and the next compute step (combine_tree_probabilities)
+      derives tree_combined_probability via the exact chain-rule
+      marginalization.
     renderer: minijinja
     template_ref: superforecasting/stage_3_probability_estimate
     gas_cap: 4500
@@ -232,8 +236,32 @@ steps:
       counterfactuals: "{{ step_7_result.counterfactuals | default([]) }}"
       starting_probability: "{{ step_5_result.calibrated | default(0.5) }}"
       outside_view_output: "{{ step_4_result }}"
+      sub_question_tree: "{{ step_2_result.sub_question_tree | default([]) }}"
+      topological_order: "{{ step_2_result.topological_order | default([]) }}"
+      outcome_node_id: "{{ step_2_result.outcome_node_id | default('') }}"
 
   - ordinal: 9
+    action: compute
+    description: >
+      Deterministic conditional-tree combine — replaces stage_3's former
+      "Aggregate hypothesis probabilities into a single combined_probability"
+      heuristic with the exact chain-rule computation. Walks the tree emitted
+      by stage_3 in topological order via
+      hkask_forecast::combine_tree_probabilities (which delegates per-node to
+      marginalize, the single source of truth for joint marginalization, and
+      combines multi-entry dependencies by product). Produces
+      tree_combined_probability, the inside-view posterior consumed by stage_4
+      as its prior. No independence heuristic is applied across a node's
+      parents — the conditioning is encoded in each conditional table.
+    compute_ref: combine_tree_probabilities
+    gas_cap: 100
+    timeout_seconds: 5
+    input_mapping:
+      nodes: "{{ step_8_result.tree_nodes | default([]) }}"
+      topological_order: "{{ step_2_result.topological_order | default([]) }}"
+      outcome_id: "{{ step_2_result.outcome_node_id | default('') }}"
+
+  - ordinal: 10
     action: select
     description: Apply Bayesian updates from incoming evidence.
     renderer: minijinja
@@ -242,7 +270,7 @@ steps:
     timeout_seconds: 60
     input_mapping:
       forecasting_question: "{{ forecasting_question }}"
-      prior_probability: "{{ step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5)) }}"
+      prior_probability: "{{ step_9_result.tree_combined_probability | default(step_8_result.hypothesis_probabilities.combined_probability | default(step_5_result.calibrated | default(0.5))) }}"
       hypothesis_analysis: "{{ step_8_result.hypothesis_probabilities | default({}) }}"
       new_evidence: "{{ new_evidence | default([]) }}"
       market_context: "{{ market_context | default([]) }}"

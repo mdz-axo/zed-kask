@@ -7,8 +7,12 @@ contract:
     counterfactuals: array
     starting_probability: number
     outside_view_output: object
+    sub_question_tree: array
+    topological_order: array
+    outcome_node_id: string
   output:
     hypothesis_probabilities: object
+    tree_nodes: array
 energy_cap: 4500
 visibility: Public
 ---
@@ -65,6 +69,23 @@ Reference Classes:
 {{ counterfactuals | tojson }}
 ```
 
+## Sub-Question Tree (from Fermi decomposition)
+
+```json
+{{ sub_question_tree | tojson }}
+```
+
+Topological order: {{ topological_order | tojson }}
+Outcome node: {{ outcome_node_id }}
+
+The tree encodes how the sub-questions combine into the outcome. The
+combinator (AND-gate / OR-gate / mixture) is encoded structurally in each
+node's conditional table — there is no separate combinator field. Your job is
+to estimate the per-node probabilities and conditional tables; the
+`combine_tree_probabilities` compute step walks the tree deterministically via
+`hkask_forecast::marginalize` (the single source of truth for joint
+marginalization) to produce the exact `tree_combined_probability`.
+
 ## Methodology
 
 For each hypothesis:
@@ -84,9 +105,27 @@ For each hypothesis:
    - Enforce internal consistency across hypotheses (mutually exclusive? additive? overlapping?).
    - Honor the outside-view anchor — case-specific adjustment, not free-floating guesses.
 
-4. **Combine.** Aggregate hypothesis probabilities into a single combined_probability that
-   adjusts from the outside-view starting_probability. The combined probability is the
-   inside-view posterior before Bayesian evidence-update (stage 4).
+4. **Estimate the tree probabilities.** For each node in the sub-question tree:
+   - **Roots**: estimate `marginal_probability` P(node). Ground each in the
+     outside-view base rate and the hypothesis evidence.
+   - **Dependents**: estimate the `conditionals` array — P(node | parent truth
+     assignment). The array is indexed by the bitmap of parent truth (bit j =
+     parent j's truth), so its length is 2^parents. For an AND-gate (all
+     parents necessary), conditionals are 1 only when all parents are true; for
+     an OR-gate (any parent sufficient), conditionals are 1 when any parent is
+     true; for a mixture, conditionals encode the partial contribution.
+   - Encode the combinator **structurally in the conditional table values**, not
+     as a separate field. The compute step reads the table and applies the
+     exact chain-rule marginalization — no independence heuristic is applied
+     across a node's parents.
+   - Keep fan-in ≤ 3 so conditional tables stay ≤ 8 entries.
+
+The `combine_tree_probabilities` compute step (next ordinal) walks the tree in
+topological order and produces `tree_combined_probability` — the exact
+inside-view posterior, fed to stage 4 as the prior. Do NOT estimate
+`combined_probability` yourself — the compute step owns that. The
+`hypothesis_probabilities` object is retained for stage 4/5 consumers that
+read the primary hypothesis and its individual probability.
 
 ## Output
 
@@ -94,9 +133,23 @@ Respond with a JSON object containing:
 - hypothesis_probabilities: Object with {
     primary_hypothesis: string (name of the highest-probability hypothesis),
     primary_probability: float,
-    combined_probability: float (the inside-view-adjusted posterior, fed to stage 4 as the prior),
     reasoning: string (how the case-specific evidence adjusted from the outside-view anchor)
   }
+  (Note: `combined_probability` is no longer LLM-estimated — the
+  `combine_tree_probabilities` compute step derives `tree_combined_probability`
+  from the tree below.)
+- tree_nodes: Array of objects, one per node in the sub-question tree, with:
+    - id: string (matches the tree node id from stage 1)
+    - marginal_probability: float|null (P(node) for roots; null for dependents)
+    - depends_on: array|null (for dependents; each entry has:
+        parent_ids: array of string (parent node ids),
+        conditionals: array of float (P(node | parent truth assignment),
+          indexed by the bitmap of parent truth, length 2^parent_ids)
+      )
+    A node must have exactly one of marginal_probability or depends_on — not
+    both, not neither. A root has marginal_probability and an empty/null
+    depends_on; a dependent has null marginal_probability and a non-empty
+    depends_on.
 
 Return JSON only:
 ```json
@@ -104,16 +157,26 @@ Return JSON only:
   "hypothesis_probabilities": {
     "primary_hypothesis": "name",
     "primary_probability": 0.0,
-    "combined_probability": 0.0,
     "reasoning": "how case-specific evidence adjusted from the outside-view anchor"
-  }
+  },
+  "tree_nodes": [
+    {"id": "root_id", "marginal_probability": 0.0, "depends_on": null},
+    {"id": "dep_id", "marginal_probability": null, "depends_on": [{"parent_ids": ["root_id"], "conditionals": [0.0, 0.0]}]}
+  ]
 }
 ```
 
 ## Constraints
 
 - Do NOT generate new hypotheses — they are provided. Do NOT construct counterfactuals — they are provided.
-- combined_probability must adjust from starting_probability using case-specific evidence, not replace it arbitrarily.
+- Do NOT estimate `combined_probability` — the `combine_tree_probabilities`
+  compute step derives `tree_combined_probability` from `tree_nodes` via the
+  exact chain-rule marginalization. Your output is the tree, not the aggregate.
+- Each tree node must have exactly one of `marginal_probability` or `depends_on`
+  — not both (ambiguous: which wins?), not neither (undefined: no probability).
+- `conditionals` length must equal 2^parent_ids.len() — a short table is an
+  error (the compute step rejects it rather than silently zero-filling).
+- Keep fan-in ≤ 3 so conditional tables stay tractable (≤ 8 entries).
 - Probabilities must be internally consistent across hypotheses.
 - Do not execute arbitrary Python code in Jinja2 expressions (sandboxed execution).
 - Handle missing variables gracefully (leave as-is or use default if specified).

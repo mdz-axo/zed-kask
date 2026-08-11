@@ -123,6 +123,96 @@ pub fn dispatch_compute(compute_ref: &str, input: &Value) -> Result<Value> {
             let posterior = forecast::bayesian_update(prior, likelihood, base_rate);
             Ok(serde_json::json!({ "posterior": posterior }))
         }
+        // Deterministic conditional-tree combine — replaces stage_3's former
+        // "Aggregate hypothesis probabilities into a single combined_probability"
+        // heuristic with the exact chain-rule computation. The LLM stage_3 emits
+        // the tree (nodes with marginals/conditionals + topological order +
+        // outcome id); this compute step walks it via
+        // `hkask_forecast::combine_tree_probabilities` (which delegates per-node
+        // to `marginalize`, the single source of truth for joint
+        // marginalization) and produces `tree_combined_probability`, the prior
+        // consumed by stage_4's Bayesian update.
+        "combine_tree_probabilities" => {
+            let nodes_json = input
+                .get("nodes")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    TemplateError::Manifest(
+                        "compute 'combine_tree_probabilities': missing 'nodes' array".into(),
+                    )
+                })?;
+            let topo_json = input
+                .get("topological_order")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    TemplateError::Manifest(
+                        "compute 'combine_tree_probabilities': missing 'topological_order' array"
+                            .into(),
+                    )
+                })?;
+            let outcome_id = input
+                .get("outcome_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    TemplateError::Manifest(
+                        "compute 'combine_tree_probabilities': missing 'outcome_id' string".into(),
+                    )
+                })?;
+
+            let nodes: Vec<forecast::TreeNode> = nodes_json
+                .iter()
+                .map(|n| {
+                    let id = n
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let marginal_probability =
+                        n.get("marginal_probability").and_then(|v| v.as_f64());
+                    let depends_on = n
+                        .get("depends_on")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|d| forecast::TreeDependency {
+                                    parent_ids: d
+                                        .get("parent_ids")
+                                        .and_then(|v| v.as_array())
+                                        .map(|pids| {
+                                            pids.iter()
+                                                .map(|p| p.as_str().unwrap_or("").to_string())
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                    conditionals: d
+                                        .get("conditionals")
+                                        .and_then(|v| v.as_array())
+                                        .map(|c| {
+                                            c.iter().map(|v| v.as_f64().unwrap_or(0.0)).collect()
+                                        })
+                                        .unwrap_or_default(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    forecast::TreeNode {
+                        id,
+                        marginal_probability,
+                        depends_on,
+                    }
+                })
+                .collect();
+
+            let topological_order: Vec<&str> =
+                topo_json.iter().map(|v| v.as_str().unwrap_or("")).collect();
+
+            let combined =
+                forecast::combine_tree_probabilities(&nodes, &topological_order, outcome_id)
+                    .map_err(|e| {
+                        TemplateError::Manifest(format!("combine_tree_probabilities: {e}"))
+                    })?;
+            Ok(serde_json::json!({ "tree_combined_probability": combined }))
+        }
         "apply_calibration_adjustment" => {
             let prior = get_f64("prior")?;
             let bias = get_f64("overconfidence_bias")?;
@@ -974,6 +1064,55 @@ mod tests {
         let result = dispatch_compute("bayesian_update", &input).unwrap();
         let posterior = result.get("posterior").and_then(|v| v.as_f64()).unwrap();
         assert!((posterior - 0.9).abs() < 0.01, "Bayesian update = 0.9");
+    }
+
+    #[test]
+    fn dispatch_combine_tree_probabilities_and_gate() {
+        // AND-gate over two independent roots: P(a)=0.8, P(b)=0.5 → P(a∧b)=0.4.
+        let input = serde_json::json!({
+            "nodes": [
+                {"id": "a", "marginal_probability": 0.8},
+                {"id": "b", "marginal_probability": 0.5},
+                {"id": "outcome", "depends_on": [{"parent_ids": ["a", "b"], "conditionals": [0.0, 0.0, 0.0, 1.0]}]}
+            ],
+            "topological_order": ["a", "b", "outcome"],
+            "outcome_id": "outcome"
+        });
+        let result = dispatch_compute("combine_tree_probabilities", &input).unwrap();
+        let combined = result
+            .get("tree_combined_probability")
+            .and_then(|v| v.as_f64())
+            .unwrap();
+        assert!(
+            (combined - 0.4).abs() < 1e-9,
+            "AND-gate = 0.4, got {combined}"
+        );
+    }
+
+    #[test]
+    fn dispatch_combine_tree_probabilities_missing_nodes_errors() {
+        let input = serde_json::json!({
+            "topological_order": ["a"],
+            "outcome_id": "a"
+        });
+        let err = dispatch_compute("combine_tree_probabilities", &input).unwrap_err();
+        assert!(err.to_string().contains("missing 'nodes' array"));
+    }
+
+    #[test]
+    fn dispatch_combine_tree_probabilities_bad_tree_errors() {
+        // Wrong conditional length (3 entries for 2 parents, expected 4).
+        let input = serde_json::json!({
+            "nodes": [
+                {"id": "a", "marginal_probability": 0.5},
+                {"id": "b", "marginal_probability": 0.5},
+                {"id": "outcome", "depends_on": [{"parent_ids": ["a", "b"], "conditionals": [0.1, 0.2, 0.3]}]}
+            ],
+            "topological_order": ["a", "b", "outcome"],
+            "outcome_id": "outcome"
+        });
+        let err = dispatch_compute("combine_tree_probabilities", &input).unwrap_err();
+        assert!(err.to_string().contains("combine_tree_probabilities"));
     }
 
     #[test]

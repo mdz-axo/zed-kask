@@ -27,6 +27,23 @@ pub enum ForecastError {
 
     #[error("brier: no data provided")]
     BrierNoData,
+
+    #[error("tree: node '{0}' in topological order not found in nodes")]
+    TreeMissingNode(String),
+
+    #[error("tree: outcome node '{0}' not computed (missing from topological order or nodes)")]
+    TreeMissingOutcome(String),
+
+    #[error("tree: node '{0}' has neither marginal_probability nor depends_on")]
+    TreeUndefinedNode(String),
+
+    #[error(
+        "tree: node '{0}' depends on '{1}' which is not yet computed (cycle or bad topological order)"
+    )]
+    TreeUnresolvedParent(String, String),
+
+    #[error("tree: node '{0}' dependency {1} has {2} conditionals, expected 2^parents")]
+    TreeConditionalLength(String, usize, usize),
 }
 
 // ── Sub-question type (minimal — no serde dependency needed here) ───────────
@@ -127,7 +144,44 @@ pub fn bayesian_update(prior: f64, evidence_likelihood: f64, evidence_base_rate:
     (evidence_likelihood * prior / evidence_base_rate).clamp(0.01, 0.99)
 }
 
-// ── Conditional-tree marginalization ──────────────────────────────────────
+// ── Conditional-tree marginalization ────────────────────────────────────────
+
+/// A dependency of a tree node on a set of parents, with a conditional
+/// probability table. Mirrors `hkask-graph-widget::DependencyBody` so the
+/// tree-walk math stays identical to the interactive widget's
+/// re-propagation.
+///
+/// `conditionals` is indexed by the bitmap of parent truth assignments (bit j
+/// = parent j's truth), matching `marginalize`'s convention. Length must be
+/// `2^parent_ids.len()`; short tables are an error (unlike the silent
+/// zero-fill in `marginalize`, the tree walk rejects incomplete conditionals
+/// so the LLM cannot silently emit a near-zero marginal).
+#[derive(Debug, Clone)]
+pub struct TreeDependency {
+    pub parent_ids: Vec<String>,
+    pub conditionals: Vec<f64>,
+}
+
+/// A node in a conditional probability tree. Roots carry a `marginal_probability`;
+/// dependents carry `depends_on` entries. A node must have exactly one of the
+/// two — a root with no parents has `marginal_probability = Some(p)` and an
+/// empty `depends_on`; a dependent has `marginal_probability = None` and a
+/// non-empty `depends_on`.
+///
+/// The combinator (AND-gate / OR-gate / mixture) is encoded structurally in
+/// the conditional table values, not as a separate field — an AND-gate has
+/// conditionals equal to 1 only when all parents are true, an OR-gate has
+/// conditionals equal to 1 when any parent is true. This avoids a second
+/// heuristic layer on top of the tree.
+#[derive(Debug, Clone)]
+pub struct TreeNode {
+    pub id: String,
+    pub marginal_probability: Option<f64>,
+    /// Each entry marginalizes over its own parents via `marginalize`; multiple
+    /// entries on the same node combine by independence (product), matching
+    /// `recompute_marginals`'s `multi_dep_combines_by_independence` semantics.
+    pub depends_on: Vec<TreeDependency>,
+}
 
 /// Marginalize a conditional probability table over independent parents.
 ///
@@ -166,6 +220,114 @@ pub fn marginalize(parent_marginals: &[f64], conditionals: &[f64]) -> f64 {
         }
     }
     marginal
+}
+
+/// Walk a conditional probability tree in topological order and compute the
+/// marginal probability of the outcome node. Roots contribute their stored
+/// `marginal_probability`; each dependent marginalizes its `depends_on` entries
+/// via `marginalize` (the single source of truth for the joint marginalization
+/// formula) and combines multiple entries by independence (product), matching
+/// `hkask-graph-widget::propagate::recompute_marginals`.
+///
+/// This is the exact chain-rule computation — no independence heuristic is
+/// applied across a node's parents; the conditioning is encoded in each
+/// conditional table. The LLM's job is the structural reasoning (tree shape,
+/// per-node conditional tables); this function owns the numeric aggregation the
+/// LLM cannot do reliably. Replaces the former stage_3 "Aggregate hypothesis
+/// probabilities into a single combined_probability" heuristic.
+///
+/// This is the pure-math factorization of `recompute_marginals` (which walks
+/// the GPUI block body). The skill's stage_3 emits the tree; the compute
+/// dispatcher calls this; stage_4 consumes the resulting
+/// `tree_combined_probability` as its prior.
+#[must_use = "tree-combined probability should be used as the stage-4 prior"]
+pub fn combine_tree_probabilities(
+    nodes: &[TreeNode],
+    topological_order: &[&str],
+    outcome_id: &str,
+) -> Result<f64, ForecastError> {
+    if topological_order.is_empty() {
+        return Err(ForecastError::TreeMissingOutcome(outcome_id.to_string()));
+    }
+
+    // Index nodes by id for O(1) lookup during the topological walk.
+    let mut node_map: std::collections::HashMap<&str, &TreeNode> =
+        std::collections::HashMap::with_capacity(nodes.len());
+    for node in nodes {
+        if node_map.insert(node.id.as_str(), node).is_some() {
+            return Err(ForecastError::TreeMissingNode(format!(
+                "duplicate node id '{}' in tree",
+                node.id
+            )));
+        }
+    }
+
+    // Computed marginals, filled as the walk progresses.
+    let mut computed: std::collections::HashMap<&str, f64> =
+        std::collections::HashMap::with_capacity(topological_order.len());
+
+    for id in topological_order {
+        let node = node_map
+            .get(id)
+            .ok_or_else(|| ForecastError::TreeMissingNode(id.to_string()))?;
+
+        let marginal = match (node.marginal_probability, node.depends_on.is_empty()) {
+            (Some(p), true) => {
+                if !p.is_finite() || !(0.0..=1.0).contains(&p) {
+                    return Err(ForecastError::InvalidProbability(
+                        p,
+                        format!("marginal_probability for node '{}'", node.id),
+                    ));
+                }
+                p
+            }
+            (None, false) => {
+                // Dependent node: marginalize each depends_on entry over its
+                // parents and combine entries by independence (product).
+                let mut combined = 1.0_f64;
+                for (entry_idx, dep) in node.depends_on.iter().enumerate() {
+                    let expected = 1usize << dep.parent_ids.len();
+                    if dep.conditionals.len() != expected {
+                        return Err(ForecastError::TreeConditionalLength(
+                            node.id.clone(),
+                            entry_idx,
+                            expected,
+                        ));
+                    }
+                    let parent_marginals: Vec<f64> = dep
+                        .parent_ids
+                        .iter()
+                        .map(|pid| {
+                            computed.get(pid.as_str()).copied().ok_or_else(|| {
+                                ForecastError::TreeUnresolvedParent(node.id.clone(), pid.clone())
+                            })
+                        })
+                        .collect::<Result<_, _>>()?;
+                    let entry_marginal = marginalize(&parent_marginals, &dep.conditionals);
+                    combined *= entry_marginal.clamp(0.0, 1.0);
+                }
+                combined.clamp(0.0, 1.0)
+            }
+            (Some(_), false) => {
+                // Both set: ambiguous — reject so the LLM can't silently
+                // override the tree math with a free-floating marginal.
+                return Err(ForecastError::TreeUndefinedNode(format!(
+                    "node '{}' has both marginal_probability and depends_on",
+                    node.id
+                )));
+            }
+            (None, true) => {
+                return Err(ForecastError::TreeUndefinedNode(node.id.clone()));
+            }
+        };
+
+        computed.insert(id, marginal);
+    }
+
+    computed
+        .get(outcome_id)
+        .copied()
+        .ok_or_else(|| ForecastError::TreeMissingOutcome(outcome_id.to_string()))
 }
 
 /// The MAIA three-level certainty tier for a probability, matching the
@@ -1108,6 +1270,254 @@ mod tests {
         // P(b) = P(b|¬a)·P(¬a) + 0 = 0.4·0.5 = 0.2.
         let m = marginalize(&[0.5], &[0.4]);
         assert!((m - 0.4 * 0.5).abs() < 1e-9, "got {m}");
+    }
+
+    // ── combine_tree_probabilities ───────────────────────────────────────────
+    //
+    // The tree walk delegates per-node to `marginalize` (above) and combines
+    // multi-entry dependencies by product, mirroring
+    // `hkask-graph-widget::propagate::recompute_marginals`.
+
+    fn root(id: &str, p: f64) -> TreeNode {
+        TreeNode {
+            id: id.to_string(),
+            marginal_probability: Some(p),
+            depends_on: vec![],
+        }
+    }
+
+    fn dependent(id: &str, depends_on: Vec<TreeDependency>) -> TreeNode {
+        TreeNode {
+            id: id.to_string(),
+            marginal_probability: None,
+            depends_on,
+        }
+    }
+
+    fn dep(parent_ids: &[&str], conditionals: &[f64]) -> TreeDependency {
+        TreeDependency {
+            parent_ids: parent_ids.iter().map(|s| s.to_string()).collect(),
+            conditionals: conditionals.to_vec(),
+        }
+    }
+
+    #[test]
+    fn tree_single_root_returns_its_marginal() {
+        let nodes = vec![root("outcome", 0.42)];
+        let p = combine_tree_probabilities(&nodes, &["outcome"], "outcome").unwrap();
+        assert!((p - 0.42).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tree_one_parent_marginalizes() {
+        // a (0.8) -> outcome, P(outcome|¬a)=0.1, P(outcome|a)=0.6
+        // P(outcome) = 0.1·0.2 + 0.6·0.8 = 0.5  (matches marginalize_single_parent)
+        let nodes = vec![
+            root("a", 0.8),
+            dependent("outcome", vec![dep(&["a"], &[0.1, 0.6])]),
+        ];
+        let p = combine_tree_probabilities(&nodes, &["a", "outcome"], "outcome").unwrap();
+        assert!((p - 0.5).abs() < 1e-9, "got {p}");
+    }
+
+    #[test]
+    fn tree_and_gate_two_independent_parents() {
+        // AND-gate: outcome true only when both a and b are true.
+        // P(a)=0.8, P(b)=0.5, independent → P(a∧b) = 0.4.
+        // conditionals: [P(¬a,¬b)=0, P(a,¬b)=0, P(¬a,b)=0, P(a,b)=1]
+        let nodes = vec![
+            root("a", 0.8),
+            root("b", 0.5),
+            dependent("outcome", vec![dep(&["a", "b"], &[0.0, 0.0, 0.0, 1.0])]),
+        ];
+        let p = combine_tree_probabilities(&nodes, &["a", "b", "outcome"], "outcome").unwrap();
+        assert!((p - 0.4).abs() < 1e-9, "AND-gate = 0.4, got {p}");
+    }
+
+    #[test]
+    fn tree_or_gate_two_independent_parents() {
+        // OR-gate: outcome true when either a or b is true.
+        // P(a)=0.8, P(b)=0.5, independent → P(a∨b) = 1 − 0.2·0.5 = 0.9.
+        // conditionals: [0, 1, 1, 1]
+        let nodes = vec![
+            root("a", 0.8),
+            root("b", 0.5),
+            dependent("outcome", vec![dep(&["a", "b"], &[0.0, 1.0, 1.0, 1.0])]),
+        ];
+        let p = combine_tree_probabilities(&nodes, &["a", "b", "outcome"], "outcome").unwrap();
+        assert!((p - 0.9).abs() < 1e-9, "OR-gate = 0.9, got {p}");
+    }
+
+    #[test]
+    fn tree_correlated_parents_via_conditionals_not_independence() {
+        // The whole point of the tree: when a and b share a common cause c,
+        // they are correlated. `marginalize` assumes its parents are
+        // independent (it multiplies parent marginals), so a node that depends
+        // directly on a and b recovers only the independence heuristic
+        // P(a∧b) = P(a)·P(b) = 0.25 — the correlation is lost because the joint
+        // P(a,b) is not carried up the tree, only the marginals.
+        //
+        // The correct decomposition makes the common cause c the parent, with
+        // the conditional table encoding the AND of the conditionally-
+        // independent children: P(and|¬c) = P(a|¬c)·P(b|¬c) = 0.01;
+        // P(and|c) = 0.9·0.9 = 0.81. P(and) = 0.5·0.01 + 0.5·0.81 = 0.41.
+        //
+        // This is the "tree of branching events" the methodology prescribes:
+        // the branching happens at the common cause, children are conditionally
+        // independent given it, and the AND marginalizes exactly through it.
+        let common_cause = vec![
+            root("c", 0.5),
+            dependent("a", vec![dep(&["c"], &[0.1, 0.9])]),
+            dependent("b", vec![dep(&["c"], &[0.1, 0.9])]),
+            dependent("and_gate", vec![dep(&["c"], &[0.01, 0.81])]),
+        ];
+        let p_correct =
+            combine_tree_probabilities(&common_cause, &["c", "a", "b", "and_gate"], "and_gate")
+                .unwrap();
+        assert!(
+            (p_correct - 0.41).abs() < 1e-9,
+            "correct tree = 0.41, got {p_correct}"
+        );
+
+        // Contrast: the naive tree (and_gate depends on the correlated a, b)
+        // recovers only the independence heuristic 0.25 — the correlation is
+        // lost because `marginalize` assumes parent independence. This is the
+        // failure mode the tree-form decomposition exists to prevent.
+        let naive = vec![
+            root("c", 0.5),
+            dependent("a", vec![dep(&["c"], &[0.1, 0.9])]),
+            dependent("b", vec![dep(&["c"], &[0.1, 0.9])]),
+            dependent("and_gate", vec![dep(&["a", "b"], &[0.0, 0.0, 0.0, 1.0])]),
+        ];
+        let p_naive =
+            combine_tree_probabilities(&naive, &["c", "a", "b", "and_gate"], "and_gate").unwrap();
+        assert!(
+            (p_naive - 0.25).abs() < 1e-9,
+            "naive tree = independence heuristic 0.25, got {p_naive}"
+        );
+        assert!(
+            (p_correct - p_naive).abs() > 0.01,
+            "correct and naive must differ"
+        );
+    }
+
+    #[test]
+    fn tree_multi_entry_combines_by_product() {
+        // Node c depends on two entries: one over parent a, one over parent b.
+        // Entry 0: P(c|¬a)=0.1, P(c|a)=0.6, P(a)=0.8 → marginalize = 0.5.
+        // Entry 1: P(c|¬b)=0.2, P(c|b)=0.7, P(b)=0.5 → marginalize = 0.45.
+        // Combined by independence (product): 0.5 * 0.45 = 0.225.
+        // (Mirrors graph-widget `multi_dep_combines_by_independence`.)
+        let nodes = vec![
+            root("a", 0.8),
+            root("b", 0.5),
+            dependent(
+                "c",
+                vec![dep(&["a"], &[0.1, 0.6]), dep(&["b"], &[0.2, 0.7])],
+            ),
+        ];
+        let p = combine_tree_probabilities(&nodes, &["a", "b", "c"], "c").unwrap();
+        assert!(
+            (p - 0.225).abs() < 1e-9,
+            "multi-entry product = 0.225, got {p}"
+        );
+    }
+
+    #[test]
+    fn tree_two_level_chain() {
+        // a -> b -> outcome (two-level conditional chain).
+        // P(a)=0.6; P(b|¬a)=0.2, P(b|a)=0.7; P(outcome|¬b)=0.1, P(outcome|b)=0.8.
+        // P(b) = 0.2·0.4 + 0.7·0.6 = 0.5
+        // P(outcome) = 0.1·0.5 + 0.8·0.5 = 0.45
+        let nodes = vec![
+            root("a", 0.6),
+            dependent("b", vec![dep(&["a"], &[0.2, 0.7])]),
+            dependent("outcome", vec![dep(&["b"], &[0.1, 0.8])]),
+        ];
+        let p = combine_tree_probabilities(&nodes, &["a", "b", "outcome"], "outcome").unwrap();
+        assert!((p - 0.45).abs() < 1e-9, "two-level chain = 0.45, got {p}");
+    }
+
+    #[test]
+    fn tree_missing_parent_errors() {
+        // parent 'a' not in topological_order → unresolved parent.
+        let nodes = vec![
+            root("a", 0.5),
+            dependent("outcome", vec![dep(&["a"], &[0.1, 0.6])]),
+        ];
+        let err = combine_tree_probabilities(&nodes, &["outcome"], "outcome").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeUnresolvedParent(_, _)));
+    }
+
+    #[test]
+    fn tree_node_not_in_topological_order_errors() {
+        let nodes = vec![root("a", 0.5), root("outcome", 0.4)];
+        let err = combine_tree_probabilities(&nodes, &["a"], "outcome").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeMissingOutcome(_)));
+    }
+
+    #[test]
+    fn tree_node_with_neither_marginal_nor_deps_errors() {
+        let nodes = vec![TreeNode {
+            id: "orphan".to_string(),
+            marginal_probability: None,
+            depends_on: vec![],
+        }];
+        let err = combine_tree_probabilities(&nodes, &["orphan"], "orphan").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeUndefinedNode(_)));
+    }
+
+    #[test]
+    fn tree_both_marginal_and_deps_errors() {
+        // Ambiguous: a node cannot both carry a marginal and depend on parents.
+        // Rejecting this prevents the LLM from silently overriding the tree math
+        // with a free-floating marginal.
+        let nodes = vec![
+            root("a", 0.5),
+            TreeNode {
+                id: "outcome".to_string(),
+                marginal_probability: Some(0.9),
+                depends_on: vec![dep(&["a"], &[0.1, 0.6])],
+            },
+        ];
+        let err = combine_tree_probabilities(&nodes, &["a", "outcome"], "outcome").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeUndefinedNode(_)));
+    }
+
+    #[test]
+    fn tree_wrong_conditional_length_errors() {
+        // 2 parents → conditionals must have 2^2 = 4 entries; 3 is malformed.
+        // Unlike `marginalize`'s silent zero-fill, the tree walk rejects short
+        // tables so a near-zero marginal cannot pass undetected.
+        let nodes = vec![
+            root("a", 0.5),
+            root("b", 0.5),
+            dependent("outcome", vec![dep(&["a", "b"], &[0.1, 0.2, 0.3])]),
+        ];
+        let err =
+            combine_tree_probabilities(&nodes, &["a", "b", "outcome"], "outcome").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeConditionalLength(_, _, _)));
+    }
+
+    #[test]
+    fn tree_invalid_marginal_probability_errors() {
+        let nodes = vec![root("a", 1.5)];
+        let err = combine_tree_probabilities(&nodes, &["a"], "a").unwrap_err();
+        assert!(matches!(err, ForecastError::InvalidProbability(_, _)));
+    }
+
+    #[test]
+    fn tree_empty_topological_order_errors() {
+        let nodes = vec![root("outcome", 0.5)];
+        let err = combine_tree_probabilities(&nodes, &[], "outcome").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeMissingOutcome(_)));
+    }
+
+    #[test]
+    fn tree_duplicate_node_id_errors() {
+        let nodes = vec![root("a", 0.5), root("a", 0.7)];
+        let err = combine_tree_probabilities(&nodes, &["a"], "a").unwrap_err();
+        assert!(matches!(err, ForecastError::TreeMissingNode(_)));
     }
 
     #[test]

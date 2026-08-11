@@ -6,6 +6,9 @@ contract:
     triage_output: object
   output:
     sub_questions: array
+    sub_question_tree: array
+    topological_order: array
+    outcome_node_id: string
     assumptions: array
     knowns: array
     unknowns: array
@@ -47,6 +50,41 @@ Break the main question into 3-7 tractable components. Each should:
 - Be as independent as possible from other sub-questions
 - Contribute meaningfully to answering the main question
 
+Emit the flat list as `sub_questions` (strings) — this is consumed by the
+Fermi calibration step.
+
+### Sub-Question Tree (conditional probability tree)
+ALSO emit a conditional probability tree (`sub_question_tree`) that encodes
+how the sub-questions combine into the main outcome. The tree is the exact
+joint-probability structure — the combinator (AND-gate / OR-gate / mixture) is
+encoded structurally in each node's conditional table, not as a separate field.
+
+Tree shape rules (keep the tree tractable for downstream probability
+estimation):
+- **Fan-in ≤ 3**: each node has at most 3 parents, so conditional tables stay
+  ≤ 8 entries.
+- **Common causes are parents, not siblings**: if two sub-questions share a
+  driver (e.g. macro conditions, regime type), make the driver a parent node
+  and the sub-questions its dependents. Two correlated nodes must NEVER be
+  co-parents of the same child — `marginalize` assumes parent independence,
+  so the correlation would be lost. Route the correlation through the common
+  cause instead.
+- **Depth ≤ 3**: the tree should be shallow. A deep chain compounds
+  estimation error multiplicatively.
+
+Each `sub_question_tree` entry is an object:
+- `id`: a short stable identifier (e.g. "sq1", "macro")
+- `question`: the sub-question text (same as the flat list entry)
+- `parent_id`: the id of this node's parent in the tree, or `null` for roots
+- `role`: "necessary" | "sufficient" | "contributing" — how this node relates
+  to its parent (an AND-gate parent has all-necessary children; an OR-gate has
+  all-sufficient; a mixture has contributing children with implicit weights)
+
+Also emit:
+- `topological_order`: array of node ids in dependency order (roots first)
+- `outcome_node_id`: the id of the root node representing the main forecasting
+  question's outcome
+
 ### Assumptions
 List all assumptions you are making. For each:
 - State it explicitly
@@ -68,7 +106,13 @@ Factors that introduce uncertainty:
 ## Output
 
 Respond with a JSON object containing:
-- sub_questions: Array of strings, each a tractable sub-question
+- sub_questions: Array of strings, each a tractable sub-question (consumed by
+  the Fermi calibration step)
+- sub_question_tree: Array of objects with {id, question, parent_id, role} —
+  the conditional probability tree encoding how sub-questions combine into the
+  outcome. `parent_id` is null for roots.
+- topological_order: Array of node ids in dependency order (roots first)
+- outcome_node_id: String, the id of the outcome node
 - assumptions: Array of objects with {assumption: string, confidence: string, notes: string}
 - knowns: Array of strings (established facts)
 - unknowns: Array of strings (uncertain factors requiring estimation)
