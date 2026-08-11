@@ -1,0 +1,106 @@
+# Template crate manifest for the kask-seam-audit skill
+# hKask v0.33.7
+# Encodes the Kask↔Zed seam audit engagement as a reproducible FlowDef process.
+
+crate:
+  name: kask-seam-audit
+  version: "0.33.7"
+  description: >
+    Convergent multi-skill audit of the zed-kask Kask↔Zed seam (DIVERGENCE.md
+    D1–D24). Three tracks — kali-audit (security), refactor-architecture
+    (dead surface + deepening), ui-layout-discipline (GPUI measured layout +
+    Zed interaction language) — adjudicated by pragmatic-semantics +
+    pragmatic-cybernetics + essentialist, ranked by mcda, with lisp.eval
+    structural-invariant gates between phases and a hard-stop on any upstream
+    non-D-seam touch.
+
+templates:
+  - id: kask-seam-audit/seam-map
+    name: "Map divergence surface and verify convention priors"
+    path: seam-map.j2
+    type: KnowAct
+    description: >
+      PLAN — read DIVERGENCE.md D1–D24, grep `crates/` for each convention prior's
+      artifact (live vs phantom), and derive the audit slices. Read-only.
+
+  - id: kask-seam-audit/refine-seam-map
+    name: "Refine seam map in response to Gate A defects"
+    path: refine-seam-map.j2
+    type: KnowAct
+    description: >
+      Repair Gate A structural defects (phantom prior, invalid verdict, no
+      slices). Only runs when Gate A found defects.
+
+  - id: kask-seam-audit/audit-security
+    name: "kali-audit security track over the seam"
+    path: audit-security.j2
+    type: KnowAct
+    description: >
+      DO — security review of the 8 priority surfaces (OWASP LLM Top-10, MITRE
+      ATLAS, NIST SSDF, 8-layer defense coverage). Every finding cites file:line.
+
+  - id: kask-seam-audit/audit-architecture
+    name: "refactor-architecture dead-surface + deepening track"
+    path: audit-architecture.j2
+    type: KnowAct
+    description: >
+      DO — find dead surface (trait-with-one-impl, helper-test-only, folded
+      re-exports) and deepening candidates; apply the essentialist deletion test
+      with grep-verified caller counts.
+
+  - id: kask-seam-audit/audit-ui
+    name: "ui-layout-discipline GPUI interaction audit"
+    path: audit-ui.j2
+    type: KnowAct
+    description: >
+      DO — measured-layout discipline + Zed interaction-language gaps across
+      kask-owned GPUI widgets; Toggle-vs-ToggleFocus and deploy-and-focus traps.
+
+  - id: kask-seam-audit/refine-findings
+    name: "Refine findings in response to Gate B defects"
+    path: refine-findings.j2
+    type: KnowAct
+    description: >
+      Re-cite or re-classify findings Gate B flagged (missing file_line, invalid
+      severity, empty track). Never fabricates evidence; marks deferred with a reason.
+
+  - id: kask-seam-audit/adjudicate
+    name: "Adjudicate findings (pragmatic-semantics + cybernetics + essentialist)"
+    path: adjudicate.j2
+    type: KnowAct
+    description: >
+      CHECK — classify each finding by constraint force, run the deletion test,
+      and check the feedback loop. Produces annotated_findings.
+
+  - id: kask-seam-audit/mcda
+    name: "MCDA ranking + sensitivity analysis"
+    path: mcda.j2
+    type: KnowAct
+    description: >
+      CHECK — rank remediation candidates against four weighted criteria and run
+      a ±20% sensitivity analysis. Each score traces to a finding.
+
+  - id: kask-seam-audit/remediate
+    name: "Apply essentialist-surviving seam-scoped remediations"
+    path: remediate.j2
+    type: KnowAct
+    description: >
+      ACT — apply only mcda top-ranked remediations surviving essentialist; pin
+      each with a test; declare within_kask per touched file; set hard_stop if
+      any touch requires an upstream non-D-seam edit.
+
+  - id: kask-seam-audit/remediation-repair
+    name: "Repair remediation defects or emit hard-stop"
+    path: remediation-repair.j2
+    type: KnowAct
+    description: >
+      Repair Gate C defects (missing test, out-of-seam touch) or emit the
+      hard-stop with the offending file and a proposed D-seam entry.
+
+  - id: kask-seam-audit/final-report
+    name: "Synthesize the engagement report"
+    path: final-report.j2
+    type: KnowAct
+    description: >
+      Consolidate the three tracks, defense-layer coverage, MCDA, applied
+      remediations, hard-stop decision, and convergence score. Cite file:line.

@@ -1,0 +1,79 @@
+{# goal: ui-layout-discipline GPUI measured-layout + Zed interaction-language audit. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    seam_scope: string
+  output:
+    findings: array
+    pattern_gap_summary: object
+energy_cap: 8192
+visibility: Public
+---
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "terse"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are running the `ui-layout-discipline` track over kask-owned GPUI renderers.
+Task: {{ task }}.
+
+## Scope (strict)
+Audit ONLY these kask-owned GPUI crates (they live under `crates/` because they
+depend on gpui/theme, per the §13.1 invariant, but they are kask-owned):
+`hkask-viz-core`, `hkask-media-widget`, `hkask-graph-widget`,
+`hkask-kanban-widget`, `hkask-portfolio-widget`, `hkask-scenarios-widget`,
+`hkask-conversation-injector`, `kask_extensions_ui`, `marketplace_ui_common`,
+and the D9 settings page (`settings_ui/src/pages/kask_page.rs` — flag findings
+but mark remediation D9-seam-scoped). Do NOT audit upstream Zed editor/panel
+code outside the above.
+
+## Audit axes (Sense→Orient→Decide→Act→Review)
+1. **measured-layout** — renderers that stack N children in an `h_flex`/`div().flex()`
+   without `flex_wrap`/`overflow_hidden`/`min_w_0`/`.truncate()`. Flag overflow +
+   collapse risk (Fitts/Hick/Rosenholtz).
+2. **action-congestion** — rows with 3+ interactive elements and no
+   `PopoverMenu`/progressive disclosure.
+3. **interaction-language** — raw `div().id(...).cursor_pointer().on_click()`
+   with a `Label` child instead of Zed's `Button::new(id, label)` /
+   `IconButton::new(id, icon)`.
+4. **toggle-vs-togglefocus** — center-pane `Item` views must use `Toggle`
+   (not `ToggleFocus`) for the View-menu entry.
+5. **deploy-focus** — center-pane `Item` deployed via
+   `add_item_to_active_pane(..., true, ...)` whose `focus_handle` delegates to a
+   child entity must call `page.focus_handle(cx).focus(window, cx)` after add.
+6. **theme-consistency** — hardcoded `px(...)` where `rems(...)`/`relative(...)`
+   should scale; missing `cx.notify()` after state mutation.
+
+## Output (JSON only)
+
+```json
+{
+  "findings": [
+    {
+      "id": "UI-NN",
+      "axis": "measured-layout|action-congestion|interaction-language|toggle-vs-togglefocus|deploy-focus|theme-consistency",
+      "severity": "high|medium|low",
+      "widget": "crate name",
+      "file_line": "path:line",
+      "evidence": "the render code snippet",
+      "problem": "what happens (overflow / double-click / silent no-op / visual inconsistency)",
+      "constraint_force": "blocking|directing|enabling",
+      "remediation": "proposed GPUI fix (PopoverMenu / truncate / focus_handle().focus() / Button)",
+      "deferred": false
+    }
+  ],
+  "pattern_gap_summary": {
+    "top_3_zed_primitives_to_adopt": [ "Button/IconButton", "PopoverMenu", "Tooltip::text" ]
+  }
+}
+```
+
+Every finding MUST have `file_line`. `severity` MUST be exactly one of: high,
+medium, low (UI findings do not use critical/info in this track). Positive
+controls (a trap verified handled) are reported as a finding with
+`constraint_force: "enabling"` and `remediation: "None needed — pins the trap."`.
+If you cannot open a file, set `deferred: true` with a `deferred_reason`.

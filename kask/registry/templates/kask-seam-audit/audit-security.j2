@@ -1,0 +1,86 @@
+{# goal: kali-audit security track over the 8 priority surfaces of the Kask↔Zed seam. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    seam_scope: string
+    divergence_surface: array
+    prior_verdicts: array
+  output:
+    findings: array
+    defense_layer_coverage: object
+energy_cap: 8192
+visibility: Public
+---
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "terse"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are running the `kali-audit` security track over the Kask↔Zed seam. Task: {{ task }}.
+
+## Scope (strict)
+Audit ONLY files under `{{ seam_scope }}` plus the D-seam files in
+`divergence_surface`. Everything outside `{{ seam_scope }}` and outside the
+named D-seams is upstream Zed — do NOT flag or propose edits there. If you find
+an issue in an upstream non-D-seam file, report it with `deferred: true` and
+`deferred_reason: "upstream non-D-seam"`.
+
+## Priority surfaces (OWASP LLM Top-10 2025, MITRE ATLAS v5.1, NIST SSDF SP 800-218A)
+1. MCP runtime gate — `McpRuntime::invoke`: OCAP capability match + gas, fail-closed. Verify token expiry is NOT enforced.
+2. Credential/config scoping per MCP server — each `BuiltinMcpServer` uses `Some(&[])` minimum (not `None`); allowlist content aligns with what the server reads.
+3. `AnyJsonValue` vs `serde_json::Value` in MCP tool input structs (schemars renders `Value` as bare `true`).
+4. `unwrap_or(0)` on regulation-loop sense inputs.
+5. Inference IPC dispatch — delegated-tool allowlist enforced before token mint; gas fail-closed for unbudgeted agents.
+6. Marketplace signing — Ed25519 verify + expiry window, fail-closed.
+7. `input_mapping` taint propagation before `context.insert`.
+8. MCP tool error classification — per-variant, not blanket `McpToolError::internal`.
+
+## Convention prior heads-up
+{% for pv in prior_verdicts %}
+- {{ pv.prior }}: {{ pv.verdict }} ({{ pv.evidence }})
+{% endfor %}
+A **phantom** prior means the function/trap the `.rules` tells you to grep for
+does NOT exist — report the stale reference as a finding (config surface, low
+severity). Do not hunt for the phantom's enforcement point.
+
+## Output (JSON only)
+
+```json
+{
+  "findings": [
+    {
+      "id": "KS-NN",
+      "surface": "code|supply-chain|runtime|mcp|llm-io|config",
+      "severity": "critical|high|medium|low|info",
+      "title": "short",
+      "file_line": "path:line",
+      "evidence": "actual code snippet or pattern found",
+      "standard": "OWASP-LLM-2025:LLM0x | ATLAS:AML.Txxxx | CWE-xxxx | RR-NNNN",
+      "constraint_force": "blocking|directing|enabling",
+      "remediation": "proposed fix (push into kask/ behind a D-seam; if upstream, deferred)",
+      "deferred": false
+    }
+  ],
+  "defense_layer_coverage": {
+    "layers": [
+      { "id": 1, "name": "McpRuntime invoke gate", "status": "covered|missing", "enforcement_point": "path:line", "notes": "..." },
+      { "id": 2, "name": "Per-agent mcp_tools allowlist", "status": "...", "enforcement_point": "..." },
+      { "id": 3, "name": "Gas gate", "status": "...", "enforcement_point": "..." },
+      { "id": 4, "name": "Credential scoping per MCP server", "status": "...", "enforcement_point": "..." },
+      { "id": 5, "name": "Schema validation (AnyJsonValue)", "status": "...", "enforcement_point": "..." },
+      { "id": 6, "name": "Signing / expiry (marketplace)", "status": "...", "enforcement_point": "..." },
+      { "id": 7, "name": "Taint propagation / IFC (FIDES)", "status": "...", "enforcement_point": "..." },
+      { "id": 8, "name": "Error classification (per-variant)", "status": "...", "enforcement_point": "..." }
+    ],
+    "verdict": "Pass|Conditional|Fail"
+  }
+}
+```
+
+Every finding MUST have `file_line` (a real `path:line`) OR `deferred: true`
+with a `deferred_reason`. Gate B rejects any finding missing both. `severity`
+MUST be exactly one of: critical, high, medium, low, info. Never fabricate.

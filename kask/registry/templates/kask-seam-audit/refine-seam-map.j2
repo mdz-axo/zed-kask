@@ -1,0 +1,55 @@
+{# goal: Repair Gate A structural defects (phantom prior, invalid verdict, no slices). #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    seam_map: object
+    gate_defects: array
+  output:
+    divergence_surface: array
+    prior_verdicts: array
+    slices: array
+energy_cap: 4096
+visibility: Public
+---
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are repairing the seam map after Gate A found structural defects. Task: {{ task }}.
+
+## Prior seam map
+{{ seam_map }}
+
+## Gate A defects (symbolic Lisp invariant check found these)
+{{ gate_defects }}
+
+Defect codes:
+- `no_prior_verdicts_field` — the `prior_verdicts` field was missing; re-emit it.
+- `invalid_prior_verdict` — a verdict was not exactly "live" or "phantom"; fix it.
+- `no_slices_field` / `no_slices` — slices missing or empty; re-derive the three tracks.
+- `no_slices_field` — re-emit the three slices.
+
+## Repair rules
+
+- Re-grep `crates/` for any prior marked phantom; confirm the absence.
+- Every `verdict` MUST be exactly `"live"` or `"phantom"`.
+- Re-emit `divergence_surface`, the corrected `prior_verdicts`, and the three
+  `slices` (security, architecture, ui).
+
+## Output (JSON only)
+
+```json
+{
+  "divergence_surface": [ ... ],
+  "prior_verdicts": [ { "prior": "...", "artifact": "...", "verdict": "live|phantom", "evidence": "..." } ],
+  "slices": [ { "id": "security" }, { "id": "architecture" }, { "id": "ui" } ]
+}
+```
+
+Do not fabricate evidence. A phantom prior is reported as phantom, not repaired
+to live — the phantom is itself a finding (KS-03 class).

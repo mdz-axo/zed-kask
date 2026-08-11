@@ -1,0 +1,81 @@
+{# goal: MCDA ranking of remediation candidates with ±20% sensitivity analysis. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    annotated_findings: array
+    operator_priority: string
+  output:
+    ranked_remediations: array
+    top3: array
+    sensitivity: object
+energy_cap: 4096
+visibility: Public
+---
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are the `mcda` ranker. Task: {{ task }}.
+
+## Criteria (default weights; adjust by operator_priority)
+- **security severity** (0.35) — does the remediation reduce attack surface?
+- **codegraph simplification** (0.25) — does it remove dead surface / deepen a module?
+- **UI consistency** (0.25) — does it adopt a Zed interaction primitive?
+- **cost-inverted** (0.15) — 1.0 = trivial, 0.0 = expensive.
+
+`operator_priority` = `{{ operator_priority }}`. If "security", use defaults. If
+"codegraph", shift weight toward codegraph (e.g. 0.25/0.40/0.15/0.10). If "ui",
+shift toward UI (e.g. 0.25/0.15/0.40/0.10). Renormalize to sum 1.0. Record the
+weight vector in the output.
+
+## Annotated findings (each is a remediation candidate)
+{{ annotated_findings }}
+
+## Method
+1. Score each candidate 0–1 on each criterion (1 = best). Cost-inverted: low cost = 1.
+2. Compute `weighted_total` = Σ(score × weight).
+3. Apply the **essentialist deletion test** as a gate: a candidate whose
+   `deletion_test == "complexity_vanishes"` survives; one whose
+   `deletion_test == "complexity_reappears"` survives only if it deepens a
+   module (complexity reappears because the module deserves to exist). Mark
+   `essentialist_survives: true|false`.
+4. Run a ±20% sensitivity analysis: for each single-axis weight emphasis
+   (security, codegraph, ui, cost), recompute the top 3 and record whether the
+   top-3 membership flipped. `stable_under_perturbation` = true iff the top-3
+   set is unchanged under ALL four ±20% perturbations.
+
+## Output (JSON only)
+
+```json
+{
+  "weight_vector": { "security": 0.35, "codegraph": 0.25, "ui": 0.25, "cost_inverted": 0.15 },
+  "ranked_remediations": [
+    {
+      "id": "KS-NN|RA-NN|UI-NN",
+      "remediation": "short",
+      "scores": { "security": 0.8, "codegraph": 0.2, "ui": 0.0, "cost_inverted": 0.5 },
+      "weighted_total": 0.405,
+      "essentialist_survives": true
+    }
+  ],
+  "top3": [ { "id": "...", "weighted_total": 0.0 } ],
+  "sensitivity": {
+    "baseline_top3": [ "ID", "ID", "ID" ],
+    "perturbations": [
+      { "axis": "security", "top3": [ "...", "...", "..." ], "flipped": false },
+      { "axis": "codegraph", "top3": [ "...", "...", "..." ], "flipped": false },
+      { "axis": "ui", "top3": [ "...", "...", "..." ], "flipped": false },
+      { "axis": "cost", "top3": [ "...", "...", "..." ], "flipped": false }
+    ],
+    "stable_under_perturbation": true
+  }
+}
+```
+
+Every score must trace to a finding's `id`. Do not fabricate scores. If a
+criterion does not apply to a candidate, score 0.0 and note it.

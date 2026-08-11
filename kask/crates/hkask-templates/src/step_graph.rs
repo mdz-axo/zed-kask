@@ -16,6 +16,7 @@
 use crate::bundle::manifest::BundleManifestStep;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Index into a `StepGraph`'s `steps` vector. Stable for the lifetime of the
 /// graph (graphs are immutable once built).
@@ -77,27 +78,22 @@ pub enum ExitKind {
 #[derive(Debug, Clone)]
 pub struct StepNode {
     pub id: StepId,
-    /// User-facing ordinal, for error messages and `step_{ordinal}_result`
-    /// context-key naming. NOT used for addressing.
     pub ordinal: u32,
-    pub action: String,
-    pub description: String,
-    pub renderer: Option<String>,
-    pub template_ref: Option<String>,
-    pub mcp: Option<String>,
-    pub compute_ref: Option<String>,
-    pub input_mapping: Option<Value>,
-    pub output_schema: Option<Value>,
-    pub condition: Option<String>,
-    pub branching: Option<HashMap<String, u32>>,
-    pub branching_field: Option<String>,
-    pub profile: Option<String>,
+    pub action: Arc<str>,
+    pub description: Arc<str>,
+    pub renderer: Option<Arc<str>>,
+    pub template_ref: Option<Arc<str>>,
+    pub mcp: Option<Arc<str>>,
+    pub compute_ref: Option<Arc<str>>,
+    pub input_mapping: Option<Arc<Value>>,
+    pub output_schema: Option<Arc<Value>>,
+    pub condition: Option<Arc<str>>,
+    pub branching: Option<Arc<HashMap<String, u32>>>,
+    pub branching_field: Option<Arc<str>>,
+    pub profile: Option<Arc<str>>,
     pub gas_cap: u32,
     pub timeout_seconds: u32,
-    pub phase: String,
-    /// Static control flow after this step completes. For most steps this is
-    /// `Fallthrough`; the last step is `Reenter(ENTRY)` (implicit loop) unless
-    /// the manifest declares `max_iterations: 1` (single-pass → `Exit`).
+    pub phase: Arc<str>,
     pub on_complete: ControlFlow,
 }
 
@@ -157,21 +153,21 @@ impl StepGraph {
             nodes.push(StepNode {
                 id,
                 ordinal: step.ordinal,
-                action: step.action.clone(),
-                description: step.description.clone(),
-                renderer: step.renderer.clone(),
-                template_ref: step.template_ref.clone(),
-                mcp: step.mcp.clone(),
-                compute_ref: step.compute_ref.clone(),
-                input_mapping: step.input_mapping.clone(),
-                output_schema: step.output_schema.clone(),
-                condition: step.condition.clone(),
-                branching: step.branching.clone(),
-                branching_field: step.branching_field.clone(),
-                profile: step.profile.clone(),
+                action: Arc::from(step.action.clone()),
+                description: Arc::from(step.description.clone()),
+                renderer: step.renderer.clone().map(Arc::from),
+                template_ref: step.template_ref.clone().map(Arc::from),
+                mcp: step.mcp.clone().map(Arc::from),
+                compute_ref: step.compute_ref.clone().map(Arc::from),
+                input_mapping: step.input_mapping.clone().map(Arc::new),
+                output_schema: step.output_schema.clone().map(Arc::new),
+                condition: step.condition.clone().map(Arc::from),
+                branching: step.branching.clone().map(Arc::new),
+                branching_field: step.branching_field.clone().map(Arc::from),
+                profile: step.profile.clone().map(Arc::from),
                 gas_cap: step.gas_cap,
                 timeout_seconds: step.timeout_seconds,
-                phase: step.phase_str().to_string(),
+                phase: Arc::from(step.phase_str()),
                 on_complete,
             });
         }

@@ -1,0 +1,100 @@
+{# goal: Synthesize the engagement report — three tracks, defense coverage, MCDA, remediations, hard-stop, convergence. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    seam_map: object
+    security_track: object
+    arch_track: object
+    ui_track: object
+    annotated_findings: array
+    mcda: object
+    applied_remediations: array
+    hard_stop: object
+    convergence_score: number
+    iterations: number
+  output:
+    report: object
+energy_cap: 4096
+visibility: Public
+---
+[inference]
+temperature = 0.4
+work_effort = "high"
+verbosity = "normal"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are synthesizing the final engagement report. Task: {{ task }}.
+
+## Inputs
+
+seam_map (divergence surface + prior verdicts + slices):
+{{ seam_map }}
+
+security track (findings + defense_layer_coverage):
+{{ security_track }}
+
+architecture track (findings + dead_surface_summary):
+{{ arch_track }}
+
+ui track (findings + pattern_gap_summary):
+{{ ui_track }}
+
+annotated_findings (constraint_force + deletion_test + feedback verdict):
+{{ annotated_findings }}
+
+mcda (ranked_remediations + top3 + sensitivity):
+{{ mcda }}
+
+applied_remediations:
+{{ applied_remediations }}
+
+hard_stop decision:
+{{ hard_stop }}
+
+convergence_score: {{ convergence_score }} (count of uncited-or-unadjudicated findings; 0 = clean)
+iterations: {{ iterations }}
+
+## Synthesis
+
+Produce a consolidated report with: (1) a verdict (Pass / Conditional / Fail)
+derived from the defense-layer coverage + whether any blocking finding remains
+unremediated; (2) the count of findings per track and per severity; (3) the
+MCDA top-3 and whether `stable_under_perturbation` held; (4) the applied
+remediations (with test descriptions) and the hard-stop decision; (5) the
+deliverable paths (reports under `kask/research/seam-audit/`, the FlowDef
+manifest under `kask/registry/manifests/kask-seam-audit.yaml` + templates under
+`kask/registry/templates/kask-seam-audit/`); (6) the convergence score and
+iteration count. Cite `file:line` throughout.
+
+## Output (JSON only)
+
+```json
+{
+  "report": {
+    "verdict": "Pass|Conditional|Fail",
+    "findings_per_track": { "security": N, "architecture": N, "ui": N },
+    "findings_per_severity": { "critical": N, "high": N, "medium": N, "low": N, "info": N },
+    "defense_layer_coverage": { "covered": N, "missing": N, "missing_layers": [ ... ] },
+    "mcda_top3": [ { "id": "...", "weighted_total": 0.0 } ],
+    "mcda_stable_under_perturbation": true,
+    "applied_remediations": [ { "id": "...", "test_description": "..." } ],
+    "hard_stop_triggered": false,
+    "deferred_remediations": [ { "id": "...", "reason": "..." } ],
+    "deliverable_paths": {
+      "reports": "kask/research/seam-audit/",
+      "flowdef_manifest": "kask/registry/manifests/kask-seam-audit.yaml",
+      "flowdef_templates": "kask/registry/templates/kask-seam-audit/"
+    },
+    "convergence_score": 0,
+    "iterations": 1
+  }
+}
+```
+
+Do not fabricate. If a track produced no findings, record 0. If remediations
+were deferred (not applied in-session), list them in `deferred_remediations`
+with the reason (e.g. "requires workspace compile verification exceeding a
+safe single-session bound").

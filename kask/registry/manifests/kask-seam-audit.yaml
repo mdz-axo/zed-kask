@@ -1,0 +1,596 @@
+# Kask-Seam-Audit Process Manifest
+# ℏKask v0.33.7 — Kask↔Zed seam security + architecture + UI audit as convergent PDCA
+#
+# Encodes the multi-skill audit-and-refactor engagement over the zed-kask seam
+# (DIVERGENCE.md D1–D24). Three Do tracks (kali-audit / refactor-architecture /
+# ui-layout-discipline) run sequentially (FlowDef has no native parallelism; the
+# parallel orchestration was an agent choice, the manifest is the reproducible
+# fallback). Adjudicated by pragmatic-semantics + pragmatic-cybernetics +
+# essentialist. Ranked by mcda. Remediations applied only if essentialist-
+# surviving and seam-scoped (hard-stop on any upstream non-D-seam touch).
+#
+# lisp.eval gates (de la Torre 2025, arXiv:2506.10021 — symbolic scaffolding of
+# probabilistic compute): between phases, stateless `lisp.eval` compute steps
+# verify structural invariants the LLM cannot reliably self-evaluate:
+#   - Gate A (step 2): convention-prior completeness + verdict-class exclusivity
+#     (live/phantom only) + slice count ≥ 1.
+#   - Gate B (step 7): finding completeness (each track non-empty) + citation
+#     (every non-deferred finding has file_line) + severity-class exclusivity
+#     (critical/high/medium/low/info only).
+#   - Gate C (step 12): remediation test-pinning (every applied remediation has
+#     test_added) + divergence-surface membership (every touched_file is
+#     within kask/ OR a listed D-seam) — the hard-stop gate.
+#   - Convergence (step 14): count of uncited-or-unadjudicated findings → 0
+#     when every finding is cited and adjudicated.
+# Lisp forms are modeled on the known-good `lisp-scaffold-reasoning` reference
+# (prefix notation, `let`+`begin`+`define` at the let scope, `assoc`/`length`/
+# `is_null`/`string=`/`cons`/`append`). `define` inside `begin` at the `let`
+# scope mutates the let's child env; recursive helpers self-reference via the
+# bound name.
+#
+# condition: branching gates steps on prior step results (defect-list length),
+# NOT on LLM self-assessment. Each `condition:` resolves a real `step_N_result`
+# key via Jinja before the executor's condition evaluator sees it.
+#
+# Convergence note: the signal is "count of uncited-or-unadjudicated findings"
+# (lower = more converged; 0 = clean). Cauchy convergence means "the audit
+# stopped changing." A stable non-zero signal (LLM cannot adjudicate a finding)
+# satisfies Cauchy but is NOT clean — `on_not_reached: escalate` routes that to
+# the Curator after max_iterations. This is the honest cybernetic stop.
+
+manifest:
+  id: kask-seam-audit
+  category: skill
+  name: Kask Seam Audit
+  description: >
+    Convergent multi-skill audit of the zed-kask Kask↔Zed seam (DIVERGENCE.md
+    D1–D24). Runs three audit tracks — kali-audit (security: OWASP LLM Top-10,
+    MITRE ATLAS, NIST SSDF, 8-layer defense coverage), refactor-architecture
+    (dead-surface removal + deepening + strangler-fig), ui-layout-discipline
+    (GPUI measured-layout + Zed interaction-language gaps) — adjudicates each
+    finding with pragmatic-semantics + pragmatic-cybernetics + essentialist,
+    ranks remediations with mcda, and applies only essentialist-surviving
+    seam-scoped remediations. Stateless lisp.eval gates verify structural
+    invariants (prior-verdict exclusivity, finding citation + severity
+    exclusivity, remediation test-pinning + divergence-surface membership)
+    between phases — not LLM self-assessment. Hard-stops on any upstream
+    non-D-seam touch. Every finding cites file:line; missing evidence is
+    deferred with a reason, never fabricated.
+  functional_role: flowdef
+  version: "0.33.7"
+  editor: curator-or-human-admin
+  visibility: Public
+
+convergence:
+  convergence_mode: "cauchy"
+  cauchy_epsilon: 0.03
+  cauchy_window: 3
+  max_iterations: 10
+  min_iterations: 2
+  on_not_reached: escalate
+  target_artifacts_field: "current_artifacts"
+
+gas:
+  cap: 150000
+  cost_per_iteration: 100
+  alert_threshold: 0.8
+  hard_limit: true
+
+rjoule:
+  cap: 3
+  alert_threshold: 0.8
+  hard_limit: true
+
+inputs:
+  - name: task
+    type: string
+    required: false
+    description: >
+      The user's task description (injected per .rules skill-cascade-context
+      rule — templates reference {{ task }} to act on the user's request).
+  - name: divergence_doc
+    type: string
+    required: false
+    description: >
+      Path to the divergence-surface doc. Default "DIVERGENCE.md".
+  - name: seam_scope
+    type: string
+    required: false
+    description: >
+      The additive scope (everything under here is ours). Default "kask/".
+  - name: operator_priority
+    type: string
+    required: false
+    description: >
+      MCDA axis emphasis: "security" (default) | "codegraph" | "ui". Selects
+      the weighting vector for the mcda ranking + sensitivity analysis.
+  - name: prior_rules
+    type: array
+    required: false
+    description: >
+      Convention priors (.rules traps) to verify as live before use. Each is
+      {prior, artifact, expected}. The seam-map step greps `crates/` for each
+      artifact and marks the prior live/phantom. A phantom prior is itself a
+      finding (stale .rules).
+
+ledger:
+  span_namespace: reg.skill.kask-seam-audit
+  emit_spans: true
+  variety_monitoring: true
+  algedonic_threshold: 100
+  escalation_target: Curator
+
+steps:
+  # ── PLAN ──────────────────────────────────────────────────────────────
+  # Step 1: map the seam + verify convention priors (grep liveness).
+  - ordinal: 1
+    action: select
+    description: >
+      PLAN — map the divergence surface (read DIVERGENCE.md D1–D24) and verify
+      each convention prior against the codebase (grep `crates/` for the named
+      artifact). A prior whose artifact is absent is "phantom" (it is itself a
+      finding — stale .rules). Produce divergence_surface (list of D-seam
+      files), prior_verdicts (live/phantom per prior), and slices (the audit
+      tracks). Read-only — no code edits.
+    renderer: minijinja
+    template_ref: kask-seam-audit/seam-map
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('') }}"
+      divergence_doc: "{{ divergence_doc | default('DIVERGENCE.md') }}"
+      seam_scope: "{{ seam_scope | default('kask/') }}"
+      prior_rules: "{{ prior_rules | default([]) }}"
+
+  # Step 2: lisp.eval — Gate A: prior-verdict completeness + exclusivity + slice count.
+  - ordinal: 2
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Gate A (symbolic). Verify: every prior_verdict has verdict in {live,
+      phantom} (exclusivity — exactly two classes); slices non-empty (count ≥ 1).
+      Returns a list of defect strings — empty = passed; non-empty = step 3
+      refines the seam map. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((priors (assoc "prior_verdicts" step_1_result)))
+          (if (is_null priors)
+              (list "no_prior_verdicts_field")
+              (let ((slices (assoc "slices" step_1_result)))
+                (begin
+                  (define check-verdicts
+                    (lambda (ps acc)
+                      (if (is_null ps)
+                          acc
+                          (let ((p (car ps))
+                                (v (assoc "verdict" p))
+                                (is-live (string= v "live"))
+                                (is-phantom (string= v "phantom")))
+                            (check-verdicts
+                              (cdr ps)
+                              (if (not is-live)
+                                  (if (not is-phantom)
+                                      (cons "invalid_prior_verdict" acc)
+                                      acc)
+                                  acc))))))
+                  (define verdict-defects (check-verdicts priors (list)))
+                  (define slice-defects
+                    (if (is_null slices)
+                        (list "no_slices_field")
+                        (if (< (length slices) 1)
+                            (list "no_slices")
+                            (list))))
+                  (append verdict-defects slice-defects)))))
+      env:
+        step_1_result: "{{ step_1_result }}"
+
+  # Step 3: refine the seam map, gated on Gate A defects.
+  - ordinal: 3
+    action: select
+    condition: "{{ step_2_result | length > 0 }}"
+    description: >
+      Refine the seam map in response to Gate A. Only runs if Gate A found
+      structural defects (a phantom prior, an invalid verdict, or no slices).
+      Re-verifies priors and re-derives slices. Feedback loop: symbolic Lisp
+      finds a defect the LLM cannot reliably self-detect, the LLM repairs it.
+    renderer: minijinja
+    template_ref: kask-seam-audit/refine-seam-map
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('') }}"
+      seam_map: "{{ step_1_result }}"
+      gate_defects: "{{ step_2_result }}"
+
+  # ── DO ────────────────────────────────────────────────────────────────
+  # Steps 4–6: the three audit tracks. FlowDef runs them sequentially; the
+  # parallel orchestration is an agent choice, the manifest is the fallback.
+  - ordinal: 4
+    action: select
+    description: >
+      DO — kali-audit security track. Audit the 8 priority surfaces (McpRuntime
+      invoke gate, credential scoping, AnyJsonValue schema, unwrap_or(0) on
+      sense inputs, inference IPC dispatch, marketplace signing, input_mapping
+      taint, MCP error classification) against OWASP LLM Top-10 / MITRE ATLAS
+      / NIST SSDF. Produce security_findings (each with id, severity, file_line,
+      evidence, standard, constraint_force, remediation, deferred) and
+      defense_layer_coverage (8 layers: covered/missing + enforcement point).
+      Every finding cites file:line or is marked deferred with a reason.
+    renderer: minijinja
+    template_ref: kask-seam-audit/audit-security
+    gas_cap: 8192
+    timeout_seconds: 300
+    input_mapping:
+      task: "{{ task | default('') }}"
+      seam_scope: "{{ seam_scope | default('kask/') }}"
+      divergence_surface: "{{ step_1_result.divergence_surface | default([]) }}"
+      prior_verdicts: "{{ step_1_result.prior_verdicts | default([]) }}"
+
+  - ordinal: 5
+    action: select
+    description: >
+      DO — refactor-architecture track. Find dead surface (trait-with-one-impl,
+      convention-helpers-with-only-test-callers, folded-service re-exports) and
+      deepening candidates across kask/crates + kask/mcp-servers. For each
+      candidate, grep the workspace for production callers and apply the
+      essentialist deletion test (complexity_reappears / complexity_vanishes).
+      Produce arch_findings (each with id, kind, crate, symbol, file_line,
+      evidence, deletion_test, constraint_force, remediation, deferred) and
+      dead_surface_summary (total lines, top deletion candidates).
+    renderer: minijinja
+    template_ref: kask-seam-audit/audit-architecture
+    gas_cap: 8192
+    timeout_seconds: 300
+    input_mapping:
+      task: "{{ task | default('') }}"
+      seam_scope: "{{ seam_scope | default('kask/') }}"
+
+  - ordinal: 6
+    action: select
+    description: >
+      DO — ui-layout-discipline track. Audit kask-owned GPUI renderers (viz
+      widgets, kask_extensions_ui, marketplace_ui_common, D9 settings page) for
+      measured-layout discipline (overflow/truncate/min_w), action-congestion
+      (Fitts/Hick/Rosenholtz), interaction-language gaps (Button/IconButton vs
+      raw div, PopoverMenu, Tooltip), and the Toggle-vs-ToggleFocus +
+      deploy-and-focus traps. Produce ui_findings (each with id, axis, severity,
+      widget, file_line, evidence, problem, constraint_force, remediation,
+      deferred) and pattern_gap_summary (top Zed primitives to adopt).
+    renderer: minijinja
+    template_ref: kask-seam-audit/audit-ui
+    gas_cap: 8192
+    timeout_seconds: 300
+    input_mapping:
+      task: "{{ task | default('') }}"
+      seam_scope: "{{ seam_scope | default('kask/') }}"
+
+  # Step 7: lisp.eval — Gate B: finding completeness + citation + severity exclusivity.
+  - ordinal: 7
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Gate B (symbolic). Verify across all three tracks: each findings array is
+      non-empty (completeness); every finding's severity is in {critical, high,
+      medium, low, info} (exclusivity); every finding has a non-null file_line
+      OR deferred == "true" (citation). Returns a list of defect strings —
+      empty = passed; non-empty = step 8 refines the findings. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((sec (assoc "findings" step_4_result))
+              (arch (assoc "findings" step_5_result))
+              (ui (assoc "findings" step_6_result)))
+          (begin
+            (define valid-sev
+              (lambda (s)
+                (if (string= s "critical") true
+                (if (string= s "high") true
+                (if (string= s "medium") true
+                (if (string= s "low") true
+                (if (string= s "info") true false)))))))
+            (define check-one
+              (lambda (fs label-bad-sev label-no-cite acc)
+                (if (is_null fs)
+                    acc
+                    (let ((f (car fs))
+                          (sev (assoc "severity" f))
+                          (fl (assoc "file_line" f))
+                          (deferred (assoc "deferred" f)))
+                      (let ((sev-ok (valid-sev sev))
+                            (has-cite (if (is_null fl)
+                                          (string= deferred "true")
+                                          true)))
+                        (check-one
+                          (cdr fs)
+                          label-bad-sev
+                          label-no-cite
+                          (if (not sev-ok)
+                              (cons label-bad-sev acc)
+                              (if (not has-cite)
+                                  (cons label-no-cite acc)
+                                  acc))))))))
+            (define d-sec
+              (if (is_null sec)
+                  (list "sec_no_findings")
+                  (check-one sec "sec_bad_severity" "sec_no_citation" (list))))
+            (define d-arch
+              (if (is_null arch)
+                  (list "arch_no_findings")
+                  (check-one arch "arch_bad_severity" "arch_no_citation" d-sec)))
+            (define d-ui
+              (if (is_null ui)
+                  (list "ui_no_findings")
+                  (check-one ui "ui_bad_severity" "ui_no_citation" d-arch)))
+            d-ui))
+      env:
+        step_4_result: "{{ step_4_result }}"
+        step_5_result: "{{ step_5_result }}"
+        step_6_result: "{{ step_6_result }}"
+
+  # Step 8: refine findings, gated on Gate B defects.
+  - ordinal: 8
+    action: select
+    condition: "{{ step_7_result | length > 0 }}"
+    description: >
+      Re-cite / re-classify findings in response to Gate B. Only runs if Gate B
+      found defects (a track with no findings, an invalid severity, or a
+      finding missing file_line and not deferred). Adds the missing citation
+      or marks the finding deferred with a reason — never fabricates evidence.
+    renderer: minijinja
+    template_ref: kask-seam-audit/refine-findings
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('') }}"
+      security_findings: "{{ step_4_result.findings | default([]) }}"
+      arch_findings: "{{ step_5_result.findings | default([]) }}"
+      ui_findings: "{{ step_6_result.findings | default([]) }}"
+      gate_defects: "{{ step_7_result }}"
+
+  # ── CHECK ─────────────────────────────────────────────────────────────
+  - ordinal: 9
+    action: select
+    description: >
+      CHECK — adjudicate. Apply pragmatic-semantics (IS/OUGHT + provenance tier
+      + constraint-force severity), pragmatic-cybernetics (feedback-loop health,
+      Ashby requisite variety, Good-Regulator, spec-drift signal), and
+      essentialist (deletion test: complexity_reappears / complexity_vanishes /
+      unclear) to every finding. Produce annotated_findings (each original
+      finding plus constraint_force + deletion_test + feedback_verdict).
+    renderer: minijinja
+    template_ref: kask-seam-audit/adjudicate
+    gas_cap: 6144
+    timeout_seconds: 180
+    input_mapping:
+      task: "{{ task | default('') }}"
+      security_findings: "{{ step_8_result.security_findings | default(step_4_result.findings | default([])) }}"
+      arch_findings: "{{ step_8_result.arch_findings | default(step_5_result.findings | default([])) }}"
+      ui_findings: "{{ step_8_result.ui_findings | default(step_6_result.findings | default([])) }}"
+      defense_layer_coverage: "{{ step_4_result.defense_layer_coverage | default({}) }}"
+
+  - ordinal: 10
+    action: select
+    description: >
+      CHECK — mcda. Rank remediation candidates against four criteria (security
+      severity, codegraph simplification, UI consistency, cost-inverted) with
+      the operator_priority weighting vector, then run a ±20% sensitivity
+      analysis. Produce ranked_remediations (each with id, remediation, scores,
+      weighted_total, essentialist_survives) and top3 + sensitivity
+      {stable_under_perturbation: bool}. Each score traces to a finding.
+    renderer: minijinja
+    template_ref: kask-seam-audit/mcda
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('') }}"
+      annotated_findings: "{{ step_9_result.annotated_findings | default([]) }}"
+      operator_priority: "{{ operator_priority | default('security') }}"
+
+  # ── ACT ───────────────────────────────────────────────────────────────
+  - ordinal: 11
+    action: select
+    description: >
+      ACT — remediate. Apply ONLY mcda top-ranked remediations that survive
+      essentialist. Pin every behavioral remediation with a test in the same
+      change. For each touched file, declare within_kask (true if under kask/)
+      OR list the D-seam it is. If any remediation requires an upstream non-
+      D-seam edit, set hard_stop.triggered = true with a reason and a proposed
+      D-seam entry — do NOT edit. Produce applied_remediations (each with id,
+      touched_files [{path, within_kask}], test_added) and hard_stop
+      {triggered, reason, proposed_d_seam}.
+    renderer: minijinja
+    template_ref: kask-seam-audit/remediate
+    gas_cap: 8192
+    timeout_seconds: 300
+    input_mapping:
+      task: "{{ task | default('') }}"
+      ranked_remediations: "{{ step_10_result.ranked_remediations | default([]) }}"
+      divergence_surface: "{{ step_1_result.divergence_surface | default([]) }}"
+      seam_scope: "{{ seam_scope | default('kask/') }}"
+
+  # Step 12: lisp.eval — Gate C: test-pinning + divergence-surface membership (hard-stop).
+  - ordinal: 12
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Gate C (symbolic, hard-stop). Verify: every applied remediation has
+      test_added == "true" (test-pinning); every touched_file is either
+      within_kask == "true" OR an exact member of the divergence_surface
+      (divergence-surface membership — the hard-stop invariant). Returns a list
+      of defect strings — any "touched_file_outside_seam" defect means the
+      engagement MUST hard-stop and surface to the user. No LLM round-trip.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((applied (assoc "applied_remediations" step_11_result))
+              (divergence (assoc "divergence_surface" step_1_result))
+              (hard-stop-obj (assoc "hard_stop" step_11_result))
+              (hard-stop (assoc "triggered" hard-stop-obj)))
+          (if (is_null applied)
+              (list "no_applied_remediations_field")
+              (begin
+                (define in-divergence
+                  (lambda (path ds)
+                    (if (is_null ds)
+                        false
+                        (if (string= path (car ds))
+                            true
+                            (in-divergence path (cdr ds))))))
+                (define allowed
+                  (lambda (in-div wk-ok)
+                    (if in-div true wk-ok)))
+                (define check-files
+                  (lambda (fs acc2)
+                    (if (is_null fs)
+                        acc2
+                        (let ((fo (car fs))
+                              (fp (assoc "path" fo))
+                              (wk (assoc "within_kask" fo))
+                              (wk-ok (string= wk "true"))
+                              (in-div (in-divergence fp divergence)))
+                          (check-files
+                            (cdr fs)
+                            (if (allowed in-div wk-ok)
+                                acc2
+                                (cons "touched_file_outside_seam" acc2)))))))
+                (define check-one
+                  (lambda (rs acc)
+                    (if (is_null rs)
+                        acc
+                        (let ((r (car rs))
+                              (test (assoc "test_added" r))
+                              (files (assoc "touched_files" r))
+                              (test-ok (string= test "true")))
+                          (check-one
+                            (cdr rs)
+                            (if (not test-ok)
+                                (cons "remediation_missing_test" acc)
+                                (if (is_null files)
+                                    (cons "remediation_no_touched_files" acc)
+                                    (append (check-files files (list)) acc))))))))
+                (define remediation-defects (check-one applied (list)))
+                (if (string= hard-stop "true")
+                    (cons "hard_stop_triggered" remediation-defects)
+                    remediation-defects))))
+      env:
+        step_11_result: "{{ step_11_result }}"
+        step_1_result: "{{ step_1_result }}"
+
+  # Step 13: remediation repair or hard-stop, gated on Gate C defects.
+  - ordinal: 13
+    action: select
+    condition: "{{ step_12_result | length > 0 }}"
+    description: >
+      Repair remediation defects (add the missing test; re-scope a touched file
+      behind a D-seam) OR, if Gate C found "touched_file_outside_seam" /
+      "hard_stop_triggered", emit the hard-stop: surface to the user with the
+      offending file, the proposed D-seam entry, and a pinning-test stub. Do
+      NOT edit any upstream non-D-seam file. Produces a hard_stop_decision.
+    renderer: minijinja
+    template_ref: kask-seam-audit/remediation-repair
+    gas_cap: 2048
+    timeout_seconds: 60
+    input_mapping:
+      task: "{{ task | default('') }}"
+      applied_remediations: "{{ step_11_result.applied_remediations | default([]) }}"
+      gate_defects: "{{ step_12_result }}"
+      hard_stop: "{{ step_11_result.hard_stop | default({}) }}"
+
+  # Step 14: lisp.eval — convergence score (count of uncited-or-unadjudicated findings).
+  - ordinal: 14
+    action: compute
+    compute_ref: lisp.eval
+    description: >
+      Convergence signal (symbolic). Count findings lacking file_line OR
+      constraint_force across the annotated set (uncited-or-unadjudicated).
+      Lower = more converged; 0 = every finding cited and adjudicated. Feeds the
+      Cauchy criterion. A stable non-zero signal satisfies Cauchy but is NOT
+      clean — `on_not_reached: escalate` routes it to the Curator.
+    gas_cap: 100
+    timeout_seconds: 10
+    input_mapping:
+      form: >
+        (let ((annotated (assoc "annotated_findings" step_9_result)))
+          (if (is_null annotated)
+              0.0
+              (begin
+                (define count-unconverged
+                  (lambda (fs acc)
+                    (if (is_null fs)
+                        acc
+                        (let ((f (car fs))
+                              (fl (assoc "file_line" f))
+                              (cf (assoc "constraint_force" f)))
+                          (count-unconverged
+                            (cdr fs)
+                            (if (is_null fl)
+                                (+ acc 1)
+                                (if (is_null cf)
+                                    (+ acc 1)
+                                    acc)))))))
+                (count-unconverged annotated 0))))
+      env:
+        step_9_result: "{{ step_9_result }}"
+
+  # Step 15: loop — re-enter the audit tracks if not converged.
+  - ordinal: 15
+    action: loop
+    description: >
+      Re-enter the DO tracks (step 4) if convergence is not met. Carries prior
+      findings so the LLM repairs cumulatively. Bounded by max_iterations and
+      the hard-stop (Gate C).
+    gas_cap: 1000
+    timeout_seconds: 30
+    input_mapping:
+      loop_target: "{{ 4 }}"
+      convergence_signal: "{{ step_14_result }}"
+
+  # ── FINAL ─────────────────────────────────────────────────────────────
+  # Step 16: final report. Runs after convergence (the loop exits when
+  # converged). The ordinal is the highest among steps that produce a
+  # step_N_result, so extract_final_step_result picks it.
+  - ordinal: 16
+    action: select
+    description: >
+      Final report. Synthesize the engagement: the three audit-track findings,
+      defense-layer coverage, dead-surface summary, UI pattern gaps, MCDA
+      ranked remediations + sensitivity, applied remediations, hard-stop
+      decision, and convergence score. Cite file:line throughout. Surface the
+      deliverable paths (reports under kask/research/seam-audit/, the FlowDef
+      manifest). Makes the structural-invariant gates auditable — which defects
+      did Lisp catch that the LLM missed?
+    renderer: minijinja
+    template_ref: kask-seam-audit/final-report
+    gas_cap: 4096
+    timeout_seconds: 120
+    input_mapping:
+      task: "{{ task | default('') }}"
+      seam_map: "{{ step_1_result }}"
+      security_track: "{{ step_4_result }}"
+      arch_track: "{{ step_5_result }}"
+      ui_track: "{{ step_6_result }}"
+      annotated_findings: "{{ step_9_result.annotated_findings | default([]) }}"
+      mcda: "{{ step_10_result }}"
+      applied_remediations: "{{ step_11_result.applied_remediations | default([]) }}"
+      hard_stop: "{{ step_13_result.hard_stop_decision | default(step_11_result.hard_stop | default({})) }}"
+      convergence_score: "{{ step_14_result | default(0) }}"
+      iterations: "{{ _convergence.iteration | default(1) }}"
+
+error_handling:
+  on_gas_exceeded: abort
+  on_timeout: retry
+  max_retries: 1
+  retry_backoff_seconds: 1
+  on_validation_failure: abort
+
+audit:
+  enabled: true
+  log_level: info
+  include_input: true
+  include_output: true
+  include_gas_cost: true
+  include_reg_events: true

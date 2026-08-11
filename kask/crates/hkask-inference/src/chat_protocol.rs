@@ -1,8 +1,8 @@
 //! Shared OpenAI-compatible chat completion protocol types and helpers.
 //!
 //! All five chat backends (DeepInfra, OpenRouter, KiloCode, Ollama,
-//! AtlasCloud) speak the same `/v1/chat/completions` wire format. fal.ai is
-//! a media backend (not chat) and does not use this protocol.
+//! AtlasCloud) speak the same `/v1/chat/completions` wire format. Media
+//! backends (image/video/audio/ASR) do not use this protocol.
 //! This module provides the shared request/response types and helper functions
 //! used by all backends.
 //!

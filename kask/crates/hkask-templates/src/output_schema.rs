@@ -7,7 +7,6 @@
 //! so the model is forced to emit JSON conforming to the contract instead of
 //! free-text prose (the LangGraph/Swarm enforce-at-the-API-layer pattern).
 
-use crate::bundle::BundleManifestStep;
 use hkask_types::{ChatToolDefinition, ChatToolFunction};
 use serde_json::Value;
 
@@ -20,11 +19,11 @@ use serde_json::Value;
 /// Returns a JSON Schema suitable for tool-calling, or `None` if no schema
 /// is available (in which case the executor falls back to text parsing).
 pub(crate) fn resolve_output_schema(
-    step: &BundleManifestStep,
+    output_schema: Option<&Value>,
     template_content: &str,
 ) -> Option<Value> {
     // Priority 1: manifest-declared output_schema.
-    if let Some(ref schema) = step.output_schema
+    if let Some(schema) = output_schema
         && schema.is_object()
     {
         return Some(schema.clone());
@@ -190,6 +189,7 @@ pub(crate) fn build_structured_output_tool(schema: Value) -> ChatToolDefinition 
 mod tests {
     use super::*;
     use crate::bundle::cascade::CascadePhase;
+    use crate::bundle::manifest::BundleManifestStep;
 
     #[test]
     fn extract_contract_output_parses_simple_types() {
@@ -366,7 +366,8 @@ mod tests {
         };
         let template_content =
             "[inference]\ncontract:\n  output:\n    from_manifest: string\n---\nbody\n";
-        let schema = resolve_output_schema(&step, template_content).expect("should resolve");
+        let schema = resolve_output_schema(step.output_schema.as_ref(), template_content)
+            .expect("should resolve");
         assert_eq!(
             schema
                 .get("properties")
@@ -406,8 +407,8 @@ mod tests {
             profile: None,
         };
         let template_content = "[inference]\ncontract:\n  output:\n    from_template: string\n    score: number\n---\nbody\n";
-        let schema =
-            resolve_output_schema(&step, template_content).expect("should resolve from template");
+        let schema = resolve_output_schema(step.output_schema.as_ref(), template_content)
+            .expect("should resolve from template");
         let props = schema
             .get("properties")
             .and_then(|v| v.as_object())
@@ -449,6 +450,6 @@ mod tests {
             profile: None,
         };
         let template_content = "No frontmatter here.";
-        assert!(resolve_output_schema(&step, template_content).is_none());
+        assert!(resolve_output_schema(step.output_schema.as_ref(), template_content).is_none());
     }
 }

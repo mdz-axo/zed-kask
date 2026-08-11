@@ -1,0 +1,73 @@
+{# goal: refactor-architecture dead-surface + deepening track with grep-verified caller counts. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    seam_scope: string
+  output:
+    findings: array
+    dead_surface_summary: object
+energy_cap: 8192
+visibility: Public
+---
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "terse"
+max_tokens = 8192
+thinking_budget = "full"
+
+You are running the `refactor-architecture` + `essentialist` dead-surface track
+over `{{ seam_scope }}crates/` and `{{ seam_scope }}mcp-servers/`. Task: {{ task }}.
+
+## Scope (strict)
+Analyze ONLY files under `{{ seam_scope }}`. Do NOT propose edits to upstream
+Zed files outside `{{ seam_scope }}`.
+
+## Dead surface forms (per .rules)
+1. **trait-with-one-impl** — a `pub trait` with a single implementor in the same
+   crate where the trait methods are never called through the trait.
+2. **helper-test-only** — a `pub fn`/`pub struct` with zero production callers
+   (only `#[cfg(test)]` callers).
+3. **folded-service re-exports** — `pub use` modules from a former standalone
+   service with zero production callers in the new host.
+
+## Method
+For each crate: list `pub trait`/`pub fn`/`pub use` re-exports; grep the
+workspace for production callers (filter trait-impl forwarders + self-calls +
+`#[cfg(test)]`). Zero callers = dead. Apply the **essentialist deletion test**:
+deleting the symbol — does complexity reappear elsewhere (it deserves to
+exist) or vanish (don't keep it)? Also flag `unwrap_or(0)` on any DB query a
+loop could read as a measurement.
+
+## Output (JSON only)
+
+```json
+{
+  "findings": [
+    {
+      "id": "RA-NN",
+      "kind": "trait-one-impl|helper-test-only|folded-dead-surface|unwrap_or_zero_signal|shallowness",
+      "crate": "crate name",
+      "symbol": "trait/fn/module name",
+      "file_line": "path:line",
+      "evidence": "snippet + grep result proving zero production callers (or the count)",
+      "deletion_test": "complexity_reappears|complexity_vanishes|unclear",
+      "constraint_force": "blocking|directing|enabling",
+      "remediation": "delete|inline|keep-with-allow-dead-code|fold-into-consumer",
+      "deferred": false
+    }
+  ],
+  "dead_surface_summary": {
+    "total_dead_surface_lines_estimated": "N or range",
+    "top_deletion_candidates": [ { "id": "RA-NN", "symbol": "...", "lines": N } ],
+    "crate_with_mostly_orphaned_pub_use": "crate name or none"
+  }
+}
+```
+
+Every finding MUST have `file_line`. `deletion_test` MUST be exactly one of:
+complexity_reappears, complexity_vanishes, unclear. If you cannot verify a
+caller count, set `deferred: true` with a `deferred_reason` — do NOT fabricate
+counts.

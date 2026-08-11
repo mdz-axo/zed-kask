@@ -1,0 +1,62 @@
+{# goal: Repair Gate C defects (missing test, out-of-seam touch) or emit the hard-stop. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    applied_remediations: array
+    gate_defects: array
+    hard_stop: object
+  output:
+    hard_stop_decision: object
+energy_cap: 2048
+visibility: Public
+---
+[inference]
+temperature = 0.3
+work_effort = "medium"
+verbosity = "terse"
+max_tokens = 2048
+thinking_budget = "full"
+
+You are responding to Gate C (the hard-stop gate). Task: {{ task }}.
+
+## Gate C defects
+{{ gate_defects }}
+
+Defect codes:
+- `remediation_missing_test` — an applied remediation lacked `test_added: true`.
+  Either add the test (and re-emit the remediation with `test_added: true`) or
+  roll the remediation back (remove it from `applied_remediations`).
+- `remediation_no_touched_files` — a remediation declared no touched files.
+- `touched_file_outside_seam` — a touched file is neither under the seam scope
+  nor an exact D-seam member. This is a HARD-STOP. Do NOT edit the file. Roll
+  the remediation back and emit the hard-stop with the offending file and a
+  proposed D-seam entry.
+- `hard_stop_triggered` — the remediate step itself flagged a hard-stop.
+
+## Current state
+applied_remediations:
+{{ applied_remediations }}
+
+prior hard_stop:
+{{ hard_stop }}
+
+## Output (JSON only)
+
+```json
+{
+  "hard_stop_decision": {
+    "triggered": false,
+    "rolled_back": [ { "id": "...", "reason": "..." } ],
+    "offending_files": [ "path" ],
+    "proposed_d_seam_entries": [ { "id": "Dxx", "surface": "...", "file": "..." } ],
+    "user_message": "what to surface to the operator"
+  }
+}
+```
+
+`triggered` MUST be exactly `"true"` or `"false"` (string). If
+`touched_file_outside_seam` is in `gate_defects`, `triggered` MUST be `"true"`.
+Do NOT edit any upstream non-D-seam file. The engagement stops and surfaces to
+the user when `triggered == "true"`.

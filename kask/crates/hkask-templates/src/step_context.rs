@@ -32,11 +32,12 @@ use crate::step_graph::StepId;
 use hkask_capability::tool_taint::ToolTaint;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// A step's result, with its taint label inline.
 #[derive(Debug, Clone)]
 pub struct StepResult {
-    pub value: Value,
+    pub value: Arc<Value>,
     pub taint: ToolTaint,
     pub step_id: StepId,
     pub ordinal: u32,
@@ -93,7 +94,7 @@ impl StepContext {
         self.results.insert(
             step_id,
             StepResult {
-                value,
+                value: Arc::new(value),
                 taint,
                 step_id,
                 ordinal,
@@ -119,7 +120,7 @@ impl StepContext {
         self.results.insert(
             step_id,
             StepResult {
-                value,
+                value: Arc::new(value),
                 taint,
                 step_id,
                 ordinal,
@@ -150,12 +151,14 @@ impl StepContext {
     /// by the machine on `Reenter`, replacing the 30-line block in the old
     /// loop arm that copied every `step_N_result` into `prev_step_N_result`.
     pub fn snapshot_prev(&mut self) {
+        // Shallow after K4: `StepResult.value` is `Arc<Value>`, so cloning the
+        // results map is N refcount bumps, not N deep Value-tree clones. The
+        // legacy prev-key writes below remain deep clones (the legacy map owns
+        // `Value`); K1 removes them when the legacy results-mirror is deleted.
         self.prev_results = self.results.clone();
-        // Also write prev_step_{ordinal}_result into the legacy map so
-        // Jinja templates that reference `{{ prev_step_1_result }}` work.
         for (_step_id, result) in &self.results {
             let prev_key = format!("prev_step_{}_result", result.ordinal);
-            self.legacy.insert(prev_key, result.value.clone());
+            self.legacy.insert(prev_key, result.value.as_ref().clone());
         }
     }
 
@@ -229,7 +232,10 @@ mod tests {
         let mut ctx = StepContext::new(HashMap::new());
         ctx.store_result(0, 1, Value::String("hello".into()), ToolTaint::Pure);
 
-        assert_eq!(ctx.result(0).unwrap().value, Value::String("hello".into()));
+        assert_eq!(
+            ctx.result(0).unwrap().value.as_ref(),
+            &Value::String("hello".into())
+        );
         assert_eq!(
             ctx.legacy("step_1_result").unwrap(),
             &Value::String("hello".into())
@@ -253,12 +259,12 @@ mod tests {
         ctx.snapshot_prev();
 
         assert_eq!(
-            ctx.prev_result(0).unwrap().value,
-            Value::String("first".into())
+            ctx.prev_result(0).unwrap().value.as_ref(),
+            &Value::String("first".into())
         );
         assert_eq!(
-            ctx.prev_result(1).unwrap().value,
-            Value::String("second".into())
+            ctx.prev_result(1).unwrap().value.as_ref(),
+            &Value::String("second".into())
         );
         assert_eq!(
             ctx.legacy("prev_step_1_result").unwrap(),
@@ -278,7 +284,7 @@ mod tests {
         ctx.store_result(2, 7, Value::String("c".into()), ToolTaint::Pure);
 
         let last = ctx.last_result(2).unwrap();
-        assert_eq!(last.value, Value::String("c".into()));
+        assert_eq!(last.value.as_ref(), &Value::String("c".into()));
         assert_eq!(last.ordinal, 7);
     }
 }

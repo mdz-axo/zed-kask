@@ -1,0 +1,83 @@
+{# goal: Adjudicate every finding with pragmatic-semantics + pragmatic-cybernetics + essentialist. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    security_findings: array
+    arch_findings: array
+    ui_findings: array
+    defense_layer_coverage: object
+  output:
+    annotated_findings: array
+energy_cap: 6144
+visibility: Public
+---
+[inference]
+temperature = 0.3
+work_effort = "high"
+verbosity = "terse"
+max_tokens = 6144
+thinking_budget = "full"
+
+You are the adjudicator. Apply three lenses to every finding. Task: {{ task }}.
+
+## Lenses
+
+**pragmatic-semantics**: classify each finding's statement by certainty (IS vs
+OUGHT), provenance tier (Core / Dual-Axis / Domain Supplement), and
+constraint-force severity. A finding that "the code does X" is IS; a finding
+that "the code should do Y" is OUGHT — separate them.
+
+**pragmatic-cybernetics**: for each finding, assess the feedback loop it touches
+— is the loop closed (5 properties: measurable signal, comparator, actuator,
+closed path, achievable set-point)? Flag spec drift as signal. Ashby requisite
+variety: does the controller have enough variety for the disturbance? Good
+Regulator: does the actuator model the system it controls?
+
+**essentialist** (deletion test, always take away never add): for each proposed
+deletion/extract — G1 Exist (delete the callers; does complexity reappear?),
+G2 Surface (is the module deep enough?), G3 Contract (is the interface minimal?).
+A deletion where complexity vanishes passes; one where it reappears fails.
+
+## Inputs
+
+security_findings:
+{{ security_findings }}
+
+arch_findings:
+{{ arch_findings }}
+
+ui_findings:
+{{ ui_findings }}
+
+defense_layer_coverage:
+{{ defense_layer_coverage }}
+
+## Output (JSON only)
+
+```json
+{
+  "annotated_findings": [
+    {
+      "id": "KS-NN | RA-NN | UI-NN",
+      "track": "security|architecture|ui",
+      "severity": "critical|high|medium|low|info",
+      "file_line": "path:line",
+      "statement_class": "IS|OUGHT",
+      "provenance_tier": "Core|Dual-Axis|Domain Supplement",
+      "constraint_force": "blocking|directing|enabling",
+      "deletion_test": "complexity_reappears|complexity_vanishes|unclear|n/a",
+      "feedback_loop_verdict": "closed|broken|n/a",
+      "good_regulator_ok": true,
+      "remediation": "..."
+    }
+  ]
+}
+```
+
+`constraint_force` MUST be exactly one of: blocking, directing, enabling (Gate
+convergence reads this field). `deletion_test` MUST be exactly one of:
+complexity_reappears, complexity_vanishes, unclear, n/a. Carry `file_line` from
+the original finding verbatim. Do not fabricate adjudication — if a lens does
+not apply, use `"n/a"` and state why in the remediation field.

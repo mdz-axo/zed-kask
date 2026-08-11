@@ -35,7 +35,7 @@
 //! - `generate_vision` — prompt + images → result
 //! - `embed` — model + texts → embedding vectors (OpenAI-compatible `/embeddings`)
 //! - `list_models` — list available models from zed's `LanguageModelRegistry`
-//! - `media_generate` — generate media (image, video, speech, transcription) via fal.ai/DeepInfra
+//! - `media_generate` — generate media (image, video, speech, transcription) via AtlasCloud/DeepInfra
 //! - `tool_invoke` — invoke a governed MCP tool on the zed side (`ToolDispatchPort`);
 //!   used by MCP servers that run agent loops (e.g. `hkask-mcp-swarm`'s local
 //!   delegate) so a delegated agent can call MCP tools that live in the parent
@@ -211,7 +211,7 @@ pub enum InferenceOutcome {
         models: Vec<ModelListEntry>,
     },
     /// Media generation result from `InferenceMethod::MediaGenerate`.
-    /// The value is the raw JSON returned by fal.ai/DeepInfra.
+    /// The value is the raw JSON returned by AtlasCloud/DeepInfra.
     Media {
         #[serde(rename = "media")]
         media: serde_json::Value,

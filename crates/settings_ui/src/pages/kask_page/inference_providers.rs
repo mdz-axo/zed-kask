@@ -5,14 +5,6 @@
 //! picker. The API key is stored in the keychain under the provider's
 //! `api_url` (so zed's OpenAI-compatible provider finds it) and mirrored to
 //! `kask://credentials/<key>` for MCP server env injection.
-//!
-//! fal.ai is deliberately not listed here: it is a generative media platform,
-//! not an OpenAI-compatible chat endpoint (`/v1/chat/completions` returns 404,
-//! `/v1/models` uses `Authorization: Key`). fal.ai is deprecated for TTS, STT,
-//! and image generation (defaults now route to DeepInfra); AtlasCloud
-//! handles video, image-to-image, upscale, and audio;
-//! workflow capabilities, so `FALAI_API_KEY` is still consumed by the media MCP
-//! server (no longer by the corpus server).
 
 use super::*;
 

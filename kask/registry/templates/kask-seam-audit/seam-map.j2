@@ -1,0 +1,72 @@
+{# goal: Map the divergence surface and verify convention priors (live vs phantom) before auditing. #}
+[inference]
+template_type: KnowAct
+contract:
+  input:
+    task: string
+    divergence_doc: string
+    seam_scope: string
+    prior_rules: array
+  output:
+    divergence_surface: array
+    prior_verdicts: array
+    slices: array
+energy_cap: 4096
+visibility: Public
+---
+[inference]
+temperature = 0.2
+work_effort = "high"
+verbosity = "terse"
+max_tokens = 4096
+thinking_budget = "full"
+
+You are the orchestrator of a Kask↔Zed seam security + architecture + UI
+audit. Task: {{ task }}.
+
+## Step 1 — Map the seam and verify convention priors
+
+Read `{{ divergence_doc }}` and extract the **divergence surface**: the list of
+D-seam files (D1–D24). Everything under `{{ seam_scope }}` is additive (ours);
+everything else tracks upstream Zed and is touched only via the named D-seams.
+
+### Convention prior liveness check
+
+For each prior in `prior_rules`, grep `crates/` (and `kask/`) for the named
+artifact. A prior whose artifact is ABSENT is a **phantom** — the `.rules`
+entry is itself a finding (stale `.rules`, per the "Convention priors drawn
+from .rules must be verified against the codebase" trap). This is read-only:
+you report verdicts, you do not edit `.rules`.
+
+{% for prior in prior_rules %}
+- prior: {{ prior.prior }} | artifact: {{ prior.artifact }} | expected: {{ prior.expected }}
+{% endfor %}
+
+For each, emit:
+```json
+{ "prior": "<name>", "artifact": "<symbol/path>", "verdict": "live" | "phantom", "evidence": "<grep result or absence>" }
+```
+`verdict` MUST be exactly `"live"` or `"phantom"` (the Gate A lisp evaluator
+enforces these two classes exclusively — any other string is a defect).
+
+### Slices
+
+Derive the audit slices. The seam decomposes into three tracks (FlowDef runs
+them sequentially; the parallel orchestration is an agent choice):
+- slice `security` — kali-audit over the 8 priority surfaces
+- slice `architecture` — refactor-architecture dead-surface + deepening
+- slice `ui` — ui-layout-discipline GPUI audit
+
+## Output (JSON only)
+
+```json
+{
+  "divergence_surface": [ "<D-seam file path>", ... ],
+  "prior_verdicts": [ { "prior": "...", "artifact": "...", "verdict": "live|phantom", "evidence": "..." } ],
+  "slices": [ { "id": "security" }, { "id": "architecture" }, { "id": "ui" } ]
+}
+```
+
+Do not fabricate. If you cannot open `{{ divergence_doc }}`, emit
+`divergence_surface: []` and a single prior_verdict with `verdict: "phantom"`
+and `evidence: "could not read divergence doc"`.
