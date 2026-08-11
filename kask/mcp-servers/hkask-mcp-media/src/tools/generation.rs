@@ -179,52 +179,6 @@ impl MediaServer {
         .await
     }
 
-    // ── Workflow execution ─────────────────────────────────────────────────
-
-    #[tool(
-        description = "Execute a multi-step Fal media workflow. Provide a JSON string with a DAG of nodes (input, run, display types). Run nodes accept 'mode': 'sync' (default, via fal.run) or 'queue' (via queue.fal.run with polling) for long-running models like video generation and upscaling. Nodes execute in dependency order with $reference resolution between them. Returns output URLs and metadata."
-    )]
-    pub async fn execute_workflow(
-        &self,
-        Parameters(ExecuteWorkflowRequest { workflow }): Parameters<ExecuteWorkflowRequest>,
-    ) -> String {
-        execute_tool(self, "execute_workflow", async {
-            let workflow_json: serde_json::Value =
-                serde_json::from_str(&workflow).map_err(|e| {
-                    McpToolError::invalid_argument(format!("Invalid workflow JSON: {e}"))
-                })?;
-            let media_params = hkask_types::MediaGenerateParams {
-                workflow: Some(workflow_json.clone()),
-                ..Default::default()
-            };
-            self.charge_budget("execute_workflow", &media_params).await?;
-            let result = self
-                .vision_port
-                .media_generate("execute_workflow", &media_params)
-                .await
-                .map(|wr| {
-                    // The IPC bridge serializes `WorkflowResult` to JSON for
-                    // transport; extract the same fields the old direct call
-                    // returned.
-                    serde_json::json!({
-                        "output_urls": wr.get("output_urls").cloned().unwrap_or(serde_json::Value::Array(vec![])),
-                        "output_fields": wr.get("output_fields").cloned().unwrap_or(serde_json::Value::Null),
-                        "elapsed_seconds": wr.get("elapsed_seconds").cloned().unwrap_or(serde_json::Value::from(0.0)),
-                    })
-                })
-                .map_err(|e| McpToolError::unavailable(format!("Workflow execution failed: {e}")))?;
-            let args = serde_json::json!({ "workflow": workflow_json });
-            Ok(crate::media_block::enrich_with_omc_and_provenance(
-                result,
-                "execute_workflow",
-                "image",
-                args,
-                None,
-            ))
-        })
-        .await
-    }
-
     #[tool(
         description = "Expand a short media prompt into a rich, detailed prompt using a vision LLM (Fooocus 'V2' pattern). The user writes 'a cat in space' and the system expands it to include lighting, composition, style, atmosphere, and quality modifiers. Optionally apply a style preset (default, anime, realistic, cinematic, minimal) to the expanded prompt."
     )]

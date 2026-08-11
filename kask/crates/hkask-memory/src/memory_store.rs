@@ -41,6 +41,16 @@ pub enum MemoryStoreError {
     HMem(#[from] HMemError),
     #[error("Embedding error: {0}")]
     Embedding(#[from] EmbeddingError),
+    #[error("No embeddings found for centroid: {0}")]
+    NoEmbeddingsForCentroid(String),
+}
+
+/// Result of computing a style centroid over a prefix-scoped embedding set.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CentroidResult {
+    pub centroid: Vec<f32>,
+    pub passage_count: usize,
+    pub stored: bool,
 }
 
 /// Default memory life in days: 180 days (6 months × 30).
@@ -446,6 +456,79 @@ impl MemoryStore {
         prefix: &str,
     ) -> Result<Vec<(String, Vec<f32>)>, MemoryStoreError> {
         Ok(self.embedding.get_all_by_prefix(prefix)?)
+    }
+
+    /// Compute the centroid (mean embedding vector) for embeddings matching a prefix.
+    pub fn compute_centroid(
+        &self,
+        prefix: &str,
+        exclude_prefix: &str,
+        exclude_ref: &str,
+        dim: usize,
+        store_as: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<CentroidResult, MemoryStoreError> {
+        let matching_refs: Vec<String> = self
+            .embedding
+            .query_by_prefix(prefix)?
+            .into_iter()
+            .filter(|r| !r.starts_with(exclude_prefix) && r != exclude_ref)
+            .collect();
+
+        if matching_refs.is_empty() {
+            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
+                prefix.to_string(),
+            ));
+        }
+
+        let mut centroid = vec![0.0f32; dim];
+        let mut count = 0usize;
+        for entity_ref in &matching_refs {
+            match self.embedding.get(entity_ref) {
+                Ok(emb) => {
+                    for (i, v) in emb.vector.iter().enumerate() {
+                        if i < dim {
+                            centroid[i] += v;
+                        }
+                    }
+                    count += 1;
+                }
+                Err(e) => tracing::warn!(
+                    target: "hkask.memory",
+                    error = %e,
+                    entity_ref = %entity_ref,
+                    "Failed to fetch embedding for centroid computation"
+                ),
+            }
+        }
+
+        if count == 0 {
+            return Err(MemoryStoreError::NoEmbeddingsForCentroid(
+                prefix.to_string(),
+            ));
+        }
+
+        let n = count as f32;
+        for v in centroid.iter_mut() {
+            *v /= n;
+        }
+
+        let stored = if let Some(ref_to_store) = store_as {
+            if let Some(m) = model {
+                let _id = self.embedding.store(ref_to_store, &centroid, m)?;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        Ok(CentroidResult {
+            centroid,
+            passage_count: count,
+            stored,
+        })
     }
 
     pub fn purge_by_prefix(&self, prefix: &str) -> Result<usize, MemoryStoreError> {

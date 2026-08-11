@@ -150,6 +150,8 @@ impl MediaProvider for AtlasCloudBackend {
         matches!(
             op,
             MediaOp::GenerateImage
+                | MediaOp::ImageToImage
+                | MediaOp::Upscale
                 | MediaOp::GenerateVideo
                 | MediaOp::ImageToVideo
                 | MediaOp::GenerateSpeech
@@ -163,20 +165,80 @@ impl MediaProvider for AtlasCloudBackend {
         params: &'a MediaGenerateParams,
     ) -> Pin<Box<dyn Future<Output = Result<Value, InferenceError>> + Send + 'a>> {
         Box::pin(async move {
-            let (endpoint, model_id) = match op {
-                MediaOp::GenerateImage => (
-                    "/model/generateImage",
-                    "seedream/seedream-v5.0-lite-text-to-image",
-                ),
-                // Image-to-video reuses the generateVideo endpoint with an
-                // `image_url` input (already merged into the body below); fal.ai
-                // is deprecated, so AtlasCloud is the video backend for both
-                // text-to-video and image-to-video.
-                MediaOp::GenerateVideo | MediaOp::ImageToVideo => {
-                    ("/model/generateVideo", "minimax/h3")
+            // Each op builds its own body with the correct field names for the
+            // AtlasCloud API. Different models use different field names
+            // (e.g. `image` for upscaler, `images` array for edit, `image_url`
+            // for video) — a generic builder would send the wrong field.
+            let (endpoint, body) = match op {
+                MediaOp::GenerateImage => {
+                    let mut body = serde_json::json!({
+                        "model": "seedream/seedream-v5.0-lite-text-to-image"
+                    });
+                    if let Some(prompt) = &params.prompt {
+                        body["prompt"] = Value::String(prompt.clone());
+                    }
+                    if let Some(size) = &params.size {
+                        body["image_size"] = Value::String(size.clone());
+                    }
+                    ("/model/generateImage", body)
                 }
-                MediaOp::GenerateSpeech => ("/model/generateAudio", "seed-audio/seed-audio-1.0"),
-                MediaOp::Transcribe => ("/model/transcribe", "bytedance/seed-asr-2.0"),
+                MediaOp::ImageToImage => {
+                    let mut body = serde_json::json!({
+                        "model": "bytedance/seedream-v5.0-pro/edit"
+                    });
+                    if let Some(prompt) = &params.prompt {
+                        body["prompt"] = Value::String(prompt.clone());
+                    }
+                    if let Some(image_url) = &params.image_url {
+                        body["images"] = serde_json::json!([image_url.clone()]);
+                    }
+                    ("/model/generateImage", body)
+                }
+                MediaOp::Upscale => {
+                    let mut body = serde_json::json!({
+                        "model": "atlascloud/image-upscaler"
+                    });
+                    if let Some(image_url) = &params.image_url {
+                        body["image"] = Value::String(image_url.clone());
+                    }
+                    if let Some(scale) = params.scale {
+                        body["outscale"] = serde_json::json!(scale as f64);
+                    }
+                    ("/model/generateImage", body)
+                }
+                MediaOp::GenerateVideo | MediaOp::ImageToVideo => {
+                    let mut body = serde_json::json!({ "model": "minimax/h3" });
+                    if let Some(prompt) = &params.prompt {
+                        body["prompt"] = Value::String(prompt.clone());
+                    }
+                    if let Some(image_url) = &params.image_url {
+                        body["image_url"] = Value::String(image_url.clone());
+                    }
+                    if let Some(duration) = params.duration {
+                        body["duration"] = serde_json::json!(duration);
+                    }
+                    ("/model/generateVideo", body)
+                }
+                MediaOp::GenerateSpeech => {
+                    let mut body = serde_json::json!({ "model": "seed-audio/seed-audio-1.0" });
+                    if let Some(text) = &params.text {
+                        body["text"] = Value::String(text.clone());
+                    }
+                    if let Some(voice) = &params.voice {
+                        body["voice"] = Value::String(voice.clone());
+                    }
+                    ("/model/generateAudio", body)
+                }
+                MediaOp::Transcribe => {
+                    let mut body = serde_json::json!({ "model": "bytedance/seed-asr-2.0" });
+                    if let Some(audio_url) = &params.audio_url {
+                        body["audio_url"] = Value::String(audio_url.clone());
+                    }
+                    if let Some(language) = &params.language {
+                        body["language"] = Value::String(language.clone());
+                    }
+                    ("/model/transcribe", body)
+                }
                 _ => {
                     return Err(InferenceError::Connection(format!(
                         "AtlasCloud does not support media op: {}",
@@ -184,33 +246,6 @@ impl MediaProvider for AtlasCloudBackend {
                     )));
                 }
             };
-
-            // Build the AtlasCloud request body: { model, ...params }
-            let mut body = serde_json::json!({ "model": model_id });
-            if let Some(prompt) = &params.prompt {
-                body["prompt"] = Value::String(prompt.clone());
-            }
-            if let Some(image_url) = &params.image_url {
-                body["image_url"] = Value::String(image_url.clone());
-            }
-            if let Some(size) = &params.size {
-                body["image_size"] = Value::String(size.clone());
-            }
-            if let Some(duration) = params.duration {
-                body["duration"] = serde_json::json!(duration);
-            }
-            if let Some(text) = &params.text {
-                body["text"] = Value::String(text.clone());
-            }
-            if let Some(voice) = &params.voice {
-                body["voice"] = Value::String(voice.clone());
-            }
-            if let Some(audio_url) = &params.audio_url {
-                body["audio_url"] = Value::String(audio_url.clone());
-            }
-            if let Some(language) = &params.language {
-                body["language"] = Value::String(language.clone());
-            }
 
             self.submit_and_poll(endpoint, body).await
         })

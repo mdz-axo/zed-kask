@@ -114,23 +114,6 @@ impl ToolSpanGuard {
             Err(e) => self.error(e.kind, e.to_json_string()),
         }
     }
-
-    /// Produces McpToolError wire format so clients can distinguish errors from successes.
-    /// Finish span with an internal error.
-    ///
-    /// post: Regulation tool span emitted with "error" status
-    /// post: returns JSON error string
-    #[must_use]
-    pub fn internal_error(self, value: Value) -> String {
-        let message = match value {
-            Value::String(s) => s,
-            other => other.to_string(),
-        };
-        self.error(
-            McpErrorKind::Internal,
-            McpToolError::internal(message).to_json_string(),
-        )
-    }
 }
 
 impl Drop for ToolSpanGuard {

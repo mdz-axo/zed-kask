@@ -264,3 +264,103 @@ These are perf claims or out-of-tier observations, not confirmed findings.
 - **`hkask-test-harness`, `hkask-bridge-ontology`, `hkask-email`,
   `hkask-forecast`, `hkask-keystore`, `hkask-lisp`**: not in any tier list; not
   examined.
+
+## 7. Should-fix mode — fixes applied
+
+After the audit, fixes were implemented (no backward-compatibility constraint;
+dead surface deleted rather than `#[allow(dead_code)]`-ed). Every change was
+verified with `cargo check` and the affected test suites. Status per finding:
+
+| # | Status | Notes |
+|---|---|---|
+| 1,2 | fixed | `config.rs` numeric env reads now `tracing::warn!` on parse failure; `pool_max_idle` falls back to `Default` (drift closed) |
+| 3 | fixed | `fal_backend.rs` `request_id` now errors instead of polling with `"unknown"` |
+| 4,5 | fixed | named `FAL_QUEUE_POLL_TIMEOUT_SECS` / `ATLASCLOUD_MAX_POLLS` / `ATLASCLOUD_POLL_INTERVAL` consts, interpolated into messages |
+| 6 | fixed | `openrouter_backend.rs` module deleted (zero callers); `RR-0049.yaml` `include` glob updated to drop the deleted file |
+| 7 | fixed | `DeepInfraBackend` chat + image methods deleted; only the live `MediaProvider` impl (bg/speech/transcribe) kept |
+| 8 | fixed | `ollama_registry.rs` module + re-exports deleted (advertised `AdapterStore` seam had no enforcement point) |
+| 9 | fixed | dead `fal_workflow::topological_sort` deleted; `workflow::topological_sort_graph` made `pub`; the 3 proptest properties re-homed to exercise the live sort (all pass) |
+| 10 | fixed | `InferenceParams` derives `Default` (`hkask-types`); 10 construction sites in `inference_ipc_client.rs` now use `..Default::default()` |
+| 11 | fixed | shared `openai_chat_roundtrip` extracted; both `openai_compatible_generate*` delegate |
+| 12 | resolved | the `&body[..500]` byte-slice sat in `vision_infer`, which was deleted as dead surface (its only callers were the deleted vision methods); `sanitize_error_body` remains the canonical char-boundary-safe truncation helper |
+| 13 | fixed | `consolidation_candidate_count` now `tracing::warn!`s on `Err` |
+| 14 | fixed | `find_existing_by_eav` propagates DB error with `warn!` (no silent duplicate h_mem seed) |
+| 15,16 | **INVALID (restored)** | `compute_centroid`/`CentroidResult` are used by `hkask-mcp-corpus/src/corpus/embed/service.rs`; the deletion's grep scope missed `kask/mcp-servers/`. Restored. |
+| 17,18,19 | fixed | `MemoryConsolidator::consolidation_candidate_count`/`semantic_low_confidence_count`/`semantic_h_mem_count` deleted — verified no `kask/mcp-servers/` callers |
+| 20–23 | **INVALID (restored)** | `compute_method_signals`, `MethodSignals`, `DeclaredMethod`/`MethodThresholds`/`DeclaredMethod::matches`, `tag_entities` are used by `hkask-mcp-corpus` (`corpus/embed/service.rs`, `passage.rs`, `discover/llm.rs`, `config.rs`, `types.rs`). The audit's claim that corpus "disclaims use" was true only of `corpus/tagging/ops.rs`, not the embed/discover services. `salience.rs` restored to original; all 186 `hkask-mcp-corpus` tests pass. |
+| 24,25 | restored (dead pub fns retained) | `EntityTags::tag_count`, `extract_keywords`, `keyword_overlap_score` have no `kask/mcp-servers/` callers and appear genuinely dead, but were restored with `salience.rs` to avoid further scope risk; their stale doc comments (claiming `MemoryService::recall_episodic`/`memory_recall` callers) remain — a separate doc-cleanup. |
+| NoEmbeddingsForCentroid | restored | the cascade removal of this `MemoryStoreError` variant (and its two downstream match arms) was wrong — `compute_centroid` constructs it; restored along with #15. |
+| 26 | not fixed | Hypothesis-tier (perf, needs benchmark) — left untouched |
+| 27,28 | fixed | `persona_to_anchor` + `CondenserEngine::classify` (advertised `condenser_classify` MCP tool that doesn't exist) deleted |
+| 29 | not fixed | Hypothesis-tier — left untouched |
+| 30–32 | fixed | `kask_bridge memory.rs` log messages interpolate the resolved constants; `ConsolidationRequest` literals → `..Default::default()` |
+| 33 | fixed | `webid_from_username` deleted (was `pub(crate)`+`allow(dead_code)`); tests removed |
+| 34 | fixed | `open_curator_store` now calls `curator_db_path()` (duplication removed) |
+| 35 | fixed | `McpTool::validate_input` deleted (rmcp validates server-side; the client-side duplicate was unenforced theater); `jsonschema` dep removed from `hkask-mcp` Cargo.toml |
+| 36–38 | fixed | `McpRuntime::start_server`/`get_tool`/`list_servers`/`servers`/`connection_count`/`connections` deleted (health-check cluster with no health endpoint) |
+| 39 | fixed | `call_tool_inner` moves the owned `args` map instead of cloning |
+| 40 | fixed | `verify_capability_domain` uses a new lightweight `required_capability_for()` (no `input_schema`/`description` clone) |
+| 41 | fixed | `api_get`/`api_put`/`http_req` deleted; re-exports removed |
+| 42 | fixed | `tool_internal_error` deleted; the now-dead `ToolSpanGuard::internal_error` method also removed (cascade cleanup) |
+| **43** | **INVALID** | see §8 |
+| 44 | fixed | new `KaskToolRouterSettings` (`threshold`, `complex_word_threshold`) with `Default`/`From`/content-layer/UI; `LazyToolRouter::new_with_thresholds` added (D-seam); `main.rs` wires settings into the router |
+| 45 | fixed | dead `let _skill_name = input.name.clone()` deleted (D1 seam) |
+| 46 | fixed | shared `manifest_execution_failed_body()` extracted; both `skill_tool.rs` and `agent.rs::send_skill_invocation` call it (format-string duplication removed) |
+| §3a | fixed | all 9 unsurfaced settings fields now have UI controls (`persona_keywords`, `transactions_dir`, 6 `KaskCorpusSettings` OCR/embedding-dim fields, `skills_dir`) |
+| §3b | partial | only the tool-router thresholds (#44) were added; the remaining genuinely-absent fields (HTTP timeout, concurrency, retry/backoff, embedding batch size, context-injection budget, condenser trigger threshold, etc.) were not added — they need new settings fields + readers and were outside the top-10/§3a scope |
+
+Cargo dep cleanup (per the `.rules` "Cargo.toml deps outlive their consumers" trap): `chrono` removed from `hkask-inference`, `jsonschema` removed from `hkask-mcp`.
+
+## 8. Invalid finding + concurrent-edit note
+
+**Finding #43 is INVALID.** The should-fix pass disproved it: `BlockProvenance::is_empty`
+(`crates/hkask-tool-invoker/src/hkask_tool_invoker.rs:118`) has two live production
+callers in `crates/hkask-portfolio-widget/src/view.rs:961` (`scrub_enabled`) and
+`:1023` (`build_returns_dispatch_args`). The doc comment is accurate — the
+portfolio widget uses `is_empty` to distinguish the empty-provenance fallback
+from dispatchable/partial provenance. The audit's grill-me lens missed this
+because the caller grep was scoped too narrowly. The method was NOT deleted.
+
+**Concurrent editor (build break, resolved).** During the should-fix pass, a
+concurrent editor committed `68d5c1fd15` "Remove dead media workflow and object
+segmentation code," which removed the `execute_workflow` tool from
+`hkask-mcp-media/generation.rs` AND removed the `SegmentObject`/`ExecuteWorkflow`
+variants from `provider.rs` — but incompletely: it left `as_str`'s
+`ExecuteWorkflow` arm dangling and left `fal_backend`/`media_router`/
+`inference_ipc_server`/gallery `extract_object` still referencing the variants,
+which broke compilation. (The `SegmentObject` removal was definitely wrong —
+`extract_object` still calls it.) `provider.rs` was restored to the last
+known-good committed state (`0c3537cc98`, where the enum/`FromStr`/`as_str` are
+consistent and both variants are present), which restores compilation while
+leaving the concurrent editor's `generation.rs` tool removal intact. If the
+concurrent editor intends to fully remove `execute_workflow`/`segment_object`,
+they must also remove the `fal_backend`/`media_router`/`inference_ipc_server`
+references (and `extract_object` in `gallery.rs`), not just the enum variants.
+
+**Sub-agent misreport.** The `hkask-inference` sub-agent also made an unreported
+erroneous edit to `provider.rs` (removing the same live variants) and reported
+its `cargo check` as clean; this was caught only by an independent
+`cargo check -p hkask-mcp-server --tests`. Lesson: sub-agent "check clean"
+claims were independently re-verified.
+
+## 9. Process finding — dead-surface grep scope must include `kask/mcp-servers/`
+
+Two invalid deletion clusters (#15/#16 and #20–#23) shared one root cause: the
+should-fix sub-agent's caller-grep was scoped to `kask/crates/` + `crates/`, which
+**excludes `kask/mcp-servers/`** — the 13 MCP server crates that are the primary
+consumers of the `hkask-memory` and `hkask-inference` public APIs. `hkask-mcp-corpus`
+alone uses `compute_centroid`, `CentroidResult`, `NoEmbeddingsForCentroid`,
+`compute_method_signals`, `tag_entities`, `MethodSignals`, `DeclaredMethod`, and
+`MethodThresholds`. The audit's own grill-me lens missed this for the same reason
+(its dead-surface verification grepped the same two trees).
+
+**Correct grep scope for kask dead-surface claims:** `kask/crates/`, `crates/`,
+AND `kask/mcp-servers/` (plus `kask/docs/` and `tasks/` for doc references). A
+`pub` item with zero callers in `kask/crates/`+`crates/` but a caller in
+`kask/mcp-servers/` is live, not dead. This is a candidate `.rules` addition
+(proposed, not edited inline): *"Dead-surface grep scope must include
+`kask/mcp-servers/` — the MCP server crates are the primary consumers of the
+`hkask-*` public APIs and are outside the `kask/crates/`+`crates/` trees."*
+
+The provider.rs break (§8) was a separate concurrent-editor issue, not this scope
+gap.
