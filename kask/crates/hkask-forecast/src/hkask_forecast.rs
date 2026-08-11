@@ -111,8 +111,19 @@ pub fn outside_view_adjustment(
 // ── Bayesian updating ──────────────────────────────────────────────────────
 
 /// Standard Bayesian update: posterior = prior × likelihood / evidence_rate.
+///
+/// If `evidence_base_rate` is zero, the Bayesian ratio is undefined (division by
+/// zero yields ±∞ or `NaN`, and `f64::clamp` cannot rescue `NaN` — it
+/// propagates). This is treated as "evidence is impossible under the model": the
+/// prior is returned unchanged (clamped) rather than letting `NaN` escape into
+/// downstream probabilities. Callers should still pass a genuine non-zero base
+/// rate when the evidence is possible; the guard is a fail-safe, not a license to
+/// pass zero.
 #[must_use = "posterior probability should be used"]
 pub fn bayesian_update(prior: f64, evidence_likelihood: f64, evidence_base_rate: f64) -> f64 {
+    if evidence_base_rate == 0.0 {
+        return prior.clamp(0.01, 0.99);
+    }
     (evidence_likelihood * prior / evidence_base_rate).clamp(0.01, 0.99)
 }
 
@@ -1016,6 +1027,22 @@ mod tests {
     fn bayesian_positive() {
         let p = bayesian_update(0.3, 0.9, 0.3);
         assert!((p - 0.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn bayesian_zero_evidence_base_rate_returns_prior_not_nan() {
+        // evidence_base_rate == 0 makes the Bayesian ratio undefined; the guard
+        // returns the clamped prior so NaN never escapes into downstream
+        // probabilities (f64::clamp of NaN is NaN, so the guard is load-bearing).
+        let p = bayesian_update(0.3, 0.9, 0.0);
+        assert!(p.is_finite(), "posterior must be finite, got {p}");
+        assert!(
+            (p - 0.3).abs() < 1e-9,
+            "zero base rate should return prior, got {p}"
+        );
+        // A prior outside the clamp range is clamped, not NaN.
+        let q = bayesian_update(0.0, 0.9, 0.0);
+        assert!(q.is_finite() && q >= 0.01, "clamped prior, got {q}");
     }
 
     #[test]

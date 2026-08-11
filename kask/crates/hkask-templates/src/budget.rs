@@ -16,6 +16,8 @@
 use crate::bundle::config::{BundleGasConfig, RjouleConfig};
 use crate::step_context::ContextMap;
 use serde_json::{Value, json};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::info;
 
 /// Which budget was exhausted.
@@ -70,8 +72,12 @@ impl BudgetSnapshot {
 /// after each charge and at end-of-pass, and snapshots the state into the
 /// context map for template awareness.
 pub struct BudgetTracker {
-    // Gas (compute)
-    gas_used: u64,
+    // Gas (compute) — `Arc<AtomicU64>` (K3/K2) so a `parallel` action's
+    // concurrent branches share the parent's gas counter (each branch's tracker
+    // holds an `Arc::clone`), enforcing the shared cap *during* the wave. rJoule
+    // stays `f64` per-branch (decision c: per-branch settle + join-sum via
+    // `charge_rjoule` after the wave — `f64` has no atomic).
+    gas_used: Arc<AtomicU64>,
     gas_cap: u64,
     gas_cost_per_iter: u64,
     gas_alert_threshold: f64,
@@ -91,7 +97,7 @@ impl BudgetTracker {
     pub fn new(gas: &BundleGasConfig, rjoule: &RjouleConfig) -> Self {
         let rjoule_cap = rjoule.cap as f64;
         Self {
-            gas_used: 0,
+            gas_used: Arc::new(AtomicU64::new(0)),
             gas_cap: gas.cap as u64,
             gas_cost_per_iter: gas.cost_per_iteration as u64,
             gas_alert_threshold: gas.alert_threshold,
@@ -107,8 +113,11 @@ impl BudgetTracker {
     }
 
     /// Charge one iteration of compute gas. Called after each `select` step.
+    /// `fetch_add` (Relaxed) — a monotonic counter; u64 wrap is unreachable for
+    /// realistic gas caps (~1e5 cap, ~1e2/iter ⇒ ~1e12 iterations to wrap).
     pub fn charge_iteration(&mut self) {
-        self.gas_used = self.gas_used.saturating_add(self.gas_cost_per_iter);
+        self.gas_used
+            .fetch_add(self.gas_cost_per_iter, Ordering::Relaxed);
     }
 
     /// Construct a per-task budget tracker from remaining capacity. Each
@@ -120,8 +129,31 @@ impl BudgetTracker {
     /// step action (slice K2) will call this per branch.
     pub fn from_remaining(gas_remaining: u32, rjoule_remaining: f64) -> Self {
         Self {
-            gas_used: 0,
+            gas_used: Arc::new(AtomicU64::new(0)),
             gas_cap: gas_remaining as u64,
+            gas_cost_per_iter: 1,
+            gas_alert_threshold: 0.8,
+            gas_hard_limit: true,
+            gas_alerted: false,
+            rjoule_used: 0.0,
+            rjoule_cap: rjoule_remaining,
+            rjoule_alert_threshold: 0.8,
+            rjoule_hard_limit: true,
+            rjoule_enabled: rjoule_remaining > 0.0,
+            rjoule_alerted: false,
+        }
+    }
+
+    /// Construct a per-branch tracker that *shares* the parent's gas counter
+    /// (K2 `parallel` action) — every branch charges the same `Arc<AtomicU64>`,
+    /// so the shared cap is enforced during the wave (a branch sees gas
+    /// exhaustion from sibling branches' consumption). rJoule is per-branch
+    /// (its own `f64`); the parent joins the sum via `charge_rjoule` after the
+    /// wave. `gas_cost_per_iter` defaults to 1 (branches account per-iteration).
+    pub fn from_remaining_shared(gas: Arc<AtomicU64>, gas_cap: u64, rjoule_remaining: f64) -> Self {
+        Self {
+            gas_used: gas,
+            gas_cap,
             gas_cost_per_iter: 1,
             gas_alert_threshold: 0.8,
             gas_hard_limit: true,
@@ -161,7 +193,7 @@ impl BudgetTracker {
     /// the parent's remaining allocation. Conservative: may over-count, never
     /// under-counts.
     pub fn consume_child(&mut self, gas: u64, rjoule: f64) {
-        self.gas_used = self.gas_used.saturating_add(gas);
+        self.gas_used.fetch_add(gas, Ordering::Relaxed);
         self.rjoule_used = (self.rjoule_used + rjoule).max(0.0);
     }
 
@@ -175,11 +207,11 @@ impl BudgetTracker {
         // precedes the exhaustion span when both fire on the same check.
         self.fire_alerts();
 
-        if self.gas_hard_limit && self.gas_used >= self.gas_cap {
+        if self.gas_hard_limit && self.gas_used.load(Ordering::Relaxed) >= self.gas_cap {
             info!(
                 target: "reg.skill.budget.gas_exhausted",
                 iteration = iteration,
-                gas_used = self.gas_used,
+                gas_used = self.gas_used.load(Ordering::Relaxed),
                 gas_cap = self.gas_cap,
                 "REG"
             );
@@ -204,14 +236,15 @@ impl BudgetTracker {
     fn fire_alerts(&mut self) {
         if !self.gas_alerted
             && self.gas_cap > 0
-            && (self.gas_used as f64 / self.gas_cap as f64) >= self.gas_alert_threshold
+            && (self.gas_used.load(Ordering::Relaxed) as f64 / self.gas_cap as f64)
+                >= self.gas_alert_threshold
         {
             self.gas_alerted = true;
             info!(
                 target: "reg.skill.budget.gas_alert",
-                gas_used = self.gas_used,
+                gas_used = self.gas_used.load(Ordering::Relaxed),
                 gas_cap = self.gas_cap,
-                pct = (self.gas_used as f64 / self.gas_cap as f64) * 100.0,
+                pct = (self.gas_used.load(Ordering::Relaxed) as f64 / self.gas_cap as f64) * 100.0,
                 "REG"
             );
         }
@@ -232,10 +265,11 @@ impl BudgetTracker {
 
     /// Snapshot the current state for context injection.
     pub fn snapshot(&self) -> BudgetSnapshot {
+        let gas_used = self.gas_used.load(Ordering::Relaxed);
         BudgetSnapshot {
-            gas_used: self.gas_used,
+            gas_used,
             gas_cap: self.gas_cap,
-            gas_remaining: self.gas_cap.saturating_sub(self.gas_used),
+            gas_remaining: self.gas_cap.saturating_sub(gas_used),
             gas_cost_per_iteration: self.gas_cost_per_iter,
             rjoule_used: self.rjoule_used,
             rjoule_cap: self.rjoule_cap,
@@ -246,7 +280,8 @@ impl BudgetTracker {
 
     /// Remaining gas budget (for capping sub-cascade budgets).
     pub fn remaining_gas(&self) -> u64 {
-        self.gas_cap.saturating_sub(self.gas_used)
+        self.gas_cap
+            .saturating_sub(self.gas_used.load(Ordering::Relaxed))
     }
 
     /// Remaining rJoule budget (for capping sub-cascade budgets).
@@ -263,7 +298,22 @@ impl BudgetTracker {
 
     /// Gas used so far.
     pub fn gas_used(&self) -> u64 {
-        self.gas_used
+        self.gas_used.load(Ordering::Relaxed)
+    }
+
+    /// Shared reference to the gas counter (K2) — lets a `parallel` action's
+    /// concurrent branches charge the parent's gas atomically during the wave,
+    /// enforcing the shared cap across all branches. Returns an `Arc` clone so
+    /// each branch's `BudgetTracker::from_remaining_shared` can hold its own
+    /// reference. rJoule is NOT shared (per-branch settle + join-sum).
+    pub fn gas_atomic(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.gas_used)
+    }
+
+    /// The gas cap (for `from_remaining_shared` to pass the shared cap to
+    /// branches). (K2)
+    pub fn gas_cap(&self) -> u64 {
+        self.gas_cap
     }
 
     /// rJoule used so far.

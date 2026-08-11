@@ -480,9 +480,11 @@ steps:
             ToolTaint::Pure,
         );
         let outcome = outcome_with_last(ctx, Some(0));
+        // `normalize_model_output` strips the `<thinking>` wrapper but leaves the
+        // remainder a string (it does not parse it as JSON).
         assert_eq!(
             extract_final_step_result(&outcome),
-            serde_json::json!({"answer": 5})
+            Value::String(r#"{"answer": 5}"#.into())
         );
     }
 

@@ -175,8 +175,8 @@ impl BridgeManifestExecutor {
         &self,
         skill_name: &str,
         mut context: HashMap<String, Value>,
-        progress: Option<Arc<dyn Fn(&str) + Send + Sync>,
-        title: Option<Arc<dyn Fn(&str) + Send + Sync>,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<CascadeOutcome, String> {
         let manifest_yaml = self.manifest_yaml(skill_name).ok_or_else(|| {
             format!(
@@ -219,8 +219,8 @@ impl BridgeManifestExecutor {
         &self,
         manifest: &hkask_templates::BundleManifest,
         mut context: HashMap<String, Value>,
-        progress: Option<Arc<dyn Fn(&str) + Send + Sync>,
-        title: Option<Arc<dyn Fn(&str) + Send + Sync>,
+        progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> Result<CascadeOutcome, String> {
         // Enforce the same `is_skill()` guard as `run_manifest_cascade` — the
         // inline refine manifest is hardcoded (not user-supplied) so this is
@@ -986,50 +986,75 @@ fn reshape_composite_to_manifest_file(composite: &serde_json::Value) -> serde_js
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hkask_capability::tool_taint::ToolTaint;
+    use hkask_templates::budget::BudgetSnapshot;
+    use hkask_templates::step_context::StepContext;
+    use hkask_templates::step_graph::{ExitKind, StepId};
+    use hkask_templates::step_machine::CascadeOutcome;
     use serde_json::json;
     use std::future::Future;
     use std::pin::Pin;
 
-    /// Regression for the non-deterministic `values().last()` extraction bug.
-    /// HashMap iteration order is randomized per-process; the extractor must
-    /// deterministically pick the highest-ordinal `step_N_result`, not an
-    /// arbitrary value.
-    #[test]
-    fn extract_final_step_result_picks_highest_ordinal() {
-        let mut map: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-        map.insert("step_1_result".to_string(), json!("first"));
-        map.insert("step_3_result".to_string(), json!("third"));
-        map.insert("step_2_result".to_string(), json!("second"));
-        map.insert("_convergence".to_string(), json!({"status": "converged"}));
+    /// Build a minimal `CascadeOutcome` for the bridge's `extract_final_step_result`
+    /// tests: typed context + machine-tracked `last_result_step`. Zeroed budget.
+    fn outcome_with_last(context: StepContext, last: Option<StepId>) -> CascadeOutcome {
+        CascadeOutcome {
+            context,
+            iterations: 1,
+            exit_kind: ExitKind::Converged,
+            last_result_step: last,
+            budget_snapshot: BudgetSnapshot {
+                gas_used: 0,
+                gas_cap: 0,
+                gas_remaining: 0,
+                gas_cost_per_iteration: 0,
+                rjoule_used: 0.0,
+                rjoule_cap: 0.0,
+                rjoule_remaining: 0.0,
+                rjoule_enabled: false,
+            },
+        }
+    }
 
-        let out = extract_final_step_result(&map);
+    /// (K5) the retired ordinal-keyed HashMap scan is gone; the bridge's
+    /// `extract_final_step_result` now selects `last_result_step`'s value from
+    /// the typed `CascadeOutcome`. Deterministic by construction (no randomized
+    /// HashMap order). Pins that contract + the null→full-context fallback.
+    #[test]
+    fn extract_final_step_result_returns_last_result_step() {
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(0, 1, json!("first"), ToolTaint::Pure);
+        ctx.store_result(2, 3, json!("third"), ToolTaint::Pure);
+        ctx.store_result(1, 2, json!("second"), ToolTaint::Pure);
+        let outcome = outcome_with_last(ctx, Some(2));
+        let out = extract_final_step_result(&outcome);
         assert_eq!(
             out, "\"third\"",
-            "must return step_3_result (highest ordinal)"
+            "must return last_result_step's value (step_id 2 = ordinal 3)"
         );
     }
 
     #[test]
-    fn extract_final_step_result_ignores_non_result_keys() {
-        let mut map: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-        map.insert("step_1_populated".to_string(), json!("populated"));
-        map.insert("step_1_result".to_string(), json!({"answer": 42}));
-        map.insert("task".to_string(), json!("user request"));
-
-        let out = extract_final_step_result(&map);
+    fn extract_final_step_result_ignores_protocol_and_named_keys() {
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(0, 1, json!({"answer": 42}), ToolTaint::Pure);
+        ctx.insert_protocol("task".into(), json!("user request"));
+        ctx.store_named(1, 2, "populated", json!("populated"), ToolTaint::Pure);
+        let outcome = outcome_with_last(ctx, Some(0));
+        let out = extract_final_step_result(&outcome);
         assert_eq!(
             out, "{\"answer\":42}",
-            "must pick step_N_result, not _populated or other keys"
+            "must return last_result_step's value, not protocol or named keys"
         );
     }
 
     #[test]
     fn extract_final_step_result_falls_back_to_full_context_when_no_step_results() {
-        let mut map: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-        map.insert("task".to_string(), json!("user request"));
-        map.insert("_convergence".to_string(), json!({"status": "running"}));
-
-        let out = extract_final_step_result(&map);
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.insert_protocol("task".into(), json!("user request"));
+        ctx.insert_protocol("_convergence".into(), json!({"status": "running"}));
+        let outcome = outcome_with_last(ctx, None);
+        let out = extract_final_step_result(&outcome);
         let parsed: serde_json::Value =
             serde_json::from_str(&out).expect("fallback must be valid JSON");
         assert_eq!(parsed["task"], json!("user request"));
@@ -1038,13 +1063,10 @@ mod tests {
 
     #[test]
     fn extract_final_step_result_handles_single_step() {
-        let mut map: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-        map.insert(
-            "step_1_result".to_string(),
-            json!({"convergence_metric": 0.05}),
-        );
-
-        let out = extract_final_step_result(&map);
+        let mut ctx = StepContext::new(std::collections::HashMap::new());
+        ctx.store_result(0, 1, json!({"convergence_metric": 0.05}), ToolTaint::Pure);
+        let outcome = outcome_with_last(ctx, Some(0));
+        let out = extract_final_step_result(&outcome);
         assert!(out.contains("convergence_metric"));
         assert!(out.contains("0.05"));
     }

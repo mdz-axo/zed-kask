@@ -66,9 +66,10 @@ pub(crate) fn brier_score_multi(
 /// with probability P_g(E) on its own; E occurs iff at least one mechanism
 /// fires, and the mechanisms are assumed independent — the same independence
 /// assumption the per-group formula already makes between parents. Noisy-OR
-/// is the standard closed form under that assumption and reduces exactly to
-/// the single-group formula when there is one group (1-(1-p) == p in IEEE-754),
-/// so single-group results are unchanged.
+// is the standard closed form under that assumption and reduces to the
+// single-group formula when there is one group (1-(1-p) ≈ p, within 1 ULP in
+// IEEE-754), so single-group results differ by at most one ULP — numerically
+// negligible.
 ///
 /// Returns a map of event_id -> resolved marginal probability.
 pub(crate) fn compute_marginal_probabilities(
@@ -127,8 +128,9 @@ pub(crate) fn compute_marginal_probabilities(
 /// Noisy-OR combination of independent causal channels:
 /// P(E) = 1 - Product_g (1 - P_g(E)).
 ///
-/// For a single channel this is the identity (1-(1-p) == p exactly in
-/// IEEE-754), so single-dependency-group behavior is unchanged.
+/// For a single channel this is (approximately) the identity: `1-(1-p)` differs
+/// from `p` by at most 1 ULP in IEEE-754, so single-dependency-group behavior is
+/// unchanged to within floating-point precision.
 fn combine_independent_channels(channel_probabilities: &[f64]) -> f64 {
     let survival = channel_probabilities
         .iter()
