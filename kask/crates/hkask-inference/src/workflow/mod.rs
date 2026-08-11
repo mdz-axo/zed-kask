@@ -355,7 +355,7 @@ async fn execute_level(
 /// Kahn topological sort over `GraphNode`s, deterministic on declaration
 /// order for independent nodes (unlike the pre-refactor HashMap-seeded sort,
 /// which was randomized — results are order-independent either way).
-fn topological_sort_graph(nodes: &[GraphNode]) -> Result<Vec<String>, InferenceError> {
+pub fn topological_sort_graph(nodes: &[GraphNode]) -> Result<Vec<String>, InferenceError> {
     let ids: HashSet<&str> = nodes.iter().map(GraphNode::id).collect();
     let mut in_degree: HashMap<&str, usize> = HashMap::new();
     let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();

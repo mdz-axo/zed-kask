@@ -56,15 +56,6 @@ pub fn agent_name_from_username(username: &str) -> Option<String> {
     }
 }
 
-/// Derive the `WebID` for a Zed username.
-///
-/// Deterministic: the same username always produces the same WebID
-/// (via `WebID::for_agent_name` in the `"hkask"` namespace).
-#[allow(dead_code)]
-pub(crate) fn webid_from_username(username: &str) -> Option<WebID> {
-    agent_name_from_username(username).map(|name| WebID::for_agent_name(&name))
-}
-
 /// A curated list of common English words, each 8+ letters.
 /// Used to generate a human-readable DB passphrase on first run.
 /// The user can change it later via the keychain or settings.
@@ -329,17 +320,10 @@ mod tests {
     }
 
     #[test]
-    fn webid_is_deterministic() {
-        let w1 = webid_from_username("mdz-axo").unwrap();
-        let w2 = webid_from_username("mdz-axo").unwrap();
-        assert_eq!(w1, w2);
-    }
-
-    #[test]
-    fn different_users_get_different_webids() {
-        let w1 = webid_from_username("alice").unwrap();
-        let w2 = webid_from_username("bob").unwrap();
-        assert_ne!(w1, w2);
+    fn agent_name_is_deterministic() {
+        let a1 = agent_name_from_username("mdz-axo").unwrap();
+        let a2 = agent_name_from_username("mdz-axo").unwrap();
+        assert_eq!(a1, a2);
     }
 
     #[test]

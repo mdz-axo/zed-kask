@@ -154,9 +154,6 @@ pub fn map_memory_store_error(
         MemoryStoreError::Embedding(hkask_storage::EmbeddingError::Infrastructure(ref infra)) => {
             map_infra_error(infra, context)
         }
-        MemoryStoreError::NoEmbeddingsForCentroid(_) => {
-            McpToolError::not_found(format!("{context}: {error}"))
-        }
         MemoryStoreError::Embedding(_) => McpToolError::internal(format!("{context}: {error}")),
     }
 }

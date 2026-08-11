@@ -88,7 +88,6 @@ fn map_memory_error(e: MemoryStoreError) -> McpToolError {
             McpToolError::not_found(message)
         }
         MemoryStoreError::Embedding(_) => McpToolError::internal(message), // rr0044-ok: mapper-internal-arm
-        MemoryStoreError::NoEmbeddingsForCentroid(_) => McpToolError::failed_precondition(message),
     }
 }
 

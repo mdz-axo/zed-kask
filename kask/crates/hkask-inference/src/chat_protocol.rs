@@ -16,7 +16,6 @@ use hkask_types::{
     InferenceUsage, StructuredToolCall, TokenProb, TokenProbability,
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 #[allow(dead_code)] // referenced as serde default via string
 fn default_enable_thinking() -> bool {
@@ -120,97 +119,7 @@ pub fn build_chat_request_messages(
     }
 }
 
-/// Build an OpenAI-standard multimodal vision request.
-///
-/// Uses the content-array format (standard across OpenAI, llama.cpp, RunPod):
-/// ```json
-/// {"messages": [{"role": "user", "content": [
-///   {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
-///   {"type": "text", "text": "Extract all text..."}
-/// ]}]}
-/// ```
-#[must_use]
-pub fn build_vision_request(
-    model: &str,
-    prompt: &str,
-    images: &[String],
-    params: &LLMParameters,
-) -> serde_json::Value {
-    let mut content: Vec<serde_json::Value> = images
-        .iter()
-        .map(|b64| {
-            serde_json::json!({
-                "type": "image_url",
-                "image_url": {"url": format!("data:image/jpeg;base64,{}", b64)}
-            })
-        })
-        .collect();
-    content.push(serde_json::json!({"type": "text", "text": prompt}));
-
-    serde_json::json!({
-        "model": model,
-        "messages": [{"role": "user", "content": content}],
-        "temperature": params.temperature,
-        "top_p": params.top_p,
-        "max_tokens": params.max_tokens,
-    })
-}
-
-/// Shared vision inference — sends OpenAI multimodal request and parses response.
-/// Used by DeepInfra, OpenRouter, and KiloCode backends.
-pub(crate) async fn vision_infer(
-    client: &reqwest::Client,
-    base_url: &str,
-    api_key: &str,
-    label: &str,
-    model: &str,
-    prompt: &str,
-    images: &[String],
-    params: &LLMParameters,
-) -> Result<InferenceResult, InferenceError> {
-    validate_prompt(prompt)?;
-    if images.is_empty() {
-        return Err(InferenceError::Generation("No images provided".into()));
-    }
-    let request = build_vision_request(model, prompt, images, params);
-    let response = client
-        .post(format!("{}/v1/chat/completions", base_url))
-        .header("Authorization", format!("Bearer {}", api_key))
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| InferenceError::Connection(format!("{} vision: {}", label, e)))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(InferenceError::Connection(format!(
-            "{} vision {}: {}",
-            label, status, body
-        )));
-    }
-    let body = response
-        .text()
-        .await
-        .map_err(|e| InferenceError::Connection(format!("{} body read: {}", label, e)))?;
-    let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-        let preview = if body.chars().count() > 500 {
-            let boundary = body
-                .char_indices()
-                .nth(500)
-                .map(|(i, _)| i)
-                .unwrap_or(body.len());
-            format!("{}...", &body[..boundary])
-        } else {
-            body.clone()
-        };
-        InferenceError::Json(format!("{} JSON: {} | body: {}", label, e, preview))
-    })?;
-    let result = chat_response_to_result(chat_response)?;
-    info!(target: "reg.inference", provider = label, model = %result.model, tokens = result.usage.total_tokens, "{} vision inference completed", label);
-    Ok(result)
-}
-
-// ── Response types ───────────────────────────────────────────────────────────
+// ── Response types ──────────────────────────────────────────────────────────
 
 /// OpenAI-compatible chat completion response.
 ///

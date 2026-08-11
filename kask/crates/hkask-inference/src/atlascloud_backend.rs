@@ -8,7 +8,7 @@
 //!      → `{ data: { status, output, error } }` (status: pending → completed/failed)
 //!
 //! This backend implements `MediaProvider` for the ops AtlasCloud serves:
-//! `GenerateImage`, `GenerateVideo`, `GenerateSpeech`, `Transcribe`.
+//! `GenerateImage`, `GenerateVideo`, `ImageToVideo`, `GenerateSpeech`, `Transcribe`.
 //! It is registered in `MediaRouter::new` alongside `FalBackend` and
 //! `DeepInfraBackend`. Auth: `Authorization: Bearer {ATLASCLOUD_API_KEY}`.
 
@@ -151,6 +151,7 @@ impl MediaProvider for AtlasCloudBackend {
             op,
             MediaOp::GenerateImage
                 | MediaOp::GenerateVideo
+                | MediaOp::ImageToVideo
                 | MediaOp::GenerateSpeech
                 | MediaOp::Transcribe
         )
@@ -167,7 +168,13 @@ impl MediaProvider for AtlasCloudBackend {
                     "/model/generateImage",
                     "seedream/seedream-v5.0-lite-text-to-image",
                 ),
-                MediaOp::GenerateVideo => ("/model/generateVideo", "minimax/h3"),
+                // Image-to-video reuses the generateVideo endpoint with an
+                // `image_url` input (already merged into the body below); fal.ai
+                // is deprecated, so AtlasCloud is the video backend for both
+                // text-to-video and image-to-video.
+                MediaOp::GenerateVideo | MediaOp::ImageToVideo => {
+                    ("/model/generateVideo", "minimax/h3")
+                }
                 MediaOp::GenerateSpeech => ("/model/generateAudio", "seed-audio/seed-audio-1.0"),
                 MediaOp::Transcribe => ("/model/transcribe", "bytedance/seed-asr-2.0"),
                 _ => {

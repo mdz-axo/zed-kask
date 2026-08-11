@@ -1,5 +1,5 @@
-//! Fal workflow execution engine — DAG parsing, topological sort, reference
-//! resolution, and multi-node orchestration against Fal's REST API.
+//! Fal workflow execution engine — DAG parsing, reference resolution, and
+//! multi-node orchestration against Fal's REST API.
 //!
 //! Migrated from the former `hkask-fal` crate (v0.31.0 consolidation).
 //!
@@ -9,7 +9,7 @@
 //! FalBackend::execute_workflow()
 //!   ├── parse_workflow_nodes()    — Deserialize flat JSON into typed DAG nodes
 //!   ├── validate_workflow_structure() — Must have input, run, display nodes
-//!   ├── topological_sort()        — Kahn's algorithm; detects cycles
+//!   ├── workflow::topological_sort_graph() — Kahn's algorithm; detects cycles
 //!   ├── For each Run node:
 //!   │   ├── resolve_references()  — $node.field.path → concrete values
 //!   │   └── FalBackend::execute_node() → fal_sync_post()
@@ -19,7 +19,7 @@
 use hkask_types::InferenceError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 // ── Workflow types ──────────────────────────────────────────────────────
 
@@ -137,75 +137,6 @@ pub fn validate_workflow_structure(nodes: &[WorkflowNode]) -> Result<(), Inferen
         ));
     }
     Ok(())
-}
-
-// ── Topological sort ────────────────────────────────────────────────────
-
-/// Topological sort of workflow nodes by dependency order (Kahn's algorithm).
-///
-/// Detects circular dependencies and unknown node references.
-///
-/// Note: this is the parsed-`WorkflowNode` sort, retained for property tests.
-/// The production path uses `workflow::topological_sort_graph` over
-/// `GraphNode` (after `fal_adapter::workflow_node_to_graph` converts).
-#[allow(dead_code)]
-pub fn topological_sort(nodes: &[WorkflowNode]) -> Result<Vec<String>, InferenceError> {
-    let node_ids: HashSet<&str> = nodes.iter().map(|n| n.id()).collect();
-
-    // Build adjacency: node → nodes that depend on it (forward edges)
-    let mut in_degree: HashMap<&str, usize> = HashMap::new();
-    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
-
-    for node in nodes {
-        let id = node.id();
-        in_degree.entry(id).or_insert(0);
-        for dep in node.depends() {
-            if !node_ids.contains(dep.as_str()) {
-                return Err(InferenceError::Generation(format!(
-                    "Node '{id}' depends on unknown node '{dep}'"
-                )));
-            }
-            dependents.entry(dep.as_str()).or_default().push(id);
-            *in_degree.entry(id).or_insert(0) += 1;
-        }
-    }
-
-    // Process nodes with in-degree 0
-    let mut queue: Vec<&str> = in_degree
-        .iter()
-        .filter(|&(_, &deg)| deg == 0)
-        .map(|(&id, _)| id)
-        .collect();
-
-    let mut sorted: Vec<String> = Vec::new();
-
-    while let Some(node) = queue.pop() {
-        sorted.push(node.to_string());
-        if let Some(deps) = dependents.get(node) {
-            for &dependent in deps {
-                if let Some(deg) = in_degree.get_mut(dependent) {
-                    *deg -= 1;
-                    if *deg == 0 {
-                        queue.push(dependent);
-                    }
-                }
-            }
-        }
-    }
-
-    if sorted.len() != nodes.len() {
-        let unsorted: Vec<_> = nodes
-            .iter()
-            .filter(|n| !sorted.contains(&n.id().to_string()))
-            .map(|n| n.id().to_string())
-            .collect();
-        return Err(InferenceError::Generation(format!(
-            "Circular dependency detected at nodes: {}",
-            unsorted.join(", ")
-        )));
-    }
-
-    Ok(sorted)
 }
 
 // ── Reference resolution ────────────────────────────────────────────────
@@ -337,45 +268,6 @@ fn extract_urls_recursive(value: &Value, urls: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_topological_sort_linear() {
-        let workflow = serde_json::json!({
-            "input": { "id": "input", "type": "input", "depends": [], "input": {} },
-            "generate": { "id": "generate", "type": "run", "depends": ["input"], "app": "test", "input": {} },
-            "output": { "id": "output", "type": "display", "depends": ["generate"], "fields": {} }
-        });
-        let nodes = parse_workflow_nodes(&workflow).unwrap();
-        let order = topological_sort(&nodes).unwrap();
-        assert_eq!(order, vec!["input", "generate", "output"]);
-    }
-
-    #[test]
-    fn test_topological_sort_parallel_branches() {
-        let workflow = serde_json::json!({
-            "input": { "id": "input", "type": "input", "depends": [], "input": {} },
-            "branch_a": { "id": "branch_a", "type": "run", "depends": ["input"], "app": "a", "input": {} },
-            "branch_b": { "id": "branch_b", "type": "run", "depends": ["input"], "app": "b", "input": {} },
-            "output": { "id": "output", "type": "display", "depends": ["branch_a", "branch_b"], "fields": {} }
-        });
-        let nodes = parse_workflow_nodes(&workflow).unwrap();
-        let order = topological_sort(&nodes).unwrap();
-        assert_eq!(order[0], "input");
-        assert_eq!(order[3], "output");
-    }
-
-    #[test]
-    fn test_circular_dependency_detected() {
-        let workflow = serde_json::json!({
-            "input": { "id": "input", "type": "input", "depends": ["output"], "input": {} },
-            "output": { "id": "output", "type": "display", "depends": ["input"], "fields": {} }
-        });
-        let nodes = parse_workflow_nodes(&workflow).unwrap();
-        let result = topological_sort(&nodes);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Circular"));
-    }
 
     #[test]
     fn test_reference_resolution_simple_field() {

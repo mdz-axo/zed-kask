@@ -18,7 +18,7 @@ detection:
   # will fail this gate (zero matches for the import).
   semantics: presence
   pattern: 'sanitize_error_body'
-  include: "crates/hkask-inference/src/deepinfra_backend.rs crates/hkask-inference/src/fal_backend.rs crates/hkask-inference/src/openrouter_backend.rs crates/hkask-inference/src/atlascloud_backend.rs"
+  include: "crates/hkask-inference/src/deepinfra_backend.rs crates/hkask-inference/src/fal_backend.rs crates/hkask-inference/src/atlascloud_backend.rs"
 mitigation: "Import sanitize_error_body from crate::openai_compat (or hkask_inference::openai_compat) and wrap every provider error body before embedding in InferenceError::Connection. The function redacts Authorization:, Bearer, sk-, api_key, ghp_, AKIA, xoxb-, glpat-, eyJ prefixes and truncates to 200 chars. RR-0035 fixed openai_compat.rs only; this entry covers the 4 other backends that had the same class."
 source: "Cycle 8 kali-audit — error-channel leakage review (defense layer 7); same class as RR-0035"
 ci_gate: scripts/check-kali-regressions.sh

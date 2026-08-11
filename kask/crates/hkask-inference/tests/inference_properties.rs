@@ -3,7 +3,7 @@
 //! These tests replaced the deleted `mod tests` blocks that used `MockProvider`
 //! and `MockExecutor` stubs. They target *pure* functions only — `MediaOp`
 //! parsing, `ProviderScore::weighted`, the fal-workflow DAG utilities
-//! (`topological_sort`, `resolve_references`, `extract_urls`,
+//! (`workflow::topological_sort_graph`, `resolve_references`, `extract_urls`,
 //! `validate_workflow_structure`, `parse_workflow_nodes`), and
 //! `RouterModelEntry::infer_vision_support` — using proptest generators and the
 //! `hkask-test-harness` Oracle taxonomy (invariant + reference oracles).
@@ -14,10 +14,11 @@
 
 use hkask_inference::fal_workflow::{
     ExecutionMode, WorkflowNode, extract_urls, parse_workflow_nodes, resolve_references,
-    topological_sort, validate_workflow_structure,
+    validate_workflow_structure,
 };
 use hkask_inference::scoring::{ProviderScore, ScoreWeights};
-use hkask_inference::{MediaOp, RouterModelEntry};
+use hkask_inference::workflow::topological_sort_graph;
+use hkask_inference::{GraphNode, MediaOp, RouterModelEntry};
 use hkask_test_harness::{OracleVerdict, arb_json_value, oracle_invariant, oracle_reference};
 use proptest::prelude::*;
 use serde_json::Value;
@@ -244,7 +245,7 @@ proptest! {
 // ── topological_sort ──────────────────────────────────────────────────────
 
 /// Encode a node graph as JSON for the oracle: each node is `{id, depends}`.
-fn graph_to_json(nodes: &[WorkflowNode]) -> Value {
+fn graph_to_json(nodes: &[GraphNode]) -> Value {
     let arr: Vec<Value> = nodes
         .iter()
         .map(|n| {
@@ -268,7 +269,7 @@ proptest! {
         deps_bits in prop::collection::vec(any::<bool>(), 0..64),
     ) {
         let count = count as usize;
-        let mut nodes: Vec<WorkflowNode> = Vec::with_capacity(count);
+        let mut nodes: Vec<GraphNode> = Vec::with_capacity(count);
         for j in 0..count {
             let mut depends = Vec::new();
             for i in 0..j {
@@ -277,14 +278,14 @@ proptest! {
                     depends.push(format!("n{i}"));
                 }
             }
-            nodes.push(WorkflowNode::Input {
+            nodes.push(GraphNode::Source {
                 id: format!("n{j}"),
                 depends,
-                input: Value::Null,
+                value: Value::Null,
             });
         }
 
-        let outcome = topological_sort(&nodes);
+        let outcome = topological_sort_graph(&nodes);
         let output = match &outcome {
             Ok(order) => serde_json::json!({ "ok": true, "order": order }),
             Err(_) => serde_json::json!({ "ok": false, "order": serde_json::Value::Array(vec![]) }),
@@ -330,16 +331,16 @@ proptest! {
     #[test]
     fn prop_topological_sort_rejects_cycle(len in 2u8..=6u8) {
         let len = len as usize;
-        let mut nodes: Vec<WorkflowNode> = Vec::with_capacity(len);
+        let mut nodes: Vec<GraphNode> = Vec::with_capacity(len);
         for i in 0..len {
             let next = (i + 1) % len;
-            nodes.push(WorkflowNode::Input {
+            nodes.push(GraphNode::Source {
                 id: format!("n{i}"),
                 depends: vec![format!("n{next}")],
-                input: Value::Null,
+                value: Value::Null,
             });
         }
-        let outcome = topological_sort(&nodes);
+        let outcome = topological_sort_graph(&nodes);
         let output = serde_json::json!({ "ok": outcome.is_ok() });
         let input = serde_json::json!({ "len": len });
 
@@ -357,12 +358,12 @@ proptest! {
     /// A node depending on an unknown id must be rejected (no silent skip).
     #[test]
     fn prop_topological_sort_rejects_unknown_dependency(ghost in "[a-z][a-z0-9_]{0,4}") {
-        let nodes = vec![WorkflowNode::Input {
+        let nodes = vec![GraphNode::Source {
             id: "n0".to_string(),
             depends: vec![format!("n{ghost}")],
-            input: Value::Null,
+            value: Value::Null,
         }];
-        let outcome = topological_sort(&nodes);
+        let outcome = topological_sort_graph(&nodes);
         let output = serde_json::json!({ "ok": outcome.is_ok() });
         let input = serde_json::json!({ "ghost": ghost });
 

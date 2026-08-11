@@ -41,10 +41,7 @@ pub enum MemoryStoreError {
     HMem(#[from] HMemError),
     #[error("Embedding error: {0}")]
     Embedding(#[from] EmbeddingError),
-    #[error("No embeddings found for centroid: {0}")]
-    NoEmbeddingsForCentroid(String),
 }
-
 
 /// Default memory life in days: 180 days (6 months × 30).
 ///
