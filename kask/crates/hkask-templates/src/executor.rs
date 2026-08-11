@@ -433,7 +433,7 @@ impl ManifestExecutor {
             ) {
                 PolicyVerdict::Block(reason) => {
                     tracing::warn!(
-                        target: "reg.guard.runtime_policy",
+                        target: "reg.runtime.policy",
                         tool = tool_name,
                         verdict = "block",
                         %reason,
@@ -445,7 +445,7 @@ impl ManifestExecutor {
                 }
                 PolicyVerdict::RequireHuman(reason) => {
                     tracing::warn!(
-                        target: "reg.guard.runtime_policy",
+                        target: "reg.runtime.policy",
                         tool = tool_name,
                         verdict = "require_human",
                         %reason,
@@ -456,7 +456,7 @@ impl ManifestExecutor {
                     )));
                 }
                 PolicyVerdict::Log(message) => {
-                    info!(target: "reg.guard.runtime_policy", tool = tool_name, verdict = "log", %message, "REG");
+                    info!(target: "reg.runtime.policy", tool = tool_name, verdict = "log", %message, "REG");
                 }
                 PolicyVerdict::Allow => {}
             }

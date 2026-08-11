@@ -187,14 +187,6 @@ const CANONICAL_NAMESPACES: &[&str] = &[
     "reg.gas.calibration",
     // ── Goal ──
     "reg.goal",
-    // ── Guard ──
-    "reg.guard",
-    "reg.guard.canary",
-    "reg.guard.input",
-    "reg.guard.output",
-    "reg.guard.redact",
-    "reg.guard.runtime_policy",
-    "reg.guard.violation",
     // ── Healing ──
     "reg.heal",
     "reg.heal.attempt",

@@ -10,7 +10,7 @@
 //! Category 3 (dependency-denial) is the primary category for curator: every
 //! store-backed tool returns `permission_denied` when its store is `None`.
 //! This is the store-presence guard pattern — the tool asserts the store is present before
-//! proceeding. The tests assert `permission_denied` (not `reg.guard.*` —
+//! proceeding. The tests assert `permission_denied` (not `reg.outcome` —
 //! Gap B, not wired).
 
 #![cfg(test)]

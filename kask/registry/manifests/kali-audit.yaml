@@ -3,8 +3,8 @@
 # Phased: select-surface → audit → report → convergence-check → loop
 #
 # Standards: OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A
-# Sources: Microsoft Research (Spotlighting, FIDES), OpenAI (Instruction Hierarchy),
-#   ANSSI Secure Rust Guidelines, RustSec, Trail of Bits, Thinkst canarytokens
+# Sources: Microsoft Research (FIDES), OpenAI (Instruction Hierarchy),
+#   ANSSI Secure Rust Guidelines, RustSec, Trail of Bits
 #
 # Forward-adaptable design:
 # - Audit template consumes regression library at runtime (coverage grows with library)

@@ -272,16 +272,16 @@ impl RegulationArchive {
         .map_err(|e| InfrastructureError::database(e.to_string()))
     }
 
-    /// Query events by span_category prefix (e.g., "reg.guard" matches "reg.guard.input",
-    /// "reg.guard.output", etc.).
+    /// Query events by span_category prefix (e.g., "reg.outcome" matches "reg.outcome.action_blocked",
+    /// "reg.outcome.action_substituted", etc.).
     ///
-    /// The stored `span_category` column holds the short name (e.g., "guard.input",
-    /// "regulation", "gas"). Callers pass the short-name prefix (e.g., "guard",
-    /// "regulation", "gas") — NOT the full `reg.*` namespace.
+    /// The stored `span_category` column holds the short name (e.g., "outcome",
+    /// "regulation", "tool"). Callers pass the short-name prefix (e.g., "outcome",
+    /// "regulation", "tool") — NOT the full `reg.*` namespace.
     ///
     /// expect: "The system provides durable storage for event data"
     /// \[P9\] Motivating: Homeostatic Self-Regulation — query Regulation span history
-    /// pre:  `namespace_prefix` is a non-empty short-name prefix (e.g., "guard", "regulation", "gas")
+    /// pre:  `namespace_prefix` is a non-empty short-name prefix (e.g., "outcome", "regulation", "tool")
     /// post: returns Vec of RegulationRecords with span_category starting with the prefix, since the given
     ///       timestamp, ordered by timestamp ASC, limited to `limit` results
     pub fn query_by_namespace(

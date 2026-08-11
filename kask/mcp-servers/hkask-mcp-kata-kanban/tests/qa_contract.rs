@@ -11,7 +11,7 @@
 //! and an optional HKASK_KANBAN_DB config path (read via `std::env::var`);
 //! calling without them yields in-memory operation, not denial. The contract
 //! therefore asserts the no-credential path returns structured errors
-//! (not panics) and does NOT assert reg.guard.* (Gap B — not wired).
+//! (not panics) and does NOT assert reg.outcome (Gap B — not wired).
 //!
 //! Each test constructs a fresh in-memory KanbanServer so tests are
 //! independent and idempotent.

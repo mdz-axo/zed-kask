@@ -351,7 +351,7 @@ impl BridgeManifestExecutor {
     ///
     /// Wires `DefaultPolicy` as the runtime policy so the FIDES Source→Sink
     /// block (Layer 4) fires on every production cascade. Without this, the
-    /// `reg.guard.runtime_policy` span and Block/RequireHuman enforcement
+    /// `reg.runtime.policy` span and Block/RequireHuman enforcement
     /// are dead code — `runtime_policy` stays `None` and untrusted input flows
     /// to Sink tools unchecked (OWASP LLM06, RR-0053).
     fn build_executor(
