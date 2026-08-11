@@ -7,10 +7,10 @@
 //! in `MediaRouter`: adding a provider = implement `MediaProvider` + register
 //! in `MediaRouter::new`; no dispatch edits.
 //!
-//! Two implementations exist from day one (`FalBackend`, `DeepInfraBackend`),
+//! Two implementations exist (`DeepInfraBackend`, `AtlasCloudBackend`),
 //! so this trait is not speculative generality. The registry order encodes the
 //! existing policy: DeepInfra first (cheapest for background removal / TTS /
-//! STT), fal.ai fallback for those three ops and sole provider for the rest.
+//! STT), AtlasCloud fallback for those three ops and sole provider for the rest.
 
 use hkask_types::{InferenceError, MediaGenerateParams};
 use serde_json::Value;
@@ -29,10 +29,8 @@ pub enum MediaOp {
     Upscale,
     GenerateVideo,
     ImageToVideo,
-    SegmentObject,
     GenerateSpeech,
     Transcribe,
-    ExecuteWorkflow,
 }
 
 /// Parse the string op name used by `InferencePort::media_generate`.
@@ -50,10 +48,8 @@ impl std::str::FromStr for MediaOp {
             "upscale" => Ok(Self::Upscale),
             "generate_video" => Ok(Self::GenerateVideo),
             "image_to_video" => Ok(Self::ImageToVideo),
-            "segment_object" => Ok(Self::SegmentObject),
             "generate_speech" => Ok(Self::GenerateSpeech),
             "transcribe" => Ok(Self::Transcribe),
-            "execute_workflow" => Ok(Self::ExecuteWorkflow),
             other => Err(InferenceError::Connection(format!(
                 "unknown media op: {other}"
             ))),
@@ -72,10 +68,8 @@ impl MediaOp {
             Self::Upscale => "upscale",
             Self::GenerateVideo => "generate_video",
             Self::ImageToVideo => "image_to_video",
-            Self::SegmentObject => "segment_object",
             Self::GenerateSpeech => "generate_speech",
             Self::Transcribe => "transcribe",
-            Self::ExecuteWorkflow => "execute_workflow",
         }
     }
 }
@@ -86,7 +80,7 @@ impl MediaOp {
 /// provider-specific call. The trait is `Send + Sync` so providers can live in
 /// an `Arc<dyn MediaProvider>` behind the registry.
 pub trait MediaProvider: Send + Sync {
-    /// Stable provider id (e.g. `"fal.ai"`, `"deepinfra"`) for logging / audit.
+    /// Stable provider id (e.g. `"deepinfra"`, `"atlascloud"`) for logging / audit.
     fn id(&self) -> &'static str;
 
     /// Whether this provider can serve `op`. The registry uses this to filter
@@ -110,7 +104,7 @@ pub trait MediaProvider: Send + Sync {
 ///
 /// Order matters: register the preferred provider first. For the ops both
 /// providers support (background removal / TTS / STT), DeepInfra is registered
-/// first so it is preferred, with fal.ai as the runtime fallback — preserving
+/// first so it is preferred, with AtlasCloud as the runtime fallback — preserving
 /// the pre-refactor `MediaRouter` policy exactly.
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn MediaProvider>>,

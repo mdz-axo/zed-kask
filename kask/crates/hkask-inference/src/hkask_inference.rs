@@ -17,8 +17,8 @@
 //!
 //! ```text
 //! MediaRouter (implements InferencePort — media only)
-//!   ├── FalBackend       — fal.ai media (image/video/speech/workflow)
-//!   └── DeepInfraBackend — DeepInfra media (background removal/speech/transcription)
+//!   ├── DeepInfraBackend — DeepInfra media (background removal/speech/transcription)
+//!   └── AtlasCloudBackend — AtlasCloud media (image/video/audio/asr)
 //!
 //! InferenceIpcClient (implements InferencePort — chat/vision/embed via zed)
 //!   └── Unix socket → zed LanguageModelRegistry
@@ -37,22 +37,18 @@ pub mod atlascloud_backend;
 pub mod chat_protocol;
 pub mod config;
 pub mod deepinfra_backend;
-pub mod fal_backend;
-pub mod fal_workflow;
 pub mod inference_ipc_client;
 pub mod media_router;
 pub mod model_constants;
 pub mod openai_compat;
 pub mod provider;
 pub mod scoring;
-pub mod workflow;
 
 // Re-exports — public API
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 pub use media_router::MediaRouter;
 pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
-pub use workflow::{FailurePolicy, GraphNode, NodeExecutor, WorkflowGraph};
 
 /// Unified model entry from any provider, with provider prefix applied.
 #[derive(Debug, Clone)]

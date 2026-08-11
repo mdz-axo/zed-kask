@@ -23,8 +23,6 @@
 use crate::atlascloud_backend::AtlasCloudBackend;
 use crate::config::InferenceConfig;
 use crate::deepinfra_backend::DeepInfraBackend;
-use crate::fal_backend::FalBackend;
-use crate::fal_workflow::WorkflowResult;
 use crate::provider::{MediaOp, MediaProvider, ProviderRegistry};
 use hkask_types::template::LLMParameters;
 use hkask_types::{
@@ -84,13 +82,6 @@ impl MediaRouter {
                      speech/transcription fallback disabled"
                 ),
             }
-            match FalBackend::new(&config, Arc::clone(client)) {
-                Ok(fal) => providers.push(Arc::new(fal)),
-                Err(_) => tracing::warn!(
-                    target: "reg.inference",
-                    "fal.ai backend unavailable (no API key) — media generation disabled"
-                ),
-            }
             match AtlasCloudBackend::new(&config, Arc::clone(client)) {
                 Ok(ac) => providers.push(Arc::new(ac)),
                 Err(_) => tracing::warn!(
@@ -104,7 +95,7 @@ impl MediaRouter {
             tracing::warn!(
                 target: "reg.inference",
                 "no media providers configured — all media generation will fail \
-                 (set FALAI_API_KEY and/or DEEPINFRA_API_KEY)"
+                 (set DEEPINFRA_API_KEY and/or ATLASCLOUD_API_KEY)"
             );
         }
 
@@ -226,22 +217,7 @@ impl MediaRouter {
             .await
     }
 
-    /// Segment/extract a specific object from an image.
-    #[must_use = "result must be used"]
-    pub async fn segment_object(
-        &self,
-        image_url: &str,
-        object_description: &str,
-    ) -> Result<serde_json::Value, InferenceError> {
-        let params = MediaGenerateParams {
-            image_url: Some(image_url.to_string()),
-            object_description: Some(object_description.to_string()),
-            ..Default::default()
-        };
-        self.registry.execute(MediaOp::SegmentObject, &params).await
-    }
-
-    /// Transcribe speech audio to text. DeepInfra first, fal.ai fallback.
+    /// Transcribe speech audio to text. DeepInfra first, AtlasCloud fallback.
     #[must_use = "result must be used"]
     pub async fn transcribe(
         &self,
@@ -254,28 +230,6 @@ impl MediaRouter {
             ..Default::default()
         };
         self.registry.execute(MediaOp::Transcribe, &params).await
-    }
-
-    /// Execute a multi-step Fal media workflow.
-    ///
-    /// Routed through the registry: only fal.ai supports `ExecuteWorkflow`.
-    /// The registry returns the serialized `WorkflowResult`; this method
-    /// deserializes it back to the typed struct to preserve the public API.
-    #[must_use = "result must be used"]
-    pub async fn execute_workflow(
-        &self,
-        workflow: &serde_json::Value,
-    ) -> Result<WorkflowResult, InferenceError> {
-        let params = MediaGenerateParams {
-            workflow: Some(workflow.clone()),
-            ..Default::default()
-        };
-        let value = self
-            .registry
-            .execute(MediaOp::ExecuteWorkflow, &params)
-            .await?;
-        serde_json::from_value(value)
-            .map_err(|e| InferenceError::Json(format!("WorkflowResult deserialize failed: {e}")))
     }
 }
 
@@ -381,26 +335,24 @@ mod tests {
         assert!(!router.registry.supports(MediaOp::RemoveBackground));
     }
 
-    /// A fal.ai key alone registers fal.ai, which supports all media ops
-    /// (including image generation and remove_background via fal.ai's own
-    /// endpoints — the DeepInfra fallback is simply absent).
+    /// An AtlasCloud key alone registers AtlasCloud, which supports all
     #[test]
-    fn media_router_with_fal_key_supports_all_ops() {
+    fn media_router_with_atlascloud_key_supports_all_ops() {
         let config = InferenceConfig {
-            fal_api_key: "test-key".into(),
+            atlascloud_api_key: "test-key".into(),
             ..Default::default()
         };
         let router = MediaRouter::new(config);
         assert!(!router.registry.is_empty());
         assert!(router.registry.supports(MediaOp::GenerateImage));
-        assert!(router.registry.supports(MediaOp::RemoveBackground));
-        assert!(router.registry.supports(MediaOp::ExecuteWorkflow));
+        assert!(router.registry.supports(MediaOp::GenerateVideo));
+        assert!(router.registry.supports(MediaOp::Upscale));
     }
 
     /// A DeepInfra key alone registers DeepInfra, which supports only the
     /// three ops it's preferred for — image generation is NOT available
     /// (DeepInfra's generate_image method is intentionally not advertised,
-    /// preserving the prior fal.ai-only image dispatch).
+    /// preserving the AtlasCloud-only image dispatch).
     #[test]
     fn media_router_with_deepinfra_key_supports_only_three_ops() {
         let config = InferenceConfig {
@@ -413,7 +365,7 @@ mod tests {
         assert!(router.registry.supports(MediaOp::Transcribe));
         assert!(
             !router.registry.supports(MediaOp::GenerateImage),
-            "image generation must require fal.ai — DeepInfra's generate_image is not advertised"
+            "image generation must require AtlasCloud — DeepInfra's generate_image is not advertised"
         );
     }
 

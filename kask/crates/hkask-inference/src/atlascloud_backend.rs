@@ -9,7 +9,7 @@
 //!
 //! This backend implements `MediaProvider` for the ops AtlasCloud serves:
 //! `GenerateImage`, `GenerateVideo`, `ImageToVideo`, `GenerateSpeech`, `Transcribe`.
-//! It is registered in `MediaRouter::new` alongside `FalBackend` and
+//! It is registered in `MediaRouter::new` alongside
 //! `DeepInfraBackend`. Auth: `Authorization: Bearer {ATLASCLOUD_API_KEY}`.
 
 use crate::config::InferenceConfig;

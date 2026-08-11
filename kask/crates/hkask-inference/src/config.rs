@@ -37,9 +37,6 @@ pub enum ProviderId {
     /// DeepInfra (cloud) — prefix `DeepInfra/`
     #[serde(rename = "DI")]
     DeepInfra,
-    /// fal.ai (cloud) — prefix `fal.ai/`
-    #[serde(rename = "FA")]
-    Fal,
     /// Runpod (cloud) — prefix `RunPod/`
     #[serde(rename = "RP")]
     Runpod,
@@ -72,7 +69,6 @@ impl ProviderId {
         // `strip_prefix` handles the matching; the match assigns the variant.
         const PREFIXES: &[(&str, ProviderId)] = &[
             ("DeepInfra/", ProviderId::DeepInfra),
-            ("fal.ai/", ProviderId::Fal),
             ("RunPod/", ProviderId::Runpod),
             ("OpenRouter/", ProviderId::OpenRouter),
             ("KiloCode/", ProviderId::KiloCode),
@@ -134,7 +130,6 @@ impl ProviderId {
     pub fn as_str(&self) -> &'static str {
         match self {
             ProviderId::DeepInfra => "DeepInfra",
-            ProviderId::Fal => "fal.ai",
             ProviderId::Runpod => "RunPod",
             ProviderId::OpenRouter => "OpenRouter",
             ProviderId::KiloCode => "KiloCode",
@@ -156,9 +151,6 @@ pub struct InferenceConfig {
 
     pub deepinfra_base_url: String,
     pub deepinfra_api_key: String,
-    pub fal_media_base_url: String,
-    pub fal_queue_base_url: String,
-    pub fal_api_key: String,
     pub openrouter_base_url: String,
     pub openrouter_api_key: String,
     pub kilocode_base_url: String,
@@ -183,9 +175,6 @@ impl Default for InferenceConfig {
             default_provider: ProviderId::DeepInfra,
             deepinfra_base_url: "https://api.deepinfra.com".to_string(),
             deepinfra_api_key: String::new(),
-            fal_media_base_url: "https://fal.run".to_string(),
-            fal_queue_base_url: "https://queue.fal.run".to_string(),
-            fal_api_key: String::new(),
             openrouter_base_url: "https://openrouter.ai/api".to_string(),
             openrouter_api_key: String::new(),
             kilocode_base_url: "https://api.kilo.ai/api/gateway".to_string(),
@@ -216,14 +205,6 @@ impl InferenceConfig {
         let kc = ProviderConfig::from_env("KiloCode", "https://api.kilo.ai/api/gateway");
         let om = ProviderConfig::from_env("ollama", "http://localhost:11434");
 
-        let fal_media_base_url =
-            std::env::var("FALAI_MEDIA_BASE_URL").unwrap_or_else(|_| "https://fal.run".to_string());
-
-        let fal_queue_base_url = std::env::var("FALAI_QUEUE_BASE_URL")
-            .unwrap_or_else(|_| "https://queue.fal.run".to_string());
-
-        let fal_api_key = resolve_api_key("FALAI_API_KEY");
-
         let atlascloud_base_url = std::env::var("ATLASCLOUD_BASE_URL")
             .unwrap_or_else(|_| "https://api.atlascloud.ai/api/v1".to_string());
         let atlascloud_api_key = resolve_api_key("ATLASCLOUD_API_KEY");
@@ -232,9 +213,6 @@ impl InferenceConfig {
             default_provider: resolve_default_provider(),
             deepinfra_base_url: di.base_url,
             deepinfra_api_key: di.api_key,
-            fal_media_base_url,
-            fal_queue_base_url,
-            fal_api_key,
             openrouter_base_url: or.base_url,
             openrouter_api_key: or.api_key,
             kilocode_base_url: kc.base_url,
@@ -325,7 +303,6 @@ fn resolve_default_provider() -> ProviderId {
 fn parse_provider_code(raw: &str) -> ProviderId {
     match raw {
         "DeepInfra" => ProviderId::DeepInfra,
-        "fal.ai" => ProviderId::Fal,
         "RunPod" => ProviderId::Runpod,
         "OpenRouter" => ProviderId::OpenRouter,
         "KiloCode" => ProviderId::KiloCode,
@@ -470,26 +447,8 @@ mod tests {
             "DeepInfra/meta-llama/Llama-3.3-70B"
         );
         assert_eq!(
-            ProviderId::Fal.prefix_model("paddleocr"),
-            "fal.ai/paddleocr"
-        );
-        assert_eq!(
             ProviderId::Runpod.prefix_model("my-model"),
             "RunPod/my-model"
-        );
-    }
-
-    /// expect: "Inference fal.ai prefix parsing works correctly under test conditions"
-    /// \[P9\] Motivating: Homeostatic Self-Regulation — validates fal.ai routing
-    #[test]
-    fn parse_fal_prefix() {
-        assert_eq!(
-            ProviderId::parse_from_model("fal.ai/paddleocr"),
-            Some((ProviderId::Fal, "paddleocr"))
-        );
-        assert_eq!(
-            ProviderId::parse_from_model("fal.ai/nemotron-parse"),
-            Some((ProviderId::Fal, "nemotron-parse"))
         );
     }
 
@@ -500,7 +459,6 @@ mod tests {
     #[test]
     fn parse_provider_code_all_codes() {
         assert_eq!(parse_provider_code("DeepInfra"), ProviderId::DeepInfra);
-        assert_eq!(parse_provider_code("fal.ai"), ProviderId::Fal);
         assert_eq!(parse_provider_code("RunPod"), ProviderId::Runpod);
         assert_eq!(parse_provider_code("OpenRouter"), ProviderId::OpenRouter);
         assert_eq!(parse_provider_code("KiloCode"), ProviderId::KiloCode);

@@ -974,28 +974,11 @@ async fn dispatch_media(
             let voice = params.media_voice.as_deref().unwrap_or("Rachel");
             media.generate_speech(text, voice).await
         }
-        "segment_object" => {
-            let image_url = params.media_image_url.as_deref().unwrap_or("");
-            let object_description = params.media_object_description.as_deref().unwrap_or("");
-            media.segment_object(image_url, object_description).await
-        }
         "transcribe" => {
             let audio_url = params.media_audio_url.as_deref().unwrap_or("");
             media
                 .transcribe(audio_url, params.media_language.as_deref())
                 .await
-        }
-        "execute_workflow" => {
-            let workflow = params
-                .media_workflow
-                .clone()
-                .unwrap_or(serde_json::Value::Null);
-            let result = media.execute_workflow(&workflow).await?;
-            // `WorkflowResult` is defined in `hkask-inference` and isn't part
-            // of the IPC protocol; serialize it to JSON for transport.
-            Ok(serde_json::to_value(result).map_err(|e| {
-                InferenceError::Json(format!("WorkflowResult serialize failed: {e}"))
-            })?)
         }
         other => Err(InferenceError::Connection(format!(
             "unknown media op: {other}"
