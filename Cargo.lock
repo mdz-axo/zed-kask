@@ -11214,10 +11214,12 @@ name = "kask_bridge"
 version = "0.33.7"
 dependencies = [
  "agent",
+ "anyhow",
  "async-trait",
  "chrono",
  "collections",
  "credentials_provider",
+ "edit_prediction",
  "fs",
  "futures 0.3.33",
  "futures-util",

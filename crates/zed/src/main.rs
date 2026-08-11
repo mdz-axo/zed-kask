@@ -2268,6 +2268,18 @@ fn main() {
                              subsequent event. The subscription below will retry."
                         );
                     }
+
+                    // zed-kask: D24 — wire the edit-prediction port alongside
+                    // the manifest executor. Separate AtomicBool so the two
+                    // wirings are independent (one may fail without blocking
+                    // the other).
+                    let ep_wired = std::sync::atomic::AtomicBool::new(false);
+                    let http_client = app_state_for_model_task.http_client();
+                    if let Err(e) =
+                        try_wire_edit_prediction_port(&ep_wired, &registry, http_client, cx).await
+                    {
+                        log::warn!("hKask edit-prediction port initial wiring failed: {e}");
+                    }
                 }
 
                 // Subscribe to registry events for the async case.
@@ -2276,6 +2288,10 @@ fn main() {
                 let tool_port_for_sub = tool_port_for_model_task.clone();
                 let manifests_dir_for_sub = registry_manifests_dir.clone();
                 let templates_dir_for_sub = registry_templates_dir.clone();
+                // zed-kask: D24 — separate AtomicBool for the edit-prediction port.
+                let ep_wired_for_sub =
+                    std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let http_client_for_sub = app_state_for_model_task.http_client();
                 cx.subscribe(
                     &registry,
                     move |_, event: &language_model::Event, cx| {
@@ -2289,6 +2305,8 @@ fn main() {
                                 let tool_port = tool_port_for_sub.clone();
                                 let manifests_dir = manifests_dir_for_sub.clone();
                                 let templates_dir = templates_dir_for_sub.clone();
+                                let ep_wired = ep_wired_for_sub.clone();
+                                let http_client = http_client_for_sub.clone();
                                 cx.spawn(async move |cx| {
                                     if let Err(e) = try_wire_manifest_executor(
                                         &wired,
@@ -2302,6 +2320,19 @@ fn main() {
                                     {
                                         log::warn!(
                                             "hKask manifest executor wiring failed on registry event: {e}"
+                                        );
+                                    }
+                                    // zed-kask: D24
+                                    if let Err(e) = try_wire_edit_prediction_port(
+                                        &ep_wired,
+                                        &registry,
+                                        http_client,
+                                        cx,
+                                    )
+                                    .await
+                                    {
+                                        log::warn!(
+                                            "hKask edit-prediction port wiring failed on registry event: {e}"
                                         );
                                     }
                                 })
@@ -2959,6 +2990,59 @@ async fn try_wire_manifest_executor(
             "hKask manifest executor wired (model-dependent task) — \
              skills will run the manifest cascade"
         );
+        Ok(())
+    })
+}
+
+/// zed-kask: D24 — wire the kask edit-prediction port.
+///
+/// Resolves `DEFAULT_FALLBACK_MODEL` (e.g. `OpenRouter/z-ai/glm-5.2`) from
+/// the `LanguageModelRegistry`, constructs a `BridgeEditPredictionPort` that
+/// makes raw `/completions` calls through the model's `api_url()`/`api_key()`,
+/// and injects it into the edit-prediction store via
+/// `edit_prediction::open_ai_compatible::set_kask_completion_port`.
+///
+/// Called from the same model-dependent task as `try_wire_manifest_executor`
+/// — fires once the registry has a model. `Mutex`-based hook (re-settable),
+/// so unlike `set_manifest_executor` (OnceLock) there is no need for an
+/// `AtomicBool` guard, but we use one anyway to avoid redundant
+/// `resolve_model_names` + HTTP-client construction on every registry event.
+async fn try_wire_edit_prediction_port(
+    wired: &std::sync::atomic::AtomicBool,
+    registry: &language_model::LanguageModelRegistry,
+    http_client: std::sync::Arc<dyn http_client::HttpClient>,
+    cx: &mut gpui::AsyncApp,
+) -> anyhow::Result<()> {
+    if wired.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    cx.update(|cx| {
+        let tokio_handle = gpui_tokio::Tokio::handle(cx);
+        let port = kask_bridge::BridgeEditPredictionPort::from_registry(
+            registry,
+            http_client,
+            tokio_handle,
+            cx,
+        );
+        if let Some(port) = port {
+            edit_prediction::open_ai_compatible::set_kask_completion_port(Some(
+                std::sync::Arc::new(port)
+                    as std::sync::Arc<dyn edit_prediction::open_ai_compatible::KaskCompletionPort>,
+            ));
+            log::info!(
+                "hKask edit-prediction port wired — routing FIM completions \
+                 through LanguageModelRegistry ({})",
+                kask_bridge::DEFAULT_FALLBACK_MODEL
+            );
+        } else {
+            log::warn!(
+                "hKask edit-prediction port not wired — could not resolve {} \
+                 from LanguageModelRegistry (no api_url/api_key). Edit predictions \
+                 will fall back to the configured provider.",
+                kask_bridge::DEFAULT_FALLBACK_MODEL
+            );
+        }
         Ok(())
     })
 }

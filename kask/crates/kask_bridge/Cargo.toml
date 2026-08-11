@@ -37,8 +37,10 @@ credentials_provider.workspace = true
 fs.workspace = true
 collections.workspace = true
 schemars = { workspace = true }
+edit_prediction.workspace = true
 
 # Shared
+anyhow.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true
 chrono.workspace = true

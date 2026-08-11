@@ -367,6 +367,23 @@ impl LanguageModel for OpenRouterLanguageModel {
         format!("openrouter/{}", self.model.id())
     }
 
+    // zed-kask: D24 — expose `api_url()` and `api_key()` so the kask edit-prediction
+    // port can make raw `/completions` calls through the same OpenRouter
+    // credentials the registry already holds, without a second inference router.
+    // Mirrors the pattern used by the kask embedding port. Without these
+    // overrides the trait default returns `None`, forcing callers to resolve
+    // credentials from env vars instead of the registry.
+    fn api_key(&self, cx: &App) -> Option<String> {
+        self.state.read_with(cx, |state, cx| {
+            let api_url = OpenRouterLanguageModelProvider::api_url(cx);
+            state.api_key_state.key(&api_url).map(|key| key.to_string())
+        })
+    }
+
+    fn api_url(&self, cx: &App) -> Option<String> {
+        Some(OpenRouterLanguageModelProvider::api_url(cx).to_string())
+    }
+
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }

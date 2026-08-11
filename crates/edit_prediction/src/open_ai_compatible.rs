@@ -6,6 +6,51 @@ use language::language_settings::{OpenAiCompatibleEditPredictionSettings, all_la
 use language_model::{ApiKeyState, EnvVar, env_var};
 use std::sync::Arc;
 
+// zed-kask: D24 — Kask edit-prediction port hook.
+//
+// When wired (by `main.rs` after the `LanguageModelRegistry` resolves the
+// edit-prediction model), this port replaces the raw HTTP call in
+// `send_custom_server_request` with a call routed through the
+// `LanguageModelRegistry` (resolve model → `api_url()` + `api_key()` →
+// raw `/completions` POST). This collapses edit predictions onto the same
+// model + credentials the agent uses, instead of a separate cloud endpoint
+// or a separately-configured OpenAI-compatible server.
+//
+// `Mutex`-based (re-settable) — same pattern as `set_memory_port`,
+// `set_thread_condenser`, etc. When `None`, `send_custom_server_request`
+// falls through to the existing HTTP path (upstream behavior).
+static KASK_COMPLETION_PORT: std::sync::Mutex<Option<Arc<dyn KaskCompletionPort>>> =
+    std::sync::Mutex::new(None);
+
+/// Trait implemented by the kask bridge to route raw completion requests
+/// through the `LanguageModelRegistry`.
+///
+/// `send_completion` returns `(text, request_id)`, matching the shape of
+/// `send_custom_server_request`.
+pub trait KaskCompletionPort: Send + Sync {
+    fn send_completion(
+        &self,
+        prompt: String,
+        max_tokens: u32,
+        stop_tokens: Vec<String>,
+    ) -> futures::future::BoxFuture<'static, Result<(String, String)>>;
+}
+
+/// Wire (or unwire) the kask edit-prediction port. Called from `main.rs`
+/// once the `LanguageModelRegistry` has resolved the edit-prediction model.
+pub fn set_kask_completion_port(port: Option<Arc<dyn KaskCompletionPort>>) {
+    *KASK_COMPLETION_PORT
+        .lock()
+        .expect("KASK_COMPLETION_PORT poisoned") = port;
+}
+
+fn kask_completion_port() -> Option<Arc<dyn KaskCompletionPort>> {
+    KASK_COMPLETION_PORT
+        .lock()
+        .expect("KASK_COMPLETION_PORT poisoned")
+        .clone()
+}
+
 pub fn open_ai_compatible_api_url(cx: &App) -> SharedString {
     all_language_settings(None, cx)
         .edit_predictions
@@ -70,6 +115,11 @@ pub(crate) async fn send_custom_server_request(
     api_key: Option<Arc<str>>,
     http_client: &Arc<dyn http_client::HttpClient>,
 ) -> Result<(String, String)> {
+    // zed-kask: D24 — when the kask completion port is wired, route through
+    // the `LanguageModelRegistry` instead of the configured HTTP endpoint.
+    if let Some(port) = kask_completion_port() {
+        return port.send_completion(prompt, max_tokens, stop_tokens).await;
+    }
     match provider {
         settings::EditPredictionProvider::Ollama => {
             let response = crate::ollama::make_request(
@@ -130,5 +180,78 @@ pub(crate) async fn send_custom_server_request(
                 .unwrap_or_default();
             Ok((text, parsed.id))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::FutureExt as _;
+    use gpui::http_client::FakeHttpClient;
+    use language::language_settings::{
+        EditPredictionPromptFormat, OpenAiCompatibleEditPredictionSettings,
+    };
+    use std::sync::Arc;
+
+    /// A mock `KaskCompletionPort` that returns a canned `(text, request_id)`.
+    struct MockCompletionPort {
+        text: String,
+        request_id: String,
+    }
+
+    impl KaskCompletionPort for MockCompletionPort {
+        fn send_completion(
+            &self,
+            _prompt: String,
+            _max_tokens: u32,
+            _stop_tokens: Vec<String>,
+        ) -> futures::future::BoxFuture<'static, Result<(String, String)>> {
+            let text = self.text.clone();
+            let request_id = self.request_id.clone();
+            async move { Ok((text, request_id)) }.boxed()
+        }
+    }
+
+    /// zed-kask: D24 — when the kask completion port is wired,
+    /// `send_custom_server_request` delegates to the port instead of the HTTP path.
+    /// This pins the deliberate deviation: edit predictions route through the
+    /// `LanguageModelRegistry`, not the configured HTTP endpoint.
+    #[gpui::test]
+    async fn test_kask_completion_port_intercepts_send_custom_server_request() {
+        // Wire the mock port.
+        set_kask_completion_port(Some(Arc::new(MockCompletionPort {
+            text: "mock_completion".to_string(),
+            request_id: "mock_req_1".to_string(),
+        })));
+
+        // Construct dummy params — the port intercepts before any are used.
+        let settings = OpenAiCompatibleEditPredictionSettings {
+            model: "".to_string(),
+            max_output_tokens: 64,
+            api_url: "".into(),
+            prompt_format: EditPredictionPromptFormat::default(),
+        };
+        let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::with_404_response();
+
+        let result = send_custom_server_request(
+            settings::EditPredictionProvider::OpenAiCompatibleApi,
+            &settings,
+            "test prompt".to_string(),
+            64,
+            vec!["stop".to_string()],
+            None,
+            &http_client,
+        )
+        .await;
+
+        // Clean up the global before assertions so a panic doesn't leak it.
+        set_kask_completion_port(None);
+
+        let (text, request_id) = result.expect("mock port should succeed");
+        assert_eq!(text, "mock_completion");
+        assert_eq!(request_id, "mock_req_1");
+
+        // Verify the global is cleaned up.
+        assert!(kask_completion_port().is_none());
     }
 }

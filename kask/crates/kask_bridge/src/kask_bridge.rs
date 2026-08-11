@@ -25,6 +25,7 @@ mod skill_executor;
 pub use condenser_bridge::BridgeThreadCondenser;
 pub use context_injector::BridgeContextInjector;
 
+pub use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
 /// Re-exports for the media IPC bridge — the composition root constructs the
 /// media router and passes it to `InferenceIpcServer::start`. Re-exported here
 /// so `zed` doesn't need a direct `hkask-inference` dependency for these two
@@ -37,6 +38,7 @@ pub use identity::{
     ProvisionError, ProvisionedAgent, agent_name_from_username, provision_agent,
     webid_from_username,
 };
+pub use inference::BridgeEditPredictionPort;
 pub use inference::LanguageModelEmbeddingPort;
 pub use inference::LanguageModelInferencePort;
 pub use inference::NoModelInferencePort;
