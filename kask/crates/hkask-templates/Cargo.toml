@@ -15,6 +15,7 @@ hkask-capability.workspace = true
 hkask-forecast.workspace = true
 hkask-lisp.workspace = true
 hkask-regulation.workspace = true
+futures-util.workspace = true
 minijinja.workspace = true
 serde.workspace = true
 serde_json.workspace = true

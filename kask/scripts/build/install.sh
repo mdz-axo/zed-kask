@@ -499,24 +499,28 @@ uninstall_hkask() {
     # zed-kask erroneously installed a .desktop file). Also remove the icon.
     # zed-kask is a CLI tool — it must not have a .desktop file.
     local app_id="dev.zed-kask.Zed-Kask"
-    local app_icon="zed-kask"
     local data_root
     for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do
         local desktop_file="$data_root/applications/$app_id.desktop"
-        local icon_file_512="$data_root/icons/hicolor/512x512/apps/$app_icon.png"
-        local icon_file_1024="$data_root/icons/hicolor/1024x1024/apps/$app_icon.png"
         if [ -f "$desktop_file" ]; then
             rm -f "$desktop_file"
             log "Removed desktop entry: $desktop_file"
         fi
-        if [ -f "$icon_file_512" ]; then
-            rm -f "$icon_file_512"
-            log "Removed icon: $icon_file_512"
-        fi
-        if [ -f "$icon_file_1024" ]; then
-            rm -f "$icon_file_1024"
-            log "Removed icon: $icon_file_1024"
-        fi
+        # Remove both icon names installed by install_icon: the app_id name
+        # (load-bearing on Wayland) and the friendly "zed-kask" alias.
+        local icon_name
+        for icon_name in "$app_id" "zed-kask"; do
+            local icon_file_512="$data_root/icons/hicolor/512x512/apps/$icon_name.png"
+            local icon_file_1024="$data_root/icons/hicolor/1024x1024/apps/$icon_name.png"
+            if [ -f "$icon_file_512" ]; then
+                rm -f "$icon_file_512"
+                log "Removed icon: $icon_file_512"
+            fi
+            if [ -f "$icon_file_1024" ]; then
+                rm -f "$icon_file_1024"
+                log "Removed icon: $icon_file_1024"
+            fi
+        done
         gtk-update-icon-cache -f "$data_root/icons/hicolor" 2>/dev/null || true
     done
     if command -v update-desktop-database >/dev/null 2>&1; then

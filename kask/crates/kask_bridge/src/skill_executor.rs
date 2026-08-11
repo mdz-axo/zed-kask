@@ -357,6 +357,7 @@ impl BridgeManifestExecutor {
     fn build_executor(
         &self,
         progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+        title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     ) -> ManifestExecutor {
         let executor = ManifestExecutor::new(
             self.inference.clone(),
@@ -377,8 +378,14 @@ impl BridgeManifestExecutor {
             executor
         };
 
-        if let Some(progress) = progress {
+        let executor = if let Some(progress) = progress {
             executor.with_progress(progress)
+        } else {
+            executor
+        };
+
+        if let Some(title) = title {
+            executor.with_title(title)
         } else {
             executor
         }

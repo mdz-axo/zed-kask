@@ -15,7 +15,6 @@
 
 use std::sync::Arc;
 
-use anyhow::Context;
 use futures_util::{FutureExt, StreamExt};
 use gpui::AsyncApp;
 use hkask_types::template::LLMParameters;
@@ -655,7 +654,6 @@ struct OpenAiEmbedResponse {
 // `api_url()`/`api_key()` trait accessors (D24 overrides on `OpenRouterLanguageModel`).
 // No GPUI access is needed at request time — the port is `Send + Sync`.
 
-use anyhow::Context as _;
 use edit_prediction::open_ai_compatible::KaskCompletionPort;
 use hkask_inference::model_constants::DEFAULT_FALLBACK_MODEL;
 use serde::Serialize;
@@ -761,7 +759,7 @@ impl BridgeEditPredictionPort {
                     }
 
                     let parsed: RawCompletionResponseWire = serde_json::from_str(&body_text)
-                        .context("failed to parse completion response")?;
+                        .map_err(|e| anyhow::anyhow!("failed to parse completion response: {e}"))?;
                     let text = parsed
                         .choices
                         .into_iter()

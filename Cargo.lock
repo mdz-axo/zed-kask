@@ -9900,6 +9900,7 @@ dependencies = [
 name = "hkask-templates"
 version = "0.33.7"
 dependencies = [
+ "futures-util",
  "hkask-capability",
  "hkask-forecast",
  "hkask-lisp",

@@ -64,7 +64,7 @@ use hkask_types::NotFound;
 use hkask_types::WebID;
 use hkask_types::json_extract as llm_json;
 use hkask_types::template::LLMParameters;
-use hkask_types::{ChatToolDefinition, InferencePort, InferenceResult};
+use hkask_types::{ChatToolDefinition, InferencePort, InferenceResult, InferenceStreamChunk};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -160,14 +160,23 @@ pub struct ManifestExecutor {
 
     /// Optional progress callback for real-time cascade feedback.
     ///
-    /// When set, `run_cascade` calls it at the start of each step with a
-    /// human-readable description (e.g. "Step 2/5: scope (populate) — scoping
-    /// the diff"). The callback is `Send + Sync` because the cascade runs on
-    /// a background tokio executor. The bridge creates this from the tool's
-    /// `ToolCallEventStream` so progress appears as thinking traces in the
-    /// agent UI — the user can see what the cascade is doing and cancel if
-    /// it goes off track. When `None` (unit tests), no progress is emitted.
+    /// When set, `run_cascade` calls it with the LLM's streamed reasoning
+    /// during each `select` step, so the user sees a live thinking trace —
+    /// not just a one-line title. The callback is `Send + Sync` because the
+    /// cascade runs on a background tokio executor. The bridge creates this
+    /// from the tool's `ToolCallEventStream::thinking_sender()` so thinking
+    /// appears as an accumulating trace in the agent UI. When `None` (unit
+    /// tests), no thinking trace is emitted.
     progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+
+    /// Optional title callback for step-label updates.
+    ///
+    /// When set, `run_cascade` calls it at the start of each step with a
+    /// short label (e.g. "Step 2/5: scope — scoping the diff"). The bridge
+    /// creates this from the tool's `ToolCallEventStream::update_fields()`
+    /// so the step label appears in the tool call header. When `None`, no
+    /// title update is emitted.
+    title: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 impl ManifestExecutor {
@@ -194,6 +203,7 @@ impl ManifestExecutor {
             taint_labels: Arc::new(std::sync::Mutex::new(HashMap::new())),
             terminal_check: None,
             progress: None,
+            title: None,
         }
     }
 
@@ -219,6 +229,17 @@ impl ManifestExecutor {
     #[must_use]
     pub fn with_progress(mut self, progress: Arc<dyn Fn(&str) + Send + Sync>) -> Self {
         self.progress = Some(progress);
+        self
+    }
+
+    /// Wire a title callback for step-label updates. The callback is invoked
+    /// at the start of each cascade step with a short label. The bridge
+    /// creates this from the tool's `ToolCallEventStream::update_fields()` so
+    /// the step label appears in the tool call header. When absent (unit
+    /// tests, pre-wiring), no title update is emitted.
+    #[must_use]
+    pub fn with_title(mut self, title: Arc<dyn Fn(&str) + Send + Sync>) -> Self {
+        self.title = Some(title);
         self
     }
 
@@ -598,11 +619,11 @@ impl ManifestExecutor {
                     "REG"
                 );
 
-                // Emit progress to the tool's event stream so the user can see
-                // what the cascade is doing in real time and steer or cancel.
-                // The callback is set by the bridge from `ToolCallEventStream`;
-                // when absent (unit tests), this is a no-op.
-                if let Some(ref progress) = self.progress {
+                // Emit step label to the title callback so the tool call header
+                // shows which step is running. The thinking trace (progress
+                // callback) is emitted separately during `execute_select` as
+                // the LLM streams its reasoning.
+                if let Some(ref title) = self.title {
                     let total = steps.len();
                     let desc = if step.description.is_empty() {
                         String::new()
@@ -611,12 +632,12 @@ impl ManifestExecutor {
                     };
                     let action = &step.action;
                     if iteration > 1 {
-                        progress(&format!(
+                        title(&format!(
                             "Iteration {iteration}, step {}/{total}: {action}{desc}",
                             step_idx + 1,
                         ));
                     } else {
-                        progress(&format!("Step {}/{total}: {action}{desc}", step_idx + 1,));
+                        title(&format!("Step {}/{total}: {action}{desc}", step_idx + 1));
                     }
                 }
 
@@ -1410,13 +1431,58 @@ impl ManifestExecutor {
             Option<f64>,
         ) = {
             let timeout_dur = std::time::Duration::from_secs(step.timeout_seconds as u64);
-            let result: InferenceResult = match tokio::time::timeout(
-                timeout_dur,
-                self.inference.generate(&prompt, &params, tools),
-            )
+            let stream = self.inference.generate_stream(&prompt, &params, tools);
+            let result: InferenceResult = match tokio::time::timeout(timeout_dur, async {
+                use futures_util::StreamExt;
+                let mut full_text = String::new();
+                let mut full_reasoning = String::new();
+                let mut final_chunk: Option<InferenceStreamChunk> = None;
+                let mut stream = stream;
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            // Emit reasoning deltas as thinking traces so
+                            // the user sees the LLM's live reasoning.
+                            if !chunk.reasoning_delta.is_empty() {
+                                if let Some(ref progress) = self.progress {
+                                    progress(&chunk.reasoning_delta);
+                                }
+                                full_reasoning.push_str(&chunk.reasoning_delta);
+                            }
+                            if !chunk.text_delta.is_empty() {
+                                full_text.push_str(&chunk.text_delta);
+                            }
+                            // Track the last chunk for finish_reason/usage/tool_calls.
+                            final_chunk = Some(chunk);
+                        }
+                        Err(e) => return Err(TemplateError::Inference(e)),
+                    }
+                }
+                let chunk = final_chunk.unwrap_or(InferenceStreamChunk {
+                    text_delta: String::new(),
+                    reasoning_delta: String::new(),
+                    model: String::new(),
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                    tool_calls: Vec::new(),
+                });
+                InferenceResult {
+                    text: full_text,
+                    reasoning: if full_reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(full_reasoning)
+                    },
+                    model: chunk.model,
+                    finish_reason: chunk.finish_reason.unwrap_or_default(),
+                    usage: chunk.usage.unwrap_or_default(),
+                    tool_calls: chunk.tool_calls,
+                    cost_usd: None,
+                }
+            })
             .await
             {
-                Ok(Ok(r)) => r,
+                Ok(r) => r,
                 Ok(Err(e)) => return Err(TemplateError::Inference(e)),
                 Err(_elapsed) => {
                     return Err(TemplateError::Manifest(format!(

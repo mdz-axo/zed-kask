@@ -876,9 +876,27 @@ pub struct ToolCall {
     /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
     /// the command was sandboxed normally (or sandboxing was off).
     pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
+    /// Real-time thinking trace from the tool's execution. Populated by the
+    /// skill cascade executor via `thinking_sender()` — each cascade step
+    /// appends its reasoning here so the user sees a live thinking trace,
+    /// not just a one-line title. `None` when the tool call has no cascade
+    /// (ordinary built-in tools like `read_file`).
+    pub thoughts: Option<Entity<Markdown>>,
 }
 
 impl ToolCall {
+    /// Append a thinking trace chunk to this tool call. Creates the `Markdown`
+    /// entity lazily on first append so ordinary tool calls pay no cost.
+    pub fn append_thinking(&mut self, text: &str, cx: &mut App) {
+        if text.is_empty() {
+            return;
+        }
+        let markdown = self
+            .thoughts
+            .get_or_insert_with(|| cx.new(|cx| Markdown::new_text(SharedString::default(), cx)));
+        markdown.update(cx, |md, cx| md.append(text, cx));
+    }
+
     fn from_acp(
         tool_call: acp::ToolCall,
         status: ToolCallStatus,
@@ -945,6 +963,7 @@ impl ToolCall {
             sandbox_authorization_details,
             sandbox_fallback_authorization_details,
             sandbox_not_applied,
+            thoughts: None,
         };
         Ok(result)
     }
@@ -3154,6 +3173,7 @@ impl AcpThread {
                     sandbox_authorization_details: None,
                     sandbox_fallback_authorization_details: None,
                     sandbox_not_applied: None,
+                    thoughts: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -3192,6 +3212,22 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
         Ok(())
+    }
+
+    /// Append a thinking trace chunk to a tool call's `thoughts` buffer.
+    /// Called from `ThreadEvent::ToolCallThinking` — the skill cascade
+    /// executor emits these so the user sees a live thinking trace during
+    /// long-running tool calls, not just a one-line title.
+    pub fn append_tool_call_thinking(
+        &mut self,
+        tool_call_id: &acp::ToolCallId,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((ix, call)) = self.tool_call_mut(tool_call_id) {
+            call.append_thinking(text, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        }
     }
 
     /// Updates a tool call if id matches an existing entry, otherwise inserts a new one.

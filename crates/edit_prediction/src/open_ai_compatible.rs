@@ -217,7 +217,9 @@ mod tests {
     /// This pins the deliberate deviation: edit predictions route through the
     /// `LanguageModelRegistry`, not the configured HTTP endpoint.
     #[gpui::test]
-    async fn test_kask_completion_port_intercepts_send_custom_server_request() {
+    async fn test_kask_completion_port_intercepts_send_custom_server_request(
+        _cx: &mut gpui::TestAppContext,
+    ) {
         // Wire the mock port.
         set_kask_completion_port(Some(Arc::new(MockCompletionPort {
             text: "mock_completion".to_string(),
@@ -233,6 +235,15 @@ mod tests {
         };
         let http_client: Arc<dyn http_client::HttpClient> = FakeHttpClient::with_404_response();
 
+        // Clean up the global via a guard so a panic doesn't leak it.
+        struct Guard;
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                set_kask_completion_port(None);
+            }
+        }
+        let _guard = Guard;
+
         let result = send_custom_server_request(
             settings::EditPredictionProvider::OpenAiCompatibleApi,
             &settings,
@@ -244,14 +255,12 @@ mod tests {
         )
         .await;
 
-        // Clean up the global before assertions so a panic doesn't leak it.
-        set_kask_completion_port(None);
-
         let (text, request_id) = result.expect("mock port should succeed");
         assert_eq!(text, "mock_completion");
         assert_eq!(request_id, "mock_req_1");
 
-        // Verify the global is cleaned up.
+        // Verify the global is cleaned up by the guard.
+        drop(_guard);
         assert!(kask_completion_port().is_none());
     }
 }

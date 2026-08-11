@@ -2488,6 +2488,11 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
+                            ThreadEvent::ToolCallThinking { tool_call_id, text } => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.append_tool_call_thinking(&tool_call_id, &text, cx);
+                                })?;
+                            }
                             ThreadEvent::SubagentSpawned(session_id) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.subagent_spawned(session_id, cx);

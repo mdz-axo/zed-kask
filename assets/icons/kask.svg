@@ -1,20 +1,14 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- zed-kask panel/status icon: mini "zk" monogram on burnt orange.
-       Mirrors the app icon (zk-icon.svg) at 16x16: rounded burnt-orange
-       background, silver "zk" letters, no rays (too fine for 16px). -->
-  <defs>
-    <linearGradient id="silver16" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#F5F7FA"/>
-      <stop offset="100%" stop-color="#A8B0BB"/>
-    </linearGradient>
-  </defs>
-  <rect x="0.5" y="0.5" width="15" height="15" rx="3" ry="3" fill="#B25A1A"/>
-  <g fill="none" stroke="url(#silver16)" stroke-width="1.1" stroke-linejoin="miter" stroke-linecap="square">
-    <!-- z: top bar, diagonal, bottom bar (compact) -->
-    <path d="M 4 5.5 L 7.5 5.5 L 4 10.5 L 7.5 10.5"/>
-    <!-- k: stem + two diagonals from mid-right -->
-    <path d="M 9 5.5 L 9 10.5"/>
-    <path d="M 9 8 L 12 5.5"/>
-    <path d="M 9 8 L 12 10.5"/>
+  <!-- zed-kask panel/status icon: "zk" monogram.
+       GPUI renders embedded SVGs as monochrome alpha masks (render_alpha_mask),
+       then applies the text color — so the SVG must be monochrome (fill="black"
+       or stroke="black"), like every other icon in assets/icons/. A filled
+       background rect makes the entire 16x16 opaque and hides the letterforms;
+       gradients and explicit colors are ignored by the alpha-mask renderer. -->
+  <g fill="black">
+    <!-- z: top bar, diagonal, bottom bar -->
+    <path d="M 4 5 L 8 5 L 4 11 L 8 11 L 8 10 L 5.5 10 L 8.5 6 L 8 6 L 5 6 z"/>
+    <!-- k: stem + upper diagonal + lower diagonal -->
+    <path d="M 9 5 L 10 5 L 10 7.5 L 12 5 L 13 5 L 10.7 8 L 13 11 L 12 11 L 10 8.5 L 10 11 L 9 11 z"/>
   </g>
 </svg>

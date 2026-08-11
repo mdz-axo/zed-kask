@@ -2274,7 +2274,7 @@ fn main() {
                     // wirings are independent (one may fail without blocking
                     // the other).
                     let ep_wired = std::sync::atomic::AtomicBool::new(false);
-                    let http_client = app_state_for_model_task.http_client();
+                    let http_client = app_state_for_model_task.client.http_client();
                     if let Err(e) =
                         try_wire_edit_prediction_port(&ep_wired, &registry, http_client, cx).await
                     {
@@ -2291,7 +2291,7 @@ fn main() {
                 // zed-kask: D24 — separate AtomicBool for the edit-prediction port.
                 let ep_wired_for_sub =
                     std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let http_client_for_sub = app_state_for_model_task.http_client();
+                let http_client_for_sub = app_state_for_model_task.client.http_client();
                 cx.subscribe(
                     &registry,
                     move |_, event: &language_model::Event, cx| {
@@ -3009,7 +3009,7 @@ async fn try_wire_manifest_executor(
 /// `resolve_model_names` + HTTP-client construction on every registry event.
 async fn try_wire_edit_prediction_port(
     wired: &std::sync::atomic::AtomicBool,
-    registry: &language_model::LanguageModelRegistry,
+    registry: &gpui::Entity<language_model::LanguageModelRegistry>,
     http_client: std::sync::Arc<dyn http_client::HttpClient>,
     cx: &mut gpui::AsyncApp,
 ) -> anyhow::Result<()> {
@@ -3020,7 +3020,7 @@ async fn try_wire_edit_prediction_port(
     cx.update(|cx| {
         let tokio_handle = gpui_tokio::Tokio::handle(cx);
         let port = kask_bridge::BridgeEditPredictionPort::from_registry(
-            registry,
+            registry.read(cx),
             http_client,
             tokio_handle,
             cx,
