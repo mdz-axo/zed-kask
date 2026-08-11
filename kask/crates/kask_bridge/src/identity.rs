@@ -60,7 +60,7 @@ pub fn agent_name_from_username(username: &str) -> Option<String> {
 ///
 /// Deterministic: the same username always produces the same WebID
 /// (via `WebID::for_agent_name` in the `"hkask"` namespace).
-pub fn webid_from_username(username: &str) -> Option<WebID> {
+pub(crate) fn webid_from_username(username: &str) -> Option<WebID> {
     agent_name_from_username(username).map(|name| WebID::for_agent_name(&name))
 }
 

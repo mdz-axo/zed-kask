@@ -144,7 +144,6 @@ PDF → [Decimate] → PageQueue → [Score → Route → OCR] → [Verify] → 
 | `HKASK_DEFAULT_MODEL` | Default generation model for all inference (also used for prose composition). |
 | `HKASK_CLASSIFIER_MODEL` | Model for section type classification. Falls back to `HKASK_DEFAULT_MODEL`. |
 | `HKASK_DB_PASSPHRASE` | Passphrase for the semantic memory DB. Default: `"hkask-default-passphrase-2024"` (dev only — set a real passphrase in production). |
-| `HKASK_USE_FAL_DOCRES` | Set to `true` to enable fal.ai docres binarization enhancement (opt-in, ~40s latency). Requires `FALAI_API_KEY`. |
 | `HKASK_ENABLE_CONTENT_GUARD` | Set to `false` to disable input-guard scanning (output guard is always active). Default: enabled. |
 | `HKASK_WEBID` | WebID identity for Regulation narrative memory. |
 

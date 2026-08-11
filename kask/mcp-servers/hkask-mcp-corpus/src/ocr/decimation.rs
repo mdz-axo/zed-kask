@@ -5,8 +5,7 @@
 //! Falls back gracefully if poppler is not installed.
 //!
 //! Applies Otsu binarization to each page image for clean B&W output
-//! optimized for OCR. Optional fal.ai `docres` enhancement available
-//! when `HKASK_USE_FAL_DOCRES=true` and `FALAI_API_KEY` is set.
+//! optimized for OCR.
 
 use crate::ocr::PipelineError;
 use image::DynamicImage;
@@ -23,10 +22,8 @@ use std::process::Command;
 /// Ordered vector of page images, or a `PipelineError` if decimation fails.
 ///
 /// # Preprocessing
-/// Each page image is preprocessed for OCR quality:
-/// - Default: local Otsu binarization (O(w·h), instant, free).
-/// - Optional: fal.ai `docres` when `FALAI_API_KEY` is set
-///   (falls back to Otsu on any failure).
+/// Each page image is preprocessed for OCR quality via local Otsu
+/// binarization (O(w·h), instant, free).
 ///
 /// # Dependencies
 /// Requires `pdftoppm` from poppler-utils. On failure, returns
@@ -98,7 +95,7 @@ pub async fn pdf_to_images(pdf_path: &Path, dpi: u32) -> Result<Vec<DynamicImage
         let page_num = page + 1;
         match image::open(path) {
             Ok(mut img) => {
-                preprocess_via_fal(&mut img).await;
+                otsu_binarize(&mut img);
                 images.push(img);
             }
             Err(e) => {
@@ -218,7 +215,7 @@ pub async fn pdf_to_images_for_pages(
         };
         match image::open(path) {
             Ok(mut img) => {
-                preprocess_via_fal(&mut img).await;
+                otsu_binarize(&mut img);
                 images.push(img);
             }
             Err(e) => {
@@ -233,173 +230,6 @@ pub async fn pdf_to_images_for_pages(
     }
 
     Ok(images)
-}
-
-/// Preprocess a page image for OCR quality improvement.
-///
-/// Default: local Otsu binarization — O(w·h), instant, free.
-/// Optional: fal.ai `docres` when `HKASK_USE_FAL_DOCRES=true` AND
-/// `FALAI_API_KEY` is set. ~40s latency — opt-in only.
-pub(crate) async fn preprocess_via_fal(image: &mut DynamicImage) {
-    // Otsu first — always instant
-    otsu_binarize(image);
-
-    // fal.ai docres is opt-in only (explicit env var required due to ~40s latency)
-    let use_fal = std::env::var("HKASK_USE_FAL_DOCRES")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-
-    if !use_fal {
-        return;
-    }
-
-    let api_key = std::env::var("FALAI_API_KEY").unwrap_or_default();
-
-    if api_key.is_empty() {
-        tracing::warn!(target: "reg.pipeline.ocr", "HKASK_USE_FAL_DOCRES set but no API key found");
-        return;
-    }
-
-    // Try fal.ai enhancement on top of Otsu-binarized image
-    if let Some(enhanced) = try_fal_docres(image, &api_key).await {
-        tracing::info!(target: "reg.pipeline.ocr", "fal.ai docres enhancement applied");
-        *image = enhanced;
-    } else {
-        tracing::warn!(target: "reg.pipeline.ocr", "fal.ai docres failed, keeping Otsu result");
-    }
-}
-
-/// Try fal.ai docres binarization. Returns None on any failure.
-///
-/// Every failure path emits a `tracing::warn!` under
-/// `reg.pipeline.ocr.fal` so an operator can distinguish 401/429/500/network/
-/// parse failures from each other instead of seeing only the caller's
-/// generic "fal.ai docres failed" line.
-async fn try_fal_docres(image: &DynamicImage, api_key: &str) -> Option<DynamicImage> {
-    // Encode image as PNG base64 data URI
-    let mut png_bytes: Vec<u8> = Vec::new();
-    if let Err(e) = image.write_to(
-        &mut std::io::Cursor::new(&mut png_bytes),
-        image::ImageFormat::Png,
-    ) {
-        tracing::warn!(
-            target: "reg.pipeline.ocr.fal",
-            error = %e,
-            "fal.ai docres: failed to encode source image as PNG"
-        );
-        return None;
-    }
-
-    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png_bytes);
-    let data_uri = format!("data:image/png;base64,{}", b64);
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                error = %e,
-                "fal.ai docres: reqwest client construction failed"
-            );
-            e
-        })
-        .ok()?;
-
-    let request_body = serde_json::json!({
-        "image_url": data_uri,
-        "task": "binarization",
-    });
-
-    let response = client
-        .post("https://fal.run/fal-ai/docres")
-        .header("Authorization", format!("Key {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                error = %e,
-                "fal.ai docres: POST request failed"
-            );
-            e
-        })
-        .ok()?;
-
-    if !response.status().is_success() {
-        tracing::warn!(
-            target: "reg.pipeline.ocr.fal",
-            status = %response.status().as_u16(),
-            "fal.ai docres: non-success HTTP status"
-        );
-        return None;
-    }
-
-    let result: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                error = %e,
-                "fal.ai docres: response JSON parse failed"
-            );
-            e
-        })
-        .ok()?;
-
-    let image_url = match result["image"]["url"].as_str() {
-        Some(url) => url,
-        None => {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                "fal.ai docres: response missing image.url field"
-            );
-            return None;
-        }
-    };
-
-    let enhanced_bytes = client
-        .get(image_url)
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                image_url,
-                error = %e,
-                "fal.ai docres: enhanced image download failed"
-            );
-            e
-        })
-        .ok()?;
-
-    let enhanced_bytes = enhanced_bytes
-        .bytes()
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                error = %e,
-                "fal.ai docres: enhanced image bytes read failed"
-            );
-            e
-        })
-        .ok()?;
-
-    image::load_from_memory(&enhanced_bytes)
-        .map_err(|e| {
-            tracing::warn!(
-                target: "reg.pipeline.ocr.fal",
-                error = %e,
-                byte_count = enhanced_bytes.len(),
-                "fal.ai docres: enhanced image decode failed"
-            );
-            e
-        })
-        .ok()
 }
 
 /// Otsu binarization — local, instant, free.
@@ -622,69 +452,5 @@ mod tests {
         otsu_binarize(&mut img);
         // Should not panic, output is valid
         assert!(img.as_luma8().is_some());
-    }
-
-    #[tokio::test]
-    async fn fal_docres_preprocessing_live() {
-        // Only run when explicitly opted in (avoids 40s latency in default test suite)
-        let use_fal = std::env::var("HKASK_USE_FAL_DOCRES")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
-        if !use_fal {
-            eprintln!("SKIP: HKASK_USE_FAL_DOCRES not set to true");
-            return;
-        }
-
-        // .env is at workspace root; cargo test runs from crate dir
-        let env_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join(".env");
-        dotenvy::from_filename(&env_path).ok();
-
-        let api_key = std::env::var("FALAI_API_KEY").unwrap_or_default();
-
-        if api_key.is_empty() {
-            eprintln!("SKIP: no fal.ai API key found");
-            return;
-        }
-
-        // Create a text-like test image
-        let img = DynamicImage::ImageLuma8(image::ImageBuffer::from_fn(400, 100, |x, y| {
-            if !(30..=70).contains(&y) || (x / 10 + y / 15) % 3 == 0 {
-                image::Luma([240])
-            } else {
-                image::Luma([30])
-            }
-        }));
-
-        eprintln!(
-            "Sending {}x{} to fal.ai docres (binarization)...",
-            img.width(),
-            img.height()
-        );
-        let start = std::time::Instant::now();
-
-        let result = try_fal_docres(&img, &api_key).await;
-
-        let elapsed = start.elapsed();
-        match result {
-            Some(enhanced) => {
-                eprintln!(
-                    "fal.ai returned {}x{} in {:?}",
-                    enhanced.width(),
-                    enhanced.height(),
-                    elapsed
-                );
-                if let Some(luma) = enhanced.as_luma8() {
-                    let unique: std::collections::BTreeSet<u8> =
-                        luma.as_raw().iter().copied().collect();
-                    eprintln!("Unique pixel values: {} ({:?})", unique.len(), unique);
-                }
-            }
-            None => {
-                eprintln!("fal.ai call failed after {:?}", elapsed);
-            }
-        }
     }
 }

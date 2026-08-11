@@ -34,10 +34,7 @@ pub use hkask_inference::{InferenceConfig, MediaRouter};
 /// Re-exported so the settings UI can display the resolved default data
 /// directory without a direct `hkask-types` dependency.
 pub use hkask_types::agent_paths::resolve_data_dir;
-pub use identity::{
-    ProvisionError, ProvisionedAgent, agent_name_from_username, provision_agent,
-    webid_from_username,
-};
+pub use identity::{ProvisionError, ProvisionedAgent, agent_name_from_username, provision_agent};
 pub use inference::BridgeEditPredictionPort;
 pub use inference::LanguageModelEmbeddingPort;
 pub use inference::LanguageModelInferencePort;

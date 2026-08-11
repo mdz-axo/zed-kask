@@ -323,27 +323,6 @@ pub fn domain_saliency(line: &str, anchor: Option<&OntologyAnchor>) -> f64 {
     direct + graph_bonus
 }
 
-/// Derive an ontology anchor from persona description text.
-///
-/// Applies the shared `select_ontology_anchor` domain-selection logic to the
-/// persona's description and capability tokens. Returns `None` if no domain
-/// signals are detected (caller treats as Core).
-pub fn persona_to_anchor(description: &str, capabilities: &[String]) -> Option<OntologyAnchor> {
-    // Try the description first — it carries the strongest domain signal.
-    let anchor = select_ontology_anchor(description);
-    if anchor != OntologyAnchor::Core {
-        return Some(anchor);
-    }
-    // Fall back to the capability tokens.
-    for capability in capabilities {
-        let anchor = select_ontology_anchor(capability);
-        if anchor != OntologyAnchor::Core {
-            return Some(anchor);
-        }
-    }
-    None
-}
-
 pub struct FlashrankAlgorithm;
 
 impl FlashrankAlgorithm {

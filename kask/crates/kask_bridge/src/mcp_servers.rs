@@ -102,7 +102,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
         binary: "hkask-mcp-corpus",
         description: "Corpus — document corpus and QA generation",
         credentials: Some(&[
-            "FALAI_API_KEY",
             // DB encryption passphrase — read by default_corpus_passphrase() in
             // semantic/mod.rs. Without this, the DB is silently encrypted with
             // the hardcoded dev passphrase under governed launch.
@@ -123,8 +122,6 @@ pub const BUILT_IN_MCP_SERVERS: &[BuiltinMcpServer] = &[
             "HKASK_QA_MODEL",
             // Model cache TTL — read by model_cache.rs, falls back to 4h default.
             "HKASK_MODEL_CACHE_TTL_SECS",
-            // fal.ai docres toggle — read by decimation.rs, falls back to false.
-            "HKASK_USE_FAL_DOCRES",
             // Content guard toggle — read by semantic/mod.rs, defaults to true.
             "HKASK_ENABLE_CONTENT_GUARD",
             // OCR triage thresholds — read by ocr/config.rs, fall back to TriageConfig::default().
@@ -1050,6 +1047,30 @@ mod tests {
         assert!(
             filtered_creds.iter().any(|(k, _)| k == "HKASK_ABW_API_KEY"),
             "swarm server reads HKASK_ABW_API_KEY but it is not in the credentials allowlist"
+        );
+    }
+
+    /// fal.ai is deprecated for the corpus server (the OCR docres path was
+    /// removed; TTS/STT/image-gen defaults now route to DeepInfra). The corpus
+    /// server no longer reads `FALAI_API_KEY` or `HKASK_USE_FAL_DOCRES`. Pin
+    /// the removal so a future re-add is caught (`.rules` "tests must pin
+    /// deliberate deviations").
+    #[test]
+    fn corpus_allowlist_excludes_deprecated_fal_ai() {
+        let corpus = server_by_id("corpus");
+        let creds = corpus
+            .credentials
+            .expect("corpus has a credential allowlist");
+        assert!(
+            !creds.contains(&"FALAI_API_KEY"),
+            "FALAI_API_KEY must not be granted to the corpus server — fal.ai docres is removed"
+        );
+        let cfg = corpus
+            .config_env
+            .expect("corpus has a config_env allowlist");
+        assert!(
+            !cfg.contains(&"HKASK_USE_FAL_DOCRES"),
+            "HKASK_USE_FAL_DOCRES must not be granted to the corpus server — fal.ai docres is removed"
         );
     }
 }

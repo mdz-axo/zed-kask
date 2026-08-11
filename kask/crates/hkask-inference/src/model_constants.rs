@@ -34,17 +34,17 @@ pub const DEFAULT_OCR_MODEL: &str = "RunPod/kask-ocr";
 /// Matches `InferenceConfig::from_env()` default.
 pub const DEFAULT_FALLBACK_MODEL: &str = "OpenRouter/z-ai/glm-5.2";
 
-/// Default TTS (text-to-speech) model.
-pub const DEFAULT_TTS_MODEL: &str = "fal.ai/Qwen3-TTS";
+/// Default TTS model — DeepInfra Kokoro-82B (DeepInfraBackend::generate_speech default).
+pub const DEFAULT_TTS_MODEL: &str = "DeepInfra/hexgrad/Kokoro-82M";
 
-/// Default STT (speech-to-text) model.
-pub const DEFAULT_STT_MODEL: &str = "fal.ai/wizper";
+/// Default STT model — DeepInfra Whisper (DeepInfraBackend::transcribe endpoint).
+pub const DEFAULT_STT_MODEL: &str = "DeepInfra/whisper-large-v3";
 
 /// Default vision model for image analysis.
 pub const DEFAULT_VISION_MODEL: &str = "KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct";
 
-/// Default image generation model.
-pub const DEFAULT_IMAGE_GEN_MODEL: &str = "fal.ai/flux-2";
+/// Default image-gen model — DeepInfra FLUX-2-klein-4B (DeepInfraBackend::generate_image).
+pub const DEFAULT_IMAGE_GEN_MODEL: &str = "DeepInfra/black-forest-labs/FLUX-2-klein-4b";
 
 // ── Test fixtures (arbitrary identifiers, no network calls) ──────────────
 

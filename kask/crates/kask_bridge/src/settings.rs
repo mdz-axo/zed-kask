@@ -445,16 +445,16 @@ fn default_embedding_model() -> String {
 /// Media MCP server configuration.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct KaskMediaSettings {
-    /// TTS model override (e.g., "fal.ai/qwen-3-tts").
+    /// TTS model override (e.g., "DeepInfra/hexgrad/Kokoro-82M").
     pub tts_model: String,
 
-    /// STT model override (e.g., "fal.ai/wizper").
+    /// STT model override (e.g., "DeepInfra/whisper-large-v3").
     pub stt_model: String,
 
     /// Vision model override (e.g., "KiloCode/qwen/qwen3-vl-235b-a22b-instruct").
     pub vision_model: String,
 
-    /// Image generation model override (e.g., "fal.ai/flux-2").
+    /// Image generation model override (e.g., "DeepInfra/black-forest-labs/FLUX-2-klein-4b").
     pub image_gen_model: String,
 }
 

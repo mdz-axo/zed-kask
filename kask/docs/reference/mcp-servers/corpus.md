@@ -121,7 +121,6 @@ Centroid computation is persona-specific (no trait, no QA equivalent).
 | `HKASK_TEMPLATE_ROOT` | Root containing `templates/docproc/`. |
 | `HKASK_QA_MODEL` | Default provider-prefixed QA model. |
 | `HKASK_DEFAULT_MODEL` | Default generation model for prose composition. |
-| `HKASK_USE_FAL_DOCRES` | Enable fal.ai docres binarization enhancement. |
 | `HKASK_WEBID` | WebID identity for Regulation narrative memory. |
 
 ## Quick Start

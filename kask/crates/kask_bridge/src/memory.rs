@@ -340,9 +340,8 @@ impl RealMemoryPort {
         );
 
         let request = hkask_types::ConsolidationRequest {
-            limit: 100,
             confidence_floor: Some(self.confidence_floor),
-            max_semantic_triples: None,
+            ..Default::default()
         };
 
         match consolidation.consolidate(&self.user_webid, request.clone()) {
@@ -473,9 +472,8 @@ impl RealMemoryPort {
                     continue;
                 }
                 let request = hkask_types::ConsolidationRequest {
-                    limit: 100,
                     confidence_floor: Some(confidence_floor),
-                    max_semantic_triples: None,
+                    ..Default::default()
                 };
                 tracing::info!(
                     target: "reg.memory",
@@ -582,7 +580,8 @@ fn parse_storage_budget(raw: &str) -> usize {
             tracing::warn!(
                 target: "reg.memory",
                 value = %raw,
-                "HKASK_MEMORY_STORAGE_BUDGET must be > 0 — falling back to default 10_000"
+                "HKASK_MEMORY_STORAGE_BUDGET must be > 0 — falling back to default {}",
+                hkask_memory::MemoryStore::default_storage_budget()
             );
             hkask_memory::MemoryStore::default_storage_budget()
         }
@@ -591,7 +590,8 @@ fn parse_storage_budget(raw: &str) -> usize {
                 target: "reg.memory",
                 value = %raw,
                 error = %e,
-                "HKASK_MEMORY_STORAGE_BUDGET malformed — falling back to default 10_000"
+                "HKASK_MEMORY_STORAGE_BUDGET malformed — falling back to default {}",
+                hkask_memory::MemoryStore::default_storage_budget()
             );
             hkask_memory::MemoryStore::default_storage_budget()
         }
@@ -617,7 +617,8 @@ fn parse_memory_life_days(raw: &str) -> f64 {
             tracing::warn!(
                 target: "reg.memory",
                 value = %raw,
-                "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to default 180.0"
+                "HKASK_MEMORY_LIFE_DAYS must be >= 0 — falling back to default {}",
+                hkask_memory::MemoryStore::default_memory_life_days()
             );
             hkask_memory::MemoryStore::default_memory_life_days()
         }
@@ -626,7 +627,8 @@ fn parse_memory_life_days(raw: &str) -> f64 {
                 target: "reg.memory",
                 value = %raw,
                 error = %e,
-                "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default 180.0"
+                "HKASK_MEMORY_LIFE_DAYS malformed — falling back to default {}",
+                hkask_memory::MemoryStore::default_memory_life_days()
             );
             hkask_memory::MemoryStore::default_memory_life_days()
         }
@@ -913,14 +915,7 @@ fn build_curator_consolidation(
 }
 
 fn open_curator_store(passphrase: &str, embedding_dim: usize) -> Option<Arc<MemoryStore>> {
-    let curator_db_path = std::env::var("HKASK_CURATOR_DB").unwrap_or_else(|_| {
-        let p = hkask_types::agent_paths::agent_pod_db("curator");
-        let resolved = hkask_types::agent_paths::resolve_under_data_dir(&p);
-        if let Some(parent) = resolved.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        resolved.to_string_lossy().to_string()
-    });
+    let curator_db_path = curator_db_path();
 
     let db = match Database::open(&curator_db_path, passphrase) {
         Ok(db) => db,

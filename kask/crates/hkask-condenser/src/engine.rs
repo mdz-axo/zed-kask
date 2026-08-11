@@ -44,18 +44,6 @@ impl CondenserEngine {
         }
     }
 
-    /// Resolve a tool name to its category and the algorithm that handles it.
-    ///
-    /// D3: single call site for the classify→select path. `condenser_classify`
-    /// delegates here instead of calling `classify_tool` + `registry.select` directly.
-    /// Returns an owned `String` for the algorithm name so callers can hold the
-    /// result across a mutable borrow of `self`.
-    pub fn classify(&self, tool_name: &str) -> (ContextCategory, String) {
-        let cat = classify_tool(tool_name);
-        let algo = self.registry.select(cat);
-        (cat, algo.name().to_string())
-    }
-
     pub fn compress(
         &mut self,
         tool_name: &str,
@@ -150,13 +138,5 @@ mod tests {
         let input = "only a few lines\n";
         let result = engine.compress("bash_execute", input, None);
         assert_eq!(result.content, input);
-    }
-
-    #[test]
-    fn classify_maps_known_tool_names() {
-        let engine = CondenserEngine::new();
-        let (cat, algo) = engine.classify("bash_execute");
-        assert_eq!(cat.label(), "shell_command");
-        assert_eq!(algo, "rtk_style");
     }
 }

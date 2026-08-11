@@ -8,8 +8,11 @@
 //!
 //! fal.ai is deliberately not listed here: it is a generative media platform,
 //! not an OpenAI-compatible chat endpoint (`/v1/chat/completions` returns 404,
-//! `/v1/models` uses `Authorization: Key`). Its `FALAI_API_KEY` is managed as a
-//! data-service credential (consumed by the media and corpus MCP servers).
+//! `/v1/models` uses `Authorization: Key`). fal.ai is deprecated for TTS, STT,
+//! and image generation (defaults now route to DeepInfra); the `FalBackend`
+//! is retained only for video / image-to-image / upscale / segment-object /
+//! workflow capabilities, so `FALAI_API_KEY` is still consumed by the media MCP
+//! server (no longer by the corpus server).
 
 use super::*;
 

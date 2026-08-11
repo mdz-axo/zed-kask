@@ -108,7 +108,7 @@ pub enum InferenceMethod {
 }
 
 /// Parameters for an inference request.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InferenceParams {
     pub prompt: Option<String>,
     pub messages: Option<Vec<ChatMessage>>,
