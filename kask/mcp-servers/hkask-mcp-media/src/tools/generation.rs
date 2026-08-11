@@ -217,7 +217,8 @@ impl MediaServer {
             let final_prompt = if let Some(style_name) = &style {
                 let preset = crate::style::get_preset(style_name).ok_or_else(|| {
                     McpToolError::invalid_argument(format!(
-                        "Unknown style: {style_name}. Available: default, anime, realistic, cinematic, minimal"
+                        "Unknown style: {style_name}. Available: {}",
+                        crate::style::available_styles().join(", ")
                     ))
                 })?;
                 let mut params = hkask_types::MediaGenerateParams {

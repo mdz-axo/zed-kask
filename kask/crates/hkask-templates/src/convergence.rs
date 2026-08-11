@@ -81,18 +81,8 @@ impl ConvergenceStatus {
 /// score deterministically.
 pub struct ConvergenceTracker {
     // ── Kata target-condition config ──
-    #[allow(dead_code)]
     target_artifacts_field: Option<String>,
-    #[allow(dead_code)]
-    current_artifacts_field: Option<String>,
-    #[allow(dead_code)]
     target_procedure_field: Option<String>,
-    #[allow(dead_code)]
-    current_procedure_field: Option<String>,
-    #[allow(dead_code)]
-    prediction_field: Option<String>,
-    #[allow(dead_code)]
-    result_field: Option<String>,
     gap_epsilon: f64,
     cauchy_epsilon: f64,
     cauchy_window: u32,
@@ -133,11 +123,7 @@ impl ConvergenceTracker {
     pub fn new(config: &ConvergenceConfig) -> Self {
         Self {
             target_artifacts_field: config.target_artifacts_field.clone(),
-            current_artifacts_field: config.current_artifacts_field.clone(),
             target_procedure_field: config.target_procedure_field.clone(),
-            current_procedure_field: config.current_procedure_field.clone(),
-            prediction_field: config.prediction_field.clone(),
-            result_field: config.result_field.clone(),
             gap_epsilon: config.gap_epsilon,
             cauchy_epsilon: config.cauchy_epsilon,
             cauchy_window: config.cauchy_window,

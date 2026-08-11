@@ -88,14 +88,10 @@ impl RegulationReason {
 
 /// A proposed action before substitution and mode-specific filtering.
 ///
-/// `target` and `action_type` document the policy's intent; the actual
-/// dispatch in `build_regulation_action` may substitute the action type
-/// via `try_substitute` or skip the action based on mode settings.
-///
-/// `target` and `action_type` are constructed by the policy table and read
-/// by tests, but production dispatch (`build_regulation_action`) reads only
-/// `reason` — the fields are retained as documentation of intent.
-#[allow(dead_code)]
+/// `target` and `action_type` are read by `build_regulation_action` to
+/// construct the dispatched `RegulatoryAction`. `try_substitute` may
+/// override `action_type` via the stagnation ladder, and mode-specific
+/// filtering may skip the action entirely.
 #[derive(Debug, Clone)]
 pub struct ProposedAction {
     pub target: LoopId,

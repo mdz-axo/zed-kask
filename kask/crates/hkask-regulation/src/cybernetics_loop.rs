@@ -1482,8 +1482,6 @@ impl CyberneticsLoop {
         dev: &Deviation,
         proposed: &regulation_policy::ProposedAction,
     ) -> Option<RegulatoryAction> {
-        use ActionType::*;
-        use LoopId::*;
         use SignalMetric::*;
 
         match proposed.reason {
@@ -1495,9 +1493,11 @@ impl CyberneticsLoop {
                 ) {
                     return None;
                 }
-                let at = self.try_substitute(EnergyRemaining, Throttle).await;
+                let at = self
+                    .try_substitute(EnergyRemaining, proposed.action_type)
+                    .await;
                 Some(RegulatoryAction::with_metric(
-                    Inference,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "energy_budget_low",
@@ -1519,8 +1519,8 @@ impl CyberneticsLoop {
                 let remaining_ratio = dev.signal.value;
                 let projected_minutes = (remaining_ratio * 60.0) as u64;
                 Some(RegulatoryAction::new(
-                    Curation,
-                    Escalate,
+                    proposed.target,
+                    proposed.action_type,
                     RegulatoryActionParams::with_data(
                         "budget_guard_escalation",
                         RegulationData::BudgetGuardEscalation {
@@ -1555,10 +1555,10 @@ impl CyberneticsLoop {
                     return None;
                 }
                 let at = self
-                    .try_substitute(EnergyRemaining, AdjustEnergyBudget)
+                    .try_substitute(EnergyRemaining, proposed.action_type)
                     .await;
                 Some(RegulatoryAction::new(
-                    Cybernetics,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "energy_depletion_auto_adjust",
@@ -1571,9 +1571,11 @@ impl CyberneticsLoop {
             }
             // -- VarietyDeficit AboveSetPoint -------------------------------
             RegulationReason::VarietyDeficitExceeded => {
-                let at = self.try_substitute(VarietyDeficit, Escalate).await;
+                let at = self
+                    .try_substitute(VarietyDeficit, proposed.action_type)
+                    .await;
                 Some(RegulatoryAction::new(
-                    Curation,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "variety_deficit_exceeded",
@@ -1586,9 +1588,9 @@ impl CyberneticsLoop {
             }
             // -- ErrorRate AboveSetPoint ------------------------------------
             RegulationReason::ErrorRateExceeded => {
-                let at = self.try_substitute(ErrorRate, CircuitBreak).await;
+                let at = self.try_substitute(ErrorRate, proposed.action_type).await;
                 Some(RegulatoryAction::new(
-                    Inference,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "error_rate_exceeded",
@@ -1601,9 +1603,11 @@ impl CyberneticsLoop {
             }
             // -- ConnectorLatency AboveSetPoint -----------------------------
             RegulationReason::ConnectorLatencyExceeded => {
-                let at = self.try_substitute(ConnectorLatency, Throttle).await;
+                let at = self
+                    .try_substitute(ConnectorLatency, proposed.action_type)
+                    .await;
                 Some(RegulatoryAction::new(
-                    Cybernetics,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "connector_latency_exceeded",
@@ -1622,9 +1626,11 @@ impl CyberneticsLoop {
                     threshold = dev.signal.set_point,
                     "Communication queue depth exceeded backpressure threshold"
                 );
-                let at = self.try_substitute(CommunicationQueueDepth, Throttle).await;
+                let at = self
+                    .try_substitute(CommunicationQueueDepth, proposed.action_type)
+                    .await;
                 Some(RegulatoryAction::new(
-                    Cybernetics,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "communication_backpressure",
@@ -1648,9 +1654,11 @@ impl CyberneticsLoop {
                     severity = severity,
                     "Wallet balance alert"
                 );
-                let at = self.try_substitute(WalletBalanceRatio, Escalate).await;
+                let at = self
+                    .try_substitute(WalletBalanceRatio, proposed.action_type)
+                    .await;
                 Some(RegulatoryAction::new(
-                    Curation,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "wallet_balance_low",
@@ -1669,8 +1677,8 @@ impl CyberneticsLoop {
                     "API key health alert — exhausted or expired"
                 );
                 Some(RegulatoryAction::new(
-                    Curation,
-                    Escalate,
+                    proposed.target,
+                    proposed.action_type,
                     RegulatoryActionParams::with_data(
                         "wallet_key_unhealthy",
                         RegulationData::WalletKeyUnhealthy {
@@ -1697,8 +1705,8 @@ impl CyberneticsLoop {
                     "Public seam coverage degraded — seam watcher alert"
                 );
                 Some(RegulatoryAction::new(
-                    Curation,
-                    Escalate,
+                    proposed.target,
+                    proposed.action_type,
                     RegulatoryActionParams::with_data(
                         "seam_coverage_degraded",
                         RegulationData::SeamCoverageDegraded {
@@ -1721,8 +1729,8 @@ impl CyberneticsLoop {
                     "Public seam coverage improved — seam watcher positive signal"
                 );
                 Some(RegulatoryAction::new(
-                    Curation,
-                    Notify,
+                    proposed.target,
+                    proposed.action_type,
                     RegulatoryActionParams::with_data(
                         "seam_coverage_improved",
                         RegulationData::SeamCoverageImproved {
@@ -1741,9 +1749,11 @@ impl CyberneticsLoop {
                     set_point = dev.signal.set_point,
                     "Tool reliability degraded — success rate below threshold"
                 );
-                let at = self.try_substitute(ToolReliability, Escalate).await;
+                let at = self
+                    .try_substitute(ToolReliability, proposed.action_type)
+                    .await;
                 Some(RegulatoryAction::new(
-                    Curation,
+                    proposed.target,
                     at,
                     RegulatoryActionParams::with_data(
                         "tool_reliability_degraded",

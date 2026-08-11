@@ -19,9 +19,8 @@ pub const MAPPING_VERSION: u32 = 1;
 /// PKO process axis. `dispute` is load-bearing: 2604.20421's oracle-risk
 /// finding shows markets trade within 24h of a dispute anchor, so consumers
 /// must be able to distrust prices at this stage without knowing UMA internals.
-/// Used from T4's contract onward; defined now so the mapping document is
-/// complete for the T4b tool from day one.
-#[allow(dead_code)]
+/// Used from T4's contract onward; consumed by `mapping_document()` so the
+/// T4b tool output and per-record ontology blocks cannot drift.
 pub const LIFECYCLE_STAGES: [&str; 6] = [
     "creation",
     "trading",
