@@ -11,7 +11,7 @@
 ///
 /// `Abw` (default, v1) routes all tools to the Agent Bestiary World REST API.
 /// `Local` (v2, §15) routes to zed-kask's local substrate crates
-/// (`hkask-ledger`, `hkask-inference`, `hkask-guard`). Both tool sets are
+/// (`hkask-ledger`, `hkask-inference`). Both tool sets are
 /// available in either mode — the operator chooses the tool explicitly.
 /// There is no `Hybrid` routing layer (§15.1.8 — rejected: the operator does
 /// the routing by choosing the tool).

@@ -33,7 +33,6 @@ pptx-to-md.workspace = true
 # Knowledge pipeline (from doc-knowledge)
 hkask-memory.workspace = true
 hkask-storage = { path = "../../crates/hkask-storage" }
-hkask-guard.workspace = true
 
 # Persona/style services (folded in from hkask-services-{compose,corpus,inference,runtime})
 hkask-keystore.workspace = true

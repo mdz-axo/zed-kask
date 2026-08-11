@@ -27,11 +27,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::io::Write;
 
-// Bring the shared content guard into scope for the tool methods below.
-// Consumers import `GUARD` / `INPUT_GUARD_ENABLED` directly from `crate::guard`,
-// so no re-export is needed here.
-use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
-
 // Re-export helpers used by other tool modules (corpus.rs imports these) and
 // make them available within this module via the module path.
 pub(crate) use ontology_io::read_ontology_namespaces;
@@ -114,37 +109,13 @@ impl CorpusServer {
                 ..Default::default()
             };
 
-            // P3.1: input guard — scan prompt before model invocation. The output
-            // guard (secret stripping) is always active; input scanning guards
-            // interactive boundaries from untrusted input. The corpus pipeline
-            // may disable it via HKASK_ENABLE_CONTENT_GUARD (curated literature).
-            if *INPUT_GUARD_ENABLED {
-                let input_scan = GUARD.scan_input(&prompt);
-                if !input_scan.passed {
-                    let violations: Vec<String> = input_scan.violations.iter()
-                        .map(|v| format!("{}: {}", v.scanner, v.description))
-                        .collect();
-                    return Err(McpToolError::invalid_argument(format!(
-                        "Input guard rejected prompt: {}", violations.join("; ")
-                    )));
-                }
-            }
-
             match self
                 .inference_router
                 .generate_with_model(&prompt, &params, selected_model.as_deref(), None)
                 .await
             {
                 Ok(response) => {
-                    let output_scan = GUARD.scan_output(&response.text);
-                    let content = output_scan.output.content(&response.text);
-                    if !output_scan.passed {
-                        tracing::warn!(
-                            target: "reg.guard",
-                            violations = ?output_scan.violations.iter().map(|v| &v.scanner).collect::<Vec<_>>(),
-                            "Output guard violations in QA generation — content may be sanitized"
-                        );
-                    }
+                    let content = &response.text;
                     let qa_response = parse_qa_response(
                         &extract_json_from_response(content),
                         &levels,
@@ -173,7 +144,7 @@ impl CorpusServer {
     }
 
     #[tool(
-        description = "Batch-generate QA pairs from multiple text chunks. Same pipeline as corpus_generate_qa (Bloom taxonomy, ContentGuard, templates). Uses configurable concurrency for parallel LLM calls. Reads prompts from prompts_jsonl (one JSON per line: chunk_ref, qa_type, system, user) and writes generated QAs to the output JSONL file. Returns a summary (total + written counts)."
+        description = "Batch-generate QA pairs from multiple text chunks. Same pipeline as corpus_generate_qa (Bloom taxonomy, templates). Uses configurable concurrency for parallel LLM calls. Reads prompts from prompts_jsonl (one JSON per line: chunk_ref, qa_type, system, user) and writes generated QAs to the output JSONL file. Returns a summary (total + written counts)."
     )]
     pub async fn corpus_generate_qa_batch(
         &self,
@@ -294,15 +265,6 @@ impl CorpusServer {
                     } else {
                         (tpl, "registry/templates/docproc/generate-qa.j2")
                     };
-                    if *INPUT_GUARD_ENABLED {
-                        let input_scan = GUARD.scan_input(&prompt_text);
-                        if !input_scan.passed {
-                            failed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            let result = json!({"chunk_id": prompt.chunk_id, "error": "Input guard rejected"});
-                            write_qa_result(&result, &output_writer, &write_count);
-                            return;
-                        }
-                    }
                     let params = LLMParameters { temperature: 0.3, top_p: 0.95, max_tokens: 4096, frequency_penalty: 0.0, presence_penalty: 0.0, top_k: 0, min_p: 0.0, typical_p: 0.0, disable_thinking: true, ..Default::default() };
                     let response = match retry_with_backoff(
                         MAX_RETRIES,
@@ -322,8 +284,7 @@ impl CorpusServer {
                     };
                     // Process the successful response — same logic as before,
                     // but now guaranteed to have a response (or we returned above).
-                    let output_scan = GUARD.scan_output(&response.text);
-                    let content = output_scan.output.content(&response.text);
+                    let content = &response.text;
                     match parse_qa_response(&extract_json_from_response(content), &levels, None) {
                         Ok(qa_response) => {
                             // Write one JSONL line per QA pair in envelope format

@@ -56,8 +56,8 @@
 //! `SwarmConfig.mode` selects between `Abw` (v1, default) and `Local`
 //! (v2). In `Local` mode, the server reads agent cards from a local
 //! directory (`agents/local/curated/`) via `LocalAgentRegistry` and will
-//! (Slice 9) execute them through `hkask-inference` + `hkask-ledger` +
-//! `hkask-guard`. No ABW calls are made in `Local` mode.
+//! (Slice 9) execute them through `hkask-inference` + `hkask-ledger`.
+//! No ABW calls are made in `Local` mode.
 
 use hkask_mcp_server::server::CredentialRequirement;
 
@@ -201,7 +201,7 @@ pub async fn run() -> Result<(), hkask_mcp_server::McpError> {
                 }
             }
 
-            // Construct the local swarm runtime (ledger + inference + guard).
+            // Construct the local swarm runtime (ledger + inference).
             // This is always constructed — even in Abw mode, the operator can
             // call `swarm_fund_local` / `swarm_delegate_local` to mix local
             // execution. The ledger path defaults to

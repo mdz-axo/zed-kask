@@ -49,7 +49,7 @@ Default is deny. Access requires explicit, scoped, version-aware, and revocable 
 #### P3 — Generative Space
 Within user-defined boundaries, hKask remains maximally generative. No hidden or engineer-only control plane.
 
-**P3.1 — Social Generativity (v0.31.0):** The Generative Space is socially generative — it operates within the social conventions of the jurisdiction where it is used. Criminal or systemically harmful use is not generative; it is destructive to the Generative Space itself. Core content safety controls (prompt injection, role override, secret leakage) are mandatory at every LLM boundary and cannot be disabled. These controls are implemented in `hkask-guard` and aligned with:
+**P3.1 — Social Generativity (v0.31.0):** The Generative Space is socially generative — it operates within the social conventions of the jurisdiction where it is used. Criminal or systemically harmful use is not generative; it is destructive to the Generative Space itself. Core content safety controls were previously implemented in `hkask-guard` but the crate was removed 2026-08-10 — the `RoleOverride` scanner's bare `system:` substring match produced false positives that blocked legitimate skill execution. Provider-side safety and refusal fallbacks remain. The former controls were aligned with:
 
 - **OWASP Top 10 for LLM Applications** (primary reference): LLM01 (Prompt Injection), LLM02 (Insecure Output Handling), LLM04 (Model DoS), LLM06 (Sensitive Information Disclosure)
 - **NIST AI RMF 1.0** (2023): Technical controls for validity, reliability, security, and resiliency
@@ -186,7 +186,7 @@ These six spans are the same for every skill, regardless of domain. The typed en
 | Domain | Target | Spans | Status | RegulationSpan Variant |
 |--------|--------|-------|--------|-----------------|
 | Tool dispatch (all MCP servers) | `reg.tool.*` | ~206 (one per tool method, counted via `grep -rn 'Parameters<' kask/mcp-servers/hkask-mcp-*/src/` on 2026-08-01) | ✅ `ToolSpanGuard` per-tool | `Tool { subsystem }` |
-| Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge`, wrapped by `GuardedInferencePort` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
+| Inference (zed `LanguageModelRegistry` via `LanguageModelInferencePort` in `kask_bridge` — D4) | `reg.inference` | 53 | ✅ generate/generate_vision across whatever providers zed's registry has configured (Anthropic, OpenAI, Ollama, Copilot Chat, Google, Mistral, DeepSeek, etc.) | `Inference` |
 | Keystore | `reg.keystore` | 25 | ✅ resolve, store, derive, sign | `Keystore` |
 | Adapter (LoRA) | `reg.adapter` | 23 | ✅ store/get_by_id/delete + router | `Adapter` |
 | Backup | `reg.backup` | 22 | ✅ snapshot/restore/verify/prune/delete_blob | `Backup` |

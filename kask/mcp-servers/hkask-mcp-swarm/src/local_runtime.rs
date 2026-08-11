@@ -1,10 +1,10 @@
-//! Local swarm runtime — ledger + inference + guard for `Local` mode (v2 §15).
+//! Local swarm runtime — ledger + inference for `Local` mode (v2 §15).
 //!
 //! Extracted from the swarm server root. `LazyLocalSwarmRuntime` defers
 //! construction to the first tool call (the `run_server` factory is sync).
-//! `LocalSwarmRuntime::delegate` runs a local agent: scan input → tool loop
-//! → cost → debit → scan output. The ledger is operator-funded; the
-//! inference/guard/skill/tool ports are resolved once at construction.
+//! `LocalSwarmRuntime::delegate` runs a local agent: tool loop → cost → debit.
+//! The ledger is operator-funded; the inference/skill/tool ports are resolved
+//! once at construction.
 
 use std::time::Instant;
 
@@ -15,7 +15,7 @@ use crate::sanitize::strip_leading_mentions;
 
 use hkask_ledger::LedgerError;
 
-/// The local swarm runtime — ledger + inference + guard.
+/// The local swarm runtime — ledger + inference.
 ///
 /// Constructed lazily on first tool call (the `run_server` factory closure
 /// is sync — it cannot `.await` the inference port resolution). `lazy()`
@@ -56,8 +56,8 @@ impl LazyLocalSwarmRuntime {
     }
 
     /// Get the runtime, initializing it on first call. Returns `Err` if
-    /// initialization fails (ledger open, inference port resolution, guard
-    /// init). Subsequent calls return the cached runtime.
+    /// initialization fails (ledger open, inference port resolution).
+    /// Subsequent calls return the cached runtime.
     pub async fn get_or_init(&self) -> Result<&LocalSwarmRuntime, LocalSwarmError> {
         self.inner
             .get_or_try_init(|| async {
@@ -70,17 +70,13 @@ impl LazyLocalSwarmRuntime {
 /// The initialized local swarm runtime — ledger + agent executor.
 ///
 /// The runtime owns the *spending* policy (ceiling check, balance check,
-/// cost computation, debit) and the final output scan. The *agent-run*
-/// policy (input scanning, skill cascade, tool-loop orchestration) lives in
-/// `AgentExecutor`. The split preserves the debit-before-scan invariant: the
-/// runtime debits the ledger, *then* calls `executor.scan_output` on the raw
-/// result — so a guard-quarantined result still costs credits (the compute was
-/// already spent).
+/// cost computation, debit). The *agent-run* policy (skill cascade,
+/// tool-loop orchestration) lives in `AgentExecutor`.
 pub struct LocalSwarmRuntime {
     ledger: std::sync::Arc<hkask_ledger::Ledger>,
-    /// The agent-run policy (inference + tool dispatch + skill exec + guard).
+    /// The agent-run policy (inference + tool dispatch + skill exec).
     /// Constructed once from the resolved IPC-bridge ports; the runtime calls
-    /// `executor.run` then debits then `executor.scan_output`.
+    /// `executor.run` then debits.
     executor: AgentExecutor,
     /// The operator's account id in the ledger (funded via `swarm_fund_local`).
     operator_account: String,
@@ -90,7 +86,7 @@ pub struct LocalSwarmRuntime {
 
 impl LocalSwarmRuntime {
     /// Construct the runtime. Opens (or creates) the ledger at `db_path`,
-    /// resolves the inference port, and initializes the guard.
+    /// resolves the inference port.
     ///
     /// The operator account is ensured in the ledger namespace "local_swarm".
     /// It starts at balance 0 — the operator funds it via `swarm_fund_local`.
@@ -120,8 +116,7 @@ impl LocalSwarmRuntime {
 
         // Resolve the agent-run ports once at construction: inference,
         // tool dispatch, and skill execution all route through the zed IPC
-        // bridge (or fall back to media/stub when the socket is absent). The
-        // guard scans all untrusted text that reaches the model. These four
+        // bridge (or fall back to media/stub when the socket is absent). These
         // compose into the `AgentExecutor`, which owns the agent-run policy
         // (the runtime owns the spending policy). Resolving them here (rather
         // than inside `AgentExecutor::new`) keeps the env-var reads at the
@@ -129,14 +124,12 @@ impl LocalSwarmRuntime {
         let inference = hkask_inference::resolve_inference_port().await;
         let tool_dispatch = hkask_inference::resolve_tool_dispatch_port().await;
         let skill_exec = hkask_inference::resolve_skill_exec_port().await;
-        let guard_config = hkask_guard::GuardConfig::from_env();
-        let guard = hkask_guard::ContentGuard::mandatory(&guard_config);
         // Resolve the skill-corpus directory for `AgentExecutor`'s Slice-6
         // skill-awareness (None = skill-blind). Passed from
         // `LazyLocalSwarmRuntime`, which reads `HKASK_SKILLS_DIR` in
         // `SwarmConfig::from_env`.
         let skills_dir = skills_dir.map(std::path::PathBuf::from);
-        let executor = AgentExecutor::new(inference, tool_dispatch, skill_exec, guard, skills_dir);
+        let executor = AgentExecutor::new(inference, tool_dispatch, skill_exec, skills_dir);
 
         // Ensure the operator account exists.
         let operator_account = "operator".to_string();
@@ -156,13 +149,13 @@ impl LocalSwarmRuntime {
     }
 
     /// Test-only constructor with injected dependencies. Mirrors the
-    /// `StubInferencePort` pattern in `hkask-templates` and `hkask-guard`:
-    /// the production `new(db_path)` resolves the inference port from env
-    /// (zed IPC bridge or MediaRouter fallback), which is unsuitable for
-    /// unit tests. This constructor accepts a pre-built ledger + the four
-    /// agent-run ports (inference, tool dispatch, skill exec, guard) which it
-    /// composes into an `AgentExecutor`, so tests can exercise the
-    /// `fund`/`debit`/`delegate` logic without a real backend.
+    /// `StubInferencePort` pattern in `hkask-templates`: the production
+    /// `new(db_path)` resolves the inference port from env (zed IPC bridge or
+    /// MediaRouter fallback), which is unsuitable for unit tests. This
+    /// constructor accepts a pre-built ledger + the three agent-run ports
+    /// (inference, tool dispatch, skill exec) which it composes into an
+    /// `AgentExecutor`, so tests can exercise the `fund`/`debit`/`delegate`
+    /// logic without a real backend.
     ///
     /// Ensures the operator account exists (same as `new`) so `balance`/
     /// `fund`/`debit` work out of the box.
@@ -171,7 +164,6 @@ impl LocalSwarmRuntime {
     pub(crate) fn with_deps(
         ledger: hkask_ledger::Ledger,
         inference: std::sync::Arc<dyn hkask_types::InferencePort>,
-        guard: hkask_guard::ContentGuard,
         tool_dispatch: std::sync::Arc<dyn hkask_types::ToolDispatchPort>,
         skill_exec: std::sync::Arc<dyn hkask_types::SkillExecPort>,
     ) -> Result<Self, LocalSwarmError> {
@@ -182,7 +174,7 @@ impl LocalSwarmRuntime {
             .map_err(|e| {
                 LocalSwarmError::Ledger(format!("failed to ensure operator account: {e}"))
             })?;
-        let executor = AgentExecutor::with_deps(inference, tool_dispatch, skill_exec, guard);
+        let executor = AgentExecutor::with_deps(inference, tool_dispatch, skill_exec);
         Ok(Self {
             ledger: std::sync::Arc::new(ledger),
             executor,
@@ -208,16 +200,10 @@ impl LocalSwarmRuntime {
         self.executor.inference()
     }
 
-    /// The content guard. Exposed so the local knowledge tools can scan their
-    /// LLM-generated output for canary/secret leakage before returning it.
-    pub(crate) fn guard(&self) -> std::sync::Arc<hkask_guard::ContentGuard> {
-        self.executor.guard()
-    }
-
     /// The resolved skill-execution port. Exposed so `swarm_ai_assist` can run
     /// the on-disk `swarm-compose-guide` skill cascade — the Jinja2 template is
     /// the single source of truth for composition guidance, not hardcoded Rust.
-    /// Mirrors the `inference()`/`guard()` accessor pattern.
+    /// Mirrors the `inference()` accessor pattern.
     pub(crate) fn skill_exec(&self) -> std::sync::Arc<dyn hkask_types::SkillExecPort> {
         self.executor.skill_exec()
     }
@@ -350,29 +336,20 @@ impl LocalSwarmRuntime {
         Ok(new_balance)
     }
 
-    /// Execute a local agent: scan the task → run the agent (skill cascade +
-    /// tool loop, via `AgentExecutor::run`) → compute cost → debit ledger →
-    /// scan output. Returns the response text, model, token usage, cost,
-    /// remaining balance, and a tool-call summary. The debit happens before
-    /// the output guard scan so a guard-quarantined result still costs credits
-    /// (matching ABW's "compute was spent" semantics).
+    /// Execute a local agent: run the agent (skill cascade + tool loop, via
+    /// `AgentExecutor::run`) → compute cost → debit ledger. Returns the
+    /// response text, model, token usage, cost, remaining balance, and a
+    /// tool-call summary.
     ///
-    /// The agent-run policy (input scanning of system prompt + skill/tool
-    /// outputs, skill cascade, tool-loop orchestration) lives in
+    /// The agent-run policy (skill cascade, tool-loop orchestration) lives in
     /// `AgentExecutor::run`; the runtime owns the spending policy (ceiling,
-    /// balance, cost, debit) and the final output scan. The task is
-    /// input-scanned here *before* the funds check, preserving the original
-    /// ordering (reject injected input before rejecting insufficient funds).
+    /// balance, cost, debit).
     ///
     /// Tool dispatch is allowlisted twice: the declared `mcp_tools` set is
     /// the only tool set shown to the model AND the qualified list travels
     /// with every dispatch so the zed-side IPC server enforces it at the
     /// dispatch boundary (a tool outside the card's declared set is never
-    /// minted a panel token). Tool *results* are third-party data injected
-    /// into the model's context — each is run through the input guard and
-    /// redacted (not fatal) on violation: a false-positive pattern in
-    /// legitimate tool data must not abort the delegation, but the payload
-    /// must not reach the model.
+    /// minted a panel token).
     pub async fn delegate(
         &self,
         agent: &LocalAgentCard,
@@ -383,12 +360,6 @@ impl LocalSwarmRuntime {
         let started = Instant::now();
         // Strip leading @mentions (defense-in-depth, mirrors ABW delegate).
         let task_clean = strip_leading_mentions(task);
-
-        // Scan the task through the guard BEFORE the funds check, preserving
-        // the original ordering (reject injected input before rejecting
-        // insufficient funds). The system_prompt + skill/tool outputs are
-        // scanned inside `AgentExecutor::run`.
-        self.executor.scan_input(&task_clean)?;
 
         // Check the per-dispatch ceiling.
         if credits_authorized > max_credits_per_dispatch {
@@ -412,12 +383,8 @@ impl LocalSwarmRuntime {
             )));
         }
 
-        // Run the agent (system_prompt scan + skill cascade + tool loop). The
-        // executor returns the RAW output — it does NOT scan the final output
-        // or debit the ledger. The debit-then-scan invariant is preserved
-        // here: debit below, then `scan_output` on the raw text, so a
-        // guard-quarantined result still costs credits (the compute was
-        // already spent inside `run`).
+        // Run the agent (skill cascade + tool loop). The executor returns the
+        // RAW output — it does NOT debit the ledger.
         let raw: RawDelegateResult = self.executor.run(agent, &task_clean).await?;
 
         // Compute the cost: 1 credit per 1000 tokens (mirrors ABW's
@@ -427,25 +394,13 @@ impl LocalSwarmRuntime {
         let base_cost = std::cmp::max(1, tokens / 1000);
         let cost = std::cmp::min(base_cost, i64::from(credits_authorized));
 
-        // Debit the ledger immediately after the agent run succeeds — before
-        // the output guard scan. This matches ABW's "compute was spent"
-        // semantics: a guard-quarantined result still costs credits because the
-        // inference compute already happened. Moving the debit before
-        // `scan_output` (which uses `?` to return early) ensures the operator
-        // is charged even when the output is rejected for canary
-        // exfiltration or secret leakage.
+        // Debit the ledger after the agent run succeeds.
         let reference = format!("delegate-{}-{}", agent.agent_id, uuid::Uuid::new_v4());
         let new_balance = self.debit(cost, &reference)?;
 
-        // Scan the output through the guard. If this rejects (canary
-        // exfiltration, secret leakage), the debit has already happened — the
-        // compute was spent. The error propagates, but the operator's balance
-        // reflects the cost of the rejected call.
-        let output_text = self.executor.scan_output(&raw.text)?;
-
         Ok(LocalDelegateResult {
             agent_id: agent.agent_id.clone(),
-            response: output_text,
+            response: raw.text,
             model: raw.model,
             tokens_used: tokens,
             cost,

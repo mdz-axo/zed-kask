@@ -14,15 +14,7 @@ use hkask_types::template::LLMParameters;
 use serde::Deserialize;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::LazyLock;
 use std::time::Duration;
-
-use hkask_guard::{ContentGuard, GuardConfig};
-
-/// Mandatory content safety guard — always active, not configurable off.
-/// P3.1 Social Generativity: core controls cannot be disabled.
-static GUARD: LazyLock<ContentGuard> =
-    LazyLock::new(|| ContentGuard::mandatory(&GuardConfig::from_env()));
 
 /// Classification result for a single passage.
 #[derive(Debug, Clone)]
@@ -253,20 +245,6 @@ async fn classify_one(
     config: &ClassifierConfig,
     text: &str,
 ) -> Result<ClassifyResult, ServiceError> {
-    // P3.1: mandatory input guard — scan before sending to any model
-    let input_scan = GUARD.scan_input(text);
-    if !input_scan.passed {
-        return Ok(ClassifyResult {
-            category: config.fallback_category.clone(),
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            cached_tokens: 0,
-            cost_urj: 0,
-            failed: true,
-            provider: config.model.clone(),
-        });
-    }
-
     let parameters = LLMParameters {
         temperature: config.temperature as f32,
         max_tokens: config.max_tokens,
@@ -300,10 +278,6 @@ async fn classify_one(
     };
 
     let content = result.text.as_str();
-
-    // P3.1: mandatory output guard — scan model output before processing
-    let output_scan = GUARD.scan_output(content);
-    let content = output_scan.output.content(content);
 
     // Parse the JSON category from the response
     let category = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(content) {
@@ -546,12 +520,6 @@ async fn extract_triples_one(
     config: &ClassifierConfig,
     text: &str,
 ) -> Result<TripleExtraction, ServiceError> {
-    // P3.1: mandatory input guard — scan before sending to any model
-    let input_scan = GUARD.scan_input(text);
-    if !input_scan.passed {
-        return Ok(TripleExtraction::default());
-    }
-
     let parameters = LLMParameters {
         temperature: config.temperature as f32,
         max_tokens: config.max_tokens,
@@ -576,10 +544,6 @@ async fn extract_triples_one(
         })?;
 
     let content = result.text.as_str();
-
-    // P3.1: mandatory output guard — scan model output before parsing
-    let output_scan = GUARD.scan_output(content);
-    let content = output_scan.output.content(content);
 
     // Parse the structured JSON from the response
     parse_triple_extraction(content)

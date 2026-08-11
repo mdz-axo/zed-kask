@@ -15,7 +15,6 @@ use hkask_types::template::LLMParameters;
 use serde_json::json;
 
 use crate::batch::{MAX_RETRIES, retry_with_backoff};
-use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
 use crate::helpers::read_jsonl;
 use crate::tools::semantic::{
     predicate_to_dimension, read_ontology_namespaces, read_ontology_tags, triple_confidence,
@@ -201,20 +200,6 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                     prompt
                 };
 
-                // Input guard — operator may disable via HKASK_ENABLE_CONTENT_GUARD
-                if *INPUT_GUARD_ENABLED {
-                    let input_scan = GUARD.scan_input(&prompt);
-                    if !input_scan.passed {
-                        tracing::warn!(
-                            target: "hkask.mcp.docproc.triples",
-                            entity = %entity_ref,
-                            "Input guard rejected extraction prompt"
-                        );
-                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
-                }
-
                 let params = LLMParameters {
                     temperature: 0.1,
                     top_p: 0.95,
@@ -244,16 +229,7 @@ Respond in JSON format: {{\"h_mems\": [{{\"subject\": \"...\", \"predicate\": \"
                 };
 
                 // Output guard + JSON extraction
-                let output_scan = GUARD.scan_output(&response.text);
-                let content = output_scan.output.content(&response.text);
-                if !output_scan.passed {
-                    tracing::warn!(
-                        target: "reg.guard",
-                        entity = %entity_ref,
-                        violations = ?output_scan.violations.iter().map(|v| &v.scanner).collect::<Vec<_>>(),
-                        "Output guard violations in h_mem extraction — content may be sanitized"
-                    );
-                }
+                let content = &response.text;
                 let cleaned = extract_json_from_response(content);
                 let h_mems: serde_json::Value = match serde_json::from_str(&cleaned) {
                     Ok(v) => v,

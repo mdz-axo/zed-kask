@@ -1,12 +1,14 @@
 ---
 title: "Guard and Taint Pipeline — ContentGuard, GuardedInferencePort, FIDES tool taint"
 audience: [architects, developers, agents]
-last_updated: 2026-08-05
+last_updated: 2026-08-10
 version: "0.1.0"
-status: "Active"
+status: "Deprecated"
 domain: "architecture"
 mds_categories: [trust, composition, domain]
 ---
+
+> **DEPRECATED 2026-08-10:** The `hkask-guard` crate and all components documented here (`ContentGuard`, `GuardedInferencePort`, `Spotlighter`, `CanaryToken`) have been removed from the codebase. The `RoleOverride` scanner's bare `system:` substring pattern produced false positives that blocked legitimate skill cascade template rendering, making the guard a net-negative failure mode. This document is retained for historical reference only.
 
 # Guard and Taint Pipeline
 

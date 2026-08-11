@@ -1001,17 +1001,15 @@ mod tests {
     }
 
     // The under-granting direction: every env var the swarm server actually
-    // reads (directly via `std::env::var` in its source, or transitively via
-    // `hkask_guard::GuardConfig::from_env()`) MUST be in its `config_env` or
-    // `credentials` allowlist. The `.rules` trap: under-granting silently
-    // drops operator overrides (the server falls back to default). The
+    // reads (directly via `std::env::var` in its source) MUST be in its
+    // `config_env` or `credentials` allowlist. The `.rules` trap: under-granting
+    // silently drops operator overrides (the server falls back to default). The
     // over-grant test above checks that unrelated vars are excluded; this
     // test checks that no read var is forgotten. When a new env var read is
     // added to the swarm server, this list MUST be updated — that is the
     // point (it forces allowlist alignment to be reviewed, not silently
     // drifted). Verified against `grep std::env::var
-    // kask/mcp-servers/hkask-mcp-swarm/src/**/*.rs` + `GuardConfig::from_env`
-    // in `hkask-guard/src/pipeline.rs`.
+    // kask/mcp-servers/hkask-mcp-swarm/src/**/*.rs`.
     #[test]
     fn swarm_config_env_includes_all_read_vars() {
         // The env vars the swarm server reads at runtime (non-test).

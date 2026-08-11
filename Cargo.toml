@@ -273,7 +273,6 @@ members = [
     "kask/crates/hkask-capability",
     "kask/crates/hkask-keystore",
     "kask/crates/hkask-regulation",
-    "kask/crates/hkask-guard",
     "kask/crates/hkask-forecast",
     "kask/crates/hkask-lisp",
     "kask/crates/hkask-templates",
@@ -883,7 +882,6 @@ blake3 = "1"
 hkask-types = { path = "kask/crates/hkask-types" }
 hkask-capability = { path = "kask/crates/hkask-capability" }
 hkask-keystore = { path = "kask/crates/hkask-keystore" }
-hkask-guard = { path = "kask/crates/hkask-guard" }
 hkask-forecast = { path = "kask/crates/hkask-forecast" }
 hkask-inference = { path = "kask/crates/hkask-inference" }
 hkask-bridge-ontology = { path = "kask/crates/hkask-bridge-ontology" }
@@ -896,7 +894,6 @@ hkask-mcp-server = { path = "kask/crates/hkask-mcp-server" }
 hkask-mcp-portfolio = { path = "kask/mcp-servers/hkask-mcp-portfolio" }
 hkask-mcp-prediction-markets = { path = "kask/mcp-servers/hkask-mcp-prediction-markets" }
 hkask-test-harness = { path = "kask/crates/hkask-test-harness" }
-llm-guard = "=0.2.0"
 minijinja = { version = "2", features = ["loader", "serde", "json", "internal_safe_search"] }
 serde_yaml_neo = "0.11"
 rmcp = "3"

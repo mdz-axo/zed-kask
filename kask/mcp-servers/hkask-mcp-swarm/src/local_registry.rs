@@ -86,7 +86,7 @@ pub struct LocalAgentCapabilities {
     /// Skill ids this agent declares. `swarm_delegate_local` executes each
     /// declared skill (capped at 3) against the task through the zed IPC
     /// bridge's `ManifestExecutor` before the LLM call, and injects the
-    /// cascade output into the prompt as context (guard-scanned). Carried
+    /// cascade output into the prompt as context. Carried
     /// through create/clone/push as well.
     #[serde(default)]
     pub skills: Vec<String>,

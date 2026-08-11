@@ -1,26 +1,15 @@
 //! Agent executor — the local agent-run policy, extracted from
 //! `LocalSwarmRuntime::delegate`.
 //!
-//! `AgentExecutor::run` runs a local agent: scans the system prompt, executes
-//! the declared skills (guard-scanning each output), builds the declared
-//! tool set, and runs the multi-round inference/tool-dispatch loop (guard-
-//! scanning + redacting each tool result). It returns a `RawDelegateResult`
-//! carrying the raw output text, model, token usage, and tool/skill
-//! summaries.
+//! `AgentExecutor::run` runs a local agent: executes the declared skills,
+//! builds the declared tool set, and runs the multi-round inference/tool-
+//! dispatch loop. It returns a `RawDelegateResult` carrying the raw output
+//! text, model, token usage, and tool/skill summaries.
 //!
-//! **The executor does NOT scan the final output or debit the ledger.** The
-//! caller (`LocalSwarmRuntime::delegate`) is responsible for debit-then-scan:
-//! it computes the cost, debits the ledger, and *then* calls
-//! `AgentExecutor::scan_output` on the raw text. This ordering is load-bearing
-//! — the "compute was spent" invariant requires the debit to happen before
-//! the output guard scan so a guard-quarantined result still costs credits.
-//! Moving `scan_output` into `run` would break that invariant (the scan would
-//! precede the debit). See ADR: "AgentExecutor returns raw output;
-//! LocalSwarmRuntime owns debit-then-scan".
-//!
-//! The executor also exposes `scan_input` so the runtime can scan the task
-//! *before* the funds check (preserving the original ordering: reject
-//! injected input before rejecting insufficient funds).
+//! **The executor does NOT debit the ledger.** The caller
+//! (`LocalSwarmRuntime::delegate`) is responsible for debit: it computes the
+//! cost and debits the ledger. See ADR: "AgentExecutor returns raw output;
+//! LocalSwarmRuntime owns debit".
 
 use std::sync::Arc;
 
@@ -38,9 +27,8 @@ pub(crate) const MAX_TOOL_ROUNDS: usize = 4;
 pub(crate) const MAX_SKILLS_PER_DELEGATION: usize = 3;
 
 /// The raw result of running an agent — text, model, token usage, and the
-/// tool/skill execution summaries. NOT output-scanned and NOT debited. The
-/// caller (`LocalSwarmRuntime::delegate`) debits the ledger, then calls
-/// `AgentExecutor::scan_output` on `text` to produce the final response.
+/// tool/skill execution summaries. NOT debited. The caller
+/// (`LocalSwarmRuntime::delegate`) debits the ledger.
 pub(crate) struct RawDelegateResult {
     pub text: String,
     pub model: String,
@@ -49,14 +37,13 @@ pub(crate) struct RawDelegateResult {
     pub executed_skills: Vec<serde_json::Value>,
 }
 
-/// The agent-run policy: how a local agent executes (input scanning, skill
-/// cascade, tool-loop orchestration). Owns the inference, tool-dispatch,
-/// skill-exec, and guard ports. Ledger-unaware — the runtime owns spending.
+/// The agent-run policy: how a local agent executes (skill cascade,
+/// tool-loop orchestration). Owns the inference, tool-dispatch, and skill-exec
+/// ports. Ledger-unaware — the runtime owns spending.
 pub(crate) struct AgentExecutor {
     inference: Arc<dyn hkask_types::InferencePort>,
     tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
     skill_exec: Arc<dyn hkask_types::SkillExecPort>,
-    guard: Arc<hkask_guard::ContentGuard>,
     /// Directory containing the zed-kask skill corpus (`.agents/skills/`),
     /// used to inject skill descriptions into the local agent's system prompt
     /// (Slice 6 — local agent skill-awareness). `None` = skill-awareness
@@ -69,14 +56,12 @@ impl AgentExecutor {
         inference: Arc<dyn hkask_types::InferencePort>,
         tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
         skill_exec: Arc<dyn hkask_types::SkillExecPort>,
-        guard: hkask_guard::ContentGuard,
         skills_dir: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             inference,
             tool_dispatch,
             skill_exec,
-            guard: Arc::new(guard),
             skills_dir,
         }
     }
@@ -89,12 +74,6 @@ impl AgentExecutor {
         Arc::clone(&self.inference)
     }
 
-    /// The content guard. Exposed so the local knowledge tools can scan their
-    /// LLM-generated output for canary/secret leakage before returning it.
-    pub(crate) fn guard(&self) -> Arc<hkask_guard::ContentGuard> {
-        Arc::clone(&self.guard)
-    }
-
     /// The resolved skill-execution port. Exposed so `swarm_ai_assist` can run
     /// the on-disk `swarm-compose-guide` skill cascade (rendering the Jinja2
     /// guidance template) rather than building the prompt from hardcoded Rust
@@ -105,65 +84,14 @@ impl AgentExecutor {
     }
 
     /// Test-only constructor with injected dependencies (mirrors the
-    /// `StubInferencePort` pattern). Accepts a pre-built guard so tests can
-    /// use `ContentGuard::mandatory(&default)`.
+    /// `StubInferencePort` pattern).
     #[cfg(test)]
     pub(crate) fn with_deps(
         inference: Arc<dyn hkask_types::InferencePort>,
         tool_dispatch: Arc<dyn hkask_types::ToolDispatchPort>,
         skill_exec: Arc<dyn hkask_types::SkillExecPort>,
-        guard: hkask_guard::ContentGuard,
     ) -> Self {
-        Self::new(inference, tool_dispatch, skill_exec, guard, None)
-    }
-
-    /// Scan input text through the content guard. Returns `Err` if the guard
-    /// rejects the input (prompt injection, role override, etc.). Exposed so
-    /// the runtime can scan the task *before* the funds check, preserving the
-    /// original ordering (reject injected input before rejecting insufficient
-    /// funds).
-    pub(crate) fn scan_input(&self, text: &str) -> Result<(), SwarmError> {
-        let result = self.guard.scan_input(text);
-        if !result.passed {
-            let violations: Vec<String> = result
-                .violations
-                .iter()
-                .map(|v| format!("{}: {}", v.scanner, v.description))
-                .collect();
-            return Err(SwarmError::Unavailable(format!(
-                "input guard rejected: {}",
-                violations.join("; ")
-            )));
-        }
-        Ok(())
-    }
-
-    /// Scan output text through the content guard. Returns the (possibly
-    /// sanitized) output text, or `Err` if canary exfiltration is detected.
-    ///
-    /// Policy: canary exfiltration is a hard failure (the system prompt was
-    /// leaked — OWASP LLM07), but secret leakage is sanitized and returned
-    /// (the output may be legitimately useful despite a false-positive secret
-    /// match). This asymmetry is intentional: canary = exfiltration = reject;
-    /// secret = leakage = sanitize and return. Do not "fix" this by making
-    /// both paths hard-fail — that would reject legitimate outputs that
-    /// happen to match a secret scanner pattern.
-    pub(crate) fn scan_output(&self, text: &str) -> Result<String, SwarmError> {
-        let result = self.guard.scan_output(text);
-        if self.guard.check_canary(text) {
-            return Err(SwarmError::Unavailable(
-                "canary token detected in output — system prompt exfiltration suspected"
-                    .to_string(),
-            ));
-        }
-        if !result.passed {
-            tracing::warn!(
-                target: "hkask.mcp.swarm",
-                violations = ?result.violations,
-                "output guard violations — sanitizing"
-            );
-        }
-        Ok(result.output.content(text).to_string())
+        Self::new(inference, tool_dispatch, skill_exec, None)
     }
 
     /// Build a skill catalog block for the agent's declared skills, reading
@@ -239,17 +167,12 @@ impl AgentExecutor {
         ))
     }
 
-    /// Run a local agent: scan the system prompt, execute declared skills
-    /// (guard-scanning each output), build the declared tool set, and run
-    /// the multi-round inference/tool-dispatch loop (guard-scanning +
-    /// redacting each tool result). Returns the raw result; the caller debits
-    /// and scans the output.
+    /// Run a local agent: execute declared skills, build the declared tool
+    /// set, and run the multi-round inference/tool-dispatch loop. Returns the
+    /// raw result; the caller debits.
     ///
-    /// `task_clean` is the already-stripped, already-input-scanned task (the
-    /// runtime strips `@mentions` and calls `scan_input` before the funds
-    /// check, then passes the clean task here). This method scans the system
-    /// prompt and every skill/tool output, but NOT the task (pre-scanned) and
-    /// NOT the final output (the runtime scans it after debit).
+    /// `task_clean` is the already-stripped task (the runtime strips `@mentions`
+    /// before the funds check, then passes the clean task here).
     pub(crate) async fn run(
         &self,
         agent: &LocalAgentCard,
@@ -272,27 +195,11 @@ impl AgentExecutor {
             None => base_system_prompt.to_string(),
         };
 
-        // Guard-scan the system_prompt before injecting it into the prompt.
-        // The task was already scanned by the caller, and each skill output is
-        // scanned below — but the system_prompt was not. For locally-authored
-        // cards the operator controls it; for cloned cards
-        // (`swarm_clone_to_local`) it is third-party ABW data that could carry
-        // prompt injection. The clone path strips obvious patterns via
-        // `sanitize_abw_text`, but the guard is the hard gate: a system_prompt
-        // that trips the input guard IS fatal. The `.rules` trap: the input
-        // guard is the advertised enforcement point for the delegate path — it
-        // must scan all untrusted text that reaches the model, not just the
-        // task.
-        self.scan_input(&system_prompt)?;
-
         // Run the declared skills (capped) against the task BEFORE the LLM
         // call. Each cascade runs on the zed side (`ManifestExecutor`, own
-        // gas/OCAP enforcement). Skill output is untrusted context — it flows
-        // into the prompt, so it is guard-scanned before injection; a skill
-        // output that trips the input guard IS fatal (an injection from a
-        // skill is a finding, not a cosmetic issue). A missing skill or
-        // cascade failure is recorded, not fatal — the delegation proceeds
-        // with whatever context the successful skills produced.
+        // gas/OCAP enforcement). A missing skill or cascade failure is
+        // recorded, not fatal — the delegation proceeds with whatever
+        // context the successful skills produced.
         let mut executed_skills: Vec<serde_json::Value> = Vec::new();
         let mut skill_context = String::new();
         for skill in agent
@@ -303,7 +210,6 @@ impl AgentExecutor {
         {
             match self.skill_exec.execute_skill(skill, task_clean).await {
                 Ok(output) => {
-                    self.scan_input(&output)?;
                     executed_skills.push(serde_json::json!({ "skill": skill, "ok": true }));
                     skill_context.push_str(&format!("\n\n## Skill '{skill}' output\n{output}"));
                 }
@@ -410,26 +316,9 @@ impl AgentExecutor {
                             Ok(value) => {
                                 let text = serde_json::to_string(&value)
                                     .unwrap_or_else(|_| value.to_string());
-                                // Redact-and-continue: a tool result that trips
-                                // the input guard is quarantined from the model
-                                // context, but the delegation proceeds — tool
-                                // output is data, and a false positive must not
-                                // abort the run.
-                                let (injected, ok, error) = match self.scan_input(&text) {
-                                    Ok(()) => (text, true, None),
-                                    Err(e) => (
-                                        "[redacted: tool output tripped the input guard — not injected]".to_string(),
-                                        false,
-                                        Some(e.to_string()),
-                                    ),
-                                };
-                                let mut summary =
-                                    serde_json::json!({ "tool": qualified, "ok": ok });
-                                if let Some(err) = error {
-                                    summary["error"] = serde_json::Value::String(err);
-                                }
+                                let summary = serde_json::json!({ "tool": qualified, "ok": true });
                                 (
-                                    format!("Tool call '{qualified}' returned:\n{injected}"),
+                                    format!("Tool call '{qualified}' returned:\n{text}"),
                                     summary,
                                 )
                             }

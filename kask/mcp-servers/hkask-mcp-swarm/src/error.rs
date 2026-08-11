@@ -107,9 +107,8 @@ pub enum LocalSwarmError {
     /// `InvalidArgument`.
     #[error("sanitize error: {0}")]
     Sanitize(String),
-    /// A dependency is unavailable (inference port, bound socket, guard
-    /// rejection of generated output). Transient or capability-class →
-    /// `Unavailable`.
+    /// A dependency is unavailable (inference port, bound socket).
+    /// Transient or capability-class → `Unavailable`.
     #[error("unavailable: {0}")]
     Unavailable(String),
 }

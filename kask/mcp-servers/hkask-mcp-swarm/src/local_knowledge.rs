@@ -245,16 +245,12 @@ pub(crate) async fn record_delegation(
     }
 }
 
-/// A one-shot LLM generate over the local inference port, with the output
-/// guard-scanned (generated prompts/ontologies are LLM output and must not
-/// exfiltrate canaries/secrets — the `.rules` GuardedStream caveat does NOT
-/// apply; this is a synchronous scan before the result leaves the tool).
+/// A one-shot LLM generate over the local inference port.
 ///
-/// `inference` is the resolved local `InferencePort` (from `LocalSwarmRuntime`);
-/// `guard` scans the output. Returns the scanned text.
+/// `inference` is the resolved local `InferencePort` (from `LocalSwarmRuntime`).
+/// Returns the generated text.
 pub(crate) async fn one_shot_generate(
     inference: &Arc<dyn hkask_types::InferencePort>,
-    guard: &Arc<hkask_guard::ContentGuard>,
     prompt: &str,
     temperature: f32,
 ) -> Result<String, LocalSwarmError> {
@@ -268,24 +264,6 @@ pub(crate) async fn one_shot_generate(
         .map_err(|e| {
             LocalSwarmError::Unavailable(format!("local inference generate failed: {e}"))
         })?;
-    // Scan the generated output for canary exfiltration / secret leakage.
-    // A canary hit is a hard failure (system-prompt exfiltration); a secret
-    // hit is logged and the text returned (the generated prompt/ontology may
-    // be legitimately useful despite a false-positive secret match — mirrors
-    // `AgentExecutor::scan_output`'s asymmetric policy).
-    if guard.check_canary(&result.text) {
-        return Err(LocalSwarmError::Unavailable(
-            "canary token detected in generated output — system prompt exfiltration suspected"
-                .to_string(),
-        ));
-    }
-    let scan = guard.scan_output(&result.text);
-    if !scan.passed {
-        tracing::warn!(
-            target: "hkask.mcp.swarm",
-            "generated output tripped a secret scanner — returned as-is (sanitize-on-read at the consumer)"
-        );
-    }
     Ok(result.text)
 }
 

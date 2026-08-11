@@ -92,19 +92,6 @@ pub const DEFAULT_OUTCOME_WARNING_THRESHOLD: f64 = 0.50;
 /// When outcome success rate drops below this, a critical alert is emitted.
 pub const DEFAULT_OUTCOME_CRITICAL_THRESHOLD: f64 = 0.25;
 
-/// Default guard violation rate maximum (0.20 = 20% of requests blocked).
-///
-/// When content safety guard violations exceed this rate over a monitoring
-/// window, the Curator escalates. Per OWASP LLM Top 10: sustained high
-/// violation rates indicate either an active attack (LLM01) or a
-/// misconfigured system producing secrets (LLM02/LLM06).
-/// Default guard violation rate maximum (0.20 = 20% of requests).
-///
-/// When content safety guard violations exceed this rate, the Curator
-/// escalates. Configurable via SetPointsConfig YAML or
-/// `HKASK_GUARD_VIOLATION_RATE_MAX` env var. OWASP LLM01/LLM02/LLM06.
-pub const DEFAULT_GUARD_VIOLATION_RATE_MAX: f64 = 0.20;
-
 /// Default stagnation detection threshold (5 cycles).
 ///
 /// After this many consecutive cycles of the same ineffective (metric, action)
@@ -178,12 +165,6 @@ pub struct SetPoints {
     pub outcome_warning_threshold: f64,
     /// Outcome success rate critical threshold. Default: 0.25.
     pub outcome_critical_threshold: f64,
-    // ── Guard thresholds (v0.31.0) ──
-    /// Maximum guard violation rate before algedonic alert (0.0-1.0).
-    /// When the fraction of requests blocked by content safety guard exceeds
-    /// this, the Curator escalates. Default: 0.20 (20% of requests blocked).
-    /// Set higher for development, lower for production.
-    pub guard_violation_rate_max: f64,
     // ── Loop regulation (v0.30.0) ──
     /// Maximum regulation iterations per cycle. Default: 100.
     pub max_iterations: u32,
@@ -245,7 +226,6 @@ pub struct SetPointsConfig {
     pub override_cooldown_secs: Option<u64>,
     pub outcome_warning_threshold: Option<f64>,
     pub outcome_critical_threshold: Option<f64>,
-    pub guard_violation_rate_max: Option<f64>,
     pub max_iterations: Option<u32>,
     pub stagnation_thresholds: Option<std::collections::HashMap<String, u32>>,
     pub stage_worsening_ratio: Option<f64>,
@@ -288,7 +268,6 @@ impl Default for SetPoints {
             outcome_warning_threshold: DEFAULT_OUTCOME_WARNING_THRESHOLD,
             outcome_critical_threshold: DEFAULT_OUTCOME_CRITICAL_THRESHOLD,
             max_iterations: DEFAULT_MAX_ITERATIONS,
-            guard_violation_rate_max: DEFAULT_GUARD_VIOLATION_RATE_MAX,
             stagnation_thresholds: std::collections::HashMap::new(),
             stage_worsening_ratio: DEFAULT_STAGE_WORSENING_RATIO,
             block_worsening_ratio: DEFAULT_BLOCK_WORSENING_RATIO,
@@ -339,9 +318,6 @@ impl SetPoints {
                 .outcome_critical_threshold
                 .unwrap_or(defaults.outcome_critical_threshold),
             max_iterations: config.max_iterations.unwrap_or(defaults.max_iterations),
-            guard_violation_rate_max: config
-                .guard_violation_rate_max
-                .unwrap_or(defaults.guard_violation_rate_max),
             stagnation_thresholds: config
                 .stagnation_thresholds
                 .clone()
@@ -376,7 +352,6 @@ impl SetPoints {
             ("gas_min_remaining", self.gas_min_remaining),
             ("error_rate_max", self.error_rate_max),
             ("seam_coverage_min", self.seam_coverage_min),
-            ("guard_violation_rate_max", self.guard_violation_rate_max),
             ("coverage_floor", self.coverage_floor),
             ("mutation_score_floor", self.mutation_score_floor),
         ] {

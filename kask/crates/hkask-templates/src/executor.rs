@@ -59,7 +59,6 @@ use crate::template_renderer::TemplateRenderer;
 use hkask_capability::tool_taint::ToolTaint;
 use hkask_capability::{DelegationAction, DelegationResource};
 use hkask_capability::{ToolPort, ToolPortError};
-use hkask_guard::{SpotlightMode, Spotlighter};
 use hkask_regulation::SkillFeedbackSpan;
 use hkask_types::NotFound;
 use hkask_types::WebID;
@@ -141,10 +140,6 @@ pub struct ManifestExecutor {
     /// relative to this path. Defaults to `registry/templates/`.
     template_renderer: TemplateRenderer,
 
-    /// Spotlighter for transforming untrusted tool outputs (Layer 2 defense).
-    /// Applied to every MCP tool result before it enters the LLM context.
-    /// Source: Microsoft Research arXiv:2403.14720
-    spotlighter: Spotlighter,
     /// Optional runtime policy for pre-execution checks (Layer 6 defense).
     /// When present, checked before every MCP tool invocation.
     /// Source: VeriGuard pattern + AgentGuard arXiv:2509.23864
@@ -195,7 +190,6 @@ impl ManifestExecutor {
                 crate::template_renderer::DEFAULT_TEMPLATE_BASE_PATH,
             )),
 
-            spotlighter: Spotlighter::new(SpotlightMode::Delimit),
             runtime_policy: None,
             taint_labels: Arc::new(std::sync::Mutex::new(HashMap::new())),
             terminal_check: None,
@@ -487,10 +481,7 @@ impl ManifestExecutor {
                 }
                 other => TemplateError::Mcp(Box::new(other)),
             })?;
-        Ok((
-            spotlight_tool_output(&self.spotlighter, &result),
-            tool_info.taint,
-        ))
+        Ok((result, tool_info.taint))
     }
 
     /// Execute the full manifest cascade with iterative PDCA convergence.
@@ -2093,21 +2084,6 @@ fn parse_json_response(text: &str, step_ordinal: u32) -> Result<Value> {
     })
 }
 
-/// Apply spotlighting to a tool output value before it enters the LLM context.
-///
-/// Serializes the JSON value to a string, applies the spotlighting transform,
-/// and wraps the result back as a JSON string value. This ensures the LLM sees
-/// the untrusted content marked as data, not instructions.
-///
-/// Source: Microsoft Research arXiv:2403.14720
-fn spotlight_tool_output(spotlighter: &Spotlighter, result: &Value) -> Value {
-    let text = match result {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    };
-    Value::String(spotlighter.spotlight(&text))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2446,11 +2422,10 @@ steps:
         }
     }
 
-    /// RR-0011: tool outputs must be spotlighted before entering the LLM
-    /// context — a refactor that drops the spotlight call from `invoke_tool`
-    /// must fail this test (a grep only proves the call exists somewhere).
+    /// RR-0011: tool outputs must pass through `invoke_tool` unchanged —
+    /// a refactor that drops or transforms the result must fail this test.
     #[tokio::test]
-    async fn tool_output_is_spotlighted_on_the_invoke_path() {
+    async fn tool_output_passes_through_on_the_invoke_path() {
         let executor = ManifestExecutor::new(
             Arc::new(StubInference),
             Arc::new(SourceToolPort),
@@ -2460,14 +2435,10 @@ steps:
             .invoke_tool("read", serde_json::json!({}), 1, false)
             .await
             .expect("SourceToolPort invoke should succeed");
-        let text = result.as_str().expect("spotlighted output is a string");
-        assert!(
-            text.contains("untrusted sub-cascade output"),
-            "payload must survive spotlighting: {text}"
-        );
-        assert_ne!(
+        let text = result.as_str().expect("output is a string");
+        assert_eq!(
             text, "untrusted sub-cascade output",
-            "output must be transformed by the spotlighter (delimited), not passed through raw"
+            "payload must pass through unchanged: {text}"
         );
     }
 
@@ -2620,7 +2591,7 @@ convergence:
             .expect("the parent's step key holds the sub-cascade's final result");
         assert!(
             step_result.contains("untrusted sub-cascade output"),
-            "the parent's step key holds the sub-cascade's final result (spotlight-wrapped): {step_result}"
+            "the parent's step key holds the sub-cascade's final result: {step_result}"
         );
         let labels = executor
             .taint_labels

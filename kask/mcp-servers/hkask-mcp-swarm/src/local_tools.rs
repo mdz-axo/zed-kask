@@ -42,21 +42,20 @@ fn run_evaluator(response: &str, evaluator: &str, spec: &str) -> Result<bool, Mc
 impl SwarmServer {
     /// Delegate a task to a local agent. The agent must exist in the local
     /// registry (`agents/local/curated/<id>/agent_card.json`). The task is
-    /// scanned by the content guard, executed via `hkask-inference`, and the
-    /// output is scanned for secret leakage + canary exfiltration. When the
+    /// executed via `hkask-inference`. When the
     /// agent's card declares `capabilities.mcp_tools` (qualified
     /// `server/tool` names), those tools are declared to the model and model
     /// tool calls are dispatched through the zed IPC bridge's governed
     /// `McpRuntime` — the declared list is the allowlist. When the card
     /// declares `capabilities.skills`, each declared skill (capped at 3) is
     /// executed against the task through the zed-side `ManifestExecutor`
-    /// before the LLM call and its guard-scanned output is injected as
+    /// before the LLM call and its output is injected as
     /// context. The ledger is debited per token across all tool-loop rounds
     /// (1 credit / 1000 tokens, capped at `credits_authorized`). No consent
     /// token — the balance check is the gate (§15.1.2 — rejected consent
     /// tokens on local tools).
     #[tool(
-        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud), scans I/O via hkask-guard, debits the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). Agents may also declare capabilities.skills — each is executed against the task through the zed-side ManifestExecutor before the LLM call (capped at 3). No ABW calls. No consent token — the balance check is the gate. Returns the response, model, token usage, cost, remaining balance, tool_calls summary, and executed_skills summary."
+        description = "Delegate a task to a local agent (from agents/local/curated/). Executes via hkask-inference (Ollama/cloud), debits the local ledger per token. Agents may declare capabilities.mcp_tools (qualified server/tool names) — those tools are dispatched through the zed IPC bridge's governed McpRuntime (allowlisted to the declared set). Agents may also declare capabilities.skills — each is executed against the task through the zed-side ManifestExecutor before the LLM call (capped at 3). No ABW calls. No consent token — the balance check is the gate. Returns the response, model, token usage, cost, remaining balance, tool_calls summary, and executed_skills summary."
     )]
     pub(crate) async fn swarm_delegate_local(
         &self,

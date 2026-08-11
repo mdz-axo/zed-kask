@@ -176,7 +176,7 @@ fn steer_system_prompt(
          stamped — ready to feed back to swarm-intelligence as delegate_results; \
          closes the loop in one call). \
          These run on the local \
-         substrate (`hkask-inference` + `hkask-ledger` + `hkask-guard`) with no \
+         substrate (`hkask-inference` + `hkask-ledger`) with no \
          ABW round-trips. The local ledger is operator-funded — call \
          `swarm_fund_local(credits)` before `swarm_delegate_local`, or it returns \
          `PaymentRequired`. There is no consent token in local mode: the balance \

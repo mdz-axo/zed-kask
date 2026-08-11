@@ -30,7 +30,6 @@ pub mod compose;
 pub mod convert;
 pub mod corpus;
 pub mod cost;
-pub(crate) mod guard;
 mod helpers;
 pub mod inference_svc;
 pub mod model_cache;

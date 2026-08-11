@@ -491,7 +491,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 
 > The pre-fork `AgentService` orchestration layer, `hkask-cli` `ReplState` wrapper, and `hkask-api` `ApiState` wrapper are **deleted**. The proposed `KaskCore` singleton was **never implemented** — the zed-kask composition root (`crates/zed/src/main.rs`) constructs individual hKask components directly and wires them via `kask_bridge` (D8) adapters. See `zed-host-architecture-plan.md` §13.3 for the actual composition-root wiring.
 
-**Boundary:** In-process only. MCP servers reach hKask primitives via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach hKask through the guard layer (D4) and the in-process transport (D1–D3). There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
+**Boundary:** In-process only. MCP servers reach hKask primitives via `kask_bridge` (D8) — they do **not** link zed-kask crates directly (P1 Prohibition — out-of-process isolation preserved at the MCP boundary). zed-kask surfaces reach hKask through the in-process transport (D1–D3); the former guard layer (D4) was removed 2026-08-10. There is no daemon, no HTTP server, no Matrix transport, no REPL state wrapper.
 
 ### Crate-to-Domain Mappings (surviving crates only)
 
@@ -503,7 +503,7 @@ Cross-references are verified by the link checker in CI (relative links within t
 | `hkask-regulation` | Lifecycle, Trust | `RegulationLedger`, `CallCapManager`/`CallCap` (per-agent tool-call ceiling, replaces deleted `GasBudget` hold-settle), `CyberneticsLoop`, variety/algedonic |
 | `hkask-templates` | Composition | `ManifestExecutor`, registry, cascade, PDCA — skill execution (D1) |
 | ~~`hkask-pods`~~ (deleted) | Domain | `AgentPod`, Curator, deployment — deleted in 2026-07-25 cleanup; `VoiceDesign` moved to `hkask-types`; Curator agent now lives in zed-kask |
-| `hkask-guard` | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4) |
+| ~~`hkask-guard`~~ (deleted) | Trust | Magna Carta floor (P3.1) — guard layer in zed-kask's inference path (D4). Deleted 2026-08-10: the `RoleOverride` scanner's bare `system:` substring match produced false positives that blocked legitimate skill cascade template rendering. Provider-side safety and refusal fallbacks remain. |
 | `hkask-capability` | Trust | capability-match gate, capability tokens |
 | `hkask-keystore` (trimmed) | Trust | Sovereignty crypto only: DB passphrase, internal-secret derivation. Uses the `keyring` crate directly for all keychain access (D5 — NOT zed's `CredentialsProvider`) |
 | ~~`hkask-wallet`~~ (deleted) | Trust | `WalletManager`, `ApiKeyIssuer`, rJoule balance, deposits, withdrawals — deleted in 2026-07-25 cleanup. The residual `hkask-storage::wallet` crypto ledger, `hkask-regulation::WalletManager`/`Well`/`agent_wallet_store`, and `hkask-types::wallet_types` were also deleted 2026-08-03 (dead-in-production, zero callers). Tool-call bounding is now `hkask-regulation::CallCapManager`; per-cascade USD budgeting is `hkask-templates::BudgetTracker`. |
@@ -548,7 +548,6 @@ graph TD
         MEM[hkask-memory]
         REG[hkask-regulation]
         TEMPLATES[hkask-templates]
-        GUARD[hkask-guard]
         CAP[hkask-capability]
         KS[hkask-keystore]
         LEDGER[hkask-ledger]
@@ -578,7 +577,7 @@ verified_against: kask/docs/architecture/zed-host-architecture-plan.md §13.3, k
 status: VERIFIED
 -->
 
-Domain crates **never** depend on zed-kask crates. MCP servers **never** link zed-kask crates directly — they reach the in-process components via `kask_bridge` (D8), preserving the P1 isolation boundary at the MCP seam. zed-kask surfaces reach hKask through the guard layer (D4) and in-process transport (D1–D3). Note: `KaskCore` was never implemented as a singleton; the composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3).
+Domain crates **never** depend on zed-kask crates. MCP servers **never** link zed-kask crates directly — they reach the in-process components via `kask_bridge` (D8), preserving the P1 isolation boundary at the MCP seam. zed-kask surfaces reach hKask through in-process transport (D1–D3); the former guard layer (D4) was removed 2026-08-10. Note: `KaskCore` was never implemented as a singleton; the composition root wires individual components directly (see `zed-host-architecture-plan.md` §13.3).
 
 ### Capability-Match Gate
 

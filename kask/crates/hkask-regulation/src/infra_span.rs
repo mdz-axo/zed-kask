@@ -4,7 +4,6 @@ use hkask_types::ObservableSpan;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InfraSpan {
     CiInvariantViolation,
-    GuardViolation,
     CuratorConsolidation,
     Chat,
     WalletConversion,
@@ -14,7 +13,6 @@ impl InfraSpan {
     pub fn as_str(&self) -> &'static str {
         match self {
             InfraSpan::CiInvariantViolation => "reg.ci.invariant.violation",
-            InfraSpan::GuardViolation => "reg.guard.violation",
             InfraSpan::CuratorConsolidation => "reg.curator.consolidation",
             InfraSpan::Chat => "reg.chat",
             InfraSpan::WalletConversion => "reg.wallet.conversion",
@@ -33,7 +31,6 @@ impl std::str::FromStr for InfraSpan {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "reg.ci.invariant.violation" => Ok(InfraSpan::CiInvariantViolation),
-            "reg.guard.violation" => Ok(InfraSpan::GuardViolation),
             "reg.curator.consolidation" => Ok(InfraSpan::CuratorConsolidation),
             "reg.chat" => Ok(InfraSpan::Chat),
             "reg.wallet.conversion" => Ok(InfraSpan::WalletConversion),
@@ -57,7 +54,6 @@ mod tests {
     fn infra_span_namespaces_are_canonical() {
         let all = vec![
             InfraSpan::CiInvariantViolation,
-            InfraSpan::GuardViolation,
             InfraSpan::CuratorConsolidation,
             InfraSpan::Chat,
             InfraSpan::WalletConversion,

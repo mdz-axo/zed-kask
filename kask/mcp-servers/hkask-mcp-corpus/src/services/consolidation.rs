@@ -13,7 +13,6 @@ use hkask_types::corpus::{ChunkOntology, ExpertiseLevel, TaggedChunk};
 use hkask_types::template::LLMParameters;
 use serde_json::json;
 
-use crate::guard::{GUARD, INPUT_GUARD_ENABLED};
 use crate::helpers::{map_corpus_io_error, map_memory_store_error};
 use crate::tools::corpus::{cluster_within_source, read_tagged_chunks};
 use crate::tools::semantic::configured_qa_model;
@@ -214,16 +213,6 @@ impl ConsolidationService {
                     combined
                 };
 
-                // ContentGuard input scan — operator may disable via HKASK_ENABLE_CONTENT_GUARD
-                if *INPUT_GUARD_ENABLED {
-                    let input_scan = GUARD.scan_input(&combined);
-                    if !input_scan.passed {
-                        let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
-                        results[ci] = Some("__FALLBACK__".to_string());
-                        return;
-                    }
-                }
-
                 let params = LLMParameters {
                     temperature: 0.3,
                     top_p: 0.95,
@@ -242,9 +231,7 @@ impl ConsolidationService {
                     .await
                 {
                     Ok(response) => {
-                        let output_scan = GUARD.scan_output(&response.text);
-                        let content = output_scan.output.content(&response.text);
-                        let text = content.trim().to_string();
+                        let text = response.text.trim().to_string();
                         let mut results = results.lock().unwrap_or_else(|e| e.into_inner());
                         results[ci] = Some(text);
                     }

@@ -6,7 +6,6 @@
 //! Every chunk gets at least one 5W1H dimension — no zero-tag chunks.
 
 use crate::batch::{BatchOutcome, MAX_RETRIES, retry_with_backoff};
-use crate::guard::GUARD;
 use crate::helpers::map_corpus_io_error;
 use crate::{
     Arc, CorpusServer, LLMParameters, McpToolError, Parameters, execute_tool,
@@ -94,15 +93,13 @@ fn compute_salience(tagged: &[TaggedChunk]) -> Vec<f32> {
 /// Parse an LLM tagging response into validated OntologyTags.
 ///
 /// This is the tagging pipeline's trust boundary (RR-0016): raw LLM text is
-/// guard-scanned, JSON-extracted, deserialized, and normalized through
+/// JSON-extracted, deserialized, and normalized through
 /// `validate_ontology_tags` before it can become a `TaggedChunk`. Extracted
-/// as a named function so the pipeline shape (scan → extract → parse →
-/// validate) is directly testable — a refactor that drops the validation
-/// step fails the test, not just a grep.
+/// as a named function so the pipeline shape (extract → parse → validate) is
+/// directly testable — a refactor that drops the validation step fails the
+/// test, not just a grep.
 fn parse_and_validate_tags(response_text: &str) -> Option<OntologyTags> {
-    let output_scan = GUARD.scan_output(response_text);
-    let content = output_scan.output.content(response_text);
-    let cleaned = extract_json_from_response(content);
+    let cleaned = extract_json_from_response(response_text);
     serde_json::from_str::<OntologyTags>(&cleaned)
         .map(validate_ontology_tags)
         .ok()
@@ -255,19 +252,6 @@ impl CorpusServer {
                     } else {
                         prompt
                     };
-
-                    // ContentGuard input scan — ALWAYS active on the tagging boundary.
-                    // The docproc pipeline ingests PDFs, HTML, and plain text — "operator-curated"
-                    // is a trust assumption, not a guarantee. A poisoned PDF chunk can
-                    // contain prompt-injection text that reaches the LLM unfiltered if the
-                    // guard is disabled. The output guard (scan_output) only strips secrets;
-                    // it cannot detect that the LLM's JSON output was hijacked. Therefore the
-                    // input guard on this boundary is non-disableable. (M2 fix.)
-                    let input_scan = GUARD.scan_input(&prompt);
-                    if !input_scan.passed {
-                        failed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        return;
-                    }
 
                     let params = LLMParameters {
                         temperature: 0.1,

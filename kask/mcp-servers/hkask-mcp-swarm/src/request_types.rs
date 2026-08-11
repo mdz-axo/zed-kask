@@ -772,7 +772,7 @@ pub struct SearchKnowledgeLocalRequest {
 /// Generate a system prompt for a local agent from a description (the local
 /// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only, spends
 /// nothing. Uses the local `InferencePort` (no ABW); optionally seeded with
-/// the agent's consolidated memory. Output is guard-scanned.
+/// the agent's consolidated memory.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GeneratePromptLocalRequest {
     /// Natural-language description of what the agent should do.
@@ -788,7 +788,6 @@ pub struct GeneratePromptLocalRequest {
 /// Generate a seed ontology (Mermaid ER diagram) for a domain (the local analog
 /// of ABW `swarm_generate_ontology`). Authoring aid — read-only. Uses the local
 /// `InferencePort`; optionally seeded with an agent's semantic-memory graph.
-/// Output is guard-scanned.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateOntologyLocalRequest {
     /// Natural-language description of the knowledge domain.
@@ -801,8 +800,8 @@ pub struct GenerateOntologyLocalRequest {
 
 /// AI assist for the swarm panel authoring forms — suggests completions for
 /// partial inputs or validates well-formedness. Authoring aid — read-only,
-/// spends nothing. Uses the local `InferencePort` (one-shot LLM generate,
-/// guard-scanned). The `mode` field only tailors the guidance text; no ABW
+/// spends nothing. Uses the local `InferencePort` (one-shot LLM generate).
+/// The `mode` field only tailors the guidance text; no ABW
 /// calls in either mode.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AiAssistRequest {

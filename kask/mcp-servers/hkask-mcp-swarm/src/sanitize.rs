@@ -215,12 +215,12 @@ pub fn sanitize_workspace_payload(value: serde_json::Value) -> serde_json::Value
                     }
                     _ => {
                         // Unknown string fields: apply the light-touch prefix
-                        // sanitizer (not the full guard scan — that would
-                        // false-positive on structured data). This closes the
-                        // gap where a field like `bio` or `summary` carries an
-                        // injection payload that the name-based approach misses.
-                        // The patterns are case-sensitive and narrow enough that
-                        // IDs, URLs, and structured data are unaffected.
+                        // sanitizer (a full scan would false-positive on
+                        // structured data). This closes the gap where a field
+                        // like `bio` or `summary` carries an injection payload
+                        // that the name-based approach misses. The patterns
+                        // are case-sensitive and narrow enough that IDs, URLs,
+                        // and structured data are unaffected.
                         if val.is_string() {
                             serde_json::Value::String(sanitize_abw_text(val.as_str().unwrap_or("")))
                         } else {

@@ -60,9 +60,9 @@ impl SwarmServer {
     /// Generate a system prompt for a local agent from a description (the kask
     /// analog of ABW `swarm_generate_prompt`). Authoring aid — read-only. Uses
     /// the local `InferencePort` (no ABW); seeded with the agent's consolidated
-    /// memory when available. Output is guard-scanned.
+    /// memory when available.
     #[tool(
-        description = "Generate a system prompt for a local agent from a description (the local analog of ABW swarm_generate_prompt). Authoring aid — read-only, spends nothing. Uses the local InferencePort (no ABW); optionally seeded with the agent's consolidated memory. Output is guard-scanned."
+        description = "Generate a system prompt for a local agent from a description (the local analog of ABW swarm_generate_prompt). Authoring aid — read-only, spends nothing. Uses the local InferencePort (no ABW); optionally seeded with the agent's consolidated memory."
     )]
     pub(crate) async fn swarm_generate_prompt_local(
         &self,
@@ -102,8 +102,7 @@ impl SwarmServer {
                 seed_block = seed_block,
             );
             let inference = runtime.inference();
-            let guard = runtime.guard();
-            let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.4)
+            let text = local_knowledge::one_shot_generate(&inference, &prompt, 0.4)
                 .await
                 .map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
@@ -121,9 +120,9 @@ impl SwarmServer {
     /// Generate a seed ontology (Mermaid ER diagram) for a knowledge domain
     /// (the kask analog of ABW `swarm_generate_ontology`). Authoring aid —
     /// read-only. Uses the local `InferencePort`; optionally seeded with an
-    /// agent's semantic-memory graph. Output is guard-scanned.
+    /// agent's semantic-memory graph.
     #[tool(
-        description = "Generate a seed ontology (Mermaid ER diagram) for a knowledge domain (the local analog of ABW swarm_generate_ontology). Authoring aid — read-only. Uses the local InferencePort; optionally seeded with an agent's semantic-memory graph. Output is guard-scanned."
+        description = "Generate a seed ontology (Mermaid ER diagram) for a knowledge domain (the local analog of ABW swarm_generate_ontology). Authoring aid — read-only. Uses the local InferencePort; optionally seeded with an agent's semantic-memory graph."
     )]
     pub(crate) async fn swarm_generate_ontology_local(
         &self,
@@ -155,8 +154,7 @@ impl SwarmServer {
                 seed_block = seed_block,
             );
             let inference = runtime.inference();
-            let guard = runtime.guard();
-            let text = local_knowledge::one_shot_generate(&inference, &guard, &prompt, 0.3)
+            let text = local_knowledge::one_shot_generate(&inference, &prompt, 0.3)
                 .await
                 .map_err(map_local_swarm_error)?;
             Ok(serde_json::json!({
