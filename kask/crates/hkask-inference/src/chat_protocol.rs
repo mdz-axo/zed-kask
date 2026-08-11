@@ -193,8 +193,13 @@ pub(crate) async fn vision_infer(
         .await
         .map_err(|e| InferenceError::Connection(format!("{} body read: {}", label, e)))?;
     let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-        let preview = if body.len() > 500 {
-            format!("{}...", &body[..500])
+        let preview = if body.chars().count() > 500 {
+            let boundary = body
+                .char_indices()
+                .nth(500)
+                .map(|(i, _)| i)
+                .unwrap_or(body.len());
+            format!("{}...", &body[..boundary])
         } else {
             body.clone()
         };

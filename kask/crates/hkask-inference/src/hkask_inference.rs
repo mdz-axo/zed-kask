@@ -42,9 +42,7 @@ pub mod fal_workflow;
 pub mod inference_ipc_client;
 pub mod media_router;
 pub mod model_constants;
-pub mod ollama_registry;
 pub mod openai_compat;
-pub mod openrouter_backend;
 pub mod provider;
 pub mod scoring;
 pub mod workflow;
@@ -53,9 +51,6 @@ pub mod workflow;
 pub use config::{InferenceConfig, ProviderConfig, ProviderId};
 pub use inference_ipc_client::InferenceIpcClient;
 pub use media_router::MediaRouter;
-pub use ollama_registry::{
-    LocalAdapter, ModelFrom, ModelfileSpec, OllamaRegistry, OllamaRegistryError, RegisteredModel,
-};
 pub use provider::{MediaOp, MediaProvider, ProviderRegistry};
 pub use workflow::{FailurePolicy, GraphNode, NodeExecutor, WorkflowGraph};
 

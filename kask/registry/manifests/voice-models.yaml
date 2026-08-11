@@ -23,7 +23,7 @@ inputs:
   - name: voice_model_ref
     type: string
     required: true
-    description: "Provider endpoint reference (e.g., DeepInfra/Kokoro-82M, fal.ai/qwen-3-tts, DeepInfra/whisper-large-v3)"
+    description: "Provider endpoint reference (e.g., DeepInfra/hexgrad/Kokoro-82M, DeepInfra/whisper-large-v3)"
   - name: profile_preset
     type: string
     required: true
@@ -103,7 +103,7 @@ steps:
           type: string
     input_mapping:
       profile_ref: "{{ step_1_result.profile_ref }}"
-      existing_defaults: ["STT_DEFAULT: FA/wizper", "TTS_DEFAULT: FA/qwen-3-tts / DeepInfra Kokoro-82M"]
+      existing_defaults: ["STT_DEFAULT: DeepInfra/whisper-large-v3", "TTS_DEFAULT: DeepInfra/hexgrad/Kokoro-82M"]
 
   - ordinal: 4
     action: populate

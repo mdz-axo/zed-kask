@@ -212,10 +212,10 @@ There is no `KaskGuardSettings` struct. Direct chat is unguarded (provider-side 
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `tts_model` | `String` | `""` | TTS model override (e.g., `"fal.ai/qwen-3-tts"`) |
-| `stt_model` | `String` | `""` | STT model override (e.g., `"fal.ai/wizper"`) |
+| `tts_model` | `String` | `""` | TTS model override (e.g., `"DeepInfra/hexgrad/Kokoro-82M"`) |
+| `stt_model` | `String` | `""` | STT model override (e.g., `"DeepInfra/whisper-large-v3"`) |
 | `vision_model` | `String` | `""` | Vision model override |
-| `image_gen_model` | `String` | `""` | Image generation model override (e.g., `"fal.ai/flux-2"`) |
+| `image_gen_model` | `String` | `""` | Image generation model override (e.g., `"DeepInfra/black-forest-labs/FLUX-2-klein-4b"`) |
 
 ## Scenarios (`KaskScenariosSettings`)
 
@@ -274,11 +274,11 @@ constants, which are `const` references to the single source of truth in
 | `embedding_model` | `String` | `""` | `DEFAULT_EMBEDDING_MODEL` = `"DeepInfra/Qwen/Qwen3-Embedding-0.6B"` (model_constants.rs:26) |
 | `classifier_model` | `String` | `""` | `DEFAULT_CLASSIFIER_MODEL` = `"OpenRouter/deepseek/deepseek-v4-flash"` (model_constants.rs:23) |
 
-`model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`,
-env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"fal.ai/Qwen3-TTS"`),
-`DEFAULT_STT_MODEL` (`"fal.ai/wizper"`), `DEFAULT_VISION_MODEL`
+`model_constants.rs` also defines `DEFAULT_OCR_MODEL` (`"RunPod/kask-ocr"`),
+env `HKASK_OCR_MODEL`), `DEFAULT_TTS_MODEL` (`"DeepInfra/hexgrad/Kokoro-82M"`),
+`DEFAULT_STT_MODEL` (`"DeepInfra/whisper-large-v3"`), `DEFAULT_VISION_MODEL`
 (`"KiloCode/Qwen/Qwen3-VL-235B-A22B-Instruct"`), and `DEFAULT_IMAGE_GEN_MODEL`
-(`"fal.ai/flux-2"`). Every constant has an env-var accessor (e.g.
+(`"DeepInfra/black-forest-labs/FLUX-2-klein-4b"`). Every constant has an env-var accessor (e.g.
 `classifier_model()` reads `HKASK_CLASSIFIER_MODEL` first) so operators can
 override without recompiling.
 

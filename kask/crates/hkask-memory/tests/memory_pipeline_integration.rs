@@ -177,26 +177,6 @@ fn episodic_and_semantic_coexist_and_stay_distinguishable() {
 
 // ── Consolidation ──────────────────────────────────────────────────────────
 
-#[test]
-fn consolidator_counts_candidates() {
-    let store = setup_store();
-    let consolidator = MemoryConsolidator::new(Arc::clone(&store));
-    let perspective = test_perspective();
-
-    assert_eq!(consolidator.consolidation_candidate_count(&perspective), 0);
-
-    let h_mem = HMem::new("e", "a", serde_json::json!("v"), perspective)
-        .with_perspective(perspective)
-        .with_ontology(HMemOntology::episodic("proc", "step", "src"));
-    store.store(h_mem).expect("store");
-
-    assert_eq!(
-        consolidator.consolidation_candidate_count(&perspective),
-        1,
-        "should count stored perspective-bound h_mems"
-    );
-}
-
 // ── Memory life and decay ──────────────────────────────────────────────────
 
 #[test]

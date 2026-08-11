@@ -1,7 +1,7 @@
 # STT / TTS Voice Integration Pipeline Manifest
 # hKask v0.33.7 — Verified wiring: media server (audio.rs) + inference router + skills (caveman/ttbs)
 # Design gap: REPL/chat coordinating loop (S1→S5) unimplemented — see architecture analysis.
-# Deepgram deferred; current backends = DeepInfra (STT_DEFAULT: FA/wizper) + fal.ai (TTS_DEFAULT: FA/qwen-3-tts / Kokoro-82M)
+# Deepgram deferred; current backends = DeepInfra (STT_DEFAULT: DeepInfra/whisper-large-v3; TTS_DEFAULT: DeepInfra/hexgrad/Kokoro-82M). fal.ai is deprecated for TTS/STT/image-gen; FalBackend retained for video/upscale/segment/workflow.
 
 manifest:
   id: stt-tts
@@ -106,7 +106,7 @@ steps:
     input_mapping:
       workflow: >
         {
-          "stt": { "capture": true, "transcribe_model": "fal.ai/wizper" },
+          "stt": { "capture": true, "transcribe_model": "DeepInfra/whisper-large-v3" },
           "tts": { "voice": "{{ step_2_result.voice_preset }}", "text": "{{ step_2_result.tts_text }}" },
           "loop_closure": "contract_defined",
           "repl_chat_hook": "repl_chat_ref"

@@ -16,7 +16,7 @@
 //! `base_url` and `api_key` are passed directly (no `ProviderConfig` envelope).
 
 use crate::chat_protocol::build_chat_request_messages;
-use crate::chat_protocol::{ChatResponse, chat_response_to_result, validate_prompt};
+use crate::chat_protocol::{ChatRequest, ChatResponse, chat_response_to_result, validate_prompt};
 use hkask_types::template::LLMParameters;
 use hkask_types::{ChatMessage, ChatToolDefinition, InferenceError, InferenceResult};
 use reqwest::Client;
@@ -130,43 +130,22 @@ pub fn redact_secret_tokens(body: &str) -> String {
     output
 }
 
-/// Parameterized OpenAI-compatible chat completion.
-///
-/// `base_url` is the provider API root (the `chat_path` is appended to it).
-/// `api_key` is sent as `Authorization: {auth_prefix} {api_key}`.
-/// `chat_path` is the URL path appended to `base_url` (e.g., `/v1/chat/completions`).
-/// `auth_prefix` is the `Authorization` header prefix (e.g., `"Bearer"` or `"Key"`).
-/// `provider_code` is the short provider identifier used in logs and error messages.
-///
-/// expect: "The system regulates text/image/speech generation through provider membranes"
-/// \[P9\] Motivating: Homeostatic Self-Regulation — shared regulated generation for OpenAI-compatible backends
-/// pre:  model is a valid provider model name
-/// pre:  prompt is non-empty (validated by validate_prompt)
-/// pre:  params is a valid LLMParameters
-/// post: returns Ok(InferenceResult) with generated text, model, usage stats
-/// post: if connection fails → Err(InferenceError::Connection)
-/// post: if prompt is empty → Err(InferenceError::Generation)
-pub async fn openai_compatible_generate(
+/// Shared tail of the OpenAI-compatible chat round-trip: send → status check
+/// → body read → `serde_json::from_str` + `sanitize_error_body` →
+/// `chat_response_to_result` → log. Used by both `openai_compatible_generate`
+/// and `openai_compatible_generate_messages` so the error paths and log shape
+/// cannot drift between them. `log_suffix` is appended to the completion log
+/// message (e.g. `" (messages)"` for the multi-turn variant).
+async fn openai_chat_roundtrip(
     client: &Client,
     base_url: &str,
     api_key: &str,
-    model: &str,
-    prompt: &str,
-    params: &LLMParameters,
-    tools: Option<&[ChatToolDefinition]>,
+    request: ChatRequest,
     chat_path: &str,
     auth_prefix: &str,
     provider_code: &str,
+    log_suffix: &str,
 ) -> Result<InferenceResult, InferenceError> {
-    validate_prompt(prompt)?;
-    let tools = tools.map(|t| t.to_vec());
-    let mut messages = Vec::with_capacity(2);
-    if let Some(ref sys) = params.system_prompt {
-        messages.push(ChatMessage::system(sys));
-    }
-    messages.push(ChatMessage::user(prompt));
-    let request = build_chat_request_messages(model, messages, params, Some(false), None, tools);
-
     let response = client
         .post(format!("{}{}", base_url, chat_path))
         .header("Authorization", format!("{} {}", auth_prefix, api_key))
@@ -210,10 +189,59 @@ pub async fn openai_compatible_generate(
         model = %result.model,
         tokens = result.usage.total_tokens,
         finish_reason = %result.finish_reason,
-        "{} inference completed",
+        "{} inference completed{log_suffix}",
         provider_code
     );
     Ok(result)
+}
+
+/// Parameterized OpenAI-compatible chat completion.
+///
+/// `base_url` is the provider API root (the `chat_path` is appended to it).
+/// `api_key` is sent as `Authorization: {auth_prefix} {api_key}`.
+/// `chat_path` is the URL path appended to `base_url` (e.g., `/v1/chat/completions`).
+/// `auth_prefix` is the `Authorization` header prefix (e.g., `"Bearer"` or `"Key"`).
+/// `provider_code` is the short provider identifier used in logs and error messages.
+///
+/// expect: "The system regulates text/image/speech generation through provider membranes"
+/// \[P9\] Motivating: Homeostatic Self-Regulation — shared regulated generation for OpenAI-compatible backends
+/// pre:  model is a valid provider model name
+/// pre:  prompt is non-empty (validated by validate_prompt)
+/// pre:  params is a valid LLMParameters
+/// post: returns Ok(InferenceResult) with generated text, model, usage stats
+/// post: if connection fails → Err(InferenceError::Connection)
+/// post: if prompt is empty → Err(InferenceError::Generation)
+pub async fn openai_compatible_generate(
+    client: &Client,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    prompt: &str,
+    params: &LLMParameters,
+    tools: Option<&[ChatToolDefinition]>,
+    chat_path: &str,
+    auth_prefix: &str,
+    provider_code: &str,
+) -> Result<InferenceResult, InferenceError> {
+    validate_prompt(prompt)?;
+    let tools = tools.map(|t| t.to_vec());
+    let mut messages = Vec::with_capacity(2);
+    if let Some(ref sys) = params.system_prompt {
+        messages.push(ChatMessage::system(sys));
+    }
+    messages.push(ChatMessage::user(prompt));
+    let request = build_chat_request_messages(model, messages, params, Some(false), None, tools);
+    openai_chat_roundtrip(
+        client,
+        base_url,
+        api_key,
+        request,
+        chat_path,
+        auth_prefix,
+        provider_code,
+        "",
+    )
+    .await
 }
 
 /// Parameterized OpenAI-compatible chat completion with an explicit message
@@ -258,51 +286,17 @@ pub async fn openai_compatible_generate_messages(
     let tools = tools.map(|t| t.to_vec());
     let request =
         build_chat_request_messages(model, messages.to_vec(), params, Some(false), None, tools);
-
-    let response = client
-        .post(format!("{}{}", base_url, chat_path))
-        .header("Authorization", format!("{} {}", auth_prefix, api_key))
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| InferenceError::Connection(e.to_string()))?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let error_text = response.text().await.unwrap_or_default();
-        return Err(InferenceError::Connection(format!(
-            "{} status {}: {}",
-            provider_code,
-            status,
-            sanitize_error_body(&error_text)
-        )));
-    }
-
-    let body = response
-        .text()
-        .await
-        .map_err(|e| InferenceError::Connection(format!("{} body read: {}", provider_code, e)))?;
-
-    let chat_response: ChatResponse = serde_json::from_str(&body).map_err(|e| {
-        InferenceError::Json(format!(
-            "{} JSON parse: {} | body: {}",
-            provider_code,
-            e,
-            sanitize_error_body(&body)
-        ))
-    })?;
-
-    let result = chat_response_to_result(chat_response)?;
-    tracing::info!(
-        target: "reg.inference",
-        provider = provider_code,
-        model = %result.model,
-        tokens = result.usage.total_tokens,
-        finish_reason = %result.finish_reason,
-        "{} inference completed (messages)",
-        provider_code
-    );
-    Ok(result)
+    openai_chat_roundtrip(
+        client,
+        base_url,
+        api_key,
+        request,
+        chat_path,
+        auth_prefix,
+        provider_code,
+        " (messages)",
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -18,6 +18,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// Maximum wall-clock time to wait for a fal.ai queue job to reach a terminal
+/// status before giving up. Kept as a named constant so the deadline and the
+/// timeout error message cannot drift apart.
+const FAL_QUEUE_POLL_TIMEOUT_SECS: u64 = 120;
+
 /// fal.ai backend for generative media (image/video/speech/transcription/workflow).
 #[derive(Debug)]
 pub struct FalBackend {
@@ -119,19 +124,20 @@ impl FalBackend {
         let request_id = v
             .get("request_id")
             .and_then(|r| r.as_str())
-            .unwrap_or("unknown")
+            .ok_or_else(|| InferenceError::Json("fal.ai queue submit missing request_id".into()))?
             .to_string();
 
         let status_url = format!(
             "{}/{}/requests/{}/status",
             self.queue_base_url, endpoint, request_id
         );
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(FAL_QUEUE_POLL_TIMEOUT_SECS);
 
         loop {
             if tokio::time::Instant::now() > deadline {
                 return Err(InferenceError::Connection(format!(
-                    "fal.ai queue poll timed out after 120s (request_id: {})",
+                    "fal.ai queue poll timed out after {FAL_QUEUE_POLL_TIMEOUT_SECS}s (request_id: {})",
                     request_id
                 )));
             }

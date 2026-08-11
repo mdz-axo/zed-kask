@@ -22,6 +22,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Maximum number of poll iterations before giving up on an AtlasCloud
+/// prediction. Coupled with [`ATLASCLOUD_POLL_INTERVAL`] to form the timeout.
+const ATLASCLOUD_MAX_POLLS: u32 = 200;
+
+/// Sleep between AtlasCloud poll iterations.
+const ATLASCLOUD_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
 /// AtlasCloud media generation backend (task-based submit + poll).
 pub struct AtlasCloudBackend {
     base_url: String,
@@ -85,7 +92,7 @@ impl AtlasCloudBackend {
 
         // Poll
         let poll_url = format!("{}/model/getPrediction?id={}", self.base_url, prediction_id);
-        for _ in 0..200 {
+        for _ in 0..ATLASCLOUD_MAX_POLLS {
             let result = self
                 .client
                 .get(&poll_url)
@@ -123,13 +130,14 @@ impl AtlasCloudBackend {
                 }
             }
 
-            // Wait 3s before next poll
-            tokio::time::sleep(Duration::from_millis(3000)).await;
+            // Wait before next poll
+            tokio::time::sleep(ATLASCLOUD_POLL_INTERVAL).await;
         }
 
-        Err(InferenceError::Connection(
-            "AtlasCloud: prediction timed out (10 min max)".into(),
-        ))
+        Err(InferenceError::Connection(format!(
+            "AtlasCloud: prediction timed out ({}s max)",
+            ATLASCLOUD_MAX_POLLS as u64 * ATLASCLOUD_POLL_INTERVAL.as_secs()
+        )))
     }
 }
 

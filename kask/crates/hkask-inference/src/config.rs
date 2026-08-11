@@ -243,12 +243,16 @@ impl InferenceConfig {
             ollama_api_key: om.api_key,
             atlascloud_base_url,
             atlascloud_api_key,
-            timeout_secs: resolve_config_str("HKASK_HTTP_TIMEOUT_SECS")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(120),
-            pool_max_idle: resolve_config_str("HKASK_HTTP_POOL_MAX_IDLE")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(256),
+            timeout_secs: parse_env_numeric(
+                "HKASK_HTTP_TIMEOUT_SECS",
+                resolve_config_str("HKASK_HTTP_TIMEOUT_SECS"),
+                Self::default().timeout_secs,
+            ),
+            pool_max_idle: parse_env_numeric(
+                "HKASK_HTTP_POOL_MAX_IDLE",
+                resolve_config_str("HKASK_HTTP_POOL_MAX_IDLE"),
+                Self::default().pool_max_idle,
+            ),
             default_model: resolve_config_str("HKASK_DEFAULT_MODEL")
                 .unwrap_or_else(|| crate::model_constants::DEFAULT_FALLBACK_MODEL.to_string()),
         }
@@ -343,6 +347,32 @@ fn resolve_config_str(key: &str) -> Option<String> {
         return Some(val);
     }
     None
+}
+
+/// Parse an env-var string into a numeric type, logging a warning naming the
+/// env var and the malformed value before falling back to `default`. Without
+/// the warning, an operator cannot distinguish "not configured" from
+/// "configured but broken" (a malformed numeric silently degrades to the
+/// default, masking a broken feedback loop).
+fn parse_env_numeric<T>(name: &str, raw: Option<String>, default: T) -> T
+where
+    T: std::str::FromStr + std::fmt::Display,
+{
+    match raw {
+        Some(value) => match value.parse::<T>() {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                tracing::warn!(
+                    target: "hkask.inference",
+                    env = name,
+                    value = %value,
+                    "malformed numeric value; falling back to default ({default})"
+                );
+                default
+            }
+        },
+        None => default,
+    }
 }
 
 // ── Provider configuration ───────────────────────────────────────────────────

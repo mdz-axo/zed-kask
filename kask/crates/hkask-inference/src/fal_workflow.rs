@@ -144,6 +144,11 @@ pub fn validate_workflow_structure(nodes: &[WorkflowNode]) -> Result<(), Inferen
 /// Topological sort of workflow nodes by dependency order (Kahn's algorithm).
 ///
 /// Detects circular dependencies and unknown node references.
+///
+/// Note: this is the parsed-`WorkflowNode` sort, retained for property tests.
+/// The production path uses `workflow::topological_sort_graph` over
+/// `GraphNode` (after `fal_adapter::workflow_node_to_graph` converts).
+#[allow(dead_code)]
 pub fn topological_sort(nodes: &[WorkflowNode]) -> Result<Vec<String>, InferenceError> {
     let node_ids: HashSet<&str> = nodes.iter().map(|n| n.id()).collect();
 

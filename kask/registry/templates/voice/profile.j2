@@ -4,7 +4,7 @@
 
 {%- set profile_preset = profile_preset | default("Rachel") -%}
 {%- set agent_mapping = agent_mapping | default({"type":"userpod","name":"unspecified","binding_contract":false}) -%}
-{%- set model_ref = model_ref | default("STT_DEFAULT: fal.ai/wizper / TTS_DEFAULT: fal.ai/qwen-3-tts") -%}
+{%- set model_ref = model_ref | default("STT_DEFAULT: DeepInfra/whisper-large-v3 / TTS_DEFAULT: DeepInfra/hexgrad/Kokoro-82M") -%}
 {%- set simplification_mode = simplification_mode | default(true) -%}
 
 {# Step 1: Verify profile preset exists in VoiceDesign / media-landscape.md or is custom #}
