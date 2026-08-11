@@ -910,38 +910,58 @@ mod tests {
             for desc in DATA_SERVICES {
                 std::env::remove_var(desc.env_var);
             }
-            std::env::set_var("FALAI_API_KEY", "fal-test-key");
             std::env::set_var("DEEPINFRA_API_KEY", "di-test-key");
+            std::env::set_var("FALAI_API_KEY", "fal-test-key");
         }
         let collected = collect_env_keys_for_mirror();
-        // Should collect exactly the two providers whose env vars we set.
+        // DeepInfra is an inference provider (chat); fal.ai is a data-service
+        // credential (media). Both are mirrored, but only the inference
+        // provider carries an api_url.
         assert_eq!(
             collected.len(),
             2,
             "two env vars set → two entries collected, got {collected:?}"
         );
-        // Verify the fal.ai entry is an InferenceProvider variant with the
-        // correct api_url, credential_url, and key.
-        let fal_entry = collected
+        // DeepInfra — InferenceProvider variant (writes api_url + credential_url).
+        let di_entry = collected
             .iter()
-            .find(|t| t.env_var() == "FALAI_API_KEY")
-            .expect("FALAI_API_KEY entry should be present");
-        match fal_entry {
+            .find(|t| t.env_var() == "DEEPINFRA_API_KEY")
+            .expect("DEEPINFRA_API_KEY entry should be present");
+        match di_entry {
             MirrorTarget::InferenceProvider {
                 api_url,
                 credential_url,
                 key,
                 ..
             } => {
-                assert_eq!(api_url, "https://api.fal.ai/v1", "api_url");
+                assert_eq!(api_url, "https://api.deepinfra.com/v1/openai", "api_url");
+                assert_eq!(
+                    credential_url, "kask://credentials/deepinfra",
+                    "credential_url"
+                );
+                assert_eq!(key, "di-test-key", "key");
+            }
+            other => panic!("DEEPINFRA_API_KEY should be InferenceProvider, got {other:?}"),
+        }
+        // fal.ai — DataService variant (no api_url; media credential only).
+        let fal_entry = collected
+            .iter()
+            .find(|t| t.env_var() == "FALAI_API_KEY")
+            .expect("FALAI_API_KEY entry should be present");
+        match fal_entry {
+            MirrorTarget::DataService {
+                credential_url,
+                key,
+                ..
+            } => {
                 assert_eq!(credential_url, "kask://credentials/fal", "credential_url");
                 assert_eq!(key, "fal-test-key", "key");
             }
-            other => panic!("FALAI_API_KEY should be InferenceProvider, got {other:?}"),
+            other => panic!("FALAI_API_KEY should be DataService, got {other:?}"),
         }
         unsafe {
-            std::env::remove_var("FALAI_API_KEY");
             std::env::remove_var("DEEPINFRA_API_KEY");
+            std::env::remove_var("FALAI_API_KEY");
         }
     }
 

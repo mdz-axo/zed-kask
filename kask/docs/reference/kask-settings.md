@@ -95,11 +95,15 @@ enabled:[^openai-compatible-settings]
 | Field | Default | Env var auto-enable check |
 |-------|---------|---------------------------|
 | `deepinfra_enabled` | `false` | `DEEPINFRA_API_KEY` set |
-| `fal_enabled` | `false` | `FALAI_API_KEY` set |
 | `openrouter_enabled` | `false` | `OPENROUTER_API_KEY` set |
 | `kilocode_enabled` | `false` | `KILOCODE_API_KEY` set |
-| `cline_enabled` | `false` | `CLINE_API_KEY` set |
 | `atlascloud_enabled` | `false` | `ATLASCLOUD_API_KEY` set |
+
+fal.ai is not an inference provider here — it is not OpenAI-compatible
+(`/v1/chat/completions` returns 404; `/v1/models` uses `Authorization: Key`).
+Its `FALAI_API_KEY` is managed as a data-service credential (see Data
+Services) and consumed by the media and corpus MCP servers. Cline was removed
+from the kask provider set.
 
 `Default` returns all-false (pure, no side effects). The env-var-based
 auto-enable logic lives in `From<KaskInferenceProvidersSettingsContent>` and
@@ -379,17 +383,19 @@ comma-joined `BUILT_IN_MCP_SERVERS_IDS`, consumed only by the swarm server's
 | `NEBIUS_PROJECT_ID` | Nebius |
 | `NEBIUS_SUBNET_ID` | Nebius |
 | `HF_TOKEN` | HuggingFace |
+| `FALAI_API_KEY` | fal.ai (media generation) |
 
 ### Inference Providers
 
 | Env Var | Service |
 |---------|--------|
 | `DEEPINFRA_API_KEY` | DeepInfra |
-| `FALAI_API_KEY` | fal.ai |
 | `OPENROUTER_API_KEY` | OpenRouter |
 | `KILOCODE_API_KEY` | KiloCode |
-| `CLINE_API_KEY` | Cline |
 | `ATLASCLOUD_API_KEY` | AtlasCloud |
+
+`FALAI_API_KEY` is listed under Data Services (fal.ai is a media platform,
+not an OpenAI-compatible chat endpoint).
 
 ### Curator Email
 

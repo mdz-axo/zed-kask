@@ -542,6 +542,130 @@ remove_mcp_server_settings() {
     fi
 }
 
+# uninstall_hkask — remove everything install.sh / install-binary.sh deploy.
+#
+# Lives in the shared helpers file (not install.sh) so it is in scope when
+# install-common.sh is sourced by the regression test
+# (kask/scripts/build/check-uninstall-paths.sh), the same way
+# prepare_install_dir / add_to_path / remove_mcp_server_settings are tested.
+# install.sh's --uninstall dispatch calls this; it is not called by
+# install-binary.sh (which has no uninstall path).
+#
+# Caller must set BIN_DIR, INSTALL_DIR, SYSTEM_BIN, MCP_SERVERS (the first
+# three are set by the installer's main(); MCP_SERVERS is loaded by sourcing
+# install-common.sh). HKASK_REMOVE_CONFIG=true additionally removes the
+# zed-kask config and data directories (named `zed-kask`, matching the app id
+# used by remove_mcp_server_settings and the runtime — NOT `hkask`, which is a
+# stale name that never existed on disk).
+uninstall_hkask() {
+    log "Uninstalling zed-kask..."
+
+    # Remove system symlink. Capture the result so we log accurately.
+    if [ -L "$SYSTEM_BIN/zed-kask" ]; then
+        if sudo rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null || rm -f "$SYSTEM_BIN/zed-kask" 2>/dev/null; then
+            log "Removed symlink: $SYSTEM_BIN/zed-kask"
+        else
+            log_error "Failed to remove $SYSTEM_BIN/zed-kask (may need sudo)"
+        fi
+    fi
+
+    # Remove CLI binary and MCP server binaries
+    assert_not_zed_owned_path "$BIN_DIR" "binary removal" || return 1
+    assert_kask_binary_destination "$BIN_DIR/zed-kask" || return 1
+    if [ -f "$BIN_DIR/zed-kask" ]; then
+        rm -f "$BIN_DIR/zed-kask"
+        log "Removed $BIN_DIR/zed-kask"
+    fi
+    for server in "${MCP_SERVERS[@]}"; do
+        if [ -f "$BIN_DIR/$server" ]; then
+            rm -f "$BIN_DIR/$server"
+        fi
+    done
+    log "Removed MCP server binaries"
+
+    local updater_dir="$INSTALL_DIR/share/zed-kask/install"
+    assert_not_zed_owned_path "$updater_dir" "updater removal" || return 1
+    if [ -d "$updater_dir" ]; then
+        rm -rf "$updater_dir"
+        log "Removed updater bundle: $updater_dir"
+    fi
+
+    # Remove any stale .desktop entry from prior installs (pre-0.34, when
+    # zed-kask erroneously installed a .desktop file). Also remove the icon.
+    # zed-kask is a CLI tool — it must not have a .desktop file.
+    local app_id="dev.zed-kask.Zed-Kask"
+    local data_root
+    for data_root in "${XDG_DATA_HOME:-$HOME/.local/share}" "/usr/local/share"; do
+        local desktop_file="$data_root/applications/$app_id.desktop"
+        if [ -f "$desktop_file" ]; then
+            rm -f "$desktop_file"
+            log "Removed desktop entry: $desktop_file"
+        fi
+        # Remove both icon names installed by install_icon: the app_id name
+        # (load-bearing on Wayland) and the friendly "zed-kask" alias.
+        local icon_name
+        for icon_name in "$app_id" "zed-kask"; do
+            local icon_file_512="$data_root/icons/hicolor/512x512/apps/$icon_name.png"
+            local icon_file_1024="$data_root/icons/hicolor/1024x1024/apps/$icon_name.png"
+            if [ -f "$icon_file_512" ]; then
+                rm -f "$icon_file_512"
+                log "Removed icon: $icon_file_512"
+            fi
+            if [ -f "$icon_file_1024" ]; then
+                rm -f "$icon_file_1024"
+                log "Removed icon: $icon_file_1024"
+            fi
+        done
+        gtk-update-icon-cache -f "$data_root/icons/hicolor" 2>/dev/null || true
+    done
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
+    fi
+
+    # Remove PATH entries from shell configs. Match both the current
+    # `# zed-kask` marker and the legacy `# hKask` marker so users who
+    # installed under the old name get cleaned up too.
+    #
+    # Escape `/` in $BIN_DIR before interpolating into the sed regex (sed uses
+    # `/` as its delimiter). Without this, a BIN_DIR like
+    # /home/user/.local/bin produces
+    #   sed: -e expression #1, char N: extra characters after command
+    # which aborts the uninstaller before remove_mcp_server_settings runs,
+    # leaving stale context_servers entries in settings.json.
+    local bin_dir_re
+    bin_dir_re=$(printf '%s' "$BIN_DIR" | sed 's|/|\\/|g')
+    for cfg in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.zprofile" "$HOME/.profile"; do
+        if [ -f "$cfg" ] && grep -qE '# (zed-kask|hKask)' "$cfg" 2>/dev/null; then
+            sed -i -E '/# (zed-kask|hKask)/d' "$cfg"
+            sed -i "/export PATH.*${bin_dir_re}/d" "$cfg"
+            log "Cleaned PATH entry from $cfg"
+        fi
+    done
+
+    # Remove kask-managed context_servers entries from settings.json.
+    # Preserves any user-added (non-kask) context_servers entries.
+    # Only removes entries whose command path points at the (now-removed)
+    # BIN_DIR, so a re-install to a different BIN_DIR doesn't lose user data.
+    remove_mcp_server_settings
+
+    # Remove config (optional). The runtime dirs are named `zed-kask`
+    # (matching the app id used everywhere else — settings.json path in
+    # remove_mcp_server_settings, the data dir, logs, db, threads). An earlier
+    # version of this block targeted `hkask`, which does not exist on disk, so
+    # HKASK_REMOVE_CONFIG silently no-op'd and left real config/data behind.
+    if [ "${HKASK_REMOVE_CONFIG:-false}" = "true" ]; then
+        local config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/zed-kask"
+        rm -rf "$config_dir"
+        log "Removed config directory: $config_dir"
+
+        local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/zed-kask"
+        rm -rf "$data_dir"
+        log "Removed data directory: $data_dir"
+    fi
+
+    log_success "zed-kask uninstalled"
+}
+
 # print_banner — standard installer header.
 # Args: $1 = subtitle line.
 print_banner() {

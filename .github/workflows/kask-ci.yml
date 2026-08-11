@@ -195,6 +195,8 @@ jobs:
         run: cd kask && bash scripts/check-lora-training-regressions.sh
       - name: Check zed-kask isolation from upstream Zed
         run: cd kask && bash scripts/build/check-zed-isolation.sh
+      - name: Check uninstall paths
+        run: cd kask && bash scripts/build/check-uninstall-paths.sh
 
   deps:
     runs-on: ubuntu-24.04

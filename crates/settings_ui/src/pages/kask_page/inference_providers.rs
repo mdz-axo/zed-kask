@@ -1,10 +1,15 @@
 //! Inference Providers sub-page — API key entry + enable toggles for
-//! OpenAI-compatible providers (DeepInfra, fal.ai, OpenRouter,
-//! KiloCode, Cline, AtlasCloud). When enabled, an `openai_compatible.<provider_id>` entry
+//! OpenAI-compatible providers (DeepInfra, OpenRouter, KiloCode,
+//! AtlasCloud). When enabled, an `openai_compatible.<provider_id>` entry
 //! is written to settings.json so the provider appears in the LLM provider
 //! picker. The API key is stored in the keychain under the provider's
 //! `api_url` (so zed's OpenAI-compatible provider finds it) and mirrored to
 //! `kask://credentials/<key>` for MCP server env injection.
+//!
+//! fal.ai is deliberately not listed here: it is a generative media platform,
+//! not an OpenAI-compatible chat endpoint (`/v1/chat/completions` returns 404,
+//! `/v1/models` uses `Authorization: Key`). Its `FALAI_API_KEY` is managed as a
+//! data-service credential (consumed by the media and corpus MCP servers).
 
 use super::*;
 

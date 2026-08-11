@@ -1,6 +1,6 @@
 //! Generic OpenAI-compatible model discovery via the standard `/v1/models` endpoint.
 //!
-//! Most OpenAI-compatible providers (DeepInfra, OpenRouter, Cline,
+//! Most OpenAI-compatible providers (DeepInfra, OpenRouter,
 //! KiloCode, etc.) expose a `/v1/models` endpoint that returns a list of
 //! available models in the standard OpenAI shape:
 //!
@@ -16,9 +16,8 @@
 //! This is the reusable discovery primitive used by
 //! `OpenAiCompatibleLanguageModelProvider` to auto-populate the model picker
 //! for any OpenAI-compatible provider when the user has supplied an API key.
-//! It is intentionally generic — provider-specific quirks (e.g. fal.ai's
-//! static catalog, OpenRouter's `/models/user` endpoint) live in their own
-//! crates, not here.
+//! It is intentionally generic — provider-specific quirks (e.g. OpenRouter's
+//! `/models/user` endpoint) live in their own crates, not here.
 
 use futures::AsyncReadExt;
 use http_client::{
@@ -46,7 +45,7 @@ pub enum ListModelsError {
 ///
 /// Mirrors the standard OpenAI model object plus the most common provider
 /// extensions. Fields beyond the standard `id` are optional so this parses
-/// cleanly across DeepInfra, Cline, KiloCode, and OpenRouter
+/// cleanly across DeepInfra, KiloCode, and OpenRouter
 /// (which extends the shape with `context_length` and capability hints).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DiscoveredModel {

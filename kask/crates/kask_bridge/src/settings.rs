@@ -1865,10 +1865,8 @@ mod tests {
             matches!(
                 env_var.as_str(),
                 "DEEPINFRA_API_KEY"
-                    | "FALAI_API_KEY"
                     | "OPENROUTER_API_KEY"
                     | "KILOCODE_API_KEY"
-                    | "CLINE_API_KEY"
                     | "ATLASCLOUD_API_KEY"
             )
         });
