@@ -21,4 +21,5 @@ detection:
 mitigation: "Change kask/crates/hkask-guard/Cargo.toml from `llm-guard = \"0.2\"` to `llm-guard.workspace = true` so it inherits the workspace's `=0.2.0` exact pin. A `cargo update -p llm-guard` would otherwise float to the latest 0.2.x without CI catching it — llm-guard is the security-critical scanner (Layer 1 input filtering, Layer 7 output filtering)."
 source: "Cycle 2 kali-audit — supply-chain pin bypass (RR-0025 scope gap)"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate and its Cargo.toml deleted 2026-08-10. llm-guard dependency removed entirely."

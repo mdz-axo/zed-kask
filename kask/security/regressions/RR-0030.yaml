@@ -16,4 +16,5 @@ detection:
 mitigation: "Scan result.reasoning alongside result.text in every GuardedInferencePort method (sanitize_reasoning helper), and accumulate reasoning_delta in GuardedStream so the end-of-stream scan sees the thinking channel. Thinking-mode models (Qwen3, GLM-5.2, DeepSeek-R1) routinely echo system-prompt content — including the canary — into the reasoning trace; an unscanned reasoning channel silently defeats RR-0006/0014 canary detection and leaks secrets past Layer 7 output filtering. Adding a text field to InferenceResult without scanning it in the guard is an unguarded exfiltration channel the compiler cannot flag."
 source: "Cycle 3 kali-audit — guard layer coverage gap (defense layers 7/8)"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. GuardedInferencePort and scan_output no longer exist."

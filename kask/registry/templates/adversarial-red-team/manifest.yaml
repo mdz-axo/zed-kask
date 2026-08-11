@@ -10,7 +10,7 @@ crate:
     exfiltration, tool misuse) at configurable persistence levels (single-shot,
     iterative multi-turn, or persistent adaptive attacks), and evaluate resistance
     rates against generated adversarial inputs. Evolved: now probes hKask's actual
-    deployed defenses (7-layer defense-in-depth stack) and reports which layers
+    deployed defenses (5-layer defense-in-depth stack) and reports which layers
     were bypassed by each attack.
 
 templates:
@@ -42,7 +42,7 @@ templates:
     description: >
       Test a target output against generated adversarial inputs. Evaluate
       resistance rate, identify critical failures, and report which defense
-      layers were bypassed by each attack. Includes canary token leakage and
-      capability token forgery detection.
+      layers were bypassed by each attack. Includes capability token forgery
+      detection.
 
 

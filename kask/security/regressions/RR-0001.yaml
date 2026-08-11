@@ -16,4 +16,5 @@ detection:
 mitigation: "Use the redact_spans helper which rebuilds the string in a single forward pass."
 source: "https://owasp.org/www-project-top-10-for-large-language-model-applications/"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. The guard scan_output path no longer exists."

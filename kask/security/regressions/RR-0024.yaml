@@ -13,4 +13,5 @@ detection:
   include: "crates/hkask-guard/src/pipeline.rs"
 mitigation: "Replace text.to_string() with text.replace(self.canary.as_str(), \"[REDACTED-CANARY]\")."
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. scan_output no longer exists."

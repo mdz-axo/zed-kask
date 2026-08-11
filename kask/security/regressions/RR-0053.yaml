@@ -23,3 +23,4 @@ mitigation: "Wire a DefaultPolicy in BridgeManifestExecutor::build_executor (kas
 source: "Static emitter-wiring audit (runtime-posture-monitor adapted) — defense layer 4 reachability"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced
+note: "hkask-guard crate deleted 2026-08-10, but runtime_policy is NOT in the guard — it lives in hkask-templates/src/executor.rs (ManifestExecutor::with_runtime_policy) and hkask-regulation (DefaultPolicy). The reg.guard.runtime_policy tracing target is still emitted from the executor's invoke_tool path. build_executor in kask_bridge/src/skill_executor.rs wires .with_runtime_policy(DefaultPolicy::default()) in production. This regression remains live and enforced."

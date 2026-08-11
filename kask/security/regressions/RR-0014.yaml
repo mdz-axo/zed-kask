@@ -16,4 +16,5 @@ detection:
 mitigation: "Call check_canary() inside scan_output() to detect system prompt exfiltration in every model output."
 source: "https://www.toxsec.com/p/canary-tokens-for-prompt-injection — OWASP LLM07:2025"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. CanaryToken and check_canary no longer exist."

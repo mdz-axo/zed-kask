@@ -21,4 +21,5 @@ detection:
 mitigation: "Thread a RegulationSink (or Arc<RegulationArchive>) into ContentGuard and call emit_to(sink, ...) at pipeline.rs:242, 286, 359 so guard violations persist to the reg_records SQL table. Alternatively, document in ContentGuard's doc comment that reg.guard.violation is log-only and the runtime-posture-monitor skill must parse tracing logs (path b in the telemetry-source note) for guard violations rather than querying reg_records. The essentialist review chose the document-as-contract path (0 new constructor surface) over threading the sink."
 source: "Static emitter-wiring audit (runtime-posture-monitor adapted) — enforcement point durability"
 ci_gate: scripts/check-kali-regressions.sh
-status: pending
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. reg.guard.violation no longer emitted."

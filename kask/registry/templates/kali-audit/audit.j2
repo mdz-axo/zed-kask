@@ -19,7 +19,7 @@ visibility: Public
 {# Produces: findings, coverage #}
 {# Design: consumes regression library at runtime; checks defense-layer coverage #}
 {# Sources: OWASP LLM Top 10 (2025), MITRE ATLAS v5.1, NIST SSDF SP 800-218A, #}
-{#   Microsoft Research (Spotlighting arXiv:2403.14720, FIDES arXiv:2505.23643), #}
+{#   Microsoft Research (FIDES arXiv:2505.23643), #}
 {#   ANSSI Secure Rust Guidelines, RustSec, Trail of Bits, OpenAI Instruction Hierarchy #}
 
 [inference]
@@ -102,10 +102,9 @@ For **supply-chain** surface:
 
 For **mcp** surface:
 - Tool-behavior contract tests present (hKask `check-mcp-tool-tests.sh`)
-- Spotlighting (datamarking) on tool outputs before LLM consumption (Microsoft Research arXiv:2403.14720 — reduces attack success from >50% to <2%)
 - Capability token attenuation supported (OCAP literature — Tenuo, Apart Research)
-- Decoy MCP tools registered with canary detection (deception technology)
 - Taint labels on MCP tools: Source/Sink/Pure/Endorser (FIDES arXiv:2505.23643)
+- Decoy MCP tools registered with detection (deception technology)
 
 For **config** surface:
 - `deny_unknown_fields` on all manifest structs (serde docs)
@@ -114,11 +113,7 @@ For **config** surface:
 - `deny.toml` schema valid and complete
 
 For **llm-io** surface:
-- Canary tokens in system prompts, checked by output scanner (OWASP LLM07:2025)
-- Input scanner covers OWASP LLM01 attack categories (OWASP)
-- Output scanner redacts secrets before storage (OWASP LLM02:2025)
-- Token limit enforced (OWASP LLM10:2025)
-- Runtime policy trait: (trajectory, proposed_action) -> Verdict (VeriGuard pattern)
+- Runtime policy trait: (trajectory, proposed_action) -> Verdict (VeriGuard pattern, implemented in hkask-regulation)
 
 ## Output Requirements
 

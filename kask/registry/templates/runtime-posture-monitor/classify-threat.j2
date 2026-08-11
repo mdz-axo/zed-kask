@@ -1,4 +1,4 @@
-{# goal: Read runtime signal evidence (reg.* canonical spans, reg.guard.* violations, reg.outcome events) within deployed userpod host (P4 runtime boundary). Classify signals into threat patterns: endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly. Apply pragmatic-cybernetics (IS/OUGHT, provenance, grill-me). Emit reg.runtime.classify spans (P9 — namespace registered). No synthetic signals; userpod_host mandatory (P12). Evidence-backed only (P8). #}
+{# goal: Read runtime signal evidence (reg.* canonical spans, reg.outcome events) within deployed userpod host (P4 runtime boundary). Classify signals into threat patterns: endpoint abuse, bot traffic, LLM usage spike, dependency behavior anomaly. Apply pragmatic-cybernetics (IS/OUGHT, provenance, grill-me). Emit reg.runtime.classify spans (P9 — namespace registered). No synthetic signals; userpod_host mandatory (P12). Evidence-backed only (P8). #}
 {# Reads runtime signals discovered in select-signal phase #}
 {# For each signal, checks: frequency vs baseline, pattern signatures,
   defense-layer firing, regulation action triggered, action distribution shift #}
@@ -39,18 +39,15 @@ INPUT: userpod_host = {{ userpod_host }} (P12 — mandatory; if undefined, raise
 CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span history, or runtime telemetry reader):
 1. For each signal source listed in `signal_sources`, observe the span emission
    pattern within the observation window.
-2. For `reg.guard.*` signals: count violations per scanner (input filter,
-   output filter, canary, runtime policy). Note violation frequency vs
-   baseline. Record timestamps and violation details.
-3. For `reg.outcome.*` signals: count regulation actions (blocked,
+2. For `reg.outcome.*` signals: count regulation actions (blocked,
    substituted, plateau). Note whether actions are increasing (system
    struggling to regulate) or decreasing (system stable).
-4. For `reg.tool.*` signals: count tool invocations per tool type. Note
+3. For `reg.tool.*` signals: count tool invocations per tool type. Note
    invocation rate, error rate, and any unusual tool call chains (e.g.,
    rapid sequential calls to high-risk tools).
-5. For `reg.inference` signals: count LLM inference calls. Note inference
+4. For `reg.inference` signals: count LLM inference calls. Note inference
    rate, token consumption, and any usage spikes exceeding baseline.
-6. Apply cybersecurity taxonomy mapping (evidence-backed only):
+5. Apply cybersecurity taxonomy mapping (evidence-backed only):
    - Endpoint abuse: evidence = repeated `reg.tool.invoked` for same tool
      exceeding baseline frequency within observation window.
    - Bot traffic: evidence = automated request pattern (regular intervals,
@@ -60,38 +57,34 @@ CLASSIFY ACTIONS (concrete — must use Regulation observer/subscriber, span his
    - Dependency behavior anomaly: evidence = unexpected tool invocation
      chain (e.g., `filesystem.write` → `web_search.fetch` → `filesystem.read`
      indicating potential data exfiltration pattern).
-   - Defense-layer bypass: evidence = `reg.guard.*` violation count
-     increasing while `reg.outcome.action_blocked` count not increasing
-     proportionally (defense firing but not regulating).
-7. Apply pragmatic-cybernetics (embedded reasoning, like `bug-hunt` oracle phase):
+   - Regulation gap: evidence = `reg.outcome.action_blocked` count not
+     increasing proportionally to observed threat indicators (regulation
+     not keeping pace with runtime threats).
+6. Apply pragmatic-cybernetics (embedded reasoning, like `bug-hunt` oracle phase):
    - IS vs OUGHT: describe what the runtime DOES (observed signal pattern)
-     vs what it SHOULD do (stable baseline, regulated threats, firing defenses).
+     vs what it SHOULD do (stable baseline, regulated threats).
    - Epistemic mode: `Declarative` (span observed), `Probabilistic` (threat
      inference from signal pattern), `Subjunctive` (potential runtime risk —
      must be labeled clearly, not presented as fact).
    - Provenance: `Direct measurement` (read span), `Inference` (pattern
      analysis from span sequence), `Assessment` (security taxonomy mapping)
      — must label each finding's provenance.
-8. Apply grill-me self-challenge (like `bug-hunt`): Could this signal pattern
+7. Apply grill-me self-challenge (like `bug-hunt`): Could this signal pattern
    be intentional? Is the usage spike a deliberate load test? Would a reviewer
    dismiss this finding? If yes, downgrade to `OBSERVATION` or omit. Only
    propose `BUG` / `POTENTIAL_BUG` when evidence is concrete.
-9. Check defense-layer firing (runtime-specific, distinct from kali-audit's
+8. Check defense-layer firing (runtime-specific, distinct from kali-audit's
    static presence check):
-   - Input filtering firing (`reg.guard.input` violations observed)
-   - Output filtering firing (`reg.guard.output` violations observed)
-   - Canary detection firing (`reg.guard.canary` violations observed)
-   - Runtime policy enforcing (`reg.guard.runtime_policy` Log/Block observed)
    - Regulation loop active (`reg.outcome` events observed)
    - Action distribution monitoring (`reg.outcome.loop_quality` observed)
-10. For each classified threat, emit structured finding:
-    `threat_type`, `signal_target`, `timestamp`, `signal_value`, `baseline_value`,
-    `deviation_pct`, `severity` (critical/high/medium/low — justified by evidence),
-    `provenance` (Direct/Inference/Assessment), `epistemic_mode`,
-    `defense_layers_firing` (list), `defense_layers_silent` (list),
-    `evidence_snippet` (quoted span target + timestamp + value),
-    `source_citation` (MITRE CWE reference, OWASP LLM reference, ATLAS reference,
-    hkask-guard docs, hkask-regulation docs).
+9. For each classified threat, emit structured finding:
+   `threat_type`, `signal_target`, `timestamp`, `signal_value`, `baseline_value`,
+   `deviation_pct`, `severity` (critical/high/medium/low — justified by evidence),
+   `provenance` (Direct/Inference/Assessment), `epistemic_mode`,
+   `defense_layers_firing` (list), `defense_layers_silent` (list),
+   `evidence_snippet` (quoted span target + timestamp + value),
+   `source_citation` (MITRE CWE reference, OWASP LLM reference, ATLAS reference,
+   hkask-regulation docs).
 
 Regulation SPAN EMISSION (P9 — every classified runtime threat):
 - `reg.runtime.classify` per classified threat (target: `"reg.runtime.classify"`,
@@ -107,8 +100,8 @@ CONSTRAINT — Evidence integrity (P8 — semantic grounding):
   (CWE-1357, CWE-829, CWE-200), OWASP LLM 2025 (LLM06, LLM07), MITRE ATLAS
   (AML.TA0010). These are taxonomy mappings, not vulnerability claims.
 - Source citations must reference concrete URLs or documents actually consulted:
-  MITRE CWE definitions, OWASP LLM Top 10 2025, MITRE ATLAS, hkask-guard
-  pipeline docs, hkask-regulation cybernetics loop docs.
+  MITRE CWE definitions, OWASP LLM Top 10 2025, MITRE ATLAS, hkask-regulation
+  cybernetics loop docs.
 
 RELATIONSHIP TO OTHER SKILLS (explicit — no overlap ambiguity):
 - `supply-chain-sentinel`: covers static dependency manifest audit (P4 manifest

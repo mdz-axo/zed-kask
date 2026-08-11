@@ -25,4 +25,5 @@ detection:
 mitigation: "Use GuardConfig::from_env() for env-var-driven config. Default::default() must return the pure default (32,000) without touching the environment."
 source: "hKask Magna Carta P3 — no hidden parameters"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. GuardConfig no longer exists."

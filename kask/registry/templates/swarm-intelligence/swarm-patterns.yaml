@@ -211,11 +211,6 @@ invariants:
     enforcement: "ORIENT Step 4 determinism guard downgrades provenance: llm_judged — not used for fault attribution, a warning emitted. Cross-mode."
     source: "Cybernetic Swarm Plan C0; audit Gap S3"
 
-  - id: debit_before_scan
-    rule: "the local runtime debits the ledger, THEN scans the output guard — a guard-quarantined result still costs credits (the compute was already spent)"
-    enforcement: "LocalSwarmRuntime::delegate ordering (debit then scan_output); reversing it would let a guard quarantine reclaim cost"
-    source: "agent_executor.rs:11; local_runtime.rs:394-400"
-
   - id: algedonic_override
     rule: "a 402 or un-acknowledged curator dispatch escalates regardless of the swarm-state distance d"
     enforcement: "CHECK Step 4 + convergence invariant; a broken algedonic channel is never read as no deviation"

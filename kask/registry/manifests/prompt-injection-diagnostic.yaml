@@ -126,8 +126,11 @@ steps:
       Recommend specific defenses from the 6-layer pipeline: sanitize,
       isolate, canary, restrict, monitor, audit. For each critical threat,
       recommend at least one defense. Note tradeoffs. Flag Rust-level
-      changes (InferenceFilter, CanaryManager, OutputMonitor) separately
-      from YAML-level changes.
+      changes (InferenceFilter [REMOVED — hkask-guard deleted 2026-08-10],
+      CanaryManager [REMOVED — hkask-guard deleted 2026-08-10],
+      OutputMonitor [REMOVED — hkask-guard deleted 2026-08-10]) separately
+      from YAML-level changes. These guard components no longer exist; any
+      defense recommendations referencing them are historical context only.
     renderer: minijinja
     template_ref: prompt-defense/recommend-defenses
     gas_cap: 4000

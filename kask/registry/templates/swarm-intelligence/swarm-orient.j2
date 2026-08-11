@@ -194,13 +194,11 @@ builds):
 4. **Skill cascade failure.** Else if any `delegate_results[]` entry has
    `executed_skills[].ok = false` (a declared skill cascade failed),
    attribute to the **earliest such agent**.
-5. **Guard redaction.** Else if a guard redaction occurred (a tool output was
-   redacted because it tripped the input guard), attribute to that agent.
-6. **Tie-break** by `delegate_results` array order (deterministic).
+5. **Tie-break** by `delegate_results` array order (deterministic).
 
 If no `delegate_results` telemetry is present (the default in the planning
 cascade), OR no failure is present, set `agent_at_fault = null`. When
-non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-6),
+non-null, `agent_at_fault = { agent_name, reason, rule_matched (1-5),
 failure_detail }`. Never fabricate a verdict from the plan's `emitted_calls`.
 
 ## Step 5 — Latency outliers (Cybernetic Swarm Plan C4, regulated)

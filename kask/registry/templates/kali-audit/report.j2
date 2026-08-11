@@ -93,9 +93,9 @@ Respond with a JSON object:
     "defense_layer_gaps": [
       {
         "layer": 2,
-        "name": "Data/instruction separation",
-        "recommendation": "Implement spotlighting (datamarking) on MCP tool outputs",
-        "source": "Microsoft Research arXiv:2403.14720"
+        "name": "Information flow control (taint labels)",
+        "recommendation": "Propagate taint labels on MCP tool outputs before entering LLM context",
+        "source": "Microsoft Research arXiv:2505.23643 (FIDES)"
       }
     ],
     "coverage_gaps": ["CWE-787 not checked — needs runtime fuzzing"]

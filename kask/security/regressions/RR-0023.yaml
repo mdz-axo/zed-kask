@@ -14,4 +14,5 @@ detection:
   include: "crates/hkask-guard/src/"
 mitigation: "Wrap the inner stream in GuardedStream, which buffers text_delta chunks and runs scan_output on stream end. Emit a redaction chunk with finish_reason: 'redacted' when secrets are detected."
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. GuardedInferencePort no longer exists."

@@ -53,7 +53,6 @@ If `target_surface` is "auto", discover surfaces by scanning the codebase:
 - `mcp-servers/hkask-mcp-*/` → mcp surface
 - `deny.toml` + `Cargo.lock` → supply-chain surface
 - `scripts/*.sh` + `.github/workflows/*.yml` → config surface
-- `crates/hkask-guard/` → llm-io surface
 
 D-seam boundary: files outside `kask/` and outside the D1–D14 seams track
 upstream Zed — do not audit them as kask code. See `DIVERGENCE.md` for the
@@ -63,19 +62,17 @@ If `target_surface` is specified, use it directly.
 
 ## Defense-in-Depth Layer Catalog
 
-The 7-layer defense stack (evidence-backed). For each layer, the audit checks
+The 5-layer defense stack (evidence-backed). For each layer, the audit checks
 whether it is present on the target surface. When a new defense is discovered
 in future research, it becomes a new layer — the skill structure does not change.
 
 | Layer | Name | Source |
 |-------|------|--------|
-| 1 | Input filtering | OWASP LLM01:2025 |
-| 2 | Data/instruction separation (spotlighting) | Microsoft Research arXiv:2403.14720 |
-| 3 | Capability gating (OCAP) | OWASP LLM06:2025, OCAP literature |
-| 4 | Information flow control (taint labels) | Microsoft Research arXiv:2505.23643 (FIDES) |
-| 5 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
-| 6 | Output filtering (secrets, canaries) | OWASP LLM02:2025, Thinkst canarytokens |
-| 7 | Deception detection (decoy tools, canary tokens) | MITRE Engage, Cobalt Honey-AI |
+| 1 | Capability gating (OCAP) | OWASP LLM06:2025, OCAP literature |
+| 2 | Information flow control (taint labels) | Microsoft Research arXiv:2505.23643 (FIDES) |
+| 3 | Runtime monitoring (Regulation, action distribution) | AgentGuard arXiv:2509.23864, NIST AI RMF |
+| 4 | Provider-side safety (model refusal, safety training) | OWASP LLM01:2025 |
+| 5 | Deception detection (decoy tools) | MITRE Engage, Cobalt Honey-AI |
 
 ## Output Requirements
 
@@ -89,17 +86,24 @@ Respond with a JSON object:
   "defense_layers": [
     {
       "ordinal": 1,
-      "name": "Input filtering",
-      "source": "OWASP LLM01:2025",
-      "check": "Is hkask-guard scan_input called before every LLM invocation?",
-      "present_if": "scan_input call present in the inference dispatch path"
+      "name": "Capability gating (OCAP)",
+      "source": "OWASP LLM06:2025, OCAP literature",
+      "check": "Are MCP tool invocations gated by capability token verification?",
+      "present_if": "DelegationToken is_valid_for check present in the dispatch path"
     },
     {
       "ordinal": 2,
-      "name": "Data/instruction separation",
-      "source": "Microsoft Research arXiv:2403.14720",
-      "check": "Are MCP tool outputs datamarked before entering LLM context?",
-      "present_if": "spotlighting or datamarking transform applied to tool outputs"
+      "name": "Information flow control (taint labels)",
+      "source": "Microsoft Research arXiv:2505.23643 (FIDES)",
+      "check": "Are taint labels (Source/Sink/Pure/Endorser) propagated on MCP tool outputs?",
+      "present_if": "propagate_taint_for_binding call present in the input_mapping path"
+    },
+    {
+      "ordinal": 3,
+      "name": "Runtime monitoring (Regulation, action distribution)",
+      "source": "AgentGuard arXiv:2509.23864, NIST AI RMF",
+      "check": "Are reg.* spans emitted for tool invocations and action distribution?",
+      "present_if": "reg.tool.* span emission present in the MCP runtime dispatch path"
     }
   ]
 }

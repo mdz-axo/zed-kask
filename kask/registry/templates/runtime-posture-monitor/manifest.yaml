@@ -5,20 +5,19 @@ crate:
   visibility: public
   description: >
     Runtime security posture monitoring skill for hKask. Observes runtime
-    telemetry (reg.* canonical spans, reg.guard.* violations,
-    reg.outcome events) to detect runtime threats: API endpoint abuse,
-    bot traffic, LLM usage anomalies, and runtime dependency behavior
-    anomalies. Distinct from supply-chain-sentinel (static manifest audit,
-    P4 manifest boundary) — this skill observes runtime behavior (P4
-    runtime boundary). Anchored to MITRE CWE (CWE-1357, CWE-829, CWE-200),
-    OWASP LLM Top 10 (LLM06, LLM07), MITRE ATLAS (AML.TA0010). Consumes
-    security/regressions/ as input; proposes RR-NNNN.yaml entries with
-    surface: runtime. Emits reg.runtime.* spans (P9 — all registered in
-    CANONICAL_NAMESPACES). Decomposed into 4 phases: select-signal →
-    classify-threat → emit-regulation → convergence-check. Minimal (P5):
-    answers all 5W1H; single skill, no bundle; complements
-    supply-chain-sentinel (distinct P4 boundaries) and adversarial-red-team
-    (synthetic vs real traffic).
+    telemetry (reg.* canonical spans, reg.outcome events) to detect runtime
+    threats: API endpoint abuse, bot traffic, LLM usage anomalies, and
+    runtime dependency behavior anomalies. Distinct from supply-chain-sentinel
+    (static manifest audit, P4 manifest boundary) — this skill observes
+    runtime behavior (P4 runtime boundary). Anchored to MITRE CWE
+    (CWE-1357, CWE-829, CWE-200), OWASP LLM Top 10 (LLM06, LLM07), MITRE
+    ATLAS (AML.TA0010). Consumes security/regressions/ as input; proposes
+    RR-NNNN.yaml entries with surface: runtime. Emits reg.runtime.* spans
+    (P9 — all registered in CANONICAL_NAMESPACES). Decomposed into 4
+    phases: select-signal → classify-threat → emit-regulation →
+    convergence-check. Minimal (P5): answers all 5W1H; single skill, no
+    bundle; complements supply-chain-sentinel (distinct P4 boundaries) and
+    adversarial-red-team (synthetic vs real traffic).
 
 templates:
   - id: runtime-posture-monitor/select-signal
@@ -28,11 +27,10 @@ templates:
     description: >
       Discover runtime signal sources within the deployed userpod host:
       reg.* canonical spans (tool invocations, inference calls,
-      communication events), reg.guard.* violation spans (input/output
-      filter firings, canary detections, runtime policy enforcements),
-      reg.outcome events (action blocks, substitutions, plateaus).
-      Reads regression library for existing surface: runtime checks.
-      Signal parameter: guard | regulation | tool | inference | all.
+      communication events), reg.outcome events (action blocks,
+      substitutions, plateaus). Reads regression library for existing
+      surface: runtime checks. Signal parameter: regulation | tool |
+      inference | all.
 
   - id: runtime-posture-monitor/classify-threat
     name: "Classify runtime signals into threat patterns"
@@ -53,10 +51,9 @@ templates:
     type: KnowAct
     description: >
       Synthesize classified threats with MITRE CWE / OWASP LLM / ATLAS
-      taxonomy. For each threat: emit reg.outcome event and trigger
-      reg.guard.violation if blocking warranted. Propose RR-NNNN.yaml
-      entries with surface: runtime for enforced CI gates. Produce
-      verdict (Pass / Conditional / Fail) based on threat severity and
-      defense-layer firing coverage.
+      taxonomy. For each threat: emit reg.outcome event. Propose
+      RR-NNNN.yaml entries with surface: runtime for enforced CI gates.
+      Produce verdict (Pass / Conditional / Fail) based on threat severity
+      and defense-layer firing coverage.
 
 

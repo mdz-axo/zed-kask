@@ -19,8 +19,9 @@ detection:
   # inside the regression library itself.
   semantics: presence
   pattern: '#!\[forbid\(unsafe_code\)\]'
-  include: "crates/hkask-guard/src/hkask_guard.rs crates/hkask-types/src/hkask_types.rs crates/hkask-templates/src/hkask_templates.rs"
+  include: "crates/hkask-types/src/hkask_types.rs crates/hkask-templates/src/hkask_templates.rs"
 mitigation: "Add #![forbid(unsafe_code)] as the first line of src/lib.rs in all hkask-* library crates that do not use unsafe blocks."
 source: "https://anssi-fr.github.io/rust-guide/ — ANSSI Secure Rust Guidelines"
 ci_gate: scripts/check-kali-regressions.sh
 status: enforced
+note: "hkask-guard crate deleted 2026-08-10; removed from the include list. The other two crates remain in scope."

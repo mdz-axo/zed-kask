@@ -98,7 +98,7 @@ loop_closure = (successful_delegations / total_delegations)
 where:
 - `total_delegations` = count of emitted_calls from ACT.
 - `successful_delegations` = count of emitted_calls whose `swarm_delegate_local`
-  response did not return `PaymentRequired` or a guard error.
+  response did not return `PaymentRequired`.
 
 There is no curator dispatch in local mode (no `curator_involved` field).
 The algedonic signal in local mode is the ledger balance itself — if it
@@ -170,13 +170,11 @@ Check for algedonic signals that override convergence:
 - Any `PaymentRequired` from `swarm_delegate_local` during the Act (the
   ledger ran out of credits — the operator needs to fund via
   `swarm_fund_local`).
-- Any guard rejection from `hkask-guard` (prompt injection detected on
-  input, or canary exfiltration detected on output).
 
-If either is present, set algedonic_signal = { type, detail } and the loop
+If present, set algedonic_signal = { type, detail } and the loop
 MUST NOT claim convergence regardless of d.
 
-If neither is present, algedonic_signal = null.
+If absent, algedonic_signal = null.
 {% else %}
 Check for algedonic signals that override convergence:
 - Any 402 (PaymentRequired) from the ABW API during the Act or re-fetch.

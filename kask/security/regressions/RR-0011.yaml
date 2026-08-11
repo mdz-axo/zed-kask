@@ -16,4 +16,5 @@ detection:
 mitigation: "Call Spotlighter::spotlight() on every MCP tool result before it enters the LLM context in execute_tool_invoke."
 source: "https://arxiv.org/html/2403.14720v1 — Microsoft Research Spotlighting"
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "hkask-guard crate deleted 2026-08-10. Spotlighter removed; tool outputs now pass through untransformed. The test `tool_output_is_spotlighted_on_the_invoke_path` was renamed to `tool_output_passes_through_on_the_invoke_path`."

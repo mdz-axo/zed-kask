@@ -12,4 +12,5 @@ detection:
   include: "../Cargo.toml"
 mitigation: "Pin to =0.2.0; cargo-deny advisory check in CI catches known vulnerabilities."
 ci_gate: scripts/check-kali-regressions.sh
-status: enforced
+status: obsolete
+note: "llm-guard dependency removed 2026-08-10 along with the hkask-guard crate. This pin is no longer needed."
