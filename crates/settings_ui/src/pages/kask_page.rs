@@ -318,6 +318,44 @@ pub(crate) fn kask_string_input(
                                 kask.collab.get_or_insert_default().marketplace_url =
                                     Some(parsed.clone());
                             }
+                            ("condenser", "persona_keywords") => {
+                                let keywords: Vec<String> = parsed
+                                    .split(',')
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                                kask.condenser.get_or_insert_default().persona_keywords =
+                                    Some(keywords);
+                            }
+                            ("companies", "transactions_dir") => {
+                                kask.companies.get_or_insert_default().transactions_dir =
+                                    Some(parsed.clone());
+                            }
+                            ("corpus", "embedding_dim") => {
+                                if let Ok(v) = parsed.parse::<u32>() {
+                                    kask.corpus.get_or_insert_default().embedding_dim = Some(v);
+                                }
+                            }
+                            ("corpus", "ocr_concurrency") => {
+                                if let Ok(v) = parsed.parse::<u32>() {
+                                    kask.corpus.get_or_insert_default().ocr_concurrency = Some(v);
+                                }
+                            }
+                            ("corpus", "ocr_simple_max") => {
+                                if let Ok(v) = parsed.parse::<f64>() {
+                                    kask.corpus.get_or_insert_default().ocr_simple_max = Some(v);
+                                }
+                            }
+                            ("corpus", "ocr_moderate_max") => {
+                                if let Ok(v) = parsed.parse::<f64>() {
+                                    kask.corpus.get_or_insert_default().ocr_moderate_max = Some(v);
+                                }
+                            }
+                            ("corpus", "ocr_sample_rate") => {
+                                if let Ok(v) = parsed.parse::<f64>() {
+                                    kask.corpus.get_or_insert_default().ocr_sample_rate = Some(v);
+                                }
+                            }
                             _ => {}
                         }
                     },

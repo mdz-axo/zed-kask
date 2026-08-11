@@ -1,7 +1,7 @@
 //! MCP runtime for hKask
 //!
 //! Manages MCP server connections, tool discovery, and lifecycle.
-//! Servers are spawned as child processes via `start_server()`, which
+//! Servers are spawned as child processes via `start_server_with_env()`, which
 //! performs the MCP handshake, discovers tools dynamically, and stores
 //! live `Peer<RoleClient>` connections. `shutdown_all()` terminates
 //! all managed processes.
@@ -33,57 +33,6 @@ pub struct McpTool {
     pub input_schema: Value,
     /// MCP server that provides this tool
     pub server_id: String,
-}
-
-impl McpTool {
-    /// Validate tool input arguments against the tool's JSON Schema.
-    ///
-    /// pre:  input is a valid JSON Value
-    /// post: returns Ok(()) if input conforms to self.input_schema
-    /// post: returns Err with validation errors if input violates schema
-    /// post: returns Ok(()) if input_schema is empty or not a valid JSON Schema (graceful)
-    #[must_use = "result must be used"]
-    pub fn validate_input(&self, input: &Value) -> Result<(), Vec<String>> {
-        // If schema is empty or not an object, skip validation (graceful degradation)
-        if !self.input_schema.is_object()
-            || self
-                .input_schema
-                .as_object()
-                .map(|o| o.is_empty())
-                .unwrap_or(true)
-        {
-            return Ok(());
-        }
-
-        match jsonschema::validator_for(&self.input_schema) {
-            Ok(validator) => {
-                let errors: Vec<String> = validator
-                    .iter_errors(input)
-                    .map(|e| format!("{}: {}", e.instance_path(), e))
-                    .collect();
-                if errors.is_empty() {
-                    Ok(())
-                } else {
-                    Err(errors)
-                }
-            }
-            Err(e) => {
-                // Schema compilation failed — fail closed (reject the input)
-                // rather than silently accepting all input. A malformed schema
-                // would disable all validation for this tool, allowing malformed
-                // arguments that could trigger downstream panics.
-                tracing::warn!(
-                    target: "hkask.mcp.validation",
-                    error = %e,
-                    "JSON Schema compilation failed for tool input — rejecting input (fail closed). \
-                     Investigate the tool's input_schema definition."
-                );
-                Err(vec![
-                    "input schema compilation failed — tool input_schema is malformed".into(),
-                ])
-            }
-        }
-    }
 }
 
 /// MCP server registration
@@ -226,28 +175,8 @@ impl McpRuntime {
         servers.insert(server.id.clone(), server);
     }
 
-    /// Start an MCP server process and connect via rmcp stdio transport.
-    ///
-    /// Spawns the server as a child process, performs the MCP handshake,
-    /// discovers tools via `list_all_tools()`, stores the live connection,
-    /// and registers the discovered tools in the runtime.
-    ///
-    /// `extra_env` is a map of environment variables to set on the child
-    /// process. These override inherited env vars.
-    ///
-    /// If a server with the same ID is already connected, returns `Ok(())`.
-    #[allow(private_interfaces)]
-    #[must_use = "result must be used"]
-    pub async fn start_server(
-        &self,
-        server_id: &str,
-        command: &str,
-    ) -> Result<(), ServerStartError> {
-        self.start_server_with_env(server_id, command, std::collections::HashMap::new())
-            .await
-    }
-
-    /// Like `start_server`, but with extra environment variables for the child process.
+    /// Start an MCP server process and connect via rmcp stdio transport with
+    /// extra environment variables for the child process.
     #[must_use = "result must be used"]
     pub async fn start_server_with_env(
         &self,
@@ -419,18 +348,6 @@ impl McpRuntime {
         tool_registry.keys().cloned().collect()
     }
 
-    /// Get tool definition
-    #[must_use]
-    pub async fn get_tool(&self, tool_name: &str) -> Option<McpTool> {
-        let tool_registry = self.tool_registry.read().await;
-        let server_id = tool_registry.get(tool_name)?;
-
-        let servers = self.servers.read().await;
-        let server = servers.get(server_id)?;
-
-        server.tools.iter().find(|t| t.name == tool_name).cloned()
-    }
-
     /// Get tool information with metadata
     #[must_use]
     pub async fn get_tool_info(&self, tool_name: &str) -> Option<ToolInfo> {
@@ -458,28 +375,6 @@ impl McpRuntime {
     pub(crate) async fn tool_exists(&self, tool_name: &str) -> bool {
         let tool_registry = self.tool_registry.read().await;
         tool_registry.contains_key(tool_name)
-    }
-
-    /// List all registered servers
-    #[must_use]
-    pub async fn list_servers(&self) -> Vec<McpServer> {
-        let servers = self.servers.read().await;
-        servers.values().cloned().collect()
-    }
-
-    /// Get all registered servers as a name→server map (for health checks).
-    pub async fn servers(&self) -> HashMap<String, McpServer> {
-        self.servers.read().await.clone()
-    }
-
-    /// Count live Peer connections (for health checks).
-    pub async fn connection_count(&self) -> usize {
-        self.connections.read().await.len()
-    }
-
-    /// Get live connection map (for health checks).
-    pub async fn connections(&self) -> HashMap<String, Peer<RoleClient>> {
-        self.connections.read().await.clone()
     }
 }
 
@@ -626,14 +521,32 @@ impl McpRuntime {
         token: &hkask_capability::DelegationToken,
         tool_name: &str,
     ) -> bool {
-        let Some(info) = self.get_tool_info(tool_name).await else {
-            return false;
-        };
-        let Some(required) = info.required_capability else {
+        let Some(required) = self.required_capability_for(tool_name).await else {
             return false;
         };
         let token_cap = format!("tool:{}:{}", token.resource_id, token.action.as_str());
         hkask_capability::capabilities_match(&token_cap, &required)
+    }
+
+    /// Lightweight capability lookup: walks `tool_registry` → `servers` →
+    /// `server_id` → `capability_from_server_id(server_id)` WITHOUT cloning
+    /// the tool's `input_schema`/`description` (unlike `get_tool_info`, which
+    /// materializes a full `ToolInfo`). Mirrors the lookup path of
+    /// `get_tool_info` so capability resolution behavior is identical.
+    async fn required_capability_for(&self, tool_name: &str) -> Option<String> {
+        let tool_registry = self.tool_registry.read().await;
+        let server_id = tool_registry.get(tool_name)?;
+        // Hold the servers read lock only while we confirm the server exists.
+        // `capability_from_server_id` derives the capability from the server_id
+        // string alone — it does not inspect the server's stored tool list —
+        // so we can drop the lock before calling it.
+        {
+            let servers = self.servers.read().await;
+            if !servers.contains_key(server_id) {
+                return None;
+            }
+        }
+        hkask_capability::capability_from_server_id(server_id)
     }
 
     /// Inner tool call: live-connection check, JSON-RPC dispatch, result parsing.
@@ -644,7 +557,13 @@ impl McpRuntime {
         args: Value,
     ) -> Result<Value, hkask_capability::ToolPortError> {
         if self.get_peer(server).await.is_some() {
-            let arguments = args.as_object().cloned().unwrap_or_default();
+            // `args` is owned and unused after this point — move the map out
+            // instead of cloning (non-object args collapse to an empty map,
+            // matching the prior `as_object().cloned().unwrap_or_default()`).
+            let arguments = match args {
+                Value::Object(map) => map,
+                _ => serde_json::Map::new(),
+            };
             let result = self
                 .call_tool(server, tool, arguments)
                 .await
@@ -665,7 +584,7 @@ impl McpRuntime {
             ));
         }
         Err(hkask_capability::ToolPortError::InvocationFailed(format!(
-            "Server '{}' registered but not connected — call start_server() first",
+            "Server '{}' registered but not connected — call start_server_with_env() first",
             server
         )))
     }

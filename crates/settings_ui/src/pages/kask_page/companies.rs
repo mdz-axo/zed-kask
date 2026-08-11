@@ -16,6 +16,7 @@ pub(crate) fn render_companies_page(
         .unwrap_or_default();
     let staleness_days = companies.chronic_staleness_days.to_string();
     let fermi_defaults = companies.fermi_defaults;
+    let transactions_dir = companies.transactions_dir;
 
     let staleness_input = kask_string_input(
         "kask-companies-staleness-days",
@@ -32,6 +33,14 @@ pub(crate) fn render_companies_page(
         fermi_defaults,
         "companies",
         "fermi_defaults",
+    );
+    let transactions_dir_input = kask_string_input(
+        "kask-companies-transactions-dir",
+        "Transactions Directory",
+        "transactions",
+        transactions_dir,
+        "companies",
+        "transactions_dir",
     );
 
     v_flex()
@@ -79,6 +88,23 @@ pub(crate) fn render_companies_page(
                         .color(Color::Muted),
                 )
                 .child(fermi_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Transactions Directory"))
+                .child(
+                    Label::new(
+                        "Directory for portfolio transaction files (CSV/JSON). The portfolio \
+                         dashboard auto-loads new files from this directory. Leave empty for \
+                         the default (<kask_data_dir>/transactions/). Or set \
+                         HKASK_TRANSACTIONS_DIR.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(transactions_dir_input),
         )
         .into_any_element()
 }

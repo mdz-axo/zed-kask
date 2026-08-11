@@ -1,4 +1,4 @@
-//! HTTP helpers — tool output wrapper, error classification, and REST convenience functions.
+//! HTTP helpers — tool output wrapper and HTTP error classification.
 
 use hkask_inference::openai_compat::sanitize_error_body;
 use serde::{Deserialize, Serialize};
@@ -45,47 +45,4 @@ pub fn classify_http_error(service: &str, status: reqwest::StatusCode, body: &st
         _ if status.is_server_error() => McpToolError::unavailable(msg),
         _ => McpToolError::internal(msg),
     }
-}
-
-async fn http_req(
-    client: &reqwest::Client,
-    service: &str,
-    method: &str,
-    url: &str,
-    payload: Option<&Value>,
-) -> Result<Value, McpToolError> {
-    let builder = match method {
-        "GET" => client.get(url),
-        "POST" => client.post(url).json(payload.unwrap_or(&Value::Null)),
-        _ => client.put(url).json(payload.unwrap_or(&Value::Null)),
-    };
-    let resp = builder
-        .send()
-        .await
-        .map_err(|e| McpToolError::unavailable(format!("{service} request failed: {e}")))?;
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(classify_http_error(service, status, &body));
-    }
-    serde_json::from_str(&body)
-        .map_err(|e| McpToolError::internal(format!("Failed to parse {service} response: {e}")))
-}
-
-#[must_use = "result must be used"]
-pub async fn api_get(
-    client: &reqwest::Client,
-    service: &str,
-    url: &str,
-) -> Result<Value, McpToolError> {
-    http_req(client, service, "GET", url, None).await
-}
-#[must_use = "result must be used"]
-pub async fn api_put(
-    client: &reqwest::Client,
-    service: &str,
-    url: &str,
-    payload: &Value,
-) -> Result<Value, McpToolError> {
-    http_req(client, service, "PUT", url, Some(payload)).await
 }

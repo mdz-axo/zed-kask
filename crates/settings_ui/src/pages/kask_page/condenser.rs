@@ -18,6 +18,7 @@ pub(crate) fn render_condenser_page(
     let profile = condenser.profile.as_str();
     let auto_compress = condenser.auto_compress_tool_results;
     let saliency_window = condenser.saliency_window.to_string();
+    let persona_keywords = condenser.persona_keywords.join(", ");
 
     let profile_input = SettingsInputField::new("kask-condenser-profile")
         .tab_index(0)
@@ -41,6 +42,15 @@ pub(crate) fn render_condenser_page(
                 );
             }
         });
+
+    let persona_keywords_input = kask_string_input(
+        "kask-condenser-persona-keywords",
+        "Persona Keywords",
+        "rust, llm, forecasting",
+        persona_keywords,
+        "condenser",
+        "persona_keywords",
+    );
 
     let saliency_input = SettingsInputField::new("kask-condenser-saliency-window")
         .tab_index(0)
@@ -146,6 +156,23 @@ pub(crate) fn render_condenser_page(
                         .color(Color::Muted),
                 )
                 .child(saliency_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Persona Keywords"))
+                .child(
+                    Label::new(
+                        "Comma-separated keywords for the condenser's word_rank saliency \
+                         algorithm. Lines matching these keywords are prioritized when \
+                         compressing tool output. Leave empty for no keyword \
+                         prioritization. Or set HKASK_CONDENSER_PERSONA_KEYWORDS.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(persona_keywords_input),
         )
         .into_any_element()
 }

@@ -21,6 +21,7 @@ pub(crate) fn render_swarm_page(
     let curator_consent_default = swarm.curator_consent_default;
     let local_agents_dir = swarm.local_agents_dir;
     let local_swarms_dir = swarm.local_swarms_dir;
+    let skills_dir = swarm.skills_dir;
 
     // Mode toggle: Abw (remote) vs Local (zed-kask substrate).
     let mode_is_local = mode == kask_bridge::SwarmModeConfig::Local;
@@ -195,6 +196,33 @@ pub(crate) fn render_swarm_page(
             }
         });
 
+    let skills_dir_input = SettingsInputField::new("kask-swarm-skills-dir")
+        .tab_index(6)
+        .with_initial_text(skills_dir)
+        .with_placeholder(".agents/skills")
+        .aria_label("Skills Directory")
+        .confirm_on_focus_out()
+        .on_confirm(move |value, _window, cx| {
+            if let Some(text) = value {
+                let parsed = text.trim().to_string();
+                SettingsStore::global(cx).update_settings_file(
+                    <dyn fs::Fs>::global(cx),
+                    move |settings, _| {
+                        settings
+                            .kask
+                            .get_or_insert_default()
+                            .swarm
+                            .get_or_insert_default()
+                            .skills_dir = if parsed.is_empty() {
+                            None
+                        } else {
+                            Some(parsed)
+                        };
+                    },
+                );
+            }
+        });
+
     v_flex()
         .id("kask-swarm-page")
         .size_full()
@@ -284,6 +312,23 @@ pub(crate) fn render_swarm_page(
                     .color(Color::Muted),
                 )
                 .child(local_swarms_dir_input),
+        )
+        .child(Divider::horizontal())
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Skills Directory"))
+                .child(
+                    Label::new(
+                        "Directory containing the zed-kask skill corpus (.agents/skills/). \
+                         Read to inject skill descriptions into the local agent's system \
+                         prompt (skill-awareness). Leave empty to run skill-blind. Or set \
+                         HKASK_SKILLS_DIR.",
+                    )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                )
+                .child(skills_dir_input),
         )
         .into_any_element()
 }

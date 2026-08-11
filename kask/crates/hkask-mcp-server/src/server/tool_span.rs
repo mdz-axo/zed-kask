@@ -225,22 +225,3 @@ pub async fn execute_tool_semantic<C: ToolContext>(
     let result = fut.await;
     span.finish(result)
 }
-
-// ── Convenience helpers ────────────────────────────────────────────────────
-
-/// Convenience: produce an internal error response for a named failed operation.
-///
-/// Combines `context` ("what failed") and `e` into a standard `{"error": "Failed to ...: ..."}` JSON
-/// body, eliminating the repeated `span.internal_error(json!({...}))` pattern across servers.
-/// Produce a JSON-RPC error response for internal tool errors.
-///
-/// pre:  message is non-empty
-/// post: returns JSON string with error object
-#[must_use]
-pub fn tool_internal_error(
-    span: ToolSpanGuard,
-    context: &str,
-    e: impl std::fmt::Display,
-) -> String {
-    span.internal_error(serde_json::json!({"error": format!("Failed to {context}: {e}")}))
-}
